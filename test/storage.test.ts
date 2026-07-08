@@ -1,12 +1,12 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'fs';
-import { join } from 'path';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
+import { join } from 'path';
 import { detectMimeType } from '../src/core/file-mime.ts';
 import { LocalStorage } from '../src/core/storage/local.ts';
-import { createStorage } from '../src/core/storage.ts';
 import { S3Storage } from '../src/core/storage/s3.ts';
 import { SupabaseStorage } from '../src/core/storage/supabase.ts';
+import { createStorage } from '../src/core/storage.ts';
 
 describe('detectMimeType', () => {
   test('prefers sniffed binary signatures over file extensions', () => {
@@ -153,7 +153,7 @@ describe('signed storage URLs', () => {
   });
 
   test('file_url operation delegates to configured storage backends for signed URLs', () => {
-    const operationsSource = readFileSync(new URL('../src/core/operations.ts', import.meta.url), 'utf-8');
+    const operationsSource = readFileSync(new URL('../src/core/operations-misc.ts', import.meta.url), 'utf-8');
 
     expect(operationsSource).toContain('expires_in_seconds');
     expect(operationsSource).toMatch(/storage\.getUrl\(\s*String\(rows\[0\]\.storage_path\),\s*\{\s*expiresInSeconds,?\s*\}\s*\)/);

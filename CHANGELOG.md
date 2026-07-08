@@ -67,6 +67,15 @@ All notable changes to MBrain will be documented in this file.
   proving the pattern that will eventually retire the 10k-line hand-mirrored
   SQLite engine.
 
+- **The operations god-file is gone.** The 7,900-line \`operations.ts\` is now
+  a 1,550-line registry assembler; its 88 inline operations moved verbatim
+  into twelve cohesive domain modules (pages, put-page, search, retrieval,
+  context maps, profile/episodes, and more), each following the existing
+  factory pattern. Nothing changed for users or agents — the golden manifest
+  is byte-identical and registry order is pinned — but every future operation
+  change now lands in a focused file instead of a monolith, and a new
+  conformance test bans inline operations from ever creeping back.
+
 - **The deprecated context-atlas family stops taxing every session.** All 8
   legacy atlas operations are demoted to the admin tier (hidden from the
   default agent catalog; context maps and graph frontier planning are the

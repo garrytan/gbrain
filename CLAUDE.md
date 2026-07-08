@@ -12,9 +12,9 @@ available in local mode versus what must fail with honest guidance.
 
 ## Key files
 
-- `src/core/operations.ts` — Contract-first operation definitions (the foundation)
-- `src/core/operations-agent-session-memory.ts` — Agent/session memory preview and capture operations
-- `src/core/operations-agent-session-activation.ts` — Agent-session activation planning operation
+- `src/core/operations.ts` — Contract-first operation registry assembler (MCP_INSTRUCTIONS, param-validation wrapper, CLI helpers, registry array; the foundation)
+- `src/core/operations-*.ts` — Domain operation modules assembled into the registry: pages, put-page (write sessions + markdown mirror), search, tags/links/timeline, versions, profile-episodes, note-sections, context-maps, retrieval (+ retrieval-params), memory-inbox, procedural-memory, agent-session-memory, agent-session-activation, misc (sync, files, skillpack); `operations-shared.ts` holds cross-module param helpers
+- `src/core/operation-params.ts` — Descriptor-driven operation param validation seam (OperationError, ParamDef, validateOperationParams)
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine)
 - `src/core/pg-engine-base.ts` — Shared SQL logic for both Postgres-dialect engines (PgEngineBase + PgQueryable transport seam)
 - `src/core/postgres-engine.ts` — Postgres + pgvector transport (postgres.js) over PgEngineBase
