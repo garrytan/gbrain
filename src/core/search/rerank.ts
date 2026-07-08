@@ -69,19 +69,82 @@ export async function applyReranker(
   const tail = results.slice(opts.topNIn);
 
   // Document text — chunk_text is the matched span. Fall back to title if
-  // empty (shouldn't happen in practice; defensive). Empty docs would
-  // confuse the reranker, but we still send them — the upstream model decides.
-  const documents = head.map(r => r.chunk_text || r.title || '');
+  // empty (shouldn't happen in practice; defensive).
+  //
+  // V4.7 prod-confirm (sliding-window + max-pool + shrink-retry ladder). The
+  // local cross-encoder bge-reranker-v2-m3 (llama-server) has a 512-token
+  // PHYSICAL BATCH. A single long chunk_text (e.g. 1089 tokens) makes
+  // llama-server return HTTP 500 for the WHOLE /rerank request, which would
+  // otherwise fail-open the rerank (no reorder at all → Q15 stays rank 4). We
+  // window each doc, rerank the windows, and score the doc by its BEST window
+  // (max-pool), so the relevant passage is never cut off. Docs <= one window
+  // keep identical behaviour. Primary geometry mirrors the V4.6 benchmark
+  // harness (CHUNK 1200 / STRIDE 800). If a window still overflows the batch
+  // (query+window just over 512 tokens on token-dense French), the ladder
+  // shrinks the window and retries — matching the harness's fail-loud
+  // shrink-on-500 guard — so no query is silently left un-reranked.
+  const RR_DOC_CAP = 6000; // safety ceiling on windowing
+  // overlap (chunk - stride) kept > a table row (~260c) so every atomic
+  // passage sits wholly inside at least one window at every ladder rung.
+  const RR_LADDER: Array<{ chunk: number; stride: number }> = [
+    { chunk: 1200, stride: 800 },
+    { chunk: 900, stride: 600 },
+    { chunk: 700, stride: 450 },
+  ];
+  const docTexts = head.map(r => r.chunk_text || r.title || '');
+  const buildWindowSet = (chunk: number, stride: number): { windows: string[]; windowDoc: number[] } => {
+    const windows: string[] = [];
+    const windowDoc: number[] = [];
+    for (let i = 0; i < docTexts.length; i++) {
+      const t = (docTexts[i] || '').slice(0, RR_DOC_CAP);
+      const push = (w: string): void => { windows.push(w && w.trim() ? w : '(vide)'); windowDoc.push(i); };
+      if (t.length <= chunk) { push(t); continue; }
+      for (let start = 0; start < t.length; start += stride) {
+        push(t.slice(start, start + chunk));
+        if (start + chunk >= t.length) break;
+      }
+    }
+    return { windows, windowDoc };
+  };
 
   let reranked: RerankResult[];
   try {
     const rerankerFn = opts.rerankerFn ?? gatewayRerank;
-    reranked = await rerankerFn({
-      query,
-      documents,
-      timeoutMs: opts.timeoutMs,
-      ...(opts.model ? { model: opts.model } : {}),
-    });
+    let windowScores: RerankResult[] | null = null;
+    let usedWindowDoc: number[] = [];
+    let lastErr: unknown = null;
+    for (const step of RR_LADDER) {
+      const { windows, windowDoc } = buildWindowSet(step.chunk, step.stride);
+      try {
+        windowScores = await rerankerFn({
+          query,
+          documents: windows,
+          timeoutMs: opts.timeoutMs,
+          ...(opts.model ? { model: opts.model } : {}),
+        });
+        usedWindowDoc = windowDoc;
+        break;
+      } catch (e) {
+        lastErr = e;
+        // Shrink-and-retry only on overflow-class failures (a window pair just
+        // over the 512-token batch surfaces as HTTP 500 → 'network'). Auth /
+        // config / malformed errors rethrow to the fail-open handler below.
+        if (e instanceof RerankError && (e.reason === 'network' || e.reason === 'payload_too_large' || e.reason === 'timeout')) continue;
+        throw e;
+      }
+    }
+    if (windowScores === null) throw lastErr ?? new RerankError('rerank: all window sizes failed', 'network');
+    // Max-pool window scores back to their parent doc (doc score = best window).
+    const docScore = new Map<number, number>();
+    for (const r of windowScores) {
+      if (r.index < 0 || r.index >= usedWindowDoc.length) continue;
+      const di = usedWindowDoc[r.index]!;
+      const prev = docScore.get(di);
+      if (prev === undefined || r.relevanceScore > prev) docScore.set(di, r.relevanceScore);
+    }
+    reranked = [...docScore.entries()]
+      .map(([index, relevanceScore]) => ({ index, relevanceScore }))
+      .sort((a, b) => b.relevanceScore - a.relevanceScore);
   } catch (err) {
     const reason: RerankFailureReason =
       err instanceof RerankError ? err.reason : 'unknown';
@@ -91,7 +154,7 @@ export async function applyReranker(
         model: opts.model ?? 'unknown',
         reason,
         query_hash: hashQuery(query),
-        doc_count: documents.length,
+        doc_count: head.length,
         error_summary: errorSummary,
       });
     } catch {
