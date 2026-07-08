@@ -125,6 +125,15 @@ All notable changes to MBrain will be documented in this file.
   baselines with exact-match regression fences; a ranking change anywhere in
   the stack now fails a test instead of silently degrading your recall.
 
+- **Weak retrieval pools can now ask for a second opinion.** With the new
+  opt-in \`retrieval_clue_first_probe\` config (default off), when a broad
+  query comes back with a weak candidate pool, \`retrieve_context\` drafts one
+  clue from compiled truth already retrieved and runs it as one extra search
+  variant through the existing ranking fusion — no ranking-weight changes, no
+  new tools. Every use or skip is disclosed in the result (clue text is never
+  answer evidence), and every failure mode degrades to a deterministic,
+  explained skip.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

@@ -19,6 +19,13 @@ export function createProductionRetrieveContextDependencies(
   if (config?.retrieval_usage_aware_ranking === true) {
     dependencies.usageAwareRanking = true;
   }
+  if (config?.retrieval_clue_first_probe === true) {
+    // Deliberately no production clueGenerator: an inline LLM call is not
+    // acceptable in the retrieval hot path. The runner-backed generator is
+    // future wiring; until then the lane skips deterministically with an
+    // honest disclosure note when the flag is on.
+    dependencies.clueFirstProbe = true;
+  }
   if (!governedProbeHybridEnabled(config)) return dependencies;
   const broadSynthesis = createProductionBroadSynthesisRouteDependencies(engine, config);
   return {

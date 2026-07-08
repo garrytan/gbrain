@@ -39,6 +39,7 @@ export interface MBrainConfig {
   retrieval_governed_probe_hybrid?: boolean;
   retrieval_contextual_chunk_embeddings?: boolean;
   retrieval_usage_aware_ranking?: boolean;
+  retrieval_clue_first_probe?: boolean;
   retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
   maintenance_phase_timeout_ms?: number;
@@ -68,6 +69,7 @@ export interface MBrainConfigInput {
     governed_probe_hybrid?: boolean;
     contextual_chunk_embeddings?: boolean;
     usage_aware_ranking?: boolean;
+    clue_first_probe?: boolean;
     source_rank_rules?: RetrievalSourceRankRuleConfig[];
   };
   retrieval_eval?: {
@@ -79,6 +81,7 @@ export interface MBrainConfigInput {
   retrieval_governed_probe_hybrid?: boolean;
   retrieval_contextual_chunk_embeddings?: boolean;
   retrieval_usage_aware_ranking?: boolean;
+  retrieval_clue_first_probe?: boolean;
   retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
   maintenance_phase_timeout_ms?: number;
@@ -177,6 +180,15 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
       ?? false,
     retrieval_usage_aware_ranking: input.retrieval_usage_aware_ranking
       ?? input.retrieval?.usage_aware_ranking
+      ?? false,
+    // Clue-first probe (N-7): for broad-synthesis queries whose candidate pool
+    // comes back weak, an injectable generator may draft one hypothesis from
+    // already-retrieved compiled truth and re-probe with it as an extra search
+    // variant. Default off: the lane requires a runner-backed generator and the
+    // deterministic fallback is to skip, so opting in without a generator only
+    // adds an honest disclosure note.
+    retrieval_clue_first_probe: input.retrieval_clue_first_probe
+      ?? input.retrieval?.clue_first_probe
       ?? false,
     retrieval_eval_answer_grounding: input.retrieval_eval_answer_grounding
       ?? input.retrieval_eval?.answer_grounding

@@ -110,6 +110,17 @@ export type RetrieveContextCandidateSignalBuilder = (
   input: BuildCandidateSignalsInput,
 ) => Promise<CandidateSignalResult>;
 
+/**
+ * Clue-first probe generator seam (N-7). Drafts a short hypothesis from
+ * compiled truth that was already retrieved; the returned text is used only as
+ * one additional search variant and is never answer evidence. No default
+ * implementation is wired in production: when the flag is on but no generator
+ * is available, the lane skips deterministically with a disclosure note.
+ */
+export type RetrieveContextClueGenerator = (
+  context: { query: string; compiledSnippets: string[] },
+) => Promise<string | null>;
+
 export interface RetrieveContextDependencies {
   candidateSearch?: RetrieveContextCandidateSearch;
   broadSynthesisCandidateSearch?: BroadSynthesisCandidateSearch;
@@ -119,6 +130,8 @@ export interface RetrieveContextDependencies {
   usageAwareRanking?: boolean;
   usageWindowDays?: number;
   sourceRankRules?: readonly SourceRankRuleInput[];
+  clueFirstProbe?: boolean;
+  clueGenerator?: RetrieveContextClueGenerator;
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
@@ -138,6 +151,20 @@ const SECTION_SELECTOR_LOOKUP_LIMIT = 50;
 const MANIFEST_LINK_SCAN_MAX_ROWS = 5_000;
 const ALIAS_RESOLUTION_MANIFEST_LIMIT = 500;
 const DEFAULT_USAGE_RANKING_WINDOW_DAYS = 90;
+// Weak-pool signal for the clue-first probe (N-7). Deterministic definition:
+// the pool is weak when no search-derived candidate resolved at all, or when
+// the top resolved candidate's deterministic rank score (query tokens + source
+// rank rules only; no usage bonus, so the signal is stable across sessions)
+// stays below this constant. Calibration against scoreResolvedCandidate: a
+// rank-0 candidate with zero title/path/section token overlap scores ~10 from
+// the normalized search-rank base, while a single title token match already
+// contributes at least 16 + 8 (position weight) + 4 (coverage) = 28. A top
+// score under 24 therefore means the pool found nothing that lexically matches
+// the query's own terms.
+const CLUE_FIRST_WEAK_POOL_TOP_SCORE = 24;
+const CLUE_FIRST_MAX_SNIPPETS = 6;
+const CLUE_FIRST_SNIPPET_MAX_CHARS = 480;
+const CLUE_FIRST_MAX_CLUE_CHARS = 600;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
 const QUERY_TOKEN_STOPWORDS = new Set([
@@ -277,8 +304,8 @@ export async function retrieveContext(
       ),
   ]);
   const orientation = orientationFromBroadSynthesisRoute(broadSynthesisRouteResult);
-  const searchResults = rankSearchResults(candidatePool.results, undefined, dependencies.sourceRankRules);
-  const candidates = await groupCandidatesByCanonicalPage(
+  let searchResults = rankSearchResults(candidatePool.results, undefined, dependencies.sourceRankRules);
+  let candidates = await groupCandidatesByCanonicalPage(
     engine,
     searchResults,
     limit,
@@ -288,6 +315,36 @@ export async function retrieveContext(
     dependencies,
     taskAffinity,
   );
+  const clueProbe = await maybeRunClueFirstProbe({
+    dependencies,
+    scenario: classification.scenario,
+    query,
+    candidatePool,
+    candidates,
+    candidateSearch,
+    searchLimit,
+    updated_after: input.updated_after,
+    updated_before: input.updated_before,
+  });
+  if (clueProbe.results.length > 0) {
+    // The clue lane contributed one extra variant; its results flow through the
+    // same rank-based fusion and canonical-page grouping as every other variant.
+    searchResults = rankSearchResults(
+      fuseCandidateSearchResults([candidatePool.results, clueProbe.results]),
+      undefined,
+      dependencies.sourceRankRules,
+    );
+    candidates = await groupCandidatesByCanonicalPage(
+      engine,
+      searchResults,
+      limit,
+      query,
+      scopeGate,
+      repoBasename(input.repo_path),
+      dependencies,
+      taskAffinity,
+    );
+  }
   const combinedCandidates = taskCandidate
     ? [taskCandidate, ...candidates]
     : candidates;
@@ -369,6 +426,7 @@ export async function retrieveContext(
     ...candidateSignals,
     warnings: [
       ...candidateSearchWarnings(candidatePool),
+      ...clueProbe.notes,
       ...(searchResults.length > 0 ? [SEARCH_CHUNK_WARNING] : []),
       ...graphAugmentation.warnings,
       ...(taskWorkingSetSelector ? ['Task continuation includes task working set and normal search; read task state before acting on raw files.'] : []),
@@ -964,6 +1022,104 @@ async function searchCandidatePool(
     total_queries: queries.length,
     successful_queries: successfulQueries,
   };
+}
+
+interface ClueFirstProbeOutcome {
+  results: SearchResult[];
+  notes: string[];
+}
+
+/**
+ * Clue-first probe lane (N-7), flag-gated and default off. For
+ * broad-synthesis-mapped queries whose candidate pool came back weak, the
+ * injected generator drafts one short hypothesis from compiled-truth snippets
+ * that were already retrieved, and that hypothesis runs as one extra search
+ * variant. Every failure mode falls back deterministically to skipping the
+ * lane; the hypothesis text is only ever a search query, never answer
+ * evidence.
+ */
+async function maybeRunClueFirstProbe(context: {
+  dependencies: RetrieveContextDependencies;
+  scenario: MemoryScenario;
+  query: string;
+  candidatePool: CandidateSearchPoolResult;
+  candidates: RetrieveContextCandidate[];
+  candidateSearch: RetrieveContextCandidateSearch;
+  searchLimit: number;
+  updated_after?: Date | string;
+  updated_before?: Date | string;
+}): Promise<ClueFirstProbeOutcome> {
+  const skip = (note?: string): ClueFirstProbeOutcome => ({ results: [], notes: note ? [note] : [] });
+  if (context.dependencies.clueFirstProbe !== true) return skip();
+  if (context.query.length === 0) return skip();
+  if (intentFromScenario(context.scenario) !== 'broad_synthesis') return skip();
+  if (!clueFirstPoolIsWeak(context.candidates, context.query, context.dependencies.sourceRankRules)) return skip();
+  if (!context.dependencies.clueGenerator) {
+    return skip('clue_first_probe_skipped: retrieval.clue_first_probe is enabled but no clue generator is wired; the lane was skipped deterministically.');
+  }
+  if (context.candidatePool.total_queries >= MAX_CANDIDATE_QUERY_VARIANTS) {
+    return skip('clue_first_probe_skipped: the candidate query variant budget is exhausted, so the clue lane could not add another variant.');
+  }
+  const compiledSnippets = clueFirstCompiledSnippets(context.candidatePool.results);
+  if (compiledSnippets.length === 0) {
+    return skip('clue_first_probe_skipped: no already-retrieved compiled-truth snippets were available to draft a hypothesis from.');
+  }
+
+  let clue: string | null;
+  try {
+    clue = await context.dependencies.clueGenerator({ query: context.query, compiledSnippets });
+  } catch {
+    return skip('clue_first_probe_skipped: the clue generator failed; the lane fell back deterministically to the base candidate pool.');
+  }
+  const normalizedClue = clue?.trim().slice(0, CLUE_FIRST_MAX_CLUE_CHARS) ?? '';
+  if (!normalizedClue) {
+    return skip('clue_first_probe_skipped: the clue generator returned no hypothesis; the lane was skipped deterministically.');
+  }
+  if (normalizeText(normalizedClue) === normalizeText(context.query)) {
+    return skip('clue_first_probe_skipped: the generated hypothesis duplicated the original query, so no extra variant was run.');
+  }
+
+  try {
+    const results = await context.candidateSearch(normalizedClue, {
+      limit: context.searchLimit,
+      ...(context.updated_after !== undefined ? { updated_after: context.updated_after } : {}),
+      ...(context.updated_before !== undefined ? { updated_before: context.updated_before } : {}),
+    });
+    return {
+      results,
+      notes: [results.length > 0
+        ? 'clue_first_variant_used: one generated-hypothesis search variant was fused into candidate discovery; the hypothesis text is a search probe only and never answer evidence.'
+        : 'clue_first_variant_used: the generated-hypothesis search variant executed but returned no additional candidates; the hypothesis text is never answer evidence.'],
+    };
+  } catch {
+    return skip('clue_first_probe_skipped: the clue variant search failed; the lane fell back deterministically to the base candidate pool.');
+  }
+}
+
+function clueFirstPoolIsWeak(
+  candidates: RetrieveContextCandidate[],
+  query: string,
+  sourceRankRules?: readonly SourceRankRuleInput[],
+): boolean {
+  if (candidates.length === 0) return true;
+  const queryTokens = tokenizeForSectionRank(query);
+  const topScore = Math.max(
+    ...candidates.map((candidate) => scoreResolvedCandidate(candidate, queryTokens, undefined, sourceRankRules)),
+  );
+  return topScore < CLUE_FIRST_WEAK_POOL_TOP_SCORE;
+}
+
+function clueFirstCompiledSnippets(searchResults: SearchResult[]): string[] {
+  const snippets: string[] = [];
+  for (const result of searchResults) {
+    if (result.chunk_source !== 'compiled_truth') continue;
+    const snippet = result.chunk_text.trim().slice(0, CLUE_FIRST_SNIPPET_MAX_CHARS);
+    if (!snippet) continue;
+    if (snippets.includes(snippet)) continue;
+    snippets.push(snippet);
+    if (snippets.length >= CLUE_FIRST_MAX_SNIPPETS) break;
+  }
+  return snippets;
 }
 
 function emptyCandidateSearchPool(): CandidateSearchPoolResult {
