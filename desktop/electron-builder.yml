@@ -18,6 +18,18 @@ extraResources:
     to: pmbrain-runtime/node_modules/@napi-rs/canvas
   - from: ../node_modules/@napi-rs/canvas-win32-x64-msvc
     to: pmbrain-runtime/node_modules/@napi-rs/canvas-win32-x64-msvc
+  - from: ../node_modules/@dqbd/tiktoken
+    to: pmbrain-runtime/node_modules/@dqbd/tiktoken
+  - from: ../node_modules/@aws-sdk
+    to: pmbrain-runtime/node_modules/@aws-sdk
+  - from: ../node_modules/@smithy
+    to: pmbrain-runtime/node_modules/@smithy
+  - from: ../node_modules/libheif-js
+    to: pmbrain-runtime/node_modules/libheif-js
+  - from: ../node_modules/tslib
+    to: pmbrain-runtime/node_modules/tslib
+  - from: ../node_modules/web-tree-sitter
+    to: pmbrain-runtime/node_modules/web-tree-sitter
 win:
   target:
     - nsis
@@ -28,6 +40,5 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
 publish:
-  provider: github
-  owner: zhengyunhui123-dev
-  repo: PMBrain
+  provider: generic
+  url: https://ghproxy.net/https://github.com/zhengyunhui123-dev/PMBrain/releases/latest/download

@@ -145,9 +145,11 @@ Windows 桌面端目前仍属于内测版本，安装或使用过程中可能会
 
 完整的新用户前置条件、首次配置、老用户升级和故障处理请阅读：[PMBrain 桌面版安装与首次使用](docs/desktop/安装与首次使用.md)。
 
-运行 `PMBrain-Windows-x64-Setup-1.0.28.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、填写所需模型 API Key，并选择知识库目录；桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
+运行 `PMBrain-Windows-x64-Setup-1.0.45.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、填写所需模型 API Key，并选择知识库目录；桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
 
 安装包已内置 Bun 运行时、PGLite 数据库及其 WASM 资源，选择 PGLite 时不需要另装 Bun、Docker 或 Postgres。首次安装会使用安装包内置的 PMBrain sidecar 自动创建数据库并执行迁移，不依赖系统 PATH、`gbrain.exe` 或用户手动命令。配置完成后可在桌面端生成 CodeBuddy、Workbuddy、Cursor、Claude Code、Codex 的 MCP 接入配置，并在写入前备份原配置、合并 `pmbrain` 节点和执行 MCP smoke test。数据库模式可在配置页中切换；切换失败时会恢复原配置。
+
+如果新用户选择 PGLite 后遇到 `PMBrain command exited with code 3221225501`、`Aborted()` 或其他 WASM 初始化异常，建议改用 Docker Postgres。新用户可直接按 [首次安装使用 Docker Postgres 教程](docs/desktop/首次安装使用DockerPostgres.md) 准备数据库并填写连接地址。
 
 桌面端会自动从 GitHub Releases 检查和下载更新。安装更新前会安全停止本地 sidecar；更新后首次启动会先执行幂等数据库迁移，再启动服务并完成健康检查。升级不会覆盖已有数据库地址、模型 Key、知识库目录或 MCP 配置。
 
@@ -159,35 +161,40 @@ PGLite 在 Windows 上有 WASM 兼容性问题，推荐优先使用 Docker：
 # 1. 安装 Docker Desktop
 
 # 2. 启动 Postgres（含 pgvector 插件）
-docker run -d --name pmbrain-pg ^
-  -e POSTGRES_USER=postgres ^
-  -e POSTGRES_PASSWORD=postgres ^
-  -e POSTGRES_DB=pmbrain ^
-  -p 5433:5432 ^
+docker run -d `
+  --name pmbrain-postgres `
+  -e POSTGRES_USER=postgres `
+  -e POSTGRES_PASSWORD=postgres `
+  -e POSTGRES_DB=pmbrain `
+  -p 5433:5432 `
+  -v pmbrain-postgres-data:/var/lib/postgresql/data `
   pgvector/pgvector:pg16
 
-# 3. 安装 Bun
+# 3. 确认 pgvector 可用
+docker exec -it pmbrain-postgres psql -U postgres -d pmbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# 4. 安装 Bun
 powershell -c "irm bun.sh/install.ps1 | iex"
 
-# 4. 全局安装 PMBrain
+# 5. 全局安装 PMBrain
 bun install -g github:zhengyunhui123-dev/PMBrain
 
-# 5. 配置（编辑 ~/.pmbrain/config.json）
+# 6. 配置（编辑 ~/.pmbrain/config.json）
 # {
 #   "engine": "postgres",
-#   "database_url": "postgresql://postgres:postgres@localhost:5433/pmbrain",
+#   "database_url": "postgresql://postgres:postgres@127.0.0.1:5433/pmbrain",
 #   "embedding_model": "zhipu:embedding-3",
 #   "embedding_dimensions": 1024,
 #   "zhipu_api_key": "你的智谱Key"
 # }
 
-# 6. 初始化
+# 7. 初始化
 pmbrain init
 
-# 7. 验证
+# 8. 验证
 pmbrain doctor
 
-# 8. 启动 GUI 管理控制台
+# 9. 启动 GUI 管理控制台
 pmbrain serve --http --port 3131
 ```
 
@@ -290,7 +297,7 @@ PMBrain 配置存放在 `~/.pmbrain/config.json`（兼容 `~/.gbrain/config.json
 | 向量化（必需） | 智谱 BigModel | `zhipu:embedding-3`（1024d） | `zhipu_api_key` |
 | 对话/搜索扩展 | MIMO 小米 | `mimo:mimo-v2.5-pro` | `mimo_api_key` |
 | Dream 提炼/判定 | MIMO 小米 | `mimo:mimo-v2.5-pro` | `mimo_api_key` |
-| 对话备用 | DeepSeek | `deepseek:deepseek-chat` | `deepseek_api_key` |
+| 对话备用 | DeepSeek | `deepseek:deepseek-v4-flash` | `deepseek_api_key` |
 | 对话/嵌入（海外） | OpenAI | `openai:text-embedding-3-small`（1536d） | `openai_api_key` |
 
 > 向量化是搜索的基础，建议优先申请智谱 Key。智谱 `embedding-3` 每百万 token 仅 0.01 美元，国内可直接访问 [open.bigmodel.cn](https://open.bigmodel.cn) 申请。
@@ -473,7 +480,13 @@ PMBrain/
 
 | 更新 | 说明 |
 |------|------|
-| **Windows 桌面端 1.0.28** | 继续修复全新 Windows 首次安装链路：所有 migration orchestrator 禁止再调用 PATH 上的 `gbrain.exe`、`pmbrain.exe` 或 `git`；v0.11.0、v0.12+、v0.32.2 等安装相关迁移均改为进程内执行或可延后处理；doctor 与迁移错误提示改为 PMBrain 命令 |
+| **PMBrain 1.0.83** | README 与当前桌面安装、Docker Postgres 首装、MCP 源范围和主知识库源说明对齐 |
+| **PMBrain 1.0.82** | 新增 [Docker Postgres 首次安装教程](docs/desktop/首次安装使用DockerPostgres.md)，用于 PGLite/WASM 启动异常或希望使用稳定数据库的新用户 |
+| **PMBrain 1.0.81** | 优化 Admin Console 的 Agent/API Key 源范围选择器排版；写入源独立显示，读取源改为单列可扫描多选列表 |
+| **PMBrain 1.0.80** | 补齐 MCP Agent/API Key 读取源范围管理；新增 Agent 和 API Key 默认使用主源并支持多选读取源；自然语言任务失败/跳过明细单独展示 |
+| **PMBrain 1.0.79；Desktop 1.0.45** | 补齐主知识库源在 Admin GUI、MCP 接入页和桌面配置页的可见与设置入口；桌面端可保存主知识库源 ID 并同步设置默认 source |
+| **Windows 桌面端 1.0.45** | 当前桌面端仍处内测，首次配置支持 PGLite 和 Docker Postgres；遇到 Windows PGLite/WASM 异常时推荐切换 Docker Postgres |
+| **Windows 桌面端 1.0.28** | 修复全新 Windows 首次安装链路：安装相关迁移不再依赖 PATH 上的 `gbrain.exe`、`pmbrain.exe` 或 `git`；doctor 与迁移错误提示改为 PMBrain 命令 |
 | **Admin Token 输出优化** | `pmbrain serve --http` 在未显式隐藏 token 时会直接打印可复制的 Admin Token，方便手动登录 Admin Console |
 | **Dream 自动读取优化** | Dream synthesize 支持直接读取 Codex `.jsonl` 对话和中文会议转写，会议文本会在 UTF-8 / GB18030 间自动选择正确解码 |
 | **运行稳定性增强** | `op_checkpoints.completed_keys` 增加数组形态保护，避免异常 JSONB 值破坏恢复进度；新增 `pmbrain advisor` 只读诊断入口和 Git source durability 命令 |

@@ -25,6 +25,7 @@ import { join, basename } from 'path';
 import { homedir } from 'os';
 import { gbrainPath } from '../core/config.ts';
 import { execSync } from 'child_process';
+import { fileURLToPath } from 'node:url';
 
 // --- Types ---
 
@@ -343,8 +344,10 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 // An attacker who drops a malicious recipe in ./recipes/ MUST NOT get embedded=true.
 export function getRecipeDirs(): Array<{ dir: string; trusted: boolean }> {
   const dirs: Array<{ dir: string; trusted: boolean }> = [];
-  const sourceDir = join(import.meta.dir, '../../recipes');
+  const sourceDir = join(moduleDir, 'recipes');
+  const devSourceDir = join(moduleDir, '..', '..', 'recipes');
   if (existsSync(sourceDir)) dirs.push({ dir: sourceDir, trusted: true });
+  if (existsSync(devSourceDir)) dirs.push({ dir: devSourceDir, trusted: true });
   const globalDir = join(homedir(), '.bun', 'install', 'global', 'node_modules', 'gbrain', 'recipes');
   if (existsSync(globalDir)) dirs.push({ dir: globalDir, trusted: true });
   if (process.env.GBRAIN_RECIPES_DIR && existsSync(process.env.GBRAIN_RECIPES_DIR)) {
@@ -895,6 +898,30 @@ import {
 } from 'node:fs';
 import { resolve as pathResolve, dirname as pathDirname } from 'node:path';
 
+const moduleDir = pathDirname(fileURLToPath(import.meta.url));
+
+function packagedOrRepoRoot(): string {
+  return existsSync(join(moduleDir, 'pmbrain-sidecar.js'))
+    ? moduleDir
+    : pathResolve(moduleDir, '..', '..');
+}
+
+function resolveRecipeBundleRoot(recipe: ParsedRecipe): string {
+  return pathResolve(
+    pathDirname(pathResolve(packagedOrRepoRoot(), 'recipes', recipe.filename)),
+    recipe.filename.replace(/\.md$/, ''),
+  );
+}
+
+function packageVersion(): string {
+  try {
+    const pkgPath = pathResolve(packagedOrRepoRoot(), 'package.json');
+    return JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 interface ManifestFileEntry {
   src: string;
   target: string;
@@ -976,7 +1003,7 @@ function validateTargetRepo(
   // Refuse if target is gbrain itself or contains gbrain.
   let gbrainRoot: string | null = null;
   try {
-    gbrainRoot = realpathSync(pathResolve(__dirname, '..', '..'));
+    gbrainRoot = realpathSync(packagedOrRepoRoot());
   } catch {
     // ignore — non-fatal
   }
@@ -1146,10 +1173,7 @@ async function refreshRecipeIntoHostRepo(
     throw new Error(`recipe ${recipeId} is not copy-into-host-repo (install_kind=${recipe.frontmatter.install_kind})`);
   }
 
-  const recipeBundleRoot = pathResolve(
-    pathDirname(pathResolve(__dirname, '..', '..', 'recipes', recipe.filename)),
-    recipe.filename.replace(/\.md$/, ''),
-  );
+  const recipeBundleRoot = resolveRecipeBundleRoot(recipe);
   const manifestPath = join(recipeBundleRoot, 'install', 'manifest.json');
   const manifest: InstallManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
@@ -1305,12 +1329,7 @@ async function refreshRecipeIntoHostRepo(
   }
 
   // Re-write .gbrain-source.json with the updated SHAs.
-  const gbrainVersion = (() => {
-    try {
-      const pkgPath = pathResolve(__dirname, '..', '..', 'package.json');
-      return JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown';
-    } catch { return 'unknown'; }
-  })();
+  const gbrainVersion = packageVersion();
 
   const updatedRecord: GbrainSourceJson = {
     recipe: recipeId,
@@ -1342,10 +1361,7 @@ export async function installRecipeIntoHostRepo(
   }
 
   // Find the recipe bundle root: recipes/<id>/ (sibling to recipes/<id>.md).
-  const recipeBundleRoot = pathResolve(
-    pathDirname(pathResolve(__dirname, '..', '..', 'recipes', recipe.filename)),
-    recipe.filename.replace(/\.md$/, ''),
-  );
+  const recipeBundleRoot = resolveRecipeBundleRoot(recipe);
 
   const manifestPath = join(recipeBundleRoot, 'install', 'manifest.json');
   let manifest: InstallManifest;
@@ -1402,12 +1418,7 @@ export async function installRecipeIntoHostRepo(
 
   // Write the .gbrain-source.json manifest into the target repo.
   // Per D11-A: NO upstream_repo field, NO imported_from field.
-  const gbrainVersion = (() => {
-    try {
-      const pkgPath = pathResolve(__dirname, '..', '..', 'package.json');
-      return JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown';
-    } catch { return 'unknown'; }
-  })();
+  const gbrainVersion = packageVersion();
 
   const gbrainSource: GbrainSourceJson = {
     recipe: recipeId,

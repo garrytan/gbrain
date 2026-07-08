@@ -465,3 +465,12 @@
 - 描述：在桌面端打包校验中把 `_brain-filing-rules.json` 和 `_brain-filing-rules.md` 设为必备运行时文件；Dream 入口在执行 cycle 前补齐系统 skill 资产，并提前校验 `--input` 路径是否存在，避免底层 ENOENT 或 allow-list 缺失错误直接暴露。
 - 是否完成：是
 - 最终结果：已补测试并验证 targeted tests 通过；桌面端安装包已重新构建为 1.0.40，发布产物 dry-run 与缺失输入路径校验均通过。
+ 
+## 2026-07-08 桌面端安装包开发路径泄漏与运行时资源缺失
+
+- 时间：2026-07-08
+- 版本号：Desktop 1.0.46
+- 标题：修复桌面端安装包包含开发机路径与 runtime 资源缺失风险
+- 描述：桌面端 sidecar 打包后可能携带开发机绝对路径，同时 packaged runtime 缺少 recipes、templates、完整 skills 和部分运行期依赖，存在新用户安装后 integrations/skill 自检失败、自动更新产物不完整的风险。
+- 是否完成：是
+- 最终结果：已恢复桌面端构建脚本，补齐 packaged runtime 资源与外置依赖复制，改造运行时资源路径解析，增强安装包校验脚本检查版本、latest.yml、必备资源和开发机路径泄漏；未处理代码签名问题。

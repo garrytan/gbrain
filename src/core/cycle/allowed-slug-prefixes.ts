@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../config.ts';
 import { loadActivePack } from '../schema-pack/load-active.ts';
 import filingRulesDoc from '../../../skills/_brain-filing-rules.json';
@@ -10,10 +11,13 @@ type FilingRulesDoc = {
   };
 };
 
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+
 export async function loadAllowedSlugPrefixes(): Promise<string[]> {
   const explicit = loadAllowedSlugPrefixesFromFiles([
     join(process.cwd(), 'skills', '_brain-filing-rules.json'),
-    join(__dirname, '..', '..', '..', 'skills', '_brain-filing-rules.json'),
+    join(moduleDir, 'skills', '_brain-filing-rules.json'),
+    join(moduleDir, '..', '..', '..', 'skills', '_brain-filing-rules.json'),
   ]);
   if (explicit.length > 0) return explicit;
 

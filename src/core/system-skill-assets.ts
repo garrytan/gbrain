@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface SystemSkillAssetResult {
   skillsDir: string;
@@ -12,6 +13,8 @@ const SYSTEM_SKILL_ASSETS = [
   '_brain-filing-rules.json',
   '_brain-filing-rules.md',
 ] as const;
+
+const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 export function ensureSystemSkillAssets(brainDir: string): SystemSkillAssetResult {
   const root = resolve(brainDir);
@@ -62,9 +65,9 @@ function isFreshEnough(source: string, target: string): boolean {
 
 function findSystemSkillAssetSource(name: string): string | null {
   const candidates = [
-    join(__dirname, 'skills', name),
-    join(__dirname, '..', '..', 'skills', name),
     join(process.cwd(), 'skills', name),
+    join(moduleDir, 'skills', name),
+    join(moduleDir, '..', '..', 'skills', name),
   ];
   return candidates.find((path) => existsSync(path)) ?? null;
 }

@@ -1,7 +1,7 @@
 {
   "name": "pmbrain-desktop",
   "productName": "PMBrain Desktop",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "private": true,
   "author": "PMBrain",
   "description": "PMBrain Windows desktop shell",
@@ -15,7 +15,7 @@
     "preview:renderer": "bun run scripts/preview-renderer.ts",
     "verify:package": "bun run scripts/verify-package.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

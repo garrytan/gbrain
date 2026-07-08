@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const moduleDir = dirname(__filename);
 import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
@@ -1426,7 +1426,7 @@ export function detectGStack(): { found: boolean; path: string | null; host: str
  * into the agent workspace. Uses minimal defaults, not the soul-audit interview.
  */
 export function installDefaultTemplates(workspaceDir: string): string[] {
-  const gbrainRoot = dirname(dirname(__dirname)); // up from src/commands/ to repo root
+  const gbrainRoot = dirname(dirname(moduleDir)); // up from src/commands/ to repo root
   const templatesDir = join(gbrainRoot, 'templates');
   const installed: string[] = [];
 
@@ -1455,7 +1455,7 @@ export function installDefaultTemplates(workspaceDir: string): string[] {
  */
 export function reportModStatus(): void {
   const gstack = detectGStack();
-  const gbrainRoot = dirname(dirname(__dirname));
+  const gbrainRoot = dirname(dirname(moduleDir));
   const skillsDir = join(gbrainRoot, 'skills');
 
   let skillCount = 0;
