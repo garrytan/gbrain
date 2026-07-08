@@ -100,6 +100,15 @@ All notable changes to MBrain will be documented in this file.
   dream cycle keeps a snapshot warm, and an admin-tier
   \`get_core_memory_blocks\` op lets you inspect exactly what gets injected.
 
+- **Your brain now notices the workflows you keep repeating.** New procedural
+  memory detection (\`detect_procedural_patterns\`) deterministically mines
+  recurring action sequences from task attempts, decisions, and traces, and
+  \`propose_procedural_candidates\` turns them into governed Memory Inbox
+  candidates — routed through the standard verify-then-promote pipeline, never
+  written directly. The dream cycle reports detected patterns as counts only;
+  creating procedure candidates stays an explicit, human-invoked step
+  (\`apply: true\`), so nothing files itself into your brain overnight.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

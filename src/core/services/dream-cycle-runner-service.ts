@@ -8,6 +8,7 @@ import type {
   AcquireMaintenanceCycleLockResult,
   MaintenanceRuntimeService,
 } from './maintenance-runtime-service.ts';
+import { detectProceduralPatterns } from './procedural-memory-service.ts';
 
 export type DreamCyclePhaseFamily =
   | 'source_status'
@@ -662,10 +663,17 @@ async function runConsolidationPhase(
     context.cycle.dream_generated_candidate_ids.add(fallback.candidate_id);
   }
   const duplicatePageSuggestions = await findDuplicatePageSuggestions(context.engine, context.input.limit);
+  // Deterministic recurrence detection only: the dream cycle reports proposal counts
+  // and never creates procedure candidates itself (propose_procedural_candidates
+  // with apply=true is the explicit, human-invoked path).
+  const proceduralPatterns = await detectProceduralPatterns(context.engine, {
+    now: context.input.now,
+  });
   const coreMemoryBlocks = await refreshCoreMemoryBlocksSnapshot(context);
   const hasActionableWork = report.suggestions.length > 0
     || writeSessionFallbacks.swept.length > 0
-    || duplicatePageSuggestions.length > 0;
+    || duplicatePageSuggestions.length > 0
+    || proceduralPatterns.proposals.length > 0;
   return {
     status: hasActionableWork || coreMemoryBlocks.errors.length > 0 ? 'warn' : 'ok',
     counts: {
@@ -674,6 +682,7 @@ async function runConsolidationPhase(
       expired_write_session_fallbacks: writeSessionFallbacks.swept.length,
       expired_write_session_fallback_skips: writeSessionFallbacks.skipped.length,
       duplicate_page_suggestions: duplicatePageSuggestions.length,
+      procedural_pattern_proposals: proceduralPatterns.proposals.length,
       ...coreMemoryBlocks.counts,
     },
     errors: coreMemoryBlocks.errors,
@@ -683,8 +692,8 @@ async function runConsolidationPhase(
       code: 'canonical_write_control_plane_required',
       message: 'Dream consolidation cannot mutate canonical memory outside policy.',
     }],
-    next_recommended_action: report.suggestions.length > 0 || duplicatePageSuggestions.length > 0
-      ? 'Review dream-cycle candidates and duplicate page suggestions before applying governed changes.'
+    next_recommended_action: report.suggestions.length > 0 || duplicatePageSuggestions.length > 0 || proceduralPatterns.proposals.length > 0
+      ? 'Review dream-cycle candidates, duplicate page suggestions, and procedural rule proposals before applying governed changes.'
       : null,
     canonical_mutations: 0,
     llm_or_runner_used: false,

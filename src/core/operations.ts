@@ -6,11 +6,11 @@
 import { createHash, randomUUID } from 'crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, join, relative, resolve } from 'path';
+import type { OperationAuthPrincipal } from './auth-principal.ts';
 import type { MBrainConfig } from './config.ts';
 import * as db from './db.ts';
 import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from './derived-jobs.ts';
 import type { BrainEngine } from './engine.ts';
-import type { OperationAuthPrincipal } from './auth-principal.ts';
 import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import { getUnsupportedCapabilityReason, type OfflineProfile } from './offline-profile.ts';
@@ -25,6 +25,7 @@ import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './op
 import { createMemoryMutationLedgerOperations } from './operations-memory-mutation-ledger.ts';
 import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
 import { createNoteManifestOperations } from './operations-note-manifest.ts';
+import { createProceduralMemoryOperations } from './operations-procedural-memory.ts';
 import { createSourceRegistryOperations } from './operations-source-registry.ts';
 import { createTaskOperations } from './operations-tasks.ts';
 import { expandQuery } from './search/expansion.ts';
@@ -48,8 +49,8 @@ import { queryStructuralContextMap } from './services/context-map-query-service.
 import { getStructuralContextMapReport } from './services/context-map-report-service.ts';
 import { buildStructuralContextMapEntry, getStructuralContextMapEntry, listStructuralContextMapEntries } from './services/context-map-service.ts';
 import { CORPUS_LANE_ARTIFACT_KINDS } from './services/corpus-lane-service.ts';
-import { assertMemoryWriteAllowed, MemoryAccessPolicyError } from './services/memory-access-policy-service.ts';
 import { reviewDuplicateMemory } from './services/duplicate-memory-review-service.ts';
+import { assertMemoryWriteAllowed, MemoryAccessPolicyError } from './services/memory-access-policy-service.ts';
 import { selectActivationPolicy } from './services/memory-activation-policy-service.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import { classifyMemoryScenario } from './services/memory-scenario-classifier-service.ts';
@@ -58,21 +59,21 @@ import { getMixedScopeDisclosure } from './services/mixed-scope-disclosure-servi
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, NOTE_MANIFEST_EXTRACTOR_VERSION } from './services/note-manifest-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
+import { buildPageProvenanceView } from './services/page-provenance-service.ts';
 import { DEFAULT_PERSONAL_EPISODE_SCOPE_ID, getPersonalEpisodeLookupRoute } from './services/personal-episode-lookup-route-service.ts';
 import { previewPersonalExport } from './services/personal-export-visibility-service.ts';
 import { DEFAULT_PROFILE_MEMORY_SCOPE_ID, getPersonalProfileLookupRoute } from './services/personal-profile-lookup-route-service.ts';
 import { selectPersonalWriteTarget } from './services/personal-write-target-service.ts';
-import { buildPageProvenanceView } from './services/page-provenance-service.ts';
 import { getPrecisionLookupRoute } from './services/precision-lookup-route-service.ts';
-import { runProofAgentMemory } from './services/proof-agent-service.ts';
-import { readContext } from './services/read-context-service.ts';
-import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
-import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
 import {
   createProductionBroadSynthesisRouteDependencies,
   createProductionRetrievalRouteDependencies,
   createProductionRetrieveContextDependencies,
 } from './services/production-retrieval-dependencies-service.ts';
+import { runProofAgentMemory } from './services/proof-agent-service.ts';
+import { readContext } from './services/read-context-service.ts';
+import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
+import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
 import { retrieveContext } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
@@ -92,15 +93,15 @@ import type {
   MemoryCandidateStatus,
   MemoryCandidateTargetObjectType,
   MemoryMutationEvent,
-  MemoryWriteSession,
   MemoryScenario,
   MemoryScenarioKnownSubject,
   MemoryScenarioKnownSubjectKind,
   MemoryScenarioSourceKind,
+  MemoryWriteSession,
   Page,
   PageProjection,
-  PersonalWriteTargetResult,
   PersonalEpisodeSourceKind,
+  PersonalWriteTargetResult,
   ProfileMemoryType,
   ReadContextProbeContext,
   RetrievalRequestPlannerInput,
@@ -5097,6 +5098,8 @@ const noteManifestOperations = createNoteManifestOperations({ OperationError });
 
 const taskOperations = createTaskOperations({ OperationError });
 
+const proceduralMemoryOperations = createProceduralMemoryOperations({ OperationError });
+
 const sourceRegistryOperations = createSourceRegistryOperations({
   OperationError,
 });
@@ -7971,6 +7974,8 @@ export const operations: Operation[] = [
   get_atlas_orientation_bundle,
   // Operational memory
   ...taskOperations,
+  // Procedural memory loop (deterministic recurrence detection -> procedure lane)
+  ...proceduralMemoryOperations,
   ...brainLoopAuditOperations,
   ...memoryMutationLedgerOperations,
   ...memoryControlPlaneOperations,

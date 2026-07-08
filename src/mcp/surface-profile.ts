@@ -1,4 +1,4 @@
-import { OperationError, type Operation } from '../core/operations.ts';
+import { type Operation, OperationError } from '../core/operations.ts';
 import { effectiveToolTier, resolveAllowedTiers, type ToolTier } from './tool-tiers.ts';
 
 export type McpSurfaceProfileName = 'stdio' | 'http_local' | 'review_local' | 'http_remote' | 'edge_remote';
@@ -96,6 +96,7 @@ const CANONICAL_WRITE_MUTATING_OPERATIONS = [
   'plan_lifecycle_purge',
   'promote_memory_candidate_entry',
   'propose_compile_debt_patches',
+  'propose_procedural_candidates',
   'purge_lifecycle_memory',
   'put_page',
   'put_raw_data',
