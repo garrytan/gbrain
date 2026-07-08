@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve } from 'path';
 import type { BrainEngine } from '../../core/engine.ts';
 import type { GBrainConfig } from '../../core/config.ts';
 import { loadAllSources } from '../../core/sources-load.ts';
+import { resolveMainSourceId } from '../../core/source-resolver.ts';
 import type { ConsoleRun, IntentPreview } from './types.ts';
 import { normalizeIntentPreview, describeAction } from './normalize.ts';
 import { callIntentModel, getAdminLlmStatus } from './llm.ts';
@@ -58,7 +59,7 @@ export async function resolveImportSourceIdForPath(
       best = { id: source.id, pathLen };
     }
   }
-  return best?.id;
+  return best?.id ?? await resolveMainSourceId(engine);
 }
 
 // ---------------------------------------------------------------------------

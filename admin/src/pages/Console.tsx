@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { AgentsPage } from './Agents';
 import { ChatGptTunnelPanel } from './ChatGptTunnel';
@@ -37,6 +37,7 @@ interface BrainOverview {
   pending_embeddings: number;
   recent_write_at: string | null;
   sources: SourceSummary[];
+  main_source_id: string;
   federated_source_count: number;
   provider_status: {
     providers: Record<string, boolean>;
@@ -133,6 +134,66 @@ function OverviewStrip({ overview }: { overview: BrainOverview }) {
       <span className={overview.llm_enabled ? 'pm-ok' : 'pm-warn'}>
         自然语言 {overview.llm_enabled ? '已启用' : '未配置'}
       </span>
+    </div>
+  );
+}
+
+function sourceLabel(source?: SourceSummary): string {
+  if (!source) return 'default';
+  return source.name && source.name !== source.id ? `${source.name} (${source.id})` : source.id;
+}
+
+function MainSourceSettings({ overview, onSaved }: { overview: BrainOverview; onSaved: () => Promise<void> }) {
+  const activeSources = overview.sources.filter(source => !source.archived);
+  const mainSource = activeSources.find(source => source.id === overview.main_source_id)
+    ?? overview.sources.find(source => source.id === overview.main_source_id);
+  const [selected, setSelected] = useState(overview.main_source_id);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    setSelected(overview.main_source_id);
+    setMessage('');
+  }, [overview.main_source_id]);
+
+  const save = async () => {
+    if (!selected || selected === overview.main_source_id) return;
+    setSaving(true);
+    setMessage('');
+    try {
+      await api.setDefaultSource(selected);
+      await onSaved();
+      setMessage(`主知识库源已设置为 ${selected}`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="pm-card main-source-card">
+      <div className="pm-section-head">
+        <div>
+          <h2>主知识库源</h2>
+          <p className="pm-hint">主源会作为默认导入位置，也会作为 MCP 未指定 source 时的默认读取范围。</p>
+        </div>
+        <button className="pm-primary" onClick={() => void save()} disabled={saving || !selected || selected === overview.main_source_id}>
+          {saving ? '保存中' : '设为主源'}
+        </button>
+      </div>
+      <div className="main-source-grid">
+        <MetricCard label="当前主源" value={overview.main_source_id} hint={mainSource?.local_path ?? '未绑定本地目录'} />
+        <MetricCard label="默认导入" value={overview.main_source_id} hint="导入时未填写 Source ID 会写入这里" />
+        <MetricCard label="MCP 默认读取" value={overview.main_source_id} hint="Agent 未指定 source 时会读取这里" />
+      </div>
+      <label>选择已有 source</label>
+      <select value={selected} onChange={event => setSelected(event.target.value)}>
+        {activeSources.map(source => (
+          <option key={source.id} value={source.id}>{sourceLabel(source)}</option>
+        ))}
+      </select>
+      {message && <div className={message.includes('已设置') ? 'pm-hint pm-ok' : 'pm-error-text'}>{message}</div>}
     </div>
   );
 }
@@ -319,29 +380,36 @@ function summarizeRunLog(run: ConsoleRun, fallback: string): string {
 
   const latestProgress = Array.from(text.matchAll(/imported=(\d+)\s+skipped=(\d+)\s+errors=(\d+)/g)).pop();
   const totalMatch = text.match(/files=(\d+)/);
-  const warningCount = (text.match(/Warning:/g) ?? []).length;
   const completedPhases = Array.from(text.matchAll(/\[pmbrain phase\]\s+([^\n]+?)\s+done/g)).map(match => match[1].trim());
-  const failedLines = text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => /error|failed|cannot access|warning:/i.test(line))
-    .slice(0, 2)
-    .map(line => line.replace(/\s+/g, ' ').slice(0, 120));
+  const skippedDetails = Array.from(text.matchAll(/Skipped\s+([^:]+):\s+([^\n]+)/gi))
+    .map(match => ({ path: match[1].trim(), reason: match[2].trim() }));
+  const warningDetails = Array.from(text.matchAll(/Warning:\s+skipped\s+([^:]+):\s+([^\n]+)/gi))
+    .map(match => ({ path: match[1].trim(), reason: match[2].trim() }));
+  const failures = [...skippedDetails, ...warningDetails]
+    .filter(item => item.path && item.reason)
+    .slice(0, 5)
+    .map(item => `${item.path}: ${item.reason.replace(/\s+/g, ' ').slice(0, 100)}`);
+  const failureSummary = text.match(/Import completed with\s+(\d+)\s+failure\(s\)/i);
 
   const parts: string[] = [];
   if (totalMatch) parts.push(`共发现 ${totalMatch[1]} 个文件`);
   if (latestProgress) {
-    parts.push(`已导入 ${latestProgress[1]} 个`);
-    parts.push(`跳过 ${latestProgress[2]} 个`);
-    parts.push(`错误 ${latestProgress[3]} 个`);
+    parts.push(`已导入 ${latestProgress[1]} 个，跳过 ${latestProgress[2]} 个，错误 ${latestProgress[3]} 个`);
   }
   if (completedPhases.length > 0) parts.push(`已完成阶段：${completedPhases.slice(0, 3).join('、')}`);
-  if (warningCount > 0) parts.push(`警告 ${warningCount} 条`);
-  if (failedLines.length > 0) parts.push(`主要问题：${failedLines.join('；')}`);
+  if (failureSummary) parts.push(`失败文件 ${failureSummary[1]} 个`);
 
-  return parts.length > 0 ? `${fallback}。${parts.join('；')}。` : fallback;
+  if (failures.length > 0) {
+    return [
+      `${fallback}。`,
+      ...parts.map(part => `- ${part}`),
+      '- 失败/跳过明细：',
+      ...failures.map(item => `  - ${item}`),
+    ].join('\n');
+  }
+
+  return parts.length > 0 ? [`${fallback}。`, ...parts.map(part => `- ${part}`)].join('\n') : fallback;
 }
-
 function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: (page: string) => void }) {
   const [text, setText] = useState('');
   const [preview, setPreview] = useState<IntentPreview | null>(null);
@@ -360,6 +428,25 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
       return next;
     });
     setActiveHistoryId(item.id);
+  };
+
+  const selectHistory = async (item: NaturalTaskHistoryItem) => {
+    setText(item.text);
+    setPreview(item.preview ?? null);
+    setRun(item.run ?? null);
+    setError(item.error ?? '');
+    setActiveHistoryId(item.id);
+    if (!item.run?.id) return;
+    setLoading(true);
+    try {
+      const nextRun = await api.run(item.run.id) as ConsoleRun;
+      setRun(nextRun);
+      upsertHistory({ ...item, run: nextRun });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const submitPreview = async () => {
@@ -478,7 +565,7 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
         {run && (
           <div className="nl-result">
             <div className="nl-summary">
-              {summary}
+              <div className="nl-summary-text">{summary}</div>
               <span className={`pm-pill run-pill run-${run.status}`}>
                 {run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'running' ? '执行中' : '排队中'}
               </span>
@@ -517,13 +604,7 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
                 <button
                   key={item.id}
                   className={item.id === activeHistoryId ? 'active' : ''}
-                  onClick={() => {
-                    setText(item.text);
-                    setPreview(item.preview ?? null);
-                    setRun(item.run ?? null);
-                    setError(item.error ?? '');
-                    setActiveHistoryId(item.id);
-                  }}
+                  onClick={() => void selectHistory(item)}
                 >
                   <span>{new Date(item.createdAt).toLocaleString()}</span>
                   <b>{item.preview?.proposedAction?.slice(0, 20) ?? item.run?.status ?? (item.error ? '失败' : '已记录')}</b>
@@ -621,6 +702,8 @@ export function ImportDataPage() {
     }
   };
 
+  const mainSource = overview?.sources.find(source => source.id === overview.main_source_id);
+
   return (
     <div className="pm-page">
       <h1>原始数据导入</h1>
@@ -673,6 +756,10 @@ export function ImportDataPage() {
           <div className="pm-card">
             <h2>启动导入</h2>
             <label>本地文件或文件夹路径</label>
+            <div className="main-source-note">
+              <b>默认导入到：{overview.main_source_id}</b>
+              <span>{sourceId.trim() ? `本次将覆盖为 ${sourceId.trim()}` : `未填写 Source ID 时会写入主知识库源${mainSource?.local_path ? `（${mainSource.local_path}）` : ''}`}</span>
+            </div>
             <input value={path} onChange={e => setPath(e.target.value)} placeholder="C:\\MyData" />
             <label>Source ID（可选）</label>
             <input value={sourceId} onChange={e => setSourceId(e.target.value)} placeholder="例如 project-docs" />
@@ -1091,6 +1178,12 @@ export function ConnectionCenterPage() {
           <span>4 让 Agent 搜索 PMBrain</span>
         </div>
       </div>
+      {overview && (
+        <div className="pm-card main-source-note mcp-main-source">
+          <b>默认读取源：{overview.main_source_id}</b>
+          <span>MCP 请求未指定 source 时，会读取主知识库源。需要修改时请到“设置”页调整主知识库源。</span>
+        </div>
+      )}
       <div className="pm-grid three-col">
         <MetricCard label="MCP Server" value={`${origin}/mcp`} />
         <MetricCard label="OAuth Discovery" value={`${origin}/.well-known/oauth-authorization-server`} />
@@ -1153,11 +1246,13 @@ export function ConnectionCenterPage() {
 }
 
 export function ModelConfigPage() {
-  const { overview } = useOverview();
+  const { overview, reload } = useOverview();
   if (!overview) return <LoadingBlock />;
+  const mainSourceSettings = <MainSourceSettings overview={overview} onSaved={reload} />;
   return (
     <div className="pm-page">
       <h1>API 与模型配置</h1>
+      {mainSourceSettings}
       <div className="pm-grid two-col">
         <div className="pm-card">
           <h2>模型路由</h2>

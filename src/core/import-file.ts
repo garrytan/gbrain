@@ -468,22 +468,15 @@ export async function importFromContent(
       const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
       const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
       const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
-      if (sameExternalId) {
-        // True duplicate (same external ID). Skip + log to stderr.
-        process.stderr.write(
-          `[import] skipping ${opts.sourcePath ?? slug}: identical to ${dup.slug} ` +
-          `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
-          `Pass --force-rechunk to override.\n`
-        );
-        return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
-      }
-      // Same content_hash, different (or missing) frontmatter.id.
-      // Surface a warning but proceed with the insert — they may be
-      // legitimate independent pages that happen to share text.
+      const identity = sameExternalId
+        ? `frontmatter.id=${fmIdStr}`
+        : `content_hash=${hash.slice(0, 8)}`;
       process.stderr.write(
-        `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${dup.slug} ` +
-        `(${hash.slice(0, 8)}) but has different frontmatter.id. Indexing both.\n`
+        `[import] skipping ${opts.sourcePath ?? slug}: duplicate of ${dup.slug} ` +
+        `(${identity}) in source ${sourceId ?? 'default'}. ` +
+        `Pass --force-rechunk to override.\n`
       );
+      return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
     }
   }
 

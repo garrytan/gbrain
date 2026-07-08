@@ -28,6 +28,14 @@ interface Agent {
   requests_today: number;
   token_ttl: number | null;
   status: 'active' | 'revoked';
+  source_id?: string | null;
+  federated_read?: string[] | null;
+}
+
+interface SourceOption {
+  id: string;
+  name?: string;
+  archived?: boolean;
 }
 
 interface ApiKey {
@@ -36,6 +44,111 @@ interface ApiKey {
   created_at: string;
   last_used_at: string | null;
   status: 'active' | 'revoked';
+}
+
+function normalizeReadSources(readSources: string[] | null | undefined, sourceId: string) {
+  const values = Array.isArray(readSources) ? readSources.filter(Boolean) : [];
+  return Array.from(new Set(values.length > 0 ? values : [sourceId]));
+}
+
+function sourceLabel(sourceId: string, sources: SourceOption[], mainSourceId: string) {
+  const effectiveId = sourceId === 'default' ? mainSourceId : sourceId;
+  const source = sources.find(item => item.id === effectiveId);
+  return source?.name || effectiveId;
+}
+
+function SourceScopeBadges({ agent, mainSourceId }: { agent: Agent; mainSourceId: string }) {
+  const writeSource = agent.source_id || mainSourceId;
+  const reads = normalizeReadSources(agent.federated_read, writeSource).map(id => id === 'default' ? mainSourceId : id);
+  return (
+    <span className="source-scope-badges">
+      {reads.slice(0, 3).map(id => <span key={id} className="badge badge-read">{id}</span>)}
+      {reads.length > 3 && <span className="badge">+{reads.length - 3}</span>}
+    </span>
+  );
+}
+
+function SourceOptionName({ sourceId, sources, mainSourceId }: { sourceId: string; sources: SourceOption[]; mainSourceId: string }) {
+  const effectiveId = sourceId === 'default' ? mainSourceId : sourceId;
+  const source = sources.find(item => item.id === effectiveId);
+  return (
+    <>
+      <span>{source?.name || effectiveId}</span>
+      {source?.name && source.name !== effectiveId && <small>{effectiveId}</small>}
+    </>
+  );
+}
+
+function SourceScopeFields({
+  sources,
+  mainSourceId,
+  sourceId,
+  readSources,
+  onSourceIdChange,
+  onReadSourcesChange,
+}: {
+  sources: SourceOption[];
+  mainSourceId: string;
+  sourceId: string;
+  readSources: string[];
+  onSourceIdChange: (sourceId: string) => void;
+  onReadSourcesChange: (sourceIds: string[]) => void;
+}) {
+  const options = sources.length > 0 ? sources : [{ id: mainSourceId }];
+  const selectedWrite = sourceLabel(sourceId, sources, mainSourceId);
+  const toggleRead = (id: string, checked: boolean) => {
+    const next = checked
+      ? Array.from(new Set([...readSources, id]))
+      : readSources.filter(item => item !== id);
+    onReadSourcesChange(next.length > 0 ? next : [sourceId]);
+  };
+  return (
+    <fieldset className="source-scope-editor">
+      <legend>源范围</legend>
+      <div className="source-write-control">
+        <div>
+          <span>写入源</span>
+          <strong>{selectedWrite}</strong>
+        </div>
+        <select aria-label="写入源" value={sourceId} onChange={e => {
+          const nextSourceId = e.target.value;
+          onSourceIdChange(nextSourceId);
+          if (readSources.length === 0 || (readSources.length === 1 && readSources[0] === sourceId)) {
+            onReadSourcesChange([nextSourceId]);
+          }
+        }}>
+          {options.map(source => (
+            <option key={source.id} value={source.id}>
+              {sourceLabel(source.id, sources, mainSourceId)}{source.id === mainSourceId ? '（主源）' : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="source-read-head">
+        <span>读取源</span>
+        <em>{readSources.length} 个已选</em>
+      </div>
+      <div className="source-read-list">
+        {options.map(source => {
+          const checked = readSources.includes(source.id);
+          return (
+            <label key={source.id} className={`source-read-option ${checked ? 'checked' : ''}`}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={e => toggleRead(source.id, e.target.checked)}
+              />
+              <span className="source-checkmark" aria-hidden="true">{checked ? '✓' : ''}</span>
+              <span className="source-option-copy">
+                <SourceOptionName sourceId={source.id} sources={sources} mainSourceId={mainSourceId} />
+              </span>
+              {source.id === mainSourceId && <span className="source-main-chip">主源</span>}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
 }
 
 export function AgentsPage({
@@ -54,10 +167,18 @@ export function AgentsPage({
   const [showApiKeyCreate, setShowApiKeyCreate] = useState(false);
   const [showApiKeyToken, setShowApiKeyToken] = useState<{ name: string; token: string } | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [sources, setSources] = useState<SourceOption[]>([]);
+  const [mainSourceId, setMainSourceId] = useState('default');
 
-  useEffect(() => { loadAgents(); }, []);
+  useEffect(() => { loadAgents(); loadOverview(); }, []);
 
   const loadAgents = () => { api.agents().then(setAgents).catch(() => {}); };
+  const loadOverview = () => {
+    api.brainOverview().then((overview: any) => {
+      setMainSourceId(typeof overview?.main_source_id === 'string' ? overview.main_source_id : 'default');
+      setSources(Array.isArray(overview?.sources) ? overview.sources.filter((source: SourceOption) => !source.archived) : []);
+    }).catch(() => {});
+  };
 
   return (
     <>
@@ -106,6 +227,7 @@ export function AgentsPage({
                 <th>名称</th>
                 <th>类型</th>
                 <th>权限范围</th>
+                <th>读取源</th>
                 <th>状态</th>
                 <th>请求数</th>
                 <th>最近使用</th>
@@ -125,6 +247,9 @@ export function AgentsPage({
                     {(a.scope || '').split(' ').filter(Boolean).map(s => (
                       <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
                     ))}
+                  </td>
+                  <td>
+                    <SourceScopeBadges agent={a} mainSourceId={mainSourceId} />
                   </td>
                   <td>
                     <span className={`badge ${a.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{statusLabel(a.status)}</span>
@@ -151,6 +276,8 @@ export function AgentsPage({
         <RegisterModal
           onClose={() => setShowRegister(false)}
           onRegistered={(creds) => { setShowRegister(false); setShowCredentials(creds); loadAgents(); }}
+          sources={sources}
+          mainSourceId={mainSourceId}
         />
       )}
 
@@ -162,13 +289,25 @@ export function AgentsPage({
       )}
 
       {selectedAgent && (
-        <AgentDrawer agent={selectedAgent} onClose={() => setSelectedAgent(null)} onRevoked={loadAgents} />
+        <AgentDrawer
+          agent={selectedAgent}
+          onClose={() => setSelectedAgent(null)}
+          onRevoked={loadAgents}
+          sources={sources}
+          mainSourceId={mainSourceId}
+          onUpdated={(next) => {
+            setSelectedAgent(next);
+            loadAgents();
+          }}
+        />
       )}
 
       {showApiKeyCreate && (
         <ApiKeyCreateModal
           onClose={() => setShowApiKeyCreate(false)}
           onCreated={(result) => { setShowApiKeyCreate(false); setShowApiKeyToken(result); loadAgents(); }}
+          sources={sources}
+          mainSourceId={mainSourceId}
         />
       )}
 
@@ -179,20 +318,29 @@ export function AgentsPage({
   );
 }
 
-function ApiKeyCreateModal({ onClose, onCreated }: {
+function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
   onClose: () => void;
   onCreated: (result: { name: string; token: string }) => void;
+  sources: SourceOption[];
+  mainSourceId: string;
 }) {
   const [name, setName] = useState('');
+  const [sourceId, setSourceId] = useState(mainSourceId);
+  const [readSources, setReadSources] = useState<string[]>([mainSourceId]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setSourceId(mainSourceId);
+    setReadSources([mainSourceId]);
+  }, [mainSourceId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setError('请输入名称'); return; }
     setLoading(true);
     try {
-      const data = await api.createApiKey(name.trim());
+      const data = await api.createApiKey(name.trim(), { sourceId, federatedRead: readSources });
       onCreated({ name: data.name, token: data.token });
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建失败');
@@ -211,6 +359,14 @@ function ApiKeyCreateModal({ onClose, onCreated }: {
           <label>Key 名称</label>
           <input placeholder="例如 claude-code-local" value={name} onChange={e => setName(e.target.value)} autoFocus />
         </div>
+        <SourceScopeFields
+          sources={sources}
+          mainSourceId={mainSourceId}
+          sourceId={sourceId}
+          readSources={readSources}
+          onSourceIdChange={setSourceId}
+          onReadSourcesChange={setReadSources}
+        />
         {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
           <button type="button" className="btn btn-secondary" onClick={onClose}>取消</button>
@@ -263,11 +419,15 @@ function ApiKeyTokenModal({ token, onClose }: {
   );
 }
 
-function RegisterModal({ onClose, onRegistered }: {
+function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
   onClose: () => void;
   onRegistered: (creds: { clientId: string; clientSecret: string; name: string }) => void;
+  sources: SourceOption[];
+  mainSourceId: string;
 }) {
   const [name, setName] = useState('');
+  const [sourceId, setSourceId] = useState(mainSourceId);
+  const [readSources, setReadSources] = useState<string[]>([mainSourceId]);
   // v0.28: scope set sourced from admin/src/lib/scope-constants.ts (mirror
   // of src/core/scope.ts). CI drift check at scripts/check-admin-scope-drift.sh
   // fails the build if these diverge.
@@ -277,6 +437,11 @@ function RegisterModal({ onClose, onRegistered }: {
   const [ttl, setTtl] = useState('86400'); // 24h default
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setSourceId(mainSourceId);
+    setReadSources([mainSourceId]);
+  }, [mainSourceId]);
 
   const ttlOptions = [
     { label: '1 小时', value: '3600' },
@@ -299,7 +464,13 @@ function RegisterModal({ onClose, onRegistered }: {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), scopes: selectedScopes, tokenTtl: ttl === '0' ? 315360000 : Number(ttl) }),
+        body: JSON.stringify({
+          name: name.trim(),
+          scopes: selectedScopes,
+          tokenTtl: ttl === '0' ? 315360000 : Number(ttl),
+          sourceId,
+          federatedRead: readSources,
+        }),
       });
       if (!res.ok) throw new Error('注册失败');
       const data = await res.json();
@@ -330,6 +501,14 @@ function RegisterModal({ onClose, onRegistered }: {
             ))}
           </div>
         </div>
+        <SourceScopeFields
+          sources={sources}
+          mainSourceId={mainSourceId}
+          sourceId={sourceId}
+          readSources={readSources}
+          onSourceIdChange={setSourceId}
+          onReadSourcesChange={setReadSources}
+        />
         <div style={{ marginBottom: 20 }}>
           <label>令牌有效期</label>
           <select value={ttl} onChange={e => setTtl(e.target.value)}
@@ -399,14 +578,58 @@ function CredentialsModal({ credentials, onClose }: {
   );
 }
 
-function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () => void; onRevoked: () => void }) {
+function AgentDrawer({
+  agent,
+  onClose,
+  onRevoked,
+  sources,
+  mainSourceId,
+  onUpdated,
+}: {
+  agent: Agent;
+  onClose: () => void;
+  onRevoked: () => void;
+  sources: SourceOption[];
+  mainSourceId: string;
+  onUpdated: (agent: Agent) => void;
+}) {
   const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
+  const [editingSource, setEditingSource] = useState(false);
+  const [sourceId, setSourceId] = useState(agent.source_id || mainSourceId);
+  const [readSources, setReadSources] = useState<string[]>(normalizeReadSources(agent.federated_read, agent.source_id || mainSourceId));
+  const [sourceSaving, setSourceSaving] = useState(false);
+  const [sourceError, setSourceError] = useState('');
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
 
   const cid = agent.id || agent.client_id || '';
   const isOAuth = agent.auth_type === 'oauth';
   const agentName = agent.name || agent.client_name || 'unknown';
+
+  useEffect(() => {
+    const nextSourceId = agent.source_id || mainSourceId;
+    setSourceId(nextSourceId);
+    setReadSources(normalizeReadSources(agent.federated_read, nextSourceId));
+  }, [agent.id, agent.source_id, agent.federated_read, mainSourceId]);
+
+  const saveSourceScope = async () => {
+    setSourceSaving(true);
+    setSourceError('');
+    try {
+      const result = await api.updateAgentSourceScope({
+        id: agent.id,
+        authType: agent.auth_type,
+        sourceId,
+        federatedRead: readSources,
+      });
+      onUpdated({ ...agent, source_id: result.sourceId, federated_read: result.federatedRead });
+      setEditingSource(false);
+    } catch (e) {
+      setSourceError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSourceSaving(false);
+    }
+  };
 
   // For API keys, we can't show the actual token (it was shown once at creation).
   // For OAuth, we show the client_id and tell them to use their secret.
@@ -569,6 +792,41 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{new Date(agent.created_at).toLocaleDateString()}</span>
           <span style={{ color: 'var(--text-secondary)' }}>Token TTL</span>
           <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? '永不过期' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)} 天` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)} 小时` : `${agent.token_ttl} 秒`) : '1 小时（默认）'}</span>
+        </div>
+
+        <div className="section-title">源范围</div>
+        <div className="agent-source-card">
+          {!editingSource ? (
+            <>
+              <div>
+                <span>写入源</span>
+                <b>{sourceLabel(agent.source_id || mainSourceId, sources, mainSourceId)}</b>
+              </div>
+              <div>
+                <span>读取源</span>
+                <b>{normalizeReadSources(agent.federated_read, agent.source_id || mainSourceId).map(id => sourceLabel(id, sources, mainSourceId)).join('、')}</b>
+              </div>
+              <button className="btn btn-secondary" onClick={() => setEditingSource(true)}>修改</button>
+            </>
+          ) : (
+            <>
+              <SourceScopeFields
+                sources={sources}
+                mainSourceId={mainSourceId}
+                sourceId={sourceId}
+                readSources={readSources}
+                onSourceIdChange={setSourceId}
+                onReadSourcesChange={setReadSources}
+              />
+              {sourceError && <div style={{ color: 'var(--error)', fontSize: 13 }}>{sourceError}</div>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setEditingSource(false)}>取消</button>
+                <button type="button" className="btn btn-primary" disabled={sourceSaving} onClick={() => void saveSourceScope()}>
+                  {sourceSaving ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/*

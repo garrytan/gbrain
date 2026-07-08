@@ -65,3 +65,27 @@ export function countCJKAwareWords(s: string): number {
 export function escapeLikePattern(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
+
+export function expandCjkSearchTerms(query: string, now: Date = new Date()): string[] {
+  const terms = new Set<string>();
+  const trimmed = query.trim();
+  if (trimmed) terms.add(trimmed);
+
+  const monthDay = trimmed.match(/(\d{1,2})\s*\u6708\s*(\d{1,2})\s*(?:\u65e5|\u53f7)?/);
+  if (monthDay) {
+    const month = Number(monthDay[1]);
+    const day = Number(monthDay[2]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const mm = String(month).padStart(2, '0');
+      const dd = String(day).padStart(2, '0');
+      const yyyy = String(now.getFullYear());
+      terms.add(`${month}\u6708${day}\u65e5`);
+      terms.add(`${month}\u6708${day}\u53f7`);
+      terms.add(`${yyyy}-${mm}-${dd}`);
+      terms.add(`${mm}-${dd}`);
+      terms.add(`${month}/${day}`);
+    }
+  }
+
+  return Array.from(terms);
+}

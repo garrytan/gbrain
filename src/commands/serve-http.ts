@@ -28,7 +28,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { GBrainOAuthProvider, legacyAccessTokenScopes, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
+import { GBrainOAuthProvider, legacyAccessTokenScopes, legacyAccessTokenSourceScope, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
@@ -41,6 +41,7 @@ import { deleteLockRow } from '../core/db-lock.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
+import { resolveMainSourceId } from '../core/source-resolver.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import {
   computeContentHash,
@@ -81,6 +82,59 @@ import {
 
 function envCompat(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
+}
+
+function pgTextArray(arr: string[]): string {
+  if (!arr || arr.length === 0) return '{}';
+  return `{${arr.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}`;
+}
+
+async function authInfoWithMainSource(engine: BrainEngine, authInfo: AuthInfo): Promise<{ auth: AuthInfo; sourceId: string }> {
+  const mainSourceId = await resolveMainSourceId(engine);
+  const rawSourceId = authInfo.sourceId;
+  const sourceId = !rawSourceId || rawSourceId === 'default' ? mainSourceId : rawSourceId;
+  const allowed = authInfo.allowedSources;
+  const nextAllowed = allowed && allowed.length > 0
+    ? allowed.map(id => id === 'default' ? mainSourceId : id)
+    : allowed;
+  const nextAuth = nextAllowed !== allowed || sourceId !== rawSourceId
+    ? { ...authInfo, sourceId, allowedSources: nextAllowed }
+    : authInfo;
+  return { auth: nextAuth, sourceId };
+}
+
+async function normalizeAdminAgentSourceScope(
+  engine: BrainEngine,
+  sourceIdInput: unknown,
+  federatedReadInput: unknown,
+): Promise<{ sourceId: string; federatedRead: string[] }> {
+  const mainSourceId = await resolveMainSourceId(engine);
+  const sourceId = typeof sourceIdInput === 'string' && sourceIdInput.trim()
+    ? sourceIdInput.trim()
+    : mainSourceId;
+  const requestedRead = Array.isArray(federatedReadInput)
+    ? federatedReadInput.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map(id => id.trim())
+    : [];
+  const federatedRead = Array.from(new Set(requestedRead.length > 0 ? requestedRead : [sourceId]));
+  const ids = Array.from(new Set([sourceId, ...federatedRead]));
+  const rows = await engine.executeRaw<{ id: string; archived: boolean }>(
+    `SELECT id, archived FROM sources`,
+    [],
+  );
+  const found = new Map(rows.map(row => [row.id, row.archived]));
+  const missing = ids.filter(id => !found.has(id));
+  if (missing.length > 0) {
+    const err = new Error(`source_not_found: ${missing.join(', ')}`);
+    (err as Error & { status?: number }).status = 404;
+    throw err;
+  }
+  const archived = ids.filter(id => found.get(id));
+  if (archived.length > 0) {
+    const err = new Error(`archived_source_not_allowed: ${archived.join(', ')}`);
+    (err as Error & { status?: number }).status = 400;
+    throw err;
+  }
+  return { sourceId, federatedRead };
 }
 
 async function adminWorkerPidFile(): Promise<string> {
@@ -1193,7 +1247,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // Unified view: OAuth clients + legacy API keys
       const oauthClients = await sql`
         SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.created_at, c.token_ttl,
+          c.grant_types, c.scope, c.created_at, c.token_ttl, c.source_id, c.federated_read,
           CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
@@ -1212,6 +1266,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const scopedLegacyKeys = legacyKeys.map(({ permissions, ...key }) => ({
         ...key,
         scope: legacyAccessTokenScopes(permissions).join(' '),
+        source_id: legacyAccessTokenSourceScope(permissions).sourceId,
+        federated_read: legacyAccessTokenSourceScope(permissions).federatedRead,
       }));
       res.json([...oauthClients, ...scopedLegacyKeys]);
     } catch (e) {
@@ -1296,6 +1352,33 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json(await getAdminBrainOverview(engine, config, VERSION));
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'overview_failed' });
+    }
+  });
+
+  app.post('/admin/api/sources/default', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
+    const sourceId = typeof req.body?.sourceId === 'string' ? req.body.sourceId.trim() : '';
+    if (!sourceId) {
+      res.status(400).json({ error: 'source_id_required' });
+      return;
+    }
+    try {
+      const rows = await engine.executeRaw<{ id: string; archived: boolean }>(
+        `SELECT id, archived FROM sources WHERE id = $1 LIMIT 1`,
+        [sourceId],
+      );
+      const source = rows[0];
+      if (!source) {
+        res.status(404).json({ error: 'source_not_found' });
+        return;
+      }
+      if (source.archived) {
+        res.status(400).json({ error: 'archived_source_cannot_be_main' });
+        return;
+      }
+      await engine.setConfig('sources.default', sourceId);
+      res.json({ sourceId });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'set_default_source_failed' });
     }
   });
 
@@ -1912,6 +1995,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         ? 'admin read write'
         : normalizeScopesInput(rawScopes);
       const scopes = scopeString.split(' ');
+      const sourceScope = await normalizeAdminAgentSourceScope(engine, req.body?.sourceId, req.body?.federatedRead);
       const { generateToken, hashToken } = await import('../core/utils.ts');
       const token = generateToken('pmbrain_');
       const hash = hashToken(token);
@@ -1921,11 +2005,54 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         `INSERT INTO access_tokens (id, name, token_hash, permissions)
          VALUES ($1, $2, $3, $4::jsonb)`,
         [id, name, hash],
-        [{ takes_holders: ['world'], scopes }],
+        [{
+          takes_holders: ['world'],
+          scopes,
+          source_id: sourceScope.sourceId,
+          federated_read: sourceScope.federatedRead,
+        }],
       );
-      res.json({ name, token, id, scopes });
+      res.json({ name, token, id, scopes, sourceId: sourceScope.sourceId, federatedRead: sourceScope.federatedRead });
     } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
+      res.status((e as Error & { status?: number }).status ?? 500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
+    }
+  });
+
+  app.post('/admin/api/agents/source-scope', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const id = typeof req.body?.id === 'string' ? req.body.id.trim() : '';
+      const authType = req.body?.authType === 'oauth' || req.body?.authType === 'api_key' ? req.body.authType : '';
+      if (!id) { res.status(400).json({ error: 'id_required' }); return; }
+      if (!authType) { res.status(400).json({ error: 'auth_type_required' }); return; }
+      const sourceScope = await normalizeAdminAgentSourceScope(engine, req.body?.sourceId, req.body?.federatedRead);
+      if (authType === 'oauth') {
+        const result = await sql`
+          UPDATE oauth_clients
+          SET source_id = ${sourceScope.sourceId}, federated_read = ${pgTextArray(sourceScope.federatedRead)}
+          WHERE client_id = ${id} AND deleted_at IS NULL
+          RETURNING client_id
+        `;
+        if (result.length === 0) { res.status(404).json({ error: 'agent_not_found' }); return; }
+      } else {
+        const rows = await sql`
+          SELECT permissions FROM access_tokens
+          WHERE id = ${id} AND revoked_at IS NULL
+          LIMIT 1
+        `;
+        if (rows.length === 0) { res.status(404).json({ error: 'agent_not_found' }); return; }
+        const current = rows[0].permissions && typeof rows[0].permissions === 'object'
+          ? rows[0].permissions as Record<string, unknown>
+          : {};
+        await executeRawJsonb(
+          engine,
+          `UPDATE access_tokens SET permissions = $2::jsonb WHERE id = $1 AND revoked_at IS NULL`,
+          [id],
+          [{ ...current, source_id: sourceScope.sourceId, federated_read: sourceScope.federatedRead }],
+        );
+      }
+      res.json({ updated: true, sourceId: sourceScope.sourceId, federatedRead: sourceScope.federatedRead });
+    } catch (e) {
+      res.status((e as Error & { status?: number }).status ?? 500).json({ error: e instanceof Error ? e.message : 'update_agent_source_scope_failed' });
     }
   });
 
@@ -2119,8 +2246,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         });
         return;
       }
+      const sourceScope = await normalizeAdminAgentSourceScope(engine, req.body?.sourceId, req.body?.federatedRead);
       const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+        name, grants, scopeString, uris, sourceScope.sourceId, sourceScope.federatedRead, validatedAuthMethod,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
@@ -2442,7 +2570,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // path codex flagged in plan review. Post-v60, every OAuth client
       // has source_id set; legacy bearer tokens default to 'default' in
       // verifyAccessToken. The env-fallback is gone.
-      const tokenSourceId = authInfo.sourceId ?? 'default';
+      const { auth: effectiveAuthInfo, sourceId: tokenSourceId } = await authInfoWithMainSource(engine, authInfo);
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
@@ -2456,7 +2584,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           // original D12/eE1 refactor moved dispatch into dispatchToolCall
           // but forgot to pass authInfo; whoami fell through to the
           // unknown_transport throw because ctx.auth was undefined.
-          auth: authInfo,
+          auth: effectiveAuthInfo,
           logger: {
             info: (msg: string) => console.error(`[INFO] ${msg}`),
             warn: (msg: string) => console.error(`[WARN] ${msg}`),

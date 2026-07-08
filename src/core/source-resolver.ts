@@ -17,6 +17,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { loadConfig } from './config.ts';
 import { SOURCE_ID_RE, isValidSourceId } from './source-id.ts';
 
 const DOTFILES = ['.pmbrain-source', '.gbrain-source'];
@@ -211,6 +212,43 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
       `or \`pmbrain sources add ${id}\` to create it.`,
     );
   }
+}
+
+/**
+ * Resolve the user's main knowledge source.
+ *
+ * This is intentionally narrower than resolveSourceId(): no cwd walk, no
+ * local_path heuristic, and no sole-non-default convenience. It models the
+ * product default used by Desktop/Admin/MCP entry points:
+ *   1. explicit global config: sources.default
+ *   2. desktop setup source: desktop.knowledge_source_id
+ *   3. seeded default source
+ */
+export async function resolveMainSourceId(engine: BrainEngine): Promise<string> {
+  const configured = await engine.getConfig('sources.default');
+  if (configured && isValidSourceId(configured)) {
+    await assertSourceExists(engine, configured);
+    return configured;
+  }
+
+  const desktopSource = loadConfig()?.desktop?.knowledge_source_id;
+  if (desktopSource && isValidSourceId(desktopSource)) {
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = $1`,
+      [desktopSource],
+    );
+    if (rows.length > 0) return desktopSource;
+  }
+
+  return 'default';
+}
+
+export async function resolveMcpDefaultSourceId(engine: BrainEngine): Promise<string> {
+  const env = process.env.PMBRAIN_SOURCE || process.env.GBRAIN_SOURCE;
+  if (env && env.length > 0) {
+    return resolveSourceId(engine, null);
+  }
+  return resolveMainSourceId(engine);
 }
 
 /**

@@ -45,6 +45,18 @@ export function legacyAccessTokenScopes(permissions: unknown): string[] {
   return Array.from(new Set(raw as string[]));
 }
 
+export function legacyAccessTokenSourceScope(permissions: unknown): { sourceId?: string; federatedRead?: string[] } {
+  if (!permissions || typeof permissions !== 'object') return {};
+  const data = permissions as { source_id?: unknown; federated_read?: unknown };
+  const sourceId = typeof data.source_id === 'string' && data.source_id.trim()
+    ? data.source_id.trim()
+    : undefined;
+  const federatedRead = Array.isArray(data.federated_read)
+    ? Array.from(new Set(data.federated_read.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map(id => id.trim())))
+    : undefined;
+  return { sourceId, federatedRead };
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -674,6 +686,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         UPDATE access_tokens SET last_used_at = now() WHERE token_hash = ${tokenHash}
       `;
       const name = legacyRows[0].name as string;
+      const sourceScope = legacyAccessTokenSourceScope(legacyRows[0].permissions);
       return {
         token,
         clientId: name,
@@ -685,7 +698,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // serve-http transport fell back to GBRAIN_SOURCE/'default' for
         // any caller without explicit scope. Operators who want a
         // narrower scope for legacy tokens migrate to OAuth.
-        sourceId: 'default',
+        sourceId: sourceScope.sourceId ?? 'default',
+        allowedSources: sourceScope.federatedRead,
       } as AuthInfo;
     }
 

@@ -87,6 +87,7 @@ describe('desktop config manager', () => {
     expect(setupInfo.current.chatModel).toBe('zhipu:glm-4-plus');
     expect(setupInfo.current.embeddingModel).toBe('zhipu:embedding-3');
     expect(setupInfo.current.embeddingDimensions).toBe(1024);
+    expect(setupInfo.current.knowledgeSourceId).toBe(config.desktop.knowledge_source_id);
     expect(setupInfo.current.keyValues.zhipu).toBe('zhipu-test');
     expect(needsDesktopMigration('1.0.21')).toBe(true);
     markDesktopMigration('1.0.21');
@@ -101,6 +102,29 @@ describe('desktop config manager', () => {
 
     restoreConfig(first.snapshot);
     expect(existsSync(path)).toBe(false);
+  });
+
+  test('persists an explicit desktop knowledge source id', () => {
+    const root = isolatedHome();
+    const path = join(root, 'knowledge');
+
+    saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'db'),
+      knowledgeDirectory: path,
+      knowledgeSourceId: 'duwu',
+      keys: {},
+      modelConfig: {
+        chatModel: 'zhipu:glm-4-plus',
+        embeddingModel: 'zhipu:embedding-3',
+        embeddingDimensions: 1024,
+      },
+    });
+
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.desktop.knowledge_directory).toBe(path);
+    expect(config.desktop.knowledge_source_id).toBe('duwu');
+    expect(getSetupInfo().current.knowledgeSourceId).toBe('duwu');
   });
 
   test('requires an explicit embedding dimension when an embedding model is configured', () => {

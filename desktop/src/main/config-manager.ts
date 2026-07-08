@@ -8,6 +8,7 @@ export interface SetupPayload {
   databasePath?: string;
   databaseUrl?: string;
   knowledgeDirectory?: string;
+  knowledgeSourceId?: string;
   modelConfig?: {
     chatModel?: string;
     embeddingModel?: string;
@@ -29,6 +30,7 @@ export interface SetupInfo {
     databasePath?: string;
     databaseConfigured: boolean;
     knowledgeDirectory?: string;
+    knowledgeSourceId?: string;
     chatModel?: string;
     embeddingModel?: string;
     embeddingDimensions?: number;
@@ -149,6 +151,7 @@ export function getSetupInfo(): SetupInfo {
       databasePath: config?.database_path,
       databaseConfigured: Boolean(config?.database_url || config?.database_path),
       knowledgeDirectory: desktop?.knowledge_directory,
+      knowledgeSourceId: desktop?.knowledge_source_id,
       chatModel: typeof config?.chat_model === 'string' ? config.chat_model : undefined,
       embeddingModel: typeof config?.embedding_model === 'string' ? config.embedding_model : undefined,
       embeddingDimensions: typeof config?.embedding_dimensions === 'number' ? config.embedding_dimensions : undefined,
@@ -368,9 +371,10 @@ export function saveSetup(payload: SetupPayload): { config: RawConfig; snapshot:
     ? existing.admin_bootstrap_token
     : randomBytes(36).toString('base64url');
   const knowledgeDirectory = payload.knowledgeDirectory?.trim() || existing.desktop?.knowledge_directory;
-  const sourceId = knowledgeDirectory
+  const requestedSourceId = payload.knowledgeSourceId?.trim();
+  const sourceId = requestedSourceId || (knowledgeDirectory
     ? `desktop-${createHash('sha1').update(knowledgeDirectory.toLowerCase()).digest('hex').slice(0, 8)}`
-    : existing.desktop?.knowledge_source_id;
+    : existing.desktop?.knowledge_source_id);
   config.desktop = {
     ...existing.desktop,
     ...(knowledgeDirectory ? { knowledge_directory: knowledgeDirectory, knowledge_source_id: sourceId } : {}),

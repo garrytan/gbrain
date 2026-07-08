@@ -55,7 +55,7 @@ import {
   COLUMN_NAME_REGEX,
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
-import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { hasCJK, escapeLikePattern, expandCjkSearchTerms } from './cjk.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1567,7 +1567,9 @@ export class PGLiteEngine implements BrainEngine {
     const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
     const qRaw = query;
     if (qRaw.length === 0) return [];
+    const terms = expandCjkSearchTerms(query).filter(Boolean);
     const qLike = escapeLikePattern(qRaw);
+    const qLikePatterns = terms.map(term => `%${term}%`);
 
     // $1 = qLike (escaped for ILIKE)
     // $2 = qRaw  (raw for position()/replace() ranking arithmetic)
@@ -1575,7 +1577,7 @@ export class PGLiteEngine implements BrainEngine {
     // $4 = final limit (dedup path only) — see callers
     // $5 = offset (dedup path)  /  $4 = offset (chunk-grain path)
     const params: unknown[] = dedup
-      ? [qLike, qRaw, innerLimit, limit, offset]
+      ? [qLikePatterns, qRaw, innerLimit, limit, offset]
       : [qLike, qRaw, limit, offset];
 
     let extraFilter = '';
@@ -1608,7 +1610,16 @@ export class PGLiteEngine implements BrainEngine {
     // (length(chunk) - length(replace(chunk, q, ''))) / length(q). Acts as
     // a ts_rank substitute. position()-tiebreaker so earlier-in-chunk hits
     // outrank later ones at the same occurrence count.
-    const scoreExpr = `
+    const scoreExpr = dedup ? `
+      (
+        CASE WHEN p.title ILIKE ANY($1::text[]) THEN 8 ELSE 0 END +
+        CASE WHEN p.slug ILIKE ANY($1::text[]) THEN 6 ELSE 0 END +
+        CASE WHEN cc.chunk_text ILIKE ANY($1::text[]) THEN 4 ELSE 0 END +
+        CASE WHEN p.compiled_truth ILIKE ANY($1::text[]) THEN 2 ELSE 0 END +
+        COALESCE((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real, 0)
+      )
+      * ${sourceFactorCase}
+    ` : `
       ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real
         + 1.0 / NULLIF(POSITION($2 IN cc.chunk_text), 0)::real)
       * ${sourceFactorCase}
@@ -1628,7 +1639,12 @@ export class PGLiteEngine implements BrainEngine {
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
            JOIN sources s ON s.id = p.source_id
-           WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+           WHERE (
+               cc.chunk_text ILIKE ANY($1::text[])
+               OR p.compiled_truth ILIKE ANY($1::text[])
+               OR p.title ILIKE ANY($1::text[])
+               OR p.slug ILIKE ANY($1::text[])
+             ) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
              AND cc.modality = 'text'
            ORDER BY score DESC
            LIMIT $3

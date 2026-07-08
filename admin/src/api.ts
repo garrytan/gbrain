@@ -65,6 +65,8 @@ export const api = {
     apiFetch('/admin/api/jobs/supervisor/stop', { method: 'POST' }),
   addSource: (body: { id?: string; path: string; name?: string; federated: boolean }) =>
     apiFetch('/admin/api/sources', { method: 'POST', body: JSON.stringify(body) }),
+  setDefaultSource: (sourceId: string) =>
+    apiFetch('/admin/api/sources/default', { method: 'POST', body: JSON.stringify({ sourceId }) }),
   archiveSource: (id: string) =>
     apiFetch(`/admin/api/sources/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   restoreSource: (id: string) =>
@@ -73,7 +75,10 @@ export const api = {
   agents: () => apiFetch('/admin/api/agents'),
   requests: (page = 1, qs = '') => apiFetch(`/admin/api/requests?page=${page}${qs}`),
   apiKeys: () => apiFetch('/admin/api/api-keys'),
-  createApiKey: (name: string) => apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
+  createApiKey: (name: string, sourceScope?: { sourceId?: string; federatedRead?: string[] }) =>
+    apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name, ...sourceScope }) }),
+  updateAgentSourceScope: (body: { id: string; authType: 'oauth' | 'api_key'; sourceId: string; federatedRead: string[] }) =>
+    apiFetch('/admin/api/agents/source-scope', { method: 'POST', body: JSON.stringify(body) }),
   revokeApiKey: (name: string) => apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name }) }),
   updateClientTtl: (clientId: string, tokenTtl: number | null) => apiFetch('/admin/api/update-client-ttl', { method: 'POST', body: JSON.stringify({ clientId, tokenTtl }) }),
   revokeClient: (clientId: string) => apiFetch('/admin/api/revoke-client', { method: 'POST', body: JSON.stringify({ clientId }) }),

@@ -196,6 +196,10 @@ function populate(next: DesktopSetupState): void {
   if (radio) radio.checked = true;
   ($<HTMLInputElement>('#database-path')).value = setup.current.databasePath || setup.defaults.databasePath;
   ($<HTMLInputElement>('#knowledge-directory')).value = setup.current.knowledgeDirectory || setup.defaults.knowledgeDirectory;
+  ($<HTMLInputElement>('#knowledge-source-id')).value = setup.current.knowledgeSourceId || '';
+  $('#knowledge-source-hint').textContent = setup.current.knowledgeSourceId
+    ? `当前主知识库源：${setup.current.knowledgeSourceId}。保存后，导入默认写入该源，MCP 默认读取该源。`
+    : '保存后，导入默认写入该源，MCP 默认读取该源。留空时会按目录自动生成。';
   const chat = splitModelId(setup.current.chatModel);
   const embedding = splitModelId(setup.current.embeddingModel);
   ($<HTMLSelectElement>('#chat-provider')).value = chat.provider;
@@ -320,6 +324,7 @@ async function save(): Promise<void> {
     databasePath: ($<HTMLInputElement>('#database-path')).value,
     databaseUrl: ($<HTMLInputElement>('#database-url')).value,
     knowledgeDirectory: ($<HTMLInputElement>('#knowledge-directory')).value,
+    knowledgeSourceId: ($<HTMLInputElement>('#knowledge-source-id')).value,
     modelConfig: {
       chatModel,
       embeddingModel,

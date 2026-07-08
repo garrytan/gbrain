@@ -1,6 +1,6 @@
 import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { dirname, join, relative } from 'path';
+import { dirname, join, relative, resolve, isAbsolute } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -134,17 +134,8 @@ export async function runImport(
     const { resolveSourceId } = await import('../core/source-resolver.ts');
     sourceId = await resolveSourceId(engine, null);
   } else if (!sourceId) {
-    const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
-    const resolved = await resolveSourceWithTier(engine, null);
-    // Only adopt the resolution when it improves on the seed_default
-    // fallback — that preserves the v0.30.x "default-only when unset"
-    // contract for the common case AND opens the sole_non_default
-    // auto-route for the single-source-brain case.
-    if (resolved.tier === 'sole_non_default') {
-      sourceId = resolved.source_id;
-      const nudge = formatSoleNonDefaultNudge(sourceId);
-      if (nudge) process.stderr.write(nudge + '\n');
-    }
+    const { resolveMainSourceId } = await import('../core/source-resolver.ts');
+    sourceId = await resolveMainSourceId(engine);
   }
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
@@ -209,6 +200,7 @@ export async function runImport(
   // Sort newest-first so date-prefixed brain paths get embedded before older ones.
   // See src/core/sort-newest-first.ts for the policy.
   sortNewestFirst(allFiles);
+  const importRoot = await resolveImportRoot(engine, sourceId, dir, allFiles);
 
   // Resume from checkpoint if available. v0.33.2: path-based resume —
   // see src/core/import-checkpoint.ts for the bug-class this fixes
@@ -216,13 +208,13 @@ export async function runImport(
   const checkpointPath = gbrainPath('import-checkpoint.json');
   const completed = new Set<string>();
   if (!fresh) {
-    const cp = loadCheckpoint(checkpointPath, dir);
+    const cp = loadCheckpoint(checkpointPath, importRoot);
     if (cp) {
       for (const p of cp.completedPaths) completed.add(p);
       console.log(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
     }
   }
-  const files = resumeFilter(allFiles, dir, completed);
+  const files = resumeFilter(allFiles, importRoot, completed);
 
   // Determine actual worker count
   const actualWorkers = workerCount > 1 ? workerCount : 1;
@@ -249,7 +241,7 @@ export async function runImport(
   }
 
   async function processFile(eng: BrainEngine, filePath: string) {
-    const relativePath = relative(dir, filePath);
+    const relativePath = relative(importRoot, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
@@ -312,7 +304,7 @@ export async function runImport(
         catch { /* non-fatal */ }
       }
       saveCheckpoint(checkpointPath, {
-        dir,
+        dir: importRoot,
         completedPaths: Array.from(completed),
         timestamp: new Date().toISOString(),
       });
@@ -457,8 +449,8 @@ export async function runImport(
   // last_run + repo_path either way (those are progress indicators).
   let gitHead: string | null = null;
   try {
-    if (existsSync(join(dir, '.git'))) {
-      gitHead = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+    if (existsSync(join(importRoot, '.git'))) {
+      gitHead = execFileSync('git', ['-C', importRoot, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
     }
   } catch {
     // Not a git repo or git not available
@@ -482,7 +474,7 @@ export async function runImport(
       );
     }
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    await engine.setConfig('sync.repo_path', importRoot);
   }
 
   return { imported, skipped, errors, chunksCreated, failures };
@@ -614,6 +606,33 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
 
   walk(dir, 0);
   return files.sort();
+}
+
+function pathContains(basePath: string, candidatePath: string): boolean {
+  const base = resolve(basePath);
+  const candidate = resolve(candidatePath);
+  const rel = relative(base, candidate);
+  return rel === '' || (rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel));
+}
+
+async function resolveImportRoot(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  collectedRoot: string,
+  files: string[],
+): Promise<string> {
+  if (!sourceId) return collectedRoot;
+  const rows = await engine.executeRaw<{ local_path: string | null }>(
+    `SELECT local_path FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  const localPath = rows[0]?.local_path;
+  if (!localPath) return collectedRoot;
+  const candidates = files.length > 0 ? files : [collectedRoot];
+  if (candidates.every(path => pathContains(localPath, path))) {
+    return localPath;
+  }
+  return collectedRoot;
 }
 
 /**

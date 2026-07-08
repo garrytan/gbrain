@@ -79,6 +79,11 @@
             <label for="knowledge-directory">本地资料目录</label>
             <div class="input-action"><input id="knowledge-directory" spellcheck="false" /><button class="ghost choose" data-input="knowledge-directory">选择</button></div>
           </div>
+          <div class="field-group">
+            <label for="knowledge-source-id">主知识库源</label>
+            <input id="knowledge-source-id" spellcheck="false" placeholder="例如 duwu" />
+            <small id="knowledge-source-hint">保存后，导入默认写入该源，MCP 默认读取该源。留空时会按目录自动生成。</small>
+          </div>
 
           <div class="section-heading separated">
             <div><span class="index">03</span><h2>模型配置</h2></div>

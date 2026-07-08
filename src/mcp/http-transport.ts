@@ -33,6 +33,7 @@ import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { resolveMainSourceId } from '../core/source-resolver.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -197,6 +198,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const allowList = Array.isArray(perms?.takes_holders)
         ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
         : ['world'];
+      const sourceId = await resolveMainSourceId(engine);
       return {
         ok: true,
         tokenId: rowId,
@@ -207,7 +209,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // serve-http fallback chain that was removed for OAuth clients
         // (migration v60 backfills oauth_clients.source_id). This path
         // is for the older v0.22.7 access_tokens transport.
-        sourceId: 'default',
+        sourceId,
       };
     } catch {
       return { ok: false };

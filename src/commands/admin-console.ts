@@ -11,6 +11,7 @@ import type { GBrainConfig } from '../core/config.ts';
 import { join } from 'path';
 import { isSensitiveConfigKey, redactConfigValue } from './config.ts';
 import { loadAllSources, isSourceFederated } from '../core/sources-load.ts';
+import { resolveMainSourceId } from '../core/source-resolver.ts';
 import { ALL_PHASES } from '../core/cycle.ts';
 import { listRuns } from './natural-lang/index.ts';
 
@@ -93,9 +94,10 @@ function redactedConfig(config: GBrainConfig | null): Record<string, unknown> {
 }
 
 export async function getAdminBrainOverview(engine: BrainEngine, config: GBrainConfig | null, version: string) {
-  const [stats, sources] = await Promise.all([
+  const [stats, sources, mainSourceId] = await Promise.all([
     engine.getStats(),
     loadAllSources(engine, { includeArchived: true }),
+    resolveMainSourceId(engine),
   ]);
 
   const sourceRows = await Promise.all(sources.map(async (source) => {
@@ -147,6 +149,7 @@ export async function getAdminBrainOverview(engine: BrainEngine, config: GBrainC
     pending_embeddings: pendingEmbed?.pending ?? Math.max(0, chunks - embedded),
     recent_write_at: recentWrite?.updated_at ?? null,
     sources: sourceRows,
+    main_source_id: mainSourceId,
     federated_source_count: sourceRows.filter(s => s.federated).length,
     provider_status: providerStatus,
     llm_enabled: providerStatus.chat.enabled,

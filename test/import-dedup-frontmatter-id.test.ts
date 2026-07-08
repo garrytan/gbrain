@@ -139,9 +139,7 @@ describe('#1309 — overlapping-ingest-roots dedup', () => {
     expect(all[0].n).toBe(2);
   });
 
-  test('no frontmatter.id: skip-decision falls back to content_hash WARNING (not SKIP)', async () => {
-    // Bare markdown — no `id:` in frontmatter at all. Two files with
-    // identical text but no external identity — must NOT silently dedup.
+  test('no frontmatter.id: same-source content_hash duplicate skips under original slug', async () => {
     const body = '---\ntype: concept\ntitle: Plain\n---\n\nBare markdown body.';
     const a = makeFile('plain-a.md', body);
     const b = makeFile('plain-b.md', body);
@@ -157,15 +155,46 @@ describe('#1309 — overlapping-ingest-roots dedup', () => {
     };
     try {
       const second = await importFromFile(engine, b.path, 'plain-b.md', { noEmbed: true });
-      expect(second.status).toBe('imported');
+      expect(second.status).toBe('skipped');
+      expect(second.slug).toBe('plain-a');
     } finally {
       (process.stderr as unknown as { write: typeof origWrite }).write = origWrite;
     }
 
     const text = captured.join('');
-    expect(text).toContain('[import] WARNING');
-    expect(text).toContain('shares content_hash');
+    expect(text).toContain('[import] skipping');
+    expect(text).toContain('content_hash=');
 
+    const rows = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL`);
+    expect(rows[0].n).toBe(1);
+  });
+
+  test('same content_hash in different sources imports both without warning', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, local_path) VALUES ($1, $2, $3::jsonb, NULL), ($4, $5, $6::jsonb, NULL)`,
+      ['alpha', 'Alpha', '{}', 'beta', 'Beta', '{}'],
+    );
+    const body = '---\ntype: concept\ntitle: Shared\n---\n\nShared body.';
+    const a = makeFile('alpha/shared.md', body);
+    const b = makeFile('beta/shared.md', body);
+    const first = await importFromFile(engine, a.path, 'shared.md', { noEmbed: true, sourceId: 'alpha' });
+    expect(first.status).toBe('imported');
+
+    const origWrite = process.stderr.write.bind(process.stderr);
+    const captured: string[] = [];
+    (process.stderr as unknown as { write: typeof origWrite }).write = (chunk: unknown, ...rest: unknown[]): boolean => {
+      const s = typeof chunk === 'string' ? chunk : chunk instanceof Buffer ? chunk.toString() : String(chunk);
+      captured.push(s);
+      return origWrite(chunk as Parameters<typeof origWrite>[0], ...(rest as []));
+    };
+    try {
+      const second = await importFromFile(engine, b.path, 'shared.md', { noEmbed: true, sourceId: 'beta' });
+      expect(second.status).toBe('imported');
+    } finally {
+      (process.stderr as unknown as { write: typeof origWrite }).write = origWrite;
+    }
+
+    expect(captured.join('')).not.toContain('[import] skipping');
     const rows = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL`);
     expect(rows[0].n).toBe(2);
   });

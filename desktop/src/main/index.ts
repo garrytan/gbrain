@@ -114,6 +114,7 @@ async function applySetup(payload: SetupPayload) {
       if (add.code !== 0 && !/already exists|duplicate|已存在|already registered/i.test(`${add.stderr}\n${add.stdout}`)) {
         throw new Error((add.stderr || add.stdout).trim());
       }
+      await runCliChecked(runtime(), ['sources', 'default', sourceId]);
     }
     markDesktopMigration(app.getVersion());
   } catch (error) {
