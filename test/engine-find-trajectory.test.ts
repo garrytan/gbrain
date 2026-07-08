@@ -15,6 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway } from '../src/core/ai/gateway.ts';
 import {
   detectRegressions,
   computeDriftScore,
@@ -28,6 +29,19 @@ let engine: PGLiteEngine;
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
+  // Pin the legacy 1536-d embedding default BEFORE initSchema() bakes the
+  // embedding column dimension. initSchema runs in beforeAll, before the shared
+  // legacy-embedding preload's beforeEach can restore 1536 — so if a co-resident
+  // file in the same shard process left the global gateway at a non-1536
+  // dimension (e.g. a 1280-d ZE test that only resetGateway()s), this file would
+  // otherwise build a vector(1280) column and its 1536-d fixtures (below) would
+  // fail ("expected 1280 dimensions, not 1536"). Order-independent, unlike
+  // fixing each individual polluter.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
   await engine.initSchema();
 });
 
