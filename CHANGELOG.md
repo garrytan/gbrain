@@ -50,6 +50,15 @@ All notable changes to MBrain will be documented in this file.
   belongs. Zero file moves, zero import churn: the taxonomy is the reviewed
   blueprint for the future physical regrouping.
 
+- **A 41%-leaner agent rules draft is ready for review.** The proposed
+  five-surface restructure of the injected agent rules
+  (\`docs/MBRAIN_AGENT_RULES.next.md\`) collapses tool-by-tool prose into the
+  five core surfaces plus \`remember\`, preserving every governance invariant
+  (evidence boundary, route-before-write, hash-gated writes, filing,
+  backlinks) — each one pinned by a conformance test. The live rules file is
+  untouched and cannot pick the draft up by accident; adopting it stays an
+  explicit owner decision gated on an A/B eval.
+
 - **The deprecated context-atlas family stops taxing every session.** All 8
   legacy atlas operations are demoted to the admin tier (hidden from the
   default agent catalog; context maps and graph frontier planning are the
