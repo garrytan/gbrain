@@ -2735,6 +2735,26 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
 
+  // Disable thinking/reasoning for all openai-compatible providers.
+  // DeepSeek V4 defaults to thinking mode ON, producing reasoning tokens
+  // that consume max_tokens quota and leave content empty, causing the AI SDK
+  // generateText() to hang until timeout (300s default).
+  //
+  // KEY: @ai-sdk/openai-compatible reads providerOptions[recipe.id], NOT
+  // providerOptions.openaiCompatible. The createOpenAICompatible({ name })
+  // field maps to this.providerOptionsName internally, so the key must match
+  // the recipe id (e.g. 'deepseek', 'openrouter', 'ollama').
+  // Using the literal 'openaiCompatible' key silently drops the parameter
+  // before it reaches the wire.
+  //
+  // Fixes: https://github.com/garrytan/gbrain/issues/2577
+  if (recipe.implementation === 'openai-compatible') {
+    providerOptions[recipe.id] = {
+      ...((providerOptions as any)[recipe.id] ?? {}),
+      thinking: { type: 'disabled' as const },
+    };
+  }
+
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
     if (!tracker || _budgetRecorded) return;
@@ -2751,18 +2771,31 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   };
 
-  try {
-    const result = await generateText({
-      model,
-      system: opts.system,
-      messages: toModelMessages(opts.messages) as any,
-      tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-      maxOutputTokens: opts.maxTokens ?? 4096,
-      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
-      // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
-      abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
-      providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
-    });
+  // Retry loop for openai-compatible providers (DeepSeek V4, etc.).
+  // These providers can exhibit intermittent timeouts; retry up to 3 times
+  // with exponential backoff (2s → 4s → 8s). Non-retryable errors
+  // (auth 401/403, budget exhaustion) propagate immediately.
+  // Per-attempt timeout is 30s for openai-compatible (so the retry loop
+  // can fire); native providers (Anthropic) keep the full 300s.
+  const isOpenAICompat = recipe.implementation === 'openai-compatible';
+  const MAX_RETRIES = isOpenAICompat ? 3 : 0;
+  const BASE_DELAY_MS = 2000;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await generateText({
+        model,
+        system: opts.system,
+        messages: toModelMessages(opts.messages) as any,
+        tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
+        maxOutputTokens: opts.maxTokens ?? 4096,
+        abortSignal: withDefaultTimeout(
+          opts.abortSignal,
+          isOpenAICompat ? 30_000 : AI_CHAT_TIMEOUT_MS,
+        ),
+        providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
+      });
 
     // Normalize blocks. Vercel SDK gives us `result.content` (an array of typed
     // parts) for v6+; fall back to text + toolCalls for older shapes.
@@ -2818,8 +2851,16 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       providerMetadata,
     };
   } catch (err) {
-    // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
-    // the worst-case ceiling — better to overcount on failure than under.
+    lastError = err;
+
+    // Retry: if we have attempts left, wait with exponential backoff.
+    if (attempt < MAX_RETRIES) {
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+
+    // Final attempt exhausted — record budget and throw.
     const fallback = _extractUsageFromError(err, {
       inputTokens: estimatedInputTokens,
       outputTokens: maxOutputTokens,
@@ -2827,6 +2868,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
+}
+
+// This line is unreachable; for-loop always returns or throws.
+throw lastError ?? new Error('chat: unreachable');
 }
 
 // ---- Tool loop (v0.38 — D11 + D6/D7 gateway-native subagent path) ----
