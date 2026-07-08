@@ -59,6 +59,14 @@ All notable changes to MBrain will be documented in this file.
   untouched and cannot pick the draft up by accident; adopting it stays an
   explicit owner decision gated on an A/B eval.
 
+- **The two engines have started sharing one SQL brain.** A new engine
+  dialect seam writes each query once and renders it for Postgres and SQLite,
+  starting with the entire personal-memory family (profile memory + personal
+  episodes, 8 methods): 279 duplicated lines deleted, every engine method now
+  a thin wrapper, and the cross-engine parity seeds pass byte-identical —
+  proving the pattern that will eventually retire the 10k-line hand-mirrored
+  SQLite engine.
+
 - **The deprecated context-atlas family stops taxing every session.** All 8
   legacy atlas operations are demoted to the admin tier (hidden from the
   default agent catalog; context maps and graph frontier planning are the

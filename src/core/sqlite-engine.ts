@@ -24,6 +24,17 @@ import {
   assertMemoryCandidateStatusEventInput,
   isAllowedMemoryCandidateStatusUpdate,
 } from './memory-inbox-status.ts';
+import { sqliteDialect, type DialectQueryable } from './engine-dialect.ts';
+import {
+  createPersonalEpisodeEntryRow,
+  deletePersonalEpisodeEntryRow,
+  deleteProfileMemoryEntryRow,
+  getPersonalEpisodeEntryRow,
+  getProfileMemoryEntryRow,
+  listPersonalEpisodeEntryRows,
+  listProfileMemoryEntryRows,
+  upsertProfileMemoryEntryRow,
+} from './shared-sql/personal-memory.ts';
 import { LATEST_VERSION } from './migrate.ts';
 import { resolvePageChunkOptions } from './page-chunk-options.ts';
 import { ensurePageChunks } from './page-chunks.ts';
@@ -2583,174 +2594,55 @@ export class SQLiteEngine implements BrainEngine {
     return rowToContextEvalCorrection(row);
   }
 
-  async upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry> {
-    const timestamp = nowIso();
-    this.database.run(`
-      INSERT INTO profile_memory_entries (
-        id, scope_id, profile_type, subject, content, source_refs, sensitivity,
-        export_status, last_confirmed_at, superseded_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        scope_id = excluded.scope_id,
-        profile_type = excluded.profile_type,
-        subject = excluded.subject,
-        content = excluded.content,
-        source_refs = excluded.source_refs,
-        sensitivity = excluded.sensitivity,
-        export_status = excluded.export_status,
-        last_confirmed_at = excluded.last_confirmed_at,
-        superseded_by = excluded.superseded_by,
-        updated_at = excluded.updated_at
-    `, [
-      input.id,
-      input.scope_id,
-      input.profile_type,
-      input.subject,
-      input.content,
-      JSON.stringify(input.source_refs ?? []),
-      input.sensitivity,
-      input.export_status,
-      toNullableIso(input.last_confirmed_at),
-      input.superseded_by ?? null,
-      timestamp,
-      timestamp,
-    ]);
+  /**
+   * Dialect-parameterized executor over `database` for shared-sql modules
+   * (O1 seam). Row mapping stays in this class.
+   */
+  private get dialectQueryable(): DialectQueryable {
+    return {
+      dialect: sqliteDialect,
+      query: async (sql, params) =>
+        this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[],
+      run: async (sql, params) => {
+        this.database.run(sql, sqliteBindings(params));
+      },
+    };
+  }
 
-    const row = this.database.query(`
-      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
-             export_status, last_confirmed_at, superseded_by, created_at, updated_at
-      FROM profile_memory_entries
-      WHERE id = ?
-    `).get(input.id) as Record<string, unknown> | null;
-    if (!row) throw new Error(`Profile memory entry not found after upsert: ${input.id}`);
-    return rowToProfileMemoryEntry(row);
+  async upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry> {
+    return rowToProfileMemoryEntry(await upsertProfileMemoryEntryRow(this.dialectQueryable, input));
   }
 
   async getProfileMemoryEntry(id: string): Promise<ProfileMemoryEntry | null> {
-    const row = this.database.query(`
-      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
-             export_status, last_confirmed_at, superseded_by, created_at, updated_at
-      FROM profile_memory_entries
-      WHERE id = ?
-    `).get(id) as Record<string, unknown> | null;
-    return row ? rowToProfileMemoryEntry(row) : null;
+    const row = await getProfileMemoryEntryRow(this.dialectQueryable, id);
+    return row === null ? null : rowToProfileMemoryEntry(row);
   }
 
   async listProfileMemoryEntries(filters?: ProfileMemoryFilters): Promise<ProfileMemoryEntry[]> {
-    const limit = filters?.limit ?? 100;
-    const offset = filters?.offset ?? 0;
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-
-    if (filters?.scope_id) {
-      clauses.push('scope_id = ?');
-      params.push(filters.scope_id);
-    }
-    if (filters?.subject) {
-      clauses.push('subject = ?');
-      params.push(filters.subject);
-    }
-    if (filters?.profile_type) {
-      clauses.push('profile_type = ?');
-      params.push(filters.profile_type);
-    }
-
-    params.push(limit);
-    params.push(offset);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-    const rows = this.database.query(`
-      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
-             export_status, last_confirmed_at, superseded_by, created_at, updated_at
-      FROM profile_memory_entries
-      ${whereClause}
-      ORDER BY updated_at DESC, id ASC
-      LIMIT ?
-      OFFSET ?
-    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    const rows = await listProfileMemoryEntryRows(this.dialectQueryable, filters);
     return rows.map(rowToProfileMemoryEntry);
   }
 
   async deleteProfileMemoryEntry(id: string): Promise<void> {
-    this.database.run(`DELETE FROM profile_memory_entries WHERE id = ?`, [id]);
+    await deleteProfileMemoryEntryRow(this.dialectQueryable, id);
   }
 
   async createPersonalEpisodeEntry(input: PersonalEpisodeEntryInput): Promise<PersonalEpisodeEntry> {
-    const timestamp = nowIso();
-    this.database.run(`
-      INSERT INTO personal_episode_entries (
-        id, scope_id, title, start_time, end_time, source_kind, summary,
-        source_refs, candidate_ids, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      input.id,
-      input.scope_id,
-      input.title,
-      toNullableIso(input.start_time),
-      toNullableIso(input.end_time),
-      input.source_kind,
-      input.summary,
-      JSON.stringify(input.source_refs ?? []),
-      JSON.stringify(input.candidate_ids ?? []),
-      timestamp,
-      timestamp,
-    ]);
-
-    const row = this.database.query(`
-      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
-             source_refs, candidate_ids, created_at, updated_at
-      FROM personal_episode_entries
-      WHERE id = ?
-    `).get(input.id) as Record<string, unknown> | null;
-    if (!row) throw new Error(`Personal episode entry not found after create: ${input.id}`);
-    return rowToPersonalEpisodeEntry(row);
+    return rowToPersonalEpisodeEntry(await createPersonalEpisodeEntryRow(this.dialectQueryable, input));
   }
 
   async getPersonalEpisodeEntry(id: string): Promise<PersonalEpisodeEntry | null> {
-    const row = this.database.query(`
-      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
-             source_refs, candidate_ids, created_at, updated_at
-      FROM personal_episode_entries
-      WHERE id = ?
-    `).get(id) as Record<string, unknown> | null;
-    return row ? rowToPersonalEpisodeEntry(row) : null;
+    const row = await getPersonalEpisodeEntryRow(this.dialectQueryable, id);
+    return row === null ? null : rowToPersonalEpisodeEntry(row);
   }
 
   async listPersonalEpisodeEntries(filters?: PersonalEpisodeFilters): Promise<PersonalEpisodeEntry[]> {
-    const limit = filters?.limit ?? 100;
-    const offset = filters?.offset ?? 0;
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-
-    if (filters?.scope_id) {
-      clauses.push('scope_id = ?');
-      params.push(filters.scope_id);
-    }
-    if (filters?.title) {
-      clauses.push('title = ?');
-      params.push(filters.title);
-    }
-    if (filters?.source_kind) {
-      clauses.push('source_kind = ?');
-      params.push(filters.source_kind);
-    }
-
-    params.push(limit);
-    params.push(offset);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-    const rows = this.database.query(`
-      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
-             source_refs, candidate_ids, created_at, updated_at
-      FROM personal_episode_entries
-      ${whereClause}
-      ORDER BY start_time DESC, id ASC
-      LIMIT ?
-      OFFSET ?
-    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    const rows = await listPersonalEpisodeEntryRows(this.dialectQueryable, filters);
     return rows.map(rowToPersonalEpisodeEntry);
   }
 
   async deletePersonalEpisodeEntry(id: string): Promise<void> {
-    this.database.run(`DELETE FROM personal_episode_entries WHERE id = ?`, [id]);
+    await deletePersonalEpisodeEntryRow(this.dialectQueryable, id);
   }
 
   async createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry> {
