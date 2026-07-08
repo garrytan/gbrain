@@ -1396,6 +1396,14 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // v0.42.x (#2390): `gbrain eval chronicle` is deterministic — brings its own
+  // in-memory PGLite, no DB/gateway. CI fixture gate runs anywhere.
+  if (command === 'eval' && args[0] === 'chronicle') {
+    const { runEvalChronicle } = await import('./commands/eval-chronicle.ts');
+    setCliExitVerdict(await runEvalChronicle(args.slice(1)));
+    return;
+  }
+
   // v0.41.13.0: `gbrain eval conversation-parser` is pure-function
   // (parses fixture JSONL, runs parseConversation, scores results).
   // No DB access; bypass connectEngine entirely so the CI fixture
@@ -2325,7 +2333,8 @@ ADMIN
   serve                              MCP server (stdio)
   serve --http [--port N]            HTTP MCP server with OAuth 2.1
     --token-ttl N                    Access token TTL in seconds (default: 3600)
-    --enable-dcr                     Enable Dynamic Client Registration
+    --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)
+    --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
   connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it

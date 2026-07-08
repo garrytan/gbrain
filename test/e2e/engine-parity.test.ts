@@ -588,7 +588,12 @@ describeBoth('Engine parity — relationalFanout', () => {
   }, 30_000);
 
   const shape = (rows: Awaited<ReturnType<BrainEngine['relationalFanout']>>) =>
-    rows.map(r => `${r.source_id}:${r.slug}:${r.hop}:${r.edge_count}:${r.via_link_types.join(',')}:${r.path.join('>')}:${r.canonical_chunk_id ?? 'null'}`);
+    // canonical_chunk_id is a serial id — its absolute value diverges between a
+    // fresh PGLite engine and a shared Postgres DB whose content_chunks sequence
+    // advanced earlier (setupDB TRUNCATEs without RESTART IDENTITY). Compare its
+    // PRESENCE, not the exact id, so the parity check verifies graph structure +
+    // canonical-chunk resolution without depending on cross-engine sequence state.
+    rows.map(r => `${r.source_id}:${r.slug}:${r.hop}:${r.edge_count}:${r.via_link_types.join(',')}:${r.path.join('>')}:${r.canonical_chunk_id != null ? 'set' : 'null'}`);
 
   test('typed-edge fan-out is identical across engines', async () => {
     const opts = { direction: 'in' as const, linkTypes: ['invested_in'] };

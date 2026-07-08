@@ -335,6 +335,32 @@ export function applyTitleBoost(
 export const DEFAULT_TITLE_BOOST = 1.25;
 
 /**
+ * v0.42.x — Life Chronicle (#2390) E1 temporal recall arm. On temporal queries
+ * (the caller gates this on recency !== 'off'), give chronicle `event`/`diary`
+ * pages a bounded boost so the timeline surfaces for "what happened…" / "when
+ * did…" queries — ambient temporality without a separate recall arm. Bounded
+ * ([1.0, 1.25]) + floor-gated like the other metadata stages, so it can't
+ * leapfrog a strong primary hit. Mutate-in-place; caller re-sorts. Pure no-op
+ * for non-chronicle results. NOT called on non-temporal queries (recency='off'),
+ * so ordinary search is bit-for-bit unchanged.
+ */
+export function applyChronicleTypeBoost(
+  results: SearchResult[],
+  strength: 'on' | 'strong',
+  floorThreshold?: number,
+): void {
+  const factor = strength === 'strong' ? 1.25 : 1.15;
+  for (const r of results) {
+    if (!Number.isFinite(r.score)) continue;
+    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
+    if (r.type === 'event' || r.type === 'diary') {
+      r.score *= factor;
+      r.chronicle_boost = factor;
+    }
+  }
+}
+
+/**
  * v0.29.1 — runPostFusionStages: wrap backlink + salience + recency in a
  * single stage that fires from EVERY hybridSearch return path (codex
  * pass-1 #2 + pass-2 #4: keyword-only, embed-fail-fallback, full-hybrid).
@@ -472,6 +498,12 @@ export async function runPostFusionStages(
     } catch {
       // Non-fatal.
     }
+
+    // v0.42.x — Life Chronicle (#2390) E1: chronicle event/diary type boost.
+    // Gated INSIDE the recency!=off branch so it fires ONLY on temporal queries;
+    // non-temporal search never reaches here → bit-for-bit unchanged. Shares the
+    // floor threshold so it can't leapfrog a strong primary hit.
+    applyChronicleTypeBoost(results, opts.recency, floorThreshold);
   }
 
   // T2 — title-phrase boost. Runs after the metadata stages, before graph

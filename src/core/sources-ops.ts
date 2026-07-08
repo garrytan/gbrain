@@ -37,8 +37,8 @@
  */
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'fs';
-import { realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
+import { isPathContained } from './path-confine.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import {
@@ -231,28 +231,10 @@ function makeTempCloneDir(id: string): string {
   return gbrainPath('clones', '.tmp', `${id}-${rand}`);
 }
 
-/**
- * Symlink-safe path confinement: realpath both sides, then lstat-walk to
- * confirm `child` is a real subtree of `parent`. Mirrors validateUploadPath
- * shape at src/core/operations.ts:61. String startsWith() would let
- * $GBRAIN_HOME/clones/<id> → /etc bypass the confine.
- *
- * Returns true if `child` exists and is contained under `parent`.
- * Returns false if the resolved path escapes, or either path is unresolvable.
- */
-export function isPathContained(child: string, parent: string): boolean {
-  let resolvedChild: string;
-  let resolvedParent: string;
-  try {
-    resolvedChild = realpathSync(child);
-    resolvedParent = realpathSync(parent);
-  } catch {
-    return false; // missing path → not contained
-  }
-  // Append a separator to parent so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
-}
+// `isPathContained` moved to `src/core/path-confine.ts` (shared with the
+// dotfile-trust + skills-dir confinement helpers). Re-exported here so existing
+// importers (and recloneIfMissing below) keep working unchanged.
+export { isPathContained };
 
 /**
  * Did gbrain CREATE this clone (so re-clone/delete is safe)? Ownership, NOT

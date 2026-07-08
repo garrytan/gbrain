@@ -58,6 +58,12 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   // loops via the dream_generated:true + type:extract_receipt belt-and-
   // suspenders pattern per plan D-EXTRACT-19.
   'extract_receipt',
+  // v0.42.x — Life Chronicle (#2390). `event` = timeline atom
+  // (when·where·who·what), lives under life/events/; `diary` = first-person
+  // interiority, lives under life/diary/. Both temporal-primitive,
+  // extractable:false (events are one-line atoms; diary is private interiority
+  // never mined into the facts table). Pack entries in gbrain-base.yaml.
+  'event', 'diary',
 ] as const;
 
 /**
@@ -755,6 +761,8 @@ export interface SearchResult {
   salience_boost?: number;
   /** Multiplier applied by applyRecencyBoost. */
   recency_boost?: number;
+  /** v0.42.x (#2390) — multiplier applied by applyChronicleTypeBoost (event/diary on temporal queries). */
+  chronicle_boost?: number;
   /** Multiplier applied by applyExactMatchBoost. */
   exact_match_boost?: number;
   /** Multiplier applied by applyGraphSignals (adjacency hit). */
@@ -1276,6 +1284,92 @@ export interface TimelineOpts {
    * `source_id = ANY($::text[])` so a federated read honors the whole grant
    * (union of allowed sources), not just one source. Mirrors `GetPageOpts.sourceIds`.
    */
+  sourceIds?: string[];
+}
+
+// v0.42.x — Life Chronicle (#2390): timeline read surfaces.
+// A ChronicleTimelineRow is a timeline_entries projection JOINed to its depth
+// page (always) and, when it is an event projection, to the event page (for
+// intra-day order via effective_date, the backlink slug, and the event kind).
+export interface ChronicleTimelineRow {
+  date: string;               // YYYY-MM-DD (the projection date, pinned tz)
+  summary: string;
+  detail: string;
+  source: string;
+  page_id: number;            // depth page id (the rich page the row belongs to)
+  page_slug: string;          // depth page slug (backlink target)
+  event_page_id: number | null;
+  event_slug: string | null;  // the type:event page, when this is an event projection
+  effective_date: string | null; // event page effective_date — drives intra-day order
+  kind: string | null;        // event.kind from the event page frontmatter
+}
+
+export interface ChronicleTimelineOpts {
+  /** getTimelineForDate: expand to the ISO week (Mon–Sun) containing `date`. */
+  week?: boolean;
+  /** getSince: filter event projections by `event.kind`. */
+  kind?: string;
+  limit?: number;
+  /** Source scope (scalar). Federated `sourceIds` takes precedence when set. */
+  sourceId?: string;
+  sourceIds?: string[];
+}
+
+export interface LastSeenResult {
+  entity_slug: string;
+  /** Most recent timeline date the entity appears in (own page or an event's who). NULL if never. */
+  last_date: string | null;
+  /** The most recent event page slug involving the entity, if the last hit was an event. */
+  last_event_slug: string | null;
+  /** Whole days between last_date and `asof` (default today). NULL when last_date is NULL. */
+  days_ago: number | null;
+}
+
+// v0.42.x — Life Chronicle (#2390) per-entity ontology (rides the `facts` table).
+// An observation is a sourced, confidence-weighted, bi-temporal claim that an
+// entity has dimension=value (e.g. role=advisor). Supersession/validity/visibility
+// are inherited from facts columns.
+export interface OntologyObservationInput {
+  entitySlug: string;
+  dimension: string;
+  value: string;
+  /** 0..1; default 0.7. */
+  confidence?: number;
+  /** Provenance — written to facts.source_markdown_slug (the dedup key + retraction key). */
+  source: string;
+  validFrom?: string | null; // ISO; null = -infinity
+  validTo?: string | null;   // ISO; null = open/current
+  visibility?: 'private' | 'world';
+  /** Novel/LLM-proposed dimensions land 'quarantined' (excluded from current resolution). */
+  status?: 'active' | 'quarantined';
+  sourceId?: string;
+}
+export interface OntologyMergeResult {
+  action: 'inserted' | 'corroborated' | 'superseded_prior' | 'noop';
+  factId: number | null;
+  supersededId: number | null;
+}
+export interface OntologyValue {
+  dimension: string;
+  value: string;
+  confidence: number;
+  source: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  status: string;          // 'active' | 'quarantined'
+  fact_id: number;
+}
+export interface OntologyDimensionStat { dimension: string; entities: number; observations: number }
+export interface OntologyConflict {
+  entity_slug: string;
+  dimension: string;
+  values: { value: string; source: string | null; confidence: number; fact_id: number }[];
+}
+export interface OntologyReadOpts {
+  asof?: string;
+  minConfidence?: number;
+  includeQuarantined?: boolean;
+  sourceId?: string;
   sourceIds?: string[];
 }
 
