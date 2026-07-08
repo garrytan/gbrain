@@ -1,13 +1,13 @@
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
-import { dirname, join } from 'path';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import type { StorageConfig } from './storage.ts';
-import { MBrainError, type EngineConfig } from './types.ts';
+import { dirname, join } from 'path';
 import {
   DEFAULT_LOCAL_EMBEDDING_DIMENSIONS,
   DEFAULT_LOCAL_EMBEDDING_MODEL,
   defaultEmbeddingDimensionsForModel,
 } from './embedding/provider.ts';
+import type { StorageConfig } from './storage.ts';
+import { type EngineConfig, MBrainError } from './types.ts';
 
 export type EngineType = 'postgres' | 'sqlite' | 'pglite';
 export type EmbeddingProvider = 'none' | 'local';
@@ -42,6 +42,7 @@ export interface MBrainConfig {
   retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
   maintenance_phase_timeout_ms?: number;
+  dream_anticipation_enabled?: boolean;
   retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
 
@@ -72,12 +73,16 @@ export interface MBrainConfigInput {
   retrieval_eval?: {
     answer_grounding?: boolean;
   };
+  dream?: {
+    anticipation_enabled?: boolean;
+  };
   retrieval_governed_probe_hybrid?: boolean;
   retrieval_contextual_chunk_embeddings?: boolean;
   retrieval_usage_aware_ranking?: boolean;
   retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
   maintenance_phase_timeout_ms?: number;
+  dream_anticipation_enabled?: boolean;
   retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
 
@@ -183,6 +188,11 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
       input.maintenance_phase_timeout_ms ?? input.maintenance?.phase_timeout_ms,
       'maintenance.phase_timeout_ms',
     ),
+    // Sleep-time anticipation dream phase (N-9). Default off: the phase is a
+    // gated satellite and must be opted into via dream.anticipation_enabled.
+    dream_anticipation_enabled: input.dream_anticipation_enabled
+      ?? input.dream?.anticipation_enabled
+      ?? false,
     retrieval_source_rank_rules: normalizeRetrievalSourceRankRules(
       input.retrieval_source_rank_rules ?? input.retrieval?.source_rank_rules,
     ),

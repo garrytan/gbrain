@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import { createMaintenanceRuntimeService } from '../src/core/services/maintenance-runtime-service.ts';
 import {
   DREAM_CYCLE_PHASE_FAMILIES,
   runDreamCycle,
 } from '../src/core/services/dream-cycle-runner-service.ts';
+import { createMaintenanceRuntimeService } from '../src/core/services/maintenance-runtime-service.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 describe('dream cycle phase runner', () => {
   test('phase registry order is stable and landed phase families no longer report unavailable owner phases', async () => {
@@ -25,6 +25,7 @@ describe('dream cycle phase runner', () => {
       'recompile',
       'daily_report',
       'auto_promote',
+      'anticipation',
     ]);
 
     const result = await runDreamCycle(stubEngine(), {
@@ -62,6 +63,12 @@ describe('dream cycle phase runner', () => {
       skip_reason: 'flag_disabled',
       owner_phase: 'Phase 07',
       next_recommended_action: 'Enable maintenance.governed_recompile_enabled before running governed recompile.',
+    });
+    expect(result.phases.find((phase) => phase.family === 'anticipation')).toMatchObject({
+      status: 'skipped',
+      skip_reason: 'flag_disabled',
+      owner_phase: 'Phase 13',
+      next_recommended_action: 'Enable dream.anticipation_enabled before precomputing next-session read plans.',
     });
   });
 
@@ -1144,6 +1151,138 @@ describe('dream cycle phase runner', () => {
       llm_or_runner_used: false,
     });
     expect(calls).toEqual(['transitions', 'report', 'plan']);
+  });
+
+  test('anticipation phase builds the pack without persisting in dry-run mode', async () => {
+    const setConfigCalls: Array<[string, string]> = [];
+    const engine = {
+      ...stubEngine(),
+      setConfig: async (key: string, value: string) => {
+        setConfigCalls.push([key, value]);
+      },
+    };
+
+    const result = await runDreamCycle(engine, {
+      scope_id: 'workspace:default',
+      now: '2026-07-06T00:00:00.000Z',
+      dry_run: true,
+      anticipation_enabled: true,
+    }, {
+      anticipation: {
+        build: async () => ({
+          generated_at: '2026-07-06T00:00:00.000Z',
+          entries: [
+            {
+              question: 'How does governed writeback work?',
+              source: 'watched_question' as const,
+              read_plan_selectors: [{ kind: 'page' as const, slug: 'systems/governed-writeback' }],
+              token_estimate: 400,
+            },
+          ],
+          candidate_question_count: 1,
+          probe_failures: [],
+        }),
+      },
+    });
+
+    expect(result.phases.find((phase) => phase.family === 'anticipation')).toMatchObject({
+      status: 'ok',
+      counts: {
+        candidate_questions: 1,
+        pack_entries: 1,
+        probe_failures: 0,
+        persisted_packs: 0,
+      },
+      next_recommended_action: 'Run dream cycle in apply mode to persist the anticipation pack.',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    });
+    expect(setConfigCalls).toEqual([]);
+  });
+
+  test('anticipation phase persists the pack via setConfig in apply mode and reports counts', async () => {
+    const setConfigCalls: Array<[string, string]> = [];
+    const engine = {
+      ...stubEngine(),
+      setConfig: async (key: string, value: string) => {
+        setConfigCalls.push([key, value]);
+      },
+    };
+
+    const result = await runDreamCycle(engine, {
+      scope_id: 'workspace:default',
+      now: '2026-07-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+      anticipation_enabled: true,
+    }, {
+      runtime: createMaintenanceRuntimeService({ now: () => '2026-07-06T00:00:00.000Z' }),
+      replayCanary: passingReplayCanary(),
+      anticipation: {
+        build: async (input) => ({
+          generated_at: input.now,
+          entries: [
+            {
+              question: 'How does governed writeback work?',
+              source: 'watched_question' as const,
+              read_plan_selectors: [{ kind: 'page' as const, slug: 'systems/governed-writeback' }],
+              token_estimate: 400,
+            },
+            {
+              question: 'Harden retrieval ranking',
+              source: 'task' as const,
+              read_plan_selectors: [{ kind: 'page' as const, slug: 'systems/retrieval' }],
+              token_estimate: 400,
+            },
+          ],
+          candidate_question_count: 3,
+          probe_failures: [
+            { question: 'retrieval pipeline', source: 'recurring_query' as const, reason: 'probe failed' },
+          ],
+        }),
+      },
+    });
+
+    expect(result.phases.find((phase) => phase.family === 'anticipation')).toMatchObject({
+      status: 'warn',
+      counts: {
+        candidate_questions: 3,
+        pack_entries: 2,
+        probe_failures: 1,
+        persisted_packs: 1,
+      },
+      errors: ['Anticipation probe failed for "retrieval pipeline": probe failed'],
+      next_recommended_action: 'Read the precomputed pack via get_anticipation_pack at session start.',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    });
+    expect(setConfigCalls).toHaveLength(1);
+    expect(setConfigCalls[0]?.[0]).toBe('anticipation_pack_latest');
+    expect(JSON.parse(setConfigCalls[0]?.[1] ?? '')).toMatchObject({
+      generated_at: '2026-07-06T00:00:00.000Z',
+      candidate_question_count: 3,
+    });
+  });
+
+  test('anticipation phase with the flag on builds an empty pack against a minimal engine', async () => {
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-07-06T00:00:00.000Z',
+      dry_run: true,
+      anticipation_enabled: true,
+    });
+
+    expect(result.phases.find((phase) => phase.family === 'anticipation')).toMatchObject({
+      status: 'ok',
+      counts: {
+        candidate_questions: 0,
+        pack_entries: 0,
+        probe_failures: 0,
+        persisted_packs: 0,
+      },
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    });
   });
 });
 

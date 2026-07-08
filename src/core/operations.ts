@@ -31,6 +31,7 @@ import { createTaskOperations } from './operations-tasks.ts';
 import { expandQuery } from './search/expansion.ts';
 import { hybridSearchWithMeta } from './search/hybrid.ts';
 import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
+import { ANTICIPATION_PACK_CONFIG_KEY } from './services/anticipation-service.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
 import { getBroadSynthesisRoute } from './services/broad-synthesis-route-service.ts';
@@ -4373,6 +4374,26 @@ const list_compile_debt: Operation = {
   cliHints: { name: 'compile-debt' },
 };
 
+const get_anticipation_pack: Operation = {
+  name: 'get_anticipation_pack',
+  description:
+    'Read the latest sleep-time anticipation pack: deterministically precomputed likely next-session questions with their read-plan selector snapshots, persisted by the dream anticipation phase. Orientation-only; read_context remains the answer-evidence boundary. Returns { status: "empty" } when no pack has been persisted.',
+  params: {},
+  tier: 'admin',
+  handler: async (ctx) => {
+    const raw = await ctx.engine.getConfig(ANTICIPATION_PACK_CONFIG_KEY);
+    if (!raw) return { status: 'empty' };
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new OperationError(
+        'database_error',
+        'Persisted anticipation pack is not valid JSON; rerun the dream anticipation phase to rebuild it.',
+      );
+    }
+  },
+};
+
 const get_versions: Operation = {
   name: 'get_versions',
   description: 'Page version history',
@@ -7890,6 +7911,7 @@ export const operations: Operation[] = [
   get_stats,
   get_health,
   list_compile_debt,
+  get_anticipation_pack,
   get_versions,
   revert_version,
   // Sync

@@ -1,17 +1,17 @@
-import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, type MBrainConfig } from '../core/config.ts';
-import { createSqlMaintenanceRuntimeAdapter } from '../core/services/maintenance-runtime-db-adapter.ts';
-import { maybeCreateLifecycleForgettingServiceForEngine } from '../core/services/lifecycle-forgetting-engine-service.ts';
-import { createProofAgentDreamReplayCanary } from '../core/services/dream-replay-canary-service.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import {
-  runDreamCycle,
   type DreamCycleRunInput,
   type DreamCycleRunResult,
+  runDreamCycle,
 } from '../core/services/dream-cycle-runner-service.ts';
+import { createProofAgentDreamReplayCanary } from '../core/services/dream-replay-canary-service.ts';
+import { maybeCreateLifecycleForgettingServiceForEngine } from '../core/services/lifecycle-forgetting-engine-service.ts';
+import { createSqlMaintenanceRuntimeAdapter } from '../core/services/maintenance-runtime-db-adapter.ts';
+import { runWatchedQuestionProbes } from '../core/services/watched-question-service.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
 import { createGovernedRecompileDreamDependency } from './governed-recompile.ts';
 import { saveMemoryReviewReport } from './memory-report.ts';
-import { runWatchedQuestionProbes } from '../core/services/watched-question-service.ts';
 
 const STRICT_ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
@@ -98,6 +98,9 @@ function applyDreamConfigDefaults(input: DreamCycleRunInput, config: MBrainConfi
       : {}),
     ...(input.governed_recompile_enabled === undefined && config?.maintenance_governed_recompile_enabled === true
       ? { governed_recompile_enabled: config.maintenance_governed_recompile_enabled }
+      : {}),
+    ...(input.anticipation_enabled === undefined && config?.dream_anticipation_enabled === true
+      ? { anticipation_enabled: config.dream_anticipation_enabled }
       : {}),
   };
 }

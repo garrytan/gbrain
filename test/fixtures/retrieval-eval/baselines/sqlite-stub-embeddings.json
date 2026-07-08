@@ -1,0 +1,672 @@
+{
+  "artifact_kind": "ev1c_live_retrieval_baseline",
+  "gate": "EV-1c",
+  "generated_by": "scripts/regen-retrieval-baselines.ts",
+  "engine": "sqlite",
+  "embedding_provider": "stub-hash-1024",
+  "config": {
+    "retrieval.governed_probe_hybrid": true
+  },
+  "fixture_id": "p2-gold",
+  "fixture_path": "test/fixtures/retrieval-eval/p2-gold.jsonl",
+  "metrics": {
+    "total": 30,
+    "passed": 18,
+    "failed": 12,
+    "pass_rate": 0.6,
+    "top1_match_rate": 1,
+    "recall_at_10": 0.8,
+    "precision_at_k": 0.16000000000000006,
+    "mrr": 1,
+    "route_match_rate": 1,
+    "latency_ms_avg": 0,
+    "per_route": {
+      "broad_synthesis": {
+        "case_count": 22,
+        "top1_match_rate": 1,
+        "recall_at_10": 0.7954545454545454,
+        "precision_at_k": 0.15909090909090917,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 10377
+      },
+      "task_resume": {
+        "case_count": 4,
+        "top1_match_rate": 1,
+        "recall_at_10": 0.625,
+        "precision_at_k": 0.125,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 1936
+      },
+      "personal_profile_lookup": {
+        "case_count": 1,
+        "top1_match_rate": 1,
+        "recall_at_10": 1,
+        "precision_at_k": 0.2,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 442
+      },
+      "personal_episode_lookup": {
+        "case_count": 1,
+        "top1_match_rate": 1,
+        "recall_at_10": 1,
+        "precision_at_k": 0.2,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 442
+      },
+      "mixed_scope_bridge": {
+        "case_count": 1,
+        "top1_match_rate": 1,
+        "recall_at_10": 1,
+        "precision_at_k": 0.2,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 454
+      },
+      "precision_lookup": {
+        "case_count": 1,
+        "top1_match_rate": 1,
+        "recall_at_10": 1,
+        "precision_at_k": 0.2,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 463
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "p2-001-hybrid-search-routing",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/hybrid-search",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-002-retrieve-context-contract",
+      "route": "task_resume",
+      "expected_selected_intent": "task_resume",
+      "selected_intent": "task_resume",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/selector-first-retrieval",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-003-korean-rebellion-architecture",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/rebellion-architecture",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-004-compile-debt-ranking",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/compiled-truth",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-005-auto-promote-stranding",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/memory-governance",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-006-nightly-memory-report",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/memory-governance",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-007-watch-question-failures",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/watched-questions",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-008-schema-drift-health",
+      "route": "task_resume",
+      "expected_selected_intent": "task_resume",
+      "selected_intent": "task_resume",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/schema-migrations",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-009-review-server-auth",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/systems/mbrain",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-010-pgvector-ordering",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/vector-search",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-011-source-rank-rules",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/retrieval-ranking",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-012-known-subject-variant-cap",
+      "route": "task_resume",
+      "expected_selected_intent": "task_resume",
+      "selected_intent": "task_resume",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/retrieval-routing",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-013-temporal-recency-filter",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/retrieval-ranking",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-014-profile-preference",
+      "route": "personal_profile_lookup",
+      "expected_selected_intent": "personal_profile_lookup",
+      "selected_intent": "personal_profile_lookup",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/profiles/user",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-015-personal-episode",
+      "route": "personal_episode_lookup",
+      "expected_selected_intent": "personal_episode_lookup",
+      "selected_intent": "personal_episode_lookup",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/episodes/mbrain-pr-follow-through",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-016-mixed-scope-bridge",
+      "route": "mixed_scope_bridge",
+      "expected_selected_intent": "mixed_scope_bridge",
+      "selected_intent": "mixed_scope_bridge",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/profiles/user",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-017-task-resume",
+      "route": "task_resume",
+      "expected_selected_intent": "task_resume",
+      "selected_intent": "task_resume",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/tasks/mbrain-wave-hardening-complete",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-018-memory-candidate-handoff",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/memory-governance",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-019-expired-write-session",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/memory-governance",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-020-dream-phase-timeout",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/autopilot",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-021-recompile-runner-gate",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/compiled-truth",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-022-count-total-backlog",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/memory-governance",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-023-retrieval-eval-baseline",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/evaluation",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-024-retrieval-trajectory-groundedness",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/evaluation",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-025-operation-tier-contract",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/operation-contract",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-026-doc-contract",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/operation-contract",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-027-superseded-by-target",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/memory-governance",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-028-pglite-timeouts",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/test-suite",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    },
+    {
+      "id": "p2-029-release-migration-file",
+      "route": "broad_synthesis",
+      "expected_selected_intent": "broad_synthesis",
+      "selected_intent": "broad_synthesis",
+      "route_match": true,
+      "status": "failed",
+      "top1_slug": "brain/concepts/release-hygiene",
+      "top1_match": true,
+      "recall_at_10": 0.5,
+      "precision_at_k": 0.1,
+      "mrr": 1,
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ]
+    },
+    {
+      "id": "p2-030-review-local-mcp",
+      "route": "precision_lookup",
+      "expected_selected_intent": "precision_lookup",
+      "selected_intent": "precision_lookup",
+      "route_match": true,
+      "status": "passed",
+      "top1_slug": "brain/concepts/local-review-security",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.2,
+      "mrr": 1,
+      "missing_gold_slugs": []
+    }
+  ],
+  "failures": [
+    {
+      "id": "p2-002-retrieve-context-contract",
+      "route": "task_resume",
+      "query": "retrieve_context required_reads answer evidence contract",
+      "top1_slug": "brain/concepts/selector-first-retrieval",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-005-auto-promote-stranding",
+      "route": "broad_synthesis",
+      "query": "auto promote staged_for_review stranded candidate repair",
+      "top1_slug": "brain/concepts/memory-governance",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-006-nightly-memory-report",
+      "route": "broad_synthesis",
+      "query": "nightly memory report primary review surface delivery",
+      "top1_slug": "brain/concepts/memory-governance",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-007-watch-question-failures",
+      "route": "broad_synthesis",
+      "query": "watched question probe failure should appear in same report",
+      "top1_slug": "brain/concepts/watched-questions",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-010-pgvector-ordering",
+      "route": "broad_synthesis",
+      "query": "pgvector HNSW order by embedding distance ascending",
+      "top1_slug": "brain/concepts/vector-search",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-012-known-subject-variant-cap",
+      "route": "task_resume",
+      "query": "known_subjects candidate query variant cap",
+      "top1_slug": "brain/concepts/retrieval-routing",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-013-temporal-recency-filter",
+      "route": "broad_synthesis",
+      "query": "retrieve_context updated_after updated_before recency tiebreak",
+      "top1_slug": "brain/concepts/retrieval-ranking",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-017-task-resume",
+      "route": "task_resume",
+      "query": "resume the wave hardening branch from the previous handoff",
+      "top1_slug": "brain/tasks/mbrain-wave-hardening-complete",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-019-expired-write-session",
+      "route": "broad_synthesis",
+      "query": "expired write session fallback evidence_kind source_extracted",
+      "top1_slug": "brain/concepts/memory-governance",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-022-count-total-backlog",
+      "route": "broad_synthesis",
+      "query": "memory report showing N of M true total backlog",
+      "top1_slug": "brain/concepts/memory-governance",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-026-doc-contract",
+      "route": "broad_synthesis",
+      "query": "per operation doc contract undocumented non admin ops",
+      "top1_slug": "brain/concepts/operation-contract",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    },
+    {
+      "id": "p2-029-release-migration-file",
+      "route": "broad_synthesis",
+      "query": "VERSION changelog migration file wave release recovery",
+      "top1_slug": "brain/concepts/release-hygiene",
+      "missing_gold_slugs": [
+        "brain/systems/mbrain"
+      ],
+      "reason_codes": [
+        "recall_at_10_miss"
+      ]
+    }
+  ]
+}

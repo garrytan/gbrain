@@ -7,18 +7,28 @@
  *
  * For each config variant this script seeds the P2 gold corpus
  * (test/fixtures/retrieval-eval/p2-gold-corpus.ts) into a fresh temporary
- * SQLite engine, runs the full live retrieval eval over
+ * engine, runs the full live retrieval eval over
  * test/fixtures/retrieval-eval/p2-gold.jsonl, and writes a baseline artifact to
  * test/fixtures/retrieval-eval/baselines/:
  *
- *   - sqlite-governed-probe-on.json   (retrieval.governed_probe_hybrid = true)
- *   - sqlite-governed-probe-off.json  (retrieval.governed_probe_hybrid = false)
+ *   - sqlite-governed-probe-on.json   (SQLite, retrieval.governed_probe_hybrid = true)
+ *   - sqlite-governed-probe-off.json  (SQLite, retrieval.governed_probe_hybrid = false)
+ *   - pglite-governed-probe-on.json   (PGLite/Postgres-dialect, probe on)
+ *   - pglite-governed-probe-off.json  (PGLite/Postgres-dialect, probe off)
+ *   - sqlite-stub-embeddings.json     (SQLite, probe on, deterministic stub-hash-1024 vectors)
+ *   - pglite-stub-embeddings.json     (PGLite, probe on, deterministic stub-hash-1024 vectors)
  *
- * Embeddings are pinned to `none`, so both runs are deterministic (the hybrid
- * probe degrades to keyword-only without an embedding provider) and the
- * artifacts are stable across machines. Latency fields are zeroed before
- * writing so regeneration produces stable diffs; comparisons must not rely on
- * timing. Diff two baselines with the existing compare path:
+ * The governed-probe configs pin embeddings to `none`, so those runs are
+ * deterministic (the hybrid probe degrades to keyword-only without an embedding
+ * provider) and stable across machines. The stub-embeddings configs exercise
+ * the real vector path end-to-end (backfill, storage, query embedding,
+ * engine.searchVector, RRF fusion) with a deterministic feature-hashed
+ * bag-of-tokens provider (test/fixtures/retrieval-eval/stub-embedding-provider.ts)
+ * — they are NOT evidence about real embedding-model quality. Real local-model
+ * embeddings need a running llama.cpp/MLX/Ollama HTTP runtime and stay out of
+ * baselines. Latency fields are zeroed before writing so regeneration produces
+ * stable diffs; comparisons must not rely on timing. Diff two baselines with
+ * the existing compare path:
  *
  *   mbrain eval retrieval --compare \
  *     test/fixtures/retrieval-eval/baselines/sqlite-governed-probe-on.json \
@@ -27,64 +37,30 @@
  * Commit the regenerated files whenever the fixture, the corpus, or ranking
  * behavior intentionally changes.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { resolveConfig } from '../src/core/config.ts';
+import type { RetrievalEvalReport } from '../src/core/evaluation/retrieval-eval.ts';
 import {
-  evaluateLiveRetrievalFixture,
-  type RetrievalEvalReport,
-} from '../src/core/evaluation/retrieval-eval.ts';
-import { createProductionRetrieveContextDependencies } from '../src/core/services/production-retrieval-dependencies-service.ts';
-import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import {
-  loadP2GoldFixture,
-  seedP2GoldCorpus,
-} from '../test/fixtures/retrieval-eval/p2-gold-corpus.ts';
+  P2_GOLD_EVAL_CONFIGS,
+  p2GoldEmbeddingProviderLabel,
+  p2GoldRouteMatchRate,
+  runP2GoldEvalConfig,
+  type P2GoldEvalConfig,
+} from '../test/fixtures/retrieval-eval/p2-gold-configs.ts';
 
 const BASELINE_DIR = new URL('../test/fixtures/retrieval-eval/baselines/', import.meta.url).pathname;
 
-const VARIANTS = [
-  { name: 'sqlite-governed-probe-on', governedProbeHybrid: true },
-  { name: 'sqlite-governed-probe-off', governedProbeHybrid: false },
-] as const;
-
-async function runVariant(governedProbeHybrid: boolean): Promise<RetrievalEvalReport> {
-  const dir = mkdtempSync(join(tmpdir(), 'mbrain-retrieval-baseline-'));
-  const engine = new SQLiteEngine();
-  try {
-    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
-    await engine.initSchema();
-    await seedP2GoldCorpus(engine);
-    const config = resolveConfig({
-      engine: 'sqlite',
-      database_path: join(dir, 'brain.db'),
-      embedding_provider: 'none',
-      query_rewrite_provider: 'none',
-      retrieval: { governed_probe_hybrid: governedProbeHybrid },
-    });
-    return await evaluateLiveRetrievalFixture(engine, loadP2GoldFixture('p2-gold'), {
-      retrieve_context_dependencies: createProductionRetrieveContextDependencies(engine, config),
-    });
-  } finally {
-    await engine.disconnect();
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-function baselineArtifact(report: RetrievalEvalReport, governedProbeHybrid: boolean) {
-  const routeMatchRate = report.case_count === 0
-    ? 0
-    : report.cases.filter((entry) => entry.route_match === true).length / report.case_count;
+function baselineArtifact(report: RetrievalEvalReport, config: P2GoldEvalConfig) {
+  const routeMatchRate = p2GoldRouteMatchRate(report);
   const passed = report.cases.filter((entry) => entry.status === 'passed').length;
   return {
     artifact_kind: 'ev1c_live_retrieval_baseline',
     gate: 'EV-1c',
     generated_by: 'scripts/regen-retrieval-baselines.ts',
-    engine: 'sqlite',
-    embedding_provider: 'none',
+    engine: config.engine,
+    embedding_provider: p2GoldEmbeddingProviderLabel(config),
     config: {
-      'retrieval.governed_probe_hybrid': governedProbeHybrid,
+      'retrieval.governed_probe_hybrid': config.governedProbeHybrid,
     },
     fixture_id: report.fixture_id,
     fixture_path: 'test/fixtures/retrieval-eval/p2-gold.jsonl',
@@ -128,10 +104,14 @@ function baselineArtifact(report: RetrievalEvalReport, governedProbeHybrid: bool
 }
 
 mkdirSync(BASELINE_DIR, { recursive: true });
-for (const variant of VARIANTS) {
-  const report = await runVariant(variant.governedProbeHybrid);
-  const artifact = baselineArtifact(report, variant.governedProbeHybrid);
-  const target = join(BASELINE_DIR, `${variant.name}.json`);
+for (const config of P2_GOLD_EVAL_CONFIGS) {
+  const started = Date.now();
+  const { report } = await runP2GoldEvalConfig(config);
+  const artifact = baselineArtifact(report, config);
+  const target = join(BASELINE_DIR, `${config.name}.json`);
   writeFileSync(target, `${JSON.stringify(artifact, null, 2)}\n`);
-  console.log(`wrote ${target} (recall_at_10=${artifact.metrics.recall_at_10}, mrr=${artifact.metrics.mrr}, route_match_rate=${artifact.metrics.route_match_rate})`);
+  console.log(
+    `wrote ${target} (recall_at_10=${artifact.metrics.recall_at_10}, mrr=${artifact.metrics.mrr}, `
+    + `route_match_rate=${artifact.metrics.route_match_rate}, ${Date.now() - started}ms)`,
+  );
 }

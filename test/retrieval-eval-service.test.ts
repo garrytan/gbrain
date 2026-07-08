@@ -10,12 +10,25 @@ import {
 import { importFromContent } from '../src/core/import-file.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { RetrievalTrace } from '../src/core/types.ts';
+import type { RetrievalEvalReport } from '../src/core/evaluation/retrieval-eval.ts';
+import {
+  P2_GOLD_EVAL_CONFIGS,
+  p2GoldRouteMatchRate,
+  runP2GoldEvalConfig,
+  type P2GoldEvalConfig,
+} from './fixtures/retrieval-eval/p2-gold-configs.ts';
 import { loadP2GoldFixture, seedP2GoldCorpus } from './fixtures/retrieval-eval/p2-gold-corpus.ts';
 
 setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 120_000));
 
+// PGLite cold starts (WASM Postgres + full schema init) are slow on CI,
+// especially macOS runners; honor the repo-wide TEST_TIMEOUT_MS contract but
+// default these suites to a larger budget than the file-wide default.
+const PGLITE_EVAL_TEST_TIMEOUT_MS = Number(process.env.TEST_TIMEOUT_MS ?? 300_000);
+
 const tempPaths: string[] = [];
 const P2_GOLD_FIXTURE_URL = new URL('./fixtures/retrieval-eval/p2-gold.jsonl', import.meta.url);
+const BASELINE_DIR_URL = new URL('./fixtures/retrieval-eval/baselines/', import.meta.url);
 
 // retrieve_context derives its selected intent from the memory scenario
 // classifier plus deterministic auto-route upgrades: a slug-like ref selects
@@ -328,6 +341,111 @@ describe('live retrieval eval harness', () => {
       await engine.disconnect();
     }
   });
+});
+
+describe('EV-1c per-config live retrieval baselines', () => {
+  // Governed-probe configs (embeddings pinned to none) must hold the same
+  // floors the SQLite EV-1b gate holds. The stub-embeddings configs exercise
+  // the real vector path (backfill -> storage -> query embedding ->
+  // engine.searchVector -> RRF fusion) with the deterministic stub-hash-1024
+  // provider; the lexical stub demotes the broad multi-topic system page out
+  // of a few top-10 windows, so their recall floor is set from what the
+  // instrument actually achieves (committed baseline: sqlite 0.8, pglite
+  // ~0.783) with the exact baseline comparison as the real regression fence.
+  const GOVERNED_PROBE_FLOORS = { recall_at_10: 0.9, mrr: 0.85, route_match_rate: 0.9 };
+  const STUB_EMBEDDINGS_FLOORS = { recall_at_10: 0.75, mrr: 0.85, route_match_rate: 0.9 };
+
+  function loadBaseline(name: string): {
+    engine: string;
+    embedding_provider: string;
+    metrics: { recall_at_10: number; mrr: number; top1_match_rate: number; route_match_rate: number };
+    cases: Array<{
+      id: string;
+      status: 'passed' | 'failed';
+      top1_slug: string | null;
+      top1_match: boolean;
+      route_match: boolean | null;
+      missing_gold_slugs: string[];
+    }>;
+  } {
+    return JSON.parse(readFileSync(new URL(`./${name}.json`, BASELINE_DIR_URL), 'utf8'));
+  }
+
+  function expectFloorsAndBaselineMatch(
+    config: P2GoldEvalConfig,
+    report: RetrievalEvalReport,
+    floors: { recall_at_10: number; mrr: number; route_match_rate: number },
+  ) {
+    expect(report.case_count).toBe(30);
+    expect(report.recall_at_10).toBeGreaterThanOrEqual(floors.recall_at_10);
+    expect(report.mrr).toBeGreaterThanOrEqual(floors.mrr);
+    expect(p2GoldRouteMatchRate(report)).toBeGreaterThanOrEqual(floors.route_match_rate);
+
+    // The committed baseline is the regression fence: the live run must
+    // reproduce it exactly (the regen script is deterministic by contract).
+    const baseline = loadBaseline(config.name);
+    expect(baseline.engine).toBe(config.engine);
+    expect(report.recall_at_10).toBe(baseline.metrics.recall_at_10);
+    expect(report.mrr).toBe(baseline.metrics.mrr);
+    expect(report.top1_match_rate).toBe(baseline.metrics.top1_match_rate);
+    expect(p2GoldRouteMatchRate(report)).toBe(baseline.metrics.route_match_rate);
+    expect(report.cases.map((entry) => ({
+      id: entry.id,
+      status: entry.status,
+      top1_slug: entry.top1_slug,
+      top1_match: entry.top1_match,
+      route_match: entry.route_match,
+      missing_gold_slugs: entry.missing_gold_slugs,
+    }))).toEqual(baseline.cases.map((entry) => ({
+      id: entry.id,
+      status: entry.status,
+      top1_slug: entry.top1_slug,
+      top1_match: entry.top1_match,
+      route_match: entry.route_match,
+      missing_gold_slugs: entry.missing_gold_slugs,
+    })));
+  }
+
+  function configByName(name: string): P2GoldEvalConfig {
+    const config = P2_GOLD_EVAL_CONFIGS.find((candidate) => candidate.name === name);
+    if (!config) throw new Error(`Unknown P2 gold eval config: ${name}`);
+    return config;
+  }
+
+  test('PGLite governed-probe-on holds the SQLite floors and matches its committed baseline', async () => {
+    const config = configByName('pglite-governed-probe-on');
+    const { report } = await runP2GoldEvalConfig(config);
+    expectFloorsAndBaselineMatch(config, report, GOVERNED_PROBE_FLOORS);
+    expect(report.status).toBe('passed');
+    expect(report.failures).toEqual([]);
+  }, PGLITE_EVAL_TEST_TIMEOUT_MS);
+
+  test('PGLite governed-probe-off holds the SQLite floors and matches its committed baseline', async () => {
+    const config = configByName('pglite-governed-probe-off');
+    const { report } = await runP2GoldEvalConfig(config);
+    expectFloorsAndBaselineMatch(config, report, GOVERNED_PROBE_FLOORS);
+    expect(report.status).toBe('passed');
+    expect(report.failures).toEqual([]);
+  }, PGLITE_EVAL_TEST_TIMEOUT_MS);
+
+  test('SQLite stub-embeddings exercises the vector path end-to-end and matches its committed baseline', async () => {
+    const config = configByName('sqlite-stub-embeddings');
+    const { report, stub_stats, stub_backfill_stats } = await runP2GoldEvalConfig(config);
+    expectFloorsAndBaselineMatch(config, report, STUB_EMBEDDINGS_FLOORS);
+
+    // Prove the vector path actually ran: the stub embedded corpus chunks at
+    // backfill time and was called again for query embeddings during the eval.
+    expect(stub_backfill_stats!.text_count).toBeGreaterThan(0);
+    expect(stub_stats!.batch_count).toBeGreaterThan(stub_backfill_stats!.batch_count);
+  });
+
+  test('PGLite stub-embeddings exercises the vector path end-to-end and matches its committed baseline', async () => {
+    const config = configByName('pglite-stub-embeddings');
+    const { report, stub_stats, stub_backfill_stats } = await runP2GoldEvalConfig(config);
+    expectFloorsAndBaselineMatch(config, report, STUB_EMBEDDINGS_FLOORS);
+    expect(stub_backfill_stats!.text_count).toBeGreaterThan(0);
+    expect(stub_stats!.batch_count).toBeGreaterThan(stub_backfill_stats!.batch_count);
+  }, PGLITE_EVAL_TEST_TIMEOUT_MS);
 });
 
 describe('retrieval trajectory score', () => {

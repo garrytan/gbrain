@@ -109,6 +109,22 @@ All notable changes to MBrain will be documented in this file.
   creating procedure candidates stays an explicit, human-invoked step
   (\`apply: true\`), so nothing files itself into your brain overnight.
 
+- **Your brain can now prepare tomorrow's context while you sleep.** A new
+  opt-in dream phase (\`dream_anticipation_enabled\`, default off) builds an
+  anticipation pack overnight: likely-next questions from open tasks, watched
+  questions, and recent attention, each with pre-resolved read selectors —
+  inspectable via the admin-tier \`get_anticipation_pack\` op. Deterministic,
+  report-only, and persisted like any other dream artifact, so nothing changes
+  in retrieval until you turn it on.
+
+- **The retrieval eval now covers every engine configuration.** The live
+  30-case gold set runs on PGLite (Postgres dialect) as well as SQLite, with
+  governed-probe on/off baselines for both — plus deterministic
+  stub-embedding configs that exercise the full embed → store → vector-search
+  → fusion path end-to-end in CI without any model server. Six byte-stable
+  baselines with exact-match regression fences; a ranking change anywhere in
+  the stack now fails a test instead of silently degrading your recall.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

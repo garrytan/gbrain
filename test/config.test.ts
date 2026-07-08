@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
+import { join } from 'path';
 
 const originalEnv = { ...process.env };
 let tempHome: string;
@@ -191,6 +191,29 @@ describe('config loading', () => {
 
     const { loadConfig } = await import('../src/core/config.ts');
     expect(loadConfig()?.maintenance_governed_recompile_enabled).toBe(true);
+  });
+
+  test('defaults the dream anticipation phase off', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.dream_anticipation_enabled).toBe(false);
+  });
+
+  test('loads the dream anticipation flag from the documented nested dream config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      dream: {
+        anticipation_enabled: true,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.dream_anticipation_enabled).toBe(true);
   });
 
   test('loads Dream phase timeout from the documented nested maintenance config', async () => {

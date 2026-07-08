@@ -152,35 +152,54 @@ describe('eval CLI runner', () => {
 
   test('EV-1c: committed per-config baselines parse and diff through the retrieval compare path', async () => {
     const baselineDir = new URL('./fixtures/retrieval-eval/baselines/', import.meta.url).pathname;
-    const onPath = join(baselineDir, 'sqlite-governed-probe-on.json');
-    const offPath = join(baselineDir, 'sqlite-governed-probe-off.json');
+    const baselineSpecs = [
+      { file: 'sqlite-governed-probe-on.json', engine: 'sqlite', probe: true, embeddings: 'none', recallFloor: 0.9 },
+      { file: 'sqlite-governed-probe-off.json', engine: 'sqlite', probe: false, embeddings: 'none', recallFloor: 0.9 },
+      { file: 'pglite-governed-probe-on.json', engine: 'pglite', probe: true, embeddings: 'none', recallFloor: 0.9 },
+      { file: 'pglite-governed-probe-off.json', engine: 'pglite', probe: false, embeddings: 'none', recallFloor: 0.9 },
+      // Stub-embeddings baselines run the real vector path with the
+      // deterministic stub-hash-1024 provider; their recall floor is the
+      // instrument floor, not a quality claim (see
+      // test/fixtures/retrieval-eval/stub-embedding-provider.ts).
+      { file: 'sqlite-stub-embeddings.json', engine: 'sqlite', probe: true, embeddings: 'stub-hash-1024', recallFloor: 0.75 },
+      { file: 'pglite-stub-embeddings.json', engine: 'pglite', probe: true, embeddings: 'stub-hash-1024', recallFloor: 0.75 },
+    ] as const;
 
-    for (const [path, expectedProbe] of [[onPath, true], [offPath, false]] as const) {
-      const baseline = JSON.parse(readFileSync(path, 'utf8'));
+    for (const spec of baselineSpecs) {
+      const baseline = JSON.parse(readFileSync(join(baselineDir, spec.file), 'utf8'));
       expect(baseline.artifact_kind).toBe('ev1c_live_retrieval_baseline');
       expect(baseline.generated_by).toBe('scripts/regen-retrieval-baselines.ts');
-      expect(baseline.config['retrieval.governed_probe_hybrid']).toBe(expectedProbe);
+      expect(baseline.engine).toBe(spec.engine);
+      expect(baseline.embedding_provider).toBe(spec.embeddings);
+      expect(baseline.config['retrieval.governed_probe_hybrid']).toBe(spec.probe);
       expect(baseline.metrics.total).toBe(30);
       expect(baseline.metrics.per_route).toBeDefined();
       expect(baseline.metrics.per_route.broad_synthesis.case_count).toBeGreaterThanOrEqual(1);
-      expect(baseline.metrics.recall_at_10).toBeGreaterThanOrEqual(0.9);
+      expect(baseline.metrics.recall_at_10).toBeGreaterThanOrEqual(spec.recallFloor);
+      expect(baseline.metrics.mrr).toBeGreaterThanOrEqual(0.85);
+      expect(baseline.metrics.route_match_rate).toBeGreaterThanOrEqual(0.9);
     }
 
-    const logs: string[] = [];
-    const originalLog = console.log;
-    console.log = (line?: unknown) => { logs.push(String(line)); };
-    try {
-      await runEval(fakeEvalEngine(), ['retrieval', '--compare', onPath, offPath, '--json']);
-    } finally {
-      console.log = originalLog;
-    }
-
-    const output = JSON.parse(logs.join('\n'));
     // With embeddings pinned to none, the hybrid probe degrades to
-    // keyword-only, so both configs must produce identical quality metrics.
-    expect(output.delta.recall_at_10).toBe(0);
-    expect(output.delta.mrr).toBe(0);
-    expect(output.per_route.broad_synthesis.delta.recall_at_10).toBe(0);
+    // keyword-only, so the on/off configs must produce identical quality
+    // metrics on both engines.
+    for (const enginePrefix of ['sqlite', 'pglite'] as const) {
+      const onPath = join(baselineDir, `${enginePrefix}-governed-probe-on.json`);
+      const offPath = join(baselineDir, `${enginePrefix}-governed-probe-off.json`);
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (line?: unknown) => { logs.push(String(line)); };
+      try {
+        await runEval(fakeEvalEngine(), ['retrieval', '--compare', onPath, offPath, '--json']);
+      } finally {
+        console.log = originalLog;
+      }
+
+      const output = JSON.parse(logs.join('\n'));
+      expect(output.delta.recall_at_10).toBe(0);
+      expect(output.delta.mrr).toBe(0);
+      expect(output.per_route.broad_synthesis.delta.recall_at_10).toBe(0);
+    }
   });
 
   test('requires retrieval eval answer grounding config before running a judge', async () => {

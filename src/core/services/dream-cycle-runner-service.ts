@@ -1,5 +1,10 @@
 import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
+import {
+  ANTICIPATION_PACK_CONFIG_KEY,
+  type AnticipationPack,
+  buildAnticipationPack,
+} from './anticipation-service.ts';
 import { buildCoreMemoryBlocks, persistCoreMemoryBlocksSnapshot } from './core-memory-blocks-service.ts';
 import { runDreamCycleMaintenance } from './dream-cycle-maintenance-service.ts';
 import { sweepExpiredWriteSessionFallbacks } from './expired-write-session-fallback-service.ts';
@@ -26,7 +31,8 @@ export type DreamCyclePhaseFamily =
   | 'context_refresh'
   | 'recompile'
   | 'daily_report'
-  | 'auto_promote';
+  | 'auto_promote'
+  | 'anticipation';
 
 export type DreamCyclePhaseStatus = 'ok' | 'warn' | 'failed' | 'skipped';
 export type DreamCycleSkipReason = 'phase_not_available' | 'runner_unavailable' | 'flag_disabled';
@@ -76,6 +82,7 @@ export interface DreamCycleRunInput {
   allow_llm?: boolean;
   allow_local_runner?: boolean;
   governed_recompile_enabled?: boolean;
+  anticipation_enabled?: boolean;
   trigger?: 'cli' | 'autopilot' | 'job' | 'manual';
 }
 
@@ -206,6 +213,13 @@ export interface DreamCycleRunDeps {
       summary_lines?: string[];
     }>;
   };
+  anticipation?: {
+    build(input: {
+      scope_id: string;
+      now: string;
+      limit?: number;
+    }): Promise<AnticipationPack>;
+  };
 }
 
 export type DreamCyclePhaseHandler = (
@@ -228,6 +242,7 @@ export interface DreamCyclePhaseContext {
     allow_llm: boolean;
     allow_local_runner: boolean;
     governed_recompile_enabled: boolean;
+    anticipation_enabled: boolean;
     signal?: AbortSignal;
   };
   registry: DreamCyclePhaseRegistryEntry;
@@ -255,6 +270,7 @@ export const DREAM_CYCLE_PHASE_FAMILIES: readonly DreamCyclePhaseRegistryEntry[]
   { order: 14, family: 'recompile', owner_phase: 'Phase 07', runner_backed: true, implemented: true },
   { order: 15, family: 'daily_report', owner_phase: 'Phase 12', runner_backed: false, implemented: true },
   { order: 16, family: 'auto_promote', owner_phase: 'Phase 07', runner_backed: true, implemented: true },
+  { order: 17, family: 'anticipation', owner_phase: 'Phase 13', runner_backed: false, implemented: true },
 ] as const;
 
 export async function runDreamCycle(
@@ -414,6 +430,9 @@ function defaultPhaseHandler(
   if (registry.family === 'auto_promote') {
     return (context) => runAutoPromotePhase(context, deps);
   }
+  if (registry.family === 'anticipation') {
+    return (context) => runAnticipationPhase(context, deps);
+  }
   if (registry.implemented) return runImplementedReadOnlyPhase;
   return undefined;
 }
@@ -551,6 +570,7 @@ async function readImplementedPhaseCounts(
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
+    case 'anticipation':
       return {};
   }
 }
@@ -599,6 +619,7 @@ function hasActionablePhaseWork(
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
+    case 'anticipation':
       return Object.values(counts).some((count) => count > 0);
   }
 }
@@ -636,6 +657,8 @@ function nextActionForImplementedPhase(family: DreamCyclePhaseFamily): string {
       return 'Review dream cycle phase output.';
     case 'auto_promote':
       return 'Review auto-promotion results.';
+    case 'anticipation':
+      return 'Review the precomputed anticipation pack.';
   }
 }
 
@@ -980,6 +1003,52 @@ async function runAutoPromotePhase(
   };
 }
 
+async function runAnticipationPhase(
+  context: DreamCyclePhaseContext,
+  deps: DreamCycleRunDeps,
+): Promise<Partial<DreamCyclePhaseResult>> {
+  if (!context.input.anticipation_enabled) {
+    return {
+      status: 'skipped',
+      skip_reason: 'flag_disabled',
+      next_recommended_action: 'Enable dream.anticipation_enabled before precomputing next-session read plans.',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    };
+  }
+
+  const buildInput = {
+    scope_id: context.input.scope_id,
+    now: context.input.now,
+    limit: context.input.limit,
+  };
+  const pack = deps.anticipation
+    ? await deps.anticipation.build(buildInput)
+    : await buildAnticipationPack(context.engine, buildInput);
+  const canPersist = !context.input.dry_run && typeof context.engine.setConfig === 'function';
+  if (canPersist) {
+    await context.engine.setConfig(ANTICIPATION_PACK_CONFIG_KEY, JSON.stringify(pack));
+  }
+  const failures = pack.probe_failures;
+  return {
+    status: failures.length > 0 ? 'warn' : 'ok',
+    counts: {
+      candidate_questions: pack.candidate_question_count,
+      pack_entries: pack.entries.length,
+      probe_failures: failures.length,
+      persisted_packs: canPersist ? 1 : 0,
+    },
+    errors: failures.map((failure) =>
+      `Anticipation probe failed for "${failure.question}": ${failure.reason}`
+    ),
+    next_recommended_action: canPersist
+      ? 'Read the precomputed pack via get_anticipation_pack at session start.'
+      : 'Run dream cycle in apply mode to persist the anticipation pack.',
+    canonical_mutations: 0,
+    llm_or_runner_used: false,
+  };
+}
+
 async function countRows(
   engine: BrainEngine,
   tableName: string,
@@ -1137,6 +1206,7 @@ function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['i
     allow_llm: input.allow_llm === true,
     allow_local_runner: input.allow_local_runner === true,
     governed_recompile_enabled: input.governed_recompile_enabled === true,
+    anticipation_enabled: input.anticipation_enabled === true,
     trigger: input.trigger ?? 'manual',
   };
 }
