@@ -1832,3 +1832,43 @@ describe('read context service', () => {
     });
   });
 });
+
+test('read context disclosure: canonical reads and trust footer carry source trust tiers', async () => {
+  await withEngine('trust-tier', async (engine) => {
+    await importFromContent(engine, 'concepts/trusted-context', [
+      '---',
+      'type: concept',
+      'title: Trusted Context',
+      '---',
+      '# Compiled Truth',
+      'The user prefers governed writes. [Source: User, direct message, 2026-07-06 09:00 KST]',
+    ].join('\n'), { path: 'concepts/trusted-context.md' });
+    await importFromContent(engine, 'concepts/unattributed-context', [
+      '---',
+      'type: concept',
+      'title: Unattributed Context',
+      '---',
+      '# Compiled Truth',
+      'A compiled statement with no source markers.',
+    ].join('\n'), { path: 'concepts/unattributed-context.md' });
+
+    const result = await readContext(engine, {
+      selectors: [
+        { kind: 'compiled_truth', slug: 'concepts/trusted-context' },
+        { kind: 'compiled_truth', slug: 'concepts/unattributed-context' },
+      ],
+    });
+
+    const trusted = result.canonical_reads.find((read) => read.selector.slug === 'concepts/trusted-context');
+    const unattributed = result.canonical_reads.find((read) => read.selector.slug === 'concepts/unattributed-context');
+    expect(trusted?.source_trust_tier).toBe('user_direct');
+    expect(unattributed?.source_trust_tier).toBe('unattributed');
+
+    const footerTiers = result.answer_trust_footer?.source_trust_tiers ?? [];
+    expect(footerTiers).toHaveLength(result.canonical_reads.length);
+    expect(footerTiers.find((entry) => entry.selector_id.includes('concepts/trusted-context'))?.source_trust_tier)
+      .toBe('user_direct');
+    expect(footerTiers.find((entry) => entry.selector_id.includes('concepts/unattributed-context'))?.source_trust_tier)
+      .toBe('unattributed');
+  });
+});

@@ -1,4 +1,4 @@
-import type { MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateExtractionKind, MemoryCandidateSensitivity, MemoryCandidateStatus, MemoryCandidateTargetObjectType, MemoryCandidateType, MemoryWriteSession } from './memory-governance.ts';
+import type { MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateExtractionKind, MemoryCandidateSensitivity, MemoryCandidateStatus, MemoryCandidateTargetObjectType, MemoryCandidateType, MemoryWriteSession, SourceTrustTier } from './memory-governance.ts';
 import type { ChunkSource, PageType } from './page.ts';
 import type { BroadSynthesisRoute, MixedScopeBridgeRoute, PrecisionLookupRoute } from './context-map-atlas.ts';
 import type { PersonalEpisodeLookupRoute, PersonalEpisodeSourceKind, PersonalProfileLookupRoute, ProfileMemoryType } from './profile-episode.ts';
@@ -483,6 +483,8 @@ export interface RetrieveContextCandidate {
   activation: MemoryActivationDecision;
   read_priority: number;
   read_selector: RetrievalSelector;
+  /** Disclosure-only trust tier derived from read_selector source refs; omitted when no refs are available. */
+  source_trust_tier?: SourceTrustTier;
   evidence_metadata?: RetrieveContextCandidateEvidenceMetadata;
 }
 
@@ -699,6 +701,11 @@ export interface AnswerTrustFooter {
     | 'canonical_write_applied';
   next_verification_action: string | null;
   trace_ids: string[];
+  /** Per-read disclosure of source trust tiers (read_context only). */
+  source_trust_tiers?: Array<{
+    selector_id: string;
+    source_trust_tier: SourceTrustTier;
+  }>;
 }
 
 export interface ReadContextProbeContext {
@@ -813,6 +820,12 @@ export interface CanonicalContextRead {
   token_estimate: number;
   has_more: boolean;
   continuation_selector?: RetrievalSelector;
+  /**
+   * Disclosure-only trust tier derived from the read's strongest source
+   * attribution ([Source:] lines / selector source refs). Never consumed by
+   * ranking.
+   */
+  source_trust_tier?: SourceTrustTier;
   evidence_metadata?: CanonicalContextReadEvidenceMetadata;
 }
 

@@ -134,6 +134,22 @@ All notable changes to MBrain will be documented in this file.
   answer evidence), and every failure mode degrades to a deterministic,
   explained skip.
 
+- **Every answer now tells you how much to trust its sources.** Canonical
+  reads and retrieval candidates carry a source trust tier —
+  \`user_direct\` > \`verified_doc\` > \`extracted\` > \`imported\` >
+  \`unattributed\` — derived from evidence kind, source attribution shape, and
+  verification status, so an agent (and you) can see at a glance whether a
+  claim rests on your own words or an unattributed import. Disclosure only:
+  ranking is untouched.
+
+- **Prompt-injection attempts can no longer ride memory into your brain.**
+  Every path that creates a Memory Inbox candidate now lints content for
+  instruction-injection patterns (system-prompt overrides, embedded tool-call
+  blobs, large base64 payloads — English and Korean variants). Flagged
+  content is still captured but frozen at the review gate and denied
+  promotion until a human explicitly verifies it — so a poisoned document can
+  sit safely in quarantine, but it cannot become compiled truth on its own.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

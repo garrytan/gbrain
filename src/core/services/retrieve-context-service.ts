@@ -58,6 +58,7 @@ import {
   selectorFromRouteRead,
   selectorFromSearchResult,
 } from './retrieval-selector-service.ts';
+import { sourceTrustTierForSourceRefs } from './memory-trust-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
 import { buildSelectorFirstPushContextEnvelope } from './selector-first-push-context-service.ts';
 import { selectRetrievalRoute } from './retrieval-route-selector-service.ts';
@@ -2359,8 +2360,16 @@ function withCandidateResultMetadata(
     : undefined;
   return candidates.map((candidate) => {
     const evidenceMetadata = candidate.evidence_metadata ?? buildCandidateEvidenceMetadata(candidate);
+    // N-8 disclosure: annotate the candidate with a trust tier when its read
+    // selector carries source refs; omitted otherwise. Never used by ranking.
+    const selectorSourceRefs = candidate.read_selector.source_refs?.length
+      ? candidate.read_selector.source_refs
+      : (candidate.read_selector.source_ref ? [candidate.read_selector.source_ref] : []);
     return {
       ...candidate,
+      ...(selectorSourceRefs.length > 0
+        ? { source_trust_tier: sourceTrustTierForSourceRefs(selectorSourceRefs) }
+        : {}),
       evidence_metadata: {
         ...evidenceMetadata,
         create_safety: createSafetySummary,

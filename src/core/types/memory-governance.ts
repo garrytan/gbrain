@@ -486,6 +486,19 @@ export type MemoryCandidateTargetObjectType =
 
 export type MemoryCandidateVerificationStatus = 'unverified' | 'verified' | 'refuted';
 
+/**
+ * Disclosure-only trust tier for retrieval results and reads (N-8).
+ * Ordered strongest-first: user_direct > verified_doc > extracted > imported > unattributed.
+ * Deterministic mapping lives in services/memory-trust-service.ts; this tier is
+ * never consumed by ranking (ranking consumption stays behind the EV-1b gate).
+ */
+export type SourceTrustTier =
+  | 'user_direct'
+  | 'verified_doc'
+  | 'extracted'
+  | 'imported'
+  | 'unattributed';
+
 export type MemoryCandidateVerificationMethod =
   | 'command_execution'
   | 'db_query'
@@ -505,6 +518,7 @@ export type MemoryCandidatePromotionPreflightReason =
   | 'candidate_requires_verification'
   | 'candidate_requires_revalidation'
   | 'candidate_refuted'
+  | 'candidate_instruction_injection_flagged'
   | 'candidate_possible_duplicate'
   | 'candidate_open_contradiction'
   | 'candidate_ready_for_promotion';

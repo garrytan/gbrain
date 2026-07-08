@@ -16,6 +16,7 @@ import type {
   RetrievalTrace,
   ScopeGateDecisionResult,
   ScopeGateScope,
+  SourceTrustTier,
   TimelineEntry,
   AnswerTrustFooter,
   AnswerTrustFooterExcludedSignal,
@@ -35,6 +36,7 @@ import {
   estimateTokens,
   projectionCharLimit,
 } from './read-context-budget-service.ts';
+import { sourceTrustTierForSourceRefs } from './memory-trust-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
 import { retrieveContext, type RetrieveContextDependencies } from './retrieve-context-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
@@ -1484,10 +1486,36 @@ async function maybePersistReadTrace(
 }
 
 function withReadTrustFooter(result: ReadContextResult, input: ReadContextInput): ReadContextResult {
-  return {
+  // N-8 disclosure: annotate each canonical read with the trust tier derived
+  // from its strongest source attribution. Disclosure only — never ranking.
+  const decorated: ReadContextResult = {
     ...result,
-    answer_trust_footer: buildReadTrustFooter(result, input),
+    canonical_reads: result.canonical_reads.map((read) => ({
+      ...read,
+      source_trust_tier: sourceTrustTierForCanonicalRead(read),
+    })),
   };
+  return {
+    ...decorated,
+    answer_trust_footer: buildReadTrustFooter(decorated, input),
+  };
+}
+
+/**
+ * Cheapest honest per-read mapping: prefer the read's extracted source refs
+ * (its [Source:] lines / timeline sources), then re-scan the read text for
+ * [Source:] markers when refs were not requested, then fall back to the
+ * selector's own source refs. No refs at all -> 'unattributed'.
+ */
+function sourceTrustTierForCanonicalRead(read: CanonicalContextRead): SourceTrustTier {
+  const refs = read.source_refs.length > 0
+    ? read.source_refs
+    : extractSourceRefs(read.text);
+  if (refs.length > 0) return sourceTrustTierForSourceRefs(refs);
+  const selectorRefs = read.selector.source_refs?.length
+    ? read.selector.source_refs
+    : (read.selector.source_ref ? [read.selector.source_ref] : []);
+  return sourceTrustTierForSourceRefs(selectorRefs);
 }
 
 function buildReadTrustFooter(result: ReadContextResult, input: ReadContextInput): AnswerTrustFooter {
@@ -1518,6 +1546,10 @@ function buildReadTrustFooter(result: ReadContextResult, input: ReadContextInput
     write_status: 'no_write',
     next_verification_action: readNextVerificationAction(result),
     trace_ids: traceIds,
+    source_trust_tiers: result.canonical_reads.map((read) => ({
+      selector_id: retrievalSelectorId(read.selector),
+      source_trust_tier: read.source_trust_tier ?? sourceTrustTierForCanonicalRead(read),
+    })),
   };
 }
 

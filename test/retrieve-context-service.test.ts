@@ -3116,3 +3116,28 @@ describe('manifest backlink scan bounding', () => {
     });
   });
 });
+
+test('retrieve context disclosure: candidates expose source trust tier only when selector refs exist', async () => {
+  await withEngine('trust-tier-disclosure', async (engine) => {
+    const result = await retrieveContext(engine, {
+      selectors: [
+        {
+          kind: 'compiled_truth',
+          slug: 'systems/mbrain',
+          source_refs: ['User, direct message, 2026-07-06 09:00 KST'],
+        },
+        { kind: 'compiled_truth', slug: 'systems/other' },
+      ],
+    }, {
+      candidateSearch: async () => {
+        throw new Error('exact selector retrieval must not search');
+      },
+    });
+
+    const withRefs = result.candidates.find((candidate) => candidate.read_selector.slug === 'systems/mbrain');
+    const withoutRefs = result.candidates.find((candidate) => candidate.read_selector.slug === 'systems/other');
+    expect(withRefs?.source_trust_tier).toBe('user_direct');
+    expect(withoutRefs).toBeDefined();
+    expect(withoutRefs?.source_trust_tier).toBeUndefined();
+  });
+});

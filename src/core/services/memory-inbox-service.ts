@@ -15,6 +15,11 @@ import {
   reviewDuplicateMemory,
   summarizeDuplicateReviewForPreflight,
 } from './duplicate-memory-review-service.ts';
+import {
+  instructionInjectionReviewReason,
+  lintInstructionInjection,
+  reviewReasonHasInstructionInjectionFlag,
+} from './memory-trust-service.ts';
 
 type AdvanceableMemoryCandidateStatus = 'captured' | 'candidate' | 'staged_for_review';
 type MemoryCandidateAdvanceTargetStatus = 'candidate' | 'staged_for_review';
@@ -76,9 +81,20 @@ export async function createMemoryCandidateEntryWithStatusEvent(
   engine: BrainEngine,
   input: MemoryCandidateEntryInput & { interaction_id?: string | null },
 ): Promise<MemoryCandidateEntry> {
+  // N-8 instruction-injection lint: flagged content is still captured (for
+  // auditability) but never enters the review lane directly, and promotion
+  // preflight denies it until an explicit verification record exists.
+  const lint = lintInstructionInjection(input.proposed_content);
+  const gatedInput = lint.flagged
+    ? {
+        ...input,
+        status: 'captured' as const,
+        review_reason: appendInstructionInjectionReviewReason(input.review_reason, lint.reasons),
+      }
+    : input;
   return engine.transaction(async (txBase) => {
     const tx = txBase as BrainEngine;
-    const created = await tx.createMemoryCandidateEntry(input);
+    const created = await tx.createMemoryCandidateEntry(gatedInput);
     await tx.createMemoryCandidateStatusEvent({
       id: crypto.randomUUID(),
       candidate_id: created.id,
@@ -126,6 +142,18 @@ export async function preflightPromoteMemoryCandidate(
   }
   if (entry.verification_status === 'refuted') {
     denyReasons.push('candidate_refuted');
+  }
+  // Instruction-injection-flagged content is denied promotion until an
+  // explicit verification record exists. The lint is re-run on the stored
+  // content so the deny survives review_reason rewrites during advancement.
+  if (
+    entry.verification_status !== 'verified'
+    && (
+      reviewReasonHasInstructionInjectionFlag(entry.review_reason)
+      || lintInstructionInjection(entry.proposed_content).flagged
+    )
+  ) {
+    denyReasons.push('candidate_instruction_injection_flagged');
   }
   if (entry.verification_status === 'unverified') {
     deferReasons.push('candidate_requires_verification');
@@ -425,6 +453,17 @@ function isValidIsoDatetime(value: string): boolean {
   return true;
 }
 
+function appendInstructionInjectionReviewReason(
+  reviewReason: string | null | undefined,
+  reasons: readonly string[],
+): string {
+  const suffix = instructionInjectionReviewReason(reasons);
+  if (reviewReasonHasInstructionInjectionFlag(reviewReason)) return reviewReason as string;
+  return reviewReason && reviewReason.trim().length > 0
+    ? `${reviewReason}; ${suffix}`
+    : suffix;
+}
+
 function hasScopeConflict(entry: MemoryCandidateEntry): boolean {
   const targetClass = classifyTargetObjectType(entry.target_object_type);
   if (targetClass === 'work_visible') {
@@ -507,6 +546,8 @@ function formatReasonLabel(reason: MemoryCandidatePromotionPreflightReason): str
       return 'candidate requires revalidation';
     case 'candidate_refuted':
       return 'candidate verification refuted the claim';
+    case 'candidate_instruction_injection_flagged':
+      return 'candidate content is instruction-injection flagged and unverified';
     case 'candidate_possible_duplicate':
       return 'possible duplicate';
     case 'candidate_open_contradiction':
