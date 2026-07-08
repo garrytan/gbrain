@@ -13,7 +13,17 @@ import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from './derived-jobs.ts'
 import type { BrainEngine } from './engine.ts';
 import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
-import { getUnsupportedCapabilityReason, type OfflineProfile } from './offline-profile.ts';
+import { getUnsupportedCapabilityReason } from './offline-profile.ts';
+import {
+  formatEnumError,
+  getMissingRequiredParams,
+  type OperationCapability,
+  OperationError,
+  type ParamDef,
+  type ParamType,
+  paramHasType,
+  validateOperationParams as validateParamsAgainstDescriptor,
+} from './operation-params.ts';
 import { createAgentSessionActivationOperations } from './operations-agent-session-activation.ts';
 import { createAgentSessionMemoryOperations } from './operations-agent-session-memory.ts';
 import { createAssertionOperations } from './operations-assertions.ts';
@@ -134,158 +144,29 @@ function structuralNodeId(value: string): StructuralNodeId {
   return value as StructuralNodeId;
 }
 
-export type ErrorCode =
-  | 'page_not_found'
-  | 'task_not_found'
-  | 'trace_not_found'
-  | 'memory_candidate_not_found'
-  | 'invalid_params'
-  | 'embedding_failed'
-  | 'storage_error'
-  | 'write_conflict'
-  | 'bucket_not_found'
-  | 'database_error'
-  | 'unsupported_capability'
-  | 'schema_out_of_date'
-  | 'permission_denied';
+export { getMissingRequiredParams, OperationError, paramHasType } from './operation-params.ts';
+export type { ErrorCode, OperationCapability, ParamDef, ParamType } from './operation-params.ts';
 
-export class OperationError extends Error {
-  constructor(
-    public code: ErrorCode,
-    message: string,
-    public suggestion?: string,
-    public docs?: string,
-  ) {
-    super(message);
-    this.name = 'OperationError';
-  }
-
-  toJSON() {
-    return {
-      error: this.code,
-      message: this.message,
-      suggestion: this.suggestion,
-      docs: this.docs,
-    };
-  }
-}
-
-export type ParamType = 'string' | 'number' | 'boolean' | 'object' | 'array';
-export type OperationCapability = keyof OfflineProfile['capabilities'];
-
-export interface ParamDef {
-  type: ParamType | ParamType[];
-  required?: boolean;
-  nullable?: boolean;
-  description?: string;
-  compactDescription?: boolean;
-  capabilityRequired?: OperationCapability;
-  default?: unknown;
-  enum?: string[];
-  enumErrorHint?: string;
-  compactEnum?: boolean;
-  items?: ParamDef;
-}
-
-function paramHasType(paramDef: ParamDef | undefined, type: ParamType): boolean {
-  if (!paramDef) return false;
-  return Array.isArray(paramDef.type) ? paramDef.type.includes(type) : paramDef.type === type;
-}
-
+/**
+ * Registry-facing validation wrapper: layers put_page's route-first
+ * explanation over the shared descriptor-driven seam in operation-params.ts.
+ */
 export function validateOperationParams(
   operation: { name: string; params: Record<string, ParamDef> },
   params: Record<string, unknown>,
 ): Record<string, unknown> {
-  const missing = getMissingRequiredParams(operation, params);
-  if (missing.length > 0) {
-    if (operation.name === 'put_page' && missing.includes('expected_content_hash')) {
+  if (operation.name === 'put_page') {
+    const missing = getMissingRequiredParams(operation, params);
+    if (missing.includes('expected_content_hash')) {
       assertPutPageRouteFirstPrecondition(params);
     }
-    const label = missing.length === 1 ? 'parameter' : 'parameters';
-    throw new OperationError('invalid_params', `Missing required ${label}: ${missing.join(', ')}`);
   }
-
-  for (const [name, value] of Object.entries(params)) {
-    const paramDef = operation.params[name];
-    if (!paramDef || value === undefined) continue;
-    validateOperationParamValue(name, value, paramDef);
-  }
-  return params;
+  return validateParamsAgainstDescriptor(operation, params);
 }
 
 export async function dispatchOperation(ctx: OperationContext, operation: Operation, params: Record<string, unknown> | null | undefined): Promise<unknown> {
   const preparedParams = params ?? {};
   return operation.handler(ctx, validateOperationParams(operation, preparedParams));
-}
-
-function validateOperationParamValue(path: string, value: unknown, paramDef: ParamDef): void {
-  if (value === null) {
-    if (paramDef.nullable) return;
-    throw new OperationError('invalid_params', `${path} must be ${formatExpectedParamTypes(paramDef)}.`);
-  }
-
-  const types = Array.isArray(paramDef.type) ? paramDef.type : [paramDef.type];
-  const matched = types.some((type) => valueMatchesParamType(value, type));
-  if (!matched) {
-    throw new OperationError('invalid_params', `${path} must be ${formatExpectedParamTypes(paramDef)}.`);
-  }
-
-  if (typeof value === 'string' && paramDef.enum && !paramDef.enum.includes(value)) {
-    throw new OperationError('invalid_params', formatEnumParamError(path, paramDef));
-  }
-
-  const itemDef = paramDef.items;
-  if (Array.isArray(value) && paramHasType(paramDef, 'array') && itemDef) {
-    value.forEach((item, index) => {
-      validateOperationParamValue(`${path}[${index}]`, item, itemDef);
-    });
-  }
-}
-
-function formatEnumParamError(path: string, paramDef: ParamDef): string {
-  return formatEnumError(path, paramDef.enum ?? [], paramDef.enumErrorHint);
-}
-
-function formatEnumError(path: string, allowed: readonly string[], hint?: string): string {
-  const base = `${path} must be one of: ${allowed.join(', ')}`;
-  return hint ? `${base}. ${hint}` : base;
-}
-
-function valueMatchesParamType(value: unknown, type: ParamType): boolean {
-  switch (type) {
-    case 'string':
-      return typeof value === 'string';
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'boolean':
-      return typeof value === 'boolean';
-    case 'object':
-      return typeof value === 'object' && value !== null && !Array.isArray(value);
-    case 'array':
-      return Array.isArray(value);
-  }
-}
-
-function formatExpectedParamTypes(paramDef: ParamDef): string {
-  const types = Array.isArray(paramDef.type) ? paramDef.type : [paramDef.type];
-  const labels = types.map(formatExpectedParamType);
-  if (labels.length === 1) return labels[0];
-  return `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]}`;
-}
-
-function formatExpectedParamType(type: ParamType): string {
-  switch (type) {
-    case 'string':
-      return 'a string';
-    case 'number':
-      return 'a number';
-    case 'boolean':
-      return 'a boolean';
-    case 'object':
-      return 'an object';
-    case 'array':
-      return 'an array';
-  }
 }
 
 export interface Logger {
@@ -641,13 +522,6 @@ function coerceCliParamValue(key: string, value: string, paramDef: ParamDef): un
 
 function isCliNullLiteralParam(key: string): boolean {
   return key.endsWith('_content_hash') || key.endsWith('_snapshot_hash');
-}
-
-export function getMissingRequiredParams(op: Pick<Operation, 'params'>, params: Record<string, unknown>): string[] {
-  return Object.entries(op.params)
-    .filter(([, def]) => def.required)
-    .filter(([key]) => params[key] === undefined)
-    .map(([key]) => key);
 }
 
 export function formatOpUsage(op: Pick<Operation, 'name' | 'cliHints'>): string {

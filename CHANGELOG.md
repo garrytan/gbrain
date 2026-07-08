@@ -33,6 +33,15 @@ All notable changes to MBrain will be documented in this file.
 
 ### Changed
 
+- **Every operation's inputs are now validated by one shared seam.** The
+  descriptor-driven parameter validator (required/type/enum/finite-number
+  checks with identical error wording) moves out of the operations god-file
+  into a focused \`operation-params\` module that both the CLI and MCP
+  dispatch paths already flow through, plus an opt-in per-parameter trim
+  coercion that never mutates your input and can never leak into tool
+  schemas — groundwork for schema-tightening every operation without another
+  188-op rewrite.
+
 - **The deprecated context-atlas family stops taxing every session.** All 8
   legacy atlas operations are demoted to the admin tier (hidden from the
   default agent catalog; context maps and graph frontier planning are the
