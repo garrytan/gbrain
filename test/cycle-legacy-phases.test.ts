@@ -17,7 +17,7 @@
  * describes here rather than 7 nearly-identical files.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -53,7 +53,8 @@ describe('runPhaseLint — result-mapping', () => {
       const result = await runPhaseLint(brainDir, false);
       expect(result.phase).toBe('lint');
       expect(result.status).toBe('ok');
-      expect(result.summary.toLowerCase()).toContain('fix');
+      expect(result.summary.toLowerCase()).toContain('no writes');
+      expect(result.details).toMatchObject({ issues: 0, fixed: 0, mode: 'audit-only' });
       // No issues, no error envelope.
       expect(result.error).toBeUndefined();
       expect(typeof result.details).toBe('object');
@@ -92,6 +93,35 @@ describe('runPhaseLint — result-mapping', () => {
       // Summary uses "would" / "found" / "no issues" — never the post-fix
       // "applied N fixes" string, because nothing was written.
       expect(result.summary.toLowerCase()).not.toContain('applied');
+    } finally {
+      cleanupBrain();
+    }
+  });
+
+  test('audit path does not rewrite fixable markdown findings', async () => {
+    try {
+      mkdirSync(join(brainDir, 'notes'), { recursive: true });
+      const page = join(brainDir, 'notes', 'alice-example.md');
+      const original = [
+        '---',
+        'title: Alice Example',
+        'type: note',
+        'created: 2026-01-01',
+        '---',
+        '',
+        'Here is a brain page.',
+        '',
+        'Useful body.',
+        '',
+      ].join('\n');
+      writeFileSync(page, original);
+
+      const result = await runPhaseLint(brainDir, false);
+
+      expect(result.phase).toBe('lint');
+      expect(result.status).toBe('warn');
+      expect(result.details).toMatchObject({ mode: 'audit-only', fixed: 0 });
+      expect(readFileSync(page, 'utf8')).toBe(original);
     } finally {
       cleanupBrain();
     }
