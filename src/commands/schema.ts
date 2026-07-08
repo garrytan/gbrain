@@ -167,8 +167,9 @@ Resolution chain (7-tier, tier 1 trust-gated):
 
 async function runActive(_args: string[]): Promise<void> {
   const cfg = loadConfig();
-  const resolution = resolveActivePackNameOnly({ cfg, remote: false });
-  const pack = await loadActivePack({ cfg, remote: false });
+  const dbConfig = await readBrainWideSchemaPackConfig();
+  const resolution = resolveActivePackNameOnly({ cfg, remote: false, dbConfig });
+  const pack = await loadActivePack({ cfg, remote: false, dbConfig });
   console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
   console.log(`Source: ${resolution.source}`);
   console.log(`Pack identity: ${pack.identity}`);
@@ -226,7 +227,9 @@ async function runShow(args: string[]): Promise<void> {
     }
     manifest = loadPackFromFile(path);
   } else {
-    const pack = await loadActivePack({ cfg: loadConfig(), remote: false });
+    const cfg = loadConfig();
+    const dbConfig = await readBrainWideSchemaPackConfig();
+    const pack = await loadActivePack({ cfg, remote: false, dbConfig });
     manifest = pack.manifest;
   }
   if (asFilingRules) {
@@ -426,6 +429,7 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
   const connectConfig: import('../core/types.ts').EngineConfig = {
     engine: engineKind,
     database_url: (cfg as { database_url?: string }).database_url,
+    database_path: (cfg as { database_path?: string }).database_path,
   };
   const engine = await createEngine(connectConfig);
   await engine.connect(connectConfig);
@@ -433,6 +437,14 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
     return await fn(engine);
   } finally {
     await engine.disconnect();
+  }
+}
+
+async function readBrainWideSchemaPackConfig(): Promise<string | undefined> {
+  try {
+    return await withConnectedEngine(async (engine) => (await engine.getConfig('schema_pack')) ?? undefined);
+  } catch {
+    return undefined;
   }
 }
 
@@ -664,7 +676,8 @@ async function runDiffCmd(args: string[]): Promise<void> {
 async function runGraphCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const cfg = loadConfig();
-  const pack = await loadActivePack({ cfg, remote: false });
+  const dbConfig = await readBrainWideSchemaPackConfig();
+  const pack = await loadActivePack({ cfg, remote: false, dbConfig });
   if (json) {
     console.log(JSON.stringify({
       schema_version: 1,
@@ -692,7 +705,8 @@ async function runLintCmd(args: string[]): Promise<void> {
     const p = packPathByName(name);
     try { pack = p ? loadPackFromFile(p) : null; } catch { pack = null; }
   } else {
-    pack = (await loadActivePack({ cfg, remote: false })).manifest;
+    const dbConfig = await readBrainWideSchemaPackConfig();
+    pack = (await loadActivePack({ cfg, remote: false, dbConfig })).manifest;
   }
   if (!pack) {
     console.error(`Pack not found: ${name}`);
@@ -735,7 +749,8 @@ async function runExplainCmd(args: string[]): Promise<void> {
     process.exit(2);
   }
   const cfg = loadConfig();
-  const pack = await loadActivePack({ cfg, remote: false });
+  const dbConfig = await readBrainWideSchemaPackConfig();
+  const pack = await loadActivePack({ cfg, remote: false, dbConfig });
   const found = pack.manifest.page_types.find((t) => t.name === typeName);
   if (!found) {
     console.error(`Type \`${typeName}\` not in active pack \`${pack.manifest.name}\`.`);
@@ -882,14 +897,15 @@ function parseBool(raw: string | undefined): boolean | null {
   return null;
 }
 
-function pickPackName(parsed: { positional?: string[] }, args: string[]): string {
+async function pickPackName(parsed: { positional?: string[] }, args: string[]): Promise<string> {
   // Honor --pack <name> before falling back to the active pack.
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--pack') return args[i + 1] ?? '';
     if (args[i]?.startsWith('--pack=')) return args[i]!.slice('--pack='.length);
   }
   const cfg = loadConfig();
-  const resolution = resolveActivePackNameOnly({ cfg, remote: false });
+  const dbConfig = await readBrainWideSchemaPackConfig();
+  const resolution = resolveActivePackNameOnly({ cfg, remote: false, dbConfig });
   return resolution.pack_name;
 }
 
@@ -1003,7 +1019,7 @@ function runReloadCmd(args: string[]): void {
 
 async function runAddTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const positional = args.filter((a) => !a.startsWith('--'));
   const name = positional[0];
   if (!name) { console.error('Usage: gbrain schema add-type <name> --primitive <p> --prefix <dir/>'); process.exit(2); }
@@ -1039,7 +1055,7 @@ async function runAddTypeCmd(args: string[]): Promise<void> {
 
 async function runRemoveTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
   if (!name) { console.error('Usage: gbrain schema remove-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeTypeFromPack(packName, name), json); }
@@ -1048,7 +1064,7 @@ async function runRemoveTypeCmd(args: string[]): Promise<void> {
 
 async function runUpdateTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
   if (!name) { console.error('Usage: gbrain schema update-type <name> [--extractable BOOL] [--expert BOOL] [--primitive P]'); process.exit(2); }
   const patch: Record<string, unknown> = {};
@@ -1072,7 +1088,7 @@ async function runUpdateTypeCmd(args: string[]): Promise<void> {
 
 async function runAddAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 2) { console.error('Usage: gbrain schema add-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await addAliasToType(packName, pos[0]!, pos[1]!), json); }
@@ -1081,7 +1097,7 @@ async function runAddAliasCmd(args: string[]): Promise<void> {
 
 async function runRemoveAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 2) { console.error('Usage: gbrain schema remove-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await removeAliasFromType(packName, pos[0]!, pos[1]!), json); }
@@ -1090,7 +1106,7 @@ async function runRemoveAliasCmd(args: string[]): Promise<void> {
 
 async function runAddPrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 2) { console.error('Usage: gbrain schema add-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await addPrefixToType(packName, pos[0]!, pos[1]!), json); }
@@ -1099,7 +1115,7 @@ async function runAddPrefixCmd(args: string[]): Promise<void> {
 
 async function runRemovePrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 2) { console.error('Usage: gbrain schema remove-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await removePrefixFromType(packName, pos[0]!, pos[1]!), json); }
@@ -1108,7 +1124,7 @@ async function runRemovePrefixCmd(args: string[]): Promise<void> {
 
 async function runAddLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
   if (!name) { console.error('Usage: gbrain schema add-link-type <name> [--inverse <verb>] [--page-type <t>] [--target-type <t>]'); process.exit(2); }
   let inverse: string | undefined;
@@ -1128,7 +1144,7 @@ async function runAddLinkTypeCmd(args: string[]): Promise<void> {
 
 async function runRemoveLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
   if (!name) { console.error('Usage: gbrain schema remove-link-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeLinkTypeFromPack(packName, name), json); }
@@ -1137,7 +1153,7 @@ async function runRemoveLinkTypeCmd(args: string[]): Promise<void> {
 
 async function runSetExtractableCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 2) { console.error('Usage: gbrain schema set-extractable <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
@@ -1148,7 +1164,7 @@ async function runSetExtractableCmd(args: string[]): Promise<void> {
 
 async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 2) { console.error('Usage: gbrain schema set-expert-routing <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
@@ -1159,7 +1175,7 @@ async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
 
 async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
-  const packName = pickPackName({}, args);
+  const packName = await pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 1) {
     console.error('Usage: gbrain schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');

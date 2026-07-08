@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createEngine } from '../src/core/engine-factory.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 
@@ -47,6 +48,26 @@ function gbrain(
     stderr: result.stderr ?? '',
     code: result.status ?? -1,
   };
+}
+
+function writeInstalledPack(home: string, name: string, version = '1.0.0'): void {
+  const dir = join(home, '.gbrain', 'schema-packs', name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'pack.json'), JSON.stringify({
+    api_version: 'gbrain-schema-pack-v1',
+    name,
+    version,
+    description: 'test pack',
+    gbrain_min_version: '0.38.0',
+    extends: null,
+    borrow_from: [],
+    page_types: [],
+    link_types: [],
+    frontmatter_links: [],
+    takes_kinds: ['fact', 'take', 'bet', 'hunch'],
+    enrichable_types: [],
+    filing_rules: [],
+  }, null, 2), 'utf-8');
 }
 
 describe('gbrain schema CLI (Phase C)', () => {
@@ -110,6 +131,38 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Active pack:');
     expect(r.stdout).toContain('Pack identity:');
+  });
+
+  test('schema active prefers brain-wide DB config over home config', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-schema-active-db-config-'));
+    const databasePath = join(home, 'brain.pglite');
+    try {
+      writeInstalledPack(home, 'home-config-pack', '1.0.0');
+      writeInstalledPack(home, 'db-config-pack', '9.0.0');
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(
+        join(home, '.gbrain', 'config.json'),
+        JSON.stringify({ engine: 'pglite', database_path: databasePath, schema_pack: 'home-config-pack' }, null, 2),
+        'utf-8',
+      );
+
+      const engine = await createEngine({ engine: 'pglite', database_path: databasePath });
+      await engine.connect({ engine: 'pglite', database_path: databasePath });
+      try {
+        await engine.initSchema();
+        await engine.setConfig('schema_pack', 'db-config-pack');
+      } finally {
+        await engine.disconnect();
+      }
+
+      const r = gbrain(['schema', 'active'], { GBRAIN_HOME: home });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('Active pack: db-config-pack v9.0.0');
+      expect(r.stdout).toContain('Source: db-config');
+      expect(r.stdout).not.toContain('home-config-pack v1.0.0');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('schema show unknown-pack errors with hint', () => {
