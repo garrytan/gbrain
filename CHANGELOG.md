@@ -42,6 +42,14 @@ All notable changes to MBrain will be documented in this file.
   schemas — groundwork for schema-tightening every operation without another
   188-op rewrite.
 
+- **The service layer now has a map that can't go stale.** All 116 core
+  service files are assigned to ten named domains (retrieval, governance,
+  memory-inbox, agent-session, maintenance, and more), each with a one-line
+  boundary note — and a ratchet test reads the directory from disk, so any
+  new service file fails CI until someone consciously decides where it
+  belongs. Zero file moves, zero import churn: the taxonomy is the reviewed
+  blueprint for the future physical regrouping.
+
 - **The deprecated context-atlas family stops taxing every session.** All 8
   legacy atlas operations are demoted to the admin tier (hidden from the
   default agent catalog; context maps and graph frontier planning are the
