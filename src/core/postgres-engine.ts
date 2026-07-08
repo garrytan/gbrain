@@ -19,6 +19,7 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { resolveOrphanExcludeTypes } from './health-config.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
@@ -4975,6 +4976,11 @@ export class PostgresEngine implements BrainEngine {
     // SQL required both — docs now match code so users can trust the
     // number. A hub page that links out to many but has no back-references
     // is working as intended, not an orphan.
+    //
+    // Env-gated chrome exclusion (default OFF): drop machine-generated page
+    // types from the orphan count when GBRAIN_HEALTH_ORPHAN_EXCLUDE_TYPES is
+    // set. Empty list → cardinality=0 → clause is a no-op (count everything).
+    const orphanExcludeTypes = resolveOrphanExcludeTypes();
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
@@ -4989,6 +4995,8 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           AND (cardinality(${orphanExcludeTypes}::text[]) = 0
+                OR NOT (p.type = ANY(${orphanExcludeTypes}::text[])))
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
