@@ -507,7 +507,11 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'embedding_signature') AS pages_embedding_signature_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'links_extracted_at') AS pages_links_extracted_at_exists
+                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'links_extracted_at') AS pages_links_extracted_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'timeline_entries') AS timeline_entries_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'timeline_entries' AND column_name = 'event_page_id') AS timeline_event_page_id_exists
     `;
     const probe = probeRows[0]!;
 
@@ -603,6 +607,19 @@ export class PostgresEngine implements BrainEngine {
     // SCHEMA_SQL replay creates the index. v112 runs later via runMigrations
     // and is idempotent.
     const needsPagesLinksExtractedAt = probe.pages_exists && !probeCr.pages_links_extracted_at_exists;
+    // v0.42.x (v121, Life Chronicle #2390): idx_timeline_event_page +
+    // idx_timeline_event_dedup in SCHEMA_SQL reference event_page_id.
+    // `CREATE TABLE IF NOT EXISTS timeline_entries` is a no-op on pre-v121
+    // brains (won't add the column), so the blob's CREATE INDEX crashes with
+    // `column "event_page_id" does not exist` before v121 ever runs. Bootstrap
+    // adds the bare column; the FK + indexes land via v121 / the blob, both
+    // idempotent.
+    const probeTimeline = probe as {
+      timeline_entries_exists?: boolean;
+      timeline_event_page_id_exists?: boolean;
+    };
+    const needsTimelineEventPageId = !!probeTimeline.timeline_entries_exists
+      && !probeTimeline.timeline_event_page_id_exists;
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -613,7 +630,8 @@ export class PostgresEngine implements BrainEngine {
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
         && !needsPagesEmbeddingSignature
-        && !needsPagesLinksExtractedAt) return;
+        && !needsPagesLinksExtractedAt
+        && !needsTimelineEventPageId) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -858,6 +876,17 @@ export class PostgresEngine implements BrainEngine {
       // idempotent.
       await conn.unsafe(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS links_extracted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsTimelineEventPageId) {
+      // v121 (timeline_entries_event_page_id, Life Chronicle #2390): the
+      // event→timeline projection pointer. SCHEMA_SQL's partial indexes
+      // idx_timeline_event_page + idx_timeline_event_dedup reference it, so
+      // bootstrap adds the bare column before the blob's CREATE INDEX runs.
+      // The FK + indexes land via the blob and v121, both idempotent.
+      await conn.unsafe(`
+        ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
       `);
     }
   }
