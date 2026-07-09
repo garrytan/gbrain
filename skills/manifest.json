@@ -273,6 +273,16 @@
       "name": "skill-vault-capture-policy",
       "path": "skill-vault-capture-policy/SKILL.md",
       "description": "Capture durable operational learnings, new agent skills, and environment/setup changes into the Obsidian vault instead of transient chat memory."
+    },
+    {
+      "name": "playwright-cli",
+      "path": "playwright-cli/SKILL.md",
+      "description": "Automate browser interactions, test web pages and work with Playwright tests."
+    },
+    {
+      "name": "webgpu-threejs-tsl",
+      "path": "webgpu-threejs-tsl/SKILL.md",
+      "description": "Comprehensive guide for developing WebGPU-enabled Three.js applications using TSL (Three.js Shading Language). Covers WebGPU renderer setup, TSL syntax and node materials, compute "
     }
   ],
   "dependencies": {
