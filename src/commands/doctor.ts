@@ -693,31 +693,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // 5. Queue health (Postgres-only). PGLite has no minion_jobs in the same
   // shape; skip the check there with an informational message.
-  if (engine.kind === 'postgres') {
-    try {
-      // issue #1801: column is `status`, not `state` (schema.sql:780). The
-      // pre-fix query errored every run and the catch silently returned "No
-      // queue activity," so this remote/thin-client check was a no-op.
-      const rows = await engine.executeRaw<{ stalled: string | number }>(
-        `SELECT COUNT(*) AS stalled FROM minion_jobs
-          WHERE status = 'active'
-            AND started_at IS NOT NULL
-            AND started_at < NOW() - INTERVAL '1 hour'`,
-      );
-      const stalled = Number(rows[0]?.stalled ?? 0);
-      checks.push({
-        name: 'queue_health',
-        status: stalled === 0 ? 'ok' : 'warn',
-        message: stalled === 0
-          ? 'No stalled active jobs'
-          : `${stalled} active job(s) stalled > 1h — \`gbrain jobs cancel <id>\` or \`gbrain jobs retry <id>\` on the host`,
-      });
-    } catch {
-      checks.push({ name: 'queue_health', status: 'ok', message: 'No queue activity' });
-    }
-  } else {
-    checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
-  }
+  checks.push(await computeQueueHealthCheck(engine));
 
   // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
   checks.push(await computeWedgedQueueCheck(engine));
@@ -1521,6 +1497,174 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
  * Also surfaces (codex M-10): runs resolveBulkRetryOpts(process.env) at
  * startup so bad GBRAIN_BULK_* config fails at doctor time, not first-retry.
  */
+/**
+ * queue_health: Postgres Minion queue diagnostics.
+ *
+ * Includes the original stalled/depth/memory/prompt checks plus the #2557
+ * no-worker signal: old `embed-backfill` jobs waiting on a queue with no live
+ * registered worker for that queue. That catches the default deployment shape
+ * where `sync` enqueues deferred embedding work but the operator never started
+ * `gbrain jobs work` or a supervisor.
+ */
+export async function computeQueueHealthCheck(
+  engine: BrainEngine,
+  opts: {
+    waitingDepthThreshold?: number;
+    oldWaitingHours?: number;
+    readWorkers?: () => Array<{ queue: string }>;
+  } = {},
+): Promise<Check> {
+  if (engine.kind === 'pglite') {
+    return {
+      name: 'queue_health',
+      status: 'ok',
+      message: 'Skipped (PGLite — no multi-process worker surface)',
+    };
+  }
+
+  try {
+    // issue #1801: column is `status`, not `state` (schema.sql:780).
+    const stalledRows: Array<{ id: number; name: string; started_at: string }> =
+      await engine.executeRaw(
+        `SELECT id, name, started_at::text AS started_at
+           FROM minion_jobs
+          WHERE status = 'active'
+            AND started_at IS NOT NULL
+            AND started_at < now() - interval '1 hour'
+          ORDER BY started_at ASC
+          LIMIT 5`,
+      );
+
+    const threshold = opts.waitingDepthThreshold
+      ?? _resolveEnvNumber('GBRAIN_QUEUE_WAITING_THRESHOLD', 10);
+    const depthRows: Array<{ name: string; queue: string; depth: number }> =
+      await engine.executeRaw(
+        `SELECT name, queue, count(*)::int AS depth
+           FROM minion_jobs
+          WHERE status = 'waiting'
+          GROUP BY name, queue
+         HAVING count(*) > $1
+          ORDER BY depth DESC
+          LIMIT 5`,
+        [threshold],
+      );
+
+    const rssKillRows: Array<{ cnt: number }> = await engine.executeRaw(
+      `SELECT count(*)::int AS cnt
+         FROM minion_jobs
+        WHERE status IN ('dead', 'failed')
+          AND finished_at > now() - interval '24 hours'
+          AND error_text = 'aborted: watchdog'`,
+    );
+    const rssKillCount = Number(rssKillRows[0]?.cnt ?? 0);
+
+    const promptTooLongRows: Array<{ cnt: number }> = await engine.executeRaw(
+      `SELECT count(*)::int AS cnt
+         FROM minion_jobs
+        WHERE name = 'subagent'
+          AND status = 'dead'
+          AND finished_at > now() - interval '24 hours'
+          AND error_text LIKE 'prompt_too_long:%'`,
+    );
+    const promptTooLongCount = Number(promptTooLongRows[0]?.cnt ?? 0);
+
+    const oldWaitingHours = opts.oldWaitingHours
+      ?? _resolveEnvNumber('GBRAIN_QUEUE_NO_WORKER_WARN_HOURS', 1);
+    const oldWaitingRows: Array<{
+      name: string;
+      queue: string;
+      depth: number;
+      oldest_age_seconds: number;
+    }> = await engine.executeRaw(
+      `SELECT name,
+              queue,
+              count(*)::int AS depth,
+              EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_age_seconds
+         FROM minion_jobs
+        WHERE status = 'waiting'
+          AND name = 'embed-backfill'
+        GROUP BY name, queue
+       HAVING min(created_at) < now() - ($1::text::interval)
+        ORDER BY oldest_age_seconds DESC
+        LIMIT 5`,
+      [`${oldWaitingHours} hours`],
+    );
+
+    let liveWorkerQueues = new Set<string>();
+    if (oldWaitingRows.length > 0) {
+      const workers = opts.readWorkers
+        ? opts.readWorkers()
+        : (await import('../core/minions/worker-registry.ts')).readWorkers();
+      liveWorkerQueues = new Set(workers.map((w) => w.queue));
+    }
+
+    const problems: string[] = [];
+    if (stalledRows.length > 0) {
+      const sample = stalledRows
+        .map(r => `#${r.id}(${r.name})`)
+        .join(', ');
+      problems.push(
+        `${stalledRows.length} stalled-forever job(s): ${sample}. ` +
+        `Fix: gbrain jobs get <id> to inspect; gbrain jobs cancel <id> to force-kill.`
+      );
+    }
+    if (depthRows.length > 0) {
+      const sample = depthRows
+        .map(r => `${r.name}@${r.queue}=${r.depth}`)
+        .join(', ');
+      problems.push(
+        `waiting-queue depth exceeds ${threshold} for: ${sample}. ` +
+        `Fix: set maxWaiting on the submitter (or raise GBRAIN_QUEUE_WAITING_THRESHOLD).`
+      );
+    }
+    for (const row of oldWaitingRows) {
+      if (liveWorkerQueues.has(row.queue)) continue;
+      const hours = Math.max(1, Math.round(Number(row.oldest_age_seconds ?? 0) / 3600));
+      problems.push(
+        `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h ` +
+        `and no live worker is registered for that queue. ` +
+        `Start one with \`gbrain jobs work --queue ${row.queue}\` or ` +
+        `\`gbrain jobs supervisor start --queue ${row.queue}\`.`
+      );
+    }
+    if (rssKillCount > 0) {
+      problems.push(
+        `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
+        `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
+        `→ see worker_oom_loop for the cap + fix (the authoritative OOM-loop signal).`
+      );
+    }
+    if (promptTooLongCount > 0) {
+      problems.push(
+        `${promptTooLongCount} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
+        `Dream/synthesize transcripts exceeded the model's input context. ` +
+        `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
+        `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
+        `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
+      );
+    }
+
+    if (problems.length === 0) {
+      return {
+        name: 'queue_health',
+        status: 'ok',
+        message: `No stalled-forever jobs; no queue over depth ${threshold}; no old embed-backfill jobs without a worker.`,
+      };
+    }
+    return {
+      name: 'queue_health',
+      status: 'warn',
+      message: problems.join(' '),
+    };
+  } catch (e) {
+    return {
+      name: 'queue_health',
+      status: 'warn',
+      message: `queue_health scan skipped: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
 /**
  * issue #1801 — `wedged_queue` check. Surfaces the alive-but-wedged-worker
  * signature (a queue with claimable work waiting, zero live-lock active jobs,
@@ -6897,159 +7041,12 @@ export async function buildChecks(
     }
   }
 
-  // 11b. Queue health (v0.19.1 queue-resilience wave).
-  // Postgres-only because PGLite has no multi-process worker surface. Two
-  // subchecks, both cheap (single SELECT each, status-index-covered):
-  //
-  //   1. stalled-forever: any active job whose started_at is > 1h old. The
-  //      incident that motivated this release ran 90+ min before surfacing.
-  //      Surface the ID so the operator can `gbrain jobs get <id>` to inspect
-  //      or `gbrain jobs cancel <id>` to force-kill.
-  //
-  //   2. backpressure-missed: per-name waiting depth exceeds the threshold
-  //      (default 10, override via GBRAIN_QUEUE_WAITING_THRESHOLD env). Signal
-  //      that a submitter probably needs maxWaiting set. Bounded by per-name
-  //      aggregation so a single name's pile shows up clearly instead of
-  //      getting lost in the total.
-  //
-  // Not included in v0.19.1 (tracked as B7 follow-up): worker-heartbeat
-  // staleness. It needs a minion_workers table; the lock_until-on-active-jobs
-  // proxy can't distinguish "no worker" from "worker idle," and a check that
-  // cries wolf erodes trust in every other doctor check.
   progress.heartbeat('queue_health');
-  if (engine.kind === 'pglite') {
-    checks.push({
-      name: 'queue_health',
-      status: 'ok',
-      message: 'Skipped (PGLite — no multi-process worker surface)',
-    });
-  } else {
-    const queueHealthHb = startHeartbeat(progress, 'scanning queue health…');
-    try {
-      const sql = db.getConnection();
-      // Subcheck 1: stalled-forever active jobs (>1h wall-clock).
-      const stalledRows: Array<{ id: number; name: string; started_at: string }> = await sql`
-        SELECT id, name, started_at::text AS started_at
-          FROM minion_jobs
-         WHERE status = 'active'
-           AND started_at IS NOT NULL
-           AND started_at < now() - interval '1 hour'
-         ORDER BY started_at ASC
-         LIMIT 5
-      `;
-      // Subcheck 2: per-name waiting depth exceeds threshold.
-      const rawThreshold = process.env.GBRAIN_QUEUE_WAITING_THRESHOLD;
-      const parsedThreshold = rawThreshold ? parseInt(rawThreshold, 10) : 10;
-      const threshold = Number.isFinite(parsedThreshold) && parsedThreshold >= 1
-        ? parsedThreshold
-        : 10;
-      const depthRows: Array<{ name: string; queue: string; depth: number }> = await sql`
-        SELECT name, queue, count(*)::int AS depth
-          FROM minion_jobs
-         WHERE status = 'waiting'
-         GROUP BY name, queue
-        HAVING count(*) > ${threshold}
-         ORDER BY depth DESC
-         LIMIT 5
-      `;
-      // Subcheck 3 (v0.22.14): RSS-watchdog kills in the last 24h. Bare workers
-      // newly default to --max-rss 2048 (was 0); operators who run large embed
-      // or import jobs may see kills that didn't happen pre-v0.22.14. We surface
-      // a hint when this signature appears so the upgrade path is obvious.
-      // Signature: when the watchdog trips, gracefulShutdown('watchdog') aborts
-      // in-flight jobs with `new Error('watchdog')`. The worker's failJob path
-      // (worker.ts:660-664) writes `error_text = 'aborted: watchdog'` for any
-      // job in-flight at the moment of the kill.
-      //
-      // We deliberately DO NOT do a loose `ILIKE '%watchdog%'`:
-      //   1. Parent jobs that inherit `on_child_fail='fail_parent'` get
-      //      `"child job N failed: aborted: watchdog"` — counting that
-      //      double-counts (child + parent) for one watchdog event.
-      //   2. Any user error_text containing the word "watchdog" matches.
-      // Match the exact prefix `'aborted: watchdog'` to scope this purely to
-      // the worker's own kill signature.
-      const rssKillRows: Array<{ cnt: number }> = await sql`
-        SELECT count(*)::int AS cnt
-          FROM minion_jobs
-         WHERE status IN ('dead', 'failed')
-           AND finished_at > now() - interval '24 hours'
-           AND error_text = 'aborted: watchdog'
-      `;
-      const rssKillCount = rssKillRows[0]?.cnt ?? 0;
-
-      // Subcheck 4 (v0.30.2): prompt_too_long terminal failures on subagent
-      // jobs in the last 24h. The dream/synthesize phase classifies Anthropic
-      // 400 "prompt is too long" responses as UnrecoverableError so they
-      // dead-letter on first attempt instead of clogging the queue with
-      // max_stalled retries. Surface count + fix hint when present.
-      const promptTooLongRows: Array<{ cnt: number }> = await sql`
-        SELECT count(*)::int AS cnt
-          FROM minion_jobs
-         WHERE name = 'subagent'
-           AND status = 'dead'
-           AND finished_at > now() - interval '24 hours'
-           AND error_text LIKE 'prompt_too_long:%'
-      `;
-      const promptTooLongCount = promptTooLongRows[0]?.cnt ?? 0;
-
-      const problems: string[] = [];
-      if (stalledRows.length > 0) {
-        const sample = stalledRows
-          .map(r => `#${r.id}(${r.name})`)
-          .join(', ');
-        problems.push(
-          `${stalledRows.length} stalled-forever job(s): ${sample}. ` +
-          `Fix: gbrain jobs get <id> to inspect; gbrain jobs cancel <id> to force-kill.`
-        );
-      }
-      if (depthRows.length > 0) {
-        const sample = depthRows
-          .map(r => `${r.name}@${r.queue}=${r.depth}`)
-          .join(', ');
-        problems.push(
-          `waiting-queue depth exceeds ${threshold} for: ${sample}. ` +
-          `Fix: set maxWaiting on the submitter (or raise GBRAIN_QUEUE_WAITING_THRESHOLD).`
-        );
-      }
-      if (rssKillCount > 0) {
-        problems.push(
-          `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
-          `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
-          `→ see worker_oom_loop for the cap + fix (the authoritative OOM-loop signal).`
-        );
-      }
-      if (promptTooLongCount > 0) {
-        problems.push(
-          `${promptTooLongCount} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
-          `Dream/synthesize transcripts exceeded the model's input context. ` +
-          `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
-          `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
-          `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
-        );
-      }
-
-      if (problems.length === 0) {
-        checks.push({
-          name: 'queue_health',
-          status: 'ok',
-          message: `No stalled-forever jobs; no queue over depth ${threshold}.`,
-        });
-      } else {
-        checks.push({
-          name: 'queue_health',
-          status: 'warn',
-          message: problems.join(' '),
-        });
-      }
-    } catch (e) {
-      checks.push({
-        name: 'queue_health',
-        status: 'warn',
-        message: `queue_health scan skipped: ${e instanceof Error ? e.message : String(e)}`,
-      });
-    } finally {
-      queueHealthHb();
-    }
+  const queueHealthHb = startHeartbeat(progress, 'scanning queue health…');
+  try {
+    checks.push(await computeQueueHealthCheck(engine));
+  } finally {
+    queueHealthHb();
   }
 
   // 11.4 subagent_capability (v0.38 — D7; was subagent_provider in v0.31.12). Surfaces a
