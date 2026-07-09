@@ -2127,6 +2127,18 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    // Chunks that don't carry a model label (no ChunkInput builder sets one
+    // today) must fall back to the LIVE gateway model, not the build-time
+    // constant: DEFAULT_EMBEDDING_MODEL stamps 'zeroentropyai:zembed-1' onto
+    // brains configured with any other provider, recording provenance for a
+    // model that never ran. Same resolution pattern as initSchema, which
+    // bakes the correct model into the column DEFAULT for the same reason.
+    let fallbackModel: string = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const gw = await import('./ai/gateway.ts');
+      fallbackModel = gw.getEmbeddingModel() || fallbackModel;
+    } catch { /* gateway unconfigured (unit tests) — keep the constant */ }
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -2156,7 +2168,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null,
+        chunk.model || fallbackModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,

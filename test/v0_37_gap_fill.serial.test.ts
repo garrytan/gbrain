@@ -30,11 +30,16 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { withEnv } from './helpers/with-env.ts';
 
 // ─────────────────────────────────────────────────────────────────────
-// Lane A.7 — Chunk-row INSERT model default tracks defaults.ts constant
-// (not stale OpenAI literal). Pre-fix `chunk.model || 'text-embedding-3-large'`
-// in both engines; post-fix `chunk.model || DEFAULT_EMBEDDING_MODEL`.
+// Lane A.7 — Chunk-row INSERT model fallback tracks the LIVE gateway
+// model, then ai/defaults.ts (not stale OpenAI literal). History:
+// pre-v0.37 `chunk.model || 'text-embedding-3-large'`; v0.37
+// `chunk.model || DEFAULT_EMBEDDING_MODEL` — which mislabeled every
+// chunk of a brain configured with a non-ZE provider (e.g. ollama)
+// as 'zeroentropyai:zembed-1'; current: `chunk.model || <gateway
+// embedding_model>` with the constant only as the unconfigured-gateway
+// fallback.
 // ─────────────────────────────────────────────────────────────────────
-describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant', () => {
+describe('Lane A.7 — chunk-row INSERT model falls back to gateway, then defaults.ts', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -45,10 +50,21 @@ describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant',
 
   afterAll(async () => {
     await engine.disconnect();
+    // Leave the module-global gateway in the same state Lane A.8 restores
+    // to, so later lanes in this serial file see a configured gateway.
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { ...process.env },
+    });
   });
 
-  test('upsertChunks without explicit model: row stores DEFAULT_EMBEDDING_MODEL', async () => {
-    const { DEFAULT_EMBEDDING_MODEL } = await import('../src/core/ai/defaults.ts');
+  test('upsertChunks without explicit model: row stores the configured gateway model', async () => {
+    configureGateway({
+      embedding_model: 'ollama:qwen3-embedding:8b-fp16',
+      embedding_dimensions: 1536,
+      env: { ...process.env },
+    });
     await engine.putPage('test/a7', { type: 'note', title: 'A.7', compiled_truth: 'hello' });
     await engine.upsertChunks('test/a7', [
       { chunk_index: 0, chunk_text: 'hello', chunk_source: 'compiled_truth' },
@@ -56,6 +72,24 @@ describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant',
 
     const rows = await engine.executeRaw<{ model: string }>(
       `SELECT model FROM content_chunks WHERE chunk_index = 0 LIMIT 1`,
+    );
+    // Provenance regression: pre-fix this row stored DEFAULT_EMBEDDING_MODEL
+    // ('zeroentropyai:zembed-1') — a model that never produced the vectors.
+    expect(rows[0]?.model).toBe('ollama:qwen3-embedding:8b-fp16');
+  });
+
+  test('upsertChunks with gateway unconfigured: row stores DEFAULT_EMBEDDING_MODEL', async () => {
+    const { DEFAULT_EMBEDDING_MODEL } = await import('../src/core/ai/defaults.ts');
+    resetGateway();
+    await engine.putPage('test/a7-unconfigured', { type: 'note', title: 'A.7b', compiled_truth: 'world' });
+    await engine.upsertChunks('test/a7-unconfigured', [
+      { chunk_index: 0, chunk_text: 'world', chunk_source: 'compiled_truth' },
+    ]);
+
+    const rows = await engine.executeRaw<{ model: string }>(
+      `SELECT cc.model FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+       WHERE p.slug = 'test/a7-unconfigured' LIMIT 1`,
     );
     expect(rows[0]?.model).toBe(DEFAULT_EMBEDDING_MODEL);
     // CDX2-4 regression: would have been 'text-embedding-3-large'
