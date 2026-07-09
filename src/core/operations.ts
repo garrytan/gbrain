@@ -2164,14 +2164,27 @@ const add_timeline_entry: Operation = {
 
 const get_timeline: Operation = {
   name: 'get_timeline',
-  description: 'Get timeline entries for a page',
+  description: 'Get timeline entries for a page, optionally filtered by date window',
   params: {
     slug: { type: 'string', required: true },
+    after: { type: 'string', description: 'Return entries on or after this date (YYYY-MM-DD)' },
+    before: { type: 'string', description: 'Return entries on or before this date (YYYY-MM-DD)' },
+    since: { type: 'string', description: 'Alias for after; accepted for agent callers' },
+    until: { type: 'string', description: 'Alias for before; accepted for agent callers' },
+    limit: { type: 'number', description: 'Maximum number of timeline entries to return' },
   },
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
-    return ctx.engine.getTimeline(p.slug as string, sourceScopeOpts(ctx));
+    const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
+    const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
+    const limit = typeof p.limit === 'number' ? p.limit : undefined;
+    return ctx.engine.getTimeline(p.slug as string, {
+      ...sourceScopeOpts(ctx),
+      ...(after ? { after } : {}),
+      ...(before ? { before } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },
