@@ -67,7 +67,16 @@ export async function getLatestProfile(
   sql += ` ORDER BY generated_at DESC LIMIT 1`;
 
   const rows = await engine.executeRaw<CalibrationProfileRow>(sql, params);
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  // LOCAL PATCH (Vijith 2026-07-09): `calibration_profiles.id` is BIGSERIAL
+  // (int8). postgres.js is configured with `types: { bigint: postgres.BigInt }`
+  // (postgres-engine.ts), so it arrives as a JS BigInt, which JSON.stringify
+  // cannot serialize — crashing both the MCP response (mcp/dispatch.ts) and the
+  // CLI --json path whenever a profile row EXISTS (zero-row case returns null and
+  // never trips it). Coerce to Number, matching the row-mapper convention
+  // (takeRowToTake: `id: Number(row.id)`). RE-APPLY after gbrain upgrade.
+  return { ...row, id: Number((row as { id?: unknown }).id) };
 }
 
 /** Human format the profile for terminal output. */

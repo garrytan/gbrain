@@ -32,6 +32,7 @@ import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
+import { DEFAULT_USER_HOLDER } from '../core/cycle/emotional-weight.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
@@ -411,6 +412,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // than silently binding loopback only.
   const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
+
+  // LOCAL PATCH (Vijith 2026-07-09): the /mcp takes-holder allow-list fallback
+  // must include THIS brain's own user holder, not just 'world'. OAuth clients
+  // never carry a per-token takes_holders permission (oauth-provider.verifyAccessToken
+  // does not set AuthInfo.takesHoldersAllowList), so the `?? ['world']` fallback
+  // below is what EVERY OAuth MCP call actually uses. On this solo brain every take
+  // is held by emotional_weight.user_holder ('people/vijith'), so a ['world']-only
+  // fallback filtered out 100% of takes from takes_list/takes_search/takes_scorecard/
+  // takes_calibration while grade_takes (a cycle phase calling engine.listTakes
+  // directly, unfiltered) still saw all of them. RE-APPLY after gbrain upgrade.
+  const userHolder = (await engine.getConfig('emotional_weight.user_holder')) || DEFAULT_USER_HOLDER;
+  const defaultTakesHolders = userHolder === 'world' ? ['world'] : ['world', userHolder];
 
   if (logFullParams) {
     console.error(
@@ -1612,7 +1625,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // persistence + SSE broadcast) stay here; the dispatcher returns the
       // ToolResult and we read isError + _meta to pick the right branch.
       const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
-        ?? ['world'];
+        ?? defaultTakesHolders;
       // v0.34.1 (#861, D13): AuthInfo.sourceId is now a real typed field
       // populated from oauth_clients.source_id (migration v60 backfilled
       // NULL → 'default'). Pre-fix this site cast through AuthInfo and
