@@ -66,15 +66,11 @@ export async function runMigrateOnlyCore(opts?: { timeoutMs?: number }): Promise
 
   // configureGateway BEFORE initSchema (init.ts B.3): a schema bump on a brain
   // whose file config is missing embedding fields must not fall through to
-  // stale hardcoded fallbacks. loadConfig already merged env; propagate it.
+  // stale hardcoded fallbacks. Route through the adapter so file-plane keys
+  // and provider base URLs follow the same precedence as the runtime path.
   const { configureGateway } = await import('../../core/ai/gateway.ts');
-  configureGateway({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    env: { ...process.env },
-  });
+  const { buildGatewayConfig } = await import('../../core/ai/build-gateway-config.ts');
+  configureGateway(buildGatewayConfig(config));
 
   const timeoutMs = opts?.timeoutMs ?? MIGRATE_ONLY_TIMEOUT_MS;
   const engine = await createEngine(toEngineConfig(config));

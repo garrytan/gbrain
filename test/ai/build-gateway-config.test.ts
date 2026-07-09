@@ -19,16 +19,26 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { buildGatewayConfig } from '../../src/cli.ts';
+import { buildGatewayConfig } from '../../src/core/ai/build-gateway-config.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
 const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
   { envVar: 'LLAMA_SERVER_BASE_URL', recipeId: 'llama-server' },
+  { envVar: 'LLAMA_SERVER_RERANKER_BASE_URL', recipeId: 'llama-server-reranker' },
   { envVar: 'OLLAMA_BASE_URL', recipeId: 'ollama' },
   { envVar: 'LMSTUDIO_BASE_URL', recipeId: 'lmstudio' },
   { envVar: 'LITELLM_BASE_URL', recipeId: 'litellm' },
   { envVar: 'OPENROUTER_BASE_URL', recipeId: 'openrouter' },
+];
+
+const API_KEY_PASSTHROUGHS: Array<{
+  configKey: 'openai_api_key' | 'anthropic_api_key' | 'zeroentropy_api_key';
+  envVar: 'OPENAI_API_KEY' | 'ANTHROPIC_API_KEY' | 'ZEROENTROPY_API_KEY';
+}> = [
+  { configKey: 'openai_api_key', envVar: 'OPENAI_API_KEY' },
+  { configKey: 'anthropic_api_key', envVar: 'ANTHROPIC_API_KEY' },
+  { configKey: 'zeroentropy_api_key', envVar: 'ZEROENTROPY_API_KEY' },
 ];
 
 const TEST_VALUE = 'http://proxy.example.test/v1';
@@ -44,6 +54,14 @@ function envFor(target: { envVar: string } | null): Record<string, string | unde
   const overrides: Record<string, string | undefined> = {};
   for (const { envVar } of PASSTHROUGHS) {
     overrides[envVar] = target?.envVar === envVar ? TEST_VALUE : undefined;
+  }
+  return overrides;
+}
+
+function keyEnvFor(target: { envVar: string } | null): Record<string, string | undefined> {
+  const overrides: Record<string, string | undefined> = {};
+  for (const { envVar } of API_KEY_PASSTHROUGHS) {
+    overrides[envVar] = target?.envVar === envVar ? 'key-from-env' : undefined;
   }
   return overrides;
 }
@@ -73,15 +91,36 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
     });
   });
 
-  test('caller-provided provider_base_urls override env (config wins)', async () => {
-    await withEnv(
-      { ...envFor(null), OPENROUTER_BASE_URL: 'http://env.example/v1' },
-      async () => {
+  for (const passthrough of PASSTHROUGHS) {
+    test(`caller-provided provider_base_urls override ${passthrough.envVar} (config wins)`, async () => {
+      await withEnv(envFor(passthrough), async () => {
         const cfg = buildGatewayConfig({
-          provider_base_urls: { openrouter: 'http://config.example/v1' },
+          provider_base_urls: { [passthrough.recipeId]: 'http://config.example/v1' },
         } as unknown as GBrainConfig);
-        expect(cfg.base_urls?.openrouter).toBe('http://config.example/v1');
-      },
-    );
-  });
+        expect(cfg.base_urls?.[passthrough.recipeId]).toBe('http://config.example/v1');
+      });
+    });
+  }
+});
+
+describe('buildGatewayConfig file-plane API key passthrough', () => {
+  for (const passthrough of API_KEY_PASSTHROUGHS) {
+    test(`${passthrough.configKey} maps into gateway env ${passthrough.envVar}`, async () => {
+      await withEnv(keyEnvFor(null), async () => {
+        const cfg = buildGatewayConfig({
+          [passthrough.configKey]: 'key-from-config',
+        } as unknown as GBrainConfig);
+        expect(cfg.env?.[passthrough.envVar]).toBe('key-from-config');
+      });
+    });
+
+    test(`process env ${passthrough.envVar} wins over ${passthrough.configKey}`, async () => {
+      await withEnv(keyEnvFor(passthrough), async () => {
+        const cfg = buildGatewayConfig({
+          [passthrough.configKey]: 'key-from-config',
+        } as unknown as GBrainConfig);
+        expect(cfg.env?.[passthrough.envVar]).toBe('key-from-env');
+      });
+    });
+  }
 });
