@@ -73,7 +73,11 @@ describe('gbrain schema CLI (Phase C)', () => {
     // `conversation` and `atom` into gbrain-base.
     // v0.41.23.0: extended to 25 by adding `extract_receipt` for the
     // unified extract receipt-writer surface (D-EXTRACT-19 belt+suspenders).
-    expect(r.stdout).toContain('Page types (25)');
+    // v0.42.56.0 (#2390): extended to 27 by adding the Life Chronicle
+    // `event` + `diary` temporal types (life/events/, life/diary/).
+    expect(r.stdout).toContain('Page types (27)');
+    expect(r.stdout).toContain('event :: temporal');
+    expect(r.stdout).toContain('diary :: temporal');
     expect(r.stdout).toContain('Link verbs (12)');
     expect(r.stdout).toContain('Takes kinds: fact, take, bet, hunch');
     expect(r.stdout).toContain('person :: entity');

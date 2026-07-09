@@ -466,6 +466,9 @@ const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageT
   { prefixes: ['/cal/', '/calendar/'], type: 'calendar-event' },
   { prefixes: ['/notes/', '/note/'], type: 'note' },
   { prefixes: ['/meetings/', '/meeting/'], type: 'meeting' },
+  // v0.42.x — Life Chronicle (#2390): timeline events + thought diary.
+  { prefixes: ['/life/events/'], type: 'event' },
+  { prefixes: ['/life/diary/'], type: 'diary' },
 ];
 
 function inferType(filePath?: string): PageType {

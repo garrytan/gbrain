@@ -1504,6 +1504,25 @@ export async function registerBuiltinHandlers(
     return result;
   });
 
+  // v0.42.x (#2390) — Life Chronicle event extraction. NOT protected (bounded
+  // LLM spend per page; no shell). Enqueued by the put_page chronicle backstop
+  // and by `gbrain chronicle backfill`. Idempotent (content-addressed event
+  // slugs + projection upsert), so a retry re-runs to the same state.
+  worker.register('chronicle_extract', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : undefined;
+    if (!slug) throw new Error('chronicle_extract job requires data.slug');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    const { runChronicleExtract } = await import('../core/chronicle/extract-events.ts');
+    const { chronicleTz } = await import('../core/chronicle/config.ts');
+    const tz = await chronicleTz(engine);
+    return await runChronicleExtract(engine, {
+      slug,
+      sourceId,
+      tz,
+      signal: (job as { signal?: AbortSignal }).signal,
+    });
+  });
+
   // v0.41.39 (#1700) — enrich. NOT in PROTECTED_JOB_NAMES: per-call cost is
   // bounded by data.maxCostUsd (default DEFAULT_MAX_COST_USD) and the handler
   // re-creates the BudgetTracker in its own process. BudgetExhausted is caught

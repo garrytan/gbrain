@@ -538,6 +538,33 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'timeline_dedup_index', status: 'warn', message: 'Could not check idx_timeline_dedup shape' });
   }
 
+  // v0.42.x — Life Chronicle (#2390): orphaned event projections. Reads already
+  // hide projections whose event page is soft-deleted (read-time correctness);
+  // this always-run probe surfaces the cleanup backlog. Keyed off the real
+  // schema (event_page_id), NOT a migration verify-hook, per
+  // migration-verify-hook-never-runs-on-stamped-brains.
+  try {
+    const orphans = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM timeline_entries te
+       JOIN pages ep ON ep.id = te.event_page_id
+       WHERE te.event_page_id IS NOT NULL AND ep.deleted_at IS NOT NULL`,
+    );
+    const n = Number(orphans[0]?.n ?? 0);
+    checks.push(
+      n === 0
+        ? { name: 'chronicle_projection_health', status: 'ok', message: 'No orphaned event projections' }
+        : {
+            name: 'chronicle_projection_health',
+            status: 'warn',
+            message:
+              `${n} timeline projection(s) point to soft-deleted event pages ` +
+              '(hidden at read time; clean up with `gbrain integrity auto`).',
+          },
+    );
+  } catch {
+    checks.push({ name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' });
+  }
+
   // 3. Brain score
   try {
     const health = await engine.getHealth();

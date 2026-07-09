@@ -85,7 +85,12 @@ export async function runServe(
     const ttlIdx = args.indexOf('--token-ttl');
     const tokenTtl = ttlIdx >= 0 ? parseInt(args[ttlIdx + 1]) || 3600 : 3600;
 
-    const enableDcr = args.includes('--enable-dcr');
+    // #1353: --enable-dcr-insecure opts into the consent-bypassing
+    // client_credentials grant on the DCR path. It implies --enable-dcr (you
+    // can't allow insecure DCR clients without DCR). Plain --enable-dcr keeps
+    // the secure default: DCR clients are authorization_code (consent-bearing).
+    const enableDcrInsecure = args.includes('--enable-dcr-insecure');
+    const enableDcr = args.includes('--enable-dcr') || enableDcrInsecure;
 
     const publicUrlIdx = args.indexOf('--public-url');
     const publicUrl = publicUrlIdx >= 0 ? args[publicUrlIdx + 1] : undefined;
@@ -114,7 +119,7 @@ export async function runServe(
     const suppressBootstrapToken = args.includes('--suppress-bootstrap-token');
 
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind, suppressBootstrapToken });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken });
     return;
   }
 
