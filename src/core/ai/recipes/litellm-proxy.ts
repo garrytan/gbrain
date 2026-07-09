@@ -40,6 +40,30 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    // LiteLLM exposes a rerank endpoint at /v1/rerank that normalizes Cohere /
+    // Voyage / Jina / etc. to the same wire shape gbrain's gateway.rerank()
+    // already speaks (the ZeroEntropy/llama.cpp contract):
+    //   { model, query, documents, top_n } → { results: [{ index, relevance_score }] }
+    // So any rerank model the user registers in their LiteLLM config is reachable
+    // via `gbrain config set search.reranker.model litellm:<model-name>` with no
+    // request/response adapter — same as embeddings ride the proxy today.
+    reranker: {
+      models: [], // user-provided; whatever rerank models the proxy serves
+      // No canonical default — the proxy defines its own model ids. The user
+      // sets search.reranker.model explicitly (mirrors the embedding touchpoint's
+      // user_provided_models contract).
+      default_model: '',
+      // The proxied backend bills (Cohere/Voyage/…); gbrain can't know the rate
+      // from here. Declare 0 so `--max-cost` callers don't hard-fail at the
+      // recipe layer — real cost is tracked by the proxy / upstream provider.
+      cost_per_1m_tokens_usd: 0,
+      price_last_verified: '2026-06-27',
+      max_payload_bytes: 5_000_000,
+      // Leaf path. base_url_default is 'http://localhost:4000' (no /v1 suffix),
+      // so the gateway concatenates to 'http://localhost:4000/v1/rerank' —
+      // LiteLLM's OpenAI-style rerank route.
+      path: '/v1/rerank',
+    },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>. For rerank: register a rerank model in LiteLLM and set search.reranker.model litellm:<model-name>.',
 };
