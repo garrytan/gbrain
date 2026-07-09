@@ -28,6 +28,12 @@ surfaces may be imported/embedded: `people/`, `companies/`, `projects/`,
 ledgers, and review state are filesystem/git evidence only. They must never be
 imported, searched, or embedded by `gbrain`.
 
+The Dreams workflow is engine-neutral. GBrain defaults to PGLite, and larger
+deployments may use Postgres; Dreams helpers must not open either database
+directly, call `psql`, read PGLite files, or branch on `DATABASE_URL`. All
+index/retrieval checks go through the active `gbrain` CLI/operation layer so
+the configured engine owns PGLite/Postgres behavior.
+
 The agent, not the operator, owns the preserve-vs-summarize decision during `$dreams`.
 Explicit markers such as `memory_intent: preserve-full` are optional overrides
 for manual drafts, not required input. If the operator says a note should be
@@ -370,19 +376,24 @@ curated timeline source_hash -> review-ledger row -> archived draft file
 For this to work at scale, every applied non-safety row must carry direct
 provenance fields: `archived_path`, `source_excerpt_summary`, and, for curated
 memory rows, `target_timeline_entry` with a source ref matching the row hash.
-After the ledger row and archive move exist, index the lookup layer into
-Postgres:
+After the ledger row and archive move exist, index the engine-backed lookup
+layer when the active `gbrain` installation exposes dedicated source-evidence
+lookup:
 
 ```bash
 gbrain evidence index-ledger --brain-repo ~/brain --source <source_id> --session "$session" --include-archive-excerpts
 ```
 
-This mutates only the `source_evidence` lookup tables. It does not add archive
-or inbox content to `pages`, `content_chunks`, embeddings, or normal retrieval.
-The indexer must store target refs for each allowlisted `targets[]` /
-`target_actions[].path` value, so old and future reviewed rows can be found by
+This must use the configured GBrain engine (PGLite or Postgres) and mutate only
+dedicated source-evidence lookup state. It does not add archive or inbox content
+to `pages`, `content_chunks`, embeddings, or normal retrieval. The indexer must
+store target refs for each allowlisted `targets[]` / `target_actions[].path`
+value, so old and future reviewed rows can be found by
 `get_evidence({target_slug})` even when the caller does not know the original
-source hash.
+source hash. If the active upstream build does not yet expose this lookup API,
+preserve the same ledger/archive/timeline refs for later backfill and report the
+missing evidence lookup as an install capability gap; do not replace it with
+archive/inbox sync, import, or semantic search.
 
 ## Memory Handling Modes
 
@@ -875,16 +886,20 @@ recomputes the same audit and rejects stale or hand-edited summary values.
      path that indexes `~/brain/archive/**`, `~/brain/inbox/**`,
      `~/brain/raw/**`, or other non-allowlisted paths; they are git/filesystem
      evidence only.
-   - After archive moves are complete, update the Postgres evidence lookup
-     layer for this session:
+   - After archive moves are complete, update the engine-backed evidence lookup
+     layer for this session when the active `gbrain` installation exposes it:
 
      ```bash
      gbrain evidence index-ledger --brain-repo ~/brain --source <source_id> --session "$session" --include-archive-excerpts
      ```
 
-     This is the only supported archive drilldown indexing path. Do not replace
-     it with `gbrain sync`, `gbrain import`, or semantic search over archive
-     files.
+     This is the only supported archive drilldown indexing path. It must go
+     through the configured GBrain engine (PGLite default or Postgres) and must
+     not be reimplemented in Dreams helpers with direct DB access. Do not
+     replace it with `gbrain sync`, `gbrain import`, or semantic search over
+     archive files. If this command is unavailable in the active upstream build,
+     keep the ledger/archive/timeline refs backfillable and call out the missing
+     evidence lookup capability in the final report.
    - The evidence index is complete only if target-based lookup works for
      curated rows. Each allowlisted `targets[]` / `target_actions[].path` value
      written in the session ledger must become discoverable through
@@ -1028,7 +1043,10 @@ recomputes the same audit and rejects stale or hand-edited summary values.
        for one changed curated target that had a non-safety ledger row, verifying
        that reviewed provenance is reachable by target slug without searching
        `inbox/` or `archive/`. If only source-note rows changed, smoke the exact
-       ref/hash instead with `gbrain evidence <ref> --json`.
+       ref/hash instead with `gbrain evidence <ref> --json`. If the active
+       upstream build does not expose evidence lookup yet, verify the
+       ledger/archive/timeline refs with the validators and report that gap
+       explicitly; do not fall back to semantic archive search.
      - `query` with `include_meta=true` for one semantic/context target, then
        inspect whether vector search ran and which embedding column was used;
        if the active Codex MCP schema does not expose `include_meta`, run the

@@ -32,4 +32,16 @@ assert_includes(
   "session-owner launches must advance as a rolling wave"
 )
 
+assert_includes(
+  body,
+  "GBrain defaults to PGLite",
+  "Dreams skill must document PGLite default and avoid Postgres-only assumptions"
+)
+
+assert_includes(
+  body,
+  "configured GBrain engine (PGLite default or Postgres)",
+  "Dreams skill must route evidence lookup through the active engine boundary"
+)
+
 puts "Dreams skill orchestration contract regression tests passed"

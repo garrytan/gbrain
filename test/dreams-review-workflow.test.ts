@@ -89,6 +89,9 @@ describe('Dreams review workflow skill', () => {
     expect(skill).toContain('proposal mirrors');
     expect(skill).toContain('indexed_at');
     expect(skill).toContain('evidence lookup');
+    expect(skill).toContain('GBrain defaults to PGLite');
+    expect(skill).toContain('configured GBrain engine (PGLite default or Postgres)');
+    expect(skill).not.toContain('Postgres evidence lookup');
     expect(skill).toContain('validate-review-ledger.rb');
     expect(skill).toContain('validate-session-owner-reports.rb');
     expect(skill).toContain('validate-curated-pages.rb');

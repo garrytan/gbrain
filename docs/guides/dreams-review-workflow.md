@@ -105,10 +105,12 @@ curated target slug -> source evidence refs -> review ledger row -> archived dra
 
 When a deployment has a dedicated source-evidence lookup, reviewed rows should
 be indexed by target slug and source ref so a future agent can hydrate
-provenance without searching archive or inbox content. If the deployment only
-has page provenance and search-result evidence, keep the same source refs in
-the curated timeline and review ledger so a later evidence index can backfill
-the chain.
+provenance without searching archive or inbox content. The lookup belongs behind
+the normal GBrain engine boundary: PGLite is the default install, Postgres is the
+scale path, and Dreams should not choose or open either database directly. If
+the deployment only has page provenance and search-result evidence, keep the
+same source refs in the curated timeline and review ledger so a later evidence
+index can backfill the chain.
 
 ## Temporal Metadata
 
