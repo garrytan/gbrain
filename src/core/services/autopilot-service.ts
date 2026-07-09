@@ -143,7 +143,12 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
       max_waiting: 1,
       timeout_ms: config.cycle_timeout_ms,
     });
-    if (result.status === 'deduped' || result.status === 'coalesced') {
+    const shouldRunExistingInline = Boolean(
+      dreamRunner
+        && (result.status === 'deduped' || result.status === 'coalesced')
+        && isInlineClaimableJob(result.job),
+    );
+    if ((result.status === 'deduped' || result.status === 'coalesced') && !shouldRunExistingInline) {
       return { status: result.status, job: result.job };
     }
     if (!dreamRunner) {
@@ -209,6 +214,9 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
           throw error;
         }
       }
+    }
+    if (result.status === 'deduped' || result.status === 'coalesced') {
+      return { status: result.status, job: result.job };
     }
     const dreamResult = await dreamRunner(dreamInput);
     return { status: 'submitted', job: result.job, dream_result: dreamResult };
@@ -371,6 +379,10 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
       };
     },
   };
+}
+
+function isInlineClaimableJob(job: Record<string, unknown>): boolean {
+  return job.status === 'waiting';
 }
 
 function renderInstallProfile(input: AutopilotInstallProfileInput): AutopilotInstallProfile {

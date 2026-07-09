@@ -164,6 +164,104 @@ describe('autopilot service', () => {
     ]);
   });
 
+  test('run-once executes a coalesced waiting job when an inline dream runner is configured', async () => {
+    const { createAutopilotService } = await import('../src/core/services/autopilot-service.ts');
+    const dreamInputs: Array<Record<string, unknown>> = [];
+    const completedJobs: Array<Record<string, unknown>> = [];
+    const service = createAutopilotService({
+      now: () => '2026-05-20T12:07:30.000Z',
+      slotFor: () => '2026-05-20T12:00Z',
+      getConfig: async () => ({ enabled: true, mode: 'cron' }),
+      setConfig: async () => {},
+      runtime: {
+        sweepTimedOutJobs: async () => [],
+        enqueueJob: async (job: Record<string, unknown>) => ({
+          status: 'coalesced',
+          job: { id: 'job:stale-autopilot', status: 'waiting', ...job },
+        }),
+        claimJob: async (input: Record<string, unknown>) => ({
+          id: input.job_id,
+          status: 'active',
+          lock_token: 'lock-token:stale-autopilot',
+        }),
+        completeJob: async (input: Record<string, unknown>) => {
+          completedJobs.push(input);
+          return { id: input.job_id, status: 'completed', result_json: input.result_json };
+        },
+        failJob: async (input: Record<string, unknown>) => ({
+          id: input.job_id,
+          status: 'failed',
+          failure_class: input.failure_class,
+          last_error: input.message,
+        }),
+      },
+      dreamRunner: async (input) => {
+        dreamInputs.push(input as Record<string, unknown>);
+        return { status: 'ok', phases: [] };
+      },
+    });
+
+    const result = await service.runOnce({ requested_by: 'cli' });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      job: { id: 'job:stale-autopilot', status: 'completed' },
+      dream_result: { status: 'ok' },
+    });
+    expect(dreamInputs).toHaveLength(1);
+    expect(completedJobs).toEqual([
+      expect.objectContaining({
+        job_id: 'job:stale-autopilot',
+        result_json: expect.objectContaining({
+          dream_result: expect.objectContaining({ status: 'ok' }),
+        }),
+      }),
+    ]);
+  });
+
+  test('run-once executes a deduped waiting job when an inline dream runner is configured', async () => {
+    const { createAutopilotService } = await import('../src/core/services/autopilot-service.ts');
+    const completedJobs: Array<Record<string, unknown>> = [];
+    const service = createAutopilotService({
+      now: () => '2026-05-20T12:07:30.000Z',
+      slotFor: () => '2026-05-20T12:00Z',
+      getConfig: async () => ({ enabled: true, mode: 'cron' }),
+      setConfig: async () => {},
+      runtime: {
+        sweepTimedOutJobs: async () => [],
+        enqueueJob: async (job: Record<string, unknown>) => ({
+          status: 'deduped',
+          job: { id: 'job:deduped-waiting-autopilot', status: 'waiting', ...job },
+        }),
+        claimJob: async (input: Record<string, unknown>) => ({
+          id: input.job_id,
+          status: 'active',
+          lock_token: 'lock-token:deduped-autopilot',
+        }),
+        completeJob: async (input: Record<string, unknown>) => {
+          completedJobs.push(input);
+          return { id: input.job_id, status: 'completed', result_json: input.result_json };
+        },
+        failJob: async (input: Record<string, unknown>) => ({
+          id: input.job_id,
+          status: 'failed',
+          failure_class: input.failure_class,
+          last_error: input.message,
+        }),
+      },
+      dreamRunner: async () => ({ status: 'ok', phases: [] }),
+    });
+
+    const result = await service.runOnce({ requested_by: 'cli' });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      job: { id: 'job:deduped-waiting-autopilot', status: 'completed' },
+      dream_result: { status: 'ok' },
+    });
+    expect(completedJobs).toHaveLength(1);
+  });
+
   test('inline dream runner failures mark the durable job failed with a valid failure class', async () => {
     const harness = await createHarness({
       dreamRunner: async () => {

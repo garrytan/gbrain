@@ -82,12 +82,16 @@ function autopilotRunScriptPath(home: string): string {
 function renderAutopilotRunScript(mbrainPath: string, home: string): string {
   const logDir = shellQuote(join(home, '.mbrain', 'logs'));
   const command = shellQuote(mbrainPath);
+  const configFile = configPath();
   return [
     '#!/bin/sh',
     'set -eu',
     `AUTOPILOT_LOG_MAX_BYTES=${AUTOPILOT_LOG_MAX_BYTES}`,
     `AUTOPILOT_LOG_ROTATE_KEEP=${AUTOPILOT_LOG_ROTATE_KEEP}`,
     `LOG_DIR=${logDir}`,
+    `export HOME=${shellQuote(home)}`,
+    `export MBRAIN_CONFIG_DIR=${shellQuote(dirname(configFile))}`,
+    `export MBRAIN_CONFIG_PATH=${shellQuote(configFile)}`,
     'OUT_LOG="$LOG_DIR/autopilot.out.log"',
     'ERR_LOG="$LOG_DIR/autopilot.err.log"',
     'mkdir -p "$LOG_DIR"',

@@ -175,6 +175,8 @@ describe('applyAutopilotSchedule (launchd)', () => {
     expect(script).toContain('rotate_log "$OUT_LOG"');
     expect(script).toContain('rotate_log "$ERR_LOG"');
     expect(script).toContain('exec >> "$OUT_LOG" 2>> "$ERR_LOG"');
+    expect(script).toContain(`export HOME='${tempHome}'`);
+    expect(script).toContain(`export MBRAIN_CONFIG_PATH='${join(tempHome, '.mbrain', 'config.json')}'`);
     expect(script).toContain("exec '/usr/local/bin/mbrain' autopilot run-once");
 
     expect(calls.some((call) => call.file === 'launchctl' && call.args[0] === 'load')).toBe(true);
@@ -251,6 +253,8 @@ describe('applyAutopilotSchedule (cron)', () => {
     expect(written).toContain(AUTOPILOT_CRON_MARKER_END);
     const script = readFileSync(join(tempHome, '.mbrain', 'bin', 'autopilot-run-once.sh'), 'utf-8');
     expect(script).toContain('AUTOPILOT_LOG_MAX_BYTES=1048576');
+    expect(script).toContain(`export HOME='${tempHome}'`);
+    expect(script).toContain(`export MBRAIN_CONFIG_PATH='${join(tempHome, '.mbrain', 'config.json')}'`);
     expect(script).toContain("exec '/usr/local/bin/mbrain' autopilot run-once");
 
     const config = readBrainConfig();
@@ -346,6 +350,32 @@ describe('applyAutopilotSchedule (cron)', () => {
 });
 
 describe('autopilot scheduler wrapper', () => {
+  test('pins HOME and MBRAIN_CONFIG_PATH for stripped scheduler environments', () => {
+    writeBrainConfig();
+    const fakeMbrain = join(tempHome, 'mbrain-env-check');
+    writeFileSync(fakeMbrain, [
+      '#!/bin/sh',
+      `test "$HOME" = '${tempHome}'`,
+      `test "$MBRAIN_CONFIG_PATH" = '${join(tempHome, '.mbrain', 'config.json')}'`,
+      'echo "config:$MBRAIN_CONFIG_PATH"',
+      '',
+    ].join('\n'));
+    chmodSync(fakeMbrain, 0o700);
+    const { exec } = createExecRecorder();
+    const plan = planAutopilotSchedule({
+      platform: 'darwin',
+      home: tempHome,
+      execPath: fakeMbrain,
+    });
+    applyAutopilotSchedule(plan, { home: tempHome, exec });
+
+    const scriptPath = join(tempHome, '.mbrain', 'bin', 'autopilot-run-once.sh');
+    execFileSync(scriptPath, { env: { HOME: join(tempHome, 'wrong-home'), PATH: process.env.PATH ?? '' } });
+
+    expect(readFileSync(join(tempHome, '.mbrain', 'logs', 'autopilot.out.log'), 'utf-8'))
+      .toContain(`config:${join(tempHome, '.mbrain', 'config.json')}`);
+  });
+
   test('rotates logs, keeps three generations, and appends command stdout and stderr', () => {
     writeBrainConfig();
     const fakeMbrain = join(tempHome, 'mbrain-fake');
