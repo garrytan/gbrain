@@ -1,0 +1,14 @@
+// Routing eval fixtures for skills/obsidian-gbrain-safe-index.
+// Positive cases: realistic user phrasings that should resolve to this skill.
+{"intent": "connect my Obsidian vault to gbrain", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "import my vault into gbrain without embeddings first", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "sync my Obsidian vault with gbrain", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "capture this new skill in my vault", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "embed gbrain after I update the vault", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "is gbrain synced with my Obsidian vault", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "safe way to index my notes into gbrain without spending money", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "I want to import my markdown vault to gbrain first, no embeddings", "expected_skill": "obsidian-gbrain-safe-index"}
+// Negative cases: related but owned by other skills. Assert NO route to this skill.
+{"intent": "harvest this skill into gbrain", "expected_skill": null}
+{"intent": "set up gbrain from scratch", "expected_skill": null}
+{"intent": "migrate my notes from Notion to gbrain", "expected_skill": null}
