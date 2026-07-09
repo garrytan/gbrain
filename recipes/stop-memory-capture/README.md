@@ -7,6 +7,7 @@ It is intentionally conservative:
 
 - raw local evidence is written under `~/.gbrain/inbox/auto`;
 - a redacted review draft is written under `~/brain/inbox/auto/YYYY-MM-DD`;
+- raw, state, and review-draft files are written with owner-only permissions;
 - no curated pages are created;
 - no `gbrain sync`, commit, or push is run.
 
@@ -50,11 +51,16 @@ multiple Stop/UserPrompt/SubagentStop hook events.
 
 ## Safety Boundary
 
-The script redacts home-directory prefixes and common token/private-key shapes
-before writing the review draft. It omits `cwd` from review drafts by default
-because repository and folder names can identify private work. The raw evidence
-stays local and should not be imported, embedded, committed, or shared by
-default.
+The script redacts home-directory prefixes, common environment-secret
+assignments, database connection strings, token shapes, and private-key blocks
+before writing the review draft. This is a first-pass guard, not a proof that a
+draft is safe for curated memory. The review workflow must still inspect the
+full draft and block, discard, or sanitize unsafe material before promotion.
+
+The script omits `cwd` from review drafts by default because repository and
+folder names can identify private work. The raw evidence stays local,
+owner-readable only, and should not be imported, embedded, committed, or shared
+by default.
 
 The redacted draft is still only a candidate. The Dreams review workflow is the
 place where an agent decides whether to preserve, synthesize, archive, discard,

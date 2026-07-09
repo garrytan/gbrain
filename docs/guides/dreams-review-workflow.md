@@ -1,14 +1,15 @@
 # Dreams Review Workflow
 
 GBrain already has `gbrain dream`: the maintenance cycle that syncs, extracts,
-synthesizes, embeds, and checks the brain. This guide describes a separate
-agent-facing workflow for reviewable memory drafts.
+synthesizes, embeds, and checks the brain. The `$dreams` skill is a separate
+agent-facing review workflow for markdown drafts that need judgment before they
+become searchable memory.
 
 The problem it solves is simple: useful context often appears as a side effect
 of agent sessions, but raw transcripts are not safe memory. They contain tool
-logs, local paths, temporary guesses, and sometimes sensitive content. The
-review workflow keeps the convenience of ambient capture while preserving a
-clear boundary between evidence and memory.
+logs, local paths, temporary guesses, credentials, and sometimes sensitive
+content. The review workflow keeps the convenience of ambient capture while
+preserving a clear boundary between evidence and memory.
 
 ## Data Flow
 
@@ -46,6 +47,18 @@ search and embeddings:
 Other folders are either workflow state, raw evidence, source snapshots, or
 operator-specific repository structure.
 
+## Default Run
+
+A plain `$dreams` invocation is a full unattended review run inside the target
+brain repo. It inventories drafts, reviews full sources, writes proposal
+mirrors, applies safe curated edits, archives handled drafts, updates ledger and
+evidence lookup state, syncs/embeds reviewed pages, stamps `indexed_at`, runs
+retrieval smokes, commits, and pushes unless the operator requests a safer mode
+such as `--dry-run`, `--no-sync`, `--no-commit`, or `--no-push`.
+
+That default is intentionally stronger than a documentation-only suggestion.
+It is the deterministic promotion boundary for reviewable draft candidates.
+
 ## Review Contract
 
 Every reviewed draft should receive a concrete decision:
@@ -59,12 +72,26 @@ Every reviewed draft should receive a concrete decision:
 
 For long or mixed drafts, decompose the content into `memory_units` before
 choosing the draft-level decision. Each unit should describe the claim, source
-anchor, preservation mode, and reason. This is what prevents a valuable idea
-from disappearing inside a generic summary of an operational session.
+anchor, preservation mode, importance score, and reason. This is what prevents
+a valuable idea from disappearing inside a generic summary of an operational
+session.
 
 Use an `importance_score` to separate durable context from temporary state:
 future retrieval value, durability, specificity, authorship or strategic value,
 and fidelity sensitivity.
+
+## Proposal And Ledger Contract
+
+Curated edits should be proposed before they are applied. A run that changes
+curated memory should have full-file proposal mirrors under session state, not
+only a review-ledger row. Ledger rows should bind every source path and hash to
+the exact decision, memory units, target actions, coverage, archived path, and
+target timeline source ref.
+
+Stop-hook captures with a `session_id` should be reviewed by session. If a
+session draft contains multiple capture segments, every `segment-N` must appear
+in coverage and be backed by durable, duplicate, unsafe, or non-durable memory
+units.
 
 ## Evidence Drilldown
 
@@ -76,10 +103,23 @@ path is:
 curated target slug -> source evidence refs -> review ledger row -> archived draft
 ```
 
-In current GBrain, the durable primitives are curated page refs, page
-provenance fields, and search result evidence. If a deployment adds a dedicated
-source-evidence lookup, it should hydrate the same provenance chain without
-making raw archives or inbox drafts part of semantic search.
+When a deployment has a dedicated source-evidence lookup, reviewed rows should
+be indexed by target slug and source ref so a future agent can hydrate
+provenance without searching archive or inbox content. If the deployment only
+has page provenance and search-result evidence, keep the same source refs in
+the curated timeline and review ledger so a later evidence index can backfill
+the chain.
+
+## Temporal Metadata
+
+Curated pages should distinguish:
+
+- `formed_at`: when the source fact, idea, decision, or event happened;
+- `recorded_at`: when the review run wrote the curated page;
+- `indexed_at`: when the reviewed page was actually synced/embedded.
+
+After stamping `indexed_at`, run sync/embed again so the timestamp itself is
+searchable.
 
 ## Optional Stop-Hook Recipe
 
@@ -92,5 +132,7 @@ The recipe writes:
 - raw local evidence under `~/.gbrain/inbox/auto`;
 - a redacted review draft under `~/brain/inbox/auto/YYYY-MM-DD`.
 
-It does not write curated pages, run sync, commit, or push. `$dreams` or an
-equivalent operator-approved review workflow is the promotion boundary.
+It writes files with owner-only permissions. Its redaction is a first-pass
+guard, not a proof that a draft is safe to promote. It does not write curated
+pages, run sync, commit, or push. `$dreams` or an equivalent
+operator-approved review workflow is the promotion boundary.

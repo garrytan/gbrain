@@ -1,0 +1,6 @@
+interface:
+  display_name: "Dreams"
+  short_description: "Run the literal $dreams memory cycle safely"
+  default_prompt: "Only literal $dreams or an equally explicit full-run approval may review, reconcile, preserve-or-summarize, sync, commit, and push ~/brain memory drafts unattended."
+policy:
+  allow_implicit_invocation: false

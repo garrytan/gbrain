@@ -1,0 +1,27 @@
+{
+  "inventory_total": 0,
+  "handled_total": 0,
+  "by_decision": {
+    "promoted": 0,
+    "low-confidence-promoted": 0,
+    "source-note": 0,
+    "discarded": 0,
+    "duplicate": 0,
+    "blocked-safety": 0
+  },
+  "by_preservation_mode": {
+    "preserve-full": 0,
+    "preserve-substantial": 0,
+    "synthesize": 0,
+    "source-note": 0,
+    "discard": 0,
+    "duplicate": 0,
+    "blocked-safety": 0
+  },
+  "score_bands": {
+    "0-3": 0,
+    "4-6": 0,
+    "7-10": 0,
+    "11+": 0
+  }
+}

@@ -2,7 +2,9 @@
 
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
@@ -57,11 +59,35 @@ function yamlQuote(input: string): string {
 
 function redact(input: string): string {
   return input
-    .replace(/\/Users\/[^/\s)]+/g, '[home]')
-    .replace(/\/home\/[^/\s)]+/g, '[home]')
+    .replace(/\/Users\/[^\s"'`<>)]*/g, '[redacted-local-path]')
+    .replace(/\/home\/[^\s"'`<>)]*/g, '[redacted-local-path]')
+    .replace(/\b[A-Za-z0-9_]*(?:DATABASE_URL|DB_URL)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '[redacted-database-url]')
+    .replace(/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s'"`<>]+/gi, '[redacted-database-url]')
+    .replace(/\b[A-Za-z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|PASS|PRIVATE_KEY)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '[redacted-secret]')
     .replace(/sk-[A-Za-z0-9_-]{12,}/g, '[redacted-api-key]')
     .replace(/gh[pousr]_[A-Za-z0-9_]+/g, '[redacted-github-token]')
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted-private-key]');
+}
+
+function ensurePrivateDir(path: string): void {
+  if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
+    throw new Error(`refusing to use symlinked directory: ${path}`);
+  }
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  chmodSync(path, 0o700);
+}
+
+function writePrivateFile(path: string, content: string): void {
+  ensurePrivateDir(dirname(path));
+  if (existsSync(path)) {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`refusing to write symlinked file: ${path}`);
+    }
+    chmodSync(path, 0o600);
+  }
+  writeFileSync(path, content, { mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
 function messageToText(item: unknown, index: number): string {
@@ -111,8 +137,7 @@ function readJson<T>(path: string): T | null {
 }
 
 function writeJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  writePrivateFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function sessionStatePath(rawDir: string, sessionId: string): string {
@@ -209,8 +234,8 @@ function appendCapture(event: HookEvent): { rawPath: string; draftPath: string; 
     return { rawPath: state.rawPath, draftPath: state.draftPath, segment, dryRun };
   }
 
-  mkdirSync(dirname(state.rawPath), { recursive: true });
-  mkdirSync(dirname(state.draftPath), { recursive: true });
+  ensurePrivateDir(dirname(state.rawPath));
+  ensurePrivateDir(dirname(state.draftPath));
 
   const rawSegment = [
     `## Capture segment ${segment}`,
@@ -225,12 +250,12 @@ function appendCapture(event: HookEvent): { rawPath: string; draftPath: string; 
     '',
   ].join('\n');
   const oldRaw = existsSync(state.rawPath) ? readFileSync(state.rawPath, 'utf8') : '';
-  writeFileSync(state.rawPath, `${oldRaw}${oldRaw ? '\n' : ''}${rawSegment}`);
+  writePrivateFile(state.rawPath, `${oldRaw}${oldRaw ? '\n' : ''}${rawSegment}`);
 
   const segmentText = segmentMarkdown(segment, event, normalized, now.toISOString(), includeCwd);
   if (existsSync(state.draftPath)) {
     const existing = updateDraftFrontmatter(readFileSync(state.draftPath, 'utf8'), segment, eventName, normalizedHash);
-    writeFileSync(state.draftPath, `${existing.trimEnd()}\n\n${segmentText}\n`);
+    writePrivateFile(state.draftPath, `${existing.trimEnd()}\n\n${segmentText}\n`);
   } else {
     const body = [
       frontmatter({ ...state, captureSegmentCount: segment }, eventName, normalizedHash),
@@ -241,7 +266,7 @@ function appendCapture(event: HookEvent): { rawPath: string; draftPath: string; 
       '',
       segmentText,
     ].join('\n');
-    writeFileSync(state.draftPath, body.endsWith('\n') ? body : `${body}\n`);
+    writePrivateFile(state.draftPath, body.endsWith('\n') ? body : `${body}\n`);
   }
 
   writeJson(statePath, state);

@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -46,7 +55,7 @@ describe('stop-memory-capture recipe', () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-stop-capture-'));
     const brainDir = join(root, 'brain');
     const rawDir = join(root, 'raw');
-    const privateHomePath = ['', 'Users', 'alice-example', 'private-project'].join('/');
+    const privateHomePath = ['', 'Users', 'alice-example', 'example-worktree'].join('/');
 
     runHook({
       hook_event_name: 'Stop',
@@ -75,7 +84,162 @@ describe('stop-memory-capture recipe', () => {
     expect(draft).toContain('Capture segment 1');
     expect(draft).toContain('Remember this durable product decision.');
     expect(draft).not.toContain(privateHomePath);
-    expect(draft).not.toContain('private-project');
+    expect(draft).not.toContain('example-worktree');
+  });
+
+  test('creates raw, draft, and state files with owner-only permissions', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-stop-capture-perms-'));
+    const brainDir = join(root, 'brain');
+    const rawDir = join(root, 'raw');
+
+    runHook({
+      hook_event_name: 'Stop',
+      session_id: 'session-permissions',
+      prompt: 'This durable session note is long enough to pass the capture threshold.',
+    }, {
+      GBRAIN_CAPTURE_BRAIN_DIR: brainDir,
+      GBRAIN_CAPTURE_RAW_DIR: rawDir,
+      GBRAIN_CAPTURE_MIN_CHARS: '1',
+    });
+
+    const rawFiles = readdirSync(rawDir, { recursive: true })
+      .map(String)
+      .filter((name) => name.endsWith('.raw.md') || name.endsWith('.json'))
+      .map((name) => join(rawDir, name));
+    const drafts = readAutoDrafts(brainDir);
+
+    expect([...rawFiles, ...drafts].length).toBeGreaterThan(0);
+    for (const file of [...rawFiles, ...drafts]) {
+      expect(statSync(file).mode & 0o077).toBe(0);
+    }
+  });
+
+  test('redacts common env secret names and database credentials from review drafts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-stop-capture-secrets-'));
+    const brainDir = join(root, 'brain');
+    const rawDir = join(root, 'raw');
+    const databaseKey = ['DATABASE', '_URL='].join('');
+    const anthropicKeyName = ['ANTHROPIC', '_API', '_KEY='].join('');
+    const openaiKeyName = ['OPENAI', '_API', '_KEY='].join('');
+    const databaseUrl = [
+      databaseKey,
+      ['postgres', '://alice:'].join(''),
+      'placeholder-db-password',
+      '@example.com:5432/db',
+    ].join('');
+    const anthropicKey = [
+      anthropicKeyName,
+      'placeholder-anthropic-value',
+    ].join('');
+    const openaiKey = [
+      openaiKeyName,
+      'placeholder-openai-value',
+    ].join('');
+
+    runHook({
+      hook_event_name: 'Stop',
+      session_id: 'session-secret-redaction',
+      prompt: [
+        databaseUrl,
+        anthropicKey,
+        openaiKey,
+        'This text is intentionally long enough to create a review draft.',
+      ].join(' '),
+    }, {
+      GBRAIN_CAPTURE_BRAIN_DIR: brainDir,
+      GBRAIN_CAPTURE_RAW_DIR: rawDir,
+      GBRAIN_CAPTURE_MIN_CHARS: '1',
+    });
+
+    const drafts = readAutoDrafts(brainDir);
+    expect(drafts.length).toBe(1);
+    const draft = readFileSync(drafts[0], 'utf8');
+    expect(draft).not.toContain(databaseKey);
+    expect(draft).not.toContain('placeholder-db-password');
+    expect(draft).not.toContain(anthropicKeyName);
+    expect(draft).not.toContain('placeholder-anthropic-value');
+    expect(draft).not.toContain(openaiKeyName);
+    expect(draft).not.toContain('placeholder-openai-value');
+    expect(draft).toContain('[redacted-database-url]');
+    expect(draft).toContain('[redacted-secret]');
+  });
+
+  test('redacts private path tails and case-insensitive secret assignments from review drafts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-stop-capture-deep-redact-'));
+    const brainDir = join(root, 'brain');
+    const rawDir = join(root, 'raw');
+    const macHomeFile = ['', 'Users', 'alice-example', 'example-client-repo', '.env'].join('/');
+    const linuxHomeFile = ['', 'home', 'alice-example', 'second-example-repo', 'config.local'].join('/');
+    const lowerSecretName = ['openai', '_api', '_key='].join('');
+    const mixedSecretName = ['MixedCase', 'Token='].join('');
+    const dbUrlName = ['db', '_url='].join('');
+    const dbUrlValue = [
+      ['postgresql', '://alice:'].join(''),
+      'placeholder-db-pass',
+      '@example.invalid/db',
+    ].join('');
+
+    runHook({
+      hook_event_name: 'Stop',
+      session_id: 'session-deep-redaction',
+      prompt: [
+        `Check ${macHomeFile} and ${linuxHomeFile}`,
+        `${lowerSecretName}placeholder-lowercase-value`,
+        `${mixedSecretName}"placeholder-mixed-token"`,
+        `${dbUrlName}${dbUrlValue}`,
+        'This text is intentionally long enough to create a review draft.',
+      ].join(' '),
+    }, {
+      GBRAIN_CAPTURE_BRAIN_DIR: brainDir,
+      GBRAIN_CAPTURE_RAW_DIR: rawDir,
+      GBRAIN_CAPTURE_MIN_CHARS: '1',
+    });
+
+    const drafts = readAutoDrafts(brainDir);
+    expect(drafts.length).toBe(1);
+    const draft = readFileSync(drafts[0], 'utf8');
+    expect(draft).not.toContain('example-client-repo');
+    expect(draft).not.toContain('second-example-repo');
+    expect(draft).not.toContain(lowerSecretName);
+    expect(draft).not.toContain('placeholder-lowercase-value');
+    expect(draft).not.toContain(mixedSecretName);
+    expect(draft).not.toContain('placeholder-mixed-token');
+    expect(draft).not.toContain(dbUrlName);
+    expect(draft).not.toContain('placeholder-db-pass');
+    expect(draft).toContain('[redacted-local-path]');
+    expect(draft).toContain('[redacted-secret]');
+    expect(draft).toContain('[redacted-database-url]');
+  });
+
+  test('refuses to write through an existing symlinked review draft', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-stop-capture-symlink-'));
+    const brainDir = join(root, 'brain');
+    const rawDir = join(root, 'raw');
+    const env = {
+      GBRAIN_CAPTURE_BRAIN_DIR: brainDir,
+      GBRAIN_CAPTURE_RAW_DIR: rawDir,
+      GBRAIN_CAPTURE_MIN_CHARS: '1',
+    };
+
+    runHook({
+      hook_event_name: 'Stop',
+      session_id: 'session-symlink-defense',
+      prompt: 'First durable session note creates the review draft path.',
+    }, env);
+
+    const drafts = readAutoDrafts(brainDir);
+    expect(drafts.length).toBe(1);
+    const outside = join(root, 'outside-target.md');
+    writeFileSync(outside, 'outside stays\n');
+    unlinkSync(drafts[0]);
+    symlinkSync(outside, drafts[0]);
+
+    expect(() => runHook({
+      hook_event_name: 'Stop',
+      session_id: 'session-symlink-defense',
+      prompt: 'Second durable session note must not follow the symlink.',
+    }, env)).toThrow();
+    expect(readFileSync(outside, 'utf8')).toBe('outside stays\n');
   });
 
   test('appends repeated captures for the same session into one draft', () => {
@@ -117,16 +281,16 @@ describe('stop-memory-capture recipe', () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-stop-capture-fallback-'));
     const brainDir = join(root, 'brain');
     const rawDir = join(root, 'raw');
-    const privateHomePath = ['', 'Users', 'alice-example', 'secret-client-repo'].join('/');
+    const privateHomePath = ['', 'Users', 'alice-example', 'example-client-repo'].join('/');
 
     runHook({
       hook_event_name: 'Stop',
       session_id: 'session-metadata-only',
       cwd: privateHomePath,
-      git_remote: 'git@example.com:acme-example/secret-client-repo.git',
-      repo_name: 'secret-client-repo',
-      mentioned_projects: ['secret-client-repo'],
-      transcript_path: '/tmp/private-transcript.jsonl',
+      git_remote: 'git@example.com:acme-example/example-client-repo.git',
+      repo_name: 'example-client-repo',
+      mentioned_projects: ['example-client-repo'],
+      transcript_path: '/tmp/example-transcript.jsonl',
     }, {
       GBRAIN_CAPTURE_BRAIN_DIR: brainDir,
       GBRAIN_CAPTURE_RAW_DIR: rawDir,
@@ -139,8 +303,8 @@ describe('stop-memory-capture recipe', () => {
     expect(draft).toContain('payload_status: "missing content payload"');
     expect(draft).toContain('No prompt, transcript, or messages payload was present');
     expect(draft).not.toContain(privateHomePath);
-    expect(draft).not.toContain('secret-client-repo');
+    expect(draft).not.toContain('example-client-repo');
     expect(draft).not.toContain('git@example.com');
-    expect(draft).not.toContain('private-transcript');
+    expect(draft).not.toContain('example-transcript');
   });
 });
