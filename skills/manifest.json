@@ -35,6 +35,11 @@
       "description": "Universal migration from Obsidian, Notion, Logseq, markdown, CSV, JSON, Roam"
     },
     {
+      "name": "obsidian-gbrain-safe-index",
+      "path": "obsidian-gbrain-safe-index/SKILL.md",
+      "description": "Connect and sync an Obsidian-style Markdown vault with gbrain using a cost-controlled import-first workflow, explicit embedding gates, and durable skill/workflow capture."
+    },
+    {
       "name": "setup",
       "path": "setup/SKILL.md",
       "description": "Set up GBrain: auto-provision Supabase or PGLite, AGENTS.md injection, first import"

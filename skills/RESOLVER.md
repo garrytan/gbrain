@@ -78,6 +78,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Set up GBrain", first boot | `skills/setup/SKILL.md` |
 | "Now what?", "fill my brain", "cold start", "bootstrap", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
+| "Connect Obsidian to gbrain", "sync vault and gbrain", "safe/free gbrain index", "embed gbrain after vault update", "is gbrain synced with my vault" | `skills/obsidian-gbrain-safe-index/SKILL.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
