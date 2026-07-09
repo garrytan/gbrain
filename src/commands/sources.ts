@@ -1134,7 +1134,8 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
         continue;
       }
       if (stat.isDirectory()) {
-        if (pruneDir(entry, dir)) continue;
+        // pruneDir returns true = descend, false = prune (see core/sync.ts).
+        if (!pruneDir(entry, dir)) continue;
         walk(full);
       } else if (entry.endsWith('.md')) {
         files.push(full);
