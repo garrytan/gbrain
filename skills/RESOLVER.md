@@ -62,6 +62,10 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
 | "talk like caveman", "use caveman", "less tokens", "be brief", "caveman mode" | `skills/caveman/SKILL.md` |
 | "analyze logs", "summarize output", "process data", "large file analysis", "page snapshot", "run tests", "git log", "fetch docs", "context mode" | `skills/context-mode/SKILL.md` |
+| "shadcn component", "add shadcn", "components.json", "--preset", "shadcn registry" | `skills/shadcn/SKILL.md` |
+| "design critique", "audit this UI", "polish this page", "impeccable", "frontend redesign", "live browser edit" | `skills/impeccable/SKILL.md` |
+| "match stripe design", "linear DESIGN.md", "bootstrap a DESIGN.md", "brand design tokens", "awesome design md" | `skills/awesome-design-md/SKILL.md` |
+| "distinctive UI", "visual design direction", "typography for this page", "avoid templated design", "frontend design" | `skills/frontend-design/SKILL.md` |
 | "save this learning to the vault", "capture this skill in Obsidian", "record this workflow in my notes", "put this setup change in the knowledge base" | `skills/skill-vault-capture-policy/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper", "add tests and evals for this" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |

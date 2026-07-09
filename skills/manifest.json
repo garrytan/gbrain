@@ -283,6 +283,26 @@
       "name": "context-mode",
       "path": "context-mode/SKILL.md",
       "description": "Route large/uncertain command, file, and API output through context-mode sandbox tools (ctx_execute, ctx_search) to keep raw data out of the context window."
+    },
+    {
+      "name": "shadcn",
+      "path": "shadcn/SKILL.md",
+      "description": "Manage shadcn/ui components and projects: add/search/fix/style/compose UI and component registries. Triggers on shadcn/ui, presets, --preset, components.json."
+    },
+    {
+      "name": "impeccable",
+      "path": "impeccable/SKILL.md",
+      "description": "Frontend design critique, audit, polish, and live browser iteration. Covers UX, accessibility, typography, color, layout, motion, and design-system tokens."
+    },
+    {
+      "name": "awesome-design-md",
+      "path": "awesome-design-md/SKILL.md",
+      "description": "Read-only corpus of 70+ real product DESIGN.md specs (Stripe, Linear, Vercel, Apple, Supabase...) for reference-driven, brand-matched frontend design."
+    },
+    {
+      "name": "frontend-design",
+      "path": "frontend-design/SKILL.md",
+      "description": "Guidance for distinctive, intentional visual design of new or reshaped UI — aesthetic direction, typography, and non-templated choices."
     }
   ],
   "dependencies": {
