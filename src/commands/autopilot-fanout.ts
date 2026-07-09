@@ -434,7 +434,9 @@ export async function dispatchPerSource(
       const job = await queue.add(
         'autopilot-cycle',
         {
-          repoPath: opts.repoPath,
+          // A fan-out job is scoped to this source. Carrying the daemon's
+          // launch path here can make an unrelated source import that repo.
+          repoPath: src.local_path,
           source_id: src.id,
           pull: !!remoteUrl,
           // #2194 fix #3 (cycle split): per-source cycles run ONLY source-scoped

@@ -220,6 +220,18 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     // source_id threaded through job data
     const sourceIds = added.map(j => (j.data as Record<string, unknown>).source_id).sort();
     expect(sourceIds).toEqual(['alpha', 'beta']);
+    // Each job must import its own registered path, not the daemon launch path.
+    // Keep the pairing intact: independent sorted arrays would miss a swap.
+    const sourcePathPairs = added
+      .map(j => {
+        const data = j.data as Record<string, unknown>;
+        return [data.source_id, data.repoPath];
+      })
+      .sort(([a], [b]) => String(a).localeCompare(String(b)));
+    expect(sourcePathPairs).toEqual([
+      ['alpha', '/tmp/alpha'],
+      ['beta', '/tmp/beta'],
+    ]);
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {
