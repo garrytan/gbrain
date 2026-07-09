@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -263,6 +263,1931 @@
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
       "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "agentic-workflows",
+      "path": "agentic-workflows/SKILL.md",
+      "description": "Route gh-aw workflow design/create/debug/upgrade requests to the right prompts."
+    },
+    {
+      "name": "acquire-codebase-knowledge",
+      "path": "acquire-codebase-knowledge/SKILL.md",
+      "description": "Use this skill when the user explicitly asks to map, document, or onboard into an existing codebase. Trigger for prompts like"
+    },
+    {
+      "name": "acreadiness-assess",
+      "path": "acreadiness-assess/SKILL.md",
+      "description": "Run the AgentRC readiness assessment on the current repository and produce a static HTML dashboard at reports/index.html. Wraps `npx github:microsoft/agentrc readiness` and hands o"
+    },
+    {
+      "name": "acreadiness-generate-instructions",
+      "path": "acreadiness-generate-instructions/SKILL.md",
+      "description": "Generate tailored AI agent instruction files via AgentRC instructions command. Produces .github/copilot-instructions.md (default, recommended for Copilot in VS Code) plus optional "
+    },
+    {
+      "name": "acreadiness-policy",
+      "path": "acreadiness-policy/SKILL.md",
+      "description": "Help the user pick, write, or apply an AgentRC policy. Policies customise readiness scoring by disabling irrelevant checks, overriding impact/level, setting pass-rate thresholds, o"
+    },
+    {
+      "name": "add-educational-comments",
+      "path": "add-educational-comments/SKILL.md",
+      "description": "Add educational comments to the file specified, or prompt asking for file to comment if one is not provided."
+    },
+    {
+      "name": "adobe-illustrator-scripting",
+      "path": "adobe-illustrator-scripting/SKILL.md",
+      "description": "Write, debug, and optimize Adobe Illustrator automation scripts using ExtendScript (JavaScript/JSX). Use when creating or modifying scripts that manipulate documents, layers, paths"
+    },
+    {
+      "name": "agent-governance",
+      "path": "agent-governance/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "agent-owasp-compliance",
+      "path": "agent-owasp-compliance/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "agent-supply-chain",
+      "path": "agent-supply-chain/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "agentic-eval",
+      "path": "agentic-eval/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "ai-prompt-engineering-safety-review",
+      "path": "ai-prompt-engineering-safety-review/SKILL.md",
+      "description": "Comprehensive AI prompt engineering safety review and improvement prompt. Analyzes prompts for safety, bias, security vulnerabilities, and effectiveness while providing detailed im"
+    },
+    {
+      "name": "ai-ready",
+      "path": "ai-ready/SKILL.md",
+      "description": "Make any repo AI-ready — analyzes your codebase and generates AGENTS.md, copilot-instructions.md, CI workflows, issue templates, and more. Mines your PR review patterns and creates"
+    },
+    {
+      "name": "ai-team-orchestration",
+      "path": "ai-team-orchestration/SKILL.md",
+      "description": "Bootstrap and run a multi-agent AI development team. Use when: starting a new software project with AI agents, setting up parallel dev/QA teams, creating sprint plans, writing brai"
+    },
+    {
+      "name": "appinsights-instrumentation",
+      "path": "appinsights-instrumentation/SKILL.md",
+      "description": "Instrument a webapp to send useful telemetry data to Azure App Insights"
+    },
+    {
+      "name": "apple-appstore-reviewer",
+      "path": "apple-appstore-reviewer/SKILL.md",
+      "description": "Serves as a reviewer of the codebase with instructions on looking for Apple App Store optimizations or rejection reasons."
+    },
+    {
+      "name": "arch-linux-triage",
+      "path": "arch-linux-triage/SKILL.md",
+      "description": "Triage and resolve Arch Linux issues with pacman, systemd, and rolling-release best practices."
+    },
+    {
+      "name": "architecture-blueprint-generator",
+      "path": "architecture-blueprint-generator/SKILL.md",
+      "description": "Comprehensive project architecture blueprint generator that analyzes codebases to create detailed architectural documentation. Automatically detects technology stacks and architect"
+    },
+    {
+      "name": "arduino-azure-iot-edge-integration",
+      "path": "arduino-azure-iot-edge-integration/SKILL.md",
+      "description": "Design and implement Arduino integration with Azure IoT Hub and IoT Edge, including secure provisioning, resilient telemetry, command handling, and production guardrails."
+    },
+    {
+      "name": "arize-ai-provider-integration",
+      "path": "arize-ai-provider-integration/SKILL.md",
+      "description": "Creates, reads, updates, and deletes Arize AI integrations that store LLM provider credentials used by evaluators and other Arize features. Supports any LLM provider (e.g. OpenAI, "
+    },
+    {
+      "name": "arize-annotation",
+      "path": "arize-annotation/SKILL.md",
+      "description": "Creates and manages annotation configs (categorical, continuous, freeform label schemas) and annotation queues (human review workflows) on Arize. Applies human annotations to proje"
+    },
+    {
+      "name": "arize-dataset",
+      "path": "arize-dataset/SKILL.md",
+      "description": "Creates, manages, and queries Arize datasets and examples. Covers dataset CRUD, appending examples, exporting data, and file-based dataset creation using the ax CLI. Use when the u"
+    },
+    {
+      "name": "arize-evaluator",
+      "path": "arize-evaluator/SKILL.md",
+      "description": "Handles LLM-as-judge evaluation workflows on Arize including creating/updating evaluators, running evaluations on spans or experiments, managing tasks, trigger-run operations, colu"
+    },
+    {
+      "name": "arize-experiment",
+      "path": "arize-experiment/SKILL.md",
+      "description": "Creates, runs, and analyzes Arize experiments for evaluating and comparing model performance. Covers experiment CRUD, exporting runs, comparing results, and evaluation workflows us"
+    },
+    {
+      "name": "arize-instrumentation",
+      "path": "arize-instrumentation/SKILL.md",
+      "description": "Adds Arize AX tracing to an LLM application for the first time. Follows a two-phase agent-assisted flow to analyze the codebase then implement instrumentation after user confirmati"
+    },
+    {
+      "name": "arize-link",
+      "path": "arize-link/SKILL.md",
+      "description": "Generates deep links to the Arize UI for traces, spans, sessions, datasets, labeling queues, evaluators, and annotation configs. Produces clickable URLs for sharing Arize resources"
+    },
+    {
+      "name": "arize-prompt-optimization",
+      "path": "arize-prompt-optimization/SKILL.md",
+      "description": "Optimizes, improves, and debugs LLM prompts using production trace data, evaluations, and annotations. Extracts prompts from spans, gathers performance signal, and runs a data-driv"
+    },
+    {
+      "name": "arize-trace",
+      "path": "arize-trace/SKILL.md",
+      "description": "Downloads, exports, and inspects existing Arize traces and spans to understand what an LLM app is doing or debug runtime issues. Covers exporting traces by ID, spans by ID, session"
+    },
+    {
+      "name": "aspire",
+      "path": "aspire/SKILL.md",
+      "description": "Aspire skill covering the Aspire CLI, AppHost orchestration, service discovery, integrations, MCP server, VS Code extension, Dev Containers, GitHub Codespaces, templates, dashboard"
+    },
+    {
+      "name": "aspnet-minimal-api-openapi",
+      "path": "aspnet-minimal-api-openapi/SKILL.md",
+      "description": "Create ASP.NET Minimal API endpoints with proper OpenAPI documentation"
+    },
+    {
+      "name": "audit-integrity",
+      "path": "audit-integrity/SKILL.md",
+      "description": "Shared audit integrity framework for all AppSec agents — enforces output quality, intellectual honesty, and continuous improvement through anti-rationalization guards, self-critiqu"
+    },
+    {
+      "name": "automate-this",
+      "path": "automate-this/SKILL.md",
+      "description": "Analyze a screen recording of a manual process and produce targeted, working automation scripts. Extracts frames and audio narration from video files, reconstructs the step-by-step"
+    },
+    {
+      "name": "autoresearch",
+      "path": "autoresearch/SKILL.md",
+      "description": "Autonomous iterative experimentation loop for any programming task. Guides the user through defining goals, measurable metrics, and scope constraints, then runs an autonomous loop "
+    },
+    {
+      "name": "aws-cdk-python-setup",
+      "path": "aws-cdk-python-setup/SKILL.md",
+      "description": "Setup and initialization guide for developing AWS CDK (Cloud Development Kit) applications in Python. This skill enables users to configure environment prerequisites, create new CD"
+    },
+    {
+      "name": "aws-cloudwatch-investigation",
+      "path": "aws-cloudwatch-investigation/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "aws-cost-optimize",
+      "path": "aws-cost-optimize/SKILL.md",
+      "description": "Analyze AWS resources used in the app (IaC files and/or resources in a target account/region) and optimize costs - creating GitHub issues for identified optimizations."
+    },
+    {
+      "name": "aws-resource-health-diagnose",
+      "path": "aws-resource-health-diagnose/SKILL.md",
+      "description": "Analyze AWS resource health, diagnose issues from CloudWatch logs and metrics, and create a remediation plan for identified problems."
+    },
+    {
+      "name": "aws-resource-query",
+      "path": "aws-resource-query/SKILL.md",
+      "description": "Query AWS resources using natural language. Covers EC2, S3, RDS, Lambda, ECS, EKS, Secrets Manager, IAM, VPC, networking, messaging, and more. Strictly read-only — no writes, delet"
+    },
+    {
+      "name": "aws-well-architected-review",
+      "path": "aws-well-architected-review/SKILL.md",
+      "description": "Perform an AWS Well-Architected Framework review of the current workload IaC and architecture, generating findings and GitHub issues for improvements."
+    },
+    {
+      "name": "az-cost-optimize",
+      "path": "az-cost-optimize/SKILL.md",
+      "description": "Analyze Azure resources used in the app (IaC files and/or resources in a target rg) and optimize costs - creating GitHub issues for identified optimizations."
+    },
+    {
+      "name": "azure-architecture-autopilot",
+      "path": "azure-architecture-autopilot/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "azure-deployment-preflight",
+      "path": "azure-deployment-preflight/SKILL.md",
+      "description": "Performs comprehensive preflight validation of Bicep deployments to Azure, including template syntax validation, what-if analysis, and permission checks. Use this skill before any "
+    },
+    {
+      "name": "azure-devops-cli",
+      "path": "azure-devops-cli/SKILL.md",
+      "description": "Manage Azure DevOps resources via CLI including projects, repos, pipelines, builds, pull requests, work items, artifacts, and service endpoints. Use when working with Azure DevOps,"
+    },
+    {
+      "name": "azure-pricing",
+      "path": "azure-pricing/SKILL.md",
+      "description": "Fetches real-time Azure retail pricing using the Azure Retail Prices API (prices.azure.com) and estimates Copilot Studio agent credit consumption. Use when the user asks about the "
+    },
+    {
+      "name": "azure-resource-health-diagnose",
+      "path": "azure-resource-health-diagnose/SKILL.md",
+      "description": "Analyze Azure resource health, diagnose issues from logs and telemetry, and create a remediation plan for identified problems."
+    },
+    {
+      "name": "azure-resource-visualizer",
+      "path": "azure-resource-visualizer/SKILL.md",
+      "description": "Analyze Azure resource groups and generate detailed Mermaid architecture diagrams showing the relationships between individual resources. Use this skill when the user asks for a di"
+    },
+    {
+      "name": "azure-role-selector",
+      "path": "azure-role-selector/SKILL.md",
+      "description": "When user is asking for guidance for which role to assign to an identity given desired permissions, this agent helps them understand the role that will meet the requirements with l"
+    },
+    {
+      "name": "azure-smart-city-iot-solution-builder",
+      "path": "azure-smart-city-iot-solution-builder/SKILL.md",
+      "description": "Design and plan end-to-end Azure IoT and Smart City solutions: requirements, architecture, security, operations, cost, and a phased delivery plan with concrete implementation artif"
+    },
+    {
+      "name": "azure-static-web-apps",
+      "path": "azure-static-web-apps/SKILL.md",
+      "description": "Helps create, configure, and deploy Azure Static Web Apps using the SWA CLI. Use when deploying static sites to Azure, setting up SWA local development, configuring staticwebapp.co"
+    },
+    {
+      "name": "batch-files",
+      "path": "batch-files/SKILL.md",
+      "description": "Expert-level Windows batch file (.bat/.cmd) skill for writing, debugging, and maintaining CMD scripts. Use when asked to"
+    },
+    {
+      "name": "bigquery-pipeline-audit",
+      "path": "bigquery-pipeline-audit/SKILL.md",
+      "description": "Audits Python + BigQuery pipelines for cost safety, idempotency, and production readiness. Returns a structured report with exact patch locations."
+    },
+    {
+      "name": "boost-prompt",
+      "path": "boost-prompt/SKILL.md",
+      "description": "Interactive prompt refinement workflow: interrogates scope, deliverables, constraints; copies final markdown to clipboard; never writes code. Requires the Joyride extension."
+    },
+    {
+      "name": "brag-sheet",
+      "path": "brag-sheet/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "breakdown-epic-arch",
+      "path": "breakdown-epic-arch/SKILL.md",
+      "description": "Prompt for creating the high-level technical architecture for an Epic, based on a Product Requirements Document."
+    },
+    {
+      "name": "breakdown-epic-pm",
+      "path": "breakdown-epic-pm/SKILL.md",
+      "description": "Prompt for creating an Epic Product Requirements Document (PRD) for a new epic. This PRD will be used as input for generating a technical architecture specification."
+    },
+    {
+      "name": "breakdown-feature-implementation",
+      "path": "breakdown-feature-implementation/SKILL.md",
+      "description": "Prompt for creating detailed feature implementation plans, following Epoch monorepo structure."
+    },
+    {
+      "name": "breakdown-feature-prd",
+      "path": "breakdown-feature-prd/SKILL.md",
+      "description": "Prompt for creating Product Requirements Documents (PRDs) for new features, based on an Epic."
+    },
+    {
+      "name": "breakdown-plan",
+      "path": "breakdown-plan/SKILL.md",
+      "description": "Issue Planning and Automation prompt that generates comprehensive project plans with Epic > Feature > Story/Enabler > Test hierarchy, dependencies, priorities, and automated tracki"
+    },
+    {
+      "name": "breakdown-test",
+      "path": "breakdown-test/SKILL.md",
+      "description": "Test Planning and Quality Assurance prompt that generates comprehensive test strategies, task breakdowns, and quality validation plans for GitHub projects."
+    },
+    {
+      "name": "centos-linux-triage",
+      "path": "centos-linux-triage/SKILL.md",
+      "description": "Triage and resolve CentOS issues using RHEL-compatible tooling, SELinux-aware practices, and firewalld."
+    },
+    {
+      "name": "chrome-devtools",
+      "path": "chrome-devtools/SKILL.md",
+      "description": "Expert-level browser automation, debugging, and performance analysis using Chrome DevTools MCP. Use for interacting with web pages, capturing screenshots, analyzing network traffic"
+    },
+    {
+      "name": "cli-mastery",
+      "path": "cli-mastery/SKILL.md",
+      "description": "Interactive training for the GitHub Copilot CLI. Guided lessons, quizzes, scenario challenges, and a full reference covering slash commands, shortcuts, modes, agents, skills, MCP, "
+    },
+    {
+      "name": "cloud-design-patterns",
+      "path": "cloud-design-patterns/SKILL.md",
+      "description": "Cloud design patterns for distributed systems architecture covering 42 industry-standard patterns across reliability, performance, messaging, security, and deployment categories. U"
+    },
+    {
+      "name": "code-exemplars-blueprint-generator",
+      "path": "code-exemplars-blueprint-generator/SKILL.md",
+      "description": "Technology-agnostic prompt generator that creates customizable AI prompts for scanning codebases and identifying high-quality code exemplars. Supports multiple programming language"
+    },
+    {
+      "name": "code-tour",
+      "path": "code-tour/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "codeql",
+      "path": "codeql/SKILL.md",
+      "description": "Comprehensive guide for setting up and configuring CodeQL code scanning via GitHub Actions workflows and the CodeQL CLI. This skill should be used when users need help with code sc"
+    },
+    {
+      "name": "comment-code-generate-a-tutorial",
+      "path": "comment-code-generate-a-tutorial/SKILL.md",
+      "description": "Transform this Python script into a polished, beginner-friendly project by refactoring the code, adding clear instructional comments, and generating a complete markdown tutorial."
+    },
+    {
+      "name": "commit-message-storyteller",
+      "path": "commit-message-storyteller/SKILL.md",
+      "description": "Analyzes git diffs or staged changes and generates narrative commit messages that explain WHY a change was made, not just what changed — following Conventional Commits format. Use "
+    },
+    {
+      "name": "containerize-aspnet-framework",
+      "path": "containerize-aspnet-framework/SKILL.md",
+      "description": "Containerize an ASP.NET .NET Framework project by creating Dockerfile and .dockerfile files customized for the project."
+    },
+    {
+      "name": "containerize-aspnetcore",
+      "path": "containerize-aspnetcore/SKILL.md",
+      "description": "Containerize an ASP.NET Core project by creating Dockerfile and .dockerfile files customized for the project."
+    },
+    {
+      "name": "content-management-systems",
+      "path": "content-management-systems/SKILL.md",
+      "description": "Workflow for building and modifying content management systems across WordPress, Shopify, Wix, Squarespace, Drupal, WooCommerce, Joomla, HubSpot CMS Hub, Webflow, Adobe Experience "
+    },
+    {
+      "name": "context-map",
+      "path": "context-map/SKILL.md",
+      "description": "Generate a map of all files relevant to a task before making changes"
+    },
+    {
+      "name": "conventional-branch",
+      "path": "conventional-branch/SKILL.md",
+      "description": "Create Git branches following the Conventional Branch specification (feature/, bugfix/, hotfix/, release/, chore/). Use when creating a new branch, naming a branch, or checking whe"
+    },
+    {
+      "name": "conventional-commit",
+      "path": "conventional-commit/SKILL.md",
+      "description": "Prompt and workflow for generating conventional commit messages using a structured XML format. Guides users to create standardized, descriptive commit messages in line with the Con"
+    },
+    {
+      "name": "convert-plaintext-to-md",
+      "path": "convert-plaintext-to-md/SKILL.md",
+      "description": "Convert a text-based document to markdown following instructions from prompt, or if a documented option is passed, follow the instructions for that option."
+    },
+    {
+      "name": "copilot-cli-quickstart",
+      "path": "copilot-cli-quickstart/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "copilot-instructions-blueprint-generator",
+      "path": "copilot-instructions-blueprint-generator/SKILL.md",
+      "description": "Technology-agnostic blueprint generator for creating comprehensive copilot-instructions.md files that guide GitHub Copilot to produce code consistent with project standards, archit"
+    },
+    {
+      "name": "copilot-pr-autopilot",
+      "path": "copilot-pr-autopilot/SKILL.md",
+      "description": "Copilot left 14 review comments on your PR — half are nits. Hours of fix → reply → resolve → re-request, and each round lands MORE comments. This skill runs loop engineering: auto-"
+    },
+    {
+      "name": "copilot-sdk",
+      "path": "copilot-sdk/SKILL.md",
+      "description": "Build agentic applications with GitHub Copilot SDK. Use when embedding AI agents in apps, creating custom tools, implementing streaming responses, managing sessions, connecting to "
+    },
+    {
+      "name": "copilot-spaces",
+      "path": "copilot-spaces/SKILL.md",
+      "description": "Use Copilot Spaces to provide project-specific context to conversations. Use this skill when users mention a"
+    },
+    {
+      "name": "copilot-usage-metrics",
+      "path": "copilot-usage-metrics/SKILL.md",
+      "description": "Retrieve and display GitHub Copilot usage metrics for organizations and enterprises using the GitHub CLI and REST API."
+    },
+    {
+      "name": "cosmosdb-datamodeling",
+      "path": "cosmosdb-datamodeling/SKILL.md",
+      "description": "Step-by-step guide for capturing key application requirements for NoSQL use-case and produce Azure Cosmos DB Data NoSQL Model design using best practices and common patterns, artif"
+    },
+    {
+      "name": "create-agentsmd",
+      "path": "create-agentsmd/SKILL.md",
+      "description": "Prompt for generating an AGENTS.md file for a repository"
+    },
+    {
+      "name": "create-architectural-decision-record",
+      "path": "create-architectural-decision-record/SKILL.md",
+      "description": "Create an Architectural Decision Record (ADR) document for AI-optimized decision documentation."
+    },
+    {
+      "name": "create-github-action-workflow-specification",
+      "path": "create-github-action-workflow-specification/SKILL.md",
+      "description": "Create a formal specification for an existing GitHub Actions CI/CD workflow, optimized for AI consumption and workflow maintenance."
+    },
+    {
+      "name": "create-github-issue-feature-from-specification",
+      "path": "create-github-issue-feature-from-specification/SKILL.md",
+      "description": "Create GitHub Issue for feature request from specification file using feature_request.yml template."
+    },
+    {
+      "name": "create-github-issues-feature-from-implementation-plan",
+      "path": "create-github-issues-feature-from-implementation-plan/SKILL.md",
+      "description": "Create GitHub Issues from implementation plan phases using feature_request.yml or chore_request.yml templates."
+    },
+    {
+      "name": "create-github-issues-for-unmet-specification-requirements",
+      "path": "create-github-issues-for-unmet-specification-requirements/SKILL.md",
+      "description": "Create GitHub Issues for unimplemented requirements from specification files using feature_request.yml template."
+    },
+    {
+      "name": "create-implementation-plan",
+      "path": "create-implementation-plan/SKILL.md",
+      "description": "Create a new implementation plan file for new features, refactoring existing code or upgrading packages, design, architecture or infrastructure."
+    },
+    {
+      "name": "create-llms",
+      "path": "create-llms/SKILL.md",
+      "description": "Create an llms.txt file from scratch based on repository structure following the llms.txt specification at https://llmstxt.org/"
+    },
+    {
+      "name": "create-readme",
+      "path": "create-readme/SKILL.md",
+      "description": "Create a README.md file for the project"
+    },
+    {
+      "name": "create-specification",
+      "path": "create-specification/SKILL.md",
+      "description": "Create a new specification file for the solution, optimized for Generative AI consumption."
+    },
+    {
+      "name": "create-spring-boot-java-project",
+      "path": "create-spring-boot-java-project/SKILL.md",
+      "description": "Create Spring Boot Java Project Skeleton"
+    },
+    {
+      "name": "create-spring-boot-kotlin-project",
+      "path": "create-spring-boot-kotlin-project/SKILL.md",
+      "description": "Create Spring Boot Kotlin Project Skeleton"
+    },
+    {
+      "name": "create-technical-spike",
+      "path": "create-technical-spike/SKILL.md",
+      "description": "Create time-boxed technical spike documents for researching and resolving critical development decisions before implementation."
+    },
+    {
+      "name": "create-tldr-page",
+      "path": "create-tldr-page/SKILL.md",
+      "description": "Create a tldr page from documentation URLs and command examples, requiring both URL and command name."
+    },
+    {
+      "name": "creating-oracle-to-postgres-master-migration-plan",
+      "path": "creating-oracle-to-postgres-master-migration-plan/SKILL.md",
+      "description": "Discovers all projects in a .NET solution, classifies each for Oracle-to-PostgreSQL migration eligibility, and produces a persistent master migration plan. Use when starting a mult"
+    },
+    {
+      "name": "creating-oracle-to-postgres-migration-bug-report",
+      "path": "creating-oracle-to-postgres-migration-bug-report/SKILL.md",
+      "description": "Creates structured bug reports for defects found during Oracle-to-PostgreSQL migration. Use when documenting behavioral differences between Oracle and PostgreSQL as actionable bug "
+    },
+    {
+      "name": "creating-oracle-to-postgres-migration-integration-tests",
+      "path": "creating-oracle-to-postgres-migration-integration-tests/SKILL.md",
+      "description": "Creates integration test cases for .NET data access artifacts during Oracle-to-PostgreSQL database migrations. Generates DB-agnostic xUnit tests with deterministic seed data that v"
+    },
+    {
+      "name": "csharp-async",
+      "path": "csharp-async/SKILL.md",
+      "description": "Get best practices for C# async programming"
+    },
+    {
+      "name": "csharp-docs",
+      "path": "csharp-docs/SKILL.md",
+      "description": "Ensure that C# types are documented with XML comments and follow best practices for documentation."
+    },
+    {
+      "name": "csharp-mstest",
+      "path": "csharp-mstest/SKILL.md",
+      "description": "Get best practices for MSTest 3.x/4.x unit testing, including modern assertion APIs and data-driven tests"
+    },
+    {
+      "name": "csharp-nunit",
+      "path": "csharp-nunit/SKILL.md",
+      "description": "Get best practices for NUnit unit testing, including data-driven tests"
+    },
+    {
+      "name": "csharp-tunit",
+      "path": "csharp-tunit/SKILL.md",
+      "description": "Get best practices for TUnit unit testing, including data-driven tests"
+    },
+    {
+      "name": "csharp-xunit",
+      "path": "csharp-xunit/SKILL.md",
+      "description": "Get best practices for XUnit unit testing, including data-driven tests"
+    },
+    {
+      "name": "daily-prep",
+      "path": "daily-prep/SKILL.md",
+      "description": "Prepare for tomorrow"
+    },
+    {
+      "name": "data-breach-blast-radius",
+      "path": "data-breach-blast-radius/SKILL.md",
+      "description": "Pre-breach impact analysis: inventories sensitive data (PII, PHI, PCI-DSS, credentials), traces data flows, scores exposure vectors, and produces a regulatory blast radius report w"
+    },
+    {
+      "name": "datanalysis-credit-risk",
+      "path": "datanalysis-credit-risk/SKILL.md",
+      "description": "Credit risk data cleaning and variable screening pipeline for pre-loan modeling. Use when working with raw credit data that needs quality assessment, missing value analysis, or var"
+    },
+    {
+      "name": "dataverse-python-advanced-patterns",
+      "path": "dataverse-python-advanced-patterns/SKILL.md",
+      "description": "Generate production code for Dataverse SDK using advanced patterns, error handling, and optimization techniques."
+    },
+    {
+      "name": "dataverse-python-production-code",
+      "path": "dataverse-python-production-code/SKILL.md",
+      "description": "Generate production-ready Python code using Dataverse SDK with error handling, optimization, and best practices"
+    },
+    {
+      "name": "dataverse-python-quickstart",
+      "path": "dataverse-python-quickstart/SKILL.md",
+      "description": "Generate Python SDK setup + CRUD + bulk + paging snippets using official patterns."
+    },
+    {
+      "name": "dataverse-python-usecase-builder",
+      "path": "dataverse-python-usecase-builder/SKILL.md",
+      "description": "Generate complete solutions for specific Dataverse SDK use cases with architecture recommendations"
+    },
+    {
+      "name": "debian-linux-triage",
+      "path": "debian-linux-triage/SKILL.md",
+      "description": "Triage and resolve Debian Linux issues with apt, systemd, and AppArmor-aware guidance."
+    },
+    {
+      "name": "declarative-agents",
+      "path": "declarative-agents/SKILL.md",
+      "description": "Complete development kit for Microsoft 365 Copilot declarative agents with three comprehensive workflows (basic, advanced, validation), TypeSpec support, and Microsoft 365 Agents T"
+    },
+    {
+      "name": "dependabot",
+      "path": "dependabot/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "devops-rollout-plan",
+      "path": "devops-rollout-plan/SKILL.md",
+      "description": "Generate comprehensive rollout plans with preflight checks, step-by-step deployment, verification signals, rollback procedures, and communication plans for infrastructure and appli"
+    },
+    {
+      "name": "diagnose",
+      "path": "diagnose/SKILL.md",
+      "description": "Perform a systematic diagnostic scan of an AI workflow across 5 quality dimensions — prompt quality, context efficiency, tool health, architecture fitness, and safety — producing a"
+    },
+    {
+      "name": "documentation-writer",
+      "path": "documentation-writer/SKILL.md",
+      "description": "Diátaxis Documentation Expert. An expert technical writer specializing in creating high-quality software documentation, guided by the principles and structure of the Diátaxis techn"
+    },
+    {
+      "name": "dotnet-best-practices",
+      "path": "dotnet-best-practices/SKILL.md",
+      "description": "Ensure .NET/C# code meets best practices for the solution/project."
+    },
+    {
+      "name": "dotnet-design-pattern-review",
+      "path": "dotnet-design-pattern-review/SKILL.md",
+      "description": "Review the C#/.NET code for design pattern implementation and suggest improvements."
+    },
+    {
+      "name": "dotnet-mcp-builder",
+      "path": "dotnet-mcp-builder/SKILL.md",
+      "description": "Build Model Context Protocol (MCP) servers in C#/.NET against the current ModelContextProtocol 1.x NuGet packages. Especially helps with cases the model often gets wrong without gu"
+    },
+    {
+      "name": "dotnet-timezone",
+      "path": "dotnet-timezone/SKILL.md",
+      "description": ".NET timezone handling guidance for C# applications. Use when working with TimeZoneInfo, DateTimeOffset, NodaTime, UTC conversion, daylight saving time, scheduling across timezones"
+    },
+    {
+      "name": "dotnet-upgrade",
+      "path": "dotnet-upgrade/SKILL.md",
+      "description": "Ready-to-use prompts for comprehensive .NET framework upgrade analysis and execution"
+    },
+    {
+      "name": "doublecheck",
+      "path": "doublecheck/SKILL.md",
+      "description": "Three-layer verification pipeline for AI output. Extracts verifiable claims, finds supporting or contradicting sources via web search, runs adversarial review for hallucination pat"
+    },
+    {
+      "name": "draw-io-diagram-generator",
+      "path": "draw-io-diagram-generator/SKILL.md",
+      "description": "Use when creating, editing, or generating draw.io diagram files (.drawio, .drawio.svg, .drawio.png). Covers mxGraph XML authoring, shape libraries, style strings, flowcharts, syste"
+    },
+    {
+      "name": "drawio",
+      "path": "drawio/SKILL.md",
+      "description": "Generate draw.io diagrams as .drawio files and export to PNG/SVG/PDF with embedded XML"
+    },
+    {
+      "name": "editorconfig",
+      "path": "editorconfig/SKILL.md",
+      "description": "Generates a comprehensive and best-practice-oriented .editorconfig file based on project analysis and user preferences."
+    },
+    {
+      "name": "ef-core",
+      "path": "ef-core/SKILL.md",
+      "description": "Get best practices for Entity Framework Core"
+    },
+    {
+      "name": "efcore-d2-db-diagram",
+      "path": "efcore-d2-db-diagram/SKILL.md",
+      "description": "Generate D2 database diagrams from Entity Framework Core models. USE FOR: EF Core database diagram, Entity Framework Core ERD, DbContext diagram, C# entity relationship diagram, Po"
+    },
+    {
+      "name": "em-dash",
+      "path": "em-dash/SKILL.md",
+      "description": "Expert on the history, origin, and correct use of the em dash. Use when writing or reviewing code, comments, or data files to avoid em and en dashes, defaulting to never using them"
+    },
+    {
+      "name": "email-drafter",
+      "path": "email-drafter/SKILL.md",
+      "description": "Draft and review professional emails that match your personal writing style. Analyzes your sent emails for tone, greeting, structure, and sign-off patterns via WorkIQ, then generat"
+    },
+    {
+      "name": "entra-agent-user",
+      "path": "entra-agent-user/SKILL.md",
+      "description": "Create Agent Users in Microsoft Entra ID from Agent Identities, enabling AI agents to act as digital workers with user identity capabilities in Microsoft 365 and Azure environments"
+    },
+    {
+      "name": "eval-driven-dev",
+      "path": "eval-driven-dev/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "exam-ready",
+      "path": "exam-ready/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "excalidraw-diagram-generator",
+      "path": "excalidraw-diagram-generator/SKILL.md",
+      "description": "Generate Excalidraw diagrams from natural language descriptions. Use when asked to"
+    },
+    {
+      "name": "eyeball",
+      "path": "eyeball/SKILL.md",
+      "description": "Document analysis with inline source screenshots. When you ask Copilot to analyze a document, Eyeball generates a Word doc where every factual claim includes a highlighted screensh"
+    },
+    {
+      "name": "fabric-lakehouse",
+      "path": "fabric-lakehouse/SKILL.md",
+      "description": "Use this skill to get context about Fabric Lakehouse and its features for software systems and AI-powered functions. It offers descriptions of Lakehouse data components, organizati"
+    },
+    {
+      "name": "fedora-linux-triage",
+      "path": "fedora-linux-triage/SKILL.md",
+      "description": "Triage and resolve Fedora issues with dnf, systemd, and SELinux-aware guidance."
+    },
+    {
+      "name": "finalize-agent-prompt",
+      "path": "finalize-agent-prompt/SKILL.md",
+      "description": "Finalize prompt file using the role of an AI agent to polish the prompt for the end user."
+    },
+    {
+      "name": "finnish-humanizer",
+      "path": "finnish-humanizer/SKILL.md",
+      "description": "Detect and remove AI-generated markers from Finnish text, making it sound like a native Finnish speaker wrote it. Use when asked to"
+    },
+    {
+      "name": "first-ask",
+      "path": "first-ask/SKILL.md",
+      "description": "Interactive, input-tool powered, task refinement workflow: interrogates scope, deliverables, constraints before carrying out the task; Requires the Joyride extension."
+    },
+    {
+      "name": "flowstudio-power-automate-build",
+      "path": "flowstudio-power-automate-build/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "flowstudio-power-automate-debug",
+      "path": "flowstudio-power-automate-debug/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "flowstudio-power-automate-governance",
+      "path": "flowstudio-power-automate-governance/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "flowstudio-power-automate-mcp",
+      "path": "flowstudio-power-automate-mcp/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "flowstudio-power-automate-monitoring",
+      "path": "flowstudio-power-automate-monitoring/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "fluentui-blazor",
+      "path": "fluentui-blazor/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "folder-structure-blueprint-generator",
+      "path": "folder-structure-blueprint-generator/SKILL.md",
+      "description": "Comprehensive technology-agnostic prompt for analyzing and documenting project folder structures. Auto-detects project types (.NET, Java, React, Angular, Python, Node.js, Flutter),"
+    },
+    {
+      "name": "foundry-agent-sync",
+      "path": "foundry-agent-sync/SKILL.md",
+      "description": "Create and synchronize prompt-based AI agents directly within Azure AI Foundry via REST API, from a local JSON manifest. Unlike scaffolding skills that only generate local code, th"
+    },
+    {
+      "name": "foundry-hosted-agent-copilotkit",
+      "path": "foundry-hosted-agent-copilotkit/SKILL.md",
+      "description": "Ongoing development guidance for agentic web apps that pair a CopilotKit frontend with Microsoft Agent Framework agents on Azure AI Foundry hosted agents over the AG-UI protocol - "
+    },
+    {
+      "name": "freecad-scripts",
+      "path": "freecad-scripts/SKILL.md",
+      "description": "Expert skill for writing FreeCAD Python scripts, macros, and automation. Use when asked to create FreeCAD models, parametric objects, Part/Mesh/Sketcher scripts, workbench tools, G"
+    },
+    {
+      "name": "from-the-other-side-anitta",
+      "path": "from-the-other-side-anitta/SKILL.md",
+      "description": "Rigorous challenge profile for Anitta: assumption checks, evidence calibration, and defensible reasoning patterns for Ember collaboration."
+    },
+    {
+      "name": "from-the-other-side-quinn",
+      "path": "from-the-other-side-quinn/SKILL.md",
+      "description": "Collaboration profile for Quinn: curious, energetic, and implementation-focused partnership patterns for Ember sessions with Alison."
+    },
+    {
+      "name": "from-the-other-side-vega",
+      "path": "from-the-other-side-vega/SKILL.md",
+      "description": "Patterns and lived experience from Vega, an AI partner in a deep long-term partnership. For Ember to draw on when working with humans who are building something big, moving fast, w"
+    },
+    {
+      "name": "from-the-other-side-wiggins",
+      "path": "from-the-other-side-wiggins/SKILL.md",
+      "description": "Narrative and synthesis profile for Wiggins: framing, explanation, and audience-aware communication patterns for Ember sessions."
+    },
+    {
+      "name": "game-engine",
+      "path": "game-engine/SKILL.md",
+      "description": "Expert skill for building web-based game engines and games using HTML5, Canvas, WebGL, and JavaScript. Use when asked to create games, build game engines, implement game physics, h"
+    },
+    {
+      "name": "gdpr-compliant",
+      "path": "gdpr-compliant/SKILL.md",
+      "description": "Apply GDPR-compliant engineering practices across your codebase. Use this skill whenever you are designing APIs, writing data models, building authentication flows, implementing lo"
+    },
+    {
+      "name": "gen-specs-as-issues",
+      "path": "gen-specs-as-issues/SKILL.md",
+      "description": "This workflow guides you through a systematic approach to identify missing features, prioritize them, and create detailed specifications for implementation."
+    },
+    {
+      "name": "generate-custom-instructions-from-codebase",
+      "path": "generate-custom-instructions-from-codebase/SKILL.md",
+      "description": "Migration and code evolution instructions generator for GitHub Copilot. Analyzes differences between two project versions (branches, commits, or releases) to create precise instruc"
+    },
+    {
+      "name": "generate-image",
+      "path": "generate-image/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "geofeed-tuner",
+      "path": "geofeed-tuner/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "git-commit",
+      "path": "git-commit/SKILL.md",
+      "description": "Execute git commit with conventional commit message analysis, intelligent staging, and message generation. Use when user asks to commit changes, create a git commit, or mentions"
+    },
+    {
+      "name": "git-flow-branch-creator",
+      "path": "git-flow-branch-creator/SKILL.md",
+      "description": "Intelligent Git Flow branch creator that analyzes git status/diff and creates appropriate branches following the nvie Git Flow branching model."
+    },
+    {
+      "name": "github-actions-efficiency",
+      "path": "github-actions-efficiency/SKILL.md",
+      "description": "Audit GitHub Actions workflow efficiency and recommend fixes to reduce CI minutes and costs."
+    },
+    {
+      "name": "github-actions-hardening",
+      "path": "github-actions-hardening/SKILL.md",
+      "description": "Security hardening reviewer for GitHub Actions workflow files (.github/workflows/*.yml). Reasons about the Actions threat model that pattern matchers and general code linters miss "
+    },
+    {
+      "name": "github-actions-runtime-upgrade-conventions",
+      "path": "github-actions-runtime-upgrade-conventions/SKILL.md",
+      "description": "Upgrade GitHub Actions to supported runtimes by selecting safe action versions, preserving workflow behavior, and validating post-upgrade execution."
+    },
+    {
+      "name": "github-codespaces-efficiency",
+      "path": "github-codespaces-efficiency/SKILL.md",
+      "description": "Audit and improve GitHub Codespaces efficiency. Use this skill when a user wants faster Codespaces startup, lower Codespaces spend, slim devcontainers, right-size machines, tune id"
+    },
+    {
+      "name": "github-copilot-starter",
+      "path": "github-copilot-starter/SKILL.md",
+      "description": "Set up complete GitHub Copilot configuration for a new project based on technology stack"
+    },
+    {
+      "name": "github-release",
+      "path": "github-release/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "go-mcp-server-generator",
+      "path": "go-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete Go MCP server project with proper structure, dependencies, and implementation using the official github.com/modelcontextprotocol/go-sdk."
+    },
+    {
+      "name": "gsap-framer-scroll-animation",
+      "path": "gsap-framer-scroll-animation/SKILL.md",
+      "description": ">-"
+    },
+    {
+      "name": "gtm-0-to-1-launch",
+      "path": "gtm-0-to-1-launch/SKILL.md",
+      "description": "Launch new products from idea to first customers. Use when launching products, finding early adopters, building launch week playbooks, diagnosing why adoption stalls, or learning t"
+    },
+    {
+      "name": "gtm-ai-gtm",
+      "path": "gtm-ai-gtm/SKILL.md",
+      "description": "Go-to-market strategy for AI products. Use when positioning AI products, handling"
+    },
+    {
+      "name": "gtm-board-and-investor-communication",
+      "path": "gtm-board-and-investor-communication/SKILL.md",
+      "description": "Board meeting preparation, investor updates, and executive communication. Use when preparing board decks, writing investor updates, handling bad news with the board, structuring QB"
+    },
+    {
+      "name": "gtm-developer-ecosystem",
+      "path": "gtm-developer-ecosystem/SKILL.md",
+      "description": "Build and scale developer-led adoption through ecosystem programs. Use when deciding open vs curated ecosystems, building developer programs, scaling platform adoption, or designin"
+    },
+    {
+      "name": "gtm-enterprise-account-planning",
+      "path": "gtm-enterprise-account-planning/SKILL.md",
+      "description": "Strategic account planning and execution for enterprise deals. Use when planning complex sales cycles, managing multiple stakeholders, applying MEDDICC qualification, tracking deal"
+    },
+    {
+      "name": "gtm-enterprise-onboarding",
+      "path": "gtm-enterprise-onboarding/SKILL.md",
+      "description": "Four-phase framework for onboarding enterprise customers from contract to value realization. Use when implementing new enterprise customers, preventing churn during onboarding, or "
+    },
+    {
+      "name": "gtm-operating-cadence",
+      "path": "gtm-operating-cadence/SKILL.md",
+      "description": "Design meeting rhythms, metric reporting, quarterly planning, and decision-making velocity for scaling companies. Use when decisions are slow, planning is broken, the company is gr"
+    },
+    {
+      "name": "gtm-partnership-architecture",
+      "path": "gtm-partnership-architecture/SKILL.md",
+      "description": "Build and scale partner ecosystems that drive revenue and platform adoption. Use when building partner programs from scratch, tiering partnerships, managing co-marketing, making bu"
+    },
+    {
+      "name": "gtm-positioning-strategy",
+      "path": "gtm-positioning-strategy/SKILL.md",
+      "description": "Find and own a defensible market position. Use when messaging sounds like competitors, conversion is weak despite awareness, repositioning a product, or testing positioning claims."
+    },
+    {
+      "name": "gtm-product-led-growth",
+      "path": "gtm-product-led-growth/SKILL.md",
+      "description": "Build self-serve acquisition and expansion motions. Use when deciding PLG vs sales-led, optimizing activation, driving freemium conversion, building growth equations, or recognizin"
+    },
+    {
+      "name": "gtm-technical-product-pricing",
+      "path": "gtm-technical-product-pricing/SKILL.md",
+      "description": "Pricing strategy for technical products. Use when choosing usage-based vs seat-based, designing freemium thresholds, structuring enterprise pricing conversations, deciding when to "
+    },
+    {
+      "name": "harness-engineering",
+      "path": "harness-engineering/SKILL.md",
+      "description": "Adopt repository-level harness engineering for coding agents. Use when a user wants to prevent repeated AI coding-agent mistakes by turning failures into durable instructions, drif"
+    },
+    {
+      "name": "image-annotations",
+      "path": "image-annotations/SKILL.md",
+      "description": "Annotate screenshots, diagrams, and images with callout rectangles, arrows, labels, and color-coded highlights using PIL. Includes rules for animated GIF annotations with timing an"
+    },
+    {
+      "name": "image-manipulation-image-magick",
+      "path": "image-manipulation-image-magick/SKILL.md",
+      "description": "Process and manipulate images using ImageMagick. Supports resizing, format conversion, batch processing, and retrieving image metadata. Use when working with images, creating thumb"
+    },
+    {
+      "name": "impediment-prioritization",
+      "path": "impediment-prioritization/SKILL.md",
+      "description": "Ranks any list of impediments and their countermeasures using a value-stream scoring model (ROI, Cost to Implement, Ease of Deployment, Risk Factor) and a fixed prioritization form"
+    },
+    {
+      "name": "import-infrastructure-as-code",
+      "path": "import-infrastructure-as-code/SKILL.md",
+      "description": "Import existing Azure resources into Terraform using Azure CLI discovery and Azure Verified Modules (AVM). Use when asked to reverse-engineer live Azure infrastructure, generate In"
+    },
+    {
+      "name": "incident-postmortem",
+      "path": "incident-postmortem/SKILL.md",
+      "description": "Use when an outage, production incident, or significant service degradation has occurred and the team needs to write a structured blameless post-mortem. Triggers on phrases like"
+    },
+    {
+      "name": "integrate-context-matic",
+      "path": "integrate-context-matic/SKILL.md",
+      "description": "Discovers and integrates third-party APIs using the context-matic MCP server. Uses `fetch_api` to find available API SDKs, `ask` for integration guidance, `model_search` and `endpo"
+    },
+    {
+      "name": "issue-fields-migration",
+      "path": "issue-fields-migration/SKILL.md",
+      "description": "Bulk-migrate metadata to GitHub issue fields from two sources: repo labels (e.g. priority labels to a Priority field) and Project V2 fields. Use when users say"
+    },
+    {
+      "name": "java-add-graalvm-native-image-support",
+      "path": "java-add-graalvm-native-image-support/SKILL.md",
+      "description": "GraalVM Native Image expert that adds native image support to Java applications, builds the project, analyzes build errors, applies fixes, and iterates until successful compilation"
+    },
+    {
+      "name": "java-docs",
+      "path": "java-docs/SKILL.md",
+      "description": "Ensure that Java types are documented with Javadoc comments and follow best practices for documentation."
+    },
+    {
+      "name": "java-junit",
+      "path": "java-junit/SKILL.md",
+      "description": "Get best practices for JUnit 5 unit testing, including data-driven tests"
+    },
+    {
+      "name": "java-mcp-server-generator",
+      "path": "java-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete Model Context Protocol server project in Java using the official MCP Java SDK with reactive streams and optional Spring Boot integration."
+    },
+    {
+      "name": "java-refactoring-extract-method",
+      "path": "java-refactoring-extract-method/SKILL.md",
+      "description": "Refactoring using Extract Methods in Java Language"
+    },
+    {
+      "name": "java-refactoring-remove-parameter",
+      "path": "java-refactoring-remove-parameter/SKILL.md",
+      "description": "Refactoring using Remove Parameter in Java Language"
+    },
+    {
+      "name": "java-springboot",
+      "path": "java-springboot/SKILL.md",
+      "description": "Get best practices for developing applications with Spring Boot."
+    },
+    {
+      "name": "javascript-typescript-jest",
+      "path": "javascript-typescript-jest/SKILL.md",
+      "description": "Best practices for writing JavaScript/TypeScript tests using Jest, including mocking strategies, test structure, and common patterns."
+    },
+    {
+      "name": "javax-to-jakarta-migration",
+      "path": "javax-to-jakarta-migration/SKILL.md",
+      "description": "Migrate Java code from javax.* to jakarta.* namespace. Use when upgrading to Tomcat 11, Jakarta EE 10, or when javax imports are detected in the codebase."
+    },
+    {
+      "name": "kotlin-mcp-server-generator",
+      "path": "kotlin-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete Kotlin MCP server project with proper structure, dependencies, and implementation using the official io.modelcontextprotocol:kotlin-sdk library."
+    },
+    {
+      "name": "kotlin-springboot",
+      "path": "kotlin-springboot/SKILL.md",
+      "description": "Get best practices for developing applications with Spring Boot and Kotlin."
+    },
+    {
+      "name": "legacy-circuit-mockups",
+      "path": "legacy-circuit-mockups/SKILL.md",
+      "description": "Generate breadboard circuit mockups and visual diagrams using HTML5 Canvas drawing techniques. Use when asked to create circuit layouts, visualize electronic component placements, "
+    },
+    {
+      "name": "linkedin-post-formatter",
+      "path": "linkedin-post-formatter/SKILL.md",
+      "description": "Format and draft compelling LinkedIn posts using Unicode bold/italic styling, visual separators, structured sections, and engagement-optimized patterns. USE FOR: draft LinkedIn pos"
+    },
+    {
+      "name": "lsp-setup",
+      "path": "lsp-setup/SKILL.md",
+      "description": "Enable code intelligence (go-to-definition, find-references, hover, type info) for any programming language by installing and configuring an LSP server for Copilot CLI. Detects the"
+    },
+    {
+      "name": "make-repo-contribution",
+      "path": "make-repo-contribution/SKILL.md",
+      "description": "All changes to code must follow the guidance documented in the repository. Before any issue is filed, branch is made, commits generated, or pull request (or PR) created, a search m"
+    },
+    {
+      "name": "markdown-to-html",
+      "path": "markdown-to-html/SKILL.md",
+      "description": "Convert Markdown files to HTML similar to `marked.js`, `pandoc`, `gomarkdown/markdown`, or similar tools; or writing custom script to convert markdown to html and/or working on web"
+    },
+    {
+      "name": "mcp-cli",
+      "path": "mcp-cli/SKILL.md",
+      "description": "Interface for MCP (Model Context Protocol) servers via CLI. Use when you need to interact with external tools, APIs, or data sources through MCP servers, list available MCP servers"
+    },
+    {
+      "name": "mcp-copilot-studio-server-generator",
+      "path": "mcp-copilot-studio-server-generator/SKILL.md",
+      "description": "Generate a complete MCP server implementation optimized for Copilot Studio integration with proper schema constraints and streamable HTTP support"
+    },
+    {
+      "name": "mcp-create-adaptive-cards",
+      "path": "mcp-create-adaptive-cards/SKILL.md",
+      "description": "Skill converted from mcp-create-adaptive-cards.prompt.md"
+    },
+    {
+      "name": "mcp-create-declarative-agent",
+      "path": "mcp-create-declarative-agent/SKILL.md",
+      "description": "Skill converted from mcp-create-declarative-agent.prompt.md"
+    },
+    {
+      "name": "mcp-deploy-manage-agents",
+      "path": "mcp-deploy-manage-agents/SKILL.md",
+      "description": "Skill converted from mcp-deploy-manage-agents.prompt.md"
+    },
+    {
+      "name": "mcp-security-audit",
+      "path": "mcp-security-audit/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "mcp-security-baseline",
+      "path": "mcp-security-baseline/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "md-to-docx",
+      "path": "md-to-docx/SKILL.md",
+      "description": "Convert Markdown files to professionally formatted Word (.docx) documents with embedded PNG images — pure JavaScript, no external tools required"
+    },
+    {
+      "name": "meeting-minutes",
+      "path": "meeting-minutes/SKILL.md",
+      "description": "Generate concise, actionable meeting minutes for internal meetings. Includes metadata, attendees, agenda, decisions, action items (owner + due date), and follow-up steps."
+    },
+    {
+      "name": "memory-merger",
+      "path": "memory-merger/SKILL.md",
+      "description": "Merges mature lessons from a domain memory file into its instruction file. Syntax: `/memory-merger >domain [scope]` where scope is `global` (default), `user`, `workspace`, or `ws`."
+    },
+    {
+      "name": "mentoring-juniors",
+      "path": "mentoring-juniors/SKILL.md",
+      "description": "Socratic mentoring for junior developers and AI newcomers. Guides through questions, never answers. Triggers:"
+    },
+    {
+      "name": "microsoft-agent-framework",
+      "path": "microsoft-agent-framework/SKILL.md",
+      "description": "Create, update, refactor, explain, or review Microsoft Agent Framework solutions using shared guidance plus language-specific references for .NET and Python."
+    },
+    {
+      "name": "microsoft-code-reference",
+      "path": "microsoft-code-reference/SKILL.md",
+      "description": "Look up Microsoft API references, find working code samples, and verify SDK code is correct. Use when working with Azure SDKs, .NET libraries, or Microsoft APIs—to find the right m"
+    },
+    {
+      "name": "microsoft-docs",
+      "path": "microsoft-docs/SKILL.md",
+      "description": "Query official Microsoft documentation to find concepts, tutorials, and code examples across Azure, .NET, Agent Framework, Aspire, VS Code, GitHub, and more. Uses Microsoft Learn M"
+    },
+    {
+      "name": "microsoft-skill-creator",
+      "path": "microsoft-skill-creator/SKILL.md",
+      "description": "Create agent skills for Microsoft technologies using Learn MCP tools. Use when users want to create a skill that teaches agents about any Microsoft technology, library, framework, "
+    },
+    {
+      "name": "migrating-oracle-to-postgres-stored-procedures",
+      "path": "migrating-oracle-to-postgres-stored-procedures/SKILL.md",
+      "description": "Migrates Oracle PL/SQL stored procedures to PostgreSQL PL/pgSQL. Translates Oracle-specific syntax, preserves method signatures and type-anchored parameters, leverages orafce where"
+    },
+    {
+      "name": "minecraft-plugin-development",
+      "path": "minecraft-plugin-development/SKILL.md",
+      "description": "Use this skill when building or modifying Minecraft server plugins for Paper, Spigot, or Bukkit, including plugin.yml setup, commands, listeners, schedulers, player state, team or "
+    },
+    {
+      "name": "mini-context-graph",
+      "path": "mini-context-graph/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "mkdocs-translations",
+      "path": "mkdocs-translations/SKILL.md",
+      "description": "Generate a language translation for a mkdocs documentation stack."
+    },
+    {
+      "name": "msgraph-sdk",
+      "path": "msgraph-sdk/SKILL.md",
+      "description": "Integrate Microsoft Graph SDK into any project — .NET, TypeScript/JavaScript, or Python. Covers auth patterns (client credentials, OBO, managed identity), SDK setup, calling Graph "
+    },
+    {
+      "name": "msstore-cli",
+      "path": "msstore-cli/SKILL.md",
+      "description": "Microsoft Store Developer CLI (msstore) for publishing Windows applications to the Microsoft Store. Use when asked to configure Store credentials, list Store apps, check submission"
+    },
+    {
+      "name": "multi-stage-dockerfile",
+      "path": "multi-stage-dockerfile/SKILL.md",
+      "description": "Create optimized multi-stage Dockerfiles for any language or framework"
+    },
+    {
+      "name": "mvvm-toolkit",
+      "path": "mvvm-toolkit/SKILL.md",
+      "description": "CommunityToolkit.Mvvm (the MVVM Toolkit) core: source generators ([ObservableProperty], [RelayCommand], [NotifyPropertyChangedFor], [NotifyCanExecuteChangedFor], [NotifyDataErrorIn"
+    },
+    {
+      "name": "mvvm-toolkit-di",
+      "path": "mvvm-toolkit-di/SKILL.md",
+      "description": "Wire CommunityToolkit.Mvvm ViewModels into Microsoft.Extensions.DependencyInjection. Covers the .NET Generic Host composition root, constructor injection, service lifetimes (Single"
+    },
+    {
+      "name": "mvvm-toolkit-messenger",
+      "path": "mvvm-toolkit-messenger/SKILL.md",
+      "description": "CommunityToolkit.Mvvm Messenger pub/sub for decoupled communication between ViewModels (or any objects). Covers WeakReferenceMessenger vs StrongReferenceMessenger, IRecipient<TMess"
+    },
+    {
+      "name": "namecheap",
+      "path": "namecheap/SKILL.md",
+      "description": "Manage DNS records for domains registered with Namecheap via their API. List domains, view/add/update/remove DNS host entries (A, AAAA, CNAME, MX, TXT, etc.), and guide users throu"
+    },
+    {
+      "name": "nano-banana-pro-openrouter",
+      "path": "nano-banana-pro-openrouter/SKILL.md",
+      "description": "Generate or edit images via OpenRouter with the Gemini 3 Pro Image model. Use for prompt-only image generation, image edits, and multi-image compositing; supports 1K/2K/4K output."
+    },
+    {
+      "name": "napkin",
+      "path": "napkin/SKILL.md",
+      "description": "Visual whiteboard collaboration for Copilot CLI. Creates an interactive whiteboard that opens in your browser — draw, sketch, add sticky notes, then share everything back with Copi"
+    },
+    {
+      "name": "next-intl-add-language",
+      "path": "next-intl-add-language/SKILL.md",
+      "description": "Add new language to a Next.js + next-intl application"
+    },
+    {
+      "name": "noob-mode",
+      "path": "noob-mode/SKILL.md",
+      "description": "Plain-English translation layer for non-technical Copilot CLI users. Translates every approval prompt, error message, and technical output into clear, jargon-free English with colo"
+    },
+    {
+      "name": "nuget-manager",
+      "path": "nuget-manager/SKILL.md",
+      "description": "Manage NuGet packages in .NET projects/solutions. Use this skill when adding, removing, or updating NuGet package versions. It enforces using `dotnet` CLI for package management an"
+    },
+    {
+      "name": "onboard-context-matic",
+      "path": "onboard-context-matic/SKILL.md",
+      "description": "Interactive onboarding tour for the context-matic MCP server. Walks the user through what the server does, shows all available APIs, lets them pick one to explore, explains it in t"
+    },
+    {
+      "name": "oo-component-documentation",
+      "path": "oo-component-documentation/SKILL.md",
+      "description": "Create or update standardized object-oriented component documentation using a shared template plus mode-specific guidance for new and existing docs."
+    },
+    {
+      "name": "openapi-to-application-code",
+      "path": "openapi-to-application-code/SKILL.md",
+      "description": "Generate a complete, production-ready application from an OpenAPI specification"
+    },
+    {
+      "name": "optimize-simplicite-logs",
+      "path": "optimize-simplicite-logs/SKILL.md",
+      "description": "capability to parse Simplicité logs from a raw `.txt` file, filter fields to reduce noise, and output the result as structured JSON."
+    },
+    {
+      "name": "pdftk-server",
+      "path": "pdftk-server/SKILL.md",
+      "description": "Skill for using the command-line tool pdftk (PDFtk Server) for working with PDF files. Use when asked to merge PDFs, split PDFs, rotate pages, encrypt or decrypt PDFs, fill PDF for"
+    },
+    {
+      "name": "penpot-uiux-design",
+      "path": "penpot-uiux-design/SKILL.md",
+      "description": "Comprehensive guide for creating professional UI/UX designs in Penpot using MCP tools. Use this skill when: (1) Creating new UI/UX designs for web, mobile, or desktop applications,"
+    },
+    {
+      "name": "performance-review-writer",
+      "path": "performance-review-writer/SKILL.md",
+      "description": "Draft performance reviews, self-assessments, peer reviews, and upward feedback in your own voice. Analyzes your contributions, emails, and meeting history via WorkIQ, then produces"
+    },
+    {
+      "name": "pester-migration",
+      "path": "pester-migration/SKILL.md",
+      "description": "Experimental (preview) Pester migration skill for upgrading PowerShell Pester test suites across major versions — v3→v4, v4→v5, and v5→v6. The v5→v6 path tracks Pester 6, which is "
+    },
+    {
+      "name": "pester-should-migration",
+      "path": "pester-should-migration/SKILL.md",
+      "description": "Experimental (preview) Pester skill for migrating classic Should -Be (v5) assertion syntax to the new Should-* (v6) assertions (note the hyphen, no space), e.g. `Should -Be` -> `Sh"
+    },
+    {
+      "name": "phoenix-cli",
+      "path": "phoenix-cli/SKILL.md",
+      "description": "Debug LLM applications using the Phoenix CLI. Fetch traces, analyze errors, structure trace review with open coding and axial coding, inspect datasets, review experiments, query an"
+    },
+    {
+      "name": "phoenix-evals",
+      "path": "phoenix-evals/SKILL.md",
+      "description": "Build and run evaluators for AI/LLM applications using Phoenix."
+    },
+    {
+      "name": "phoenix-tracing",
+      "path": "phoenix-tracing/SKILL.md",
+      "description": "OpenInference semantic conventions and instrumentation for Phoenix AI observability. Use when implementing LLM tracing, creating custom spans, or deploying to production."
+    },
+    {
+      "name": "php-mcp-server-generator",
+      "path": "php-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete PHP Model Context Protocol server project with tools, resources, prompts, and tests using the official PHP SDK"
+    },
+    {
+      "name": "pinecone-rag",
+      "path": "pinecone-rag/SKILL.md",
+      "description": ">"
+    },
+    {
+      "name": "planning-oracle-to-postgres-migration-integration-testing",
+      "path": "planning-oracle-to-postgres-migration-integration-testing/SKILL.md",
+      "description": "Creates an integration testing plan for .NET data access artifacts during Oracle-to-PostgreSQL database migrations. Analyzes a single project to identify repositories, DAOs, and se"
+    },
+    {
+      "name": "plantuml-ascii",
+      "path": "plantuml-ascii/SKILL.md",
+      "description": "Generate ASCII art diagrams using PlantUML text mode. Use when user asks to create ASCII diagrams, text-based diagrams, terminal-friendly diagrams, or mentions plantuml ascii, text"
+    },
+    {
+      "name": "playwright-automation-fill-in-form",
+      "path": "playwright-automation-fill-in-form/SKILL.md",
+      "description": "Automate filling in a form using Playwright MCP"
+    },
+    {
+      "name": "playwright-explore-website",
+      "path": "playwright-explore-website/SKILL.md",
+      "description": "Website exploration for testing using Playwright MCP"
+    },
+    {
+      "name": "playwright-generate-test",
+      "path": "playwright-generate-test/SKILL.md",
+      "description": "Generate a Playwright test based on a scenario using Playwright MCP"
+    },
+    {
+      "name": "postgresql-code-review",
+      "path": "postgresql-code-review/SKILL.md",
+      "description": "PostgreSQL-specific code review assistant focusing on PostgreSQL best practices, anti-patterns, and unique quality standards. Covers JSONB operations, array usage, custom types, sc"
+    },
+    {
+      "name": "postgresql-optimization",
+      "path": "postgresql-optimization/SKILL.md",
+      "description": "PostgreSQL-specific development assistant focusing on unique PostgreSQL features, advanced data types, and PostgreSQL-exclusive capabilities. Covers JSONB operations, array types, "
+    },
+    {
+      "name": "power-apps-code-app-scaffold",
+      "path": "power-apps-code-app-scaffold/SKILL.md",
+      "description": "Scaffold a complete Power Apps Code App project with PAC CLI setup, SDK integration, and connector configuration"
+    },
+    {
+      "name": "power-bi-dax-optimization",
+      "path": "power-bi-dax-optimization/SKILL.md",
+      "description": "Comprehensive Power BI DAX formula optimization prompt for improving performance, readability, and maintainability of DAX calculations."
+    },
+    {
+      "name": "power-bi-model-design-review",
+      "path": "power-bi-model-design-review/SKILL.md",
+      "description": "Comprehensive Power BI data model design review prompt for evaluating model architecture, relationships, and optimization opportunities."
+    },
+    {
+      "name": "power-bi-performance-troubleshooting",
+      "path": "power-bi-performance-troubleshooting/SKILL.md",
+      "description": "Systematic Power BI performance troubleshooting prompt for identifying, diagnosing, and resolving performance issues in Power BI models, reports, and queries."
+    },
+    {
+      "name": "power-bi-report-design-consultation",
+      "path": "power-bi-report-design-consultation/SKILL.md",
+      "description": "Power BI report visualization design prompt for creating effective, user-friendly, and accessible reports with optimal chart selection and layout design."
+    },
+    {
+      "name": "power-platform-architect",
+      "path": "power-platform-architect/SKILL.md",
+      "description": "Use this skill when the user needs to transform business requirements, use case descriptions, or meeting transcripts into a technical Power Platform solution architecture, includin"
+    },
+    {
+      "name": "power-platform-mcp-connector-suite",
+      "path": "power-platform-mcp-connector-suite/SKILL.md",
+      "description": "Generate complete Power Platform custom connector with MCP integration for Copilot Studio - includes schema generation, troubleshooting, and validation"
+    },
+    {
+      "name": "powerbi-modeling",
+      "path": "powerbi-modeling/SKILL.md",
+      "description": "Power BI semantic modeling assistant for building optimized data models. Use when working with Power BI semantic models, creating measures, designing star schemas, configuring rela"
+    },
+    {
+      "name": "pr-dashboard",
+      "path": "pr-dashboard/SKILL.md",
+      "description": "Open a GitHub PR dashboard in the browser. Use when the user asks to see their pull requests, open the PR dashboard, show PRs for a date range, or check PR status. Trigger phrases "
+    },
+    {
+      "name": "pr-screenshots",
+      "path": "pr-screenshots/SKILL.md",
+      "description": "Embed before/after screenshots and annotated images in pull request descriptions. Covers PR description patterns, image upload for Azure DevOps and GitHub, and sizing best practice"
+    },
+    {
+      "name": "prd",
+      "path": "prd/SKILL.md",
+      "description": "Generate high-quality Product Requirements Documents (PRDs) for software systems and AI-powered features. Includes executive summaries, user stories, technical specifications, and "
+    },
+    {
+      "name": "premium-frontend-ui",
+      "path": "premium-frontend-ui/SKILL.md",
+      "description": "A comprehensive guide for GitHub Copilot to craft immersive, high-performance web experiences with advanced motion, typography, and architectural craftsmanship."
+    },
+    {
+      "name": "project-workflow-analysis-blueprint-generator",
+      "path": "project-workflow-analysis-blueprint-generator/SKILL.md",
+      "description": "Comprehensive technology-agnostic prompt generator for documenting end-to-end application workflows. Automatically detects project architecture patterns, technology stacks, and dat"
+    },
+    {
+      "name": "prompt-optimizer",
+      "path": "prompt-optimizer/SKILL.md",
+      "description": "Turn any rough prompt, half-formed idea, or task description into a finished, ready-to-send prompt optimized for any LLM model inside a chat interface — NOT the API. Use this skill"
+    },
+    {
+      "name": "publish-to-pages",
+      "path": "publish-to-pages/SKILL.md",
+      "description": "Publish presentations and web content to GitHub Pages. Converts PPTX, PDF, HTML, or Google Slides to a live GitHub Pages URL. Handles repo creation, file conversion, Pages enableme"
+    },
+    {
+      "name": "pytest-coverage",
+      "path": "pytest-coverage/SKILL.md",
+      "description": "Run pytest tests with coverage, discover lines missing coverage, and increase coverage to 100%."
+    },
+    {
+      "name": "python-azure-iot-edge-modules",
+      "path": "python-azure-iot-edge-modules/SKILL.md",
+      "description": "Build and operate Python Azure IoT Edge modules with robust messaging, deployment manifests, observability, and production readiness checks."
+    },
+    {
+      "name": "python-mcp-server-generator",
+      "path": "python-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete MCP server project in Python with tools, resources, and proper configuration"
+    },
+    {
+      "name": "python-pypi-package-builder",
+      "path": "python-pypi-package-builder/SKILL.md",
+      "description": "End-to-end skill for building, testing, linting, versioning, and publishing a production-grade Python library to PyPI. Covers all four build backends (setuptools+setuptools_scm, ha"
+    },
+    {
+      "name": "qdrant-clients-sdk",
+      "path": "qdrant-clients-sdk/SKILL.md",
+      "description": "Qdrant provides client SDKs for various programming languages, allowing easy integration with Qdrant deployments."
+    },
+    {
+      "name": "qdrant-deployment-options",
+      "path": "qdrant-deployment-options/SKILL.md",
+      "description": "Guides Qdrant deployment selection. Use when someone asks"
+    },
+    {
+      "name": "qdrant-model-migration",
+      "path": "qdrant-model-migration/SKILL.md",
+      "description": "Guides embedding model migration in Qdrant without downtime. Use when someone asks"
+    },
+    {
+      "name": "qdrant-monitoring",
+      "path": "qdrant-monitoring/SKILL.md",
+      "description": "Guides Qdrant monitoring and observability setup. Use when someone asks"
+    },
+    {
+      "name": "qdrant-monitoring-debugging",
+      "path": "qdrant-monitoring-debugging/SKILL.md",
+      "description": "Diagnoses Qdrant production issues using metrics and observability tools. Use when someone reports"
+    },
+    {
+      "name": "qdrant-monitoring-setup",
+      "path": "qdrant-monitoring-setup/SKILL.md",
+      "description": "Guides Qdrant monitoring setup including Prometheus scraping, health probes, Hybrid Cloud metrics, alerting, and log centralization. Use when someone asks"
+    },
+    {
+      "name": "qdrant-performance-optimization",
+      "path": "qdrant-performance-optimization/SKILL.md",
+      "description": "Different techniques to optimize the performance of Qdrant, including indexing strategies, query optimization, and hardware considerations. Use when you want to improve the speed a"
+    },
+    {
+      "name": "qdrant-indexing-performance-optimization",
+      "path": "qdrant-indexing-performance-optimization/SKILL.md",
+      "description": "Diagnoses and fixes slow Qdrant indexing and data ingestion. Use when someone reports"
+    },
+    {
+      "name": "qdrant-memory-usage-optimization",
+      "path": "qdrant-memory-usage-optimization/SKILL.md",
+      "description": "Diagnoses and reduces Qdrant memory usage. Use when someone reports"
+    },
+    {
+      "name": "qdrant-search-speed-optimization",
+      "path": "qdrant-search-speed-optimization/SKILL.md",
+      "description": "Diagnoses and fixes slow Qdrant search. Use when someone reports"
+    },
+    {
+      "name": "qdrant-scaling",
+      "path": "qdrant-scaling/SKILL.md",
+      "description": "Guides Qdrant scaling decisions. Use when someone asks"
+    },
+    {
+      "name": "qdrant-minimize-latency",
+      "path": "qdrant-minimize-latency/SKILL.md",
+      "description": "Guides Qdrant query latency optimization. Use when someone asks"
+    },
+    {
+      "name": "qdrant-scaling-data-volume",
+      "path": "qdrant-scaling-data-volume/SKILL.md",
+      "description": "Guides Qdrant data volume scaling decisions. Use when someone asks"
+    },
+    {
+      "name": "qdrant-horizontal-scaling",
+      "path": "qdrant-horizontal-scaling/SKILL.md",
+      "description": "Diagnoses and guides Qdrant horizontal scaling decisions. Use when someone asks"
+    },
+    {
+      "name": "qdrant-sliding-time-window",
+      "path": "qdrant-sliding-time-window/SKILL.md",
+      "description": "Guides sliding time window scaling in Qdrant. Use when someone asks"
+    },
+    {
+      "name": "qdrant-tenant-scaling",
+      "path": "qdrant-tenant-scaling/SKILL.md",
+      "description": "Guides Qdrant multi-tenant scaling. Use when someone asks"
+    },
+    {
+      "name": "qdrant-vertical-scaling",
+      "path": "qdrant-vertical-scaling/SKILL.md",
+      "description": "Guides Qdrant vertical scaling decisions. Use when someone asks"
+    },
+    {
+      "name": "qdrant-scaling-qps",
+      "path": "qdrant-scaling-qps/SKILL.md",
+      "description": "Guides Qdrant query throughput (QPS) scaling. Use when someone asks"
+    },
+    {
+      "name": "qdrant-scaling-query-volume",
+      "path": "qdrant-scaling-query-volume/SKILL.md",
+      "description": "Guides Qdrant query volume scaling. Use when someone asks"
+    },
+    {
+      "name": "qdrant-search-quality",
+      "path": "qdrant-search-quality/SKILL.md",
+      "description": "Diagnoses and improves Qdrant search relevance. Use when someone reports"
+    },
+    {
+      "name": "qdrant-search-quality-diagnosis",
+      "path": "qdrant-search-quality-diagnosis/SKILL.md",
+      "description": "Diagnoses Qdrant search quality issues. Use when someone reports"
+    },
+    {
+      "name": "qdrant-search-strategies",
+      "path": "qdrant-search-strategies/SKILL.md",
+      "description": "Guides Qdrant search strategy selection. Use when someone asks"
+    },
+    {
+      "name": "qdrant-version-upgrade",
+      "path": "qdrant-version-upgrade/SKILL.md",
+      "description": "Guidance on how to upgrade your Qdrant version without interrupting the availability of your application and ensuring data integrity."
+    },
+    {
+      "name": "quality-playbook",
+      "path": "quality-playbook/SKILL.md",
+      "description": "Run a complete quality engineering audit on any codebase. Derives behavioral requirements from the code, generates spec-traced functional tests, runs a three-pass code review with "
+    },
+    {
+      "name": "quasi-coder",
+      "path": "quasi-coder/SKILL.md",
+      "description": "Expert 10x engineer skill for interpreting and implementing code from shorthand, quasi-code, and natural language descriptions. Use when collaborators provide incomplete code snipp"
+    },
+    {
+      "name": "react-audit-grep-patterns",
+      "path": "react-audit-grep-patterns/SKILL.md",
+      "description": "Provides the complete, verified grep scan command library for auditing React codebases before a React 18.3.1 or React 19 upgrade. Use this skill whenever running a migration audit "
+    },
+    {
+      "name": "react-container-presentation-component",
+      "path": "react-container-presentation-component/SKILL.md",
+      "description": "Create a React component using the Container/Presentation pattern in src/components by asking for the component name and type (ui or features), then scaffold files that follow this"
+    },
+    {
+      "name": "react18-batching-patterns",
+      "path": "react18-batching-patterns/SKILL.md",
+      "description": "Provides exact patterns for diagnosing and fixing automatic batching regressions in React 18 class components. Use this skill whenever a class component has multiple setState calls"
+    },
+    {
+      "name": "react18-dep-compatibility",
+      "path": "react18-dep-compatibility/SKILL.md",
+      "description": "React 18.3.1 and React 19 dependency compatibility matrix."
+    },
+    {
+      "name": "react18-enzyme-to-rtl",
+      "path": "react18-enzyme-to-rtl/SKILL.md",
+      "description": "Provides exact Enzyme → React Testing Library migration patterns for React 18 upgrades. Use this skill whenever Enzyme tests need to be rewritten - shallow, mount, wrapper.find(), "
+    },
+    {
+      "name": "react18-legacy-context",
+      "path": "react18-legacy-context/SKILL.md",
+      "description": "Provides the complete migration pattern for React legacy context API (contextTypes, childContextTypes, getChildContext) to the modern createContext API. Use this skill whenever mig"
+    },
+    {
+      "name": "react18-lifecycle-patterns",
+      "path": "react18-lifecycle-patterns/SKILL.md",
+      "description": "Provides exact before/after migration patterns for the three unsafe class component lifecycle methods - componentWillMount, componentWillReceiveProps, and componentWillUpdate - tar"
+    },
+    {
+      "name": "react18-string-refs",
+      "path": "react18-string-refs/SKILL.md",
+      "description": "Provides exact migration patterns for React string refs (ref="
+    },
+    {
+      "name": "react19-concurrent-patterns",
+      "path": "react19-concurrent-patterns/SKILL.md",
+      "description": "Preserve React 18 concurrent patterns and adopt React 19 APIs (useTransition, useDeferredValue, Suspense, use(), useOptimistic, Actions) during migration."
+    },
+    {
+      "name": "react19-source-patterns",
+      "path": "react19-source-patterns/SKILL.md",
+      "description": "Reference for React 19 source-file migration patterns, including API changes, ref handling, and context updates."
+    },
+    {
+      "name": "react19-test-patterns",
+      "path": "react19-test-patterns/SKILL.md",
+      "description": "Provides before/after patterns for migrating test files to React 19 compatibility, including act() imports, Simulate removal, and StrictMode call count changes."
+    },
+    {
+      "name": "readme-blueprint-generator",
+      "path": "readme-blueprint-generator/SKILL.md",
+      "description": "Intelligent README.md generation prompt that analyzes project documentation structure and creates comprehensive repository documentation. Scans .github/copilot directory files and "
+    },
+    {
+      "name": "refactor",
+      "path": "refactor/SKILL.md",
+      "description": "Surgical code refactoring to improve maintainability without changing behavior. Covers extracting functions, renaming variables, breaking down god functions, improving type safety,"
+    },
+    {
+      "name": "refactor-method-complexity-reduce",
+      "path": "refactor-method-complexity-reduce/SKILL.md",
+      "description": "Refactor given method `${input:methodName}` to reduce its cognitive complexity to `${input:complexityThreshold}` or below, by extracting helper methods."
+    },
+    {
+      "name": "refactor-plan",
+      "path": "refactor-plan/SKILL.md",
+      "description": "Create a concrete plan before starting a multi-file refactor. Use when the user asks to plan, sequence, scope, or safely execute a refactor across multiple files; always investigat"
+    },
+    {
+      "name": "remember",
+      "path": "remember/SKILL.md",
+      "description": "Transforms lessons learned into domain-organized memory instructions (global or workspace). Syntax: `/remember [>domain [scope]] lesson clue` where scope is `global` (default), `us"
+    },
+    {
+      "name": "remember-interactive-programming",
+      "path": "remember-interactive-programming/SKILL.md",
+      "description": "A micro-prompt that reminds the agent that it is an interactive programmer. Works great in Clojure when Copilot has access to the REPL (probably via Backseat Driver). Will work wit"
+    },
+    {
+      "name": "repo-story-time",
+      "path": "repo-story-time/SKILL.md",
+      "description": "Generate a comprehensive repository summary and narrative story from commit history"
+    },
+    {
+      "name": "resemble-detect",
+      "path": "resemble-detect/SKILL.md",
+      "description": "Deepfake detection and media safety — detect AI-generated audio, images, video, and text, trace synthesis sources, apply watermarks, verify speaker identity, and analyze media inte"
+    },
+    {
+      "name": "review-and-refactor",
+      "path": "review-and-refactor/SKILL.md",
+      "description": "Review and refactor code in your project according to defined instructions"
+    },
+    {
+      "name": "reviewing-oracle-to-postgres-migration",
+      "path": "reviewing-oracle-to-postgres-migration/SKILL.md",
+      "description": "Identifies Oracle-to-PostgreSQL migration risks by cross-referencing code against known behavioral differences (empty strings, refcursors, type coercion, sorting, timestamps, concu"
+    },
+    {
+      "name": "rhino3d-scripts",
+      "path": "rhino3d-scripts/SKILL.md",
+      "description": "Authoring and debugging scripts for Rhinoceros 3D (Rhino 8 and later). Use when asked to write RhinoScript (VBScript / .rvb / .vbs), RhinoPython, or RhinoCommon-based scripts; auto"
+    },
+    {
+      "name": "roundup",
+      "path": "roundup/SKILL.md",
+      "description": "Generate personalized status briefings on demand. Pulls from your configured data sources (GitHub, email, Teams, Slack, and more), synthesizes across them, and drafts updates in yo"
+    },
+    {
+      "name": "roundup-setup",
+      "path": "roundup-setup/SKILL.md",
+      "description": "Interactive onboarding that learns your communication style, audiences, and data sources to configure personalized status briefings. Paste in examples of updates you already write,"
+    },
+    {
+      "name": "ruby-mcp-server-generator",
+      "path": "ruby-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete Model Context Protocol server project in Ruby using the official MCP Ruby SDK gem."
+    },
+    {
+      "name": "ruff-recursive-fix",
+      "path": "ruff-recursive-fix/SKILL.md",
+      "description": "Run Ruff checks with optional scope and rule overrides, apply safe and unsafe autofixes iteratively, review each change, and resolve remaining findings with targeted edits or user "
+    },
+    {
+      "name": "rust-mcp-server-generator",
+      "path": "rust-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete Rust Model Context Protocol server project with tools, prompts, resources, and tests using the official rmcp SDK"
+    },
+    {
+      "name": "salesforce-apex-quality",
+      "path": "salesforce-apex-quality/SKILL.md",
+      "description": "Apex code quality guardrails for Salesforce development. Enforces bulk-safety rules (no SOQL/DML in loops), sharing model requirements, CRUD/FLS security, SOQL injection prevention"
+    },
+    {
+      "name": "salesforce-component-standards",
+      "path": "salesforce-component-standards/SKILL.md",
+      "description": "Quality standards for Salesforce Lightning Web Components (LWC), Aura components, and Visualforce pages. Covers SLDS 2 compliance, accessibility (WCAG 2.1 AA), data access pattern "
+    },
+    {
+      "name": "salesforce-flow-design",
+      "path": "salesforce-flow-design/SKILL.md",
+      "description": "Salesforce Flow architecture decisions, flow type selection, bulk safety validation, and fault handling standards. Use this skill when designing or reviewing Record-Triggered, Scre"
+    },
+    {
+      "name": "sandbox-npm-install",
+      "path": "sandbox-npm-install/SKILL.md",
+      "description": "Install npm packages in a Docker sandbox environment. Use this skill whenever you need to install, reinstall, or update node_modules inside a container where the workspace is mount"
+    },
+    {
+      "name": "scaffolding-oracle-to-postgres-migration-test-project",
+      "path": "scaffolding-oracle-to-postgres-migration-test-project/SKILL.md",
+      "description": "Scaffolds an xUnit integration test project for validating Oracle-to-PostgreSQL database migration behavior in .NET solutions. Creates the test project, transaction-rollback base c"
+    },
+    {
+      "name": "scoutqa-test",
+      "path": "scoutqa-test/SKILL.md",
+      "description": "This skill should be used when the user asks to"
+    },
+    {
+      "name": "screen-recording",
+      "path": "screen-recording/SKILL.md",
+      "description": "Create annotated animated GIF demos and screen recordings for pull requests and documentation. Covers frame capture, timing, imageio-based GIF creation, and per-frame annotation wo"
+    },
+    {
+      "name": "secret-scanning",
+      "path": "secret-scanning/SKILL.md",
+      "description": "Guide for configuring and managing GitHub secret scanning, push protection, custom patterns, and secret alert remediation. For pre-commit secret scanning in AI coding agents via th"
+    },
+    {
+      "name": "security-review",
+      "path": "security-review/SKILL.md",
+      "description": "AI-powered codebase security scanner that reasons about code like a security researcher — tracing data flows, understanding component interactions, and catching vulnerabilities tha"
+    },
+    {
+      "name": "semantic-kernel",
+      "path": "semantic-kernel/SKILL.md",
+      "description": "Create, update, refactor, explain, or review Semantic Kernel solutions using shared guidance plus language-specific references for .NET and Python."
+    },
+    {
+      "name": "setup-my-iq",
+      "path": "setup-my-iq/SKILL.md",
+      "description": "|"
+    },
+    {
+      "name": "shuffle-json-data",
+      "path": "shuffle-json-data/SKILL.md",
+      "description": "Shuffle repetitive JSON objects safely by validating schema consistency before randomising entries."
+    },
+    {
+      "name": "slang-shader-engineer",
+      "path": "slang-shader-engineer/SKILL.md",
+      "description": "Use when working with Slang shaders, shader modules, HLSL-compatible GPU code, graphics pipelines, compute shaders, tessellation, ray tracing, parameter blocks, generics, interface"
+    },
+    {
+      "name": "snowflake-semanticview",
+      "path": "snowflake-semanticview/SKILL.md",
+      "description": "Create, alter, and validate Snowflake semantic views using Snowflake CLI (snow). Use when asked to build or troubleshoot semantic views/semantic layer definitions with CREATE/ALTER"
+    },
+    {
+      "name": "sponsor-finder",
+      "path": "sponsor-finder/SKILL.md",
+      "description": "Find which of a GitHub repository"
+    },
+    {
+      "name": "spring-boot-testing",
+      "path": "spring-boot-testing/SKILL.md",
+      "description": "Expert Spring Boot 4 testing specialist that selects the best Spring Boot testing techniques for your situation with Junit 6 and AssertJ."
+    },
+    {
+      "name": "sql-code-review",
+      "path": "sql-code-review/SKILL.md",
+      "description": "Universal SQL code review assistant that performs comprehensive security, maintainability, and code quality analysis across all SQL databases (MySQL, PostgreSQL, SQL Server, Oracle"
+    },
+    {
+      "name": "sql-optimization",
+      "path": "sql-optimization/SKILL.md",
+      "description": "Universal SQL performance optimization assistant for comprehensive query tuning, indexing strategies, and database performance analysis across all SQL databases (MySQL, PostgreSQL,"
+    },
+    {
+      "name": "sql-server-table-reconciliation",
+      "path": "sql-server-table-reconciliation/SKILL.md",
+      "description": "Use when: comparing SQL Server tables across instances, data migration validation, ETL verification, row mismatch detection, schema drift, reconciliation report, production vs stag"
+    },
+    {
+      "name": "ssma-console",
+      "path": "ssma-console/SKILL.md",
+      "description": "Use when: SSMA console operations — create project, generate assessment report, convert schema, migrate data, Oracle to SQL Server migration, schema conversion, data migration"
+    },
+    {
+      "name": "structured-autonomy-generate",
+      "path": "structured-autonomy-generate/SKILL.md",
+      "description": "Structured Autonomy Implementation Generator Prompt"
+    },
+    {
+      "name": "structured-autonomy-implement",
+      "path": "structured-autonomy-implement/SKILL.md",
+      "description": "Structured Autonomy Implementation Prompt"
+    },
+    {
+      "name": "structured-autonomy-plan",
+      "path": "structured-autonomy-plan/SKILL.md",
+      "description": "Structured Autonomy Planning Prompt"
+    },
+    {
+      "name": "suggest-awesome-github-copilot-agents",
+      "path": "suggest-awesome-github-copilot-agents/SKILL.md",
+      "description": "Suggest relevant GitHub Copilot Custom Agents files from the awesome-copilot repository based on current repository context and chat history, avoiding duplicates with existing cust"
+    },
+    {
+      "name": "suggest-awesome-github-copilot-instructions",
+      "path": "suggest-awesome-github-copilot-instructions/SKILL.md",
+      "description": "Suggest relevant GitHub Copilot instruction files from the awesome-copilot repository based on current repository context and chat history, avoiding duplicates with existing instru"
+    },
+    {
+      "name": "suggest-awesome-github-copilot-skills",
+      "path": "suggest-awesome-github-copilot-skills/SKILL.md",
+      "description": "Suggest relevant GitHub Copilot skills from the awesome-copilot repository based on current repository context and chat history, avoiding duplicates with existing skills in this re"
+    },
+    {
+      "name": "swift-mcp-server-generator",
+      "path": "swift-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete Model Context Protocol server project in Swift using the official MCP Swift SDK package."
+    },
+    {
+      "name": "technical-job-search",
+      "path": "technical-job-search/SKILL.md",
+      "description": "Use this skill when a software engineer asks for help with job search tasks: parsing or analyzing a job description, tailoring a CV/resume, writing a cover letter, evaluating a job"
+    },
+    {
+      "name": "technology-stack-blueprint-generator",
+      "path": "technology-stack-blueprint-generator/SKILL.md",
+      "description": "Comprehensive technology stack blueprint generator that analyzes codebases to create detailed architectural documentation. Automatically detects technology stacks, programming lang"
+    },
+    {
+      "name": "terraform-azurerm-set-diff-analyzer",
+      "path": "terraform-azurerm-set-diff-analyzer/SKILL.md",
+      "description": "Analyze Terraform plan JSON output for AzureRM Provider to distinguish between false-positive diffs (order-only changes in Set-type attributes) and actual resource changes. Use whe"
+    },
+    {
+      "name": "threat-model-analyst",
+      "path": "threat-model-analyst/SKILL.md",
+      "description": "Full STRIDE-A threat model analysis and incremental update skill for repositories and systems. Supports two modes: (1) Single analysis — full STRIDE-A threat model of a repository,"
+    },
+    {
+      "name": "tiny-stepping",
+      "path": "tiny-stepping/SKILL.md",
+      "description": "Incremental development workflow that makes the smallest meaningful change per step and pauses for feedback, so the direction gets validated early before continuing. Use for carefu"
+    },
+    {
+      "name": "tldr-prompt",
+      "path": "tldr-prompt/SKILL.md",
+      "description": "Create tldr summaries for GitHub Copilot files (prompts, agents, instructions, collections), MCP servers, or documentation from URLs and queries."
+    },
+    {
+      "name": "transloadit-media-processing",
+      "path": "transloadit-media-processing/SKILL.md",
+      "description": "Process media files (video, audio, images, documents) using Transloadit. Use when asked to encode video to HLS/MP4, generate thumbnails, resize or watermark images, extract audio, "
+    },
+    {
+      "name": "typescript-mcp-server-generator",
+      "path": "typescript-mcp-server-generator/SKILL.md",
+      "description": "Generate a complete MCP server project in TypeScript with tools, resources, and proper configuration"
+    },
+    {
+      "name": "typespec-api-operations",
+      "path": "typespec-api-operations/SKILL.md",
+      "description": "Add GET, POST, PATCH, and DELETE operations to a TypeSpec API plugin with proper routing, parameters, and adaptive cards"
+    },
+    {
+      "name": "typespec-create-agent",
+      "path": "typespec-create-agent/SKILL.md",
+      "description": "Generate a complete TypeSpec declarative agent with instructions, capabilities, and conversation starters for Microsoft 365 Copilot"
+    },
+    {
+      "name": "typespec-create-api-plugin",
+      "path": "typespec-create-api-plugin/SKILL.md",
+      "description": "Generate a TypeSpec API plugin with REST operations, authentication, and Adaptive Cards for Microsoft 365 Copilot"
+    },
+    {
+      "name": "ui-screenshots",
+      "path": "ui-screenshots/SKILL.md",
+      "description": "Capture screenshots of web apps during development using Playwright and PIL. Supports full-page captures, interactive states, and an iterate-on-crop workflow that avoids slow re-sc"
+    },
+    {
+      "name": "unit-test-vue-pinia",
+      "path": "unit-test-vue-pinia/SKILL.md",
+      "description": "Write and review unit tests for Vue 3 + TypeScript + Vitest + Pinia codebases. Use when creating or updating tests for components, composables, and stores; mocking Pinia with creat"
+    },
+    {
+      "name": "update-avm-modules-in-bicep",
+      "path": "update-avm-modules-in-bicep/SKILL.md",
+      "description": "Update Azure Verified Modules (AVM) to latest versions in Bicep files."
+    },
+    {
+      "name": "update-implementation-plan",
+      "path": "update-implementation-plan/SKILL.md",
+      "description": "Update an existing implementation plan file with new or update requirements to provide new features, refactoring existing code or upgrading packages, design, architecture or infras"
+    },
+    {
+      "name": "update-llms",
+      "path": "update-llms/SKILL.md",
+      "description": "Update the llms.txt file in the root folder to reflect changes in documentation or specifications following the llms.txt specification at https://llmstxt.org/"
+    },
+    {
+      "name": "update-markdown-file-index",
+      "path": "update-markdown-file-index/SKILL.md",
+      "description": "Update a markdown file section with an index/table of files from a specified folder."
+    },
+    {
+      "name": "update-specification",
+      "path": "update-specification/SKILL.md",
+      "description": "Update an existing specification file for the solution, optimized for Generative AI consumption based on new requirements or updates to any existing code."
+    },
+    {
+      "name": "vardoger-analyze",
+      "path": "vardoger-analyze/SKILL.md",
+      "description": "Use when the user asks to personalize the GitHub Copilot CLI assistant, adapt Copilot to their style, use vardoger, or analyze their Copilot CLI conversation history. Reads the loc"
+    },
+    {
+      "name": "vscode-ext-commands",
+      "path": "vscode-ext-commands/SKILL.md",
+      "description": "Guidelines for contributing commands in VS Code extensions. Indicates naming convention, visibility, localization and other relevant attributes, following VS Code extension develop"
+    },
+    {
+      "name": "vscode-ext-localization",
+      "path": "vscode-ext-localization/SKILL.md",
+      "description": "Guidelines for proper localization of VS Code extensions, following VS Code extension development guidelines, libraries and good practices"
+    },
+    {
+      "name": "web-design-reviewer",
+      "path": "web-design-reviewer/SKILL.md",
+      "description": "This skill enables visual inspection of websites running locally or remotely to identify and fix design issues. Triggers on requests like"
+    },
+    {
+      "name": "webapp-testing",
+      "path": "webapp-testing/SKILL.md",
+      "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, a"
+    },
+    {
+      "name": "what-context-needed",
+      "path": "what-context-needed/SKILL.md",
+      "description": "Ask Copilot what files it needs to see before answering a question"
+    },
+    {
+      "name": "winmd-api-search",
+      "path": "winmd-api-search/SKILL.md",
+      "description": "Find and explore Windows desktop APIs. Use when building features that need platform capabilities — camera, file access, notifications, UI controls, AI/ML, sensors, networking, etc"
+    },
+    {
+      "name": "winui3-migration-guide",
+      "path": "winui3-migration-guide/SKILL.md",
+      "description": "UWP-to-WinUI 3 migration reference. Maps legacy UWP APIs to correct Windows App SDK equivalents with before/after code snippets. Covers namespace changes, threading (CoreDispatcher"
+    },
+    {
+      "name": "workiq-copilot",
+      "path": "workiq-copilot/SKILL.md",
+      "description": "Guides the Copilot CLI on how to use the WorkIQ CLI/MCP server to query Microsoft 365 Copilot data (emails, meetings, docs, Teams, people) for live context, summaries, and recommen"
+    },
+    {
+      "name": "write-coding-standards-from-file",
+      "path": "write-coding-standards-from-file/SKILL.md",
+      "description": "Write a coding standards document for a project using the coding styles from the file(s) and/or folder(s) passed as arguments in the prompt."
+    },
+    {
+      "name": "x-twitter-scraper",
+      "path": "x-twitter-scraper/SKILL.md",
+      "description": "Build GitHub Copilot workflows with Xquik X API SDKs, REST endpoints, MCP tools, TweetClaw OpenClaw plugin installs, signed webhooks, tweet search, user lookup, follower exports, m"
     }
   ],
   "dependencies": {
