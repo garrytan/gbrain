@@ -689,10 +689,10 @@ recomputes the same audit and rejects stale or hand-edited summary values.
      be represented by `status-noise`, `duplicate`, `unsafe`, or
      `other-ephemeral` units. Every unit `source_anchor` must include the
      segment id, for example `segment-4: decision about stop-hook aggregation`.
-  - First check explicit preservation signals in frontmatter or body:
-    `memory_intent: preserve-full`, `preserve: full`, `target_namespace:
-    originals`, "fully in memory", or "save this fully". These signals override
-    normal summarization pressure but not safety and dedupe rules.
+   - First check explicit preservation signals in frontmatter or body:
+     `memory_intent: preserve-full`, `preserve: full`, `target_namespace:
+     originals`, "fully in memory", or "save this fully". These signals override
+     normal summarization pressure but not safety and dedupe rules.
    - Then assign the memory handling mode from `## Memory Handling Modes`, even when
      there is no explicit marker. Auto-captures and messaging/source extractions
      must be judged by content importance, not by whether the operator pre-tagged them.
