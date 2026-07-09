@@ -31,6 +31,10 @@ export const dashscope: Recipe = {
       // path. Conservative declaration so the gateway pre-splits before
       // hitting whatever undocumented server-side limit exists.
       max_batch_tokens: 8192,
+      // DashScope limits each API call to 10 input items.
+      // Without this cap, gbrain's token-based batching can pack
+      // 20+ small chunks into one request → HTTP 400.
+      max_batch_items: 10,
       // text-embedding-v3 mixes English + CJK heavily; the tokenizer is
       // closer to Voyage density than OpenAI tiktoken for CJK-dominant
       // content. Conservative chars_per_token=2 leaves headroom.
