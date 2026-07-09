@@ -72,6 +72,10 @@ await cp(join(projectRoot, 'recipes'), join(outputDirectory, 'recipes'), {
 await cp(join(projectRoot, 'skills'), join(outputDirectory, 'skills'), { recursive: true, force: true });
 await cp(join(projectRoot, 'templates'), join(outputDirectory, 'templates'), { recursive: true });
 await cp(
+  join(projectRoot, 'node_modules', 'pdf-parse', 'dist', 'worker', 'pdf.worker.mjs'),
+  join(outputDirectory, 'pdf.worker.mjs'),
+);
+await cp(
   join(projectRoot, 'skills', '_brain-filing-rules.json'),
   join(outputDirectory, 'skills', '_brain-filing-rules.json'),
 );

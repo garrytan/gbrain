@@ -515,6 +515,17 @@
 - 是否完成：是
 - 最终结果：帮助中心在 README 缺失时仍能正常打开，显示“暂无”，后续可再补充正式帮助文档资源。
 
+## 2026-07-09 桌面端 PDF 导入缺少 pdf.worker.mjs
+
+- 时间：2026-07-09 17:49:48
+- 版本号：Desktop 1.0.49
+- 标题：修复安装版导入 PDF 时找不到 pdf.worker.mjs
+- 描述：安装版执行 Office/PDF 导入时，`pdf-parse` 在解析 PDF 文本阶段尝试从运行目录加载 `./pdf.worker.mjs`，但桌面端 runtime 组装未复制该 worker 文件，导致导入任务在 `import.collect_files` 阶段报 `Setting up fake worker failed: Cannot find module './pdf.worker.mjs'`。
+- 根因：`pdf-parse` 的 PDF worker 属于运行时动态加载资源，不会自动内联进 Bun 单文件 sidecar；原有桌面打包脚本和安装包校验只覆盖了 canvas、PGLite 等外置依赖，未覆盖 PDF worker。
+- 解决方案：桌面端 sidecar runtime 组装时从 `node_modules/pdf-parse/dist/worker/pdf.worker.mjs` 复制到 `pmbrain-runtime/pdf.worker.mjs`；安装包校验同步检查该文件存在且非空，避免后续打包遗漏。
+- 是否完成：是
+- 最终结果：下次执行桌面端打包流程时，`pdf.worker.mjs` 会随 `resources/pmbrain-runtime` 一起进入安装包，PDF 导入不再因缺少 worker 文件失败。
+
 ## 2026-07-09 GitHub Actions CI 失败与 skill 引用缺失
 
 - 时间：2026-07-09

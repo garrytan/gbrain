@@ -17,6 +17,7 @@ const requiredFiles = [
   join(distRoot, 'latest.yml'),
   join(runtimeRoot, 'bun.exe'),
   join(runtimeRoot, 'pmbrain-sidecar.js'),
+  join(runtimeRoot, 'pdf.worker.mjs'),
   join(runtimeRoot, 'package.json'),
   join(runtimeRoot, 'recipes', 'agent-voice.md'),
   join(runtimeRoot, 'templates', 'SOUL.md.template'),
