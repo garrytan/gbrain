@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun recipes/stop-memory-capture/stop-memory-capture.ts"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun recipes/stop-memory-capture/stop-memory-capture.ts"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun recipes/stop-memory-capture/stop-memory-capture.ts"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -20,6 +20,11 @@
       "description": "Brain health checks: back-link enforcement, citation audit, filing validation, stale info, orphans, benchmarks"
     },
     {
+      "name": "dreams",
+      "path": "dreams/SKILL.md",
+      "description": "review brain inbox drafts and stop-hook capture candidates before they enter curated memory."
+    },
+    {
       "name": "enrich",
       "path": "enrich/SKILL.md",
       "description": "Enrich pages with tiered enrichment protocol, person/company page templates, and validation rules"
