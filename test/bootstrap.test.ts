@@ -196,4 +196,41 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
       await engine.disconnect();
     }
   }, 30000);
+
+  test('pre-v121 timeline shape: bootstrap adds event_page_id before blob index replay', async () => {
+    // v121 (Life Chronicle #2390) wedge: `CREATE TABLE IF NOT EXISTS
+    // timeline_entries` is a no-op on pre-v121 brains (won't add the column),
+    // so the blob's partial indexes idx_timeline_event_page +
+    // idx_timeline_event_dedup crash with `column "event_page_id" does not
+    // exist` before runMigrations can ever apply v121. Regression test for
+    // the bootstrap entry that closes the gap.
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      // Mutate to pre-v121 shape: indexes + FK first, then the column.
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_timeline_event_page;
+        DROP INDEX IF EXISTS idx_timeline_event_dedup;
+        ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+        ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+      `);
+      await engine.setConfig('version', '119');
+
+      // Path under test: bootstrap → PGLITE_SCHEMA_SQL replay → runMigrations
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+
+      const { rows } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'timeline_entries' AND column_name = 'event_page_id'
+      `);
+      expect(rows).toHaveLength(1);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });
