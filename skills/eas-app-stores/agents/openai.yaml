@@ -1,0 +1,4 @@
+interface:
+  display_name: "EAS App Stores"
+  short_description: "Paid EAS service. Build and submit Expo apps to the iOS App Store, Google Play Store, and TestFlight, with eas.json profiles, versioning, and store metadata"
+  default_prompt: "Use $eas-app-stores when preparing production EAS builds, store submissions, TestFlight distribution, app-store metadata and ASO, or version and build-number management for an Expo app. For web or API route hosting, use eas-hosting instead."

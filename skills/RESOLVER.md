@@ -83,6 +83,31 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "GSAP utils", "helpers" | `skills/gsap-utils/SKILL.md` |
 | "minimalist design", "clean UI" | `skills/minimalist-skill/SKILL.md` |
 | "brutalist design", "raw UI" | `skills/brutalist-skill/SKILL.md` |
+| "mobile app UI", "mobile app design", "iOS Android app UI" | `skills/mobile-app-ui-design/SKILL.md` |
+| "SwiftUI expert", "SwiftUI layout", "SwiftUI performance" | `skills/swiftui-expert-skill/SKILL.md` |
+| "update SwiftUI APIs", "latest SwiftUI", "SwiftUI migration" | `skills/update-swiftui-apis/SKILL.md` |
+| "SwiftUI skills", "SwiftUI review", "SwiftUI generation" | `skills/swiftui-skills/SKILL.md` |
+| "Material 3", "Material Design 3", "M3 tokens" | `skills/material-3/SKILL.md` |
+| "Expo skill eval", "Expo app evaluation", "Expo design rubric" | `skills/expo-skill-eval/SKILL.md` |
+| "EAS app stores", "App Store metadata", "TestFlight", "Play Store" | `skills/eas-app-stores/SKILL.md` |
+| "EAS hosting", "Expo hosting" | `skills/eas-hosting/SKILL.md` |
+| "EAS observe", "Expo metrics", "Expo observability" | `skills/eas-observe/SKILL.md` |
+| "EAS simulator", "Expo simulator" | `skills/eas-simulator/SKILL.md` |
+| "EAS update insights", "Expo update analytics" | `skills/eas-update-insights/SKILL.md` |
+| "EAS workflows", "Expo workflows" | `skills/eas-workflows/SKILL.md` |
+| "Expo App Clip", "app clip" | `skills/expo-app-clip/SKILL.md` |
+| "Expo brownfield", "existing native app Expo" | `skills/expo-brownfield/SKILL.md` |
+| "Expo data fetching", "React Native data fetching" | `skills/expo-data-fetching/SKILL.md` |
+| "Expo dev client", "development build" | `skills/expo-dev-client/SKILL.md` |
+| "Expo DOM components", "DOM in Expo" | `skills/expo-dom/SKILL.md` |
+| "Expo examples", "sample Expo app" | `skills/expo-examples/SKILL.md` |
+| "Expo module", "native module" | `skills/expo-module/SKILL.md` |
+| "Expo native UI", "native views" | `skills/expo-native-ui/SKILL.md` |
+| "Expo Router", "file-based routing" | `skills/expo-router/SKILL.md` |
+| "Expo Tailwind", "NativeWind setup" | `skills/expo-tailwind-setup/SKILL.md` |
+| "Expo UI", "Expo components" | `skills/expo-ui/SKILL.md` |
+| "Expo upgrade", "SDK upgrade" | `skills/expo-upgrade/SKILL.md` |
+| "Expo web to native", "migrate web app to Expo" | `skills/expo-web-to-native/SKILL.md` |
 | "save this learning to the vault", "capture this skill in Obsidian", "record this workflow in my notes", "put this setup change in the knowledge base" | `skills/skill-vault-capture-policy/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper", "add tests and evals for this" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |

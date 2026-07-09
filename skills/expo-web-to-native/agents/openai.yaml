@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expo Web to Native"
+  short_description: "Migrate an existing web React app (Next.js, Vite, CRA) to a native iOS/Android app with Expo, screen by screen"
+  default_prompt: "Use $expo-web-to-native to migrate a web React codebase to native: assess and bucket screens, ship a DOM-component shell on day one, then nativize screens in priority order with @expo/ui and Expo Router."

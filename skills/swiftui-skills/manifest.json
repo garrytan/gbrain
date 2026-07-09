@@ -1,0 +1,15 @@
+{
+  "name": "swiftui-skills",
+  "display_name": "SwiftUI Skills",
+  "version": "0.1.0",
+  "description": "Apple-authored AdditionalDocumentation packaged as an agent skill.",
+  "license": "MIT",
+  "docs_dir": "docs",
+  "prompts": {
+    "system": "prompts/system.md",
+    "router": "prompts/router.md",
+    "reviewer": "prompts/reviewer.md",
+    "generator": "prompts/generator.md",
+    "refactorer": "prompts/refactorer.md"
+  }
+}

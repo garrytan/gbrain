@@ -388,6 +388,131 @@
       "name": "brutalist-skill",
       "path": "brutalist-skill/SKILL.md",
       "description": "Raw mechanical interfaces fusing Swiss typographic print with military terminal aesthetics. Rigid grids, extreme type scale contrast, utilit"
+    },
+    {
+      "name": "mobile-app-ui-design",
+      "path": "mobile-app-ui-design/SKILL.md",
+      "description": "Design high-quality mobile app UI/UX screens, flows, and components. Use this skill whenever the user asks to design a mobile app screen, create app mockups, bu"
+    },
+    {
+      "name": "swiftui-expert-skill",
+      "path": "swiftui-expert-skill/SKILL.md",
+      "description": "Use when writing, reviewing, or refactoring SwiftUI code for iOS or macOS, including state management and `@Observable` data flow, view composition and invalida"
+    },
+    {
+      "name": "update-swiftui-apis",
+      "path": "update-swiftui-apis/SKILL.md",
+      "description": "Scan Apple's SwiftUI documentation for deprecated APIs and update the SwiftUI Expert Skill with modern replacements. Use when asked to \"update latest APIs\", \"re"
+    },
+    {
+      "name": "swiftui-skills",
+      "path": "swiftui-skills/SKILL.md",
+      "description": "Apple-authored SwiftUI and platform guidance extracted from Xcode. Helps AI agents write idiomatic, Apple-native SwiftUI with reduced hallucinations."
+    },
+    {
+      "name": "material-3",
+      "path": "material-3/SKILL.md",
+      "description": "> Implement Google's Material Design 3 (Material You) UI system. Primary: Jetpack Compose Material3 (MaterialTheme, components, adaptive layout). Also Flutter a"
+    },
+    {
+      "name": "expo-skill-eval",
+      "path": "expo-skill-eval/SKILL.md",
+      "description": "Evaluate Expo skills in this repo end-to-end - trigger accuracy, generated code quality, and runtime screenshots on iOS simulator and Android emulator via Expo "
+    },
+    {
+      "name": "eas-app-stores",
+      "path": "eas-app-stores/SKILL.md",
+      "description": "EAS service (paid). Deploy Expo apps to the app stores with EAS - build and submit to the iOS App Store, Google Play Store, and TestFlight, configure eas.json b"
+    },
+    {
+      "name": "eas-hosting",
+      "path": "eas-hosting/SKILL.md",
+      "description": "EAS service (paid). Deploy Expo websites and Expo Router API routes to EAS Hosting - export the web bundle, run eas deploy for production and PR preview URLs, m"
+    },
+    {
+      "name": "eas-observe",
+      "path": "eas-observe/SKILL.md",
+      "description": "EAS service (paid). Use for anything related to EAS Observe - adding `expo-observe` to an Expo project (AppMetricsRoot/ObserveRoot HOC, markInteractive, the use"
+    },
+    {
+      "name": "eas-simulator",
+      "path": "eas-simulator/SKILL.md",
+      "description": "\"EAS service (paid). Run and control a user's app on a remote iOS/Android simulator hosted on EAS cloud. Read before running any `eas simulator:*` commands - it"
+    },
+    {
+      "name": "eas-update-insights",
+      "path": "eas-update-insights/SKILL.md",
+      "description": "\"EAS service (paid). Check the health of published EAS Update: crash rates, install/launch counts, unique users, payload size, and the split between embedded an"
+    },
+    {
+      "name": "eas-workflows",
+      "path": "eas-workflows/SKILL.md",
+      "description": "EAS service (paid). Helps understand and write EAS workflow YAML files for Expo projects. Use this skill when the user asks about CI/CD or workflows in an Expo "
+    },
+    {
+      "name": "expo-app-clip",
+      "path": "expo-app-clip/SKILL.md",
+      "description": "Framework (OSS). Add an iOS App Clip target to an Expo app. Use when the user mentions App Clip, AASA, apple-app-site-association, appclips, smart app banner, o"
+    },
+    {
+      "name": "expo-brownfield",
+      "path": "expo-brownfield/SKILL.md",
+      "description": "Framework (OSS). Integrate Expo and React Native into an existing native iOS or Android app. Use when the user mentions brownfield, embedding React Native in a "
+    },
+    {
+      "name": "expo-data-fetching",
+      "path": "expo-data-fetching/SKILL.md",
+      "description": "Framework (OSS). Use when implementing or debugging ANY network request, API call, or data fetching. Covers fetch API, React Query, SWR, error handling, caching"
+    },
+    {
+      "name": "expo-dev-client",
+      "path": "expo-dev-client/SKILL.md",
+      "description": "Framework (OSS). Build and distribute Expo development clients locally or via TestFlight for internal testing. For production TestFlight releases and store subm"
+    },
+    {
+      "name": "expo-dom",
+      "path": "expo-dom/SKILL.md",
+      "description": "Framework (OSS). Use Expo DOM components to run web code in a webview on native and as-is on web. Migrate web code to native incrementally. For the end-to-end m"
+    },
+    {
+      "name": "expo-examples",
+      "path": "expo-examples/SKILL.md",
+      "description": "Framework (OSS). Expo's official example projects - the expo/examples repo of ~70 `with-*` integrations (Stripe, Clerk, Supabase, OpenAI, maps, Reanimated, SQLi"
+    },
+    {
+      "name": "expo-module",
+      "path": "expo-module/SKILL.md",
+      "description": "Framework (OSS). Guide for creating and writing Expo native modules and views using the Expo Modules API (Swift, Kotlin, TypeScript). Covers module definition D"
+    },
+    {
+      "name": "expo-native-ui",
+      "path": "expo-native-ui/SKILL.md",
+      "description": "Framework (OSS). Build beautiful, native-feeling Expo screens. Covers Apple HIG styling, semantic colors, native controls, SF Symbols, media, animations, visual"
+    },
+    {
+      "name": "expo-router",
+      "path": "expo-router/SKILL.md",
+      "description": "Framework (OSS). Navigation and routing for Expo Router. Covers file-based routes, groups and dynamic routes, folder organization, Link with previews and contex"
+    },
+    {
+      "name": "expo-tailwind-setup",
+      "path": "expo-tailwind-setup/SKILL.md",
+      "description": "Framework (OSS). Set up Tailwind CSS v4 in Expo with react-native-css and NativeWind v5 for universal styling"
+    },
+    {
+      "name": "expo-ui",
+      "path": "expo-ui/SKILL.md",
+      "description": "\"Framework (OSS). Build native UI with the @expo/ui package: real SwiftUI on iOS and Jetpack Compose on Android rendered from React in an Expo or React Native a"
+    },
+    {
+      "name": "expo-upgrade",
+      "path": "expo-upgrade/SKILL.md",
+      "description": "Framework (OSS). Guidelines for upgrading Expo SDK versions and fixing dependency issues"
+    },
+    {
+      "name": "expo-web-to-native",
+      "path": "expo-web-to-native/SKILL.md",
+      "description": "Framework (OSS). Migrate an existing web React app to a native iOS/Android app with Expo. Use when the user wants to turn a website into a mobile app, port a Ne"
     }
   ],
   "dependencies": {
