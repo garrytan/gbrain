@@ -273,6 +273,16 @@
       "name": "skill-vault-capture-policy",
       "path": "skill-vault-capture-policy/SKILL.md",
       "description": "Capture durable operational learnings, new agent skills, and environment/setup changes into the Obsidian vault instead of transient chat memory."
+    },
+    {
+      "name": "caveman",
+      "path": "caveman/SKILL.md",
+      "description": "Ultra-compressed communication mode that cuts output tokens ~65% while keeping full technical accuracy. Levels: lite/full/ultra/wenyan."
+    },
+    {
+      "name": "context-mode",
+      "path": "context-mode/SKILL.md",
+      "description": "Route large/uncertain command, file, and API output through context-mode sandbox tools (ctx_execute, ctx_search) to keep raw data out of the context window."
     }
   ],
   "dependencies": {
