@@ -197,7 +197,7 @@ async function detectDeadPrefixes(
         const rows = await engine.executeRaw<{ cnt: string }>(
           `SELECT COUNT(*)::text AS cnt FROM pages
            WHERE deleted_at IS NULL
-             AND source_path LIKE $1${sourceWhere}`,
+             AND slug LIKE $1${sourceWhere}`,
           [`${prefix}%`, ...sourceParam],
         );
         const cnt = parseInt(rows[0]?.cnt ?? '0', 10) || 0;

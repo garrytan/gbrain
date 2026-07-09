@@ -56,7 +56,7 @@ async function ensureSource(id: string): Promise<void> {
   );
 }
 
-async function seedPage(slug: string, opts: { type?: string; sourceId?: string; sourcePath?: string; deleted?: boolean } = {}): Promise<void> {
+async function seedPage(slug: string, opts: { type?: string; sourceId?: string; sourcePath?: string | null; deleted?: boolean } = {}): Promise<void> {
   // pages.type is NOT NULL; use empty string for "untyped".
   // pages.title is NOT NULL.
   // pages.source_id FKs sources(id) — seed source first.
@@ -65,7 +65,7 @@ async function seedPage(slug: string, opts: { type?: string; sourceId?: string; 
   await engine.executeRaw(
     `INSERT INTO pages (slug, source_id, source_path, type, title, compiled_truth, timeline, content_hash, deleted_at)
      VALUES ($1, $2, $3, $4, $5, '', '', '', $6)`,
-    [slug, sourceId, opts.sourcePath ?? `${slug}.md`, opts.type ?? '', slug, opts.deleted ? new Date() : null],
+    [slug, sourceId, opts.sourcePath === undefined ? `${slug}.md` : opts.sourcePath, opts.type ?? '', slug, opts.deleted ? new Date() : null],
   );
 }
 
@@ -176,6 +176,15 @@ describe('runStatsCore — dead-prefix detection', () => {
     await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
       seedTinyPack('tiny', [{ name: 'person', prefix: 'people/' }]);
       await seedPage('people/alice', { type: 'person', sourcePath: 'people/alice.md' });
+      const result = await runStatsCore(ctxOf());
+      expect(result.dead_prefixes).toEqual([]);
+    });
+  });
+
+  it('matches declared prefixes by slug even when source_path is NULL (#2664)', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
+      seedTinyPack('tiny', [{ name: 'ops', prefix: 'ops/' }]);
+      await seedPage('ops/tasks', { type: 'ops', sourcePath: null });
       const result = await runStatsCore(ctxOf());
       expect(result.dead_prefixes).toEqual([]);
     });
