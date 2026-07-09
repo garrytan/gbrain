@@ -9,7 +9,7 @@
  * Doctor is NOT in the refused set — it routes to runRemoteDoctor instead.
  *
  * Strategy: seed `~/.gbrain/config.json` with remote_mcp set in a tempdir
- * `GBRAIN_HOME`, then spawn `gbrain <cmd>` and assert (a) exit code 1,
+ * `GBRAIN_HOME`, then spawn `pmbrain <cmd>` and assert (a) exit code 1,
  * (b) stderr contains the canonical error message, (c) the local engine
  * was never reached. Async Bun.spawn (NOT execFileSync) so the test event
  * loop stays responsive — see init-mcp-only.test.ts for the rationale.
@@ -107,14 +107,14 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
   ];
 
   for (const args of refusedCommands) {
-    test(`refuses \`gbrain ${args.join(' ')}\` with pinpoint hint`, async () => {
+    test(`refuses \`pmbrain ${args.join(' ')}\` with pinpoint hint`, async () => {
       seedThinClientConfig();
       const r = await run(args);
       expect(r.exitCode).toBe(1);
       // v0.31.1 (Issue #734): refusal carries an actionable hint via
       // THIN_CLIENT_REFUSE_HINTS instead of a generic "run on the remote
-      // host" message. Hint format: "`gbrain <cmd>` is not routable. <hint>"
-      expect(r.stderr).toContain(`gbrain ${args[0]}`);
+      // host" message. Hint format: "`pmbrain <cmd>` is not routable. <hint>"
+      expect(r.stderr).toContain(`pmbrain ${args[0]}`);
       expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
       expect(r.stderr).toContain('not routable');
     });
@@ -125,15 +125,15 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
   // Commands that are still useful in thin-client mode (init, auth, version,
   // help) MUST NOT be refused. We assert the canonical thin-client error
   // does NOT appear.
-  test('`gbrain --version` works on thin-client install', async () => {
+  test('`pmbrain --version` works on thin-client install', async () => {
     seedThinClientConfig();
     const r = await run(['--version']);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('gbrain');
+    expect(r.stdout).toContain('pmbrain');
     expect(r.stderr).not.toContain('thin client');
   });
 
-  test('`gbrain --help` works on thin-client install', async () => {
+  test('`pmbrain --help` works on thin-client install', async () => {
     seedThinClientConfig();
     const r = await run(['--help']);
     expect(r.exitCode).toBe(0);
@@ -142,7 +142,7 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
 });
 
 describe('thin-client doctor routes to runRemoteDoctor', () => {
-  test('`gbrain doctor` runs remote checks (not DB-bound checks) when remote_mcp is set', async () => {
+  test('`pmbrain doctor` runs remote checks (not DB-bound checks) when remote_mcp is set', async () => {
     seedThinClientConfig();
     const r = await run(['doctor', '--json']);
     // Doctor will likely fail because brain-host.example isn't reachable —
@@ -157,7 +157,7 @@ describe('thin-client doctor routes to runRemoteDoctor', () => {
 
 describe('regression — local config still passes through normally', () => {
   test('local PGLite config does NOT trigger thin-client guard for `sync`', async () => {
-    // Seed a local PGLite config (no remote_mcp). `gbrain sync` shouldn't
+    // Seed a local PGLite config (no remote_mcp). `pmbrain sync` shouldn't
     // refuse with the thin-client error. It may error for other reasons
     // (no brain repo configured, etc.) — what matters is the canonical
     // thin-client message MUST NOT appear.

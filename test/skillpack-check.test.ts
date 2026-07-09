@@ -1,13 +1,13 @@
-/**
- * Tests for `gbrain skillpack-check` — the agent-readable health report.
+﻿/**
+ * Tests for `pmbrain skillpack-check` — the agent-readable health report.
  *
  * Covers:
- *   - Healthy fresh install → exit 0, healthy:true, actions:[], no DB needed.
- *   - Half-migrated (partial entry in completed.jsonl) → exit 1,
- *     healthy:false, actions includes `gbrain apply-migrations --yes`,
+ *   - Healthy fresh install -> exit 0, healthy:true, actions:[], no DB needed.
+ *   - Half-migrated (partial entry in completed.jsonl) -> exit 1,
+ *     healthy:false, actions includes `pmbrain apply-migrations --yes`,
  *     summary mentions the action.
- *   - --quiet → no stdout, same exit code.
- *   - --help → prints usage, exits 0.
+ *   - --quiet -> no stdout, same exit code.
+ *   - --help -> prints usage, exits 0.
  *
  * Subprocess invocation against temp $HOME so each test sees clean fixture
  * state. DATABASE_URL / GBRAIN_DATABASE_URL stripped so the report runs
@@ -26,7 +26,7 @@ let tmp: string;
 let origHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = { ...process.env, HOME: tmp, PMBRAIN_HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -56,20 +56,20 @@ afterEach(() => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-describe('gbrain skillpack-check', () => {
-  test('healthy fresh install → exit 0, healthy:true, empty actions', () => {
+describe('pmbrain skillpack-check', () => {
+  test('healthy fresh install -> exit 0, healthy:true, empty actions', () => {
     const result = run(['skillpack-check']);
     expect(result.exitCode).toBe(0);
     const report = JSON.parse(result.stdout);
     expect(report.healthy).toBe(true);
     expect(report.actions).toEqual([]);
-    expect(report.summary).toBe('gbrain skillpack healthy');
+    expect(report.summary).toBe('pmbrain skillpack healthy');
     expect(report.version).toBeTruthy();
     expect(report.ts).toBeTruthy();
   });
 
-  test('half-migrated (partial completed.jsonl) → exit 1, apply-migrations in actions', () => {
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+  test('half-migrated (partial completed.jsonl) -> exit 1, apply-migrations in actions', () => {
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -80,8 +80,8 @@ describe('gbrain skillpack-check', () => {
     expect(result.exitCode).toBe(1);
     const report = JSON.parse(result.stdout);
     expect(report.healthy).toBe(false);
-    expect(report.actions).toContain('gbrain apply-migrations --yes');
-    expect(report.summary).toContain('gbrain apply-migrations --yes');
+    expect(report.actions).toContain('pmbrain apply-migrations --yes');
+    expect(report.summary).toContain('pmbrain apply-migrations --yes');
     expect(report.summary).toContain('needs attention');
     // Doctor check surfaced the MINIONS HALF-INSTALLED line
     const doctorChecks = (report.doctor as { checks: Array<{ name: string; status: string }> }).checks;
@@ -90,14 +90,14 @@ describe('gbrain skillpack-check', () => {
     expect(minions!.status).toBe('fail');
   });
 
-  test('--quiet → no stdout, same exit code', () => {
-    // Healthy path quiet
+  test('--quiet healthy path -> no stdout, same exit code', () => {
     const healthy = run(['skillpack-check', '--quiet']);
     expect(healthy.exitCode).toBe(0);
     expect(healthy.stdout).toBe('');
+  });
 
-    // Broken path quiet — need new tmp with fixture
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+  test('--quiet broken path -> no stdout, same exit code', () => {
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -108,7 +108,7 @@ describe('gbrain skillpack-check', () => {
     expect(broken.stdout).toBe('');
   });
 
-  test('--help → exit 0, prints usage', () => {
+  test('--help -> exit 0, prints usage', () => {
     const result = run(['skillpack-check', '--help']);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('skillpack-check');
@@ -119,7 +119,7 @@ describe('gbrain skillpack-check', () => {
   test('summary includes top action when multiple present', () => {
     // Partial record creates apply-migrations action + the migrations count
     // action. Summary should reference the first (highest-priority) action.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),

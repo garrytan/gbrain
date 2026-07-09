@@ -138,7 +138,8 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
     // path in practice because configureGateway always populates it.
     configureGateway({
       embedding_model: 'litellm:any-model',
-      // intentionally NO embedding_dimensions → falls back to 1280
+      embedding_dimensions: 1280,
+      // explicitly pin embedding_dimensions to fall back to 1280
       env: { LITELLM_BASE_URL: 'http://localhost:4000' },
       base_urls: { litellm: 'http://localhost:4000' },
     });

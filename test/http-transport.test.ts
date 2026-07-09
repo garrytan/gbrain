@@ -29,6 +29,7 @@ interface FakeEngine {
   // tag is preserved as a fallback for any code path we missed (none
   // expected after the migration, but harmless if it sticks around).
   executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
+  getConfig: (key: string) => Promise<string | null>;
   sql: ReturnType<typeof makeSqlTag>;
   audit: { token_name: string | null; operation: string; status: string; latency_ms: number }[];
 }
@@ -134,7 +135,7 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     return Promise.resolve(result as T[]);
   };
 
-  return { kind: 'postgres', executeRaw, sql, audit };
+  return { kind: 'postgres', executeRaw, getConfig: async () => null, sql, audit };
 }
 
 interface TestServer {

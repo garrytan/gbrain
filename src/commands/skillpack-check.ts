@@ -166,7 +166,7 @@ function buildReport(): SkillpackReport {
   if ('applied_count' in migrations) {
     if (migrations.partial_count > 0 || migrations.pending_count > 0) {
       healthy = false;
-      const action = 'gbrain apply-migrations --yes';
+      const action = 'pmbrain apply-migrations --yes';
       if (!actions.includes(action)) actions.unshift(action);
     }
   } else {
@@ -175,8 +175,8 @@ function buildReport(): SkillpackReport {
   }
 
   const summary = healthy
-    ? 'gbrain skillpack healthy'
-    : `gbrain skillpack needs attention: ${actions.length} action(s) — ${actions[0]}`;
+    ? 'pmbrain skillpack healthy'
+    : `pmbrain skillpack needs attention: ${actions.length} action(s) — ${actions[0]}`;
 
   return {
     version: VERSION,
@@ -191,16 +191,16 @@ function buildReport(): SkillpackReport {
 
 export async function runSkillpackCheck(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`gbrain skillpack-check — agent-readable health report.
+    console.log(`pmbrain skillpack-check — agent-readable health report.
 
 Wraps doctor + apply-migrations --list into one JSON blob.
 
 Usage:
-  gbrain skillpack-check            Pretty JSON to stdout, exit 0/1/2 (legacy).
-  gbrain skillpack check            v0.33 subcommand. Default: informational
+  pmbrain skillpack-check           Pretty JSON to stdout, exit 0/1/2 (legacy).
+  pmbrain skillpack check           v0.33 subcommand. Default: informational
                                      (exit 0 even with drift). Pass --strict
                                      to exit non-zero on action-needed.
-  gbrain skillpack-check --quiet    Exit code only, no output.
+  pmbrain skillpack-check --quiet   Exit code only, no output.
 
 Exit codes:
   0  healthy (no action needed) — or informational mode with drift detected

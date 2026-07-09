@@ -21,6 +21,7 @@ import { join } from 'path';
 
 // Save original env so we don't leak between tests.
 const ORIG_GBRAIN_HOME = process.env.GBRAIN_HOME;
+const ORIG_PMBRAIN_HOME = process.env.PMBRAIN_HOME;
 
 function fresh(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-home-isolation-'));
@@ -40,17 +41,22 @@ describe('GBRAIN_HOME write-side isolation', () => {
     }
   });
 
-  test('configDir() falls back to homedir when GBRAIN_HOME unset', async () => {
+  test('configDir() falls back to homedir .pmbrain when home overrides are unset', async () => {
     delete process.env.GBRAIN_HOME;
+    delete process.env.PMBRAIN_HOME;
     try {
       const { configDir } = await import('../src/core/config.ts');
-      // Contract: when GBRAIN_HOME is unset, configDir() === os.homedir()/.gbrain.
+      // Contract: when PMBRAIN_HOME/GBRAIN_HOME are unset, configDir() defaults
+      // to os.homedir()/.pmbrain unless an existing legacy ~/.gbrain is present.
       // Asserting against os.homedir() (rather than a "not /tmp/" sentinel) keeps
       // this test correct under safety wrappers that redirect HOME=/tmp/... — the
       // behavior we care about is that the fallback path equals homedir().
-      expect(configDir()).toBe(join(homedir(), '.gbrain'));
+      expect(configDir()).toBe(join(homedir(), '.pmbrain'));
     } finally {
       if (ORIG_GBRAIN_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      else delete process.env.GBRAIN_HOME;
+      if (ORIG_PMBRAIN_HOME !== undefined) process.env.PMBRAIN_HOME = ORIG_PMBRAIN_HOME;
+      else delete process.env.PMBRAIN_HOME;
     }
   });
 

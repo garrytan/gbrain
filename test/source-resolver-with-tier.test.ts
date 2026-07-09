@@ -102,7 +102,7 @@ describe('resolveSourceWithTier — tier 3 (dotfile)', () => {
     const result = await resolveSourceWithTier(engine, null, scratchDir);
     expect(result.source_id).toBe('team-alpha');
     expect(result.tier).toBe('dotfile');
-    expect(result.detail).toBe('.gbrain-source');
+    expect(result.detail).toBe('.pmbrain-source');
   });
 
   test('dotfile in ancestor directory walks up to find it', async () => {
@@ -125,7 +125,7 @@ describe('resolveSourceWithTier — tier 4 (local_path)', () => {
     const result = await resolveSourceWithTier(engine, null, '/work/gstack/src');
     expect(result.source_id).toBe('gstack');
     expect(result.tier).toBe('local_path');
-    expect(result.detail).toContain('/work/gstack');
+    expect(result.detail?.replace(/\\/g, '/')).toContain('/work/gstack');
   });
 
   test('longest-prefix wins on nested registered sources', async () => {

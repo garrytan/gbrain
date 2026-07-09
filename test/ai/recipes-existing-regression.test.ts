@@ -191,7 +191,7 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     const overrides = listRecipes().filter(
       r => r.implementation === 'openai-compatible' && r.resolveAuth,
     );
-    expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai']);
+    expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai', 'mimo']);
   });
 });
 

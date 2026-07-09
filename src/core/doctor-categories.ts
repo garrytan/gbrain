@@ -127,6 +127,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'federation_health',
   'home_dir_in_worktree',
   'index_audit',
+  'lock_renewal_health',
   'oauth_confidential_client_health',
   'orphan_clones',
   'pgbouncer_prepare',

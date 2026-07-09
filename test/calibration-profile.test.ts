@@ -232,7 +232,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     // grade_completion, domain_scorecards_json, patterns[], voice_passed, voice_attempts,
     // bias_tags[], model_id
     expect(insert!.params[0]).toBe('default'); // source_id
-    expect(insert!.params[1]).toBe('garry'); // holder
+    expect(insert!.params[1]).toBe('brain'); // holder
     expect(insert!.params[2]).toBe(12); // total_resolved
     expect(insert!.params[9]).toBe(true); // voice_gate_passed
     expect(insert!.params[10]).toBe(1); // voice_gate_attempts

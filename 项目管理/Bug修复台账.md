@@ -514,3 +514,14 @@
 - 解决方案：文档接口改为按多个源码/运行时候选路径尝试读取 README；全部找不到时返回“暂无”占位，并保留 FAQ 为“暂无”，避免帮助中心因缺失文档资源返回 500。
 - 是否完成：是
 - 最终结果：帮助中心在 README 缺失时仍能正常打开，显示“暂无”，后续可再补充正式帮助文档资源。
+
+## 2026-07-09 GitHub Actions CI 失败与 skill 引用缺失
+
+- 时间：2026-07-09
+- 版本号：PMBrain 1.0.87
+- 标题：修复 GitHub Actions 测试失败和两个本地 skill 未纳入仓库
+- 描述：Actions 中单元测试、skill resolver 和 E2E 流水线失败，主要由 PMBrain 改名后的旧 `gbrain` 文案断言、`.pmbrain` home 迁移、fake engine 缺少可选 `getConfig`、doctor 分类缺项、OpenAI-compatible 默认维度断言、Windows 路径差异，以及 `momo-ai-tutorial` / `yunhui-style-writer` 两个 skill 目录被本地 exclude 未提交导致。
+- 根因：本地仓库存在 legacy `gbrain` 兼容逻辑和 PMBrain 新品牌/新 home 目录之间的测试漂移；部分测试 fake 未覆盖真实 engine 接口可选性；skill 文件被 `.git/info/exclude` 忽略，导致 CI checkout 缺少 resolver 引用的文件。
+- 解决方案：补齐两个 skill 的 manifest 引用和 conformance 章节；让 source resolver / doctor 对可选 `getConfig` 更稳健；同步 PMBrain 用户可见文案与测试预期；修正 `.pmbrain` home、Windows 路径和 OpenAI-compatible embedding 维度相关测试；补上 `lock_renewal_health` 分类。
+- 是否完成：是
+- 最终结果：相关 targeted tests 已在本地通过；完整 resolver/skill conformance 在本机受未跟踪 skill 目录影响，改用针对新增两个 skill 的校验确认 manifest、frontmatter 和必需章节齐全。

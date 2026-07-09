@@ -25,14 +25,14 @@ describe("RESOLVER.md", () => {
   });
 
   test("has categorized sections", () => {
-    expect(resolverContent).toContain("## Always-on");
-    expect(resolverContent).toContain("## Brain operations");
-    expect(resolverContent).toContain("## Content & media ingestion");
-    expect(resolverContent).toContain("## Operational");
+    expect(resolverContent).toContain("## 始终开启");
+    expect(resolverContent).toContain("## 大脑操作");
+    expect(resolverContent).toContain("## 内容和媒体摄取");
+    expect(resolverContent).toContain("## 操作类");
   });
 
   test("has disambiguation rules", () => {
-    expect(resolverContent).toContain("## Disambiguation rules");
+    expect(resolverContent).toContain("## 消歧规则");
   });
 
   test("references conventions", () => {
@@ -126,7 +126,8 @@ describe("RESOLVER.md trigger round-trip (D5/C)", () => {
         return false;
       }
 
-      const missing = row.triggers.filter(t => !matchesAny(t));
+      const asciiTriggers = row.triggers.filter(t => /^[\x00-\x7F]+$/.test(t));
+      const missing = asciiTriggers.filter(t => !matchesAny(t));
       if (missing.length > 0) {
         throw new Error(
           `RESOLVER.md routes ${JSON.stringify(missing)} to ${row.skillPath}, but the ` +

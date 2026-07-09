@@ -164,11 +164,11 @@ function parseArgs(args: string[]): DreamArgs {
   const sourceValues = collectFlagValues(args, '--source');
   const sourceIdValues = collectFlagValues(args, '--source-id');
   if (sourceValues === null) {
-    console.error('--source <id>: missing value. Usage: gbrain dream --source <source-id>');
+    console.error('--source <id>: missing value. Usage: pmbrain dream --source <source-id>');
     process.exit(2);
   }
   if (sourceIdValues === null) {
-    console.error('--source-id <id>: missing value. Usage: gbrain dream --source-id <source-id>');
+    console.error('--source-id <id>: missing value. Usage: pmbrain dream --source-id <source-id>');
     process.exit(2);
   }
   const uniqSource = Array.from(new Set(sourceValues));
@@ -192,7 +192,7 @@ function parseArgs(args: string[]): DreamArgs {
 
   const maxPagesValues = collectFlagValues(args, '--max-pages');
   if (maxPagesValues === null) {
-    console.error('--max-pages <n>: missing value. Usage: gbrain dream --phase propose_takes --max-pages 25');
+    console.error('--max-pages <n>: missing value. Usage: pmbrain dream --phase propose_takes --max-pages 25');
     process.exit(2);
   }
   const uniqMaxPages = Array.from(new Set(maxPagesValues));
@@ -220,7 +220,7 @@ function parseArgs(args: string[]): DreamArgs {
 
   const maxChunksValues = collectFlagValues(args, '--propose-max-chunks');
   if (maxChunksValues === null) {
-    console.error('--propose-max-chunks <n>: missing value. Usage: gbrain dream --phase propose_takes --propose-max-chunks 200');
+    console.error('--propose-max-chunks <n>: missing value. Usage: pmbrain dream --phase propose_takes --propose-max-chunks 200');
     process.exit(2);
   }
   const uniqMaxChunks = Array.from(new Set(maxChunksValues));
@@ -303,7 +303,7 @@ async function resolveBrainDir(
 }
 
 function printHelp() {
-  console.log(`用法：gbrain dream [选项]
+  console.log(`用法：pmbrain dream [选项]
 
 运行一次 PMBrain 维护周期。当前阶段：
   ${ALL_PHASES.join(' -> ')}
@@ -346,12 +346,12 @@ function printHelp() {
   --help, -h          显示此帮助。
 
 示例：
-  gbrain dream --dry-run --json
-  gbrain dream --phase propose_takes --dry-run --source pmgbrain
-  gbrain dream --phase propose_takes --source pmgbrain --max-pages 25
-  gbrain dream --phase calibration_profile --source pmgbrain
-  gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
-  gbrain dream --phase synthesize --input ~/transcripts/
+  pmbrain dream --dry-run --json
+  pmbrain dream --phase propose_takes --dry-run --source pmgbrain
+  pmbrain dream --phase propose_takes --source pmgbrain --max-pages 25
+  pmbrain dream --phase calibration_profile --source pmgbrain
+  pmbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
+  pmbrain dream --phase synthesize --input ~/transcripts/
 
 审批入口：
   启动服务后打开 http://localhost:3131/admin ，进入“观点审批”。
@@ -476,7 +476,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   if (opts.source !== null) {
     if (engine === null) {
       console.error(
-        'gbrain dream --source <id> requires a connected brain ' +
+        'pmbrain dream --source <id> requires a connected brain ' +
         '(no engine available); omit --source or run `gbrain init` first',
       );
       process.exit(1);
@@ -500,7 +500,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     if (src?.archived === true) {
       console.error(
         `source ${resolvedSourceId} is archived; restore with ` +
-        `\`gbrain sources restore ${resolvedSourceId}\` before cycling`,
+        `\`pmbrain sources restore ${resolvedSourceId}\` before cycling`,
       );
       process.exit(1);
     }

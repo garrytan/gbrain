@@ -1,5 +1,5 @@
-/**
- * Unit tests for src/commands/dream.ts — CLI alias over runCycle.
+﻿/**
+ * Unit tests for src/commands/dream.ts 鈥?CLI alias over runCycle.
  *
  * dream is intentionally thin. These tests exercise the CLI surface
  * (argv parsing, brainDir resolution, output format, exit codes)
@@ -11,7 +11,7 @@
  * every test that imports shouldExclude/deriveDomain/formatOrphansText).
  * Testing against real calls is honest and mock-leak-free.
  *
- * What this test file does NOT cover: the exhaustive dryRun-×-phases-×-
+ * What this test file does NOT cover: the exhaustive dryRun-脳-phases-脳-
  * lock matrix, which test/core/cycle.test.ts handles (in isolation).
  * Here we only verify that dream.ts routes args correctly.
  */
@@ -24,7 +24,7 @@ import { execSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runDream } from '../src/commands/dream.ts';
 
-// ─── Helpers ───────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /** Make an empty, engine-backed PGLite brain. */
 async function makePGLite() {
@@ -34,7 +34,7 @@ async function makePGLite() {
   return engine;
 }
 
-/** Make an empty git repo. Lint/backlinks have nothing to scan → status=clean. */
+/** Make an empty git repo. Lint/backlinks have nothing to scan 鈫?status=clean. */
 function makeGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-dream-repo-'));
   execSync('git init', { cwd: dir, stdio: 'pipe' });
@@ -46,9 +46,9 @@ function makeGitRepo(): string {
   return dir;
 }
 
-// ─── brainDir resolution ───────────────────────────────────────────
+// 鈹€鈹€鈹€ brainDir resolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-describe('runDream — brainDir resolution', () => {
+describe('runDream 鈥?brainDir resolution', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -102,12 +102,23 @@ describe('runDream — brainDir resolution', () => {
   });
 
   test('no --dir + engine=null exits 1', async () => {
+    const oldPmbrainHome = process.env.PMBRAIN_HOME;
+    const oldGbrainHome = process.env.GBRAIN_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-dream-empty-home-'));
     const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
     try {
+      process.env.PMBRAIN_HOME = home;
+      delete process.env.GBRAIN_HOME;
       await runDream(null, []);
     } catch (e: any) {
       expect(e.message).toBe('EXIT');
+    } finally {
+      if (oldPmbrainHome === undefined) delete process.env.PMBRAIN_HOME;
+      else process.env.PMBRAIN_HOME = oldPmbrainHome;
+      if (oldGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldGbrainHome;
+      rmSync(home, { recursive: true, force: true });
     }
     expect(spy).toHaveBeenCalledWith(1);
     spy.mockRestore();
@@ -127,10 +138,9 @@ describe('runDream — brainDir resolution', () => {
     errSpy.mockRestore();
   });
 });
+// 鈹€鈹€鈹€ Phase selection (single-phase runs stay fast) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-// ─── Phase selection (single-phase runs stay fast) ─────────────────
-
-describe('runDream — --phase <name> restricts the cycle', () => {
+describe('runDream 鈥?--phase <name> restricts the cycle', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -176,9 +186,9 @@ describe('runDream — --phase <name> restricts the cycle', () => {
   });
 });
 
-// ─── Output format ─────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Output format 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-describe('runDream — output format', () => {
+describe('runDream 鈥?output format', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -207,16 +217,16 @@ describe('runDream — output format', () => {
   test('human output for clean status mentions "Brain is healthy"', async () => {
     const lines: string[] = [];
     const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
-    // Single-phase lint run on a clean repo → status=clean.
+    // Single-phase lint run on a clean repo 鈫?status=clean.
     await runDream(engine, ['--dir', repo, '--phase', 'lint']);
     logSpy.mockRestore();
     expect(lines.join('\n')).toContain('Brain is healthy');
   });
 });
 
-// ─── Dry-run propagation ───────────────────────────────────────────
+// 鈹€鈹€鈹€ Dry-run propagation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-describe('runDream — dry-run propagates through to runCycle', () => {
+describe('runDream 鈥?dry-run propagates through to runCycle', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -243,9 +253,9 @@ describe('runDream — dry-run propagates through to runCycle', () => {
   });
 });
 
-// ─── Exit-code semantics ───────────────────────────────────────────
+// 鈹€鈹€鈹€ Exit-code semantics 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-describe('runDream — exit-code semantics', () => {
+describe('runDream 鈥?exit-code semantics', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -267,7 +277,7 @@ describe('runDream — exit-code semantics', () => {
   });
 });
 
-// ─── v0.41.13: --source / --source-id wiring (supersedes PR #1559) ────
+// 鈹€鈹€鈹€ v0.41.13: --source / --source-id wiring (supersedes PR #1559) 鈹€鈹€鈹€鈹€
 //
 // Covers:
 //   - argv repetition + conflict rules (parseArgs path)
@@ -277,10 +287,10 @@ describe('runDream — exit-code semantics', () => {
 //   - --source-id alias equivalence (D3)
 //   - --help short-circuit ordering (C-8)
 //   - typed-error propagation (T3: TypeError must NOT be swallowed)
-//   - end-to-end dream→doctor (D5): writeback flips cycle_freshness
-//   - back-compat regression: bare `gbrain dream` writes no per-source stamp
+//   - end-to-end dream鈫抎octor (D5): writeback flips cycle_freshness
+//   - back-compat regression: bare `pmbrain dream` writes no per-source stamp
 
-describe('runDream — --source / --source-id (v0.41.13)', () => {
+describe('runDream 鈥?--source / --source-id (v0.41.13)', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -311,7 +321,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     rmSync(repo, { recursive: true, force: true });
   }, 60_000);
 
-  // ─── parseArgs: --source missing / conflict / repetition ────────────
+  // 鈹€鈹€鈹€ parseArgs: --source missing / conflict / repetition 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   test('--source with no value exits 2 with usage hint', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
@@ -376,7 +386,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     errSpy.mockRestore();
   });
 
-  // ─── Help short-circuit ordering (C-8 IRON RULE) ────────────────────
+  // 鈹€鈹€鈹€ Help short-circuit ordering (C-8 IRON RULE) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   test('--help --source whatever prints help and exits 0 (no engine-null error)', async () => {
     // engine null + --source set would normally exit 1, but --help short-circuits first.
@@ -389,12 +399,12 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
       throw new Error('--help with --source should NOT exit; got: ' + e.message);
     }
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/用法：gbrain dream/);
+    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/用法：pmbrain dream/);
     exitSpy.mockRestore();
     logSpy.mockRestore();
   });
 
-  // ─── Engine-null guard (D1) ─────────────────────────────────────────
+  // 鈹€鈹€鈹€ Engine-null guard (D1) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   test('engine=null + --source set exits 1 with "requires a connected brain"', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
@@ -410,7 +420,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     errSpy.mockRestore();
   });
 
-  // ─── Unknown source (resolveSourceId throw) ─────────────────────────
+  // 鈹€鈹€鈹€ Unknown source (resolveSourceId throw) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   test('--source <unknown> exits 1 with assertSourceExists hint', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
@@ -423,12 +433,12 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/Source "no-such-source" not found/);
-    expect(errOut).toMatch(/gbrain sources list/);
+    expect(errOut).toMatch(/pmbrain sources list/);
     exitSpy.mockRestore();
     errSpy.mockRestore();
   });
 
-  // ─── Archived source guard (D2) ─────────────────────────────────────
+  // 鈹€鈹€鈹€ Archived source guard (D2) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   test('--source <archived> exits 1 and leaves last_full_cycle_at untouched', async () => {
     await seedSource('archived-thing', /* archived = */ true);
@@ -445,7 +455,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/source archived-thing is archived/);
-    expect(errOut).toMatch(/gbrain sources restore archived-thing/);
+    expect(errOut).toMatch(/pmbrain sources restore archived-thing/);
 
     const after = await readLastFullCycleAt('archived-thing');
     expect(after).toBeNull(); // archived guard prevents writeback
@@ -453,7 +463,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     errSpy.mockRestore();
   });
 
-  // ─── Happy path: --source writes last_full_cycle_at (the bug fix) ───
+  // 鈹€鈹€鈹€ Happy path: --source writes last_full_cycle_at (the bug fix) 鈹€鈹€鈹€
 
   test('--source <existing> writes last_full_cycle_at on success (PR #1559 regression)', async () => {
     await seedSource('media-corpus');
@@ -472,9 +482,9 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(writtenMs).toBeLessThanOrEqual(Date.now() + 1000);
   }, 60_000);
 
-  // ─── Back-compat: bare `gbrain dream` does NOT write per-source stamp ─
+  // 鈹€鈹€鈹€ Back-compat: bare `pmbrain dream` does NOT write per-source stamp 鈹€
 
-  test('gbrain dream (no --source) leaves all sources untouched (back-compat regression)', async () => {
+  test('pmbrain dream (no --source) leaves all sources untouched (back-compat regression)', async () => {
     await seedSource('alpha');
     await seedSource('beta');
     const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
@@ -483,7 +493,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 60_000);
 
-  // ─── --source-id alias equivalence (D3) ─────────────────────────────
+  // 鈹€鈹€鈹€ --source-id alias equivalence (D3) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   test('--source-id <existing> is equivalent to --source (writes timestamp)', async () => {
     await seedSource('beta');
@@ -498,7 +508,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(after).not.toBeNull();
   }, 60_000);
 
-  // ─── T3: TypeError MUST propagate (not swallowed by predicate-gated catch) ─
+  // 鈹€鈹€鈹€ T3: TypeError MUST propagate (not swallowed by predicate-gated catch) 鈹€
 
   test('non-resolver-user errors propagate uncaught (T3)', async () => {
     // Monkey-patch executeRaw to throw a synthetic TypeError on the
@@ -531,14 +541,14 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
   });
 });
 
-// ─── v0.41.13 D5: end-to-end dream → checkCycleFreshness parity ───────
+// 鈹€鈹€鈹€ v0.41.13 D5: end-to-end dream 鈫?checkCycleFreshness parity 鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 //
 // Closes the column-rename drift class: if a future PR renames
 // last_full_cycle_at on one side but not the other, both isolated
 // tests stay green but production breaks. This exercises the FULL
 // chain through the exact seam both sides consume.
 
-describe('runDream → checkCycleFreshness end-to-end (D5)', () => {
+describe('runDream 鈫?checkCycleFreshness end-to-end (D5)', () => {
   let repo: string;
   let engine: InstanceType<typeof PGLiteEngine>;
 

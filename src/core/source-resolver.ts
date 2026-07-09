@@ -132,7 +132,7 @@ export async function resolveSourceId(
   // Silent-fallback tier per codex P1-F: an invalid `sources.default` config
   // value (operator hand-edit gone wrong, legacy underscore id) falls through
   // to tier 6 rather than throwing. Resolver stays robust to bad config.
-  const globalDefault = await engine.getConfig('sources.default');
+  const globalDefault = await getEngineConfigSafe(engine, 'sources.default');
   if (globalDefault && isValidSourceId(globalDefault)) {
     await assertSourceExists(engine, globalDefault);
     return globalDefault;
@@ -214,6 +214,12 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
   }
 }
 
+async function getEngineConfigSafe(engine: BrainEngine, key: string): Promise<string | null> {
+  const getConfig = (engine as { getConfig?: (key: string) => Promise<string | null> }).getConfig;
+  if (typeof getConfig !== 'function') return null;
+  return await getConfig.call(engine, key);
+}
+
 /**
  * Resolve the user's main knowledge source.
  *
@@ -225,7 +231,7 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
  *   3. seeded default source
  */
 export async function resolveMainSourceId(engine: BrainEngine): Promise<string> {
-  const configured = await engine.getConfig('sources.default');
+  const configured = await getEngineConfigSafe(engine, 'sources.default');
   if (configured && isValidSourceId(configured)) {
     await assertSourceExists(engine, configured);
     return configured;
@@ -283,7 +289,7 @@ export async function getDefaultSourcePath(
   // config table under sync.repo_path. The sources table exists but its
   // local_path is NULL for the seeded 'default' row. Fall back so storage
   // tiering works without forcing a `gbrain sources add . --path .` migration.
-  const legacyPath = await engine.getConfig('sync.repo_path');
+  const legacyPath = await getEngineConfigSafe(engine, 'sync.repo_path');
   return legacyPath ?? null;
 }
 
@@ -365,7 +371,7 @@ export async function resolveSourceWithTier(
   if (best) return { source_id: best.id, tier: 'local_path', detail: best.path };
 
   // 5. Brain-level default. Silent-fallback (P1-F) like tier 5 in resolveSourceId.
-  const globalDefault = await engine.getConfig('sources.default');
+  const globalDefault = await getEngineConfigSafe(engine, 'sources.default');
   if (globalDefault && isValidSourceId(globalDefault)) {
     await assertSourceExists(engine, globalDefault);
     return { source_id: globalDefault, tier: 'brain_default', detail: 'sources.default config' };

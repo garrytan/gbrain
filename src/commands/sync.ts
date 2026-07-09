@@ -2042,17 +2042,17 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // passed. Pre-fix this was unreachable because the dispatcher's generic
   // CLI-only short-circuit fired first; sync is now in CLI_ONLY_SELF_HELP.
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`用法：gbrain sync [选项]
+    console.log(`用法：pmbrain sync [选项]
 
 将大脑仓库中的文本内容同步到存储引擎，然后生成向量嵌入。
 
 选项：
   --no-embed           跳过向量嵌入步骤。适用于嵌入服务配置错误，
-                       或希望稍后运行 'gbrain embed --stale' 的场景。
+                       或希望稍后运行 'pmbrain embed --stale' 的场景。
   --workers N          导入阶段并行工作进程数（别名：--concurrency）。
                        文件差异超过 100 个时默认为 4，否则串行执行。
   --source <id>        仅同步指定来源，默认使用大脑的默认来源。
-  --repo <path>        大脑仓库路径，默认使用 'gbrain init' 保存的路径。
+  --repo <path>        大脑仓库路径，默认使用 'pmbrain init' 保存的路径。
   --full               强制完整重新同步，通常无需使用。
   --dry-run            仅预览将同步的内容，不写入数据。
   --skip-failed        确认之前记录的同步失败，让书签跳过无法解析的文件。
@@ -2070,8 +2070,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   --yes                自动接受交互式提示，适用于 CI 或非 TTY 环境。
 
 相关命令：
-  gbrain embed --stale    重新嵌入全部过期分块。
-  gbrain doctor           诊断维度不匹配和其他同步问题。
+  pmbrain embed --stale   重新嵌入全部过期分块。
+  pmbrain doctor          诊断维度不匹配和其他同步问题。
 `);
     return;
   }

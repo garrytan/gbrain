@@ -90,16 +90,19 @@ describe('admin console intent planning', () => {
     expect(sourceId).toBe('manual-source');
   });
 
-  test('import source resolver returns undefined when no source local_path matches', async () => {
+  test('import source resolver falls back to main source when no source local_path matches', async () => {
     const engine = {
-      executeRaw: async () => [
-        { id: 'other-source', name: 'other-source', local_path: 'D:\\other', last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
-      ],
+      executeRaw: async (sql: string) => {
+        if (sql.includes('SELECT id FROM sources WHERE id = $1')) return [];
+        return [
+          { id: 'other-source', name: 'other-source', local_path: 'D:\\other', last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+        ];
+      },
     } as any;
 
     const sourceId = await resolveImportSourceIdForPath(engine, 'D:\\duwu\\youdao\\x.md');
 
-    expect(sourceId).toBeUndefined();
+    expect(sourceId).toBe('default');
   });
 
   test('source id derivation uses readable ascii folder names', () => {
@@ -115,14 +118,16 @@ describe('admin console intent planning', () => {
   });
 
   test('dream run command forwards source and max-pages', () => {
-    expect(buildDreamCommand({
+    const command = buildDreamCommand({
       phase: 'propose_takes',
       sourceId: 'pmgbrain',
       maxPages: 25,
       dryRun: true,
-    })).toEqual([
-      'bun',
-      'src/cli.ts',
+    });
+    expect(command[0]).toBe('bun');
+    expect(command[1]).toBe('run');
+    expect(command[2].replace(/\\/g, '/')).toContain('src/cli.ts');
+    expect(command.slice(3)).toEqual([
       'dream',
       '--phase',
       'propose_takes',

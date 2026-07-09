@@ -858,7 +858,10 @@ export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check>
  */
 export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
   try {
-    const holder = await engine.getConfig('emotional_weight.user_holder').catch(() => null) ?? DEFAULT_USER_HOLDER;
+    const getConfig = (engine as { getConfig?: (key: string) => Promise<string | null> }).getConfig;
+    const holder = (typeof getConfig === 'function'
+      ? await getConfig.call(engine, 'emotional_weight.user_holder').catch(() => null)
+      : null) ?? DEFAULT_USER_HOLDER;
     const rows = await engine.executeRaw<{ generated_at: Date | null }>(
       `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1`,
       [holder],

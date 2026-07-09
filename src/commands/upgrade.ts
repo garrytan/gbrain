@@ -7,7 +7,7 @@ const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 
 export async function runUpgrade(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('用法：gbrain upgrade\n\n更新 CLI 自身。\n\n检测安装方式（bun、binary、clawhub）并执行对应更新。\n更新完成后显示新内容，并提示配置新增功能。');
+    console.log('用法：pmbrain upgrade\n\n更新 CLI 自身。\n\n检测安装方式（bun、binary、clawhub）并执行对应更新。\n更新完成后显示新内容，并提示配置新增功能。');
     return;
   }
 
