@@ -28,6 +28,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
@@ -37,7 +38,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
+import type { MinionJobInput, MinionJobContext, MinionHandler, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
@@ -244,6 +246,85 @@ export interface SynthesizePhaseOpts {
   bypassDreamGuard?: boolean;
 }
 
+const INLINE_PGLITE_LOCK_MS = 30_000;
+
+async function runPgliteSubagentsInline(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  queueName: string,
+  handler: MinionHandler = makeSubagentHandler({ engine }),
+): Promise<void> {
+  if (engine.kind !== 'pglite') return;
+
+  while (true) {
+    // PGLite cannot be served by a separate worker process while the parent
+    // owns the embedded data-dir lock. Drive the same housekeeping a worker
+    // would normally perform so child rows can reach terminal states before
+    // the synth parent enters waitForCompletion polling.
+    await queue.promoteDelayed();
+    await queue.handleStalled();
+    await queue.handleTimeouts();
+    await queue.handleWallClockTimeouts(INLINE_PGLITE_LOCK_MS);
+
+    const lockToken = randomUUID();
+    const job = await queue.claim(lockToken, INLINE_PGLITE_LOCK_MS, queueName, ['subagent']);
+    if (!job) return;
+
+    const abort = new AbortController();
+    const shutdown = new AbortController();
+    const context: MinionJobContext = {
+      id: job.id,
+      name: job.name,
+      data: job.data,
+      attempts_made: job.attempts_made,
+      signal: abort.signal,
+      shutdownSignal: shutdown.signal,
+      updateProgress: async (progress: unknown) => {
+        await queue.updateProgress(job.id, lockToken, progress);
+      },
+      updateTokens: async (tokens) => {
+        await queue.updateTokens(job.id, lockToken, tokens);
+      },
+      log: async (message) => {
+        const value = typeof message === 'string' ? message : JSON.stringify(message);
+        await engine.executeRaw(
+          `UPDATE minion_jobs SET stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($1::text),
+            updated_at = now()
+           WHERE id = $2 AND status = 'active' AND lock_token = $3`,
+          [value, job.id, lockToken],
+        );
+      },
+      isActive: async () => {
+        const rows = await engine.executeRaw<{ id: number }>(
+          `SELECT id FROM minion_jobs WHERE id = $1 AND status = 'active' AND lock_token = $2`,
+          [job.id, lockToken],
+        );
+        return rows.length > 0;
+      },
+      readInbox: async () => queue.readInbox(job.id, lockToken),
+    };
+
+    try {
+      const result = await handler(context);
+      await queue.completeJob(
+        job.id,
+        lockToken,
+        result != null ? (typeof result === 'object' ? result as Record<string, unknown> : { value: result }) : undefined,
+      );
+    } catch (e) {
+      const errorText = e instanceof Error ? e.message : String(e);
+      const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
+      await queue.failJob(
+        job.id,
+        lockToken,
+        errorText,
+        attemptsExhausted ? 'dead' : 'delayed',
+        0,
+      );
+    }
+  }
+}
+
 export async function runPhaseSynthesize(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
@@ -404,6 +485,9 @@ export async function runPhaseSynthesize(
     }
 
     const queue = new MinionQueue(engine);
+    const childQueueName = engine.kind === 'pglite'
+      ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
+      : 'default';
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -479,6 +563,7 @@ export async function runPhaseSynthesize(
           on_child_fail: 'continue',
           idempotency_key,
           timeout_ms: 30 * 60 * 1000, // 30 min per chunk
+          queue: childQueueName,
         };
         const child = await queue.add(
           'subagent',
@@ -492,6 +577,12 @@ export async function runPhaseSynthesize(
         }
       }
     }
+
+    // PGLite cannot run a separate Minions worker because the embedded DB holds
+    // an exclusive file lock. Drain this phase's private child queue inline so
+    // the parent observes terminal child states instead of polling waiters until
+    // an external wrapper kills the dream run.
+    await runPgliteSubagentsInline(engine, queue, childQueueName);
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
@@ -1242,4 +1333,5 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 // double-encoded jsonb regression). Not part of the runtime contract.
 export const __testing = {
   collectChildPutPageSlugs,
+  runPgliteSubagentsInline,
 };

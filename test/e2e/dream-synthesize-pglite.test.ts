@@ -17,7 +17,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown, __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
+import { MinionQueue } from '../../src/core/minions/queue.ts';
+import type { MinionJobContext } from '../../src/core/minions/types.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -511,6 +513,75 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0].cached).toBe(true);
       });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
+describe('E2E synthesize — PGLite inline subagent drain', () => {
+  test('drains private subagent queue inline so the parent can observe completion', async () => {
+    const rig = await setupRig();
+    try {
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 1 },
+        { allowProtectedSubmit: true },
+      );
+
+      await synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        async (ctx: MinionJobContext) => {
+          await ctx.log('inline child ran');
+          await ctx.updateProgress({ step: 'done' });
+          return { ok: true };
+        },
+      );
+
+      const final = await queue.getJob(child.id);
+      expect(final?.status).toBe('completed');
+      expect(final?.result).toEqual({ ok: true });
+      expect(final?.progress).toEqual({ step: 'done' });
+
+      const waiting = await rig.engine.executeRaw<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM minion_jobs WHERE queue = $1 AND status = 'waiting'`,
+        [queueName],
+      );
+      expect(waiting[0]?.count).toBe('0');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('terminally marks failed inline children so synth parent will not hang', async () => {
+    const rig = await setupRig();
+    try {
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-fail-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 1 },
+        { allowProtectedSubmit: true },
+      );
+
+      await synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        async () => {
+          throw new Error('synthetic child failure');
+        },
+      );
+
+      const final = await queue.getJob(child.id);
+      expect(final?.status).toBe('dead');
+      expect(final?.error_text).toContain('synthetic child failure');
     } finally {
       await rig.cleanup();
     }
