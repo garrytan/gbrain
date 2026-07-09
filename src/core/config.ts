@@ -30,6 +30,10 @@ function envCompat(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
 }
 
+function stripJsonBom(content: string): string {
+  return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+}
+
 export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
@@ -310,7 +314,7 @@ function migrateLegacyEmbeddingConfig(raw: Record<string, unknown>): Record<stri
  */
 export function loadConfigFileOnly(): GBrainConfig | null {
   try {
-    const raw = readFileSync(getConfigPath(), 'utf-8');
+    const raw = stripJsonBom(readFileSync(getConfigPath(), 'utf-8'));
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
   } catch {
@@ -321,7 +325,7 @@ export function loadConfigFileOnly(): GBrainConfig | null {
 export function loadConfig(): GBrainConfig | null {
   let fileConfig: GBrainConfig | null = null;
   try {
-    const raw = readFileSync(getConfigPath(), 'utf-8');
+    const raw = stripJsonBom(readFileSync(getConfigPath(), 'utf-8'));
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     fileConfig = migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
   } catch { /* no config file */ }
@@ -851,7 +855,7 @@ export function getDbUrlSource(): DbUrlSource {
   if (process.env.DATABASE_URL) return 'env:DATABASE_URL';
   if (!existsSync(configPath())) return null;
   try {
-    const raw = readFileSync(configPath(), 'utf-8');
+    const raw = stripJsonBom(readFileSync(configPath(), 'utf-8'));
     const parsed = JSON.parse(raw) as Partial<GBrainConfig>;
     if (parsed.database_url) return 'config-file';
     if (parsed.database_path) return 'config-file-path';

@@ -186,6 +186,30 @@ describe('loadConfig — legacy provider+model migration (v0.36.1.x #1086)', () 
       rmSync(tmpHome, { recursive: true, force: true });
     }
   });
+
+  test('accepts config files written with a UTF-8 BOM', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-cfg-test-'));
+    try {
+      mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, '.gbrain', 'config.json'),
+        `\ufeff${JSON.stringify({ engine: 'postgres', database_url: 'postgresql://u:p@127.0.0.1:5432/pmbrain' })}`,
+      );
+      await withEnv({ GBRAIN_HOME: tmpHome, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        const { loadConfig, getDbUrlSource } = await import('../src/core/config.ts');
+        const cfg = loadConfig();
+        expect(cfg).not.toBeNull();
+        expect(cfg!.engine).toBe('postgres');
+        expect(getDbUrlSource()).toBe('config-file');
+      });
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });
 
 // v0.36.1.x #1019 (cherry-pick #1083): configDir uses path.isAbsolute and

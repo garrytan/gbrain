@@ -26,6 +26,7 @@ import {
 } from '../core/content-sanity.ts';
 import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
+import type { BrainEngine } from '../core/engine.ts';
 
 export interface LintIssue {
   file: string;
@@ -295,15 +296,26 @@ export function fixContent(content: string): string {
  * Also loads the operator literals file (`~/.gbrain/junk-substrings.txt`)
  * once per lint invocation so multi-file lint runs amortize the read.
  */
-async function resolveLintContentSanity(): Promise<LintContentOpts['contentSanity']> {
+export async function resolveLintContentSanity(
+  engine?: BrainEngine,
+): Promise<LintContentOpts['contentSanity']> {
   const base = loadConfig();
   let cs = base?.content_sanity;
+
+  if (engine) {
+    try {
+      const lifted = await loadConfigWithEngine(engine, base);
+      cs = lifted?.content_sanity ?? cs;
+    } catch {
+      // Lint should never block on DB-plane config.
+    }
+  }
 
   // DB-plane lift: only attempt when the file/env config suggests an
   // engine is configured. Avoids spinning up a fresh PGLite just to
   // read 4 config keys in a CI lint run that has no brain at all.
   const hasEngineConfig = !!(base?.database_url || base?.database_path);
-  if (hasEngineConfig) {
+  if (!engine && hasEngineConfig) {
     try {
       const { createEngine } = await import('../core/engine-factory.ts');
       const engine = await createEngine({

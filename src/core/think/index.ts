@@ -28,6 +28,7 @@ import { chat as gatewayChat, type ChatResult } from '../ai/gateway.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { loadConfig } from '../config.ts';
+import { DEFAULT_USER_HOLDER } from '../cycle/emotional-weight.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -68,7 +69,7 @@ export interface RunThinkOpts {
    */
   withCalibration?: boolean;
   /**
-   * Holder to retrieve the calibration profile for. Default 'garry'. Only
+   * Holder to retrieve the calibration profile for. Defaults to PMBrain's user holder. Only
    * consulted when withCalibration=true.
    */
   calibrationHolder?: string;
@@ -262,7 +263,7 @@ export async function runThink(
     try {
       const { getLatestProfile } = await import('../../commands/calibration.ts');
       const profile = await getLatestProfile(engine, {
-        holder: opts.calibrationHolder ?? 'garry',
+        holder: opts.calibrationHolder ?? DEFAULT_USER_HOLDER,
       });
       if (profile) {
         calibrationBlockOpts = {

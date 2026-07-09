@@ -95,10 +95,14 @@ function desktopWriteConfigPath(): string {
   return join(preferredConfigDirectory(), 'config.json');
 }
 
+function stripJsonBom(content: string): string {
+  return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+}
+
 function readConfig(path = desktopConfigPath()): RawConfig | null {
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as RawConfig;
+    return JSON.parse(stripJsonBom(readFileSync(path, 'utf8'))) as RawConfig;
   } catch (error) {
     throw new Error(`无法读取 PMBrain 配置：${error instanceof Error ? error.message : String(error)}`);
   }

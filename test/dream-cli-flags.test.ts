@@ -53,8 +53,18 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc).toContain("'--max-pages'");
     expect(dreamSrc).toContain('maxPages');
     expect(dreamSrc).toContain('proposeTakesPageLimit');
+    expect(dreamSrc).toContain('proposeTakesRequireChunks');
+    expect(dreamSrc).toContain('proposeTakesMaxChunks');
     expect(cycleSrc).toContain('proposeTakesPageLimit?: number');
+    expect(cycleSrc).toContain('proposeTakesRequireChunks?: boolean');
     expect(cycleSrc).toContain('pageLimit: opts.proposeTakesPageLimit');
+  });
+
+  test('declares propose_takes chunk range controls', () => {
+    expect(dreamSrc).toContain("'--propose-require-chunks'");
+    expect(dreamSrc).toContain("'--propose-allow-unchunked'");
+    expect(dreamSrc).toContain("'--propose-max-chunks'");
+    expect(dreamSrc).toContain('use --propose-require-chunks OR --propose-allow-unchunked');
   });
 
   test('totals line includes synth + patterns counters', () => {

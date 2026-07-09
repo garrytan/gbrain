@@ -10,6 +10,7 @@ import { searchPages } from '../search.ts';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { gbrainPath } from '../config.ts';
+import { groupProjectPages, normalizeProjectTitle } from './project-health.ts';
 
 export interface ReportData {
   title: string;
@@ -50,6 +51,7 @@ export async function runReportGen(
 
   try {
     const projects = await searchPages(engine, { type: 'project' });
+    const projectGroups = groupProjectPages(projects);
     const tasks = await searchPages(engine, { type: 'task' });
     const risks = await searchPages(engine, { type: 'risk' });
     const meetings = await searchPages(engine, { type: 'meeting' });
@@ -59,7 +61,7 @@ export async function runReportGen(
     weekStart.setDate(now.getDate() - now.getDay());
 
     const summary = {
-      totalProjects: projects.length,
+      totalProjects: projectGroups.length,
       totalTasks: tasks.length,
       tasksDone: tasks.filter((t) => t.status === 'done').length,
       tasksInProgress: tasks.filter((t) => t.status === 'in_progress').length,
@@ -67,14 +69,15 @@ export async function runReportGen(
       activeRisks: risks.filter((r) => r.status !== 'mitigated' && r.status !== 'closed').length,
     };
 
-    const projectDetails = projects.map((project) => {
-      const projectTasks = tasks.filter((t) => t.project === project.title);
-      const projectRisks = risks.filter((r) => r.project === project.title);
+    const projectDetails = projectGroups.map((project) => {
+      const projectTasks = tasks.filter((t) => normalizeProjectTitle(t.project).toLowerCase() === project.key);
+      const projectRisks = risks.filter((r) => normalizeProjectTitle(r.project).toLowerCase() === project.key);
       const done = projectTasks.filter((t) => t.status === 'done').length;
+      const status = project.pages.find((p) => p.status)?.status;
 
       return {
-        title: String(project.title),
-        status: String(project.status || 'unknown'),
+        title: project.title,
+        status: String(status || 'unknown'),
         progress: projectTasks.length > 0 ? Math.round((done / projectTasks.length) * 100) : 0,
         tasks: {
           total: projectTasks.length,

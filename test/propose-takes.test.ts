@@ -39,9 +39,11 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  chunkCounts?: Map<number, number>;
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
+  const chunkCounts = opts.chunkCounts ?? new Map(opts.pages.map((page) => [page.id, 1]));
 
   const engine = {
     kind: 'pglite',
@@ -50,6 +52,11 @@ function buildMockEngine(opts: {
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
+      if (sql.includes('FROM content_chunks')) {
+        return (params ?? [])
+          .map((id) => ({ page_id: Number(id), chunk_count: chunkCounts.get(Number(id)) ?? 0 }))
+          .filter((row) => row.chunk_count > 0) as T[];
+      }
       // SELECT idempotency check
       if (sql.includes('SELECT id FROM take_proposals')) {
         const [sourceId, slug, ch, pv] = params ?? [];
@@ -65,9 +72,9 @@ function buildMockEngine(opts: {
   return { engine, captured };
 }
 
-function buildPage(opts: { slug: string; body: string; sourceId?: string }): Page {
+function buildPage(opts: { slug: string; body: string; sourceId?: string; id?: number }): Page {
   return {
-    id: 1,
+    id: opts.id ?? 1,
     slug: opts.slug,
     type: 'analysis',
     title: opts.slug,
@@ -394,6 +401,50 @@ New prose appended here.`;
     };
     await runPhaseProposeTakes(buildCtx(engine), { extractor });
     expect(extractorCalls).toBe(1);
+  });
+
+  test('requireChunks skips pages without text chunks before extractor/cache work', async () => {
+    const pages = [
+      buildPage({ id: 1, slug: 'wiki/no-chunks', body: 'large unchunked body' }),
+      buildPage({ id: 2, slug: 'wiki/with-chunks', body: 'normal chunked body' }),
+    ];
+    const { engine, captured } = buildMockEngine({
+      pages,
+      chunkCounts: new Map([[1, 0], [2, 2]]),
+    });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const details = result.details as Record<string, unknown>;
+    expect(extractorCalls).toBe(1);
+    expect(details.pages_scanned).toBe(1);
+    expect(details.skipped_no_chunks).toBe(1);
+    expect(captured.filter(c => c.sql.includes('SELECT id FROM take_proposals'))).toHaveLength(1);
+  });
+
+  test('requireChunks:false preserves old behavior for unchunked pages', async () => {
+    const pages = [buildPage({ slug: 'wiki/no-chunks', body: 'unchunked prose' })];
+    const { engine } = buildMockEngine({
+      pages,
+      chunkCounts: new Map([[1, 0]]),
+    });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, requireChunks: false });
+
+    expect(extractorCalls).toBe(1);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(1);
+    expect(details.skipped_no_chunks).toBe(0);
   });
 
   test('skipPagesWithFence:true bypasses pages that already have a complete fence', async () => {

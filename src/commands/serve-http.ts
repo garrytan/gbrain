@@ -80,6 +80,31 @@ import {
   writePrivateFile,
 } from '../core/chatgpt-tunnel.ts';
 
+const ADMIN_README_CANDIDATES = [
+  new URL('../../README.md', import.meta.url),
+  new URL('../README.md', import.meta.url),
+  new URL('./README.md', import.meta.url),
+];
+
+const ADMIN_DOCS_EMPTY_MARKDOWN = '暂无';
+
+export async function loadAdminReadmeMarkdown(
+  candidates: URL[] = ADMIN_README_CANDIDATES,
+): Promise<{ markdown: string; source: 'file' | 'missing'; path?: string }> {
+  for (const candidate of candidates) {
+    try {
+      return {
+        markdown: await readFile(candidate, 'utf8'),
+        source: 'file',
+        path: candidate.toString(),
+      };
+    } catch {
+      // Packaged desktop runtimes may not include repository README.md.
+    }
+  }
+  return { markdown: ADMIN_DOCS_EMPTY_MARKDOWN, source: 'missing' };
+}
+
 function envCompat(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
 }
@@ -1490,44 +1515,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.get('/admin/api/docs', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+      const readme = await loadAdminReadmeMarkdown();
       res.json({
+        readme_source: readme.source,
+        readme_path: readme.path ?? null,
         articles: [
           {
             id: 'readme',
             title: 'README.md',
             category: '使用文档',
-            markdown: readme,
+            markdown: readme.markdown,
           },
           {
             id: 'faq',
             title: '常见问题',
             category: '常见问题',
-            markdown: [
-              '# 常见问题',
-              '',
-              '## 登录链接打不开？',
-              '',
-              '管理员登录链接是一次性的，5 分钟内有效。过期、打开过一次、复制了旧端口，或者服务重启后，都需要重新生成新的登录链接。',
-              '',
-              '如果你只是想快速登录，可以在启动终端复制 `Admin Token`，展开登录页的“手动粘贴管理员初始令牌”后粘贴登录。',
-              '',
-              '## 为什么启动后每次都要 token？',
-              '',
-              'Admin Console 使用本地管理员会话保护敏感操作。默认 token 是本次服务启动时生成的 bootstrap token，服务重启后会变化；配置固定 `PMBRAIN_ADMIN_BOOTSTRAP_TOKEN` 后可以保持稳定。',
-              '',
-              '## MCP 接入后没有响应？',
-              '',
-              '先确认 PMBrain HTTP 服务仍在运行，MCP Server 地址和当前端口一致，再检查 API Key 是否完整复制到 `Authorization: Bearer ...`。如果使用 CodeBuddy，保存配置后需要重启或刷新 MCP。',
-              '',
-              '## 导入后搜索不到？',
-              '',
-              '先看系统诊断中的向量化覆盖率和待处理 chunk 数。如果存在待处理内容，执行自然语言任务“向量化所有过期内容”或运行 stale embedding 任务。',
-              '',
-              '## 自然语言任务没有执行？',
-              '',
-              '自然语言任务依赖已配置的对话模型。请先在 API 与模型配置中确认 LLM 已配置，再到自然语言任务页查看识别结果和历史记录。',
-            ].join('\n'),
+            markdown: ADMIN_DOCS_EMPTY_MARKDOWN,
           },
         ],
       });

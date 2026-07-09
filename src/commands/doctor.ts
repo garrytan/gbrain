@@ -29,6 +29,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
 import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
+import { DEFAULT_USER_HOLDER } from '../core/cycle/emotional-weight.ts';
 
 export interface Check {
   name: string;
@@ -851,14 +852,16 @@ export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check>
 
 /**
  * calibration_freshness: warns when the active calibration profile is
- * older than 7 days (configurable). Default holder 'garry'. Multi-source
+ * older than 7 days (configurable). Uses the configured PMBrain user holder.
  * brains see one row per source; this check uses the most recent across
  * all sources.
  */
 export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
   try {
+    const holder = await engine.getConfig('emotional_weight.user_holder').catch(() => null) ?? DEFAULT_USER_HOLDER;
     const rows = await engine.executeRaw<{ generated_at: Date | null }>(
-      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = 'garry'`,
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1`,
+      [holder],
     );
     const generated = rows[0]?.generated_at;
     if (!generated) {

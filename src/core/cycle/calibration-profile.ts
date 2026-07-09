@@ -29,6 +29,7 @@ import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
+import { DEFAULT_USER_HOLDER } from './emotional-weight.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
 // pack's calibration_domains declarations into per-domain Brier+accuracy+
 // extras scorecards stored in calibration_profiles.domain_scorecards JSONB.
@@ -95,7 +96,7 @@ export type PatternStatementsGenerator = (input: {
 export type BiasTagsGenerator = (patterns: string[]) => Promise<string[]>;
 
 export interface CalibrationProfileOpts extends BasePhaseOpts {
-  /** Holder to generate the profile for. Default 'garry'. */
+  /** Holder to generate the profile for. Defaults to PMBrain's user holder. */
   holder?: string;
   /** Inject the patterns generator (tests). */
   patternsGenerator?: PatternStatementsGenerator;
@@ -226,7 +227,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
     _ctx: OperationContext,
     opts: CalibrationProfileOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
-    const holder = opts.holder ?? 'garry';
+    const holder = opts.holder ?? DEFAULT_USER_HOLDER;
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
     const modelId = opts.model ?? 'claude-sonnet-4-6';
     const gradeCompletion = opts.gradeCompletion ?? 1.0;

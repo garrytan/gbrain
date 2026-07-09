@@ -73,6 +73,10 @@ interface DreamArgs {
    * Forwarded to runCycle as proposeTakesPageLimit.
    */
   maxPages: number | null;
+  /** Default true: propose_takes only scans pages with existing text chunks. */
+  proposeRequireChunks: boolean;
+  /** Optional cap to skip very large chunked pages during propose_takes. */
+  proposeMaxChunks: number | null;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -206,6 +210,34 @@ function parseArgs(args: string[]): DreamArgs {
     maxPages = parsed;
   }
 
+  const requireChunksFlag = args.includes('--propose-require-chunks');
+  const allowUnchunkedFlag = args.includes('--propose-allow-unchunked');
+  if (requireChunksFlag && allowUnchunkedFlag) {
+    console.error('use --propose-require-chunks OR --propose-allow-unchunked, not both');
+    process.exit(2);
+  }
+  const proposeRequireChunks = !allowUnchunkedFlag;
+
+  const maxChunksValues = collectFlagValues(args, '--propose-max-chunks');
+  if (maxChunksValues === null) {
+    console.error('--propose-max-chunks <n>: missing value. Usage: gbrain dream --phase propose_takes --propose-max-chunks 200');
+    process.exit(2);
+  }
+  const uniqMaxChunks = Array.from(new Set(maxChunksValues));
+  if (uniqMaxChunks.length > 1) {
+    console.error(`specify --propose-max-chunks once; got [${uniqMaxChunks.map(v => `"${v}"`).join(', ')}]`);
+    process.exit(2);
+  }
+  let proposeMaxChunks: number | null = null;
+  if (uniqMaxChunks.length === 1) {
+    const parsed = Number(uniqMaxChunks[0]);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      console.error(`--propose-max-chunks must be a positive integer; got "${uniqMaxChunks[0]}"`);
+      process.exit(2);
+    }
+    proposeMaxChunks = parsed;
+  }
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -220,6 +252,8 @@ function parseArgs(args: string[]): DreamArgs {
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
     source,
     maxPages,
+    proposeRequireChunks,
+    proposeMaxChunks,
   };
 }
 
@@ -232,7 +266,9 @@ function parseArgs(args: string[]): DreamArgs {
  *   1. An explicit --dir argument.
  *   2. The `sync.repo_path` config key set by `gbrain init` (engine-backed).
  *
- * If neither is available, we error out instead of guessing.
+ *   3. The desktop wizard's `desktop.knowledge_directory` file-plane config.
+ *
+ * If none is available, we error out instead of guessing.
  */
 async function resolveBrainDir(
   engine: BrainEngine | null,
@@ -255,8 +291,13 @@ async function resolveBrainDir(
     }
   }
 
+  const desktopConfigured = brainDirFromConfig(loadConfig());
+  if (desktopConfigured && existsSync(desktopConfigured)) {
+    return resolve(desktopConfigured);
+  }
+
   console.error(
-    'No brain directory found. Pass --dir <path> or configure one via `gbrain init`.',
+    'No brain directory found. Pass --dir <path>, set sync.repo_path, or configure a desktop knowledge directory.',
   );
   process.exit(1);
 }
@@ -286,6 +327,12 @@ function printHelp() {
                       calibration_profile 也会使用这个 source。
   --source-id <id>    --source 的别名。
   --max-pages <n>     限制 propose_takes 最多处理的页面数，适合分批执行。
+  --propose-require-chunks
+                      仅让已有文本 chunks 的页面进入 propose_takes。默认开启。
+  --propose-allow-unchunked
+                      兼容旧行为：允许没有 chunks 的页面进入 propose_takes。
+  --propose-max-chunks <n>
+                      跳过 chunks 数超过 n 的超大页面，避免小说/整本书类页面进入观点提取。
 
   --input <path>      综合指定转录文件或文件夹，隐含 --phase synthesize。
   --date YYYY-MM-DD   综合指定日期的转录文本。
@@ -476,6 +523,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
     proposeTakesPageLimit: opts.maxPages ?? undefined,
+    proposeTakesRequireChunks: opts.proposeRequireChunks,
+    proposeTakesMaxChunks: opts.proposeMaxChunks ?? undefined,
   });
 
   if (opts.json) {

@@ -2782,7 +2782,7 @@ const get_calibration_profile: Operation = {
     holder: {
       type: 'string',
       description:
-        "Holder slug, e.g. 'garry' or 'people/charlie-example'. Defaults to 'garry' when omitted.",
+        "Holder slug, e.g. 'brain' or 'people/charlie-example'. Defaults to 'brain' when omitted.",
     },
   },
   handler: async (ctx, p) => {

@@ -33,6 +33,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { chat as defaultChat, embedQuery, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
+import { DEFAULT_USER_HOLDER } from '../cycle/emotional-weight.ts';
 import { hybridSearch, hybridSearchCached } from '../search/hybrid.ts';
 import { fetchFar, type CloseRef, type FarPage } from './domain-bank.ts';
 import { StructuredAgentError } from '../errors.ts';
@@ -138,7 +139,7 @@ export interface BrainstormOptions {
   modelOverride?: string;
   /** Skip the cost-preview TTY grace window. Required for non-interactive callers. */
   skipCostPreview?: boolean;
-  /** When set, force the user holder for calibration profile lookup. Falls back to config (`emotional_weight.user_holder`) then `'garry'`. */
+  /** When set, force the user holder for calibration profile lookup. Falls back to config (`emotional_weight.user_holder`) then PMBrain's default user holder. */
   holderOverride?: string;
   /** Source scope. */
   sourceId?: string;
@@ -635,7 +636,7 @@ async function _runBrainstormInner(
   }
 
   // ---- Phase 3: calibration context (cold-start fallback) ----
-  const holder = opts.holderOverride ?? config.emotional_weight?.user_holder ?? 'garry';
+  const holder = opts.holderOverride ?? config.emotional_weight?.user_holder ?? DEFAULT_USER_HOLDER;
   const calibContext = await loadCalibrationContext(engine, {
     holder,
     sourceId: opts.sourceId,

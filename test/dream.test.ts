@@ -17,7 +17,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
@@ -74,6 +74,31 @@ describe('runDream — brainDir resolution', () => {
     const report = await runDream(engine, ['--json']);
     expect(report).toBeTruthy();
     if (report) expect(report.brain_dir).toBe(repo);
+  });
+
+  test('no --dir + no sync.repo_path: falls back to desktop knowledge_directory', async () => {
+    const oldPmbrainHome = process.env.PMBRAIN_HOME;
+    const oldGbrainHome = process.env.GBRAIN_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-dream-home-'));
+    try {
+      process.env.PMBRAIN_HOME = home;
+      delete process.env.GBRAIN_HOME;
+      const configDir = join(home, '.pmbrain');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+        desktop: { knowledge_directory: repo },
+      }));
+
+      const report = await runDream(engine, ['--phase', 'lint', '--json']);
+      expect(report).toBeTruthy();
+      if (report) expect(report.brain_dir).toBe(repo);
+    } finally {
+      if (oldPmbrainHome === undefined) delete process.env.PMBRAIN_HOME;
+      else process.env.PMBRAIN_HOME = oldPmbrainHome;
+      if (oldGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldGbrainHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('no --dir + engine=null exits 1', async () => {

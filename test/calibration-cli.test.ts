@@ -194,17 +194,17 @@ describe('formatProfileText', () => {
 // ─── getCalibrationProfileOp ────────────────────────────────────────
 
 describe('getCalibrationProfileOp (MCP)', () => {
-  test('defaults holder to "garry" when omitted', async () => {
-    const { engine } = buildMockEngine({ rows: [buildProfile({ holder: 'garry' })] });
+  test('defaults holder to "brain" when omitted', async () => {
+    const { engine } = buildMockEngine({ rows: [buildProfile({ holder: 'brain' })] });
     const ctx = buildCtx(engine);
     const result = await getCalibrationProfileOp(ctx, {});
-    expect(result?.holder).toBe('garry');
+    expect(result?.holder).toBe('brain');
   });
 
   test('routes through sourceScopeOpts: scalar source-bound client gets source-scoped result', async () => {
     const rows = [
-      buildProfile({ holder: 'garry', source_id: 'default' }),
-      buildProfile({ holder: 'garry', source_id: 'tenant-b' }),
+      buildProfile({ holder: 'brain', source_id: 'default' }),
+      buildProfile({ holder: 'brain', source_id: 'tenant-b' }),
     ];
     const { engine } = buildMockEngine({ rows });
     const ctx = buildCtx(engine, { sourceId: 'tenant-b' });
@@ -214,8 +214,8 @@ describe('getCalibrationProfileOp (MCP)', () => {
 
   test('federated read scope sees the union of allowed sources', async () => {
     const rows = [
-      buildProfile({ holder: 'garry', source_id: 'tenant-a' }),
-      buildProfile({ holder: 'garry', source_id: 'tenant-z' }),
+      buildProfile({ holder: 'brain', source_id: 'tenant-a' }),
+      buildProfile({ holder: 'brain', source_id: 'tenant-z' }),
     ];
     const { engine } = buildMockEngine({ rows });
     const ctx = buildCtx(engine, { allowedSources: ['tenant-a', 'tenant-b'] });

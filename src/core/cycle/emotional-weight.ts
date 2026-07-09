@@ -43,11 +43,11 @@ export const HIGH_EMOTION_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Holder name treated as "the user" for the Garry-as-holder ratio. Configurable
- * via the `emotional_weight.user_holder` config key (defaults to 'garry' to
- * match the v0.28 schema's takes table convention).
+ * Holder name treated as "the user" for the user-holder ratio. Configurable
+ * via the `emotional_weight.user_holder` config key. PMBrain defaults to
+ * 'brain' so fresh installs do not inherit the upstream sample user's name.
  */
-export const DEFAULT_USER_HOLDER = 'garry';
+export const DEFAULT_USER_HOLDER = 'brain';
 
 export interface EmotionalWeightTake {
   holder: string;
@@ -64,7 +64,7 @@ export interface EmotionalWeightInput {
 export interface EmotionalWeightOpts {
   /** Override the default HIGH_EMOTION_TAGS set. Tag matching is case-insensitive. */
   highEmotionTags?: ReadonlySet<string>;
-  /** Override the default user holder name (used in the Garry-as-holder ratio). */
+  /** Override the default user holder name (used in the user-holder ratio). */
   userHolder?: string;
 }
 
@@ -82,12 +82,11 @@ export interface EmotionalWeightOpts {
  *   user act of categorization. A page tagged `wedding` is *about* something
  *   emotionally weighty by construction.
  * - Take density (0.3) covers the case of pages with no emotion-tag but lots
- *   of opinions / hot-take attention (Garry's "I have a bunch of takes about
- *   this person/company" signal).
+ *   of opinions / hot-take attention.
  * - Avg weight (0.1) captures take confidence; high-confidence takes amplify
  *   density.
  * - User-holder ratio (0.1) preserves the personal-vs-other distinction.
- *   A page where Garry has takes outweighs one where only third-party holders
+ *   A page where the configured user holder has takes outweighs one where only third-party holders
  *   are recorded.
  *
  * Returns exactly 0.0 for empty inputs (no tags, no takes) so default-row

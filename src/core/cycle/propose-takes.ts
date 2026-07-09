@@ -150,10 +150,21 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   model?: string;
   /** Skip pages that already have a complete takes fence. Default: true. */
   skipPagesWithFence?: boolean;
+  /**
+   * Require at least one existing text chunk before scanning a page. Default:
+   * true, so very large raw/attachment pages that were intentionally left
+   * unchunked do not spend propose_takes budget.
+   */
+  requireChunks?: boolean;
+  /** Optional upper bound on text chunk count; skips unusually large pages. */
+  maxChunks?: number;
 }
 
 export interface ProposeTakesResult {
   pages_scanned: number;
+  pages_considered: number;
+  skipped_no_chunks: number;
+  skipped_too_many_chunks: number;
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
@@ -174,6 +185,41 @@ export function contentHash(pageBody: string): string {
 function progressNote(done: number, total: number, status: string, slug: string): string {
   const pct = total > 0 ? Math.floor((done / total) * 100) : 0;
   return `${status} ${done}/${total} (${pct}%) ${slug}`;
+}
+
+async function loadTextChunkCounts(engine: BrainEngine, pages: Page[]): Promise<Map<number, number>> {
+  const ids = pages
+    .map((page) => page.id)
+    .filter((id): id is number => Number.isInteger(id));
+  if (ids.length === 0) return new Map();
+
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  let rows: Array<{ page_id: number; chunk_count: number }>;
+  try {
+    rows = await engine.executeRaw<{ page_id: number; chunk_count: number }>(
+      `SELECT page_id, COUNT(*)::int AS chunk_count
+         FROM content_chunks
+        WHERE page_id IN (${placeholders})
+          AND COALESCE(modality, 'text') = 'text'
+        GROUP BY page_id`,
+      ids,
+    );
+  } catch (err) {
+    if (!(err instanceof Error) || !/modality/i.test(err.message)) throw err;
+    rows = await engine.executeRaw<{ page_id: number; chunk_count: number }>(
+      `SELECT page_id, COUNT(*)::int AS chunk_count
+         FROM content_chunks
+        WHERE page_id IN (${placeholders})
+        GROUP BY page_id`,
+      ids,
+    );
+  }
+
+  const out = new Map<number, number>();
+  for (const row of rows) {
+    out.set(Number(row.page_id), Number(row.chunk_count));
+  }
+  return out;
 }
 
 /**
@@ -322,6 +368,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
     const result: ProposeTakesResult = {
       pages_scanned: 0,
+      pages_considered: 0,
+      skipped_no_chunks: 0,
+      skipped_too_many_chunks: 0,
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
@@ -330,12 +379,35 @@ class ProposeTakesPhase extends BaseCyclePhase {
     };
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
+    const requireChunks = opts.requireChunks ?? true;
+    const maxChunks = opts.maxChunks;
+    const needsChunkFilter = requireChunks || maxChunks !== undefined;
     const pageFilters: PageFilters = {
       ...scope,
-      limit: pageLimit,
+      limit: needsChunkFilter ? pageLimit * 5 : pageLimit,
       sort: 'updated_desc',
     };
-    const pages: Page[] = await engine.listPages(pageFilters);
+    const candidatePages: Page[] = await engine.listPages(pageFilters);
+    result.pages_considered = candidatePages.length;
+
+    let pages: Page[] = candidatePages.slice(0, pageLimit);
+    if (needsChunkFilter) {
+      const chunkCounts = await loadTextChunkCounts(engine, candidatePages);
+      pages = [];
+      for (const page of candidatePages) {
+        const chunkCount = chunkCounts.get(page.id) ?? 0;
+        if (requireChunks && chunkCount === 0) {
+          result.skipped_no_chunks += 1;
+          continue;
+        }
+        if (maxChunks !== undefined && chunkCount > maxChunks) {
+          result.skipped_too_many_chunks += 1;
+          continue;
+        }
+        pages.push(page);
+        if (pages.length >= pageLimit) break;
+      }
+    }
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages', pages.length);
@@ -478,7 +550,15 @@ class ProposeTakesPhase extends BaseCyclePhase {
       summary: opts.dryRun
         ? `propose_takes: dry-run scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.cache_misses} would need LLM, 0 proposals written (run ${proposalRunId})`
         : `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
-      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+      details: {
+        ...result,
+        chunk_filter: {
+          require_chunks: requireChunks,
+          max_chunks: maxChunks ?? null,
+        },
+        proposal_run_id: proposalRunId,
+        prompt_version: promptVersion,
+      },
       status: result.budget_exhausted ? 'warn' : 'ok',
     };
   }

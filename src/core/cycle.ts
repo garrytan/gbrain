@@ -415,6 +415,10 @@ export interface CycleOpts {
    * batch expensive LLM proposal runs without changing the phase default.
    */
   proposeTakesPageLimit?: number;
+  /** Require existing text chunks before propose_takes scans a page. Default true. */
+  proposeTakesRequireChunks?: boolean;
+  /** Optional upper bound on existing text chunk count for propose_takes. */
+  proposeTakesMaxChunks?: number;
   /**
    * v0.23.2: explicit opt-in to disable the synthesize self-consumption guard.
    * Wired from `gbrain dream --unsafe-bypass-dream-guard`. Never auto-applied
@@ -744,10 +748,19 @@ function checkAborted(signal?: AbortSignal): void {
 // keyword is the minimal seam that lets behavioral tests drive the
 // wrapper's result-mapping (counter → status enum + summary) without
 // going through runCycle's full setup cost.
-export async function runPhaseLint(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
+export async function runPhaseLint(
+  brainDir: string,
+  dryRun: boolean,
+  engine?: BrainEngine,
+): Promise<PhaseResult> {
   try {
-    const { runLintCore } = await import('../commands/lint.ts');
-    const result = await runLintCore({ target: brainDir, fix: true, dryRun });
+    const { runLintCore, resolveLintContentSanity } = await import('../commands/lint.ts');
+    const result = await runLintCore({
+      target: brainDir,
+      fix: true,
+      dryRun,
+      contentSanity: await resolveLintContentSanity(engine),
+    });
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
@@ -1501,7 +1514,7 @@ export async function runCycle(
     if (phases.includes('lint')) {
       checkAborted(opts.signal);
       progress.start('cycle.lint');
-      const { result, duration_ms } = await timePhase(() => runPhaseLint(opts.brainDir, dryRun));
+      const { result, duration_ms } = await timePhase(() => runPhaseLint(opts.brainDir, dryRun, engine ?? undefined));
       result.duration_ms = duration_ms;
       phaseResults.push(result);
       progress.finish();
@@ -1911,6 +1924,8 @@ export async function runCycle(
             reporter: progress,
             dryRun,
             pageLimit: opts.proposeTakesPageLimit,
+            requireChunks: opts.proposeTakesRequireChunks,
+            maxChunks: opts.proposeTakesMaxChunks,
           }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);

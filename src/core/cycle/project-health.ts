@@ -7,11 +7,11 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase, PhaseResult } from '../cycle.ts';
-import { searchPages } from '../search.ts';
+import { searchPages, type SearchPage } from '../search.ts';
 
 export interface ProjectHealthResult {
   project: string;
-  health: 'healthy' | 'at_risk' | 'critical';
+  health: 'unknown' | 'healthy' | 'at_risk' | 'critical';
   taskStats: {
     total: number;
     done: number;
@@ -19,6 +19,32 @@ export interface ProjectHealthResult {
     overdue: number;
   };
   progress: number;  // 0-100
+}
+
+export interface ProjectPageGroup {
+  key: string;
+  title: string;
+  pages: SearchPage[];
+}
+
+export function normalizeProjectTitle(title: unknown): string {
+  return String(title ?? '').replace(/\s+/g, ' ').trim();
+}
+
+export function groupProjectPages(projects: SearchPage[]): ProjectPageGroup[] {
+  const groups = new Map<string, ProjectPageGroup>();
+  for (const project of projects) {
+    const title = normalizeProjectTitle(project.title);
+    if (!title) continue;
+    const key = title.toLowerCase();
+    const existing = groups.get(key);
+    if (existing) {
+      existing.pages.push(project);
+    } else {
+      groups.set(key, { key, title, pages: [project] });
+    }
+  }
+  return Array.from(groups.values());
 }
 
 export async function runProjectHealth(
@@ -31,38 +57,42 @@ export async function runProjectHealth(
   try {
     // 1. 搜索所有项目页面
     const projects = await searchPages(engine, { type: 'project' });
+    const projectGroups = groupProjectPages(projects);
+    const tasks = await searchPages(engine, { type: 'task' });
     const results: ProjectHealthResult[] = [];
 
     // 2. 对每个项目评估健康度
-    for (const project of projects) {
-      const projectTitle = String(project.title);
-      const tasks = await searchPages(engine, { type: 'task', project: projectTitle });
-      const total = tasks.length;
-      const done = tasks.filter(t => t.status === 'done').length;
-      const blocked = tasks.filter(t => t.status === 'blocked').length;
-      const overdue = tasks.filter(t => {
+    for (const project of projectGroups) {
+      const projectTasks = tasks.filter((task) => normalizeProjectTitle(task.project).toLowerCase() === project.key);
+      const done = projectTasks.filter(t => t.status === 'done').length;
+      const blocked = projectTasks.filter(t => t.status === 'blocked').length;
+      const overdue = projectTasks.filter(t => {
         if (!t.deadline) return false;
         return new Date(String(t.deadline)) < new Date() && t.status !== 'done';
       }).length;
 
       // 判断健康度
-      let health: ProjectHealthResult['health'] = 'healthy';
-      if (blocked > 0 || overdue > 2) {
-        health = 'at_risk';
-      }
-      if (blocked > total * 0.3 || overdue > total * 0.5) {
-        health = 'critical';
+      let health: ProjectHealthResult['health'] = 'unknown';
+      if (projectTasks.length > 0) {
+        health = 'healthy';
+        if (blocked > 0 || overdue > 2) {
+          health = 'at_risk';
+        }
+        if (blocked > projectTasks.length * 0.3 || overdue > projectTasks.length * 0.5) {
+          health = 'critical';
+        }
       }
 
       results.push({
-        project: projectTitle,
+        project: project.title,
         health,
-        taskStats: { total, done, blocked, overdue },
-        progress: total > 0 ? Math.round((done / total) * 100) : 0,
+        taskStats: { total: projectTasks.length, done, blocked, overdue },
+        progress: projectTasks.length > 0 ? Math.round((done / projectTasks.length) * 100) : 0,
       });
     }
 
     // 3. 汇总结果
+    const unknownCount = results.filter(r => r.health === 'unknown').length;
     const healthyCount = results.filter(r => r.health === 'healthy').length;
     const atRiskCount = results.filter(r => r.health === 'at_risk').length;
     const criticalCount = results.filter(r => r.health === 'critical').length;
@@ -72,10 +102,12 @@ export async function runProjectHealth(
       status: criticalCount > 0 ? 'warn' : 'ok',
       duration_ms: Date.now() - start,
       summary: dryRun
-        ? `Would check ${projects.length} project(s) (dry-run)`
-        : `${projects.length} project(s): ${healthyCount} healthy, ${atRiskCount} at risk, ${criticalCount} critical`,
+        ? `Would check ${projectGroups.length} project(s) (${projects.length} page records, dry-run)`
+        : `${projectGroups.length} project(s): ${healthyCount} healthy, ${atRiskCount} at risk, ${criticalCount} critical, ${unknownCount} unknown`,
       details: {
-        projects_checked: projects.length,
+        projects_checked: projectGroups.length,
+        project_page_records: projects.length,
+        unknown: unknownCount,
         healthy: healthyCount,
         at_risk: atRiskCount,
         critical: criticalCount,

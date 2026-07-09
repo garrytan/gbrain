@@ -474,3 +474,43 @@
 - 描述：桌面端 sidecar 打包后可能携带开发机绝对路径，同时 packaged runtime 缺少 recipes、templates、完整 skills 和部分运行期依赖，存在新用户安装后 integrations/skill 自检失败、自动更新产物不完整的风险。
 - 是否完成：是
 - 最终结果：已恢复桌面端构建脚本，补齐 packaged runtime 资源与外置依赖复制，改造运行时资源路径解析，增强安装包校验脚本检查版本、latest.yml、必备资源和开发机路径泄漏；未处理代码签名问题。
+
+## 2026-07-08 桌面端配置文件 UTF-8 BOM 读取失败
+
+- 时间：2026-07-08
+- 版本号：Desktop 1.0.47
+- 标题：修复 Windows 工具写入 BOM 后桌面端无法读取 config.json
+- 描述：用户本机 `.pmbrain/config.json` 以 UTF-8 BOM 开头，PowerShell 可解析但 Bun/Node 的 `JSON.parse(readFileSync(...))` 报错，导致桌面端初始化页显示无法读取 PMBrain 配置。
+- 是否完成：是
+- 最终结果：已备份并重写本机配置为无 BOM；桌面端配置读取和核心 `loadConfig` 均兼容开头 BOM，并新增回归测试覆盖该场景。
+
+## 2026-07-09 Dream 完整周期数据库连接异常
+
+- 时间：2026-07-09
+- 版本号：PMBrain 1.0.84
+- 标题：修复 Dream 完整周期中 sync/synthesize 报 connect() 未调用
+- 描述：完整 Dream dry-run 中 `lint` 阶段会为读取 DB 配置临时创建并关闭 Postgres module-level engine，导致后续 `sync`、`synthesize` 等阶段复用已断开的共享连接并报 `connect() has not been called`。
+- 是否完成：是
+- 最终结果：Dream 的 `lint` 阶段改为复用当前 cycle 已连接的 engine 读取配置，不再自行开关共享连接；完整 `dream --dry-run --max-pages 1 --json` 验证 `sync/synthesize` 不再报连接异常。
+
+## 2026-07-09 桌面端 Dream 找不到本地知识库目录
+
+- 时间：2026-07-09
+- 版本号：PMBrain 1.0.85
+- 标题：修复桌面端 Admin 运行 Dream 报 No brain directory found
+- 描述：用户通过桌面端首次配置保存了 `desktop.knowledge_directory`，但 Admin Console 启动 Dream 时命令未传 `--dir`，Dream 目录解析只读取 `--dir` 和数据库配置 `sync.repo_path`，导致报 `No brain directory found. Pass --dir <path> or configure one via gbrain init`。
+- 根因：桌面端知识库目录保存在文件配置的 `desktop.knowledge_directory`，而 Dream 命令未把该字段作为 brain 目录 fallback。
+- 解决方案：Dream 的 `resolveBrainDir` 在 `--dir` 和 `sync.repo_path` 都不可用时，回退读取文件配置中的 `desktop.knowledge_directory`，并仅在目录存在时使用；补充回归测试覆盖桌面配置 fallback。
+- 是否完成：是
+- 最终结果：桌面端 Admin 直接运行 Dream 时，可使用首次配置保存的本地知识库目录，不再要求用户额外手动设置 `sync.repo_path`。
+
+## 2026-07-09 Admin 帮助中心 README 缺失报错
+
+- 时间：2026-07-09
+- 版本号：PMBrain 1.0.86
+- 标题：修复帮助中心在安装目录缺少 README.md 时直接报错
+- 描述：桌面端/安装版 Admin Console 打开帮助中心时，后端文档接口直接读取运行目录相对路径下的 `README.md`；安装目录 `D:\Program Files\PMBrain\README.md` 不存在时，接口返回 `ENOENT`，页面只显示红色错误。
+- 根因：帮助中心把源码仓库 README 当成必备运行时文件，但打包后的 runtime 不保证携带该文件。
+- 解决方案：文档接口改为按多个源码/运行时候选路径尝试读取 README；全部找不到时返回“暂无”占位，并保留 FAQ 为“暂无”，避免帮助中心因缺失文档资源返回 500。
+- 是否完成：是
+- 最终结果：帮助中心在 README 缺失时仍能正常打开，显示“暂无”，后续可再补充正式帮助文档资源。

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -53,6 +53,21 @@ describe('desktop config manager', () => {
     expect(info.current.databaseConfigured).toBe(true);
     expect(info.current.keyStatus.deepseek).toBe(true);
     expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+
+  test('reads a config file with a UTF-8 BOM', () => {
+    const root = isolatedHome();
+    const path = desktopConfigPath();
+    mkdirSync(join(root, '.pmbrain'), { recursive: true });
+    writeFileSync(path, `\ufeff${JSON.stringify({
+      engine: 'postgres',
+      database_url: 'postgresql://local:secret@127.0.0.1:5432/pmbrain',
+    })}`);
+
+    const info = getSetupInfo();
+    expect(info.needsSetup).toBe(false);
+    expect(info.current.engine).toBe('postgres');
+    expect(info.current.databaseConfigured).toBe(true);
   });
 
   test('creates secure PGLite config and preserves keys on a later switch', () => {
