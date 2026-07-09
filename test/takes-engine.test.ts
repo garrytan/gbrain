@@ -96,6 +96,14 @@ describe('searchTakes', () => {
     expect(hits.some(h => h.claim.toLowerCase().includes('technical'))).toBe(true);
   });
 
+  test('keyword search falls back to full-text for short terms and natural-language questions', async () => {
+    const singleTermHits = await engine.searchTakes('technical');
+    expect(singleTermHits.some(h => h.claim.toLowerCase().includes('technical'))).toBe(true);
+
+    const questionHits = await engine.searchTakes('who is a technical founder?');
+    expect(questionHits.some(h => h.claim.toLowerCase().includes('technical'))).toBe(true);
+  });
+
   test('searchTakes honors takesHoldersAllowList', async () => {
     const worldHits = await engine.searchTakes('founder', { takesHoldersAllowList: ['world'] });
     expect(worldHits.every(h => h.holder === 'world')).toBe(true);

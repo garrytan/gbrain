@@ -87,6 +87,12 @@ d('v0.28 takes engine — Postgres', () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].claim.toLowerCase()).toContain('technical');
 
+    const singleTermHits = await engine.searchTakes('technical');
+    expect(singleTermHits.some(h => h.claim.toLowerCase().includes('technical'))).toBe(true);
+
+    const questionHits = await engine.searchTakes('who is a technical founder?');
+    expect(questionHits.some(h => h.claim.toLowerCase().includes('technical'))).toBe(true);
+
     const worldHits = await engine.searchTakes('founder', { takesHoldersAllowList: ['world'] });
     expect(worldHits.every(h => h.holder === 'world')).toBe(true);
   });

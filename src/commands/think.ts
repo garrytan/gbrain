@@ -9,6 +9,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { runThink, persistSynthesis } from '../core/think/index.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { embedQuery } from '../core/ai/gateway.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -118,6 +119,10 @@ prints what would have been the input (exit 0).
         // think when no profile exists, with NO_CALIBRATION_PROFILE warning.
         withCalibration,
         ...(calibrationHolder ? { calibrationHolder } : {}),
+        // Local CLI should exercise the takes vector-recall lane when the
+        // configured embedding provider is available; runThink catches and
+        // surfaces QUESTION_EMBED_FAILED if the provider is unavailable.
+        embedQuestion: embedQuery,
         // Local CLI: no MCP allow-list filter — operator owns the brain.
       });
 
