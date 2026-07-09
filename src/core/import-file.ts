@@ -36,7 +36,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { isUndefinedTableError, validateSlug, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { runGuardrails } from './guardrails.ts';
 
@@ -303,6 +303,7 @@ export async function importFromContent(
     };
   }
 
+  slug = validateSlug(slug);
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
 
   // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED

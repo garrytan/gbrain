@@ -38,6 +38,35 @@ afterAll(() => {
 });
 
 describe('importFile', () => {
+  test('normalizes mixed-case importFromContent slug before tag/chunk writes (#2680)', async () => {
+    const engine = mockEngine();
+
+    const result = await importFromContent(engine, 'session/GenerateText-shape-confirmed', `---
+type: concept
+title: Mixed Case
+tags: [llm, shape]
+---
+
+Content here.
+`, { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('session/generatetext-shape-confirmed');
+
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('session/generatetext-shape-confirmed');
+
+    const tagCalls = calls.filter((c: any) => c.method === 'addTag');
+    expect(tagCalls.map((c: any) => c.args[0])).toEqual([
+      'session/generatetext-shape-confirmed',
+      'session/generatetext-shape-confirmed',
+    ]);
+
+    const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
+    expect(chunkCall.args[0]).toBe('session/generatetext-shape-confirmed');
+  });
+
   test('imports a valid markdown file', async () => {
     const filePath = join(TMP, 'test-page.md');
     writeFileSync(filePath, `---
