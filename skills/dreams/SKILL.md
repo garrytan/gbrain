@@ -1,6 +1,11 @@
 ---
 name: dreams
 description: "Use only when the operator explicitly invokes literal '$dreams' or gives an equally explicit full-run Dreams approval. This runs the Dreams memory cycle: review, consolidate, promote, archive, sync, commit, and push ~/brain/inbox memory drafts, especially stop-hook auto captures under ~/brain/inbox/auto. A plain '$dreams' invocation is an unattended full-run approval for ~/brain only: inventory, classify, dedupe, resolve conflicts by policy, promote safe durable facts into curated pages, archive handled drafts, run redaction/gitleaks checks, sync gbrain, commit, and push. Non-literal mentions such as review-brain requests do not authorize mutation; require literal '$dreams' or run a non-mutating dry-run/no-commit/no-push review if explicitly requested. Never ask the user mid-run after literal '$dreams'; make the conservative autonomous decision instead."
+triggers:
+  - "$dreams"
+  - "review brain inbox"
+  - "process auto captures"
+  - "promote memory drafts"
 ---
 
 # Dreams
@@ -43,6 +48,15 @@ create or update an allowlisted curated page with the sanitized substance
 preserved in the page body. It does not mean indexing the raw draft, archive
 copy, transcript dump, or `sources/` note.
 
+## Contract
+
+This skill guarantees:
+- Literal `$dreams` runs are treated as full unattended approval for the `~/brain` memory review cycle only.
+- Inbox drafts are inventoried, classified, reconciled, and either promoted, archived, discarded, deduplicated, or blocked with an explicit reason.
+- Curated memory writes stay inside allowlisted namespaces and preserve reviewed provenance through ledger rows, timeline source refs, and evidence lookup.
+- Raw captures, inbox drafts, archives, source snapshots, and review state remain filesystem/git evidence only; they are not imported as semantic memory.
+- Verification gates run before completion: proposal validation, ledger validation, curated-page validation, redaction/gitleaks checks, allowlist checks, sync/indexing checks, and git state proof.
+
 ## Unattended Contract
 
 A plain `$dreams` invocation is the operator's standing approval to run the full memory maintenance cycle for `~/brain`:
@@ -59,6 +73,24 @@ This invocation is the normal deterministic sync boundary for memory. Do not ass
 This approval applies only inside `~/brain`. It does not authorize unrelated repos, destructive git operations, force pushes, package changes, or deleting evidence.
 
 Do not ask the user questions during the run. If something requires judgment, resolve it by the policy below and record the decision in the report.
+
+## Anti-Patterns
+
+- Treating any mention of dreams, inbox review, or memory cleanup as authorization to mutate state without literal `$dreams` or an explicit full-run approval.
+- Importing, embedding, or semantically searching raw `~/.gbrain`, `~/brain/inbox`, `~/brain/archive`, `~/brain/raw`, `sources/`, scripts, ledgers, or review-state files.
+- Asking the operator to classify drafts mid-run instead of applying the autonomous resolution policy.
+- Editing live curated pages before writing and validating proposal artifacts.
+- Bypassing validators, redaction, gitleaks, evidence indexing, sync, commit, or push checks and still reporting the run as complete.
+- Flattening operator-authored thinking into generic summaries when the source deserves full or substantial preservation.
+
+## Output Format
+
+Final reports must include:
+- Session id, mode flags, inventory counts, and cutoff assumptions.
+- Decision counts for `promoted`, `low-confidence-promoted`, `source-note`, `discarded`, `duplicate`, and `blocked-safety`.
+- Changed curated targets, ledger/archive/evidence actions, and any drafts left for the next run.
+- Exact verification commands and pass/fail status for the validators, redaction/gitleaks checks, sync/indexing checks, retrieval smokes, commit, and push.
+- Explicit blockers or unverified items, including the reason they could not be completed.
 
 ## Modes
 
