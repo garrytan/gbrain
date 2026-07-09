@@ -66,6 +66,23 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "design critique", "audit this UI", "polish this page", "impeccable", "frontend redesign", "live browser edit" | `skills/impeccable/SKILL.md` |
 | "match stripe design", "linear DESIGN.md", "bootstrap a DESIGN.md", "brand design tokens", "awesome design md" | `skills/awesome-design-md/SKILL.md` |
 | "distinctive UI", "visual design direction", "typography for this page", "avoid templated design", "frontend design" | `skills/frontend-design/SKILL.md` |
+| "banner design", "ad creative", "hero banner" | `skills/banner-design/SKILL.md` |
+| "brand guidelines", "brand tokens", "brand system" | `skills/brand/SKILL.md` |
+| "UI/UX design", "product design", "interface design" | `skills/design/SKILL.md` |
+| "design system", "component library", "tokens" | `skills/design-system/SKILL.md` |
+| "presentation slides", "deck design", "slide layout" | `skills/slides/SKILL.md` |
+| "UI styling", "CSS", "visual polish", "component styling" | `skills/ui-styling/SKILL.md` |
+| "pro max UI/UX", "full design workflow" | `skills/ui-ux-pro-max/SKILL.md` |
+| "GSAP core", "tween", "animation basics" | `skills/gsap-core/SKILL.md` |
+| "GSAP with frameworks", "integration" | `skills/gsap-frameworks/SKILL.md` |
+| "GSAP performance", "optimization" | `skills/gsap-performance/SKILL.md` |
+| "GSAP plugins", "extra eases" | `skills/gsap-plugins/SKILL.md` |
+| "GSAP in React", "useGSAP" | `skills/gsap-react/SKILL.md` |
+| "GSAP ScrollTrigger", "scroll animation" | `skills/gsap-scrolltrigger/SKILL.md` |
+| "GSAP timeline", "sequenced animation" | `skills/gsap-timeline/SKILL.md` |
+| "GSAP utils", "helpers" | `skills/gsap-utils/SKILL.md` |
+| "minimalist design", "clean UI" | `skills/minimalist-skill/SKILL.md` |
+| "brutalist design", "raw UI" | `skills/brutalist-skill/SKILL.md` |
 | "save this learning to the vault", "capture this skill in Obsidian", "record this workflow in my notes", "put this setup change in the knowledge base" | `skills/skill-vault-capture-policy/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper", "add tests and evals for this" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |

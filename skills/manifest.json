@@ -303,6 +303,91 @@
       "name": "frontend-design",
       "path": "frontend-design/SKILL.md",
       "description": "Guidance for distinctive, intentional visual design of new or reshaped UI — aesthetic direction, typography, and non-templated choices."
+    },
+    {
+      "name": "banner-design",
+      "path": "banner-design/SKILL.md",
+      "description": "\"Design banners for social media, ads, website heroes, creative assets, and print. Multiple art direction options with AI-generated visuals."
+    },
+    {
+      "name": "brand",
+      "path": "brand/SKILL.md",
+      "description": "Brand voice, visual identity, messaging frameworks, asset management, brand consistency. Activate for branded content, tone of voice, market"
+    },
+    {
+      "name": "design",
+      "path": "design/SKILL.md",
+      "description": "\"Comprehensive design skill: brand identity, design tokens, UI styling, logo generation (55 styles, Gemini AI), corporate identity program ("
+    },
+    {
+      "name": "design-system",
+      "path": "design-system/SKILL.md",
+      "description": "Token architecture, component specifications, and slide generation. Three-layer tokens (primitive→semantic→component), CSS variables, spacin"
+    },
+    {
+      "name": "slides",
+      "path": "slides/SKILL.md",
+      "description": "Create strategic HTML presentations with Chart.js, design tokens, responsive layouts, copywriting formulas, and contextual slide strategies."
+    },
+    {
+      "name": "ui-styling",
+      "path": "ui-styling/SKILL.md",
+      "description": "Create beautiful, accessible user interfaces with shadcn/ui components (built on Radix UI + Tailwind), Tailwind CSS utility-first styling, a"
+    },
+    {
+      "name": "ui-ux-pro-max",
+      "path": "ui-ux-pro-max/SKILL.md",
+      "description": "\"UI/UX design intelligence for web and mobile. Includes 50+ styles, 161 color palettes, 57 font pairings, 161 product types, 99 UX guideline"
+    },
+    {
+      "name": "gsap-core",
+      "path": "gsap-core/SKILL.md",
+      "description": "Official GSAP skill for the core API — gsap.to(), from(), fromTo(), easing, duration, stagger, defaults, gsap.matchMedia() (responsive, pref"
+    },
+    {
+      "name": "gsap-frameworks",
+      "path": "gsap-frameworks/SKILL.md",
+      "description": "Official GSAP skill for Vue, Svelte, and other non-React frameworks — lifecycle, scoping selectors, cleanup on unmount. Use when the user wa"
+    },
+    {
+      "name": "gsap-performance",
+      "path": "gsap-performance/SKILL.md",
+      "description": "Official GSAP skill for performance — prefer transforms, avoid layout thrashing, will-change, batching. Use when optimizing GSAP animations,"
+    },
+    {
+      "name": "gsap-plugins",
+      "path": "gsap-plugins/SKILL.md",
+      "description": "Official GSAP skill for GSAP plugins — registration, ScrollToPlugin, ScrollSmoother, Flip, Draggable, Inertia, Observer, SplitText, Scramble"
+    },
+    {
+      "name": "gsap-react",
+      "path": "gsap-react/SKILL.md",
+      "description": "Official GSAP skill for React — useGSAP hook, refs, gsap.context(), cleanup. Use when the user wants animation in React or Next.js, or asks "
+    },
+    {
+      "name": "gsap-scrolltrigger",
+      "path": "gsap-scrolltrigger/SKILL.md",
+      "description": "Official GSAP skill for ScrollTrigger — scroll-linked animations, pinning, scrub, triggers. Use when building or recommending scroll-based a"
+    },
+    {
+      "name": "gsap-timeline",
+      "path": "gsap-timeline/SKILL.md",
+      "description": "Official GSAP skill for timelines — gsap.timeline(), position parameter, nesting, playback. Use when sequencing animations, choreographing k"
+    },
+    {
+      "name": "gsap-utils",
+      "path": "gsap-utils/SKILL.md",
+      "description": "Official GSAP skill for gsap.utils — clamp, mapRange, normalize, interpolate, random, snap, toArray, wrap, pipe. Use when the user asks abou"
+    },
+    {
+      "name": "minimalist-skill",
+      "path": "minimalist-skill/SKILL.md",
+      "description": "Clean editorial-style interfaces. Warm monochrome palette, typographic contrast, flat bento grids, muted pastels. No gradients, no heavy sha"
+    },
+    {
+      "name": "brutalist-skill",
+      "path": "brutalist-skill/SKILL.md",
+      "description": "Raw mechanical interfaces fusing Swiss typographic print with military terminal aesthetics. Rigid grids, extreme type scale contrast, utilit"
     }
   ],
   "dependencies": {
