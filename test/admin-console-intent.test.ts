@@ -43,7 +43,10 @@ describe('admin console intent planning', () => {
 
   test('truncated capture JSON keeps the complete original text', async () => {
     let modelInput = '';
-    globalThis.fetch = (async (_input, init) => {
+    globalThis.fetch = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as any;
       modelInput = body.messages?.[1]?.content ?? '';
       return new Response(JSON.stringify({

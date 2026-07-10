@@ -23,7 +23,7 @@
  * No DATABASE_URL needed; PGLite is the engine. Serial because it binds
  * a TCP port and reads/writes a tmpdir.
  */
-import { describe, test, expect } from 'bun:test';
+import { afterAll, beforeAll, describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -94,11 +94,13 @@ async function spawnServer(): Promise<ServeProc> {
       stderr: 'pipe',
     },
   );
+  const stdoutDrain = new Response(proc.stdout).text().catch(() => '');
+  const stderrDrain = new Response(proc.stderr).text().catch(() => '');
 
   // Wait for readiness by polling /health. Bun's readable streams don't
   // give us a synchronous "stderr line" API and the startup banner format
   // is allowed to drift; a /health probe is the contract that matters.
-  const readinessTimeoutMs = 60_000;
+  const readinessTimeoutMs = 120_000;
   const deadline = Date.now() + readinessTimeoutMs;
   let ready = false;
   while (Date.now() < deadline) {
@@ -122,15 +124,15 @@ async function spawnServer(): Promise<ServeProc> {
       new Promise(r => setTimeout(r, 2000)),
     ]);
     try { proc.kill('SIGKILL'); } catch { /* already gone */ }
+    await Promise.allSettled([stdoutDrain, stderrDrain]);
     try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
   };
 
   if (!ready) {
-    // Capture some diagnostics for the failure message before tearing down.
-    const stderrText = await new Response(proc.stderr).text().catch(() => '');
     await cleanup();
+    const stderrText = await stderrDrain;
     throw new Error(
-      `serve --http never became ready on port ${port} after ${readinessTimeoutMs / 1000}s. stderr: ${stderrText.slice(0, 2000)}`,
+      `serve --http never became ready on port ${port} after ${readinessTimeoutMs / 1000}s. stderr: ${stderrText.slice(-4000)}`,
     );
   }
 
@@ -138,8 +140,18 @@ async function spawnServer(): Promise<ServeProc> {
 }
 
 describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1090)', () => {
+  let server: ServeProc;
+
+  beforeAll(async () => {
+    server = await spawnServer();
+  }, 150_000);
+
+  afterAll(async () => {
+    await server?.cleanup();
+  });
+
   test('GET /admin redirects to the embedded SPA shell instead of 404', async () => {
-    const s = await spawnServer();
+    const s = server;
     try {
       const res = await fetch(`http://127.0.0.1:${s.port}/admin`, {
         signal: AbortSignal.timeout(5000),
@@ -151,12 +163,12 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
       expect(html).toContain('PMBrain 管理后台');
       expect(html).toContain('<div id="root">');
     } finally {
-      await s.cleanup();
+      // Shared server is cleaned up in afterAll.
     }
   }, 90_000);
 
   test('GET /admin/ returns 200 with the React SPA shell HTML', async () => {
-    const s = await spawnServer();
+    const s = server;
     try {
       const res = await fetch(`http://127.0.0.1:${s.port}/admin/`, {
         signal: AbortSignal.timeout(5000),
@@ -172,12 +184,12 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
       // mean the mime lookup in ADMIN_ASSETS regressed).
       expect(res.headers.get('content-type') ?? '').toMatch(/text\/html/);
     } finally {
-      await s.cleanup();
+      // Shared server is cleaned up in afterAll.
     }
   }, 90_000);
 
   test('GET /admin/index.html (explicit path) also returns the SPA HTML', async () => {
-    const s = await spawnServer();
+    const s = server;
     try {
       const res = await fetch(`http://127.0.0.1:${s.port}/admin/index.html`, {
         signal: AbortSignal.timeout(5000),
@@ -186,12 +198,12 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
       const html = await res.text();
       expect(html).toContain('PMBrain 管理后台');
     } finally {
-      await s.cleanup();
+      // Shared server is cleaned up in afterAll.
     }
   }, 90_000);
 
   test('GET /admin/agents (SPA-routed deep link) falls back to index.html', async () => {
-    const s = await spawnServer();
+    const s = server;
     try {
       const res = await fetch(`http://127.0.0.1:${s.port}/admin/agents`, {
         signal: AbortSignal.timeout(5000),
@@ -203,12 +215,12 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
       expect(html).toContain('PMBrain 管理后台');
       expect(html).toContain('<div id="root">');
     } finally {
-      await s.cleanup();
+      // Shared server is cleaned up in afterAll.
     }
   }, 90_000);
 
   test('GET /admin/api/stats (API route) is NOT swallowed by the SPA fallback — returns auth challenge', async () => {
-    const s = await spawnServer();
+    const s = server;
     try {
       const res = await fetch(`http://127.0.0.1:${s.port}/admin/api/stats`, {
         signal: AbortSignal.timeout(5000),
@@ -220,7 +232,7 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
       const body = await res.text().catch(() => '');
       expect(body).not.toContain('<div id="root">');
     } finally {
-      await s.cleanup();
+      // Shared server is cleaned up in afterAll.
     }
   }, 90_000);
 });

@@ -589,3 +589,14 @@
 - 解决方案：模型只识别任务意图，不再回传长文；后端从用户输入中保留完整正文，并兼容 `capture_memo` 和被截断的 capture JSON。模型识别采用首尾片段以保留末尾指令，前后端统一限制为 10,000 字，超限时明确阻止发送且不静默截断；预览和完成结果标注完整字数及“页面仅显示摘要”。
 - 是否完成：是
 - 最终结果：长文本保存不再依赖模型完整复述正文，模型 JSON 被截断时也能安全恢复 capture 意图；用户能在发送前看到字数限制，发送后明确知道完整正文或导入范围未被界面摘要截断。
+
+## 2026-07-10 GitHub Actions 多项 CI 失败修复
+
+- 时间：2026-07-10
+- 版本号：PMBrain 1.0.92
+- 标题：修复 Test、Heavy Tests、Skill resolver 与生成文件校验失败
+- 描述：GitHub Actions 中存在 PMBrain 改名后的旧断言、Skill 路由歧义、迁移 dry-run 产生副作用、测试隔离遗漏、Heavy Tests 初始化方式错误，以及 Windows/Linux 行尾导致的 llms 生成文件漂移。
+- 根因：部分测试仍按 GBrain 旧品牌与旧阶段数量断言；新增 Skill 缺少完整契约和歧义标注；迁移 dry-run 仍进入数据库初始化；Heavy Tests 使用诊断命令代替数据库迁移；生成器直接拼接平台原始行尾；已被模型配置引用的 embedding 维度对齐模块未纳入提交。
+- 解决方案：同步 PMBrain 契约与测试预期，补齐 Skill 元数据和 resolver 歧义，隔离串行测试，保证迁移 dry-run 无副作用，修正 Heavy Tests 初始化和日志保留，统一 llms 输入行尾，补齐 embedding 维度对齐模块、Admin 嵌入资产及回归测试，并将 Admin 路由测试改为整组复用一次冷启动服务。
+- 是否完成：是
+- 最终结果：严格 resolver 通过；Skill 合规测试 264 项通过；CI 相关组合测试通过，迁移、品牌契约、OAuth、公开导出、阶段覆盖、Admin 意图和生成文件均有回归验证。Heavy Tests 的数据库初始化失败根因已修正，等待 GitHub Actions 在 Linux/Postgres 环境复验。
