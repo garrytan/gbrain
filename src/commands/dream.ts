@@ -84,6 +84,15 @@ const DEFAULT_DRAIN_WINDOW_SECONDS = 300;
 const EXIT_DRAIN_INCOMPLETE = 3;
 
 /**
+ * Exact dry-run mode that needs a migration-free CLI connection.
+ * Keep this beside dream's argv parser so cli.ts does not own command syntax.
+ */
+export function shouldUseProbeOnlyConnection(args: string[]): boolean {
+  const phaseIdx = args.indexOf('--phase');
+  return phaseIdx !== -1 && args.includes('--dry-run') && args[phaseIdx + 1] === 'propose_takes';
+}
+
+/**
  * Collect every occurrence of `--<flag> <value>` in argv. Used to
  * detect repeated flags with different values (e.g.
  * `--source X --source Y`) and to surface a clean usage error

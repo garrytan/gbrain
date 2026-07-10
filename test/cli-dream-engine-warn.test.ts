@@ -14,7 +14,10 @@
  * Subprocess test so we exercise the real cli.ts dispatch end-to-end.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { PGlite } from '@electric-sql/pglite';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,6 +91,94 @@ describe('#1422 — dream surfaces connectEngine failures', () => {
       });
       expect(stderr).not.toContain('[dream] WARNING: could not connect to DB');
       expect(status).toBeGreaterThanOrEqual(0);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+      rmSync(tmpBrain, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('dream propose_takes dry-run connection', () => {
+  let tmpHome: string;
+  let tmpBrain: string;
+  let databasePath: string;
+  let engine: PGLiteEngine;
+  const pendingVersion = String(LATEST_VERSION - 1);
+
+  beforeAll(async () => {
+    tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-dream-pending-'));
+    tmpBrain = mkdtempSync(join(tmpdir(), 'gbrain-dream-brain-'));
+    databasePath = join(tmpHome, '.gbrain', 'brain.pglite');
+    mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+    writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify({
+      engine: 'pglite',
+      database_path: databasePath,
+    }));
+
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.setConfig('version', pendingVersion);
+    await engine.disconnect();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+    rmSync(tmpHome, { recursive: true, force: true });
+    rmSync(tmpBrain, { recursive: true, force: true });
+  });
+
+  test('propose_takes dry-run works without applying a pending migration', async () => {
+    const { status } = runDream(
+      ['--dir', tmpBrain, '--phase', 'propose_takes', '--dry-run'],
+      {
+        GBRAIN_HOME: tmpHome,
+        DATABASE_URL: '',
+        GBRAIN_DATABASE_URL: '',
+      },
+    );
+    expect(status).toBe(0);
+
+    const db = await PGlite.create({ dataDir: databasePath });
+    try {
+      const result = await db.query<{ value: string }>(
+        `SELECT value FROM config WHERE key = 'version'`,
+      );
+      expect(result.rows[0]?.value).toBe(pendingVersion);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('propose_takes dry-run does not auto-migrate a fresh PGLite brain', async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-dream-dry-run-'));
+    const tmpBrain = mkdtempSync(join(tmpdir(), 'gbrain-dream-brain-'));
+    const databasePath = join(tmpHome, '.gbrain', 'brain.pglite');
+    try {
+      mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+      writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify({
+        engine: 'pglite',
+        database_path: databasePath,
+      }));
+
+      runDream(['--dir', tmpBrain, '--phase', 'propose_takes', '--dry-run'], {
+        GBRAIN_HOME: tmpHome,
+        DATABASE_URL: '',
+        GBRAIN_DATABASE_URL: '',
+      });
+
+      const db = await PGlite.create({ dataDir: databasePath });
+      try {
+        const result = await db.query<{ exists: boolean }>(`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'pages'
+          ) AS exists
+        `);
+        expect(result.rows[0]?.exists).toBe(false);
+      } finally {
+        await db.close();
+      }
     } finally {
       rmSync(tmpHome, { recursive: true, force: true });
       rmSync(tmpBrain, { recursive: true, force: true });

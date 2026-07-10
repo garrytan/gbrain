@@ -1321,10 +1321,10 @@ async function handleCliOnly(command: string, args: string[]) {
     // were skipped instead of seeing a silent "lint + backlinks done"
     // and assuming the cycle actually ran. Pre-fix, foxhoundinc reported
     // the cycle exiting 0 on PostgreSQL with every DB phase silently no-op.
-    const { runDream } = await import('./commands/dream.ts');
+    const { runDream, shouldUseProbeOnlyConnection } = await import('./commands/dream.ts');
     let eng: BrainEngine | null = null;
     try {
-      eng = await connectEngine();
+      eng = await connectEngine({ probeOnly: shouldUseProbeOnlyConnection(args) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(
