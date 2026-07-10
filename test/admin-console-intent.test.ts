@@ -185,4 +185,23 @@ describe('admin console intent planning', () => {
       '--dry-run',
     ]);
   });
+
+  test('meeting preset is forwarded to the canonical Dream CLI', () => {
+    const command = buildDreamCommand({
+      preset: 'meeting',
+      input: 'D:\\meetings',
+      dryRun: false,
+    });
+    expect(command.slice(3)).toEqual([
+      'dream',
+      '--preset',
+      'meeting',
+      '--input',
+      'D:\\meetings',
+    ]);
+  });
+
+  test('phase and preset cannot create two competing Dream selections', () => {
+    expect(() => buildDreamCommand({ phase: 'lint', preset: 'quick' })).toThrow('mutually exclusive');
+  });
 });

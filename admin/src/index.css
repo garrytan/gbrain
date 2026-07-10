@@ -2793,3 +2793,502 @@ pre {
     text-align: left;
   }
 }
+
+/* PMBrain knowledge studio shell ------------------------------------------------ */
+.sidebar {
+  background: #fbfcff;
+  border-right-color: #dce2ed;
+  box-shadow: 10px 0 34px rgba(40, 52, 86, 0.035);
+}
+
+.sidebar-logo {
+  padding: 2px 6px 24px;
+}
+
+.brand-mark {
+  background: #252b45;
+  border-radius: 11px;
+  box-shadow: 0 6px 16px rgba(37, 43, 69, 0.18);
+}
+
+.sidebar-nav {
+  gap: 10px;
+}
+
+.nav-group {
+  gap: 4px;
+}
+
+.nav-group-title {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #27324a;
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.nav-group-title:hover,
+.nav-group.expanded > .nav-group-title {
+  color: #171e31;
+  background: #f0f3f9;
+  border-color: #e2e7f0;
+}
+
+.nav-arrow {
+  width: 14px;
+  color: #69748b;
+}
+
+.nav-item,
+.nav-item-top {
+  min-height: 38px;
+  margin-left: 9px;
+  padding: 9px 12px 9px 14px;
+  border: 1px solid transparent;
+  color: #59647a;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.nav-item-top {
+  margin: 0;
+  color: #27324a;
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.nav-item:hover {
+  background: #f1f4fa;
+  border-color: #e5e9f1;
+}
+
+.nav-item.active {
+  color: #4545bd;
+  background: #efeffc;
+  border-color: #dedef5;
+  box-shadow: inset 3px 0 0 #5b5bd6;
+}
+
+.main {
+  background-color: #f4f6fa;
+}
+
+/* Dream — one memorable element, the knowledge growth track ------------------- */
+.dream-home {
+  max-width: 1320px;
+  padding-bottom: 64px;
+}
+
+.dream-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #5b5bd6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dream-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 34px;
+  align-items: center;
+  min-height: 300px;
+  margin-bottom: 16px;
+  padding: 42px 48px;
+  overflow: hidden;
+  border: 1px solid #dfe3ee;
+  border-radius: 22px;
+  background-color: #fff;
+  background-image: radial-gradient(circle, rgba(91, 91, 214, 0.11) 1px, transparent 1px);
+  background-size: 22px 22px;
+  box-shadow: 0 20px 50px rgba(42, 50, 82, 0.07);
+}
+
+.dream-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.72);
+  pointer-events: none;
+}
+
+.dream-hero-copy,
+.dream-status-orbit {
+  position: relative;
+  z-index: 1;
+}
+
+.dream-hero h1 {
+  max-width: 680px;
+  margin: 0;
+  color: #172033;
+  font-family: "Microsoft YaHei UI", "PingFang SC", var(--font-sans);
+  font-size: clamp(38px, 5vw, 62px);
+  font-weight: 780;
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+}
+
+.dream-hero p {
+  max-width: 650px;
+  margin: 18px 0 0;
+  color: #687287;
+  font-size: 16px;
+  line-height: 1.85;
+}
+
+.dream-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.dream-primary-action {
+  min-height: 43px;
+  padding-inline: 20px;
+  border-radius: 10px;
+  background: #5555cc;
+  box-shadow: 0 8px 18px rgba(85, 85, 204, 0.2);
+}
+
+.dream-primary-action:hover {
+  background: #4545b8;
+}
+
+.dream-status-orbit {
+  display: grid;
+  place-items: center;
+  width: 210px;
+  height: 210px;
+  justify-self: end;
+}
+
+.dream-status-orbit i {
+  position: absolute;
+  border: 1px solid #cfd4e6;
+  border-radius: 50%;
+}
+
+.dream-status-orbit .orbit-one { width: 168px; height: 168px; }
+.dream-status-orbit .orbit-two { width: 208px; height: 208px; border-style: dashed; }
+
+.dream-orbit-core {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border: 10px solid #eeeeff;
+  border-radius: 50%;
+  background: #5b5bd6;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  box-shadow: 0 12px 32px rgba(91, 91, 214, 0.24);
+}
+
+.dream-status-orbit.healthy .dream-orbit-core { background: #2d9b83; border-color: #e4f5f0; }
+.dream-status-orbit.attention .dream-orbit-core { background: #b77723; border-color: #fff1dc; }
+
+.dream-status-orbit.running .orbit-two {
+  animation: dream-orbit-spin 14s linear infinite;
+}
+
+@keyframes dream-orbit-spin { to { transform: rotate(360deg); } }
+
+.dream-recommendation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 15px 18px;
+  border: 1px solid #dfe4ec;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.dream-recommendation-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #ececfc;
+  color: #5050c4;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.dream-recommendation > div:nth-child(2) { display: grid; gap: 2px; }
+.dream-recommendation b { color: #20293b; font-size: 14px; }
+.dream-recommendation span,
+.dream-recommendation small { color: #737d90; font-size: 12px; }
+
+.dream-launcher,
+.dream-summary-card,
+.dream-library-card,
+.dream-history-card {
+  border: 1px solid #dfe4ec;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(42, 50, 82, 0.045);
+}
+
+.dream-launcher {
+  margin-bottom: 16px;
+  padding: 26px;
+  scroll-margin-top: 20px;
+}
+
+.dream-launcher-head,
+.dream-section-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.dream-launcher-head h2,
+.dream-section-title h2,
+.dream-summary-card h2 {
+  margin: 0;
+  color: #1b2437;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.dream-launcher-head p {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: #707a8d;
+  line-height: 1.7;
+}
+
+.dream-run-mode {
+  margin: 20px 0 16px;
+  padding: 4px;
+  width: fit-content;
+  border: 1px solid #e0e4ec;
+  border-radius: 11px;
+  background: #f4f6fa;
+}
+
+.dream-run-mode button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #667085;
+  font-weight: 650;
+}
+
+.dream-run-mode button.active {
+  border-color: transparent;
+  background: #fff;
+  color: #4747bd;
+  box-shadow: 0 3px 10px rgba(45, 52, 78, 0.1);
+}
+
+.dream-run-grid:empty { display: none; }
+.dream-run-persist-note { margin: 12px 0 0; }
+
+.dream-journey {
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid #e0e4ee;
+  border-radius: 15px;
+  background: #fafbfe;
+}
+
+.dream-journey-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+
+.dream-journey-head h2 { margin: 0; font-size: 17px; color: #222b3e; }
+
+.dream-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-radius: 99px;
+  background: #e7f5f1;
+  color: #237d6a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dream-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2d9b83;
+  box-shadow: 0 0 0 5px rgba(45, 155, 131, 0.12);
+  animation: dream-live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dream-live-pulse { 50% { transform: scale(0.72); opacity: 0.58; } }
+
+.dream-journey-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dream-journey-track::before {
+  content: '';
+  position: absolute;
+  top: 17px;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  background: #d7dce7;
+}
+
+.dream-journey-step {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.dream-step-marker {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  height: 35px;
+  border: 1px solid #d7dce7;
+  border-radius: 50%;
+  background: #fff;
+  color: #8a93a5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dream-journey-step > div:last-child { display: grid; gap: 4px; }
+.dream-journey-step b { color: #394256; font-size: 13px; }
+.dream-journey-step span { color: #848da0; font-size: 11px; line-height: 1.55; }
+.dream-journey-step.done .dream-step-marker { border-color: #2d9b83; background: #2d9b83; color: #fff; }
+.dream-journey-step.active .dream-step-marker { border: 7px solid #e4e4fc; background: #5b5bd6; color: #fff; box-shadow: 0 0 0 1px #5b5bd6; }
+.dream-journey-step.active b { color: #4d4dc6; }
+.dream-journey-step.warning .dream-step-marker { border-color: #d89a46; background: #fff1dc; color: #a56313; }
+
+.dream-run-narrative {
+  padding: 18px;
+  border-color: #dfe3f2;
+  border-radius: 14px;
+  background: #f8f9ff;
+}
+
+.dream-technical-details,
+.dream-diagnostics-details {
+  margin-top: 12px;
+  border: 1px solid #e0e4ec;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.dream-technical-details > summary,
+.dream-diagnostics-details > summary {
+  padding: 12px 14px;
+  color: #626d82;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dream-technical-table-wrap { overflow-x: auto; padding: 0 14px 14px; }
+.dream-technical-table code { color: #4e4ebc; font-family: var(--font-mono); font-size: 11px; }
+.dream-diagnostics-details .dream-ops-diagnostics { margin: 0 12px 12px; }
+
+.dream-home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dream-summary-card,
+.dream-library-card,
+.dream-history-card { padding: 24px; }
+.dream-summary-card p,
+.dream-library-card p { margin: 10px 0; color: #727c8f; line-height: 1.7; }
+.dream-summary-card small { color: #9299a8; }
+
+.dream-summary-facts { display: grid; gap: 8px; margin: 16px 0; }
+.dream-summary-facts span { padding-left: 15px; color: #475167; font-size: 13px; position: relative; }
+.dream-summary-facts span::before { content: ''; position: absolute; left: 0; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: #2d9b83; }
+
+.dream-library-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dream-library-metrics div { display: grid; gap: 3px; padding: 12px 8px; border-radius: 10px; background: #f5f7fb; text-align: center; }
+.dream-library-metrics b { color: #252e43; font-size: 18px; }
+.dream-library-metrics span { color: #7b8496; font-size: 10px; }
+
+.dream-friendly-empty { display: grid; gap: 5px; padding: 24px 4px; color: #7a8498; }
+.dream-friendly-empty b { color: #3d4659; }
+
+.dream-section-title { margin-bottom: 12px; }
+.dream-section-title h2 { font-size: 17px; }
+.dream-history-card .dream-run-list > div { padding: 12px 4px; }
+
+@media (max-width: 980px) {
+  .dream-hero { grid-template-columns: 1fr 170px; padding: 34px; }
+  .dream-status-orbit { width: 165px; height: 165px; }
+  .dream-status-orbit .orbit-one { width: 136px; height: 136px; }
+  .dream-status-orbit .orbit-two { width: 164px; height: 164px; }
+  .dream-orbit-core { width: 96px; height: 96px; }
+  .dream-journey-track { grid-template-columns: 1fr; gap: 12px; }
+  .dream-journey-track::before { top: 16px; bottom: 16px; left: 17px; right: auto; width: 1px; height: auto; }
+  .dream-journey-step { grid-template-columns: 35px minmax(0, 1fr); justify-items: start; text-align: left; }
+  .dream-journey-step > div:last-child { padding-top: 2px; }
+  .dream-home-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .dream-home { padding-bottom: 30px; }
+  .dream-hero { grid-template-columns: 1fr; min-height: 0; padding: 26px 22px; border-radius: 16px; }
+  .dream-hero h1 { font-size: 38px; }
+  .dream-hero p { font-size: 14px; }
+  .dream-status-orbit { display: none; }
+  .dream-recommendation { grid-template-columns: auto 1fr; }
+  .dream-recommendation small { grid-column: 2; }
+  .dream-launcher { padding: 20px 16px; border-radius: 15px; }
+  .dream-launcher-head,
+  .dream-section-title { display: grid; }
+  .dream-run-actions { width: 100%; }
+  .dream-run-actions button { width: 100%; }
+  .dream-run-mode { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); }
+  .dream-run-mode button { padding-inline: 6px; font-size: 12px; }
+  .dream-journey { padding: 18px 14px; }
+  .dream-journey-head { display: grid; }
+  .dream-summary-card,
+  .dream-library-card,
+  .dream-history-card { padding: 20px 16px; }
+  .dream-library-metrics { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dream-status-orbit.running .orbit-two,
+  .dream-live i { animation: none; }
+  html { scroll-behavior: auto; }
+}

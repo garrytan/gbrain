@@ -855,7 +855,8 @@ function AgentDrawer({
         {(() => {
           const oauthOnlyTabs = new Set(['chatgpt', 'claude-cowork', 'perplexity']);
           if (!isOAuth && oauthOnlyTabs.has(tab)) {
-            const clientName = { chatgpt: 'ChatGPT', 'claude-cowork': 'Claude.ai', perplexity: 'Perplexity' }[tab] || tab;
+            const oauthClientNames: Record<string, string> = { chatgpt: 'ChatGPT', 'claude-cowork': 'Claude.ai', perplexity: 'Perplexity' };
+            const clientName = oauthClientNames[tab] || tab;
             return (
               <div style={{
                 background: 'rgba(255, 200, 100, 0.08)',

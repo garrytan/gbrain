@@ -61,15 +61,9 @@ export function App() {
       ],
     },
     {
-      title: '知识加工',
+      title: '知识整理',
       items: [
-        { page: 'dream', label: 'Dream 总览' },
-        { page: 'dream-execute', label: '阶段执行' },
-        { page: 'dream-knowledge', label: '知识沉淀' },
-        { page: 'dream-takes', label: '观点生产线' },
-        { page: 'dream-scoring', label: '权重与评分' },
-        { page: 'dream-calibration', label: '校准画像' },
-        { page: 'dream-insights', label: '项目洞察' },
+        { page: 'dream', label: 'AI 知识整理' },
       ],
     },
     {

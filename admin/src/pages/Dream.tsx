@@ -172,33 +172,58 @@ const PHASE_LABELS: Record<string, string> = {
   orphans: '孤儿页面检测：发现没有被任何页面引用的孤立页面',
   'schema-suggest': 'Schema 建议：推荐知识库结构优化方案',
   purge: '清理：删除软删除标记的页面和数据',
-  project_health: '项目健康检查：评估知识库整体健康状况',
-  risk_detect: '风险检测：发现知识库中的矛盾和信息风险',
-  report_gen: '报告生成：自动生成知识库状态报告',
+};
+
+const PHASE_USER_ACTIONS: Record<string, string> = {
+  lint: '检查知识页面是否完整',
+  backlinks: '补全知识之间的双向引用',
+  sync: '读取最近新增和更新的内容',
+  synthesize: '把会话和记录整理成长期知识',
+  extract: '识别内容中的人物、地点和概念',
+  extract_facts: '提炼可以长期保留的事实',
+  extract_atoms: '把复杂内容拆成清晰的知识点',
+  resolve_symbol_edges: '连接知识点之间的关系',
+  patterns: '发现多份内容中反复出现的主题',
+  synthesize_concepts: '把相关知识归纳成更高层概念',
+  recompute_emotional_weight: '重新判断哪些内容更值得关注',
+  consolidate: '合并重复或相近的信息',
+  propose_takes: '整理值得进一步确认的观点',
+  grade_takes: '评估已有观点的可靠程度',
+  calibration_profile: '更新 AI 对你的判断习惯的理解',
+  conversation_facts_backfill: '把对话中确认的信息补回知识库',
+  embed: '更新 AI 搜索和理解能力',
+  orphans: '发现缺少关联的孤立知识',
+  'schema-suggest': '检查知识结构是否需要优化',
+  purge: '清理已经过期且可安全移除的数据',
 };
 
 const PHASE_GROUPS = [
-  {
-    key: 'prepare',
-    title: '同步与数据准备',
-    phases: ['lint', 'backlinks', 'sync', 'extract', 'extract_facts', 'extract_atoms', 'resolve_symbol_edges', 'embed'],
-  },
-  {
-    key: 'synthesis',
-    title: '知识沉淀',
-    phases: ['synthesize', 'patterns', 'synthesize_concepts', 'recompute_emotional_weight', 'consolidate'],
-  },
-  {
-    key: 'takes',
-    title: '观点与校准',
-    phases: ['propose_takes', 'grade_takes', 'calibration_profile', 'conversation_facts_backfill'],
-  },
-  {
-    key: 'lifecycle',
-    title: '项目洞察与生命周期',
-    phases: ['orphans', 'schema-suggest', 'purge', 'project_health', 'risk_detect', 'report_gen'],
-  },
-];
+  { key: 'prepare', title: '同步与数据准备' },
+  { key: 'synthesis', title: '知识沉淀' },
+  { key: 'takes', title: '观点与校准' },
+  { key: 'lifecycle', title: '索引与维护' },
+] as const;
+
+const PHASE_GROUP_BY_PHASE: Record<string, typeof PHASE_GROUPS[number]['key']> = {
+  lint: 'prepare', backlinks: 'prepare', sync: 'prepare', extract: 'prepare', extract_facts: 'prepare',
+  extract_atoms: 'prepare', resolve_symbol_edges: 'prepare',
+  synthesize: 'synthesis', patterns: 'synthesis', synthesize_concepts: 'synthesis',
+  recompute_emotional_weight: 'synthesis', consolidate: 'synthesis',
+  propose_takes: 'takes', grade_takes: 'takes', calibration_profile: 'takes', conversation_facts_backfill: 'takes',
+  embed: 'lifecycle', orphans: 'lifecycle', 'schema-suggest': 'lifecycle', purge: 'lifecycle',
+};
+
+function phasesForGroup(catalog: string[], groupKey: string): string[] {
+  return catalog.filter(phase => PHASE_GROUP_BY_PHASE[phase] === groupKey);
+}
+
+const KNOWLEDGE_STEPS = [
+  { key: 'read', title: '阅读新内容', description: '找到最近新增或变化的资料', phases: ['lint', 'backlinks', 'sync'] },
+  { key: 'understand', title: '理解与提炼', description: '提取事实、人物、概念和知识点', phases: ['synthesize', 'extract', 'extract_facts', 'extract_atoms'] },
+  { key: 'connect', title: '建立知识连接', description: '补全关系并发现反复出现的主题', phases: ['resolve_symbol_edges', 'patterns', 'synthesize_concepts'] },
+  { key: 'remember', title: '形成长期记忆', description: '合并重复信息并沉淀重要判断', phases: ['recompute_emotional_weight', 'consolidate', 'propose_takes', 'grade_takes', 'calibration_profile', 'conversation_facts_backfill'] },
+  { key: 'search', title: '更新搜索能力', description: '让最新知识可以被 AI 准确找到', phases: ['embed', 'orphans', 'schema-suggest', 'purge'] },
+] as const;
 
 type DreamRunMode = 'meeting' | 'cycle' | 'advanced';
 
@@ -261,7 +286,7 @@ function DreamShell({
       <div className="pm-section-head">
         <div>
           <h1>{title}</h1>
-          <p className="pm-page-intro">把 Dream 从分散的后台 phase，整理成可查看、可控制、可追踪、可干预的知识进化工作台。</p>
+          <p className="pm-page-intro">PMBrain 会阅读、理解并连接你的资料，让知识库持续保持清晰、完整和好用。</p>
         </div>
         {action}
       </div>
@@ -278,14 +303,14 @@ function ErrorBlock({ message }: { message: string }) {
   return <div className="pm-card pm-error">{message}</div>;
 }
 
-function PhaseRail({ active }: { active?: string }) {
+function PhaseRail({ catalog, active }: { catalog: string[]; active?: string }) {
   return (
     <div className="dream-phase-rail">
       {PHASE_GROUPS.map(group => (
         <section key={group.key}>
           <h2>{group.title}</h2>
           <div>
-            {group.phases.map(phase => <span key={phase} className={phase === active ? 'active' : ''} title={PHASE_LABELS[phase]}>{phase}</span>)}
+            {phasesForGroup(catalog, group.key).map(phase => <span key={phase} className={phase === active ? 'active' : ''} title={PHASE_LABELS[phase]}>{phase}</span>)}
           </div>
         </section>
       ))}
@@ -386,7 +411,7 @@ function describeDreamRun(run: ConsoleRun): {
     return {
       headline: '本次 Dream 已中止',
       diagnosis: '中止会结束 Admin 启动的 Dream 子进程；已经完成的阶段会保留，未开始或未完成的阶段不会继续写入。',
-      actions: report?.phases?.map(phase => `${phase.phase}: ${phase.summary ?? phase.status}`) ?? ['进程已被用户中止。'],
+      actions: report?.phases?.map(phase => PHASE_USER_ACTIONS[phase.phase] ?? phase.summary ?? phase.phase) ?? ['进程已被用户中止。'],
       outputs: pagesWritten > 0 ? [`中止前已写入 ${pagesWritten} 个知识页。`] : ['中止前没有检测到新的知识页写入。'],
       details: [`耗时约 ${(duration / 1000).toFixed(1)} 秒`, `run id: ${run.id}`],
       slugs: writtenSlugs,
@@ -397,14 +422,14 @@ function describeDreamRun(run: ConsoleRun): {
     return {
       headline: '本次没有执行：Dream 锁正在保护另一轮运行',
       diagnosis: 'Dream 对会写库的阶段使用单周期锁，避免同步、抽取、向量化、综合写入同时改同一批数据。通常等上一轮结束后再跑即可；如果上一轮异常退出，刷新后仍长期 locked 再处理锁。',
-      actions: ['没有进入 phase 执行。'],
+      actions: ['没有开始新的整理步骤。'],
       outputs: ['没有生成新的知识点，也没有写入页面。'],
       details: [`状态: ${run.status}`, `run id: ${run.id}`],
       slugs: [],
     };
   }
 
-  const actions = report?.phases?.map(phase => `${phase.phase}: ${phase.summary ?? phase.status}`) ?? [];
+  const actions = report?.phases?.map(phase => PHASE_USER_ACTIONS[phase.phase] ?? phase.summary ?? phase.phase) ?? [];
   const details: string[] = [
     `检查阶段: ${phaseCount}`,
     `耗时约 ${(duration / 1000).toFixed(1)} 秒`,
@@ -455,7 +480,7 @@ function describeDreamRun(run: ConsoleRun): {
   return {
     headline,
     diagnosis,
-    actions: actions.length > 0 ? actions : ['没有结构化 phase 明细；请查看原始日志。'],
+    actions: actions.length > 0 ? actions : ['没有可展示的整理步骤；需要排查时可查看技术详情。'],
     outputs,
     details,
     slugs: writtenSlugs,
@@ -485,6 +510,92 @@ function DreamRunNarrative({ run }: { run: ConsoleRun }) {
         {summary.details.map((item, index) => <span key={index}>{item}</span>)}
       </div>
     </div>
+  );
+}
+
+type JourneyState = 'idle' | 'active' | 'done' | 'warning';
+
+function phaseProgressFromRun(run: ConsoleRun | null): { completed: Set<string>; active: string | null; report: DreamCycleReport | null } {
+  if (!run) return { completed: new Set(), active: null, report: null };
+  const report = parseDreamReport(run);
+  const completed = new Set(
+    (report?.phases ?? [])
+      .filter(phase => phase.status === 'ok' || phase.status === 'skipped' || phase.status === 'warn')
+      .map(phase => phase.phase),
+  );
+  const text = `${run.stdout}\n${run.stderr}`;
+  for (const match of text.matchAll(/\[cycle\.([a-z_-]+)\]\s+done/g)) completed.add(match[1]);
+  const starts = [...text.matchAll(/\[cycle\.([a-z_-]+)\]\s+start/g)];
+  const lastStarted = starts.length > 0 ? starts[starts.length - 1]?.[1] ?? null : null;
+  const active = run.status === 'running' || run.status === 'queued'
+    ? (lastStarted && !completed.has(lastStarted) ? lastStarted : null)
+    : null;
+  return { completed, active, report };
+}
+
+function KnowledgeJourney({ run }: { run: ConsoleRun | null }) {
+  const progress = phaseProgressFromRun(run);
+  const running = run?.status === 'running' || run?.status === 'queued';
+  return (
+    <section className={`dream-journey ${running ? 'is-running' : ''}`} aria-label="知识整理进度">
+      <div className="dream-journey-head">
+        <div>
+          <span className="dream-eyebrow">知识生长轨迹</span>
+          <h2>{running ? 'AI 正在整理你的知识' : '一次整理，会完成这五件事'}</h2>
+        </div>
+        {running && <span className="dream-live"><i />后台运行中</span>}
+      </div>
+      <div className="dream-journey-track">
+        {KNOWLEDGE_STEPS.map((step, index) => {
+          const phaseStates = step.phases.map(phase => progress.report?.phases?.find(item => item.phase === phase)?.status);
+          const hasWarning = phaseStates.some(status => status === 'warn' || status === 'error');
+          const isActive = !!progress.active && step.phases.includes(progress.active as never);
+          const isDone = step.phases.some(phase => progress.completed.has(phase));
+          const state: JourneyState = hasWarning ? 'warning' : isActive ? 'active' : isDone ? 'done' : 'idle';
+          return (
+            <div className={`dream-journey-step ${state}`} key={step.key}>
+              <div className="dream-step-marker" aria-hidden="true">{state === 'done' ? '✓' : index + 1}</div>
+              <div>
+                <b>{step.title}</b>
+                <span>{isActive ? (PHASE_USER_ACTIONS[progress.active ?? ''] ?? step.description) : step.description}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function DreamTechnicalDetails({ run }: { run: ConsoleRun }) {
+  const report = parseDreamReport(run);
+  if (!report?.phases?.length) return null;
+  return (
+    <details className="dream-technical-details">
+      <summary>查看阶段、模型与 Token</summary>
+      <div className="dream-technical-table-wrap">
+        <table className="dream-technical-table">
+          <thead><tr><th>阶段</th><th>状态</th><th>模型</th><th>Token</th><th>说明</th></tr></thead>
+          <tbody>
+            {report.phases.map(phase => {
+              const details = phase.details ?? {};
+              const inputTokens = Number(details.input_tokens ?? 0);
+              const outputTokens = Number(details.output_tokens ?? 0);
+              const tokens = inputTokens + outputTokens;
+              return (
+                <tr key={phase.phase}>
+                  <td><code>{phase.phase}</code></td>
+                  <td><span className={`pm-pill run-${phase.status}`}>{phase.status}</span></td>
+                  <td>{String(details.model_id ?? details.verdict_model_id ?? '—')}</td>
+                  <td>{tokens > 0 ? tokens.toLocaleString() : '—'}</td>
+                  <td>{phase.summary ?? PHASE_LABELS[phase.phase] ?? '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 
@@ -621,6 +732,7 @@ function DreamOpsDiagnostics({
 function DreamRunPanel({
   defaultPhase = 'all',
   compact = false,
+  phaseCatalog = [],
   sources,
   locks,
   jobs,
@@ -629,6 +741,7 @@ function DreamRunPanel({
 }: {
   defaultPhase?: string;
   compact?: boolean;
+  phaseCatalog?: string[];
   sources?: Array<{ id: string; name: string; page_count: number; archived?: boolean }>;
   locks?: DreamData['locks'];
   jobs?: DreamData['jobs'];
@@ -642,7 +755,7 @@ function DreamRunPanel({
   const [date, setDate] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [dryRun, setDryRun] = useState(true);
+  const [dryRun, setDryRun] = useState(false);
   const [timeoutMinutes, setTimeoutMinutes] = useState('120');
   const [runMode, setRunMode] = useState<DreamRunMode>(defaultPhase === 'all' ? 'cycle' : 'advanced');
 
@@ -656,18 +769,20 @@ function DreamRunPanel({
     [sources],
   );
 
-  const hasInputDateConflict = !!(input.trim() && (date || from || to));
-  const hasDateRangeConflict = !!(date && (from || to));
-  const hasFromToConflict = !!(from && to && from > to);
-  const hasConflict = hasInputDateConflict || hasDateRangeConflict || hasFromToConflict;
   const showAdvancedControls = runMode === 'advanced';
   const showInputControls = runMode === 'meeting' || runMode === 'advanced';
-  const inputEnabled = runMode === 'meeting' || phase === 'all' || phase === 'synthesize';
+  const inputEnabled = runMode === 'meeting' || (runMode === 'advanced' && phase === 'synthesize');
+  const dateEnabled = runMode === 'advanced' && (phase === 'all' || phase === 'synthesize');
+  const hasInputDateConflict = !!(inputEnabled && dateEnabled && input.trim() && (date || from || to));
+  const hasDateRangeConflict = !!(dateEnabled && date && (from || to));
+  const hasFromToConflict = !!(dateEnabled && from && to && from > to);
+  const hasConflict = hasInputDateConflict || hasDateRangeConflict || hasFromToConflict;
 
   const applyRunMode = (mode: DreamRunMode) => {
+    setError('');
     setRunMode(mode);
     if (mode === 'meeting') {
-      setPhase('synthesize');
+      setPhase('all');
       setSourceId('');
       setDate('');
       setFrom('');
@@ -680,7 +795,7 @@ function DreamRunPanel({
       setDate('');
       setFrom('');
       setTo('');
-      setDryRun(true);
+      setDryRun(false);
     }
   };
 
@@ -721,8 +836,12 @@ function DreamRunPanel({
     return () => clearInterval(timer);
   }, [run?.id, run?.status, onDone]);
 
-  const start = async () => {
+  const start = async (dryRunOverride?: boolean) => {
     setError('');
+    if (runMode === 'meeting' && !input.trim()) {
+      setError('请选择需要整理的会议记录文件或文件夹');
+      return;
+    }
     if (hasConflict) {
       setError('存在字段冲突，请先解决后再运行');
       return;
@@ -734,14 +853,15 @@ function DreamRunPanel({
     }
     try {
       const res = await api.startDreamRun({
-        phase,
+        preset: runMode === 'meeting' ? 'meeting' : runMode === 'cycle' ? 'full' : undefined,
+        phase: runMode === 'advanced' ? phase : undefined,
         sourceId: sourceId.trim() || undefined,
         maxPages: maxPages.trim() ? Number(maxPages) : undefined,
-        dryRun,
-        input: input.trim() || undefined,
-        date: date.trim() || undefined,
-        from: from.trim() || undefined,
-        to: to.trim() || undefined,
+        dryRun: dryRunOverride ?? dryRun,
+        input: inputEnabled ? input.trim() || undefined : undefined,
+        date: dateEnabled ? date.trim() || undefined : undefined,
+        from: dateEnabled ? from.trim() || undefined : undefined,
+        to: dateEnabled ? to.trim() || undefined : undefined,
         timeoutMs,
       }) as { runId: string };
       window.localStorage.setItem(DREAM_LAST_RUN_KEY, res.runId);
@@ -764,39 +884,37 @@ function DreamRunPanel({
   };
 
   return (
-    <div className={`pm-card dream-run-panel ${compact ? 'compact' : ''}`}>
-      <div className="pm-section-head">
+    <div id="dream-launcher" className={`dream-launcher ${compact ? 'compact' : ''}`}>
+      <div className="dream-launcher-head">
         <div>
-          <h2>运行控制</h2>
-          <p className="pm-muted">支持整轮 Dream 或单个 phase。默认 dry-run，先看影响范围再执行。</p>
+          <span className="dream-eyebrow">开始整理</span>
+          <h2>{runMode === 'meeting' ? '把会议和会话变成长期知识' : runMode === 'advanced' ? '自定义本次整理' : '让知识库自己整理一遍'}</h2>
+          <p>{runMode === 'meeting'
+            ? '选择会议记录或会话文件夹，AI 会完成整理、提炼、连接和索引。'
+            : runMode === 'advanced'
+              ? '按来源、日期或内部阶段运行，适合调试和精细维护。'
+              : 'AI 会检查最近的变化，补全关系、合并重复信息，并更新搜索能力。'}</p>
         </div>
         <div className="dream-run-actions">
-          <button className="pm-primary" onClick={() => void start()} disabled={running}>
-            {running ? '执行中' : '启动'}
+          <button className="pm-primary dream-primary-action" onClick={() => void start(runMode === 'advanced' ? undefined : false)} disabled={running}>
+            {running ? '正在整理…' : runMode === 'meeting' ? '开始整理会议' : runMode === 'advanced' ? '运行所选流程' : '开始整理知识'}
           </button>
+          {!running && runMode !== 'advanced' && (
+            <button className="pm-ghost" onClick={() => void start(true)}>先预览会发生什么</button>
+          )}
           {running && <button className="pm-ghost danger" onClick={() => void cancel()}>中止</button>}
         </div>
       </div>
-      <div className="pm-hint dream-run-persist-note">
-        离开本页不会主动停止后台执行；返回后会继续显示同一个 run 的状态。关闭或刷新浏览器时会提示确认。
-      </div>
       <div className="dream-run-mode">
         <button type="button" className={runMode === 'cycle' ? 'active' : ''} onClick={() => applyRunMode('cycle')}>
-          Dream
+          一键整理
         </button>
         <button type="button" className={runMode === 'meeting' ? 'active' : ''} onClick={() => applyRunMode('meeting')}>
-          会议/会话整理
+          会议与会话
         </button>
         <button type="button" className={runMode === 'advanced' ? 'active' : ''} onClick={() => applyRunMode('advanced')}>
-          高级阶段
+          高级设置
         </button>
-        <span>
-          {runMode === 'meeting'
-            ? '整理会议记录、Codex/ChatGPT/Claude 会话或其它对话文件夹，逐份写入会议/会话摘要并沉淀观点。'
-            : runMode === 'cycle'
-              ? '整轮 Dream 预演，先看影响范围和系统状态，不写入知识库。'
-              : '保留 phase、source、日期范围等高级参数。'}
-        </span>
       </div>
       <div className="dream-run-grid">
         {showAdvancedControls && (
@@ -808,11 +926,7 @@ function DreamRunPanel({
               if (newPhase === 'all') setSourceId('');
             }}>
               <option value="all">整轮 cycle</option>
-              {PHASE_GROUPS.map(group => (
-                <optgroup key={group.key} label={group.title}>
-                  {group.phases.map(item => <option key={item} value={item} title={PHASE_LABELS[item]}>{item}</option>)}
-                </optgroup>
-              ))}
+              {phaseCatalog.map(item => <option key={item} value={item} title={PHASE_LABELS[item]}>{item}</option>)}
             </select>
             {phase !== 'all' && (
               <div className="pm-hint" style={{ marginTop: 4 }}>
@@ -833,16 +947,18 @@ function DreamRunPanel({
             </select>
           </label>
         )}
-        <label>
-          <span>Max pages</span>
-          <input value={maxPages} onChange={event => setMaxPages(event.target.value)} placeholder="可选" inputMode="numeric" />
-        </label>
+        {showAdvancedControls && (
+          <label>
+            <span>最多处理页面</span>
+            <input value={maxPages} onChange={event => setMaxPages(event.target.value)} placeholder="可选" inputMode="numeric" />
+          </label>
+        )}
         {!compact && showInputControls && (
           <>
             <label className={!inputEnabled ? 'dream-input-disabled' : ''}>
-              <span>{runMode === 'meeting' ? '文件/文件夹路径' : 'Input file'}</span>
+              <span>{runMode === 'meeting' ? '会议记录文件或文件夹' : '输入文件'}</span>
               <input value={input} onChange={event => setInput(event.target.value)}
-                placeholder={!inputEnabled ? '仅 synthesize 支持单文件，已禁用' : 'D:\\LenovoSoftstore\\huiyijilu 或 C:\\Users\\zhengyunhui\\.codex\\sessions'}
+                placeholder={!inputEnabled ? '当前阶段不支持指定输入' : '例如 D:\\会议记录 或 C:\\Users\\你\\.codex\\sessions'}
                 disabled={!inputEnabled} />
             </label>
           </>
@@ -869,38 +985,58 @@ function DreamRunPanel({
             {hasFromToConflict && <div className="pm-warning" style={{ gridColumn: '1 / -1', marginTop: 4 }}>⚠ From 不能晚于 To</div>}
           </>
         )}
-        <label>
-          <span>超时(分钟)</span>
-          <input value={timeoutMinutes} onChange={event => setTimeoutMinutes(event.target.value)} placeholder="120" inputMode="numeric" />
-        </label>
-        <label className="dream-check">
-          <input type="checkbox" checked={dryRun} onChange={event => setDryRun(event.target.checked)} />
-          <span>Dry run</span>
-        </label>
+        {showAdvancedControls && (
+          <label>
+            <span>超时时间（分钟）</span>
+            <input value={timeoutMinutes} onChange={event => setTimeoutMinutes(event.target.value)} placeholder="120" inputMode="numeric" />
+          </label>
+        )}
+        {showAdvancedControls && (
+          <label className="dream-check">
+            <input type="checkbox" checked={dryRun} onChange={event => setDryRun(event.target.checked)} />
+            <span>只预览，不写入知识库</span>
+          </label>
+        )}
       </div>
       {error && <div className="pm-error-text">{error}</div>}
-      <DreamOpsDiagnostics locks={locks} jobs={jobs} supervisor={supervisor} onChanged={onDone} />
+      <div className="pm-hint dream-run-persist-note">
+        整理会在后台继续运行，离开页面不会中断。
+      </div>
+      <KnowledgeJourney run={run} />
       {run && (
         <>
           <DreamRunNarrative run={run} />
+          <DreamTechnicalDetails run={run} />
           <details className="nl-details">
             <summary>原始日志与命令</summary>
             <RunOutput run={run} />
           </details>
         </>
       )}
+      <details className="dream-diagnostics-details">
+        <summary>遇到问题？查看运行诊断</summary>
+        <DreamOpsDiagnostics locks={locks} jobs={jobs} supervisor={supervisor} onChanged={onDone} />
+      </details>
     </div>
   );
 }
 
 function RecentRuns({ runs }: { runs: ConsoleRun[] }) {
-  if (runs.length === 0) return <div className="pm-empty compact-empty">暂无本次服务内 Dream 运行记录。</div>;
+  if (runs.length === 0) return <div className="dream-friendly-empty"><b>还没有整理记录</b><span>开始第一次整理后，记录会显示在这里。</span></div>;
+  const runLabel = (run: ConsoleRun) => run.kind.includes('meeting')
+    ? '会议与会话整理'
+    : run.kind.includes('quick')
+      ? '快速维护'
+      : run.kind.includes('cycle') || run.kind.includes('full')
+        ? '完整知识整理'
+        : '自定义整理';
+  const statusLabel = (status: string) => ({ completed: '已完成', running: '整理中', queued: '等待中', failed: '未完成', cancelled: '已中止' }[status] ?? status);
   return (
     <div className="dream-run-list">
       {runs.slice(0, 8).map(run => (
         <div key={run.id}>
-          <span>{run.kind}</span>
-          <b className={`run-${run.status}`}>{run.status}</b>
+          <span>{runLabel(run)}</span>
+          <b className={`run-${run.status}`}>{statusLabel(run.status)}</b>
           <small>{formatDate(run.startedAt, '-')}</small>
         </div>
       ))}
@@ -908,86 +1044,94 @@ function RecentRuns({ runs }: { runs: ConsoleRun[] }) {
   );
 }
 
-function DreamRunStatusCard({
-  locks,
-  jobs,
-  supervisor,
-}: {
-  locks?: DreamData['locks'];
-  jobs?: DreamData['jobs'];
-  supervisor?: DreamData['supervisor'];
-}) {
-  const activeLock = locks?.find(lock => lock.active) ?? null;
-  const waiting = countBy(jobs?.subagent_status ?? [], 'waiting');
-  const active = countBy(jobs?.subagent_status ?? [], 'active');
-  const failed = countBy(jobs?.subagent_status ?? [], 'failed');
-  return (
-    <div className="pm-card dream-run-panel compact">
-      <div className="pm-section-head">
-        <div>
-          <h2>运行状态</h2>
-          <p className="pm-muted">这里只展示 Dream 当前状态；执行和调试请进入阶段执行页面。</p>
-        </div>
-        <button className="pm-primary" onClick={() => { window.location.hash = 'dream-execute'; }}>去执行</button>
-      </div>
-      <div className="dream-ops-grid">
-        <section>
-          <h4>Worker</h4>
-          <div className="pm-kv"><span>状态</span><b>{supervisor?.running ? 'running' : 'stopped'}</b></div>
-          <div className="pm-kv"><span>PID</span><b>{supervisor?.supervisor_pid ?? '-'}</b></div>
-        </section>
-        <section>
-          <h4>Cycle lock</h4>
-          <div className="pm-kv"><span>状态</span><b>{activeLock ? 'active' : 'none'}</b></div>
-          <div className="pm-kv"><span>最近刷新</span><b>{formatDate(activeLock?.last_refreshed_at ?? null, '-')}</b></div>
-        </section>
-        <section>
-          <h4>Subagent 队列</h4>
-          <div className="dream-detail-chips">
-            <span>waiting {jobs?.subagent_queue?.waiting ?? waiting}</span>
-            <span>active {jobs?.subagent_queue?.active ?? active}</span>
-            <span>failed {failed}</span>
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
 export function DreamOverviewPage() {
   const { data, error, loading, reload } = useDreamData();
-  if (error) return <DreamShell title="Dream 总览"><ErrorBlock message={error} /></DreamShell>;
-  if (loading || !data) return <DreamShell title="Dream 总览"><Loading /></DreamShell>;
+  if (error) return <DreamShell title="AI 知识整理"><ErrorBlock message={error} /></DreamShell>;
+  if (loading || !data) return <DreamShell title="AI 知识整理"><Loading text="正在了解你的知识库…" /></DreamShell>;
 
   const activeLock = data.locks.find(lock => lock.active);
-  const pendingProposals = countBy(data.proposals, 'pending');
+  const pending = data.embeddings.pending ?? 0;
+  const orphanPages = data.health?.orphan_pages ?? 0;
+  const deadLinks = data.health?.dead_links ?? 0;
+  const latestRun = data.runs[0] ?? null;
+  const latestSummary = latestRun ? describeDreamRun(latestRun) : null;
+  const needsAttention = pending > 0 || orphanPages > 0 || deadLinks > 0;
+  const statusTitle = activeLock
+    ? 'AI 正在整理你的知识'
+    : needsAttention
+      ? '有一些新知识等待整理'
+      : '知识库目前状态很好';
+  const statusText = activeLock
+    ? '整理会在后台继续，完成后这里会显示结果。'
+    : pending > 0
+      ? `有 ${pending} 段内容等待更新搜索索引，建议运行一次整理。`
+      : orphanPages > 0
+        ? `发现 ${orphanPages} 个暂时缺少关联的页面，整理后可能建立新的知识连接。`
+        : deadLinks > 0
+          ? `发现 ${deadLinks} 条需要检查的知识引用，建议运行一次整理。`
+          : '暂时没有发现需要立即处理的问题。导入新资料或积累一段时间后再运行即可。';
 
   return (
-    <DreamShell title="Dream 总览" action={<button className="pm-ghost" onClick={() => void reload()}>刷新</button>}>
-      <div className="pm-grid metrics-grid">
-        <Metric label="Brain Score" value={numberValue(data.health?.brain_score)} hint="知识库综合评分" />
-        <Metric label="Embedding" value={pct(data.embeddings.coverage)} hint={`${data.embeddings.pending ?? 0} 待向量化`} />
-        <Metric label="候选观点" value={pendingProposals} hint="等待人工处理" />
-        <Metric label="锁状态" value={activeLock ? '运行中' : '空闲'} hint={activeLock ? `TTL ${formatDate(activeLock.ttl_expires_at, '-')}` : '无活跃 cycle lock'} />
-        <Metric label="最近写入" value={formatDate(data.overview?.recent_write_at ?? null, '-')} />
-      </div>
-      <PhaseRail />
-      <div className="pm-grid two-col">
-        <DreamRunStatusCard locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} />
-        <div className="pm-card">
-          <h2>Checkpoint / 锁 / 恢复</h2>
-          <div className="pm-kv"><span>活跃锁</span><b>{activeLock ? activeLock.id : '无'}</b></div>
-          <div className="pm-kv"><span>持有者</span><b>{activeLock ? `${activeLock.holder_host ?? 'host'}:${activeLock.holder_pid}` : '-'}</b></div>
-          <div className="pm-kv"><span>最近刷新</span><b>{formatDate(activeLock?.last_refreshed_at ?? null, '-')}</b></div>
-          <div className="pm-kv"><span>队列 active</span><b>{countBy(data.jobs.status, 'active')}</b></div>
-          <div className="pm-kv"><span>队列 failed</span><b>{countBy(data.jobs.status, 'failed')}</b></div>
+    <div className="pm-page dream-page dream-home">
+      <section className="dream-hero">
+        <div className="dream-hero-copy">
+          <span className="dream-eyebrow">PMBrain Dream</span>
+          <h1>让知识自己长起来</h1>
+          <p>AI 会阅读最近新增的资料，理解内容、建立联系、形成长期记忆，并更新搜索能力。</p>
+          <div className="dream-hero-actions">
+            <button className="pm-primary dream-primary-action" onClick={() => document.getElementById('dream-launcher')?.scrollIntoView({ behavior: 'smooth' })}>开始整理</button>
+            <button className="pm-ghost" onClick={() => void reload()}>刷新状态</button>
+          </div>
         </div>
+        <div className={`dream-status-orbit ${activeLock ? 'running' : needsAttention ? 'attention' : 'healthy'}`}>
+          <div className="dream-orbit-core"><span>{activeLock ? '整理中' : needsAttention ? '待整理' : '清晰'}</span></div>
+          <i className="orbit-one" /><i className="orbit-two" />
+        </div>
+      </section>
+
+      <section className="dream-recommendation">
+        <div className="dream-recommendation-icon">{activeLock ? '↻' : needsAttention ? '↗' : '✓'}</div>
+        <div><b>{statusTitle}</b><span>{statusText}</span></div>
+        <small>最近更新 {formatDate(data.overview?.recent_write_at ?? null, '暂无')}</small>
+      </section>
+
+      <DreamRunPanel phaseCatalog={data.phase_catalog} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+
+      <div className="dream-home-grid">
+        <section className="dream-summary-card">
+          <span className="dream-eyebrow">最近一次整理</span>
+          {latestRun && latestSummary ? (
+            <>
+              <h2>{latestSummary.headline}</h2>
+              <p>{latestSummary.diagnosis}</p>
+              <div className="dream-summary-facts">
+                {latestSummary.outputs.slice(0, 3).map((item, index) => <span key={index}>{item}</span>)}
+              </div>
+              <small>{formatDate(latestRun.startedAt, '-')}</small>
+            </>
+          ) : (
+            <div className="dream-friendly-empty"><b>还没有整理记录</b><span>第一次整理完成后，这里会告诉你 AI 做了什么。</span></div>
+          )}
+        </section>
+        <section className="dream-library-card">
+          <span className="dream-eyebrow">知识库状态</span>
+          <div className="dream-library-metrics">
+            <div><b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span></div>
+            <div><b>{pct(data.embeddings.coverage)}</b><span>可被 AI 搜索</span></div>
+            <div><b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span></div>
+          </div>
+          <p>这些数字来自当前知识库，不会因为刷新页面而丢失。</p>
+        </section>
       </div>
-      <div className="pm-card">
-        <div className="pm-section-head"><h2>最近 Dream 运行</h2></div>
+
+      <section className="dream-history-card">
+        <div className="dream-section-title">
+          <div><span className="dream-eyebrow">整理记录</span><h2>最近发生了什么</h2></div>
+          <button className="pm-ghost" onClick={() => { window.location.hash = 'dream-execute'; }}>打开高级执行页</button>
+        </div>
         <RecentRuns runs={data.runs} />
-      </div>
-    </DreamShell>
+      </section>
+    </div>
   );
 }
 
@@ -999,8 +1143,8 @@ export function DreamExecutePage() {
       {loading && <Loading />}
       {data && (
         <>
-          <DreamRunPanel sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
-          <PhaseRail />
+          <DreamRunPanel phaseCatalog={data.phase_catalog} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+          <PhaseRail catalog={data.phase_catalog} />
           <div className="pm-card">
             <h2>队列与重试</h2>
             <table>
@@ -1054,7 +1198,7 @@ export function DreamKnowledgePage() {
         </div>
         <div className="pm-card">
           <h2>基础治理阶段</h2>
-          <PhaseRail active="backlinks" />
+          <PhaseRail catalog={data.phase_catalog} active="backlinks" />
         </div>
       </div>
     </DreamShell>
@@ -1122,10 +1266,10 @@ export function DreamCalibrationPage() {
 
 export function DreamInsightsPage() {
   const { data, error, loading, reload } = useDreamData();
-  if (error) return <DreamShell title="项目洞察"><ErrorBlock message={error} /></DreamShell>;
-  if (loading || !data) return <DreamShell title="项目洞察"><Loading /></DreamShell>;
+  if (error) return <DreamShell title="知识维护与质量"><ErrorBlock message={error} /></DreamShell>;
+  if (loading || !data) return <DreamShell title="知识维护与质量"><Loading /></DreamShell>;
   return (
-    <DreamShell title="项目洞察" action={<button className="pm-ghost" onClick={() => void reload()}>刷新</button>}>
+    <DreamShell title="知识维护与质量" action={<button className="pm-ghost" onClick={() => void reload()}>刷新</button>}>
       <div className="pm-grid metrics-grid">
         <Metric label="软删除页面" value={data.lifecycle?.soft_deleted_pages ?? 0} />
         <Metric label="可清理页面" value={data.lifecycle?.purge_ready_pages ?? 0} />
@@ -1136,7 +1280,7 @@ export function DreamInsightsPage() {
       <div className="pm-grid two-col">
         <div className="pm-card">
           <h2>生命周期阶段</h2>
-          <PhaseRail active="purge" />
+          <PhaseRail catalog={data.phase_catalog} active="purge" />
         </div>
         <div className="pm-card">
           <h2>质量评估记录</h2>

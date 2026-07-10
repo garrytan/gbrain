@@ -1655,6 +1655,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         : Number(rawMaxPages);
       const run = await startDreamRun({
         phase: typeof req.body?.phase === 'string' ? req.body.phase : undefined,
+        preset: ['full', 'meeting', 'quick'].includes(req.body?.preset) ? req.body.preset : undefined,
         sourceId: typeof req.body?.sourceId === 'string' ? req.body.sourceId : undefined,
         maxPages,
         dryRun: req.body?.dryRun === true,

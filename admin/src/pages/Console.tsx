@@ -750,7 +750,7 @@ export function ImportDataPage() {
                       <b>{source.id}</b>
                       <div className="pm-muted">{source.archived ? 'archived' : source.federated ? 'federated' : 'isolated'}</div>
                       {source.archived && (
-                        <div className="pm-hint">可恢复至 {formatDate(source.archive_expires_at)}</div>
+                        <div className="pm-hint">可恢复至 {formatDate(source.archive_expires_at ?? null)}</div>
                       )}
                     </td>
                     <td className="mono">{source.local_path ?? '-'}</td>

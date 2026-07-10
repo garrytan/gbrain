@@ -164,6 +164,7 @@ export async function startSourceAddRun(input: {
 
 export function buildDreamCommand(input: {
   phase?: CyclePhase | 'all' | string;
+  preset?: 'full' | 'meeting' | 'quick';
   sourceId?: string;
   maxPages?: number;
   dryRun?: boolean;
@@ -175,6 +176,8 @@ export function buildDreamCommand(input: {
 }): string[] {
   const prefix = resolveCliEntry();
   const cmd = [...prefix, 'dream'];
+  if (input.phase && input.preset) throw new Error('Dream phase and preset are mutually exclusive');
+  if (input.preset) cmd.push('--preset', input.preset);
   const phase = input.phase === 'all' ? undefined : (input.phase || undefined);
   if (phase) {
     if (!(ALL_PHASES as readonly string[]).includes(phase)) throw new Error(`Unsupported dream phase: ${phase}`);
@@ -199,6 +202,7 @@ export function buildDreamCommand(input: {
 
 export async function startDreamRun(input: {
   phase?: CyclePhase | 'all' | string;
+  preset?: 'full' | 'meeting' | 'quick';
   sourceId?: string;
   maxPages?: number;
   dryRun?: boolean;
@@ -208,8 +212,8 @@ export async function startDreamRun(input: {
   to?: string;
   timeoutMs?: number;
 }, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
-  const phase = input.phase && input.phase !== 'all' ? input.phase : 'cycle';
-  return await startRun(`dream_${phase}`, buildDreamCommand({ ...input, json: true }), cwd, hooks, input.timeoutMs);
+  const mode = input.preset ?? (input.phase && input.phase !== 'all' ? input.phase : 'cycle');
+  return await startRun(`dream_${mode}`, buildDreamCommand({ ...input, json: true }), cwd, hooks, input.timeoutMs);
 }
 
 export async function startActionRun(action: 'doctor_check' | 'show_sources' | 'show_stats' | 'embed_stale' | 'sync_all', cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
