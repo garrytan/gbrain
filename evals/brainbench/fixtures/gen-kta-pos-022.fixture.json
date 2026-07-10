@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-022",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/beatrix-larkmoor",
+      "content": "---\ntitle: Beatrix Larkmoor\ntype: person\naliases: [beatrix]\nsummary: Founder of Marblepond Labs.\n---\n\nBeatrix Larkmoor is the founder of Marblepond Labs. Beatrix pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/marblepond-labs",
+      "content": "---\ntitle: Marblepond Labs\ntype: company\nsummary: Seed-stage company. Founded by Beatrix Larkmoor.\n---\n\nMarblepond Labs is a seed-stage company. Founded by Beatrix Larkmoor. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Can you pull up my notes on Marblepond Labs before the call?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ]
+}

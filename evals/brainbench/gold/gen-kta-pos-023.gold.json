@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-023",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/ingrid-stargazer"
+      ],
+      "acceptable_slugs": [
+        "companies/quartzbloom-systems"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

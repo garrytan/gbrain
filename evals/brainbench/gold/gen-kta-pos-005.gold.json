@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-005",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/emrys-galewright"
+      ],
+      "acceptable_slugs": [
+        "companies/glintworks-co"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

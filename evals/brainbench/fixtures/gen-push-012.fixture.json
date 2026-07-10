@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-012",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/imogen-corvalen",
+      "content": "---\ntitle: Imogen Corvalen\ntype: person\naliases: [imogen]\nsummary: Founder of Emberweave Systems.\n---\n\nImogen Corvalen is the founder of Emberweave Systems. Imogen flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "people/elspeth-farrowdale",
+      "content": "---\ntitle: Elspeth Farrowdale\ntype: person\naliases: [elspeth]\nsummary: Founder of Quillstream Labs.\n---\n\nElspeth Farrowdale is the founder of Quillstream Labs. Elspeth shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/emberweave-systems",
+      "content": "---\ntitle: Emberweave Systems\ntype: company\nsummary: Seed-stage company. Founded by Imogen Corvalen.\n---\n\nEmberweave Systems is a seed-stage company. Founded by Imogen Corvalen. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/pinecrest-hollow-capital",
+      "content": "---\ntitle: Pinecrest Hollow Capital\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nPinecrest Hollow Capital is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Imogen Corvalen and Elspeth Farrowdale both want Pinecrest Hollow Capital in the Emberweave Systems round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

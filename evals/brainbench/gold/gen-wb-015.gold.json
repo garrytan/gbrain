@@ -1,0 +1,35 @@
+{
+  "fixture_id": "gen-wb-015",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Emberweave Systems",
+          "fact": "Imogen Corvalen reported Emberweave Systems hit its growth target a month early",
+          "entity_slug": "people/imogen-corvalen",
+          "match_keywords": [
+            "growth target",
+            "Emberweave Systems"
+          ],
+          "kind": "fact"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Emberweave Systems",
+          "fact": "Imogen Corvalen is worried the Emberweave Systems pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/imogen-corvalen",
+          "match_keywords": [
+            "pricing",
+            "Emberweave Systems"
+          ],
+          "kind": "belief"
+        }
+      ]
+    }
+  }
+}

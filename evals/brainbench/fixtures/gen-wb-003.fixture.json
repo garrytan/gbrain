@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-003",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/bastian-rookswood",
+      "content": "---\ntitle: Bastian Rookswood\ntype: person\naliases: [bastian]\nsummary: Founder of Skylarkift.\n---\n\nBastian Rookswood is the founder of Skylarkift. Bastian shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/skylarkift",
+      "content": "---\ntitle: Skylarkift\ntype: company\nsummary: Seed-stage company. Founded by Bastian Rookswood.\n---\n\nSkylarkift is a seed-stage company. Founded by Bastian Rookswood. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Skylarkift call with Bastian Rookswood.",
+      "ts": "2025-01-12T11:41:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-01-12T11:42:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Bastian is worried the Skylarkift pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-01-12T12:28:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Bastian prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-01-12T12:29:00Z"
+    }
+  ],
+  "holdout": true
+}

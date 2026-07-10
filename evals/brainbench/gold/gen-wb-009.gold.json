@@ -1,0 +1,35 @@
+{
+  "fixture_id": "gen-wb-009",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Windrose",
+          "fact": "Noor Wrenhaven is worried the Windrose pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/noor-wrenhaven",
+          "match_keywords": [
+            "pricing",
+            "Windrose"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Noor Wrenhaven the diligence checklist by Friday",
+          "entity_slug": "people/noor-wrenhaven",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

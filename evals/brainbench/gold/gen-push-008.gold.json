@@ -1,0 +1,19 @@
+{
+  "fixture_id": "gen-push-008",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/saoirse-oakhurst",
+        "people/anneke-veldenmere",
+        "funds/brightmoor-ventures"
+      ],
+      "acceptable_slugs": [
+        "companies/driftspark-works"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-003",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/mateo-glimmerton",
+      "content": "---\ntitle: Mateo Glimmerton\ntype: person\naliases: [mateo]\nsummary: Founder of Kelpforge.\n---\n\nMateo Glimmerton is the founder of Kelpforge. Mateo pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "people/mateo-glimmerton",
+      "content": "---\ntitle: Mateo Glimmerton\ntype: person\naliases: [mateo]\nsummary: Founder of Kelpforge.\n---\n\nMateo Glimmerton is the founder of Kelpforge. Mateo shipped the v2 launch two weeks ahead of plan.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/thistledew-co",
+      "content": "---\ntitle: Thistledew Co\ntype: company\nsummary: Seed-stage company.\n---\n\nThistledew Co is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Mateo Glimmerton?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Thistledew Co in here?"
+    }
+  ]
+}

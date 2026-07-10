@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-016",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Windrose",
+          "fact": "Marisol Novalis reported Windrose hit its growth target a month early",
+          "entity_slug": "people/marisol-novalis",
+          "match_keywords": [
+            "growth target",
+            "Windrose"
+          ],
+          "kind": "fact"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Marisol Novalis the diligence checklist by Friday",
+          "entity_slug": "people/marisol-novalis",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Marisol Novalis prefers async updates over standing calls",
+          "entity_slug": "people/marisol-novalis",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

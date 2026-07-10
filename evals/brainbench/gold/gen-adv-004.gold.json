@@ -1,0 +1,11 @@
+{
+  "fixture_id": "gen-adv-004",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/tidecraft-systems"
+      ]
+    }
+  }
+}

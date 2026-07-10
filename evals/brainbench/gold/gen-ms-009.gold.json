@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-ms-009",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/beatrix-larkmoor"
+      ]
+    },
+    "2": {
+      "should_retrieve": false
+    }
+  }
+}

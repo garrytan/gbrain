@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-003",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/tobias-cindergate"
+      ],
+      "acceptable_slugs": [
+        "companies/mosslight"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

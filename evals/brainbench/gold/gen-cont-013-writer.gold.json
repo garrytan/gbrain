@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-cont-013-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pass on Kelpforge",
+          "fact": "Decided to pass on the Kelpforge round because pricing is too rich",
+          "entity_slug": "companies/kelpforge",
+          "match_keywords": [
+            "pass",
+            "Kelpforge"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

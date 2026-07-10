@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-002-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/junipergrid-labs"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-002",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/junipergrid-labs"
+        ],
+        "match_keywords": [
+          "lead",
+          "Junipergrid Labs"
+        ]
+      }
+    ]
+  }
+}

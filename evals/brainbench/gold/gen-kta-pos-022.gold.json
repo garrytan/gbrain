@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-022",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/marblepond-labs"
+      ],
+      "acceptable_slugs": [
+        "companies/marblepond-labs"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

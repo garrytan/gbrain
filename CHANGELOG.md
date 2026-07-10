@@ -2,6 +2,42 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.44.0.0] - 2026-06-12
+
+**BrainBench: agent memory now has a scorecard.** `gbrain eval brainbench` is a public, reproducible, cross-harness conformance suite for the four ways agent memory fails — and from this release forward, every memory PR must hold or move its numbers against a committed baseline that CI compares against master's own copy.
+
+Four suites, scored per harness seam:
+
+- **know-to-ask** — does memory volunteer the right context unprompted, and stay silent when it should? (`know_to_ask_failure_rate` + the anti-gaming `false_fire_rate` — "always inject" can't win both)
+- **push precision / recall** — when context is volunteered, was it the right context, within each harness's injection budget?
+- **write-back fidelity** — do conversation facts survive the PRODUCTION conversation→memory pipeline with correct provenance? (graded through a new injectable-extractor seam on the conversation-facts pipeline, so CI executes the shipped segmentation/insertion/dedup code with zero LLM calls; `--llm` opts into the real extractor under a run-scoped budget)
+- **continuity** — a decision recorded in one session, recalled by a different harness on the same brain
+
+Plus two cross-cutting measures: `source_isolation_violations` (gates at zero, every run — cross-source leakage is the data-leak invariant) and `avg_injected_tokens` (the intrusion budget, reported per harness).
+
+Every scoreboard row carries a `seam` label: the `openclaw` row exercises the shipped context-engine pipeline byte-for-byte (`production`); the `claude-code` and `codex` rows grade the same gbrain primitives through those harnesses' injection-shape contracts (`contract`) — the exported wire types are the contracts future integrations implement, and the rows flip to `production` with continuous numbers when they land. At v0.44.0.0 the production seam reads: know-to-ask failure 0.15 (the documented v1 reflex limits, now measured), push recall 0.81 at precision 1.0, write-back fidelity 1.0, continuity 1.0, zero isolation violations.
+
+### Added
+
+- `gbrain eval brainbench` — hermetic by default (in-memory PGLite, no keys, no LLM, ~7s for the full corpus), with `--harness`, `--suite`, `--fixtures DIR --gold DIR` (the foreign-runner surface), `--json`, `--out` (the canonical CI artifact), `--compare`, `--update-baseline`, `--justification`, `--allow-regression`, `--include-holdout`, and `--llm --budget-usd`. Exit codes are the contract: 0 pass, 1 regression, 2 error/inconclusive.
+- A 141-fixture / 241-gold-turn benchmark corpus across 7 stratified categories, generated deterministically (seed 42) over a whole-cloth fictional universe with SEALED gold (a `gold` key inside a fixture is a validation error; adapters only ever see sanitized turns), a ~15% holdout split, and a blind double-label validation receipt (96.4% agreement) recorded in the corpus ledger. Rebuild byte-identically with `bun evals/brainbench/generator/gen.ts`.
+- Published interchange contract for foreign runners: JSON Schemas for fixtures, gold, results, and baselines under `evals/brainbench/schema/` — point the CLI at any conforming corpus and parse the schema'd receipt back.
+- A CI gate (`brainbench` job + `scripts/ci-brainbench-gate.sh`) hardened through four adversarial review rounds: it compares against MASTER's committed baseline (a PR cannot rewrite the thing it's graded by), any baseline edit without a fixture change must byte-match the actual run, corpus changes route through a bless mode where shrinking gold coverage or regressing a metric requires a written justification visible in the PR diff, baselines bind their run config, and the gate fails hard — never silently open — on broken refs or deleted baselines.
+- Eleven new metrics in the metric glossary (plain-English definitions in `docs/eval/METRIC_GLOSSARY.md`); every JSON response carries the standard `_meta.metric_glossary` block.
+- Methodology doc at `docs/eval/BRAINBENCH.md`: seam disclosure, formulas, pre-registered expectations, determinism posture, gate governance, gold methodology, and accepted residuals.
+
+### Changed
+
+- `gbrain eval run-all --suites brainbench` now actually runs the suite in-process (closing the long-standing orchestrator-stub follow-up) and records one result per sweep under `EvalRunRecord` schema v3 with `mode: 'n/a'` — benchmark records no longer fabricate a search mode.
+- The conversation-facts pipeline accepts an injectable per-segment extractor (default unchanged — the LLM path); this is the seam the write-back suite grades production code through.
+- The synthetic-corpus privacy guard now scans the BrainBench corpus dirs (fixtures AND gold) alongside the calibration corpus, and the fixture-authoring guide adds scenario-level privacy rules: scenarios are invented whole-cloth, never anonymized from real situations.
+- The CI aggregate (`test-status`) now checks the brainbench job's result explicitly — a failing memory gate fails the branch-protection check.
+
+### Fixed
+
+- CLI exit codes for the new command route through the shared write-fence + aliveness-grace exit seam, so PGLite's WASM exit-code stomping and Bun's exit-time stdout discard can't corrupt the CI contract.
+
+To take advantage of v0.44.0.0: run `gbrain eval brainbench` — no setup, no keys, no brain required. If it ever reports something broken after an upgrade, `bun evals/brainbench/generator/gen.ts` rebuilds the corpus byte-identically and `gbrain eval brainbench --update-baseline` re-derives the baseline from an actual run; both are safe to re-run any time.
 ## [0.42.58.0] - 2026-07-06
 
 **gbrain now runs cleanly on the stack you already have — a local Ollama box, a self-hosted LiteLLM proxy, llama.cpp's llama-server, or gbrain running as a Claude Code MCP subprocess — instead of silently degrading or hard-failing when you're not on a raw OpenAI/Anthropic key.** A provider-agnostic plumbing pass across the AI gateway: environment handling, base-URL normalization, and embedding-dimension validation all stop tripping on the non-frontier-vendor setups that used to fail without a clear signal.

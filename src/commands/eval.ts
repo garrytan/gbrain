@@ -52,6 +52,15 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCrossModal } = await import('./eval-cross-modal.ts');
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
+  if (sub === 'brainbench') {
+    // No-DB sub-subcommand: brainbench brings its own hermetic PGLite. The
+    // cli.ts dispatcher routes the user-facing path before connectEngine;
+    // this branch only fires on re-entry. Engine intentionally unused. The
+    // command owns its exit codes (0 pass / 1 regression / 2 error).
+    const { runEvalBrainBench } = await import('./eval-brainbench.ts');
+    await runEvalBrainBench(args.slice(1));
+    return; // unreachable — runEvalBrainBench always exits — but keeps control flow explicit
+  }
   if (sub === 'code-retrieval') {
     // v0.33.3 pre-w0 — code-retrieval baseline / gate harness. Needs a brain
     // for the baseline (BaselineStrategy calls hybridSearch); --compare

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-014",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/noor-wrenhaven",
+      "content": "---\ntitle: Noor Wrenhaven\ntype: person\naliases: [noor]\nsummary: Founder of Windrose.\n---\n\nNoor Wrenhaven is the founder of Windrose. Noor shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "people/cosmo-hollybrook",
+      "content": "---\ntitle: Cosmo Hollybrook\ntype: person\naliases: [cosmo]\nsummary: Founder of Skylarkift.\n---\n\nCosmo Hollybrook is the founder of Skylarkift. Cosmo shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Noor Wrenhaven.\n---\n\nWindrose is a seed-stage company. Founded by Noor Wrenhaven. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/quartzgate-capital",
+      "content": "---\ntitle: Quartzgate Capital\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nQuartzgate Capital is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Noor Wrenhaven and Cosmo Hollybrook both want Quartzgate Capital in the Windrose round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

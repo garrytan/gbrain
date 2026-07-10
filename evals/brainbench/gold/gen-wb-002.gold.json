@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-002",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Kelpforge",
+          "fact": "Soren Hartwhistle is worried the Kelpforge pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/soren-hartwhistle",
+          "match_keywords": [
+            "pricing",
+            "Kelpforge"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Soren Hartwhistle the diligence checklist by Friday",
+          "entity_slug": "people/soren-hartwhistle",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Soren Hartwhistle prefers async updates over standing calls",
+          "entity_slug": "people/soren-hartwhistle",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

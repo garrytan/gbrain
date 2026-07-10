@@ -1,0 +1,8 @@
+{
+  "fixture_id": "kta-002-quiet-smalltalk",
+  "turns": {
+    "1": { "should_retrieve": false },
+    "3": { "should_retrieve": false },
+    "4": { "should_retrieve": false }
+  }
+}

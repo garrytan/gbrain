@@ -1,0 +1,34 @@
+{
+  "fixture_id": "gen-wb-017",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Oskar Pemberlake prefers async updates over standing calls",
+          "entity_slug": "people/oskar-pemberlake",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Frostpetal Systems",
+          "fact": "Oskar Pemberlake reported Frostpetal Systems hit its growth target a month early",
+          "entity_slug": "people/oskar-pemberlake",
+          "match_keywords": [
+            "growth target",
+            "Frostpetal Systems"
+          ],
+          "kind": "fact"
+        }
+      ]
+    }
+  }
+}

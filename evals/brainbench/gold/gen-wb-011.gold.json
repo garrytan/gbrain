@@ -1,0 +1,35 @@
+{
+  "fixture_id": "gen-wb-011",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Bramblevolt Co",
+          "fact": "Devran Tidewell is worried the Bramblevolt Co pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/devran-tidewell",
+          "match_keywords": [
+            "pricing",
+            "Bramblevolt Co"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Devran Tidewell the diligence checklist by Friday",
+          "entity_slug": "people/devran-tidewell",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

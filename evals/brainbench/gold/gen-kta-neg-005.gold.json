@@ -1,0 +1,11 @@
+{
+  "fixture_id": "gen-kta-neg-005",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

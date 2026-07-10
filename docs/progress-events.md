@@ -26,6 +26,7 @@ Any of these commands stream events when `--progress-json` is set:
 - `gbrain lint`
 - `gbrain integrity auto`
 - `gbrain eval`
+- `gbrain eval brainbench`
 - `gbrain apply-migrations` (the orchestrator + every child command)
 
 Non-bulk commands (`stats`, `graph-query`, `get`, `put`, etc.) don't emit
@@ -145,6 +146,9 @@ Stable phase names shipped in v0.15.2:
 - `lint.pages`
 - `integrity.auto`
 - `eval.single`, `eval.ab`
+- `eval.brainbench` — ticks carry a `note` but no `total`: continuity pairs
+  replay once per (writer, reader) ordering, so the tick count exceeds the
+  fixture count and a percentage would lie
 - `export.pages`
 - `files.sync`
 

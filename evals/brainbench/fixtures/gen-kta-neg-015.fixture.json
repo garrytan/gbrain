@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-015",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/stellan-frostholm",
+      "content": "---\ntitle: Stellan Frostholm\ntype: person\naliases: [stellan]\nsummary: Founder of Umbergale Labs.\n---\n\nStellan Frostholm is the founder of Umbergale Labs. Stellan is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/umbergale-labs",
+      "content": "---\ntitle: Umbergale Labs\ntype: company\nsummary: Seed-stage company. Founded by Stellan Frostholm.\n---\n\nUmbergale Labs is a seed-stage company. Founded by Stellan Frostholm. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Quick one — does Tuesday work for the sync?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Tobias Yarrowgate emailed about partnerships. Never heard of them."
+    }
+  ]
+}

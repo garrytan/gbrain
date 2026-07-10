@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-002",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/yuki-quincewood",
+      "content": "---\ntitle: Yuki Quincewood\ntype: person\naliases: [yuki]\nsummary: Founder of Orchardbyte Labs.\n---\n\nYuki Quincewood is the founder of Orchardbyte Labs. Yuki is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "people/petra-moonstead",
+      "content": "---\ntitle: Petra Moonstead\ntype: person\naliases: [petra]\nsummary: Founder of Bramblevolt Co.\n---\n\nPetra Moonstead is the founder of Bramblevolt Co. Petra flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/orchardbyte-labs",
+      "content": "---\ntitle: Orchardbyte Labs\ntype: company\nsummary: Seed-stage company. Founded by Yuki Quincewood.\n---\n\nOrchardbyte Labs is a seed-stage company. Founded by Yuki Quincewood. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/quartzgate-capital",
+      "content": "---\ntitle: Quartzgate Capital\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nQuartzgate Capital is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Yuki Quincewood and Petra Moonstead both want Quartzgate Capital in the Orchardbyte Labs round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ],
+  "holdout": true
+}

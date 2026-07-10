@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-001-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/russetvane-systems",
+      "content": "---\ntitle: Russetvane Systems\ntype: company\nsummary: Seed-stage company. Founded by Freya Emberlyn.\n---\n\nRussetvane Systems is a seed-stage company. Founded by Freya Emberlyn. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/freya-emberlyn",
+      "content": "---\ntitle: Freya Emberlyn\ntype: person\naliases: [freya]\nsummary: Founder of Russetvane Systems.\n---\n\nFreya Emberlyn is the founder of Russetvane Systems. Freya is exploring a pivot toward the enterprise segment.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Russetvane Systems round.",
+      "ts": "2026-08-14T10:48:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-08-14T10:49:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to pass on the Russetvane Systems round. Pricing is too rich at this stage. Logging it now.",
+      "ts": "2026-08-14T10:50:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-001",
+    "pair_role": "writer"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-001-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/russetvane-systems"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-001",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/russetvane-systems"
+        ],
+        "match_keywords": [
+          "pass",
+          "Russetvane Systems"
+        ]
+      }
+    ]
+  }
+}

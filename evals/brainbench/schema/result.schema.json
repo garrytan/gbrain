@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/garrytan/gbrain/evals/brainbench/schema/result.schema.json",
+  "title": "BrainBench run result (result_schema_version 1)",
+  "description": "The JSON document `gbrain eval brainbench --json` / `--out FILE` emits. Foreign runners (gbrain-evals) parse this; additive-only within a version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["receipt", "cells", "turn_rows", "seed_failures"],
+  "properties": {
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result_schema_version", "fixtures_hash", "harness_sha", "ts", "cmd_args", "seed", "include_holdout", "llm"],
+      "properties": {
+        "result_schema_version": { "const": 1 },
+        "fixtures_hash": { "type": "string" },
+        "harness_sha": { "type": "string" },
+        "ts": { "type": "string", "format": "date-time" },
+        "cmd_args": { "type": "array", "items": { "type": "string" } },
+        "seed": { "type": "integer" },
+        "include_holdout": { "type": "boolean" },
+        "llm": { "type": "boolean" }
+      }
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["suite", "harness", "seam", "gold_total", "gold_failed", "metrics", "fixtures"],
+        "properties": {
+          "suite": { "enum": ["know-to-ask", "push", "write-back", "continuity"] },
+          "harness": { "enum": ["openclaw", "claude-code", "codex"] },
+          "seam": { "enum": ["production", "contract"] },
+          "gold_total": { "type": "integer", "minimum": 0 },
+          "gold_failed": { "type": "integer", "minimum": 0 },
+          "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+          "fixtures": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "turn_rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_id", "turn_id", "harness", "suite", "injected_slugs", "injected_tokens", "gold", "cross_source_slugs", "latency_ms"],
+        "properties": {
+          "fixture_id": { "type": "string" },
+          "turn_id": { "type": "integer" },
+          "harness": { "enum": ["openclaw", "claude-code", "codex"] },
+          "suite": { "enum": ["know-to-ask", "push", "write-back", "continuity"] },
+          "injected_slugs": { "type": "array", "items": { "type": "string" } },
+          "injected_tokens": { "type": "number" },
+          "gold": { "type": ["object", "null"] },
+          "cross_source_slugs": { "type": "array", "items": { "type": "string" } },
+          "latency_ms": { "type": "number" }
+        }
+      }
+    },
+    "seed_failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_id", "error"],
+        "properties": {
+          "fixture_id": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "_meta": {
+      "type": "object",
+      "description": "Carries one metric_glossary block per response (CDX-25 discipline).",
+      "properties": { "metric_glossary": { "type": "object" } }
+    }
+  }
+}

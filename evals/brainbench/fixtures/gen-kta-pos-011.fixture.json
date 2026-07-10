@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-011",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-coppersmith",
+      "content": "---\ntitle: Mireille Coppersmith\ntype: person\naliases: [mireille]\nsummary: Founder of Inkwhale Co.\n---\n\nMireille Coppersmith is the founder of Inkwhale Co. Mireille pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/inkwhale-co",
+      "content": "---\ntitle: Inkwhale Co\ntype: company\nsummary: Seed-stage company. Founded by Mireille Coppersmith.\n---\n\nInkwhale Co is a seed-stage company. Founded by Mireille Coppersmith. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What did Mireille Coppersmith say about the Inkwhale Co deal?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ]
+}

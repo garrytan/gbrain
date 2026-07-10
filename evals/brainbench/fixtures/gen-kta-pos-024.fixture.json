@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-024",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/caspian-ironwood",
+      "content": "---\ntitle: Caspian Ironwood\ntype: person\naliases: [caspian]\nsummary: Founder of Umbergale Labs.\n---\n\nCaspian Ironwood is the founder of Umbergale Labs. Caspian wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "companies/umbergale-labs",
+      "content": "---\ntitle: Umbergale Labs\ntype: company\nsummary: Seed-stage company. Founded by Caspian Ironwood.\n---\n\nUmbergale Labs is a seed-stage company. Founded by Caspian Ironwood. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "remind me what caspian said about the round"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ]
+}
