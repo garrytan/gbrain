@@ -1,0 +1,12 @@
+- When debugging a long, uninterruptible sleep state related to I/O: Check for overlapping slices with "verity" in their name (dm-verity).
+- When a thread is stuck in an uninterruptible sleep with no blocked_function, look for other threads that might be holding the memory lock (e.g., "jit-thread-pool", memory mapping ops).
+- When analyzing a long uninterruptible sleep, check the "blocked_function" in the thread state details (from sched_blocked_reason ftrace event).
+- A lot of time spent in "do_page_fault" during app startup is a strong indicator of I/O contention.
+- For file integrity mechanisms like DM-Verity, search for events like dm_verity_fec_prefetch.
+- To find the specific kernel dependency of a stalled app thread, locate the thread in state 'D', then look for kworker or kernel threads that become runnable immediately after.
+- For app stalls caused by I/O, analyze the scheduling latency of the relevant kworker threads handling the request.
+- To find inefficient file I/O, query the syscall table for a high frequency of small, sequential read() or pread() syscalls on a single fd.
+- If a thread spends significant time in 'Uninterruptible Sleep', check if 'blocked_function' is 'page_cache_readahead'. Correlate waking timestamps with 'filemap_add_to_page_cache' ftrace events.
+- Aggregate counts of 'filemap_add_to_page_cache' grouping by 'inode' to find the specific file causing I/O pressure.
+- Inspect 'nr_sector' in 'block_rq_issue' ftrace events to understand file read-ahead size.
+- If an I/O issue disappears on subsequent launches, it's a 'cold start' problem (populating page cache).

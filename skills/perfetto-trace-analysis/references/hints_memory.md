@@ -1,0 +1,15 @@
+- To investigate low memory kills, look for the "lmk_kill_occurred" ftrace event; a high count indicates severe memory pressure.
+- When you see a burst of "lmk_kill_occurred" events, query for processes with high CPU wall_duration in the "sched_slice" table during the same time window. Runaway processes consuming CPU exacerbate memory pressure.
+- To understand a process's memory impact, inspect its "anon_rss" (Anonymous Resident Set Size) from memory counters like "mem.info".
+- Check system-wide memory stats for a high or rapidly increasing "swap_used" value.
+- To confirm memory thrashing, look for high CPU usage by the "kswapd" kernel thread.
+- To find the direct trigger for LMKD, look for "memory_pressure" trace events from Pressure Stall Information (PSI).
+- To detect 'lost' memory for processes using hardware accelerators (like a TPU), query the counter table for RssFile values. If it drops significantly while hardware is active, check for kswapd0 scheduling slices.
+- When analyzing memory shared with hardware, query the dma_heap_stat and dmabuf_total_size counters (or ion_total_size for older devices) for a more accurate picture than RSS.
+- Be aware that RssFile can over-report memory if the same physical page is mapped multiple times.
+- When investigating OOMs, establish a baseline by querying process memory counters (e.g., mem.rss) and compare the median and 95th percentile against its history.
+- If bitmaps are a major memory consumer, check for outliers in bitmap count by querying android.graphics.Bitmap instances across traces.
+- To find what is holding onto an object (like a bitmap), trace its retainer path back to a GC root by querying heap_graph_reference. Pay close attention to custom application classes.
+- Query the android_bitmaps table to check the width and height properties of bitmaps.
+- Check for the presence of software bitmaps, which consume memory on both the app heap and in graphics memory.
+- When analyzing bitmaps, look for duplicates by checking for multiple android.graphics.Bitmap objects with identical properties.

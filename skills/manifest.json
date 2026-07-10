@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -263,6 +263,101 @@
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
       "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "agp-9-upgrade",
+      "description": "Upgrades, or migrates, an Android project to use Android Gradle Plugin",
+      "path": "agp-9-upgrade/SKILL.md"
+    },
+    {
+      "name": "camerax",
+      "description": "Provide technical guidance for Android camera development with CameraX.",
+      "path": "camerax/SKILL.md"
+    },
+    {
+      "name": "appfunctions",
+      "description": "Analyzes Android apps to identify key user workflows for AppFunctions",
+      "path": "appfunctions/SKILL.md"
+    },
+    {
+      "name": "android-cli",
+      "description": "Provides instructions for installing and using the `android` CLI. The `android` command-line tool is a critical tool for Android development and helps you create new Android projects, run Android apps on devices, manage and interact with An",
+      "path": "android-cli/SKILL.md"
+    },
+    {
+      "name": "verified-email",
+      "description": "Provides a complete workflow for implementing verified email retrieval",
+      "path": "verified-email/SKILL.md"
+    },
+    {
+      "name": "adaptive",
+      "description": "Instructions to make or update an app's UI so that it adapts to different",
+      "path": "adaptive/SKILL.md"
+    },
+    {
+      "name": "migrate-xml-views-to-jetpack-compose",
+      "description": "Provides a structured workflow for migrating an Android XML View to Jetpack",
+      "path": "migrate-xml-views-to-jetpack-compose/SKILL.md"
+    },
+    {
+      "name": "styles",
+      "description": "Use this skill to integrate the Jetpack Compose Styles API into an Android",
+      "path": "styles/SKILL.md"
+    },
+    {
+      "name": "navigation-3",
+      "description": "Learn how to install and migrate to Jetpack Navigation 3, and how to",
+      "path": "navigation-3/SKILL.md"
+    },
+    {
+      "name": "r8-analyzer",
+      "description": "Analyzes Android build files and R8 keep rules to identify redundancies,",
+      "path": "r8-analyzer/SKILL.md"
+    },
+    {
+      "name": "engage-sdk-integration",
+      "description": "Helps developers integrate, debug, and resolve Play Engage SDK implementation",
+      "path": "engage-sdk-integration/SKILL.md"
+    },
+    {
+      "name": "play-billing-library-version-upgrade",
+      "description": "Use this skill when upgrading or migrating an Android project from any",
+      "path": "play-billing-library-version-upgrade/SKILL.md"
+    },
+    {
+      "name": "perfetto-sql",
+      "description": "Translates natural language data intents into syntactically valid Perfetto",
+      "path": "perfetto-sql/SKILL.md"
+    },
+    {
+      "name": "perfetto-trace-analysis",
+      "description": "Analyzes Perfetto traces to find the root cause of latency, memory, or",
+      "path": "perfetto-trace-analysis/SKILL.md"
+    },
+    {
+      "name": "android-intent-security",
+      "description": "Best practices for Android Intent security. Use this skill when auditing",
+      "path": "android-intent-security/SKILL.md"
+    },
+    {
+      "name": "edge-to-edge",
+      "description": "Use this skill to migrate your Jetpack Compose app to add adaptive edge-to-edge",
+      "path": "edge-to-edge/SKILL.md"
+    },
+    {
+      "name": "testing-setup",
+      "description": "Analyze and create a testing strategy for native Android apps - install",
+      "path": "testing-setup/SKILL.md"
+    },
+    {
+      "name": "wear-compose-m3",
+      "description": "Expert guidance for working with Wear OS Compose Material3. Use this",
+      "path": "wear-compose-m3/SKILL.md"
+    },
+    {
+      "name": "display-glasses-with-jetpack-compose-glimmer",
+      "description": "Provides guidelines for developing projected Android XR apps for display",
+      "path": "display-glasses-with-jetpack-compose-glimmer/SKILL.md"
     }
   ],
   "dependencies": {

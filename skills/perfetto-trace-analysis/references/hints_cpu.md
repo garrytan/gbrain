@@ -1,0 +1,16 @@
+- When debugging a long slice: Examine its thread states to understand what the thread was doing (running, sleeping, blocked on I/O).
+- When debugging a long slice for latency issues: Check if its duration is caused by one or more long-running child slices. Apply recursively.
+- When a thread is woken up but there's a delay before it runs, check the "IRQ" track for the corresponding CPU to see if an interrupt is the cause.
+- Check if kernel threads associated with hardware are running with real-time priority; if not, they can be preempted.
+- When analysis of the primary application package does not reveal the root cause, expand to all threads and processes. Search for other runnable threads on the same CPU or high-priority kernel threads.
+- When investigating app startup, use an SQL query to aggregate the reasons for uninterruptible sleep on the main thread.
+- Check the "cpu_frequency" counter for the CPU cores that ran the main process. Missing frequency data or stuck frequencies indicate a kernel-level bug in the governor.
+- Query raw "ftrace" events for logs related to the governor thread (e.g., "su_gov").
+- To find concurrency issues, search for critical threads (e.g., 'RenderThread') in a blocked state (thread_state.state = 'D') and join with scheduling data to find the waker.
+- Compare time spent in userspace functions vs kernel (slices with \[k\] prefix).
+- To detect a 'catch-up storm', look for threads with long gaps in thread_state/cpu_slice activity immediately followed by a high-density burst.
+- Quantify scheduler contention by calculating scheduling latency (measure duration of preceding 'Runnable' state using preceding_sched_slice_for_thread). Search for maximums and high percentiles (p95/p99).
+- If a task exhibits high scheduling latency, check if other CPUs were idle (running swapper or idle thread).
+- Check the cpu_id for key threads; if consistently scheduled on slower cores, it signals a potential performance gain by allowing them on big cores.
+- For a struggling thread, analyze 'Runnable' vs 'Running' state time. A large 'Runnable' time indicates CPU contention.
+- If a slice's wall duration increases but the percentage of 'Running' time is unchanged, it strongly suggests a lower CPU frequency. Check sched_switch to focus on the correct cores.

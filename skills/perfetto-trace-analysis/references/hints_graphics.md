@@ -1,0 +1,11 @@
+- When investigating UI jank, check for long-running slices on the main thread; if a slice like "ConstraintLayout.onMeasure" is taking a long time (e.g., \>8ms), it is a likely cause of the jank.
+- When a bitmap_write_to_parcel slice takes milliseconds instead of microseconds, investigate its children slices to see how time is spent. Long durations often point to suboptimal kernel operations like memory mapping (mmap) or unnecessary data zeroing.
+- For a high-level overview of graphics memory usage, track the 'gpu_mem_total' counter for a specific process (upid).
+- To find the largest graphics allocations, query the android_graphics_allocs table and sort by size_bytes in descending order. Compare its 'width' and 'height' against the device's display resolution.
+- To detect the "double memory cost" of an image existing on both CPU and GPU, look for a large buffer in android_graphics_allocs and a simultaneous CPU memory allocation of a similar size (rss_anon_bytes or heap_graph).
+- To find potentially costly intermediate render targets, look for large buffers in android_graphics_allocs where 'usage_bits' lack a 'COMPOSER_OVERLAY' flag.
+- To check if an allocation is actually presented on screen, correlate 'buffer_id' with SurfaceFlinger events.
+- To see if high graphics memory is causing performance issues, check the frame duration in 'actual_frame_timeline_frame'. Durations over vsync (e.g., 16.6ms) correlating with 'gpu_mem_total' spikes suggest memory pressure jank.
+- Within the main thread of a janky graphics application, look for frequent or long-running 'texture_upload' slices.
+- Analyze the duration of 'eglSwapBuffersWithDamageKHR' or similar buffer-swapping slices in the graphics rendering thread. Consistently long durations suggest a large "damage area" being redrawn every frame.
+- To identify UI jank, compare the 'actual_frame_timeline' against the 'expected_frame_timeline' on the main process; a significant deviation indicates missed frames.

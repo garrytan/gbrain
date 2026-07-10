@@ -134,3 +134,22 @@ These apply to ALL brain-writing skills:
 | "voice note", "ingest this voice memo", "transcribe and file", "voice note ingest", "save this audio note" | `skills/voice-note-ingest/SKILL.md` |
 | "add a page type", "add a type to my schema", "schema author", "schema mutate", "schema pack add", "my brain has untyped pages", "propose new types from my corpus", "backfill page types", "evolve my schema", "researcher type", "make X an expert type" (dispatcher for: gbrain schema active/list/show/validate/graph/lint/stats/explain/use/downgrade/reload/init/fork/edit/diff/add-type/remove-type/update-type/add-alias/remove-alias/add-prefix/remove-prefix/add-link-type/remove-link-type/set-extractable/set-expert-routing/detect/suggest/review-candidates/review-orphans/sync) | `skills/schema-author/SKILL.md` |
 | "unify my types", "migrate to gbrain-base-v2", "94 types to 14", "apply canonical taxonomy", "clean up my page types", "pack upgrade", "shrink type proliferation", "consolidate page types", "retype pages to canonical" (dispatcher for: gbrain onboard --check, gbrain onboard --check --explain, gbrain jobs submit unify-types, gbrain pages restore) | `skills/schema-unify/SKILL.md` |
+| `agp-9-upgrade` | android | Upgrades, or migrates, an Android project to use Android Gradle Plugin |
+| `camerax` | android | Provide technical guidance for Android camera development with CameraX. |
+| `appfunctions` | android | Analyzes Android apps to identify key user workflows for AppFunctions |
+| `android-cli` | android | Provides instructions for installing and using the `android` CLI. The `android` command-line tool is a critical tool for |
+| `verified-email` | android | Provides a complete workflow for implementing verified email retrieval |
+| `adaptive` | android | Instructions to make or update an app's UI so that it adapts to different |
+| `migrate-xml-views-to-jetpack-compose` | android | Provides a structured workflow for migrating an Android XML View to Jetpack |
+| `styles` | android | Use this skill to integrate the Jetpack Compose Styles API into an Android |
+| `navigation-3` | android | Learn how to install and migrate to Jetpack Navigation 3, and how to |
+| `r8-analyzer` | android | Analyzes Android build files and R8 keep rules to identify redundancies, |
+| `engage-sdk-integration` | android | Helps developers integrate, debug, and resolve Play Engage SDK implementation |
+| `play-billing-library-version-upgrade` | android | Use this skill when upgrading or migrating an Android project from any |
+| `perfetto-sql` | android | Translates natural language data intents into syntactically valid Perfetto |
+| `perfetto-trace-analysis` | android | Analyzes Perfetto traces to find the root cause of latency, memory, or |
+| `android-intent-security` | android | Best practices for Android Intent security. Use this skill when auditing |
+| `edge-to-edge` | android | Use this skill to migrate your Jetpack Compose app to add adaptive edge-to-edge |
+| `testing-setup` | android | Analyze and create a testing strategy for native Android apps - install |
+| `wear-compose-m3` | android | Expert guidance for working with Wear OS Compose Material3. Use this |
+| `display-glasses-with-jetpack-compose-glimmer` | android | Provides guidelines for developing projected Android XR apps for display |
