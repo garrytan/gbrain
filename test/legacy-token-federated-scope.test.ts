@@ -42,4 +42,13 @@ describe('parseLegacyTokenScope', () => {
   test('array with non-string junk is filtered to valid sources', () => {
     expect(parseLegacyTokenScope(['a', 5, '', 'b'])).toEqual({ sourceId: 'a', allowedSources: ['a', 'b'] });
   });
+
+  test("wildcard-only grant ['*'] → '*' read grant, scalar floor falls back to default (never '*')", () => {
+    // '*' is a READ grant; it must NOT become the scalar write floor.
+    expect(parseLegacyTokenScope(['*'])).toEqual({ sourceId: 'default', allowedSources: ['*'] });
+  });
+
+  test("wildcard mixed with a real source ['a','*'] → floor is the real source, grant keeps '*'", () => {
+    expect(parseLegacyTokenScope(['a', '*'])).toEqual({ sourceId: 'a', allowedSources: ['a', '*'] });
+  });
 });

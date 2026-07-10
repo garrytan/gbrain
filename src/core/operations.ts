@@ -394,6 +394,18 @@ export interface OperationContext {
 }
 
 /**
+ * A `'*'` entry in a federated_read grant is an explicit, admin-issued
+ * "read every source" wildcard. READ SCOPE ONLY — writes always use the scalar
+ * source floor, never this. It must be set deliberately (e.g.
+ * `gbrain auth register-client --scopes read --federated-read '*'`); an
+ * empty/garbage grant NEVER widens to all (that fail-closed contract is what the
+ * v0.42.37 hardening restored). Solves the static-grant problem: one wildcard
+ * grant covers every source, present AND future, so newly-synced repos are
+ * readable immediately with nothing to re-issue.
+ */
+export const ALL_SOURCES_WILDCARD = '*';
+
+/**
  * v0.34.1 (#861, D9 — P0 leak seal): resolve the source-scope filter for a
  * read-side op handler. Returns an opts fragment ready to spread into the
  * engine call.
@@ -416,6 +428,10 @@ export interface OperationContext {
  */
 export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
   const allowed = ctx.auth?.allowedSources;
+  // A deliberate '*' grant spans every source (read scope). Checked BEFORE the
+  // generic array branch so it returns the no-filter shape, not a literal
+  // `source_id = ANY(['*'])` (which would match a nonexistent source named '*').
+  if (allowed && allowed.includes(ALL_SOURCES_WILDCARD)) return {};
   // Treat an empty `allowedSources: []` as "no federated read scope" — the
   // op-handler defers to scalar `ctx.sourceId` below. An attacker-controlled
   // value of `[]` MUST NOT widen scope to "all sources" by being interpreted
@@ -464,8 +480,9 @@ export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; s
  *       remote                           → the caller's grant (sourceScopeOpts)
  *   - explicit `source_id`:
  *       remote + federated grant that doesn't include it → permission_denied
+ *       (UNLESS the grant holds the '*' wildcard, which permits any source)
  *       otherwise                                        → `{ sourceId }`
- *   - neither → the caller's grant (sourceScopeOpts).
+ *   - neither → the caller's grant (sourceScopeOpts; '*' grant → spans all).
  *
  * `code_traversal_cache_clear` is intentionally NOT a caller — it is localOnly
  * and carries its own destructive D8 all_sources guard.
@@ -481,7 +498,10 @@ export function resolveRequestedScope(
   }
   if (sourceIdParam !== undefined) {
     const allowed = ctx.auth?.allowedSources;
-    if (ctx.remote !== false && allowed && allowed.length > 0 && !allowed.includes(sourceIdParam)) {
+    // A '*' wildcard grant permits narrowing to ANY single source, so skip the
+    // out-of-grant rejection for it.
+    const wildcard = !!allowed && allowed.includes(ALL_SOURCES_WILDCARD);
+    if (ctx.remote !== false && allowed && allowed.length > 0 && !wildcard && !allowed.includes(sourceIdParam)) {
       throw new OperationError(
         'permission_denied',
         `source '${sourceIdParam}' is outside your granted sources`,

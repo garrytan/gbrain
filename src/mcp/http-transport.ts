@@ -28,7 +28,7 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { operations } from '../core/operations.ts';
+import { operations, ALL_SOURCES_WILDCARD } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
