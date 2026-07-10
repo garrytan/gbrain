@@ -89,6 +89,45 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
+/**
+ * Retry a chat provider call ONLY when the default wall-clock timeout backstop
+ * fires (a transient slow/contended provider moment — e.g. the local seat-proxy
+ * under overnight embedder+extraction load). The AI SDK's `maxRetries` covers
+ * transient HTTP errors (429/5xx) but NOT an abort, so before this a single slow
+ * moment killed the whole call — that's what timed out 10 of 21 pages in a dream
+ * extract_atoms run. A CALLER-initiated abort (opts.abortSignal: budget cap,
+ * worker shutdown, a query deadline) is NEVER retried — that is an intentional
+ * cancellation. Each attempt rebuilds a FRESH timeout (the thunk re-runs
+ * withDefaultTimeout). Bounded backoff; no cost impact (seat-based, not metered).
+ */
+const CHAT_TIMEOUT_MAX_RETRIES = 2;      // up to 3 attempts total
+const CHAT_TIMEOUT_RETRY_BASE_MS = 750;  // 0.75s, then 1.5s (× 2**attempt)
+
+function isRetryableChatTimeout(err: unknown, callerSignal: AbortSignal | undefined): boolean {
+  if (callerSignal?.aborted) return false; // caller cancelled — respect it, never retry
+  const e = err as { name?: string; message?: string } | null;
+  const name = e?.name ?? '';
+  const msg = String(e?.message ?? '');
+  return name === 'TimeoutError' || name === 'AbortError' || /timed out|timeout/i.test(msg);
+}
+
+async function withChatTimeoutRetry<T>(
+  fn: () => Promise<T>,
+  callerSignal: AbortSignal | undefined,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= CHAT_TIMEOUT_MAX_RETRIES || !isRetryableChatTimeout(err, callerSignal)) throw err;
+      await new Promise(r => setTimeout(r, CHAT_TIMEOUT_RETRY_BASE_MS * 2 ** attempt));
+    }
+  }
+}
+
+/** Test seam for the chat timeout-retry helpers (v0.42.x). */
+export const __chatRetryTesting = { isRetryableChatTimeout, withChatTimeoutRetry, CHAT_TIMEOUT_MAX_RETRIES };
+
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
 // new default for embedding. Real-corpus benchmark across 20 queries:
@@ -2752,7 +2791,12 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   };
 
   try {
-    const result = await generateText({
+    // Retry-on-timeout wrapper (see withChatTimeoutRetry): a slow/contended
+    // provider moment aborts on the default deadline; the SDK won't retry an
+    // abort, so we do — with a fresh deadline each attempt. Caller aborts are
+    // NOT retried. reserve() already ran once above; budget is recorded once on
+    // the final outcome, so retries don't double-count.
+    const result = await withChatTimeoutRetry(() => generateText({
       model,
       system: opts.system,
       messages: toModelMessages(opts.messages) as any,
@@ -2762,7 +2806,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
-    });
+    }), opts.abortSignal);
 
     // Normalize blocks. Vercel SDK gives us `result.content` (an array of typed
     // parts) for v6+; fall back to text + toolCalls for older shapes.
