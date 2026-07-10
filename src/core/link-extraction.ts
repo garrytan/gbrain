@@ -28,7 +28,10 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+// 2026-07-10: bumped for the #2576 --stale nullResolver fix — sweeps before it
+// stamped pages with their bare wikilinks silently dropped; the bump re-flags
+// them so the fixed sweep re-extracts.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-10T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 

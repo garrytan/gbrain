@@ -1684,9 +1684,17 @@ async function extractStaleFromDB(
   // Batch mode = pg_trgm + exact only, NO per-name search fallback. The
   // resolution map sees ALL sources so qualified cross-source wikilinks resolve
   // even when --source-id scopes the stale SCAN.
-  const resolver = makeResolver(engine, { mode: 'batch' });
-  const nullResolver = { resolve: async () => null as string | null };
-  const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  //
+  // #2576 bug 1: ALWAYS the real resolver — extractPageLinks's opts gate which
+  // pass runs (`skipFrontmatter` for the frontmatter pass, `globalBasename` for
+  // the issue-#972 bare-wikilink pass). The former `includeFrontmatter ?
+  // resolver : nullResolver` ternary predates #972; the synthetic resolver has
+  // no `resolveBasenameMatches`, so the --stale sweep silently skipped basename
+  // resolution even with `link_resolution.global_basename` enabled, stamping
+  // pages as extracted with their bare wikilinks dropped. Mirrors
+  // extractLinksFromDB (including the codex-[P1] `sourceId` scoping).
+  const resolver = makeResolver(engine, { mode: 'batch', sourceId: sourceIdFilter });
+  const globalBasename = await isGlobalBasenameEnabled(engine);
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1718,7 +1726,8 @@ async function extractStaleFromDB(
     for (const page of rows) {
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
-        page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        page.slug, fullContent, page.frontmatter, page.type, resolver,
+        { skipFrontmatter: !includeFrontmatter, globalBasename },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
