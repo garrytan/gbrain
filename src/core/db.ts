@@ -159,6 +159,47 @@ export function getConnection(): ReturnType<typeof postgres> {
   return sql;
 }
 
+/**
+ * v0.42.2 (#1745): build + verify a configured postgres.js client for the
+ * module singleton. Shared by connect() (cold start) and
+ * rebuildConnection() (atomic swap) so both paths carry identical
+ * pooler-detection, timeout, and NOTICE-silencing semantics.
+ */
+async function createModuleClient(url: string): Promise<ReturnType<typeof postgres>> {
+  const prepare = resolvePrepare(url);
+  const timeouts = resolveSessionTimeouts();
+  const opts: Record<string, unknown> = {
+    max: resolvePoolSize(),
+    idle_timeout: 20,
+    connect_timeout: 10,
+    types: {
+      // Register pgvector type
+      bigint: postgres.BigInt,
+    },
+    // Silence postgres NOTICE-level messages by default ("relation already
+    // exists, skipping" floods stdout under idempotent CREATE statements
+    // during migrations + initSchema, and breaks stdout-parsing callers like
+    // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
+    onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
+  };
+  if (Object.keys(timeouts).length > 0) {
+    opts.connection = timeouts;
+  }
+  if (typeof prepare === 'boolean') {
+    opts.prepare = prepare;
+    if (!prepare) {
+      console.warn(
+        '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
+      );
+    }
+  }
+  const client = postgres(url, opts);
+  // Test connection
+  await client`SELECT 1`;
+  await setSessionDefaults(client);
+  return client;
+}
+
 export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
@@ -178,40 +219,8 @@ export async function connect(config: EngineConfig): Promise<void> {
   }
 
   try {
-    const prepare = resolvePrepare(url);
-    const timeouts = resolveSessionTimeouts();
-    const opts: Record<string, unknown> = {
-      max: resolvePoolSize(),
-      idle_timeout: 20,
-      connect_timeout: 10,
-      types: {
-        // Register pgvector type
-        bigint: postgres.BigInt,
-      },
-      // Silence postgres NOTICE-level messages by default ("relation already
-      // exists, skipping" floods stdout under idempotent CREATE statements
-      // during migrations + initSchema, and breaks stdout-parsing callers like
-      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
-      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
-    };
-    if (Object.keys(timeouts).length > 0) {
-      opts.connection = timeouts;
-    }
-    if (typeof prepare === 'boolean') {
-      opts.prepare = prepare;
-      if (!prepare) {
-        console.warn(
-          '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
-        );
-      }
-    }
-    sql = postgres(url, opts);
-
-    // Test connection
-    await sql`SELECT 1`;
+    sql = await createModuleClient(url);
     connectedUrl = url;
-
-    await setSessionDefaults(sql);
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;
@@ -222,6 +231,31 @@ export async function connect(config: EngineConfig): Promise<void> {
       'Check your connection URL in ~/.gbrain/config.json',
     );
   }
+}
+
+/**
+ * v0.42.2 (#1745): atomically rebuild the module singleton. Unlike
+ * disconnect()+connect(), there is NO window where `sql` is null, so
+ * concurrent getConnection() callers never see "connect() has not been
+ * called". Sequence: build + verify a NEW client first, swap the singleton
+ * reference, then drain the old pool in the background (postgres.js end()
+ * lets in-flight queries finish inside the drain timeout instead of dying
+ * against a torn-down reference).
+ *
+ * Fail-loud: if the fresh client cannot be built (auth failure, network
+ * partition), the error propagates AND the old pool is left untouched —
+ * strictly no worse than before the call. No-op when never connected
+ * (cold connect() owns that path).
+ */
+export async function rebuildConnection(): Promise<void> {
+  if (!sql || !connectedUrl) return; // never connected — nothing to swap
+  const fresh = await createModuleClient(connectedUrl);
+  const old = sql;
+  sql = fresh;
+  // Drain the old pool without blocking the caller's retry loop. 5s cap:
+  // anything still running after that was already doomed by whatever broke
+  // the pool in the first place.
+  void old.end({ timeout: 5 }).catch(() => { /* best-effort drain */ });
 }
 
 export async function disconnect(): Promise<void> {

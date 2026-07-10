@@ -2127,9 +2127,16 @@ export async function runCycle(
   // the cost of missing a successful write (next cycle will redo work).
   if (opts.sourceId && engine && !dryRun && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
-      await engine.updateSourceConfig(opts.sourceId, {
+      const stamped = await engine.updateSourceConfig(opts.sourceId, {
         last_full_cycle_at: new Date().toISOString(),
       });
+      // v0.42.2 (#1745 follow-on): updateSourceConfig returns false when the
+      // UPDATE matched zero rows (missing/renamed source, RLS-filtered row).
+      // Ignoring it produced a SILENTLY unstamped cycle: exit 0, freshness
+      // stale, no trace.  Loud or it did not happen.
+      if (!stamped) {
+        console.warn(`[cycle] last_full_cycle_at NOT stamped for source ${opts.sourceId}: UPDATE matched zero rows (source missing or not visible to this role). cycle_freshness will read stale despite this run.`);
+      }
     } catch (e) {
       // Best-effort; cycle already succeeded by the time we get here.
       console.warn(`[cycle] failed to write last_full_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);

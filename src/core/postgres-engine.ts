@@ -4647,16 +4647,34 @@ export class PostgresEngine implements BrainEngine {
   }
 
   /**
-   * Reconnect the engine by tearing down the current pool and creating a fresh one.
-   * No-ops if no saved config (module-singleton mode) or if already reconnecting.
+   * Reconnect the engine.  No-ops if never connected or already reconnecting.
+   *
+   * v0.42.2 (#1745): the two connection styles need OPPOSITE strategies.
+   * - 'instance' pools are engine-private: teardown + rebuild is safe.
+   * - 'module' style shares the db.ts singleton with EVERY other
+   *   module-style consumer in this process (cycle phases, sibling engines,
+   *   the minion supervisor's health loop).  The old disconnect()+connect()
+   *   path nulled that shared singleton mid-flight, opening a window where
+   *   concurrent getConnection() callers threw "connect() has not been
+   *   called" and in-flight sibling queries died with the pool — the #1745
+   *   cascade that killed the dream cycle's sync/synthesize phases.  The
+   *   fix is db.rebuildConnection(): build + verify the fresh client FIRST,
+   *   swap the reference, then drain the old pool.  No null window, ever.
+   *   (Note: the previous docstring claimed module mode no-ops here; it
+   *   never did — connect() saves config unconditionally, so the
+   *   destructive path was live.)
    */
   async reconnect(): Promise<void> {
     if (!this._savedConfig || this._reconnecting) return;
     this._reconnecting = true;
     try {
-      // Tear down old pool (best-effort — it may already be dead)
+      if (this._connectionStyle === 'module') {
+        await db.rebuildConnection();
+        return;
+      }
+      // Instance pool (engine-private): tear down old pool (best-effort —
+      // it may already be dead), then create a fresh one.
       try { await this.disconnect(); } catch { /* swallow */ }
-      // Create fresh pool
       await this.connect(this._savedConfig);
     } finally {
       this._reconnecting = false;
