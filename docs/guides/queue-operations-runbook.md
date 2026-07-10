@@ -23,16 +23,20 @@ container health), but its DB connection died (common behind a transaction
 pooler) and never came back, so it claims no jobs and finishes nothing. Jobs
 pile up with **0 active**. Liveness checks all pass; nothing crashes.
 
-As of v0.42.22.0 this self-heals — you usually won't have to do anything:
+The dead-pool path has self-healed since v0.42.22.0, so you usually won't have
+to do anything. Current managed-worker paths also share the same progress
+watchdog: standalone `gbrain jobs supervisor` and the worker embedded by
+`gbrain autopilot`:
 
 - **The worker exits on its own dead pool.** Under a supervisor, the worker's
   DB-liveness probe runs and self-exits (`db_dead`) after ~3 minutes; the
-  supervisor respawns it with a fresh pool.
-- **The supervisor restarts a worker that stops making progress.** If a queue
+  composing process respawns it with a fresh pool.
+- **The manager restarts a worker that stops making progress.** If a queue
   has claimable work, **0 live-lock active jobs**, and no completions for 15
-  minutes while the child is alive, the supervisor restarts it (covers stuck
-  handlers too, not just dead pools). Tune with `--wedge-restart-minutes` /
-  `--wedge-restart-checks` on `gbrain jobs supervisor` (0 disables).
+  minutes while the child is alive, its shared watchdog restarts it (covers
+  stuck handlers too, not just dead pools). Standalone deployments can tune
+  this with `--wedge-restart-minutes` / `--wedge-restart-checks` on
+  `gbrain jobs supervisor` (0 disables); autopilot uses the documented defaults.
 
 The signal is loud now — check either:
 
@@ -45,7 +49,12 @@ gbrain doctor --json | jq '.checks[] | select(.name == "wedged_queue")'
 stale completions). Manual fix if you ever need it:
 
 ```bash
-gbrain jobs supervisor stop && gbrain jobs supervisor start   # fresh pool
+# Standalone supervisor:
+gbrain jobs supervisor stop && gbrain jobs supervisor start
+
+# Canonical macOS autopilot install:
+launchctl kickstart -k gui/$(id -u)/com.gbrain.autopilot
+
 gbrain jobs retry <id>                                        # dead-lettered jobs
 ```
 

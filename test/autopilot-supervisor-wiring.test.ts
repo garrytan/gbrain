@@ -68,6 +68,16 @@ describe('autopilot.ts ↔ ChildWorkerSupervisor wiring', () => {
     expect(AUTOPILOT_SRC).toMatch(/maxCrashes:\s*5\b/);
   });
 
+  it('runs the shared progress watchdog around the managed worker', () => {
+    expect(AUTOPILOT_SRC).toContain('WorkerWedgeWatchdog');
+    expect(AUTOPILOT_SRC).toContain('deriveClaimableHandlerNames');
+    expect(AUTOPILOT_SRC).toContain('queryWedgeSignals');
+    expect(AUTOPILOT_SRC).toContain('wedgeWatchdog?.noteWorkerSpawned()');
+    expect(AUTOPILOT_SRC).toContain('wedgeWatchdog?.evaluate(signals)');
+    expect(AUTOPILOT_SRC).toContain("GBRAIN_SUPERVISED: '1'");
+    expect(AUTOPILOT_SRC).toContain('clearInterval(wedgeHealthTimer)');
+  });
+
   it('routes onMaxCrashesExceeded to autopilot.shutdown (not process.exit directly)', () => {
     // Pre-refactor: autopilot.ts called process.exit(1) directly when the
     // crash counter tripped, bypassing its own dispatch-loop cleanup and

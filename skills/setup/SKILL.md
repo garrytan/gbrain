@@ -298,9 +298,11 @@ What `gbrain autopilot --install` does:
   detected (use `--no-inject` to opt out).
 - On **Linux without systemd**: installs a crontab entry (every 5 min).
 
-Autopilot then supervises the Minions worker as a child process. Users get
-sync + extract + embed + backlinks + durable Postgres-backed job processing
-from ONE install step. No separate `gbrain jobs work` daemon to manage.
+Autopilot then supervises the Minions worker as a child process, including the
+same bounded alive-but-wedged progress watchdog used by the standalone
+supervisor. Users get sync + extract + embed + backlinks + durable
+Postgres-backed job processing from ONE install step. No separate
+`gbrain jobs work` daemon to manage.
 
 On PGLite, autopilot runs inline (PGLite's exclusive file lock blocks a
 separate worker process). Everything else still works.
