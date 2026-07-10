@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -263,6 +263,36 @@
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
       "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "firecrawl-build",
+      "description": "Integrate Firecrawl into application code whenever a product, agent, or workflow needs web data inside the app: web search, live search results, page scraping, structured extraction, or browser interaction. Use when building any feature tha",
+      "path": "firecrawl-build/SKILL.md"
+    },
+    {
+      "name": "firecrawl-build-interact",
+      "description": "Integrate Firecrawl `/interact` into product code for dynamic pages and browser actions after scraping. Use when a feature needs clicks, form fills, pagination, authentication-aware flows, or other multi-step interactions that plain `/scrap",
+      "path": "firecrawl-build-interact/SKILL.md"
+    },
+    {
+      "name": "firecrawl-build-onboarding",
+      "description": "Get Firecrawl credentials and SDK setup into a project. Use when an application needs `FIRECRAWL_API_KEY`, when an agent should add Firecrawl to `.env`, when the user wants to authenticate Firecrawl for app code, or when choosing the first ",
+      "path": "firecrawl-build-onboarding/SKILL.md"
+    },
+    {
+      "name": "firecrawl-build-scrape",
+      "description": "Integrate Firecrawl `/scrape` into product code for single-page extraction. Use when an app already has a URL and needs markdown, HTML, links, screenshots, metadata, or structured page output. Prefer this skill over broader crawl patterns w",
+      "path": "firecrawl-build-scrape/SKILL.md"
+    },
+    {
+      "name": "firecrawl-build-search",
+      "description": "Integrate Firecrawl `/search` into product code and agent workflows. Use when an app needs discovery before extraction, when the feature starts with a query instead of a URL, or when the system should search the web and optionally hydrate r",
+      "path": "firecrawl-build-search/SKILL.md"
+    },
+    {
+      "name": "firecrawl-research-index",
+      "description": "Find the papers that answer a research query with Firecrawl Research, using semantic search, semantic and structural expansion, and in-body verification. Always use this skill for any literature-finding / paper-retrieval task — single-paper",
+      "path": "firecrawl-research-index/SKILL.md"
     }
   ],
   "dependencies": {
