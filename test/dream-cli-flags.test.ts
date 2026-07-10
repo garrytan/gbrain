@@ -9,6 +9,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import { shouldUseProbeOnlyConnection } from '../src/commands/dream.ts';
 
 const dreamSrc = readFileSync(new URL('../src/commands/dream.ts', import.meta.url), 'utf-8');
 
@@ -103,6 +104,19 @@ describe('dream CLI flag wiring', () => {
     test('declares archived-source guard', () => {
       expect(dreamSrc).toMatch(/source.*is archived/);
       expect(dreamSrc).toContain('gbrain sources restore');
+    });
+  });
+
+  describe('migration-free connection gate', () => {
+    test('enables probe-only only for propose_takes dry-run', () => {
+      expect(shouldUseProbeOnlyConnection(['--phase', 'propose_takes', '--dry-run'])).toBe(true);
+      expect(shouldUseProbeOnlyConnection(['--dry-run', '--phase', 'propose_takes'])).toBe(true);
+    });
+
+    test('preserves normal connection semantics for every neighboring shape', () => {
+      expect(shouldUseProbeOnlyConnection(['--phase', 'propose_takes'])).toBe(false);
+      expect(shouldUseProbeOnlyConnection(['--phase', 'lint', '--dry-run'])).toBe(false);
+      expect(shouldUseProbeOnlyConnection(['--dry-run'])).toBe(false);
     });
   });
 

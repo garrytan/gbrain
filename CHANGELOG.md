@@ -4,10 +4,10 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.42.59.0] - 2026-07-10
 
-**`gbrain dream --phase propose_takes --dry-run` now previews the phase without acquiring a cycle lock, spending model budget, or changing the brain.** The phase still scans eligible pages and cache state, but it stops before model extraction and every write surface. Mixed dry-run cycles keep their existing lock semantics for the other selected phases.
+**`gbrain dream --phase propose_takes --dry-run` now previews the phase without automatic schema migration, a GBrain cycle lock, model budget, or persisted phase output.** The phase still scans eligible pages and cache state, but it stops before model extraction and every phase-owned write surface. Mixed dry-run cycles keep their existing lock semantics for the other selected phases. On PGLite, the backend data-directory connection lock still applies; this change skips the dream cycle's file/database lock, not PGLite's single-process safety lock.
 
 ### Fixed
-- **`propose_takes` is read-only when dry-run is requested through either the cycle or direct phase API.** A propose-takes-only cycle no longer acquires file or database cycle locks, appends budget-audit entries, calls the proposal model, inserts `take_proposals`, creates extract-receipt pages, or updates extract rollups. Normal runs continue to perform all of those operations.
+- **`propose_takes` is read-only when dry-run is requested through either the cycle or direct phase API.** The exact `gbrain dream --phase propose_takes --dry-run` CLI path also uses a probe-only connection, so it does not run pending schema migrations before the phase. A propose-takes-only cycle no longer acquires file or database cycle locks, appends budget-audit entries, calls the proposal model, inserts `take_proposals`, creates extract-receipt pages, or updates extract rollups. Normal runs continue to perform all of those operations.
 
 ### To take advantage of v0.42.59.0
 `gbrain upgrade`. No migration or configuration change is required.
