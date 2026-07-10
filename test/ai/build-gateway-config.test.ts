@@ -85,3 +85,35 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
     );
   });
 });
+
+describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
+  test('an empty-string process.env value does NOT clobber a valid config-plane key', async () => {
+    // Claude Code injects ANTHROPIC_API_KEY='' to neuter subprocess LLM calls.
+    await withEnv({ ANTHROPIC_API_KEY: '' }, async () => {
+      const cfg = buildGatewayConfig({
+        anthropic_api_key: 'sk-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.ANTHROPIC_API_KEY).toBe('sk-config-plane');
+    });
+  });
+
+  test('a real process.env value still wins over the config-plane fallback', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        anthropic_api_key: 'sk-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.ANTHROPIC_API_KEY).toBe('sk-env-plane');
+    });
+  });
+
+  test("legitimate falsy-but-present values ('0' / 'false') are preserved, not dropped", async () => {
+    await withEnv(
+      { GBRAIN_TEST_ZERO_VAL: '0', GBRAIN_TEST_FALSE_VAL: 'false' },
+      async () => {
+        const cfg = buildGatewayConfig(baseConfig);
+        expect(cfg.env.GBRAIN_TEST_ZERO_VAL).toBe('0');
+        expect(cfg.env.GBRAIN_TEST_FALSE_VAL).toBe('false');
+      },
+    );
+  });
+});

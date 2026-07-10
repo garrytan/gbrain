@@ -451,6 +451,18 @@ function isCustomDimValidForProvider(
     };
   }
 
+  // Passthrough tier (#2271): local / bring-your-own-backend recipes (ollama,
+  // llama-server, litellm) flag trust_custom_dims because the user knows their
+  // model's native dim and we can't enumerate every locally-pulled model. Trust
+  // the requested dim; the provider's /embeddings response-dim validation catches
+  // a genuine mismatch pre-storage. Runs AFTER Tier 1 (recipe dims_options) and
+  // Tier 2 (provider Matryoshka allowlists) so a recipe that DOES declare fixed
+  // options (e.g. openrouter) is still governed by those, and fixed-dim hosted
+  // providers (openai/voyage/zeroentropy) never reach here as valid.
+  if (recipe.touchpoints.embedding?.trust_custom_dims === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 3: provider not known to support custom dims at all.
   return {
     valid: false,

@@ -6,7 +6,7 @@ import type { Recipe } from '../types.ts';
  * gbrain at it via `LITELLM_BASE_URL`. The proxy normalizes to
  * OpenAI-compatible API.
  *
- * See docs/guides/litellm-proxy.md for the setup recipe.
+ * See docs/integrations/embedding-providers.md for the setup recipe.
  */
 export const litellmProxy: Recipe = {
   id: 'litellm',
@@ -25,6 +25,7 @@ export const litellmProxy: Recipe = {
       models: [],
       user_provided_models: true, // v0.32 D8=A wire-through for the litellm hardcode
       default_dims: 0, // user must declare --embedding-dimensions explicitly
+      trust_custom_dims: true, // #2271: proxy-backed model dim is user-declared
       cost_per_1m_tokens_usd: undefined,
       price_last_verified: '2026-04-20',
       // LiteLLM's batch capacity is determined by the backend it proxies;
@@ -41,5 +42,5 @@ export const litellmProxy: Recipe = {
       supports_multimodal: true,
     },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL (include the /v1 suffix if your proxy serves the OpenAI route there, e.g. http://localhost:4000/v1) + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
 };

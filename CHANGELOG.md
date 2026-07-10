@@ -2,11 +2,51 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.42.57.0] - 2026-07-06
+## [0.42.59.0] - 2026-07-10
+
+A correctness + reliability wave, most of it surfaced on a local-Postgres / seat-proxy (LiteLLM) single-user setup where several code paths had latent bugs that a raw-Anthropic-key setup never exercised.
 
 ### Fixed
-- **`get_page` and `resolve_slugs` now honor a per-call source override.** Previously, a scoped `query` call could hand back a page from a non-default source that a follow-up `get_page` on the same connection could never resolve — the op had no way to be told which source to look in. `get_page` now accepts an optional `source_id` parameter (mirroring `query`'s), including `"__all__"` for trusted local callers to search across every source. `resolve_slugs` is now source-scoped too, so a scoped caller no longer sees cross-source slug matches leak into its results.
-- **`gbrain schema sync` no longer misreports a prefix as "dead" when its pages are already typed.** The dry-run probe used to conflate "no pages exist under this prefix" with "pages exist here but none are untyped" — both reported as `dead_prefix`, hiding a real backfill target (e.g. pages retyped by a prior migration) behind what looked like a typo'd or nonexistent prefix. The sync result now distinguishes `dead_prefix` (genuinely no matching pages) from a new `all_already_typed` flag (pages exist, nothing left to backfill), and surfaces a probe SQL error as `probe_error` instead of silently reporting a false zero count.
+- **`get_page` and `resolve_slugs` now honor a per-call source override.** A scoped `query` could hand back a page from a non-default source that a follow-up `get_page` on the same connection could never resolve — the op had no way to be told which source to look in. `get_page` now accepts an optional `source_id` (mirroring `query`'s), including `"__all__"` for trusted local callers. `resolve_slugs` is source-scoped too.
+- **`list_pages` honors a per-call `source_id`.** Same gap as `get_page`: it silently scoped to the caller's ambient default source. Now routed through the same grant-checked resolver; omitted → prior behavior (the source-isolation seal holds).
+- **`gbrain schema sync` no longer misreports a prefix as "dead" when its pages are already typed.** Distinguishes `dead_prefix` (no matching pages) from a new `all_already_typed` flag, and surfaces a probe SQL error as `probe_error` instead of a false zero count.
+- **`extract_facts` no longer wedges forever on structurally-unfenceable legacy facts.** The empty-fence guard blocked the phase on any `row_num IS NULL` fact, but v0.32.2 can never fence a row whose source has a NULL `local_path` (federated `import --source-id` sources) — so the phase blocked every cycle, pointing at an `apply-migrations` remedy that no-ops. Those rows are now excluded from the guard count, mirroring the existing NULL-`entity_slug` exclusion (both are structurally unfenceable and survive every reconcile).
+- **v0.32.2 migration reports unfenceable rows instead of silently self-certifying `complete`.** Phase B returned `complete` having fenced zero of a non-empty backlog when every row's source lacked a local_path — the silent self-cert that wedged `extract_facts` above. It now keeps `complete` (those rows are permanently unfenceable; `partial` would re-run forever) but reports the backlog in the phase detail and via a `console.warn`.
+- **`get_calibration_profile` is BigInt-safe and `takes_list` respects its holder filter.** The profile read threw "cannot serialize BigInt" on the populated path; `takes_list` returned `[]` for a valid holder via a holder-fallback gap.
+- **`calibration_profile` honors its holder and rejects leaked scaffolding.** The cycle always invoked the phase with an empty opts object, so it generated for the default holder regardless of the configured target; and a thin scorecard leaked the model's clarifying-question chain-of-thought straight into `pattern_statements`. The phase now reads the holder from the environment and filters clarifying-question / scaffolding shapes out of the statements.
+- **The calibration voice-gate judge uses the configured chat model, not a hardcoded bare id.** It hardcoded a provider-prefix-less `claude-haiku-4-5` (rejected by model resolution, and anthropic-only — unreachable on a proxy-only setup). It now resolves the configured default via `chat()`. Latent until now because the cold-brain branch short-circuits before the gate runs for holders with <5 resolved takes.
+- **`synthesize_concepts` attributes concepts to the dominant atom source, not `default`.** Concept pages were stranded in the unbacked `default` source.
+- **Chat provider calls retry on the default-timeout abort.** The wall-clock timeout backstop aborts a slow call, and the AI SDK's `maxRetries` doesn't retry an abort — so a transient slow/contended provider moment killed the call outright. Bounded retry (≤3 attempts, 0.75s→1.5s backoff), fresh deadline per attempt, fires ONLY on the default-timeout abort; a caller-initiated abort (budget cap / shutdown / query deadline) is never retried.
+
+### To take advantage of v0.42.59.0
+`gbrain upgrade`. No migration.
+
+## [0.42.58.0] - 2026-07-06
+
+**gbrain now runs cleanly on the stack you already have — a local Ollama box, a self-hosted LiteLLM proxy, llama.cpp's llama-server, or gbrain running as a Claude Code MCP subprocess — instead of silently degrading or hard-failing when you're not on a raw OpenAI/Anthropic key.** A provider-agnostic plumbing pass across the AI gateway: environment handling, base-URL normalization, and embedding-dimension validation all stop tripping on the non-frontier-vendor setups that used to fail without a clear signal.
+
+### Fixed
+- **Running gbrain as a Claude Code MCP subprocess no longer breaks every AI call.** Some hosts inject an empty `ANTHROPIC_API_KEY` into the subprocess environment; that empty value used to override a real key set in your `~/.gbrain/config.json`, so every gateway call failed with a missing-key error. Empty environment values no longer clobber a configured key. (#1249)
+- **A custom Anthropic or OpenAI base URL without a `/v1` suffix no longer 404s.** When the base URL comes from the environment as a bare host, gbrain normalizes it before the call instead of posting to a path the provider doesn't serve. Unset base URLs are untouched, so the default hosted endpoints are unaffected. (#1250)
+- **Vector search stops silently going dark on a LiteLLM or llama-server embedding model.** A model-availability check was rejecting user-provided embedding recipes even when a model was configured, quietly disabling vector search so results looked empty. The check now validates what actually matters — that a dimension is set — and reports a clear, actionable message when it isn't. (#1292, #2295)
+- **Local embedding models with non-standard dimensions are accepted.** Ollama, llama-server, and LiteLLM models (e.g. modern 1024- or 4096-dimension embedders) no longer get hard-rejected by the dimension validator; you declare the dimension and gbrain trusts it. Hosted fixed-dimension providers stay strictly validated. Modern Ollama embed models are recognized. (#2271)
+
+### Changed
+- **LiteLLM setup guidance now names the `/v1` path convention** so OpenAI-shaped proxies that only serve the `/v1` route don't fail authentication with no hint. (#2209)
+
+### To take advantage of v0.42.58.0
+`gbrain upgrade`. If you run on Ollama, a LiteLLM proxy, llama-server, or as a Claude Code MCP subprocess, the fixes apply automatically — no migration, no config change. If you use a user-provided embedding recipe (LiteLLM / llama-server) and see a "no default embedding dimension" message, set it with `gbrain init --embedding-dimensions <N>`.
+
+## [0.42.57.0] - 2026-07-02
+
+**PGLite incident fix: a busy `gbrain dream` (or `embed`) could have its data-directory lock stolen and get its brain corrupted beyond in-place repair. The lock will no longer be taken from a process that is alive, and an already-corrupted store now tells you exactly how to recover.**
+
+### Fixed
+- **A live PGLite holder is never stolen.** The data-directory lock used to be reaped if the holder's heartbeat went stale past a grace window. But the heartbeat runs on the JS event loop, which is blocked during long synchronous WASM imports/checkpoints, so a genuinely working `gbrain dream`/`embed` could look stale while fully alive. Reaping it let a second process open the same store and corrupt the catalog + pgvector extension (surfacing later as `relation "content_chunks" does not exist` / `type "vector" does not exist`, only recoverable by wipe-and-restore). The lock is now reaped only when the holder process is actually dead; a wedged-but-alive or PID-reused holder makes the acquire time out with a clear message naming the PID, instead of risking corruption.
+- **A corrupted PGLite store now explains how to recover.** When the store's catalog or pgvector extension can no longer load, the error names the cause and points at `gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>` (or restoring a backup), instead of the unrelated "macOS WASM bug" hint. It also notes that deleting the lock dir or `postmaster.pid` does not fix it.
+
+### To take advantage of v0.42.57.0
+`gbrain upgrade`. No migration. New corruption is prevented going forward. A brain already corrupted by a prior concurrent open cannot be repaired in place; the upgraded error message walks you through `gbrain reinit-pglite` or restoring a backup.
 
 ## [0.42.56.0] - 2026-07-02
 
