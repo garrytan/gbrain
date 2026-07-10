@@ -1627,7 +1627,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // pullRepo's own 300s default). The catch below distinguishes
       // timeout (ETIMEDOUT / SIGTERM on err.cause) from ordinary pull
       // failure.
-      pullRepo(repoPath);
+      // Allow the file transport ONLY for the trusted local durability origin:
+      // the default brain source (its origin is the gbrain bare repo under
+      // GBRAIN_HOME). pullRepo re-verifies the origin is local AND contained
+      // under the trusted root, so federated https sources keep full SSRF
+      // hardening. Fixes the autopilot git_pull loop ("transport 'file' not allowed").
+      pullRepo(repoPath, {
+        allowLocalFileOrigin: !opts.sourceId || opts.sourceId === DEFAULT_SOURCE_ID,
+      });
       serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
