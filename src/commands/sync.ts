@@ -2677,6 +2677,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //     pin..HEAD diff. Advance to pin.
   //   - pin NOT an ancestor of HEAD (history REWRITE / reset / force-push) →
   //     the tree we imported against is gone. Block; do not advance.
+  let headVerificationSucceeded = false;
   try {
     const currentHead = git(repoPath, ['rev-parse', 'HEAD']);
     if (currentHead !== pin) {
@@ -2692,8 +2693,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           path: '<head>',
           error: `git history rewritten during sync: pinned target ${pin.slice(0, 8)} is no longer an ancestor of HEAD ${currentHead.slice(0, 8)}`,
         });
+      } else {
+        headVerificationSucceeded = true;
       }
       // else: forward progress (enrich committed on top) — safe, advance to pin.
+    } else {
+      headVerificationSucceeded = true;
     }
   } catch (e) {
     // rev-parse failure is itself a drift signal (worktree disappeared).
@@ -2739,6 +2744,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     ...succeededPaths,
     ...filtered.deleted,
     ...filtered.renamed.map(r => r.from),
+    // A prior transient rev-parse timeout records a hard-blocking sentinel that
+    // operators cannot acknowledge manually. Once pin ancestry is verified on
+    // a later run, clear that stale sentinel through the ordinary success path.
+    ...(headVerificationSucceeded ? ['<head>'] : []),
   ];
 
   const gate = await applySyncFailureGate({
