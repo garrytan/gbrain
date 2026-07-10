@@ -5505,6 +5505,100 @@ export const MIGRATIONS: Migration[] = [
         WHERE dimension IS NOT NULL;
     `,
   },
+  {
+    version: 123,
+    name: 'take_proposals_claim_hash_and_scan_markers',
+    // v0.42.x — producer-side propose_takes correctness. The original
+    // `take_proposals_idempotency_idx` used proposal rows as the page-scan
+    // cache via UNIQUE(source_id, page_slug, content_hash, prompt_version), so
+    // claim #2+ from the same page/content/prompt hit ON CONFLICT DO NOTHING
+    // and disappeared. Split the two identities:
+    //   - take_proposal_scans caches completed page scans, including zero-claim
+    //     scans, by (source_id, page_slug, content_hash, prompt_version).
+    //   - take_proposals.claim_hash dedupes individual claims by normalized
+    //     claim_text + kind + holder, independent of content_hash/run/weight.
+    //
+    // Backfill parity: keep the md5(lower(trim/collapse-space claim) + kind +
+    // holder) expression in lockstep with proposalClaimHash() in
+    // src/core/cycle/propose-takes.ts. Legacy duplicate rows are salted after
+    // the first row so existing accepted/rejected audit rows survive while the
+    // canonical first row still blocks future duplicate proposals.
+    idempotent: true,
+    sql: `
+      ALTER TABLE take_proposals ADD COLUMN IF NOT EXISTS claim_hash TEXT;
+
+      WITH normalized AS (
+        SELECT
+          id,
+          source_id,
+          page_slug,
+          prompt_version,
+          lower(regexp_replace(trim(coalesce(claim_text, '')), '\\s+', ' ', 'g')) || chr(31) ||
+          lower(trim(coalesce(kind, ''))) || chr(31) ||
+          lower(trim(coalesce(holder, ''))) AS canonical_identity
+        FROM take_proposals
+        WHERE claim_hash IS NULL
+      ), ranked AS (
+        SELECT
+          id,
+          md5(canonical_identity) AS canonical_hash,
+          row_number() OVER (
+            PARTITION BY source_id, page_slug, prompt_version, md5(canonical_identity)
+            ORDER BY id
+          ) AS rn
+        FROM normalized
+      )
+      UPDATE take_proposals tp
+         SET claim_hash = CASE
+           WHEN ranked.rn = 1 THEN ranked.canonical_hash
+           ELSE md5(ranked.canonical_hash || chr(31) || 'legacy-duplicate:' || ranked.id::text)
+         END
+        FROM ranked
+       WHERE tp.id = ranked.id
+         AND tp.claim_hash IS NULL;
+
+      ALTER TABLE take_proposals ALTER COLUMN claim_hash SET NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS take_proposal_scans (
+        source_id       TEXT        NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        page_slug       TEXT        NOT NULL,
+        content_hash    TEXT        NOT NULL,
+        prompt_version  TEXT        NOT NULL,
+        scanned_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        proposal_run_id TEXT,
+        extracted_count INTEGER     NOT NULL DEFAULT 0,
+        inserted_count  INTEGER     NOT NULL DEFAULT 0,
+        model_id        TEXT,
+        PRIMARY KEY (source_id, page_slug, content_hash, prompt_version)
+      );
+
+      INSERT INTO take_proposal_scans
+        (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+         scanned_at, extracted_count, inserted_count, model_id)
+      SELECT
+        source_id,
+        page_slug,
+        content_hash,
+        prompt_version,
+        min(proposal_run_id),
+        min(proposed_at),
+        count(*)::int,
+        count(*)::int,
+        min(model_id)
+      FROM take_proposals
+      GROUP BY source_id, page_slug, content_hash, prompt_version
+      ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING;
+
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_claim_identity_idx
+        ON take_proposals (source_id, page_slug, prompt_version, claim_hash);
+      CREATE INDEX IF NOT EXISTS take_proposal_scans_recent_idx
+        ON take_proposal_scans (source_id, scanned_at DESC);
+      CREATE INDEX IF NOT EXISTS take_proposal_scans_run_id_idx
+        ON take_proposal_scans (proposal_run_id)
+        WHERE proposal_run_id IS NOT NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

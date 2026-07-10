@@ -19,6 +19,8 @@ import {
   runPhaseProposeTakes,
   parseExtractorOutput,
   contentHash,
+  canonicalProposalIdentity,
+  proposalClaimHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
   PROPOSE_TAKES_PROMPT_VERSION,
@@ -38,10 +40,11 @@ interface CapturedSql {
 
 function buildMockEngine(opts: {
   pages: Page[];
-  existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  existingScans?: Set<string>; // composite-key strings already in take_proposal_scans
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
-  const existing = opts.existingProposals ?? new Set<string>();
+  const existingScans = opts.existingScans ?? new Set<string>();
+  let nextId = 1;
 
   const engine = {
     kind: 'pglite',
@@ -51,14 +54,19 @@ function buildMockEngine(opts: {
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
       // SELECT idempotency check
-      if (sql.includes('SELECT id FROM take_proposals')) {
+      if (sql.includes('SELECT content_hash FROM take_proposal_scans')) {
         const [sourceId, slug, ch, pv] = params ?? [];
         const key = `${sourceId}|${slug}|${ch}|${pv}`;
-        if (existing.has(key)) return [{ id: 1 } as unknown as T];
+        if (existingScans.has(key)) return [{ content_hash: ch } as unknown as T];
         return [];
       }
-      // INSERT — return nothing
+      if (sql.includes('INSERT INTO take_proposals')) {
+        return [{ id: nextId++ } as unknown as T];
+      }
       return [];
+    },
+    async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+      return fn(engine as unknown as BrainEngine);
     },
   } as unknown as BrainEngine;
 
@@ -176,6 +184,23 @@ describe('contentHash', () => {
   });
 });
 
+// ─── proposalClaimHash ──────────────────────────────────────────────
+
+describe('proposalClaimHash', () => {
+  test('canonicalizes claim identity exactly for runtime/backfill parity', () => {
+    const a = { claim_text: '  Same\n Claim   Text ', kind: 'take' as const, holder: ' Brain ' };
+    const b = { claim_text: 'same claim text', kind: 'take' as const, holder: 'brain' };
+    expect(canonicalProposalIdentity(a)).toBe('same claim text\x1ftake\x1fbrain');
+    expect(proposalClaimHash(a)).toBe(proposalClaimHash(b));
+  });
+
+  test('excludes confidence/domain/content metadata from identity', () => {
+    const a = { claim_text: 'Same claim', kind: 'bet' as const, holder: 'brain', weight: 0.4, domain: 'macro' };
+    const b = { claim_text: 'Same claim', kind: 'bet' as const, holder: 'brain', weight: 0.9, domain: 'pricing' };
+    expect(proposalClaimHash(a)).toBe(proposalClaimHash(b));
+  });
+});
+
 // ─── hasCompleteFence ───────────────────────────────────────────────
 
 describe('hasCompleteFence', () => {
@@ -256,21 +281,27 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(details.pages_scanned).toBe(1);
     expect(details.cache_misses).toBe(1);
     expect(details.cache_hits).toBe(0);
+    expect(details.proposals_extracted).toBe(1);
     expect(details.proposals_inserted).toBe(1);
 
     const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
     expect(inserts).toHaveLength(1);
-    expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
-    expect(inserts[0]!.params[6]).toBe('bet'); // kind
-    expect(inserts[0]!.params[9]).toBe('market'); // domain
+    expect(inserts[0]!.params[4]).toBe(proposalClaimHash({ claim_text: 'Marketplaces with cold-start liquidity win', kind: 'bet', holder: 'brain' }));
+    expect(inserts[0]!.params[6]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
+    expect(inserts[0]!.params[7]).toBe('bet'); // kind
+    expect(inserts[0]!.params[10]).toBe('market'); // domain
+    const scans = captured.filter(c => c.sql.includes('INSERT INTO take_proposal_scans'));
+    expect(scans).toHaveLength(1);
+    expect(scans[0]!.params[5]).toBe(1); // extracted_count
+    expect(scans[0]!.params[6]).toBe(1); // inserted_count
   });
 
-  test('cache hit: page already in take_proposals is skipped', async () => {
+  test('cache hit: page already in take_proposal_scans is skipped', async () => {
     const body = 'A page that was already processed.';
     const pages = [buildPage({ slug: 'wiki/old-page', body })];
     const ch = contentHash(body);
     const existing = new Set([`default|wiki/old-page|${ch}|${PROPOSE_TAKES_PROMPT_VERSION}`]);
-    const { engine, captured } = buildMockEngine({ pages, existingProposals: existing });
+    const { engine, captured } = buildMockEngine({ pages, existingScans: existing });
     let extractorCalled = false;
     const extractor: ProposeTakesExtractor = async () => {
       extractorCalled = true;
@@ -378,8 +409,8 @@ New prose appended here.`;
     await runPhaseProposeTakes(buildCtx(engine), { extractor });
     const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
     expect(inserts).toHaveLength(2);
-    const runIdA = inserts[0]!.params[4];
-    const runIdB = inserts[1]!.params[4];
+    const runIdA = inserts[0]!.params[5];
+    const runIdB = inserts[1]!.params[5];
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);

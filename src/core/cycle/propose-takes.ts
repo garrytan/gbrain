@@ -6,10 +6,11 @@
  * `take_proposals` queue. User accepts/rejects via `gbrain takes propose`.
  *
  * Idempotency contract (D17 schema spec):
- *   The unique index on (source_id, page_slug, content_hash, prompt_version)
- *   means an unchanged page never re-spends LLM tokens. Bumping
- *   PROPOSE_TAKES_PROMPT_VERSION cleanly invalidates the cache so a tuned
- *   prompt re-runs proposals on every page.
+ *   `take_proposal_scans` is the page-scan cache keyed by
+ *   (source_id, page_slug, content_hash, prompt_version), so unchanged pages
+ *   never re-spend LLM tokens. Individual proposal rows use claim_hash identity
+ *   keyed by (source_id, page_slug, prompt_version, claim_hash), so a page may
+ *   persist multiple claims while reruns do not duplicate the same claim.
  *
  * F2 fence dedup:
  *   The phase reads the page's existing `<!-- gbrain:takes:begin -->` fence
@@ -151,6 +152,7 @@ export interface ProposeTakesResult {
   pages_scanned: number;
   cache_hits: number;
   cache_misses: number;
+  proposals_extracted: number;
   proposals_inserted: number;
   budget_exhausted: boolean;
   warnings: string[];
@@ -163,6 +165,24 @@ export interface ProposeTakesResult {
  */
 export function contentHash(pageBody: string): string {
   return createHash('sha256').update(pageBody).digest('hex');
+}
+
+/**
+ * Canonical proposal identity. Keep this in lockstep with migration v123's
+ * `claim_hash` backfill SQL. Excludes weight/model/run/content metadata so
+ * confidence jitter or page edits do not create duplicate same-claim proposals.
+ */
+export function canonicalProposalIdentity(p: Pick<ProposedTake, 'claim_text' | 'kind' | 'holder'>): string {
+  return [
+    p.claim_text.trim().replace(/\s+/g, ' ').toLowerCase(),
+    p.kind.trim().toLowerCase(),
+    p.holder.trim().toLowerCase(),
+  ].join('\x1f');
+}
+
+/** Deterministic claim identity hash used by runtime inserts and migration backfill. */
+export function proposalClaimHash(p: Pick<ProposedTake, 'claim_text' | 'kind' | 'holder'>): string {
+  return createHash('md5').update(canonicalProposalIdentity(p)).digest('hex');
 }
 
 /**
@@ -307,12 +327,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const modelId = opts.model ?? 'claude-sonnet-4-6';
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
       cache_misses: 0,
+      proposals_extracted: 0,
       proposals_inserted: 0,
       budget_exhausted: false,
       warnings: [],
@@ -342,11 +364,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
       const ch = contentHash(body);
       const existingTakes = extractExistingTakesForDedup(body);
 
-      // Idempotency check. If a row exists for (source_id, page_slug, content_hash,
-      // prompt_version), this page was already processed — skip and count as cache hit.
+      // Idempotency check. If a scan marker exists for (source_id, page_slug,
+      // content_hash, prompt_version), this page was already processed — skip
+      // and count as cache hit. Proposal row identity is separate so same-page
+      // multi-claim runs can persist every claim.
       const sourceId = page.source_id ?? scope.sourceId ?? 'default';
-      const cached = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM take_proposals
+      const cached = await engine.executeRaw<{ content_hash: string }>(
+        `SELECT content_hash FROM take_proposal_scans
          WHERE source_id = $1 AND page_slug = $2 AND content_hash = $3 AND prompt_version = $4
          LIMIT 1`,
         [sourceId, page.slug, ch, promptVersion],
@@ -359,7 +383,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
+        modelId,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -378,41 +402,64 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: modelId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
         continue;
       }
+      result.proposals_extracted += proposals.length;
 
-      // Write proposals to take_proposals. Each row is a separate INSERT
-      // because the composite idempotency key is on the per-page tuple — a
-      // bulk UPSERT would collapse a same-page-multi-claim run into one row.
-      for (const p of proposals) {
-        await engine.executeRaw(
-          `INSERT INTO take_proposals
+      // Write proposals and the page-scan marker in one transaction. If the
+      // extractor succeeded but persistence fails, we must NOT mark the page as
+      // scanned; otherwise future cycles would skip data that never landed.
+      const insertedForPage = await engine.transaction(async (tx) => {
+        let inserted = 0;
+        for (const p of proposals) {
+          const rows = await tx.executeRaw<{ id: number }>(
+            `INSERT INTO take_proposals
+               (source_id, page_slug, content_hash, prompt_version, claim_hash, proposal_run_id,
+                claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             ON CONFLICT (source_id, page_slug, prompt_version, claim_hash) DO NOTHING
+             RETURNING id`,
+            [
+              sourceId,
+              page.slug,
+              ch,
+              promptVersion,
+              proposalClaimHash(p),
+              proposalRunId,
+              p.claim_text,
+              p.kind,
+              p.holder,
+              p.weight,
+              p.domain ?? null,
+              JSON.stringify(existingTakes),
+              modelId,
+            ],
+          );
+          if (rows.length > 0) inserted += 1;
+        }
+
+        await tx.executeRaw(
+          `INSERT INTO take_proposal_scans
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
-              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
-          [
-            sourceId,
-            page.slug,
-            ch,
-            promptVersion,
-            proposalRunId,
-            p.claim_text,
-            p.kind,
-            p.holder,
-            p.weight,
-            p.domain ?? null,
-            JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
-          ],
+              extracted_count, inserted_count, model_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO UPDATE
+             SET scanned_at = now(),
+                 proposal_run_id = EXCLUDED.proposal_run_id,
+                 extracted_count = EXCLUDED.extracted_count,
+                 inserted_count = EXCLUDED.inserted_count,
+                 model_id = EXCLUDED.model_id`,
+          [sourceId, page.slug, ch, promptVersion, proposalRunId, proposals.length, inserted, modelId],
         );
-        result.proposals_inserted += 1;
-      }
+
+        return inserted;
+      });
+      result.proposals_inserted += insertedForPage;
     }
 
     if (opts.reporter) opts.reporter.finish();
