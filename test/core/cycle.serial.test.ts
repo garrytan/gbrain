@@ -246,6 +246,43 @@ describe('runCycle — cycle lock acquire/release semantics', () => {
     const { rows } = await (sharedEngine as any).db.query('SELECT COUNT(*)::int AS n FROM gbrain_cycle_locks');
     expect(rows[0].n).toBe(0);
   });
+
+  test('dry-run propose_takes alone skips a live lock and leaves it untouched', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ('gbrain-cycle', 99999, 'other-host', NOW(), NOW() + INTERVAL '1 hour')`,
+    );
+
+    const report = await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain',
+      dryRun: true,
+      phases: ['propose_takes'],
+    });
+
+    expect(report.phases.map(p => p.phase)).toEqual(['propose_takes']);
+    expect(report.reason).not.toBe('cycle_already_running');
+    const { rows } = await (sharedEngine as any).db.query(
+      `SELECT holder_pid FROM gbrain_cycle_locks WHERE id = 'gbrain-cycle'`,
+    );
+    expect(rows).toEqual([{ holder_pid: 99999 }]);
+  });
+
+  test('dry-run propose_takes with another mutating phase still honors a live lock', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ('gbrain-cycle', 99999, 'other-host', NOW(), NOW() + INTERVAL '1 hour')`,
+    );
+
+    const report = await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain',
+      dryRun: true,
+      phases: ['propose_takes', 'sync'],
+    });
+
+    expect(report.status).toBe('skipped');
+    expect(report.reason).toBe('cycle_already_running');
+    expect(report.phases).toEqual([]);
+  });
 });
 
 // ─── Lock held by another live holder ──────────────────────────────

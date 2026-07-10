@@ -7,6 +7,7 @@
  *
  * Tests cover:
  *  - happy path: extracts proposals, writes via executeRaw with idempotency clause
+ *  - dry-run paths: skip model work and persistence for proposals, receipts, and rollups
  *  - cache hit path: skip pages already in take_proposals (F2 idempotency)
  *  - fence dedup: existing fence rows pass through to extractor as context
  *  - budget exhaustion mid-page: phase aborts cleanly with warn status
@@ -36,11 +37,17 @@ interface CapturedSql {
   params: unknown[];
 }
 
+interface CapturedPage {
+  slug: string;
+  page: unknown;
+}
+
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
-}): { engine: BrainEngine; captured: CapturedSql[] } {
+}): { engine: BrainEngine; captured: CapturedSql[]; capturedPages: CapturedPage[] } {
   const captured: CapturedSql[] = [];
+  const capturedPages: CapturedPage[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
 
   const engine = {
@@ -60,9 +67,12 @@ function buildMockEngine(opts: {
       // INSERT — return nothing
       return [];
     },
+    async putPage(slug: string, page: unknown) {
+      capturedPages.push({ slug, page });
+    },
   } as unknown as BrainEngine;
 
-  return { engine, captured };
+  return { engine, captured, capturedPages };
 }
 
 function buildPage(opts: { slug: string; body: string; sourceId?: string }): Page {
@@ -80,12 +90,12 @@ function buildPage(opts: { slug: string; body: string; sourceId?: string }): Pag
   } as Page;
 }
 
-function buildCtx(engine: BrainEngine): OperationContext {
+function buildCtx(engine: BrainEngine, dryRun = false): OperationContext {
   return {
     engine,
     config: {} as never,
     logger: { info() {}, warn() {}, error() {} } as never,
-    dryRun: false,
+    dryRun,
     remote: false,
     sourceId: 'default',
   };
@@ -245,7 +255,7 @@ describe('extractExistingTakesForDedup', () => {
 describe('runPhaseProposeTakes — phase integration', () => {
   test('happy path: scans pages, extracts proposals, writes via INSERT', async () => {
     const pages = [buildPage({ slug: 'wiki/concepts/network-effects', body: 'Marketplaces with cold-start liquidity always win.' })];
-    const { engine, captured } = buildMockEngine({ pages });
+    const { engine, captured, capturedPages } = buildMockEngine({ pages });
     const extractor: ProposeTakesExtractor = async () => [
       { claim_text: 'Marketplaces with cold-start liquidity win', kind: 'bet', holder: 'brain', weight: 0.7, domain: 'market' },
     ];
@@ -263,6 +273,54 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+    expect(capturedPages).toHaveLength(1);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO extract_rollup_7d'))).toHaveLength(1);
+  });
+
+  test('context dry-run skips budget checks, extraction, and persistence', async () => {
+    const pages = [buildPage({ slug: 'wiki/dry-run', body: 'This product bet will be obvious in a year.' })];
+    const { engine, captured, capturedPages } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    let budgetChecks = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls += 1;
+      return [{ claim_text: 'This product bet will be obvious in a year', kind: 'bet', holder: 'brain', weight: 0.7 }];
+    };
+    const meter = {
+      check() {
+        budgetChecks += 1;
+        return { allowed: true, estimatedCostUsd: 0, cumulativeCostUsd: 0, budgetUsd: 5 };
+      },
+    } as never;
+
+    const result = await runPhaseProposeTakes(buildCtx(engine, true), { extractor, meter });
+
+    expect(result.status).toBe('ok');
+    expect(budgetChecks).toBe(0);
+    expect(extractorCalls).toBe(0);
+    expect((result.details as Record<string, unknown>).proposals_inserted).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+    expect(capturedPages).toHaveLength(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO extract_rollup_7d'))).toHaveLength(0);
+  });
+
+  test('phase-option dry-run skips extraction and persistence', async () => {
+    const pages = [buildPage({ slug: 'wiki/dry-run-option', body: 'This market will compress in 18 months.' })];
+    const { engine, captured, capturedPages } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls += 1;
+      return [{ claim_text: 'This market will compress in 18 months', kind: 'take', holder: 'brain', weight: 0.6 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, dryRun: true });
+
+    expect(result.status).toBe('ok');
+    expect(extractorCalls).toBe(0);
+    expect((result.details as Record<string, unknown>).proposals_inserted).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+    expect(capturedPages).toHaveLength(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO extract_rollup_7d'))).toHaveLength(0);
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {

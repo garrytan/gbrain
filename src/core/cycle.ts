@@ -1444,7 +1444,13 @@ export async function runCycle(
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // Decide if we need the cycle lock: any state-mutating phase in the selection.
-  const needsLock = phases.some(p => NEEDS_LOCK_PHASES.has(p));
+  // propose_takes dry-run exits before budget checks, model calls, and every
+  // persistence surface, so that single phase no longer needs coordination.
+  // Other dry-run phases keep their existing lock semantics because their
+  // preview contracts vary and may still use caches or other guarded state.
+  const needsLock = phases.some(p =>
+    NEEDS_LOCK_PHASES.has(p) && !(dryRun && p === 'propose_takes')
+  );
 
   let lock: LockHandle | null = null;
   if (needsLock) {

@@ -300,9 +300,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
   protected async process(
     engine: BrainEngine,
     scope: ScopedReadOpts,
-    _ctx: OperationContext,
+    ctx: OperationContext,
     opts: ProposeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
+    const dryRun = ctx.dryRun === true || opts.dryRun === true;
     const extractor = opts.extractor ?? defaultExtractor;
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
@@ -356,6 +357,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
       result.cache_misses += 1;
+      if (dryRun) continue;
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
@@ -420,7 +422,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
     // via the read scope. Receipt only when proposals actually written.
     const sourceIdForReceipt = scope.sourceId ?? 'default';
-    if (result.proposals_inserted > 0) {
+    if (!dryRun && result.proposals_inserted > 0) {
       try {
         await writeReceipt(engine, {
           kind: 'takes.proposed',
@@ -438,12 +440,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
         console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
       }
     }
-    await upsertExtractRollup(engine, {
-      kind: 'takes.proposed',
-      source_id: sourceIdForReceipt,
-      round_completed_delta: result.budget_exhausted ? 0 : 1,
-      halt_delta: result.budget_exhausted ? 1 : 0,
-    });
+    if (!dryRun) {
+      await upsertExtractRollup(engine, {
+        kind: 'takes.proposed',
+        source_id: sourceIdForReceipt,
+        round_completed_delta: result.budget_exhausted ? 0 : 1,
+        halt_delta: result.budget_exhausted ? 1 : 0,
+      });
+    }
 
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
