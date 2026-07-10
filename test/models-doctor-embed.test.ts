@@ -53,6 +53,6 @@ describe('models doctor — embedding reachability probe (v0.40.x)', () => {
     expect(runIdx).toBeGreaterThan(0);
     const slice = src.slice(runIdx, runIdx + 700);
     expect(slice).toContain("const subArg = args[0] === 'models' ? args[1] : args[0]");
-    expect(slice).toContain("subArg === 'doctor' ? 'doctor'");
+    expect(slice).toMatch(/subArg === 'doctor'\s*\?\s*'doctor'/);
   });
 });

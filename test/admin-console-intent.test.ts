@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
 import { buildDreamCommand, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
@@ -111,14 +112,15 @@ describe('admin console intent planning', () => {
   });
 
   test('import path resolves registered source by local_path prefix', async () => {
+    const sourceRoot = join(process.cwd(), 'fixtures', 'registered-source');
     const engine = {
       executeRaw: async () => [
         { id: 'default', name: 'default', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
-        { id: 'dingdan-qingdan', name: 'dingdan-qingdan', local_path: 'D:\\duwu\\youdao\\订单+清单项目', last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+        { id: 'dingdan-qingdan', name: 'dingdan-qingdan', local_path: sourceRoot, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
       ],
     } as any;
 
-    const sourceId = await resolveImportSourceIdForPath(engine, 'D:\\duwu\\youdao\\订单+清单项目\\项目管理.md');
+    const sourceId = await resolveImportSourceIdForPath(engine, join(sourceRoot, 'project-management.md'));
 
     expect(sourceId).toBe('dingdan-qingdan');
   });
