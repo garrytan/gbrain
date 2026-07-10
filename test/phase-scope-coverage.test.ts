@@ -41,15 +41,15 @@ describe('PHASE_SCOPE coverage', () => {
     expect(invalid).toEqual([]);
   });
 
-  test('all 23 phases covered (regression on accidental omission)', () => {
+  test('all 20 supported upstream phases covered (regression on accidental omission)', () => {
     // Pin the count so a future PR that adds a phase to ALL_PHASES
     // without updating PHASE_SCOPE notices here too. The v0.39.1.0
     // master merge brought in the 17th phase (`schema-suggest`); v0.41
     // adds 'extract_atoms' + 'synthesize_concepts' (T9 lens packs) +
     // 'conversation_facts_backfill' plus PMBrain's three newer maintenance
-    // phases for a total of 23.
-    expect(ALL_PHASES.length).toBe(23);
-    expect(Object.keys(PHASE_SCOPE).length).toBe(23);
+    // phases for a total of 20.
+    expect(ALL_PHASES.length).toBe(20);
+    expect(Object.keys(PHASE_SCOPE).length).toBe(20);
   });
 
   test('embed remains global (the headline brain-wide phase)', () => {

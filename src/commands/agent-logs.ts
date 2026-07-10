@@ -51,7 +51,7 @@ export async function runAgentLogs(
     // Break on terminal job status so --follow exits once the run is done.
     const status = await readJobStatus(engine, jobId);
     if (status && TERMINAL_STATUSES.has(status)) {
-      write(`\n[gbrain agent] job ${jobId} reached terminal state: ${status}\n`);
+      write(`\n[pmbrain agent] job ${jobId} reached terminal state: ${status}\n`);
       return;
     }
   }

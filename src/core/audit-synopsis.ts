@@ -121,7 +121,7 @@ export function logSynopsisFailure(args: LogSynopsisFailureArgs): void {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[gbrain] synopsis-failure audit write failed (${msg}); page ${args.pageSlug} continues\n`,
+      `[pmbrain] synopsis-failure audit write failed (${msg}); page ${args.pageSlug} continues\n`,
     );
   }
 }

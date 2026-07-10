@@ -102,7 +102,7 @@ export function readRecentRerankFailures(days = 7, now: Date = new Date()): Rera
 // stderr label "gbrain" + qualifier "rerank-failure audit " preserve the
 // pre-v0.40.4 message byte-for-byte:
 //
-//   `[gbrain] rerank-failure audit write failed (${msg}); search continues`
+//   `[pmbrain] rerank-failure audit write failed (${msg}); search continues`
 //
 // The `errorMessagePrefix` option on createAuditWriter restores the
 // qualifier that would otherwise be dropped by the refactor. Operators

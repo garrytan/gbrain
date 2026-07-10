@@ -49,6 +49,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { dreamModelDetails, resolveDreamModel } from './model-routing.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 
@@ -273,6 +274,8 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
+  const resolvedModel = await resolveDreamModel(engine, { phase: 'extract_atoms' });
+  const modelDetails = dreamModelDetails(resolvedModel, 'single_chat');
 
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
@@ -364,6 +367,7 @@ export async function runPhaseExtractAtoms(
       duration_ms: 0,
       summary: 'extract_atoms: no transcripts or pages to process',
       details: {
+        ...modelDetails,
         reason: 'no_work',
         source_id: sourceId,
         atoms_extracted: 0,
@@ -425,6 +429,7 @@ export async function runPhaseExtractAtoms(
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     try {
       const result = await chat({
+        model: resolvedModel.model,
         system: EXTRACT_PROMPT,
         messages: [
           {
@@ -545,6 +550,7 @@ export async function runPhaseExtractAtoms(
         ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
         : ''),
     details: {
+      ...modelDetails,
       atoms_extracted: totalAtomsExtracted,
       transcripts_processed: transcriptsProcessed,
       transcripts_total: transcripts.length,

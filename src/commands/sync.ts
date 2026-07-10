@@ -891,11 +891,11 @@ function buildPartialResult(opts: {
 async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // v0.41.8.0 (D9 / #1342): phase breadcrumbs. The #1342 reporter saw
   // ZERO stderr output before their sync hang, which made the bug
-  // impossible to triage. Mirror the existing `[gbrain phase] sync.git_pull`
+  // impossible to triage. Mirror the existing `[pmbrain phase] sync.git_pull`
   // pattern at the major phase boundaries so the next #1342-shaped
   // report names WHICH phase spun. Doesn't fix #1342 but converts
   // "hung with no output" into actionable diagnostic data.
-  serr(`[gbrain phase] sync.resolve_repo`);
+  serr(`[pmbrain phase] sync.resolve_repo`);
   // Resolve repo path
   const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!repoPath) {
@@ -905,7 +905,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(hint);
   }
 
-  serr(`[gbrain phase] sync.load_active_pack`);
+  serr(`[pmbrain phase] sync.load_active_pack`);
   // v0.39 T1.5: load active pack ONCE at sync entry; pass to every per-file
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
@@ -930,7 +930,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // we recover from missing/no-git/not-a-dir by re-cloning, refuse on
   // url-drift or corruption with structured hints.
   if (opts.sourceId) {
-    serr(`[gbrain phase] sync.validate_repo_state`);
+    serr(`[pmbrain phase] sync.validate_repo_state`);
     const { validateRepoState } = await import('../core/git-remote.ts');
     const { recloneIfMissing } = await import('../core/sources-ops.ts');
     const cfgRows = await engine.executeRaw<{ config: unknown }>(
@@ -951,7 +951,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         case 'no-git':
         case 'not-a-dir':
           serr(
-            `[gbrain] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
+            `[pmbrain] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
           );
           await recloneIfMissing(engine, opts.sourceId);
           break;
@@ -978,7 +978,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(`Not a git repository: ${repoPath}. GBrain sync requires a git-initialized repo.`);
   }
 
-  serr(`[gbrain phase] sync.detect_head`);
+  serr(`[pmbrain phase] sync.detect_head`);
   // Detect detached HEAD up front so the working-tree fallback fires for both
   // the default sync and `--no-pull` callers. Only the actual git pull is
   // gated on opts.noPull.
@@ -1024,7 +1024,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
-    serr(`[gbrain phase] sync.git_pull start`);
+    serr(`[pmbrain phase] sync.git_pull start`);
     try {
       const { pullRepo } = await import('../core/git-remote.ts');
       // v0.41.13.0 (T3 / D-V4-mech-7): if the operator set --timeout,
@@ -1034,10 +1034,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // timeout (ETIMEDOUT / SIGTERM on err.cause) from ordinary pull
       // failure.
       pullRepo(repoPath);
-      serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
+      serr(`[pmbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      serr(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
+      serr(`[pmbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
       // v0.41.13.0 (T3 / D-V4-mech-7): pullRepo wraps execFileSync errors
       // in GitOperationError, so `error.code === 'ETIMEDOUT'` and
       // `error.signal === 'SIGTERM'` live on `.cause`, NOT on the top-
@@ -1939,14 +1939,14 @@ async function performFullSync(
   // v0.30.x: thread sourceId so performFullSync routes pages to the named
   // source (incremental path already does this).
   const _fullImportT0 = Date.now();
-  serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
+  serr(`[pmbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   const result = await runImport(engine, importArgs, {
     commit: headCommit,
     strategy: opts.strategy,
     sourceId: opts.sourceId,
   });
   serr(
-    `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
+    `[pmbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
     `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
   );
 

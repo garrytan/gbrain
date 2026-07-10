@@ -163,7 +163,7 @@ export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
-      console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
+      console.warn('[pmbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
     return;
   }
@@ -201,7 +201,7 @@ export async function connect(config: EngineConfig): Promise<void> {
       opts.prepare = prepare;
       if (!prepare) {
         console.warn(
-          '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
+          '[pmbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
         );
       }
     }

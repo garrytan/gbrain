@@ -79,9 +79,9 @@ export function patternStatementTemplate(s: PatternStatementSlots): string {
 /** E7 nudge template — stderr line on sync after a take is committed. */
 export function nudgeTemplate(s: NudgeSlots): string {
   return (
-    `[gbrain] You just committed a ${s.domain} take at conviction ${s.conviction.toFixed(2)}. ` +
+    `[pmbrain] You just committed a ${s.domain} take at conviction ${s.conviction.toFixed(2)}. ` +
     `Recent record on similar calls: ${s.nRecentMisses} of ${s.nRecentTotal} missed. ` +
-    `Hush this pattern for 14 days: gbrain takes nudge --hush ${s.hushPattern}`
+    `Hush this pattern for 14 days: pmbrain takes nudge --hush ${s.hushPattern}`
   );
 }
 

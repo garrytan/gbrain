@@ -169,7 +169,7 @@ export async function runImport(
   // enumeration (codex C11 confirms dispatch was correct; bug was here).
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
-  console.error(`[gbrain phase] import.collect_files start target=${dirArg} strategy=${strategy}`);
+  console.error(`[pmbrain phase] import.collect_files start target=${dirArg} strategy=${strategy}`);
   let allFiles: string[];
   try {
     const stat = lstatSync(dirArg);
@@ -559,7 +559,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
 
   function walk(d: string, depth: number): void {
     if (depth >= maxDepth) {
-      console.warn(`[gbrain] walker depth limit reached at ${d}; skipping`);
+      console.warn(`[pmbrain] walker depth limit reached at ${d}; skipping`);
       return;
     }
     let entries: string[];
@@ -580,19 +580,19 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       try {
         stat = lstatSync(full);
       } catch {
-        console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        console.warn(`[pmbrain import] Skipping unreadable path: ${full}`);
         continue;
       }
 
       if (stat.isSymbolicLink()) {
-        console.warn(`[gbrain import] Skipping symlink: ${full}`);
+        console.warn(`[pmbrain import] Skipping symlink: ${full}`);
         continue;
       }
 
       if (stat.isDirectory()) {
         const inodeKey = `${stat.dev}:${stat.ino}`;
         if (visitedInodes.has(inodeKey)) {
-          console.warn(`[gbrain] walker cycle detected at ${full}; skipping`);
+          console.warn(`[pmbrain] walker cycle detected at ${full}; skipping`);
           continue;
         }
         visitedInodes.set(inodeKey, true);

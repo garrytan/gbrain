@@ -27,7 +27,6 @@ import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
-import { generateReport } from './generate-report.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
@@ -1801,7 +1800,7 @@ const traverse_graph: Operation = {
     const slug = p.slug as string;
     const requestedDepth = (p.depth as number) || 5;
     if (requestedDepth > TRAVERSE_DEPTH_CAP) {
-      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
+      ctx.logger.warn(`[pmbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
     }
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
@@ -4352,25 +4351,6 @@ const run_onboard: Operation = {
   },
 };
 
-const generate_report: Operation = {
-  name: 'generate_report',
-  description: 'Generate a PMBrain project report. Admin scope required because it can write report files.',
-  params: {
-    type: { type: 'string', description: "'weekly', 'monthly', or 'custom'", enum: ['weekly', 'monthly', 'custom'] },
-    title: { type: 'string', description: 'Custom report title when type=custom' },
-    outputDir: { type: 'string', description: 'Output directory for the generated report' },
-    dryRun: { type: 'boolean', description: 'Preview report generation without writing files' },
-  },
-  mutating: true,
-  scope: 'admin',
-  handler: async (ctx, p) => generateReport(ctx.engine, ctx, {
-    type: p.type as 'weekly' | 'monthly' | 'custom' | undefined,
-    title: p.title as string | undefined,
-    outputDir: p.outputDir as string | undefined,
-    dryRun: p.dryRun as boolean | undefined,
-  }),
-};
-
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -4443,8 +4423,6 @@ export const operations: Operation[] = [
   schema_apply_mutations, reload_schema_pack,
   // v0.41.18.0 (T16, A7, codex #5)
   run_onboard,
-  // v0.42 PMBrain: generate project report
-  generate_report,
 ];
 
 export const operationsByName = Object.fromEntries(

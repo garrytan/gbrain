@@ -140,7 +140,6 @@
 |---------|-------|
 | "项目健康度"、"项目状态"、"项目进展"、"项目风险"、"项目报告" | `skills/pm-status/SKILL.md` |
 | "项目任务"、"任务列表"、"任务分配"、"任务进度"、"项目待办" | `skills/pm-task/SKILL.md` |
-| "项目健康检查"、"风险评估"、"项目报告生成" | 内置到周期阶段（`project_health`、`risk_detect`、`report_gen`）|
 
 ## Uncategorized
 

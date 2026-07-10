@@ -52,6 +52,7 @@ import {
   type AllowedType,
   type ExtractConversationFactsResult,
 } from '../../commands/extract-conversation-facts.ts';
+import { dreamModelDetails, resolveDreamModel } from './model-routing.ts';
 
 /** Per-phase wrapper opts. */
 export interface ConversationFactsBackfillPhaseOpts {
@@ -153,6 +154,8 @@ export async function runPhaseConversationFactsBackfill(
   opts: ConversationFactsBackfillPhaseOpts = {},
 ): Promise<ConversationFactsBackfillPhaseResult> {
   const cfg = await loadCfg(engine);
+  const resolvedModel = await resolveDreamModel(engine, { phase: 'conversation_facts_backfill' });
+  const modelDetails = dreamModelDetails(resolvedModel, 'single_chat');
 
   if (!cfg.enabled) {
     return {
@@ -161,6 +164,7 @@ export async function runPhaseConversationFactsBackfill(
       duration_ms: 0,
       summary: 'cycle.conversation_facts_backfill.enabled=false (default OFF)',
       details: {
+        ...modelDetails,
         reason: 'disabled',
         enable_hint:
           'gbrain config set cycle.conversation_facts_backfill.enabled true',
@@ -178,7 +182,7 @@ export async function runPhaseConversationFactsBackfill(
       status: 'ok',
       duration_ms: Date.now() - startedAt,
       summary: 'no sources to process',
-      details: { sources_count: 0 },
+      details: { ...modelDetails, sources_count: 0 },
     };
   }
 
@@ -213,6 +217,7 @@ export async function runPhaseConversationFactsBackfill(
         try {
           const result = await runExtractConversationFactsCore(engine, {
             sourceId: src.id,
+            model: resolvedModel.model,
             types: cfg.types,
             dryRun: opts.dryRun,
             // Pass brain-wide tracker so core skips its own auto-wrap.
@@ -271,7 +276,7 @@ export async function runPhaseConversationFactsBackfill(
         status: 'fail',
         duration_ms: Date.now() - startedAt,
         summary: `brain-wide loop failed: ${(err as Error).message}`,
-        details: { error: (err as Error).message, perSourceResults },
+        details: { ...modelDetails, error: (err as Error).message, perSourceResults },
       };
     }
   }
@@ -302,6 +307,7 @@ export async function runPhaseConversationFactsBackfill(
     duration_ms: Date.now() - startedAt,
     summary,
     details: {
+      ...modelDetails,
       sources_count: sources.length,
       sources_processed: totals.sources_processed,
       pages_processed: totals.pages_processed,

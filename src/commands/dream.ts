@@ -42,6 +42,7 @@ interface DreamArgs {
   dryRun: boolean;
   pull: boolean;
   phase: CyclePhase | null;
+  preset: DreamPreset | null;
   dir: string | null;
   help: boolean;
   /** v0.21: ad-hoc transcript file or directory path; implies --phase synthesize. */
@@ -79,6 +80,36 @@ interface DreamArgs {
   proposeMaxChunks: number | null;
 }
 
+export type DreamPreset = 'full' | 'meeting' | 'quick';
+
+const DREAM_PRESET_PHASES: Record<DreamPreset, ReadonlySet<CyclePhase>> = {
+  full: new Set(ALL_PHASES),
+  meeting: new Set([
+    'synthesize',
+    'extract',
+    'extract_facts',
+    'extract_atoms',
+    'resolve_symbol_edges',
+    'embed',
+  ]),
+  quick: new Set([
+    'lint',
+    'backlinks',
+    'sync',
+    'extract',
+    'extract_facts',
+    'resolve_symbol_edges',
+    'embed',
+    'orphans',
+  ]),
+};
+
+/** Presets select a subset; ALL_PHASES remains the sole ordering source. */
+export function resolveDreamPresetPhases(preset: DreamPreset): CyclePhase[] {
+  const selected = DREAM_PRESET_PHASES[preset];
+  return ALL_PHASES.filter((phase) => selected.has(phase));
+}
+
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -110,6 +141,24 @@ function parseArgs(args: string[]): DreamArgs {
   if (rawPhase && !phase) {
     console.error(`Unknown phase "${rawPhase}". Valid: ${ALL_PHASES.join(', ')}`);
     process.exit(1);
+  }
+
+  const presetIdx = args.indexOf('--preset');
+  const rawPreset = presetIdx !== -1 ? args[presetIdx + 1] : null;
+  const preset = rawPreset && ['full', 'meeting', 'quick'].includes(rawPreset)
+    ? rawPreset as DreamPreset
+    : null;
+  if (presetIdx !== -1 && !rawPreset) {
+    console.error('--preset requires one of: full, meeting, quick');
+    process.exit(2);
+  }
+  if (rawPreset && !preset) {
+    console.error(`Unknown preset "${rawPreset}". Valid: full, meeting, quick`);
+    process.exit(2);
+  }
+  if (phase && preset) {
+    console.error('--phase and --preset are mutually exclusive');
+    process.exit(2);
   }
 
   const dirIdx = args.indexOf('--dir');
@@ -150,8 +199,17 @@ function parseArgs(args: string[]): DreamArgs {
     process.exit(2);
   }
 
-  // --input implies --phase synthesize.
-  if (inputFile && !phase) phase = 'synthesize';
+  // Back-compat: bare --input still means one synthesize phase. Meeting
+  // preset is the explicit full ingest→extract→embed workflow.
+  if (inputFile && !phase && !preset) phase = 'synthesize';
+  if (preset === 'meeting' && !inputFile) {
+    console.error('--preset meeting requires --input <file-or-directory>');
+    process.exit(2);
+  }
+  if (inputFile && preset && preset !== 'meeting') {
+    console.error('--input can only be combined with --preset meeting');
+    process.exit(2);
+  }
 
   // v0.41.13: --source <id> (and the --source-id alias) drives per-source
   // cycle scoping. Resolution rules:
@@ -243,6 +301,7 @@ function parseArgs(args: string[]): DreamArgs {
     dryRun: args.includes('--dry-run'),
     pull: args.includes('--pull'),
     phase,
+    preset,
     dir,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
@@ -320,6 +379,7 @@ function printHelp() {
                       dry-run 语义执行。
   --json              以 JSON 输出 CycleReport，供 Agent 读取。
   --phase <name>      仅运行单个阶段：${ALL_PHASES.join(' | ')}
+  --preset <name>     运行场景预设：full | meeting | quick。与 --phase 互斥。
   --pull              同步前对大脑仓库执行 git pull，默认不执行。
   --dir <path>        大脑目录，默认使用已配置目录。
 
@@ -334,7 +394,8 @@ function printHelp() {
   --propose-max-chunks <n>
                       跳过 chunks 数超过 n 的超大页面，避免小说/整本书类页面进入观点提取。
 
-  --input <path>      综合指定转录文件或文件夹，隐含 --phase synthesize。
+  --input <path>      综合指定转录文件或文件夹。单独使用仍只运行 synthesize；
+                      配合 --preset meeting 可一次完成综合、抽取和向量化。
   --date YYYY-MM-DD   综合指定日期的转录文本。
   --from YYYY-MM-DD   回填范围开始日期，与 --to 配合使用。
   --to   YYYY-MM-DD   回填范围结束日期。
@@ -352,6 +413,8 @@ function printHelp() {
   pmbrain dream --phase calibration_profile --source pmgbrain
   pmbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
   pmbrain dream --phase synthesize --input ~/transcripts/
+  pmbrain dream --preset meeting --input ~/meetings/
+  pmbrain dream --preset quick --dry-run
 
 审批入口：
   启动服务后打开 http://localhost:3131/admin ，进入“观点审批”。
@@ -509,13 +572,18 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   const brainDir = await resolveBrainDir(engine, opts.dir);
   ensureDreamSystemSkillAssets(brainDir);
   validateDreamInputPath(opts.inputFile);
-  const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  const phases: CyclePhase[] | undefined = opts.phase
+    ? [opts.phase]
+    : opts.preset
+      ? resolveDreamPresetPhases(opts.preset)
+      : undefined;
 
   const report = await runCycle(engine, {
     brainDir,
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    forcePackPhases: opts.preset === 'meeting' ? ['extract_atoms'] : undefined,
     sourceId: resolvedSourceId, // undefined when --source not set → legacy back-compat
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,

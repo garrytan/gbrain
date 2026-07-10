@@ -32,19 +32,20 @@ import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
   resolveModel,
+  resolveModelDetailed,
   type ModelTier,
 } from '../core/model-config.ts';
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
 
 const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }> = [
-  { key: 'models.dream.synthesize',         tier: 'reasoning', description: 'Dream synthesis (conversation → brain pages)' },
+  { key: 'models.dream.synthesize',         tier: 'subagent',  description: 'Dream synthesis (conversation → brain pages)' },
   { key: 'models.dream.synthesize_verdict', tier: 'utility',   description: 'Dream synthesis verdict (Haiku judge)' },
-  { key: 'models.dream.patterns',           tier: 'reasoning', description: 'Pattern discovery (cross-take themes)' },
+  { key: 'models.dream.patterns',           tier: 'subagent',  description: 'Pattern discovery (cross-take themes)' },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
-  { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
-  { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
+  { key: 'models.think',                    tier: 'deep',      description: '`pmbrain think` synthesis op' },
+  { key: 'models.subagent',                 tier: 'subagent',  description: '`pmbrain agent run` subagent loop' },
   { key: 'facts.extraction_model',          tier: 'reasoning', description: 'Real-time facts extraction during sync' },
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
   { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
@@ -66,41 +67,19 @@ interface ModelsReport {
   aliases: { defaults: Record<string, string>; user: Record<string, string> };
 }
 
-async function probeSource(engine: BrainEngine, configKey: string, envVar: string): Promise<string | null> {
-  // For per-task probes, return the source the resolver USED (config / env /
-  // tier default / hardcoded). The resolver itself is the source of truth;
-  // we re-walk a subset of its precedence here to attribute the value.
-  const configVal = await engine.getConfig(configKey);
-  if (configVal && configVal.trim()) return `config: ${configKey}`;
-  if (process.env[envVar] && process.env[envVar]!.trim()) return `env: ${envVar}`;
-  return null;
-}
-
 async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
   const globalDefault = await engine.getConfig('models.default');
 
   const tiers = {} as Record<ModelTier, ModelEntry>;
   for (const t of TIERS) {
-    const tierOverride = await engine.getConfig(`models.tier.${t}`);
-    // What models.default beats tier — re-walk the chain to attribute properly.
-    let source: string;
-    if (globalDefault && globalDefault.trim()) {
-      source = 'config: models.default';
-    } else if (tierOverride && tierOverride.trim()) {
-      source = `config: models.tier.${t}`;
-    } else {
-      source = 'default';
-    }
-    const resolved = await resolveModel(engine, { tier: t, fallback: TIER_DEFAULTS[t] });
-    tiers[t] = { tier: t, resolved, source };
+    const detail = await resolveModelDetailed(engine, { tier: t, fallback: TIER_DEFAULTS[t] });
+    tiers[t] = { tier: t, resolved: detail.model, source: detail.source };
   }
 
   const per_task: ModelsReport['per_task'] = [];
   for (const { key, tier, description } of PER_TASK_KEYS) {
-    const resolved = await resolveModel(engine, { configKey: key, tier, fallback: TIER_DEFAULTS[tier] });
-    const explicit = await probeSource(engine, key, 'GBRAIN_MODEL');
-    const source = explicit ?? `tier.${tier}`;
-    per_task.push({ key, tier, resolved, source, description });
+    const detail = await resolveModelDetailed(engine, { configKey: key, tier, fallback: TIER_DEFAULTS[tier] });
+    per_task.push({ key, tier, resolved: detail.model, source: detail.source, description });
   }
 
   // User-defined aliases (engine.getConfig is the source; we don't enumerate
@@ -564,9 +543,9 @@ Flags (doctor only):
   --json                          JSON output
 
 Configure routing:
-  gbrain config set models.default <model>           # global hammer
-  gbrain config set models.tier.<tier> <model>       # per-tier (utility/reasoning/deep/subagent)
-  gbrain config set models.aliases.<name> <model>    # custom alias
+  pmbrain config set models.default <model>           # global hammer
+  pmbrain config set models.tier.<tier> <model>       # per-tier (utility/reasoning/deep/subagent)
+  pmbrain config set models.aliases.<name> <model>    # custom alias
 
 Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anthropic-only)
 `);

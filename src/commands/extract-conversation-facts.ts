@@ -192,6 +192,8 @@ export interface ConversationSegment {
 export interface ExtractConversationFactsCoreOpts {
   /** REQUIRED. Strict per-source contract. */
   sourceId: string;
+  /** Optional explicit model selected by a Dream preset/phase router. */
+  model?: string;
   /**
    * Page types to walk. Reads cycle config when omitted.
    * Allowlist enforced via ALLOWED_TYPES.
@@ -620,6 +622,7 @@ interface ExtractCoreState {
   result: ExtractConversationFactsResult;
   engine: BrainEngine;
   sourceId: string;
+  model: string | undefined;
   dryRun: boolean;
   sleepMs: number;
   segmentLimit: number;
@@ -739,6 +742,7 @@ async function processPage(
         sessionId,
         source: PER_SEGMENT_SOURCE_PREFIX,
         engine: state.engine,
+        ...(state.model ? { model: state.model } : {}),
         abortSignal: state.signal,
       });
     } catch (err) {
@@ -924,6 +928,7 @@ export async function runExtractConversationFactsCore(
     result,
     engine,
     sourceId,
+    model: opts.model,
     dryRun,
     sleepMs,
     segmentLimit,

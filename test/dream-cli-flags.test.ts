@@ -9,6 +9,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import { resolveDreamPresetPhases } from '../src/commands/dream.ts';
 
 const dreamSrc = readFileSync(new URL('../src/commands/dream.ts', import.meta.url), 'utf-8');
 const cycleSrc = readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf-8');
@@ -36,6 +37,36 @@ describe('dream CLI flag wiring', () => {
 
   test('--input implies --phase synthesize', () => {
     expect(dreamSrc).toContain("phase = 'synthesize'");
+  });
+
+  test('declares mutually-exclusive full / meeting / quick presets', () => {
+    expect(dreamSrc).toContain("'--preset'");
+    expect(dreamSrc).toContain('--phase and --preset are mutually exclusive');
+    expect(resolveDreamPresetPhases('meeting')).toEqual([
+      'synthesize',
+      'extract',
+      'extract_facts',
+      'extract_atoms',
+      'resolve_symbol_edges',
+      'embed',
+    ]);
+    expect(resolveDreamPresetPhases('quick')).toEqual([
+      'lint',
+      'backlinks',
+      'sync',
+      'extract',
+      'extract_facts',
+      'resolve_symbol_edges',
+      'embed',
+      'orphans',
+    ]);
+  });
+
+  test('legacy input stays synthesize-only while meeting preset is explicit', () => {
+    expect(dreamSrc).toContain('if (inputFile && !phase && !preset)');
+    expect(dreamSrc).toContain("preset === 'meeting'");
+    expect(dreamSrc).toContain('--preset meeting requires --input');
+    expect(dreamSrc).toContain("forcePackPhases: opts.preset === 'meeting' ? ['extract_atoms']");
   });
 
   test('--from > --to range validation', () => {

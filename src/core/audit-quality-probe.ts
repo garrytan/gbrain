@@ -79,7 +79,7 @@ export function logQualityProbeEvent(event: Omit<QualityProbeAuditEvent, 'ts'> &
     fs.appendFileSync(file, JSON.stringify(stamped) + '\n', { encoding: 'utf8' });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] quality-probe audit write failed (${msg}); probe continues\n`);
+    process.stderr.write(`[pmbrain] quality-probe audit write failed (${msg}); probe continues\n`);
   }
 }
 

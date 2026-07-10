@@ -90,10 +90,11 @@ export type PatternStatementsGenerator = (input: {
   holder: string;
   attempt: number;
   feedback?: string;
+  modelHint?: string;
 }) => Promise<string[]>;
 
 /** Generator function for bias tags (test seam). */
-export type BiasTagsGenerator = (patterns: string[]) => Promise<string[]>;
+export type BiasTagsGenerator = (patterns: string[], modelHint?: string) => Promise<string[]>;
 
 export interface CalibrationProfileOpts extends BasePhaseOpts {
   /** Holder to generate the profile for. Defaults to PMBrain's user holder. */
@@ -147,7 +148,7 @@ export async function defaultPatternsGenerator(input: {
 }
 
 /** Production bias-tags generator. */
-export async function defaultBiasTagsGenerator(patterns: string[]): Promise<string[]> {
+export async function defaultBiasTagsGenerator(patterns: string[], modelHint?: string): Promise<string[]> {
   if (patterns.length === 0) return [];
   const prompt = BIAS_TAGS_PROMPT.replace(
     '{PATTERNS_BULLETS}',
@@ -155,6 +156,7 @@ export async function defaultBiasTagsGenerator(patterns: string[]): Promise<stri
   );
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
+    ...(modelHint ? { model: modelHint } : {}),
     maxTokens: 200,
   });
   return parseBiasTagsOutput(result.text);
@@ -266,6 +268,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         holder,
         attempt,
         ...(feedback !== undefined ? { feedback } : {}),
+        modelHint: modelId,
       });
       return lines.join('\n');
     };
@@ -308,7 +311,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
 
     // Bias tags from the patterns. Best-effort; failure is non-fatal.
     try {
-      result.active_bias_tags = await biasTagsGenerator(result.pattern_statements);
+      result.active_bias_tags = await biasTagsGenerator(result.pattern_statements, modelId);
     } catch (err) {
       result.warnings.push(`bias_tags_generator failed: ${err instanceof Error ? err.message : String(err)}`);
     }

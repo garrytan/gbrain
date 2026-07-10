@@ -104,6 +104,10 @@ describe('v0.41 T9 R-GATE: orchestrator dispatch wires the pack-gate', () => {
     expect(cycleTsSrc).toContain("packDeclaresPhase(engine, 'extract_atoms')");
   });
 
+  test('trusted meeting preset can force extract_atoms without weakening the default pack gate', () => {
+    expect(cycleTsSrc).toContain("!opts.forcePackPhases?.includes('extract_atoms')");
+  });
+
   test('cycle.ts dispatch for synthesize_concepts calls packDeclaresPhase', () => {
     expect(cycleTsSrc).toContain("packDeclaresPhase(engine, 'synthesize_concepts')");
   });

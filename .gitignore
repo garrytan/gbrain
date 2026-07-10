@@ -64,6 +64,13 @@ imports/
 temp-sections/
 temp_doc_reader.py
 
+# Codex local verification runtime (bundled CLI, scratch PGLite database)
+.codex/
+
+# One-off local lock diagnostics; never ship destructive DB helpers
+_clear_lock.ts
+check-lock.mjs
+
 # Generated PMBrain desktop runtime and installers
 desktop/build/extraResources/
 desktop/dist/

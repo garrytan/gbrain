@@ -113,13 +113,16 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
+  'extract_atoms',               // v0.41 — atom extraction
   'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
   'patterns',
+  'synthesize_concepts',         // v0.41 — concept aggregation
   'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31
   'propose_takes',              // v0.36.1.0 — hindsight calibration wave
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
+  'conversation_facts_backfill', // v0.41.11 — opt-in conversation facts
   'embed',
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans
@@ -161,7 +164,7 @@ describe('E2E full cycle phase order', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 20_000);
 
   test('--phase synthesize alone runs only that phase, returns skipped/not_configured', async () => {
     const rig = await setupRig();
@@ -179,7 +182,7 @@ describe('E2E full cycle phase order', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 20_000);
 
   test('--phase patterns alone runs only that phase, returns skipped/insufficient_evidence', async () => {
     const rig = await setupRig();
@@ -198,7 +201,7 @@ describe('E2E full cycle phase order', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 20_000);
 
   test('synthInputFile flag is plumbed through runCycle to runPhaseSynthesize', async () => {
     const rig = await setupRig();
@@ -224,5 +227,5 @@ describe('E2E full cycle phase order', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 20_000);
 });

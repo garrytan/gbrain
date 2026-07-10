@@ -593,7 +593,7 @@ export async function chunkCodeTextFull(
     } catch (e: unknown) {
       if (e instanceof ChunkerTimeoutError) {
         console.warn(
-          `[gbrain chunker] timeout parsing ${filePath} after ${timeoutMs}ms; ` +
+          `[pmbrain chunker] timeout parsing ${filePath} after ${timeoutMs}ms; ` +
           `falling back to recursive chunks`,
         );
         return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };

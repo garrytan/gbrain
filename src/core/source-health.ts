@@ -80,7 +80,7 @@ export function resolvePriorityLabel(
   if (!_warnedSources.has(sourceId)) {
     _warnedSources.add(sourceId);
     process.stderr.write(
-      `[gbrain] source "${sourceId}": invalid config.priority value ${JSON.stringify(raw)}; ` +
+      `[pmbrain] source "${sourceId}": invalid config.priority value ${JSON.stringify(raw)}; ` +
       `falling back to 'normal'. Fix: gbrain sources config set ${sourceId} priority normal\n`,
     );
   }

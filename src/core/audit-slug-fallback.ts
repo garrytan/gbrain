@@ -62,7 +62,7 @@ export function logSlugFallback(slug: string, sourcePath: string): void {
   // D7 dual logging — every fallback gets an operator-visible stderr line
   // regardless of audit write success. Lives in this caller, not in the
   // shared writer, because only this audit module wants per-call stderr.
-  process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; path slugified empty)\n`);
+  process.stderr.write(`[pmbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; path slugified empty)\n`);
   writer.log({
     slug,
     source_path: sourcePath,

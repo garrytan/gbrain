@@ -630,7 +630,7 @@ export async function removeSource(
       // Don't fail the whole remove if rmSync had a permission hiccup — log
       // and continue. The DB row deletion is the user-facing operation.
       console.error(
-        `[gbrain] WARN: clone cleanup at ${src.local_path} failed: ${(e as Error).message}`,
+        `[pmbrain] WARN: clone cleanup at ${src.local_path} failed: ${(e as Error).message}`,
       );
     }
   }

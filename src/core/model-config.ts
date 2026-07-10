@@ -8,9 +8,11 @@
  *   2. New-key config (e.g. models.dream.synthesize)
  *   3. Old-key config (deprecated dream.synthesize.model, dream.patterns.model)
  *      — read with stderr deprecation warning, one-per-process
- *   4. Global default (models.default)
- *   5. Env var (process.env[envVar] or GBRAIN_MODEL)
- *   6. Hardcoded fallback (caller-supplied)
+ *   4. Tier config (models.tier.*)
+ *   5. Global default (models.default)
+ *   6. Env var (process.env[envVar] or GBRAIN_MODEL)
+ *   7. Tier default
+ *   8. Hardcoded fallback (caller-supplied)
  *
  * Aliases (`opus`, `sonnet`, `haiku`, `gemini`, `gpt`) resolve at the end so any
  * tier can use a short name. Unknown alias passes through unchanged so users can
@@ -35,17 +37,29 @@ export interface ResolveModelOpts {
   /** Env var to consult after global default. Defaults to `GBRAIN_MODEL`. */
   envVar?: string;
   /**
-   * Tier classification (v0.31.12). Looked up after `models.default` and
-   * before the env var. Routing groups: `utility` (haiku-class, classification
+   * Tier classification. Looked up before `models.default` so advanced-mode
+   * settings actually override the simple-mode global default. Routing groups:
+   * `utility` (haiku-class, classification
    * + expansion + verdict), `reasoning` (sonnet-class, default chat +
    * synthesis + fact extraction), `deep` (opus-class, expensive reasoning),
-   * `subagent` (Anthropic-only multi-turn tool loop — never inherits a
-   * non-Anthropic `models.default`; falls back to TIER_DEFAULTS.subagent
-   * with a one-shot stderr warn instead).
+   * `subagent` (multi-turn tool loop — accepts any recipe with tool support;
+   * unsupported or unknown models fall back visibly to TIER_DEFAULTS.subagent).
    */
   tier?: ModelTier;
+  /** Additional tier configs to try after `tier`, before `models.default`. */
+  fallbackTiers?: ModelTier[];
   /** Hardcoded last-resort fallback. */
   fallback: string;
+}
+
+export interface ResolvedModel {
+  model: string;
+  tier?: ModelTier;
+  source: string;
+  provider_id: string | null;
+  requested_model?: string;
+  fallback_used: boolean;
+  fallback_reason?: string;
 }
 
 /** Default aliases shipped in code. Users override via `models.aliases.<name>` config.
@@ -65,11 +79,11 @@ export const DEFAULT_ALIASES: Record<string, string> = {
 /**
  * Default model for each tier. Used as the hardcoded fallback when no
  * `models.tier.<tier>` config + no `models.default` is set. Subagent gets
- * Sonnet (Anthropic Messages API tool-loop shape required); reasoning gets
+ * Sonnet (safe tool-capable fallback); reasoning gets
  * Sonnet (default workhorse); deep gets Opus 4.7 (expensive reasoning);
  * utility gets Haiku (fast classification).
  *
- * Users override via `gbrain config set models.tier.<tier> <model>`.
+ * Users override via `pmbrain config set models.tier.<tier> <model>`.
  */
 export const TIER_DEFAULTS: Record<ModelTier, string> = {
   utility:   'anthropic:claude-haiku-4-5-20251001',
@@ -79,14 +93,12 @@ export const TIER_DEFAULTS: Record<ModelTier, string> = {
 };
 
 /**
- * v0.31.12 subagent runtime enforcement (layer 2).
+ * Provider classifier used to keep Anthropic on its stable direct loop while
+ * PMBrain automatically routes every other tool-capable provider through the
+ * Gateway Tool Loop.
  *
  * Returns true if a resolved `provider:model` (or bare model id) points at
- * an Anthropic-shape API. The subagent loop in
- * `src/core/minions/handlers/subagent.ts` makes Anthropic Messages API calls
- * with prompt caching on system + tools; routing it elsewhere silently
- * breaks. When `tier === 'subagent'` resolves to a non-Anthropic provider,
- * we log a stderr warn AND fall back to `TIER_DEFAULTS.subagent`.
+ * an Anthropic-shape API.
  */
 export function isAnthropicProvider(modelString: string): boolean {
   if (!modelString) return false;
@@ -126,19 +138,37 @@ function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean
 }
 
 /**
- * Resolve a model name through the 6-tier precedence chain. Async because it
+ * Resolve a model name through the 8-step precedence chain. Async because it
  * reads config from the engine. Pass `engine: null` for callsites that don't
  * have an engine (rare; usually CLI bootstrap before connect).
  */
-export async function resolveModel(
+export async function resolveModelDetailed(
   engine: BrainEngine | null,
   opts: ResolveModelOpts,
-): Promise<string> {
+): Promise<ResolvedModel> {
   const envVar = opts.envVar ?? 'GBRAIN_MODEL';
+
+  const finish = async (candidate: string, source: string, tier = opts.tier): Promise<ResolvedModel> => {
+    const requested = await resolveAlias(engine, candidate);
+    const model = enforceSubagentCapable(requested, tier, source);
+    const parsed = splitProviderModelId(model);
+    const fallbackUsed = model !== requested;
+    return {
+      model,
+      ...(tier ? { tier } : {}),
+      source,
+      provider_id: parsed.provider,
+      fallback_used: fallbackUsed,
+      ...(fallbackUsed ? {
+        requested_model: requested,
+        fallback_reason: 'requested model cannot run the subagent tool loop',
+      } : {}),
+    };
+  };
 
   // 1. CLI flag wins
   if (opts.cliFlag && opts.cliFlag.trim()) {
-    return await resolveAlias(engine, opts.cliFlag.trim());
+    return finish(opts.cliFlag.trim(), 'cli');
   }
 
   if (engine) {
@@ -153,7 +183,7 @@ export async function resolveModel(
             emitDeprecationWarning(opts.deprecatedConfigKey, opts.configKey, /*ignored=*/ true);
           }
         }
-        return await resolveAlias(engine, v.trim());
+        return finish(v.trim(), opts.configKey);
       }
     }
 
@@ -162,42 +192,50 @@ export async function resolveModel(
       const v = await engine.getConfig(opts.deprecatedConfigKey);
       if (v && v.trim()) {
         emitDeprecationWarning(opts.deprecatedConfigKey, opts.configKey ?? '<no replacement>', /*ignored=*/ false);
-        return await resolveAlias(engine, v.trim());
+        return finish(v.trim(), opts.deprecatedConfigKey);
       }
     }
 
-    // 4. Global default
+    // 4. Tier overrides. Advanced-mode tier settings intentionally beat the
+    // simple-mode global default. Subagent callers may also provide reasoning
+    // as a capability-checked secondary tier.
+    const tiers = [opts.tier, ...(opts.fallbackTiers ?? [])]
+      .filter((tier): tier is ModelTier => tier !== undefined);
+    for (const tier of tiers) {
+      const tierVal = await engine.getConfig(`models.tier.${tier}`);
+      if (tierVal && tierVal.trim()) {
+        return finish(tierVal.trim(), `models.tier.${tier}`, opts.tier);
+      }
+    }
+
+    // 5. Global default keeps simple mode working when no tier is configured.
     const def = await engine.getConfig('models.default');
     if (def && def.trim()) {
-      const resolved = await resolveAlias(engine, def.trim());
-      return enforceSubagentCapable(resolved, opts.tier, 'models.default');
-    }
-
-    // 5. Tier override (v0.31.12)
-    if (opts.tier) {
-      const tierVal = await engine.getConfig(`models.tier.${opts.tier}`);
-      if (tierVal && tierVal.trim()) {
-        const resolved = await resolveAlias(engine, tierVal.trim());
-        return enforceSubagentCapable(resolved, opts.tier, `models.tier.${opts.tier}`);
-      }
+      return finish(def.trim(), 'models.default');
     }
   }
 
   // 6. Env var
   const env = process.env[envVar];
   if (env && env.trim()) {
-    const resolved = await resolveAlias(engine, env.trim());
-    return enforceSubagentCapable(resolved, opts.tier, `env:${envVar}`);
+    return finish(env.trim(), `env:${envVar}`);
   }
 
   // 7. Tier default (v0.31.12 — when no override beats us, the tier's
   //    canonical model wins over caller-supplied fallback)
   if (opts.tier && TIER_DEFAULTS[opts.tier]) {
-    return await resolveAlias(engine, TIER_DEFAULTS[opts.tier]);
+    return finish(TIER_DEFAULTS[opts.tier], `tier_default:${opts.tier}`);
   }
 
   // 8. Hardcoded fallback (caller-supplied)
-  return await resolveAlias(engine, opts.fallback);
+  return finish(opts.fallback, 'fallback');
+}
+
+export async function resolveModel(
+  engine: BrainEngine | null,
+  opts: ResolveModelOpts,
+): Promise<string> {
+  return (await resolveModelDetailed(engine, opts)).model;
 }
 
 /**
@@ -260,7 +298,7 @@ function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, s
       process.stderr.write(
         `[models] tier.subagent resolved to "${resolved}" via "${source}", which ${reason}. ` +
         `The subagent tool loop cannot run on this model — falling back to ${TIER_DEFAULTS.subagent}. ` +
-        `Fix: gbrain config set models.tier.subagent <provider>:<model-with-tools>\n`,
+        `Fix: pmbrain config set models.tier.subagent <provider>:<model-with-tools>\n`,
       );
     }
     return TIER_DEFAULTS.subagent;

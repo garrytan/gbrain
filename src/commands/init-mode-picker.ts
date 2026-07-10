@@ -219,8 +219,8 @@ export async function runModePicker(
     try { await engine.setConfig(SEARCH_MODE_KEY, rec.mode); } catch { /* swallow */ }
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
-    console.log(`[gbrain] search mode tentatively set to: ${rec.mode}`);
-    console.log(`[gbrain] Reason: ${rec.reason}`);
+    console.log(`[pmbrain] search mode tentatively set to: ${rec.mode}`);
+    console.log(`[pmbrain] Reason: ${rec.reason}`);
     console.log('═══════════════════════════════════════════════════════════════');
     console.log('');
     console.log('[AGENT] Before continuing, SHOW this matrix to your operator and');
@@ -261,7 +261,7 @@ export async function runModePicker(
     // Worst case: config write fails. Mode resolution falls back to balanced
     // at search-time anyway, so we don't block init. Emit the failure to
     // stderr so the operator sees it.
-    console.error(`[gbrain] WARN: failed to persist search.mode (${(err as Error).message ?? 'unknown'}). Defaulting to ${picked} at search-time.`);
+    console.error(`[pmbrain] WARN: failed to persist search.mode (${(err as Error).message ?? 'unknown'}). Defaulting to ${picked} at search-time.`);
   }
 
   console.log(`Search mode set to: ${picked}`);

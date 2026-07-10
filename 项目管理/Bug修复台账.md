@@ -600,3 +600,13 @@
 - 解决方案：同步 PMBrain 契约与测试预期，补齐 Skill 元数据和 resolver 歧义，隔离串行测试，保证迁移 dry-run 无副作用，修正 Heavy Tests 初始化和日志保留，统一 llms 输入行尾，补齐 embedding 维度对齐模块、Admin 嵌入资产及回归测试，并将 Admin 路由测试改为整组复用一次冷启动服务。
 - 是否完成：是
 - 最终结果：严格 resolver 通过；Skill 合规测试 264 项通过；CI 相关组合测试通过，迁移、品牌契约、OAuth、公开导出、阶段覆盖、Admin 意图和生成文件均有回归验证。Heavy Tests 的数据库初始化失败根因已修正，等待 GitHub Actions 在 Linux/Postgres 环境复验。
+## 2026-07-11 Dream 会议原子提取、模型配置漂移与日志品牌修复
+
+- 时间：2026-07-11
+- 版本号：PMBrain 1.0.94；Desktop 1.0.53
+- 标题：修复会议整理缺少原子提取、错误使用陈旧模型及运行日志残留 GBrain 品牌
+- 描述：Meeting Preset 已选择 `extract_atoms`，但通用 Schema Pack 门禁仍会跳过该阶段；桌面简单模式只同步 `models.default`，数据库中历史 `models.dream.*` 和 `models.tier.*` 覆盖继续优先生效；部分 CLI 与核心运行日志仍显示 GBrain 品牌。
+- 根因：场景预设没有向统一 `runCycle()` 声明受信任的阶段强制项；桌面配置同步没有同时维护兼容键和清理用户明确切回简单模式时的高级覆盖；PMBrain 改名后的用户可见日志未完成集中复核。
+- 解决方案：Meeting Preset 通过 `forcePackPhases` 仅绕过 `extract_atoms` 的 Pack 门禁，其他运行方式仍保持原门禁；桌面显式保存简单模式时清理 `models.tier.*`、`models.dream.*` 并同步 `chat_model` 与 `models.default`，升级迁移不删除高级配置；模型报告改用统一解析结果显示真实来源，并将运行期品牌日志与命令提示改为 PMBrain。
+- 是否完成：是
+- 最终结果：会议链路不再因活动 Pack 缺少声明而跳过 `extract_atoms`；当前数据库已清除陈旧模型覆盖并统一解析为 `deepseek:deepseek-v4-flash`；高级模式阶段覆盖优先级保持不变，用户可见运行日志不再沿用本次审计发现的 GBrain 前缀。

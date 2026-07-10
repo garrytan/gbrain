@@ -39,8 +39,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
 
   if (!action || action === '--help' || action === '-h') {
-    console.log('Usage: gbrain config [show|get|set|unset] <key> [value]');
-    console.log('       gbrain config unset --pattern <prefix>');
+    console.log('Usage: pmbrain config [show|get|set|unset] <key> [value]');
+    console.log('       pmbrain config unset --pattern <prefix>');
     return;
   }
 
@@ -50,7 +50,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('No config found. Run: gbrain init');
       process.exit(1);
     }
-    console.log('GBrain config:');
+    console.log('PMBrain config:');
     for (const [k, v] of Object.entries(config)) {
       const display = typeof v === 'string' ? redactConfigValue(k, v) : v;
       console.log(`  ${k}: ${display}`);
@@ -67,7 +67,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (flagIdx !== -1) {
       const prefix = args[flagIdx + 1];
       if (!prefix || prefix.length === 0) {
-        console.error('Usage: gbrain config unset --pattern <prefix>');
+        console.error('Usage: pmbrain config unset --pattern <prefix>');
         process.exit(1);
       }
       const keys = await engine.listConfigKeys(prefix);
@@ -87,7 +87,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
 
     const key = args[1];
     if (!key) {
-      console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
+      console.error('Usage: pmbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
     const n = await engine.unsetConfig(key);
@@ -165,7 +165,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         if (suggestion) {
           console.error(`[config] Did you mean "${suggestion}"?`);
         } else {
-          console.error(`[config] No similar known key. Run \`gbrain config show\` to see currently-set keys.`);
+          console.error(`[config] No similar known key. Run \`pmbrain config show\` to see currently-set keys.`);
         }
         console.error(`[config] If this is intentional (downstream tooling, forward-compat), re-run with --force.`);
         process.exit(1);
@@ -338,8 +338,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
   } else {
-    console.error('Usage: gbrain config [show|get|set|unset] <key> [value]');
-    console.error('       gbrain config unset --pattern <prefix>');
+    console.error('Usage: pmbrain config [show|get|set|unset] <key> [value]');
+    console.error('       pmbrain config unset --pattern <prefix>');
     process.exit(1);
   }
 }

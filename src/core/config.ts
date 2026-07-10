@@ -502,10 +502,10 @@ export async function loadConfigWithEngine(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         merged.embedding_columns = parsed as Record<string, EmbeddingColumnConfig>;
       } else {
-        console.warn('[gbrain] config: embedding_columns DB value is not a JSON object; ignoring');
+        console.warn('[pmbrain] config: embedding_columns DB value is not a JSON object; ignoring');
       }
     } catch (err) {
-      console.warn(`[gbrain] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
+      console.warn(`[pmbrain] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
     }
   }
   if (merged.search_embedding_column === undefined && dbSearchEmbeddingColumn !== undefined) {

@@ -93,9 +93,14 @@ async function migrateConfiguredInstallation(): Promise<void> {
   markDesktopMigration(app.getVersion());
 }
 
-async function syncModelDefaultsToDatabase(): Promise<void> {
+async function syncModelDefaultsToDatabase(opts: { resetAdvanced?: boolean } = {}): Promise<void> {
   const chatModel = getSetupInfo().current.chatModel?.trim();
   if (!chatModel) return;
+  if (opts.resetAdvanced) {
+    await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.tier.']);
+    await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.dream.']);
+  }
+  await runCliChecked(runtime(), ['config', 'set', 'chat_model', chatModel]);
   await runCliChecked(runtime(), ['config', 'set', 'models.default', chatModel]);
 }
 
@@ -114,7 +119,7 @@ async function applySetup(payload: SetupPayload) {
       saved.config.embedding_dimensions = result.dimensions!;
     }
     await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
-    await syncModelDefaultsToDatabase();
+    await syncModelDefaultsToDatabase({ resetAdvanced: true });
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const sourceId = saved.config.desktop?.knowledge_source_id;
     if (knowledgeDirectory && sourceId) {

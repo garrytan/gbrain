@@ -197,7 +197,7 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
  */
 export function formatSoleNonDefaultNudge(sourceId: string): string | null {
   if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
-  return `[gbrain] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
+  return `[pmbrain] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
 }
 
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {

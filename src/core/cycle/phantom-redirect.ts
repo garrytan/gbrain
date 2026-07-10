@@ -491,7 +491,7 @@ export async function tryRedirectPhantom(
       if (code !== 'ENOENT') {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(
-          `[gbrain] phantom-redirect: unlink ${phantomPath} failed (${msg}); cycle continues\n`,
+          `[pmbrain] phantom-redirect: unlink ${phantomPath} failed (${msg}); cycle continues\n`,
         );
       }
     }
@@ -564,7 +564,7 @@ export async function runPhantomRedirectPass(
         redirectResult = await tryRedirectPhantom(engine, page, sourceId, brainDir, dryRun);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[gbrain] phantom-redirect: ${slug} failed (${msg}); skipping\n`);
+        process.stderr.write(`[pmbrain] phantom-redirect: ${slug} failed (${msg}); skipping\n`);
         logPhantomEvent({
           phantom_slug: slug,
           outcome: 'drift',

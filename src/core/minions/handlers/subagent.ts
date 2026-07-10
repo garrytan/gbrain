@@ -218,21 +218,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // deterministic so the Anthropic prompt-cache marker on the system
     // block stays a hit across turns.
 
-    // v0.38 S1.10 — feature flag for the gateway-native tool loop. When ON,
-    // route ALL subagent jobs through gateway.toolLoop() (works for every
-    // provider in src/core/ai/recipes/). When OFF, route through the legacy
-    // Anthropic-direct path AND refuse non-Anthropic models loudly.
+    // PMBrain keeps the stable Anthropic-direct path by default, but every
+    // non-Anthropic provider is routed automatically through the canonical
+    // gateway.toolLoop(). Ordinary users should not need to understand an
+    // internal feature flag just to use a configured tool-capable model.
     const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
-    const useGatewayLoop = typeof useGatewayLoopRaw === 'string' &&
+    const gatewayLoopExplicit = typeof useGatewayLoopRaw === 'string' &&
       (useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1');
-    if (!useGatewayLoop && !isAnthropicProvider(model)) {
-      throw new Error(
-        `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
-        `Enable the gateway-native loop to run on this provider: ` +
-        `\`gbrain config set agent.use_gateway_loop true\`. ` +
-        `Or use an Anthropic model (e.g. anthropic:claude-sonnet-4-6).`,
-      );
-    }
+    const useGatewayLoop = gatewayLoopExplicit || !isAnthropicProvider(model);
 
     // Build the tool registry bound to THIS job as the owning subagent.
     // brain_id (per-call brain override; children inherit parent's unless

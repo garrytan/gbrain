@@ -73,7 +73,7 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
       ? '--concurrency flag'
       : 'GBRAIN_WORKER_CONCURRENCY env';
     process.stderr.write(
-      `[gbrain jobs] invalid concurrency from ${source} (${JSON.stringify(raw)}); ` +
+      `[pmbrain jobs] invalid concurrency from ${source} (${JSON.stringify(raw)}); ` +
       `falling back to 1. Set a positive integer.\n`
     );
     return 1;
@@ -854,7 +854,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         // "engine ownership stays with the creator" invariant that broke
         // tests in earlier waves of this branch.
         try { await engine.disconnect(); }
-        catch (e) { console.error('[gbrain jobs work] engine disconnect failed during shutdown:', e); }
+        catch (e) { console.error('[pmbrain jobs work] engine disconnect failed during shutdown:', e); }
       }
       break;
     }

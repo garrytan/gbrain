@@ -5,12 +5,14 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   resolveModel,
+  resolveModelDetailed,
   resolveAlias,
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
   isAnthropicProvider,
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
+import { resolveDreamModel } from '../src/core/cycle/model-routing.ts';
 
 class StubEngine {
   readonly kind = 'pglite' as const;
@@ -146,15 +148,27 @@ describe('resolveModel — 6-tier precedence', () => {
   });
 });
 
-describe('resolveModel — v0.31.12 tier system', () => {
-  test('models.default beats tier override', async () => {
+describe('resolveModel — PMBrain tier system', () => {
+  test('tier override beats models.default in advanced mode', async () => {
     stub.set('models.default', 'opus');
     stub.set('models.tier.reasoning', 'haiku');
     const m = await resolveModel(stub as never, {
       tier: 'reasoning',
       fallback: 'sonnet',
     });
-    expect(m).toBe(DEFAULT_ALIASES.opus);
+    expect(m).toBe(DEFAULT_ALIASES.haiku);
+  });
+
+  test('detailed resolution reports model source without changing simple mode', async () => {
+    stub.set('models.default', 'openai:gpt-5.2');
+    const resolved = await resolveModelDetailed(stub as never, {
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+    expect(resolved.model).toBe('openai:gpt-5.2');
+    expect(resolved.source).toBe('models.default');
+    expect(resolved.provider_id).toBe('openai');
+    expect(resolved.fallback_used).toBe(false);
   });
 
   test('models.tier.<tier> beats env + fallback', async () => {
@@ -165,6 +179,15 @@ describe('resolveModel — v0.31.12 tier system', () => {
       fallback: 'sonnet',
     });
     expect(m).toBe(DEFAULT_ALIASES.opus);
+  });
+
+  test('Dream subagent phases fall back from subagent tier to reasoning tier before default', async () => {
+    stub.set('models.default', 'deepseek:deepseek-chat');
+    stub.set('models.tier.reasoning', 'openai:gpt-5.2');
+    const resolved = await resolveDreamModel(stub as never, { phase: 'synthesize' });
+    expect(resolved.model).toBe('openai:gpt-5.2');
+    expect(resolved.source).toBe('models.tier.reasoning');
+    expect(resolved.tier).toBe('subagent');
   });
 
   test('TIER_DEFAULTS wins over caller fallback when no override', async () => {

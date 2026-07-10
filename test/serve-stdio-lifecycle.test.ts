@@ -297,7 +297,7 @@ describe('runServe stdio lifecycle', () => {
 
     // Watchdog NOT installed — message matches behavior.
     expect(h.timers.active()).toBe(0);
-    expect(h.logs.some(l => l.includes('[gbrain serve] watchdog disabled: ps unavailable'))).toBe(true);
+    expect(h.logs.some(l => l.includes('[pmbrain serve] watchdog disabled: ps unavailable'))).toBe(true);
 
     // Sanity: the other lifecycle paths still work — the shutdown still
     // funnels through stdin EOF / signals, just not via the watchdog.

@@ -209,7 +209,7 @@ describe('evaluateAndFireNudge', () => {
     });
     expect(out.shouldFire).toBe(true);
     expect(out.matchedTag).toBe('over-confident-hiring');
-    expect(stderrWrites).toContain('[gbrain]');
+    expect(stderrWrites).toContain('[pmbrain]');
     expect(stderrWrites).toContain('over-confident-hiring');
     const insertCall = sqls.find(s => s.sql.includes('INSERT INTO take_nudge_log'));
     expect(insertCall).toBeDefined();
@@ -268,7 +268,7 @@ describe('buildNudgeText', () => {
   test('contains the matched tag for hush command', () => {
     const out = buildNudgeText({ matchedTag: 'over-confident-geography', conviction: 0.85 });
     expect(out).toContain('over-confident-geography');
-    expect(out).toContain('gbrain takes nudge --hush over-confident-geography');
+    expect(out).toContain('pmbrain takes nudge --hush over-confident-geography');
   });
 
   test('contains the conviction value', () => {

@@ -104,6 +104,22 @@ describe('v0.41 T5: parseAtomsResponse', () => {
 });
 
 describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
+  test('passes the resolved reasoning-tier model explicitly', async () => {
+    await engine.setConfig('models.tier.reasoning', 'openai:gpt-5.2');
+    let receivedModel: string | undefined;
+    const chat = async (opts: ChatOpts) => {
+      receivedModel = opts.model;
+      return stubChat('[]')(opts);
+    };
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/model.txt', content: 'c', contentHash: 'model-hash' }],
+      _pages: [],
+      _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(receivedModel).toBe('openai:gpt-5.2');
+    expect(result.details?.model_source).toBe('models.tier.reasoning');
+  });
+
   test('no-op when no transcripts AND no pages provided', async () => {
     // v0.41.2.1: _pages:[] suppresses page-discovery so this matches the
     // pre-v0.41.2.1 "transcript-only no-op" path. Reason changed from
@@ -208,6 +224,28 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
 });
 
 describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
+  test('passes the resolved reasoning-tier model explicitly', async () => {
+    await engine.setConfig('models.tier.reasoning', 'google:gemini-3-pro');
+    let receivedModel: string | undefined;
+    const chat = async (opts: ChatOpts) => {
+      receivedModel = opts.model;
+      return stubChat('A synthesized concept.')(opts);
+    };
+    const atoms = Array.from({ length: 6 }, (_, i) => ({
+      slug: `model-${i}`,
+      title: `Model ${i}`,
+      body: `Body ${i}`,
+      concept_refs: ['model-routing'],
+    }));
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
+      dryRun: true,
+    });
+    expect(receivedModel).toBe('google:gemini-3-pro');
+    expect(result.details?.model_source).toBe('models.tier.reasoning');
+  });
+
   test('no-op when no atoms have concept refs', async () => {
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: [] });
     expect(result.status).toBe('skipped');

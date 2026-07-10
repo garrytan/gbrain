@@ -29,7 +29,7 @@ export function sanitizeQueryForPrompt(query: string): string {
   q = q.replace(/^(\s*(ignore|forget|disregard|override|system|assistant|human)[\s:]+)+/gi, '');
   q = q.replace(/\s+/g, ' ').trim();
   if (q !== original) {
-    console.warn('[gbrain] sanitizeQueryForPrompt: stripped content from user query before LLM expansion');
+    console.warn('[pmbrain] sanitizeQueryForPrompt: stripped content from user query before LLM expansion');
   }
   return q;
 }

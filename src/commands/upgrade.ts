@@ -321,9 +321,9 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           if (shown !== 'true' && !existingMode) {
             console.log('');
             console.log('═══════════════════════════════════════════════════════════════');
-            console.log('[gbrain] v0.32.3 added named search modes (conservative/balanced/tokenmax).');
-            console.log('[gbrain] Your current behavior is unchanged — the `query` op still defaults');
-            console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
+            console.log('[pmbrain] v0.32.3 added named search modes (conservative/balanced/tokenmax).');
+            console.log('[pmbrain] Your current behavior is unchanged — the `query` op still defaults');
+            console.log('[pmbrain] expand=true and limit=20, same as v0.31.x.');
             console.log('═══════════════════════════════════════════════════════════════');
             console.log('');
             console.log('[AGENT] Relay this matrix to your operator and ask which mode they want.');

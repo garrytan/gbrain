@@ -39,9 +39,9 @@ describe('patterns phase wiring', () => {
     expect(patternsSrc).toContain("tool_name = 'brain_put_page'");
   });
 
-  test('skips when ANTHROPIC_API_KEY missing', () => {
-    expect(patternsSrc).toContain('ANTHROPIC_API_KEY');
-    expect(patternsSrc).toContain('no_api_key');
+  test('does not hard-code Anthropic credentials', () => {
+    expect(patternsSrc).not.toContain('process.env.ANTHROPIC_API_KEY');
+    expect(patternsSrc).toContain('resolveDreamModel');
   });
 
   test('skips when reflections below min_evidence', () => {

@@ -24,6 +24,7 @@ import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { dreamModelDetails, resolveDreamModel } from './model-routing.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
 const TIER_T1_MIN = 10;
@@ -66,6 +67,8 @@ export async function runPhaseSynthesizeConcepts(
   opts: SynthesizeConceptsOpts = {},
 ): Promise<PhaseResult> {
   const chat = opts._chat ?? gatewayChat;
+  const resolvedModel = await resolveDreamModel(engine, { phase: 'synthesize_concepts' });
+  const modelDetails = dreamModelDetails(resolvedModel, 'single_chat');
 
   // 1. Get atom pages (test seam OR DB query)
   let atoms = opts._atoms ?? [];
@@ -102,7 +105,7 @@ export async function runPhaseSynthesizeConcepts(
       status: 'skipped',
       duration_ms: 0,
       summary: 'synthesize_concepts: no atoms with concept refs',
-      details: { reason: 'no_atoms' },
+      details: { ...modelDetails, reason: 'no_atoms' },
     };
   }
 
@@ -138,7 +141,7 @@ export async function runPhaseSynthesizeConcepts(
       status: 'skipped',
       duration_ms: 0,
       summary: `synthesize_concepts: no concept groups with ≥${TIER_T3_MIN} atoms`,
-      details: { reason: 'no_groups_above_threshold', atoms_seen: atoms.length },
+      details: { ...modelDetails, reason: 'no_groups_above_threshold', atoms_seen: atoms.length },
     };
   }
 
@@ -178,6 +181,7 @@ export async function runPhaseSynthesizeConcepts(
       } else {
         try {
           const result = await chat({
+            model: resolvedModel.model,
             system: SYNTH_PROMPT,
             messages: [
               {
@@ -284,6 +288,7 @@ export async function runPhaseSynthesizeConcepts(
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : ''),
     details: {
+      ...modelDetails,
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
       groups_found: atomGroups.length,

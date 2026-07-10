@@ -44,6 +44,12 @@ import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
 import { safeSplitIndex } from '../text-safe.ts';
+import type { ResolvedModel } from '../model-config.ts';
+import {
+  dreamModelDetails,
+  resolveDreamModel,
+  resolveSubagentExecutionMode,
+} from './model-routing.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -287,15 +293,26 @@ export async function runPhaseSynthesize(
   }
   try {
     const config = await loadSynthConfig(engine);
+    const executionMode = await resolveSubagentExecutionMode(engine, config.resolvedModel.model);
+    const synthesisModelDetails = dreamModelDetails(config.resolvedModel, executionMode);
+    const verdictModelDetails = dreamModelDetails(config.resolvedVerdictModel, 'verdict_chat');
+    const modelDetails = {
+      ...synthesisModelDetails,
+      verdict_model_id: config.resolvedVerdictModel.model,
+      verdict_model_tier: config.resolvedVerdictModel.tier ?? null,
+      verdict_model_source: config.resolvedVerdictModel.source,
+      verdict_provider_id: config.resolvedVerdictModel.provider_id,
+      verdict_fallback_used: config.resolvedVerdictModel.fallback_used,
+    };
 
     // Allow ad-hoc --input to run even when config is disabled.
     if (!opts.inputFile && !config.corpusDir) {
       return skipped('not_configured',
-        'dream.synthesize.session_corpus_dir is unset');
+        'dream.synthesize.session_corpus_dir is unset', modelDetails);
     }
     if (!opts.inputFile && !config.enabled) {
       return skipped('not_configured',
-        'dream.synthesize.enabled is explicitly false');
+        'dream.synthesize.enabled is explicitly false', modelDetails);
     }
 
     // Cooldown check (skipped for explicit --input / --date / --from / --to runs).
@@ -304,7 +321,8 @@ export async function runPhaseSynthesize(
       const cooldown = await checkCooldown(engine, config.cooldownHours);
       if (cooldown.active) {
         return skipped('cooldown_active',
-          `synthesize cooled down until ${cooldown.expires_at} (${config.cooldownHours}h cooldown)`);
+          `synthesize cooled down until ${cooldown.expires_at} (${config.cooldownHours}h cooldown)`,
+          modelDetails);
       }
     }
 
@@ -342,6 +360,7 @@ export async function runPhaseSynthesize(
 
     if (transcripts.length === 0) {
       return ok('no transcripts to process', {
+        ...modelDetails,
         transcripts_discovered: rawTranscripts.length,
         transcripts_unique: transcripts.length,
         transcripts_processed: 0,
@@ -415,6 +434,9 @@ export async function runPhaseSynthesize(
     // "zero LLM calls"; it means "skip Sonnet."
     if (opts.dryRun) {
       return ok(`dry-run: ${worthProcessing.length} of ${rawTranscripts.length} transcripts would synthesize`, {
+        ...modelDetails,
+        verdict_execution: verdictModelDetails,
+        formal_synthesis_called: false,
         transcripts_discovered: rawTranscripts.length,
         transcripts_unique: transcripts.length,
         transcripts_processed: 0,
@@ -430,6 +452,7 @@ export async function runPhaseSynthesize(
       // real successful run — not on "nothing worth processing." Lets a
       // re-run pick up if a new transcript lands later.
       return ok('all transcripts skipped by significance filter', {
+        ...modelDetails,
         transcripts_discovered: rawTranscripts.length,
         transcripts_unique: transcripts.length,
         transcripts_processed: 0,
@@ -598,6 +621,7 @@ export async function runPhaseSynthesize(
     const ms = Date.now() - start;
     const submittedTranscripts = worthProcessing.length - skipReports.length;
     return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
+      ...modelDetails,
       transcripts_discovered: rawTranscripts.length,
       transcripts_unique: transcripts.length,
       transcripts_processed: submittedTranscripts,
@@ -650,6 +674,8 @@ interface SynthConfig {
   excludePatterns: string[];
   model: string;
   verdictModel: string;
+  resolvedModel: ResolvedModel;
+  resolvedVerdictModel: ResolvedModel;
   cooldownHours: number;
   /**
    * D1: Override the per-chunk token budget (model_context × HEADROOM_RATIO
@@ -676,20 +702,10 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const meetingTranscriptsDir = await engine.getConfig('dream.synthesize.meeting_transcripts_dir');
   const minCharsStr = await engine.getConfig('dream.synthesize.min_chars');
   const excludeStr = await engine.getConfig('dream.synthesize.exclude_patterns');
-  // v0.28: resolveModel() unifies CLI flag > new key > deprecated key > models.default > env > fallback
-  const { resolveModel } = await import('../model-config.ts');
-  const model = await resolveModel(engine, {
-    configKey: 'models.dream.synthesize',
-    deprecatedConfigKey: 'dream.synthesize.model',
-    tier: 'reasoning',
-    fallback: 'sonnet',
-  });
-  const verdictModel = await resolveModel(engine, {
-    configKey: 'models.dream.synthesize_verdict',
-    deprecatedConfigKey: 'dream.synthesize.verdict_model',
-    tier: 'utility',
-    fallback: 'haiku',
-  });
+  const resolvedModel = await resolveDreamModel(engine, { phase: 'synthesize' });
+  const resolvedVerdictModel = await resolveDreamModel(engine, { phase: 'synthesize_verdict' });
+  const model = resolvedModel.model;
+  const verdictModel = resolvedVerdictModel.model;
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
@@ -727,6 +743,8 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     excludePatterns,
     model,
     verdictModel,
+    resolvedModel,
+    resolvedVerdictModel,
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
     maxPromptTokens,
     maxChunksPerTranscript,
@@ -1329,13 +1347,13 @@ function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult
   return { phase: 'synthesize', status: 'ok', duration_ms: 0, summary, details };
 }
 
-function skipped(reason: string, summary: string): PhaseResult {
+function skipped(reason: string, summary: string, details: Record<string, unknown> = {}): PhaseResult {
   return {
     phase: 'synthesize',
     status: 'skipped',
     duration_ms: 0,
     summary,
-    details: { reason },
+    details: { ...details, reason },
   };
 }
 

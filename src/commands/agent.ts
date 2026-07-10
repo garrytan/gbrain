@@ -270,7 +270,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
 // ── follow ────────────────────────────────────────────────
 
 async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number, timeoutMs?: number): Promise<void> {
-  process.stderr.write(`[gbrain agent] following job ${jobId} (Ctrl-C to detach)...\n`);
+  process.stderr.write(`[pmbrain agent] following job ${jobId} (Ctrl-C to detach)...\n`);
   const ac = new AbortController();
   const onSigint = () => ac.abort();
   process.once('SIGINT', onSigint);
@@ -286,12 +286,12 @@ async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number,
       });
       ac.abort();
       await logsP.catch(() => {});
-      process.stderr.write(`[gbrain agent] job ${jobId} terminal: ${job.status}\n`);
+      process.stderr.write(`[pmbrain agent] job ${jobId} terminal: ${job.status}\n`);
       if (job.result != null) process.stdout.write(JSON.stringify(job.result, null, 2) + '\n');
       if (job.status !== 'completed') process.exit(1);
     } catch (e) {
       if (e instanceof TimeoutError) {
-        process.stderr.write(`[gbrain agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: gbrain jobs get ${jobId}\n`);
+        process.stderr.write(`[pmbrain agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: pmbrain jobs get ${jobId}\n`);
         process.exit(3);
       }
       throw e;

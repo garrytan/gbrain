@@ -6169,7 +6169,7 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
     writeSnapshotAtomically(violatorSlugs);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] skill_brain_first audit step failed (${msg}); check continues\n`);
+    process.stderr.write(`[pmbrain] skill_brain_first audit step failed (${msg}); check continues\n`);
   }
 
   // --- Build the check result ---------------------------------------------

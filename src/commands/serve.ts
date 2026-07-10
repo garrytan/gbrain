@@ -266,7 +266,7 @@ function installStdioLifecycle(
   if (initialParentPid !== 1) {
     if (!deps.probeWatchdog()) {
       deps.log(
-        '[gbrain serve] watchdog disabled: ps unavailable, parent-death detection unavailable — child will rely on stdin EOF / signals only',
+        '[pmbrain serve] watchdog disabled: ps unavailable, parent-death detection unavailable — child will rely on stdin EOF / signals only',
       );
     } else {
       parentWatchdog = deps.setInterval(() => {

@@ -110,7 +110,7 @@ export function parseRemoteUrl(s: string): ParsedRemoteUrl {
   if (isInternalUrl(s)) {
     if (process.env.GBRAIN_ALLOW_PRIVATE_REMOTES === '1') {
       console.error(
-        `[gbrain] WARN: GBRAIN_ALLOW_PRIVATE_REMOTES=1, accepting internal/private URL: ${url.hostname}`,
+        `[pmbrain] WARN: GBRAIN_ALLOW_PRIVATE_REMOTES=1, accepting internal/private URL: ${url.hostname}`,
       );
     } else {
       throw new RemoteUrlError(

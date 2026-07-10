@@ -370,7 +370,8 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
   it('non-Anthropic model routes through gateway path (the load-bearing v0.38 unlock)', async () => {
     // This is the headline scenario: openai:gpt-5.2 (no caching) works.
     // Pre-v0.38, this would have refused at queue.ts. With the gateway path
-    // flag on, the loop runs end-to-end.
+    // The loop now auto-routes even when the internal feature flag is off.
+    await engine.setConfig('agent.use_gateway_loop', 'false');
     __setChatTransportForTests(async () => ({
       text: 'gpt-5 says hi',
       blocks: [{ type: 'text', text: 'gpt-5 says hi' }] as ChatBlock[],

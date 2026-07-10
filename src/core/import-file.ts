@@ -123,7 +123,7 @@ async function extractFencedChunks(
     if (!text) continue;
     if (fencesSeen >= MAX_FENCES_PER_PAGE) {
       console.warn(
-        `[gbrain] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
+        `[pmbrain] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
         `Override via GBRAIN_MAX_FENCES_PER_PAGE env var.`,
       );
       break;
@@ -150,7 +150,7 @@ async function extractFencedChunks(
     } catch (e: unknown) {
       // One fence failing shouldn't sink the page. Log + continue.
       console.warn(
-        `[gbrain] fence extraction failed for lang=${code.lang}: ${e instanceof Error ? e.message : String(e)}`,
+        `[pmbrain] fence extraction failed for lang=${code.lang}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -311,7 +311,7 @@ export async function importFromContent(
       effectiveCfg = await loadConfigWithEngine(engine, baseCfg);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
+      process.stderr.write(`[pmbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
     }
     const cs = effectiveCfg?.content_sanity ?? {};
     // GBRAIN_NO_SANITY=1 fast-path: loadConfig() returns null when
@@ -346,7 +346,7 @@ export async function importFromContent(
       // time it fires so they remember the gate is off.
       if (sanityResult.shouldHardBlock || sanityResult.shouldSkipEmbed) {
         process.stderr.write(
-          `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
+          `[pmbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
         );
       }
     } else {
@@ -368,12 +368,12 @@ export async function importFromContent(
         // invariant that embed_skip means "no live chunks").
         parsed.frontmatter[EMBED_SKIP_KEY] = buildEmbedSkipMarker(sanityResult.bytes);
         process.stderr.write(
-          `[gbrain] content-sanity soft-block: ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped\n`,
+          `[pmbrain] content-sanity soft-block: ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped\n`,
         );
       } else if (sanityResult.reasons.includes('oversize_warn')) {
         // Warn tier: page lands normally; lint surface picks up too.
         process.stderr.write(
-          `[gbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold, consider splitting\n`,
+          `[pmbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold, consider splitting\n`,
         );
       }
     }
@@ -936,7 +936,7 @@ export async function importCodeFile(
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
-      console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[pmbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1021,7 +1021,7 @@ export async function importCodeFile(
       // Edge persistence is best-effort. A failed addCodeEdges must not
       // fail the overall import — the chunks + embeddings already
       // landed, which is the primary value.
-      console.warn(`[gbrain] edge extraction failed for ${slug}: ${edgeErr instanceof Error ? edgeErr.message : String(edgeErr)}`);
+      console.warn(`[pmbrain] edge extraction failed for ${slug}: ${edgeErr instanceof Error ? edgeErr.message : String(edgeErr)}`);
     }
   }
 
@@ -1256,7 +1256,7 @@ async function maybeOcr(
     const { isAvailable, generateOcrText } = await import('./ai/gateway.ts');
     if (!isAvailable('expansion')) {
       if (!_ocrWarnedThisSession) {
-        console.warn('[gbrain] OCR opt-in is true but expansion model is unavailable; skipping OCR for this session');
+        console.warn('[pmbrain] OCR opt-in is true but expansion model is unavailable; skipping OCR for this session');
         _ocrWarnedThisSession = true;
       }
       await bump('ocr_failed_no_key');
@@ -1267,7 +1267,7 @@ async function maybeOcr(
     return text;
   } catch (err) {
     if (!_ocrWarnedThisSession) {
-      console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[pmbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
       _ocrWarnedThisSession = true;
     }
     await bump('ocr_failed_other');

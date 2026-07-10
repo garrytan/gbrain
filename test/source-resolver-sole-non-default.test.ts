@@ -176,7 +176,7 @@ describe('formatSoleNonDefaultNudge', () => {
   test('returns canonical nudge string in default env', async () => {
     await withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: undefined }, async () => {
       expect(formatSoleNonDefaultNudge('studiovault')).toBe(
-        "[gbrain] routing to source 'studiovault' (sole non-default source registered; pass --source to override).",
+        "[pmbrain] routing to source 'studiovault' (sole non-default source registered; pass --source to override).",
       );
     });
   });

@@ -28,6 +28,12 @@ import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { loadAllowedSlugPrefixes } from './allowed-slug-prefixes.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import {
+  dreamModelDetails,
+  resolveDreamModel,
+  resolveSubagentExecutionMode,
+} from './model-routing.ts';
+import type { ResolvedModel } from '../model-config.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -47,26 +53,26 @@ export async function runPhasePatterns(
       return skipped('disabled', 'dream.patterns.enabled is false');
     }
 
+    const executionMode = await resolveSubagentExecutionMode(engine, config.resolvedModel.model);
+    const modelDetails = dreamModelDetails(config.resolvedModel, executionMode);
+
     // Gather reflections within lookback window.
     const reflections = await gatherReflections(engine, config.lookbackDays);
     if (reflections.length < config.minEvidence) {
       return skipped(
         'insufficient_evidence',
         `${reflections.length} reflections in last ${config.lookbackDays}d (need ≥${config.minEvidence})`,
+        modelDetails,
       );
     }
 
     if (opts.dryRun) {
       return ok(`dry-run: would detect patterns over ${reflections.length} reflections`, {
+        ...modelDetails,
         reflections_considered: reflections.length,
         patterns_written: 0,
         dryRun: true,
       });
-    }
-
-    // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
     }
 
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
@@ -78,7 +84,7 @@ export async function runPhasePatterns(
     const queue = new MinionQueue(engine);
     const data: SubagentHandlerData = {
       prompt: buildPatternsPrompt(reflections, config.minEvidence),
-      model: config.model,
+      model: config.resolvedModel.model,
       max_turns: 30,
       allowed_slug_prefixes: allowedSlugPrefixes,
     };
@@ -115,6 +121,7 @@ export async function runPhasePatterns(
     const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, {
+      ...modelDetails,
       reflections_considered: reflections.length,
       patterns_written: writtenRefs.length,
       reverse_write_count: reverseWriteCount,
@@ -135,7 +142,7 @@ interface PatternsConfig {
   enabled: boolean;
   lookbackDays: number;
   minEvidence: number;
-  model: string;
+  resolvedModel: ResolvedModel;
 }
 
 async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> {
@@ -143,19 +150,12 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const enabled = enabledStr === null ? true : enabledStr === 'true';
   const lookbackStr = await engine.getConfig('dream.patterns.lookback_days');
   const minEvidenceStr = await engine.getConfig('dream.patterns.min_evidence');
-  // v0.28: unified model resolution
-  const { resolveModel } = await import('../model-config.ts');
-  const model = await resolveModel(engine, {
-    configKey: 'models.dream.patterns',
-    deprecatedConfigKey: 'dream.patterns.model',
-    tier: 'reasoning',
-    fallback: 'sonnet',
-  });
+  const resolvedModel = await resolveDreamModel(engine, { phase: 'patterns' });
   return {
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
     minEvidence: minEvidenceStr ? Math.max(1, parseInt(minEvidenceStr, 10) || 3) : 3,
-    model,
+    resolvedModel,
   };
 }
 
@@ -307,13 +307,13 @@ function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult
   return { phase: 'patterns', status: 'ok', duration_ms: 0, summary, details };
 }
 
-function skipped(reason: string, summary: string): PhaseResult {
+function skipped(reason: string, summary: string, details: Record<string, unknown> = {}): PhaseResult {
   return {
     phase: 'patterns',
     status: 'skipped',
     duration_ms: 0,
     summary,
-    details: { reason },
+    details: { ...details, reason },
   };
 }
 
