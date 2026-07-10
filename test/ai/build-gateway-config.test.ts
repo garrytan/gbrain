@@ -117,3 +117,21 @@ describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
     );
   });
 });
+
+describe('buildGatewayConfig OpenCode server file-plane settings', () => {
+  test('maps connection settings into the gateway environment', () => {
+    const cfg = buildGatewayConfig({
+      opencode_server_url: 'http://127.0.0.1:4900',
+      opencode_server_username: 'gbrain',
+      opencode_server_password: 'secret-value',
+      opencode_server_provider_id: 'openai',
+      opencode_server_agent: 'gbrain',
+    } as unknown as GBrainConfig);
+
+    expect(cfg.env.GBRAIN_OPENCODE_SERVER_URL).toBe('http://127.0.0.1:4900');
+    expect(cfg.env.GBRAIN_OPENCODE_SERVER_USERNAME).toBe('gbrain');
+    expect(cfg.env.GBRAIN_OPENCODE_SERVER_PASSWORD).toBe('secret-value');
+    expect(cfg.env.GBRAIN_OPENCODE_PROVIDER_ID).toBe('openai');
+    expect(cfg.env.GBRAIN_OPENCODE_AGENT).toBe('gbrain');
+  });
+});

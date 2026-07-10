@@ -52,6 +52,7 @@ import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+import { OpenCodeServerLanguageModel } from './providers/opencode-server-language-model.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -1266,6 +1267,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'opencode-server':
+      throw new AIConfigError(
+        `opencode-server has no embedding model. Use openai, zeroentropyai, or google for embeddings.`,
+      );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -2182,6 +2187,14 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
+    case 'opencode-server':
+      return new OpenCodeServerLanguageModel(modelId, {
+        baseUrl: cfg.env.GBRAIN_OPENCODE_SERVER_URL,
+        username: cfg.env.GBRAIN_OPENCODE_SERVER_USERNAME,
+        password: cfg.env.GBRAIN_OPENCODE_SERVER_PASSWORD,
+        providerId: cfg.env.GBRAIN_OPENCODE_PROVIDER_ID,
+        agent: cfg.env.GBRAIN_OPENCODE_AGENT,
+      });
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2556,6 +2569,14 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
+    case 'opencode-server':
+      return new OpenCodeServerLanguageModel(modelId, {
+        baseUrl: cfg.env.GBRAIN_OPENCODE_SERVER_URL,
+        username: cfg.env.GBRAIN_OPENCODE_SERVER_USERNAME,
+        password: cfg.env.GBRAIN_OPENCODE_SERVER_PASSWORD,
+        providerId: cfg.env.GBRAIN_OPENCODE_PROVIDER_ID,
+        agent: cfg.env.GBRAIN_OPENCODE_AGENT,
+      });
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'chat');

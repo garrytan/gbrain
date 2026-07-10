@@ -34,6 +34,11 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // plane field now exists (GBrainConfig type) and gets mapped here, so
   // setting it via `~/.gbrain/config.json` propagates into the gateway.
   if (c.zeroentropy_api_key) envFromConfig.ZEROENTROPY_API_KEY = c.zeroentropy_api_key;
+  if (c.opencode_server_url) envFromConfig.GBRAIN_OPENCODE_SERVER_URL = c.opencode_server_url;
+  if (c.opencode_server_username) envFromConfig.GBRAIN_OPENCODE_SERVER_USERNAME = c.opencode_server_username;
+  if (c.opencode_server_password) envFromConfig.GBRAIN_OPENCODE_SERVER_PASSWORD = c.opencode_server_password;
+  if (c.opencode_server_provider_id) envFromConfig.GBRAIN_OPENCODE_PROVIDER_ID = c.opencode_server_provider_id;
+  if (c.opencode_server_agent) envFromConfig.GBRAIN_OPENCODE_AGENT = c.opencode_server_agent;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
