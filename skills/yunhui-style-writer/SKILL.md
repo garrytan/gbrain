@@ -10,7 +10,7 @@ triggers:
   - "按云辉风格写"
   - "帮我把这段扩写"
 writes_to:
-  - "brain"  # 输出文章时写入大脑
+  - "writing/"
 writes_pages: true
 mutating: false
 ---

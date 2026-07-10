@@ -1,5 +1,6 @@
 ---
 name: pm-task
+description: 查询、创建和更新 PMBrain 项目任务页面。
 triggers:
   - "任务"
   - "分配"
@@ -44,3 +45,17 @@ tools:
 - deadline: 截止日期（YYYY-MM-DD）
 - project: 所属项目名称
 - milestone: 关联里程碑名称
+
+## Contract
+
+- 查询前先读取现有任务，不覆盖未要求修改的字段。
+- 创建和更新任务时保持 PMBrain 页面结构及知识链接完整。
+
+## Anti-Patterns
+
+- 不在目标任务不明确时猜测并修改任务。
+- 不删除任务页面或批量覆盖知识库内容。
+
+## Output Format
+
+返回匹配任务列表，或说明已创建/更新的任务及变更字段。

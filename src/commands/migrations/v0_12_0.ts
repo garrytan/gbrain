@@ -152,6 +152,13 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   console.log('');
 
   const phases: OrchestratorPhaseResult[] = [];
+  if (opts.dryRun) {
+    for (const name of ['schema', 'config', 'backfill_links', 'backfill_timeline', 'verify']) {
+      phases.push({ name, status: 'skipped', detail: 'dry-run' });
+    }
+    return finalizeResult(phases, 'complete');
+  }
+
   const engine = await createMigrationEngine();
   try {
     const a = await phaseASchema(engine, opts);

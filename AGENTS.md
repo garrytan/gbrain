@@ -22,7 +22,9 @@ Agent 不允许：
 ## 常见入口
 
 * 架构：CLAUDE.md
-* 技能：skills/
+* 技能：skills/RESOLVER.md
+* Agent 安装：INSTALL_FOR_AGENTS.md
+* LLM 导航：llms.txt
 * 知识库：wiki/
 * 原始资料：sources/
 

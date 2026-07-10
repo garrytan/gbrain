@@ -182,7 +182,7 @@ describe('detectDroppedMessages', () => {
         topic: '12345',
         sessionId: 'abc123',
         abortedLastRun: true,
-        reason: 'Session aborted on last run',
+        lastUpdate: '2026-05-06T12:55:00.000Z',
       });
     });
   });
@@ -283,7 +283,9 @@ describe('detectDroppedMessages', () => {
           expect(dropped).toHaveLength(1);
           expect(dropped[0]).toMatchObject({
             suspiciousGap: true,
-            reason: 'Active before restart, silent after',
+            sessionId: 'def',
+            topic: '67890',
+            timeSinceUpdate: 17,
           });
         } finally {
           Date.now = realNow;

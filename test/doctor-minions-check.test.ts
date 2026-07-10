@@ -27,7 +27,12 @@ let origHome: string | undefined;
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   // Strip DATABASE_URL so doctor runs filesystem-only for these tests.
   // Half-migrated checks run in the filesystem section; no DB needed.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = {
+    ...process.env,
+    HOME: tmp,
+    PMBRAIN_HOME: tmp,
+  } as Record<string, string | undefined>;
+  delete env.GBRAIN_HOME;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -59,9 +64,9 @@ afterEach(() => {
 
 describe('gbrain doctor — half-migrated Minions detection', () => {
   test('filesystem: partial completed.jsonl entry with no matching complete → FAIL', () => {
-    // Seed ~/.gbrain/migrations/completed.jsonl with a single status:"partial"
+    // Seed ~/.pmbrain/migrations/completed.jsonl with a single status:"partial"
     // entry — the classic signal the stopgap ran but apply-migrations didn't.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -84,14 +89,14 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     expect(minions).toBeDefined();
     expect(minions!.status).toBe('fail');
     expect(minions!.message).toContain('MINIONS HALF-INSTALLED');
-    expect(minions!.message).toContain('gbrain apply-migrations --yes');
+    expect(minions!.message).toContain('pmbrain apply-migrations --yes');
     expect(minions!.message).toContain('0.11.0');
   });
 
   test('filesystem: partial followed by complete → NO warning', () => {
     // The stopgap wrote partial, then v0.11.1 apply-migrations wrote
     // complete. Doctor should stay quiet.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -149,7 +154,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     // flag v0.11 by name. The forward-progress override only kicks in
     // when a NEWER version completed; v0.10 is older than v0.11 so the
     // partial still stands.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -180,7 +185,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     // historical stopgap runs; a doctor flag with no time decay or
     // forward-progress detection becomes meaningless once you've
     // moved past those versions.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -209,7 +214,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     // The override only fires when a >= partial version has completed.
     // Older completes (e.g. v0.10 complete + v0.16 partial) do NOT
     // supersede the partial; the partial still indicates a real problem.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -231,7 +236,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     // Same fixture as the first test, but check the human-readable output
     // includes the exact banner phrase an OpenClaw host's cron script
     // can grep for.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    const migrationsDir = join(tmp, '.pmbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
       join(migrationsDir, 'completed.jsonl'),
@@ -241,6 +246,6 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     const result = run(['doctor', '--fast']);
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain('MINIONS HALF-INSTALLED');
-    expect(result.stdout).toContain('gbrain apply-migrations --yes');
+    expect(result.stdout).toContain('pmbrain apply-migrations --yes');
   });
 });

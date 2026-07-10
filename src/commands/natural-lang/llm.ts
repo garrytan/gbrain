@@ -4,6 +4,8 @@ import { chat, configureGateway, isAvailable } from '../../core/ai/gateway.ts';
 import type { AIGatewayConfig } from '../../core/ai/types.ts';
 import { INTENT_SYSTEM_PROMPT, PMBRAIN_ACTION_TOOL } from './prompt.ts';
 
+const INTENT_CLASSIFICATION_CHARACTERS = 4_000;
+
 // ---------------------------------------------------------------------------
 // JSON / response parsing helpers
 // ---------------------------------------------------------------------------
@@ -15,9 +17,28 @@ export function parseJsonObject(raw: string): Record<string, unknown> {
   const first = body.indexOf('{');
   const last = body.lastIndexOf('}');
   if (first === -1 || last === -1 || last <= first) {
-    throw new Error(`LLM did not return a JSON object: ${body.slice(0, 240) || '(empty)'}`);
+    const partialIntent = body.match(/["']intent["']\s*:\s*["']([^"']+)["']/i)?.[1];
+    if (partialIntent === 'capture_memory' || partialIntent === 'capture_memo') {
+      return { intent: 'capture_memory' };
+    }
+    throw new Error('模型返回的任务格式不完整，请重新发送。');
   }
-  return JSON.parse(body.slice(first, last + 1)) as Record<string, unknown>;
+  try {
+    return JSON.parse(body.slice(first, last + 1)) as Record<string, unknown>;
+  } catch {
+    const partialIntent = body.match(/["']intent["']\s*:\s*["']([^"']+)["']/i)?.[1];
+    if (partialIntent === 'capture_memory' || partialIntent === 'capture_memo') {
+      return { intent: 'capture_memory' };
+    }
+    throw new Error('模型返回的任务格式无法解析，请重新发送。');
+  }
+}
+
+function classificationText(text: string): string {
+  if (text.length <= INTENT_CLASSIFICATION_CHARACTERS) return text;
+  const tailLength = 800;
+  const headLength = INTENT_CLASSIFICATION_CHARACTERS - tailLength;
+  return `${text.slice(0, headLength)}\n\n[中间正文已省略，仅用于识别任务；执行时仍使用完整原文]\n\n${text.slice(-tailLength)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -157,6 +178,7 @@ export function getAdminLlmStatus(config: GBrainConfig | null) {
 // ---------------------------------------------------------------------------
 
 export async function callIntentModel(config: GBrainConfig, text: string, attempt: number): Promise<Record<string, unknown>> {
+  const taskText = classificationText(text);
   if (config.chat_model?.startsWith('mimo:') && config.mimo_api_key) {
     const model = config.chat_model.slice('mimo:'.length);
     const res = await fetch('https://api.xiaomimimo.com/v1/chat/completions', {
@@ -171,7 +193,7 @@ export async function callIntentModel(config: GBrainConfig, text: string, attemp
           { role: 'system', content: INTENT_SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `${attempt === 0 ? '' : '上次输出不可解析。请严格只输出 JSON 对象。\n'}用户输入：${text.slice(0, 4000)}`,
+            content: `${attempt === 0 ? '' : '上次输出不可解析。请严格只输出 JSON 对象。\n'}用户输入：${taskText}`,
           },
         ],
         tools: [PMBRAIN_ACTION_TOOL],
@@ -196,7 +218,7 @@ export async function callIntentModel(config: GBrainConfig, text: string, attemp
     system: INTENT_SYSTEM_PROMPT,
     messages: [{
       role: 'user',
-      content: `${attempt === 0 ? '' : '上次输出不可解析。请严格只输出 JSON 对象。\n'}用户输入：${text.slice(0, 4000)}`,
+      content: `${attempt === 0 ? '' : '上次输出不可解析。请严格只输出 JSON 对象。\n'}用户输入：${taskText}`,
     }],
     tools: [{
       name: PMBRAIN_ACTION_TOOL.function.name,

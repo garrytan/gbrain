@@ -127,7 +127,7 @@ describe('dream CLI flag wiring', () => {
 
     test('declares archived-source guard', () => {
       expect(dreamSrc).toMatch(/source.*is archived/);
-      expect(dreamSrc).toContain('gbrain sources restore');
+      expect(dreamSrc).toContain('pmbrain sources restore');
     });
   });
 });

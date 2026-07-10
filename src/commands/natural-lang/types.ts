@@ -57,3 +57,8 @@ export const INTENT_SLOT_KEYS = new Set([
   'includeImages',
   'sourceId',
 ]);
+
+// Keep this aligned with the character counter in admin/src/pages/Console.tsx.
+// Natural-language capture is ultimately forwarded as a Windows process argument,
+// so leave sufficient room below the CreateProcess command-line limit.
+export const MAX_NATURAL_TASK_CHARACTERS = 10_000;

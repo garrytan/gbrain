@@ -2,17 +2,17 @@
  * Public exports contract test (v0.21.0 — Lane 2 / R2).
  *
  * Reads package.json "exports" at runtime, imports each subpath via the
- * package name ("gbrain/<subpath>") so it actually exercises the
+ * package name ("pmbrain/<subpath>") so it actually exercises the
  * resolver — then asserts each resolves AND has at least one canary
  * symbol. Importing from relative paths (e.g. "../src/core/engine.ts")
  * would bypass the exports map and miss resolver/wiring breakage.
  *
  * The canary symbols are concrete values each module re-exports today.
  * If a refactor renames or removes one, this test fails in CI so the
- * downstream consumer (gbrain-evals) doesn't silently break first.
+ * downstream PMBrain consumers do not silently break first.
  *
  * To add a new public export: extend `EXPECTED_EXPORTS` below. To
- * REMOVE one: bump gbrain's minor (breaking-interface per CLAUDE.md
+ * REMOVE one: bump PMBrain's minor (breaking-interface per CLAUDE.md
  * "Removing any of these is a breaking change going forward").
  */
 
@@ -33,26 +33,26 @@ interface ExpectedExport {
  * are intentional breaking changes to the public exports surface.
  */
 const EXPECTED_EXPORTS: ExpectedExport[] = [
-  { subpath: 'gbrain', canary: [] }, // root "." export; no single canary — just require import success
-  { subpath: 'gbrain/engine', canary: ['clampSearchLimit', 'MAX_SEARCH_LIMIT'] },
-  { subpath: 'gbrain/types', canary: ['GBrainError'] },
-  { subpath: 'gbrain/operations', canary: ['operations', 'OperationError'] },
-  { subpath: 'gbrain/minions', canary: [] }, // barrel module; re-exports many names
-  { subpath: 'gbrain/engine-factory', canary: [] }, // factory exports a default creator
-  { subpath: 'gbrain/pglite-engine', canary: ['PGLiteEngine'] },
-  { subpath: 'gbrain/link-extraction', canary: ['extractEntityRefs', 'extractPageLinks'] },
-  { subpath: 'gbrain/import-file', canary: ['importFromContent'] },
-  { subpath: 'gbrain/transcription', canary: [] },
-  { subpath: 'gbrain/embedding', canary: ['embed'] },
-  { subpath: 'gbrain/config', canary: ['loadConfig'] },
-  { subpath: 'gbrain/markdown', canary: ['splitBody', 'parseMarkdown', 'serializeMarkdown'] },
-  { subpath: 'gbrain/backoff', canary: [] },
-  { subpath: 'gbrain/search/hybrid', canary: ['hybridSearch', 'rrfFusion'] },
-  { subpath: 'gbrain/search/expansion', canary: ['expandQuery'] },
-  { subpath: 'gbrain/ai/gateway', canary: ['configureGateway', 'embed'] },
-  { subpath: 'gbrain/extract', canary: [] },
-  { subpath: 'gbrain/ingestion', canary: ['INGESTION_SOURCE_API_VERSION', 'validateIngestionEvent', 'computeContentHash'] },
-  { subpath: 'gbrain/ingestion/test-harness', canary: ['IngestionTestHarness', 'expectEvent'] },
+  { subpath: 'pmbrain', canary: [] }, // root "." export; no single canary — just require import success
+  { subpath: 'pmbrain/engine', canary: ['clampSearchLimit', 'MAX_SEARCH_LIMIT'] },
+  { subpath: 'pmbrain/types', canary: ['GBrainError'] },
+  { subpath: 'pmbrain/operations', canary: ['operations', 'OperationError'] },
+  { subpath: 'pmbrain/minions', canary: [] }, // barrel module; re-exports many names
+  { subpath: 'pmbrain/engine-factory', canary: [] }, // factory exports a default creator
+  { subpath: 'pmbrain/pglite-engine', canary: ['PGLiteEngine'] },
+  { subpath: 'pmbrain/link-extraction', canary: ['extractEntityRefs', 'extractPageLinks'] },
+  { subpath: 'pmbrain/import-file', canary: ['importFromContent'] },
+  { subpath: 'pmbrain/transcription', canary: [] },
+  { subpath: 'pmbrain/embedding', canary: ['embed'] },
+  { subpath: 'pmbrain/config', canary: ['loadConfig'] },
+  { subpath: 'pmbrain/markdown', canary: ['splitBody', 'parseMarkdown', 'serializeMarkdown'] },
+  { subpath: 'pmbrain/backoff', canary: [] },
+  { subpath: 'pmbrain/search/hybrid', canary: ['hybridSearch', 'rrfFusion'] },
+  { subpath: 'pmbrain/search/expansion', canary: ['expandQuery'] },
+  { subpath: 'pmbrain/ai/gateway', canary: ['configureGateway', 'embed'] },
+  { subpath: 'pmbrain/extract', canary: [] },
+  { subpath: 'pmbrain/ingestion', canary: ['INGESTION_SOURCE_API_VERSION', 'validateIngestionEvent', 'computeContentHash'] },
+  { subpath: 'pmbrain/ingestion/test-harness', canary: ['IngestionTestHarness', 'expectEvent'] },
 ];
 
 function readPackageExports(): Record<string, string> {
@@ -73,7 +73,7 @@ describe('public exports — package.json exports map', () => {
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {
     const exports = readPackageExports();
-    const exportedSubpaths = Object.keys(exports).map(k => (k === '.' ? 'gbrain' : `gbrain${k.slice(1)}`)).sort();
+    const exportedSubpaths = Object.keys(exports).map(k => (k === '.' ? 'pmbrain' : `pmbrain${k.slice(1)}`)).sort();
     const expectedSubpaths = EXPECTED_EXPORTS.map(e => e.subpath).sort();
     expect(expectedSubpaths).toEqual(exportedSubpaths);
   });

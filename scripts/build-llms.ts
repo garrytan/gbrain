@@ -101,7 +101,7 @@ function renderLlmsFullTxt(): { content: string; sizes: Array<{ path: string; by
         );
       }
 
-      const body = readFileSync(absPath, "utf8");
+      const body = readFileSync(absPath, "utf8").replace(/\r\n?/g, "\n");
       const bytes = Buffer.byteLength(body, "utf8");
       sizes.push({ path: entry.path, bytes });
 

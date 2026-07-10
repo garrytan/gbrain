@@ -3,7 +3,7 @@
 
 // Types
 export type { ConsoleIntent, IntentPreview, ConsoleRun } from './types.ts';
-export { INTENTS, INTENT_SLOT_KEYS } from './types.ts';
+export { INTENTS, INTENT_SLOT_KEYS, MAX_NATURAL_TASK_CHARACTERS } from './types.ts';
 
 // Prompt
 export { INTENT_SYSTEM_PROMPT, PMBRAIN_ACTION_TOOL } from './prompt.ts';

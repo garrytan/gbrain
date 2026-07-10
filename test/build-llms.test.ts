@@ -31,6 +31,7 @@ describe("build-llms generator", () => {
     const second = buildLlmsFiles();
     expect(second.llmsTxt).toBe(first.llmsTxt);
     expect(second.llmsFullTxt).toBe(first.llmsFullTxt);
+    expect(first.llmsFullTxt).not.toContain("\r");
   });
 
   // Case 3 — llms.txt spec shape per llmstxt.org: H1 + blockquote + required H2s.
@@ -84,7 +85,7 @@ describe("build-llms generator", () => {
     expect(agents).toContain("INSTALL_FOR_AGENTS.md");
     expect(agents).toContain("llms.txt");
     // Trust boundary is the non-obvious security concept agents need up-front.
-    expect(agents.toLowerCase()).toContain("trust boundary");
+    expect(agents).toContain("信任边界");
   });
 
   test("llms-full.txt stays within size budget", () => {

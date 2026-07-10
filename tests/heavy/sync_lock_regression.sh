@@ -39,24 +39,28 @@ export GBRAIN_HOME="$TMP_GBRAIN_HOME"
 LOG_DIR="$GBRAIN_HOME/audit"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/heavy-sync_lock_regression-$TS.log"
-# Surface the log path so it survives the EXIT trap that nukes GBRAIN_HOME.
-SURFACE_LOG="${TMPDIR:-/tmp}/heavy-sync_lock_regression-$TS.log"
-trap 'rm -rf "$TMP_GBRAIN_HOME"; cp -f "$LOG" "$SURFACE_LOG" 2>/dev/null || true' EXIT
+# Surface the log under the runner's stable audit directory so the workflow
+# artifact step can collect it after the isolated GBRAIN_HOME is removed.
+SURFACE_DIR="$HOME/.gbrain/audit"
+mkdir -p "$SURFACE_DIR"
+SURFACE_LOG="$SURFACE_DIR/heavy-sync_lock_regression-$TS.log"
+trap 'cp -f "$LOG" "$SURFACE_LOG" 2>/dev/null || true; rm -rf "$TMP_GBRAIN_HOME"' EXIT
 
 NUM_PARALLEL="${NUM_PARALLEL:-4}"
 echo "[sync_lock_regression] DATABASE_URL=$DATABASE_URL"
 echo "[sync_lock_regression] log=$LOG"
 echo "[sync_lock_regression] spawning $NUM_PARALLEL parallel sync processes..."
 
-# Step 1: ensure schema is up-to-date by running doctor once
-echo "[sync_lock_regression] init schema via gbrain doctor..." | tee -a "$LOG"
-timeout 180s bun run src/cli.ts doctor --json > /dev/null 2>>"$LOG"
+# Step 1: initialize the empty CI database. Doctor is diagnostic-only and does
+# not create schema objects, so using it here leaves the config table absent.
+echo "[sync_lock_regression] init schema via pmbrain init --migrate-only..." | tee -a "$LOG"
+timeout 180s bun run src/cli.ts init --migrate-only --json > /dev/null 2>>"$LOG"
 
 # Step 2: create a tiny brain dir + register it as sync.repo_path so each sync
 # call has something legitimate to do.
 BRAIN_DIR=$(mktemp -d -t gbrain-sync-lock-XXXXXX)
 # Compose with the earlier GBRAIN_HOME-cleanup trap (NOT overwrite it).
-trap 'rm -rf "$BRAIN_DIR" "$TMP_GBRAIN_HOME"; cp -f "$LOG" "$SURFACE_LOG" 2>/dev/null || true' EXIT
+trap 'cp -f "$LOG" "$SURFACE_LOG" 2>/dev/null || true; rm -rf "$BRAIN_DIR" "$TMP_GBRAIN_HOME"' EXIT
 
 # Seed two markdown pages so sync has real (but trivial) work
 mkdir -p "$BRAIN_DIR"

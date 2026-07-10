@@ -5,6 +5,7 @@ import type { GBrainConfig } from '../../core/config.ts';
 import { loadAllSources } from '../../core/sources-load.ts';
 import { resolveMainSourceId } from '../../core/source-resolver.ts';
 import type { ConsoleRun, IntentPreview } from './types.ts';
+import { MAX_NATURAL_TASK_CHARACTERS } from './types.ts';
 import { normalizeIntentPreview, describeAction } from './normalize.ts';
 import { callIntentModel, getAdminLlmStatus } from './llm.ts';
 import { commandForPreview, resolveCliEntry } from './commands.ts';
@@ -67,7 +68,11 @@ export async function resolveImportSourceIdForPath(
 // ---------------------------------------------------------------------------
 
 export async function previewIntent(text: string, config: GBrainConfig | null): Promise<IntentPreview> {
-  if (!text.trim()) throw new Error('Text is required');
+  const trimmedText = text.trim();
+  if (!trimmedText) throw new Error('请输入任务内容。');
+  if (text.length > MAX_NATURAL_TASK_CHARACTERS) {
+    throw new Error(`输入内容不能超过 ${MAX_NATURAL_TASK_CHARACTERS.toLocaleString('zh-CN')} 字，当前为 ${text.length.toLocaleString('zh-CN')} 字。`);
+  }
   const llm = getAdminLlmStatus(config);
   if (!llm.enabled) {
     throw new Error(`LLM is not configured: ${llm.missing.join(', ') || 'missing chat model or key'}`);
@@ -76,6 +81,16 @@ export async function previewIntent(text: string, config: GBrainConfig | null): 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const obj = await callIntentModel(config!, text, attempt);
+      const rawIntent = String(obj.intent ?? obj.action ?? obj.type ?? '').trim();
+      if (rawIntent === 'capture_memory' || rawIntent === 'capture_memo') {
+        const content = captureContentFromInput(trimmedText);
+        obj.intent = 'capture_memory';
+        obj.content = content;
+        obj.slots = {
+          ...(obj.slots && typeof obj.slots === 'object' && !Array.isArray(obj.slots) ? obj.slots as Record<string, unknown> : {}),
+          content,
+        };
+      }
       const preview = normalizeIntentPreview(obj);
       previews.set(preview.previewId, preview);
       return preview;
@@ -84,6 +99,14 @@ export async function previewIntent(text: string, config: GBrainConfig | null): 
     }
   }
   throw lastError ?? new Error('Intent preview failed');
+}
+
+function captureContentFromInput(text: string): string {
+  const withoutTrailingInstruction = text.replace(
+    /\s*(?:请)?(?:把|将)?(?:以上|上述|这段|这些|全文|这篇)?(?:文本|文章|内容)?(?:保存|存入|写入|记入|收录)(?:到|至|进)?(?:我的)?知识库[。！!\s]*$/u,
+    '',
+  ).trim();
+  return withoutTrailingInstruction || text;
 }
 
 export async function executePreview(engine: BrainEngine, previewId: string, confirmed: boolean, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {

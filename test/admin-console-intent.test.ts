@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { buildDreamCommand, deriveSourceIdFromPath, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
+import { buildDreamCommand, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
 describe('admin console intent planning', () => {
@@ -39,6 +39,48 @@ describe('admin console intent planning', () => {
     expect(preview.intent).toBe('import_path');
     expect(preview.slots.path).toBe('D:\\Obsidian\\Vault\\raw\\a.md');
     expect(preview.slots.pathType).toBe('file');
+  });
+
+  test('truncated capture JSON keeps the complete original text', async () => {
+    let modelInput = '';
+    globalThis.fetch = (async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as any;
+      modelInput = body.messages?.[1]?.content ?? '';
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: '```json\n{"intent":"capture_memo","content":"模型输出在长正文中被截断',
+          },
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+
+    const article = `标题\n${'完整正文。'.repeat(900)}`;
+    const preview = await previewIntent(`${article}\n存入知识库`, {
+      chat_model: 'mimo:mimo-v2.5-pro',
+      mimo_api_key: 'test-key',
+    } as any);
+
+    expect(preview.intent).toBe('capture_memory');
+    expect(preview.slots.content).toBe(article);
+    expect(preview.proposedAction).toContain(`共 ${article.length.toLocaleString('zh-CN')} 字`);
+    expect(modelInput.length).toBeLessThan(article.length);
+    expect(modelInput).toContain('执行时仍使用完整原文');
+    expect(modelInput).toContain('存入知识库');
+  });
+
+  test('natural-language input over the documented limit is rejected before calling the model', async () => {
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response('{}');
+    }) as unknown as typeof fetch;
+
+    await expect(previewIntent('字'.repeat(MAX_NATURAL_TASK_CHARACTERS + 1), {
+      chat_model: 'mimo:mimo-v2.5-pro',
+      mimo_api_key: 'test-key',
+    } as any)).rejects.toThrow('不能超过 10,000 字');
+    expect(called).toBe(false);
   });
 
   test('gateway tool-call blocks are accepted when result text is empty', async () => {

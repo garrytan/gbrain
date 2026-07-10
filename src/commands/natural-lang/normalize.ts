@@ -16,7 +16,8 @@ function inferPathType(path: string): 'file' | 'directory' | 'unknown' {
 }
 
 export function normalizeIntentPreview(obj: Record<string, unknown>): IntentPreview {
-  const rawIntent = String(obj.intent ?? obj.action ?? obj.type ?? '').trim();
+  const originalIntent = String(obj.intent ?? obj.action ?? obj.type ?? '').trim();
+  const rawIntent = originalIntent === 'capture_memo' ? 'capture_memory' : originalIntent;
   if (!INTENTS.has(rawIntent as ConsoleIntent)) throw new Error(`Unsupported intent: ${rawIntent}`);
   const intent = rawIntent as ConsoleIntent;
   const slots = obj.slots && typeof obj.slots === 'object' && !Array.isArray(obj.slots)
@@ -72,7 +73,10 @@ export function validateSlots(preview: IntentPreview): void {
 
 export function describeAction(intent: ConsoleIntent, slots: Record<string, unknown>): string {
   switch (intent) {
-    case 'capture_memory': return `保存文本到知识库：${String(slots.content ?? '').slice(0, 60)}`;
+    case 'capture_memory': {
+      const content = String(slots.content ?? '');
+      return `准备将完整文本保存到知识库（共 ${content.length.toLocaleString('zh-CN')} 字）。预览：${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`;
+    }
     case 'search_brain': return `搜索知识库：${String(slots.query ?? '').slice(0, 80)}`;
     case 'import_path': return `导入路径：${String(slots.path ?? '')}`;
     case 'sync_source': return `同步 source：${String(slots.sourceId ?? '')}`;

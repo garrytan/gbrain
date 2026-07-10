@@ -287,6 +287,8 @@ export function KnowledgeWorkbenchPage({ onNavigate }: { onNavigate?: (page: str
 }
 
 const NATURAL_HISTORY_KEY = 'pmbrain.natural.history';
+// Backend authority: src/commands/natural-lang/types.ts.
+const MAX_NATURAL_TASK_CHARACTERS = 10_000;
 
 function loadNaturalHistory(): NaturalTaskHistoryItem[] {
   try {
@@ -303,7 +305,8 @@ function saveNaturalHistory(rows: NaturalTaskHistoryItem[]) {
   localStorage.setItem(NATURAL_HISTORY_KEY, JSON.stringify(rows.slice(0, 30)));
 }
 
-function summarizeRunResult(intent: string, run: ConsoleRun): string {
+function summarizeRunResult(preview: IntentPreview, run: ConsoleRun): string {
+  const intent = preview.intent;
   if (run.status === 'running') return '任务正在执行中，请稍候...';
   if (run.status === 'queued') return '任务已排队，等待执行...';
   if (run.status === 'failed') {
@@ -338,8 +341,10 @@ function summarizeRunResult(intent: string, run: ConsoleRun): string {
         ? `搜索完成，找到 ${count} 条相关结果。${count > 0 ? '请在详情中查看具体内容。' : ''}`
         : '搜索完成，未找到相关结果。';
     }
-    case 'capture_memory':
-      return '已成功将内容保存到知识库。';
+    case 'capture_memory': {
+      const savedLength = String(preview.slots.content ?? '').length;
+      return `已将完整文本保存到知识库，共 ${savedLength.toLocaleString('zh-CN')} 字。`;
+    }
     case 'import_path': {
       if (run.error || run.stderr || /imported=\d+\s+skipped=\d+\s+errors=\d+/.test(out)) {
         return summarizeRunLog(run, '导入完成');
@@ -420,6 +425,8 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
   const [error, setError] = useState('');
   const [history, setHistory] = useState<NaturalTaskHistoryItem[]>(() => loadNaturalHistory());
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+  const inputLength = text.length;
+  const inputTooLong = inputLength > MAX_NATURAL_TASK_CHARACTERS;
 
   const upsertHistory = (item: NaturalTaskHistoryItem) => {
     setHistory(current => {
@@ -450,7 +457,7 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
   };
 
   const submitPreview = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() || inputTooLong) return;
     setSubmitClicked(true);
     setExecuteClicked(false);
     setLoading(true);
@@ -517,8 +524,13 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
     return () => clearInterval(timer);
   }, [run, activeHistoryId, history]);
 
-  const summary = preview && run ? summarizeRunResult(preview.intent, run) : null;
+  const summary = preview && run ? summarizeRunResult(preview, run) : null;
   const isRunActive = run?.status === 'queued' || run?.status === 'running';
+  const completenessNote = preview?.intent === 'capture_memory'
+    ? '页面只显示内容摘要；实际提交和保存的是上方标注字数的完整文本。'
+    : preview?.intent === 'import_path'
+      ? '页面只显示导入摘要；实际导入范围不会因这里的省略展示而截断，完整日志可展开查看。'
+      : null;
 
   return (
     <div className={`nl-shell ${compact ? 'compact' : ''}`}>
@@ -537,11 +549,18 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
           placeholder="例如：把这段话记下来；导入文件夹路径；同步所有知识库；查一下项目相关资料"
           rows={compact ? 4 : 6}
         />
+        <div className={`nl-input-meta ${inputTooLong ? 'is-over-limit' : ''}`}>
+          <span>最多 10,000 字；长文会完整提交，模型只负责识别任务。</span>
+          <strong>{inputLength.toLocaleString('zh-CN')} / {MAX_NATURAL_TASK_CHARACTERS.toLocaleString('zh-CN')} 字</strong>
+        </div>
+        {inputTooLong && (
+          <div className="pm-error-text">已超出 {(inputLength - MAX_NATURAL_TASK_CHARACTERS).toLocaleString('zh-CN')} 字，请缩短后发送；系统不会静默截断内容。</div>
+        )}
         <div className="pm-actions">
           <button
             className={`pm-primary ${submitClicked ? 'pm-clicked' : ''}`}
             onClick={() => void submitPreview()}
-            disabled={loading || !text.trim()}
+            disabled={loading || !text.trim() || inputTooLong}
           >
             {loading ? '正在理解...' : '发送'}
           </button>
@@ -565,7 +584,10 @@ function NaturalLanguagePanel({ compact = false, onNavigate }: { compact?: boole
         {run && (
           <div className="nl-result">
             <div className="nl-summary">
-              <div className="nl-summary-text">{summary}</div>
+              <div className="nl-summary-text">
+                <div>{summary}</div>
+                {completenessNote && <div className="nl-completeness-note">{completenessNote}</div>}
+              </div>
               <span className={`pm-pill run-pill run-${run.status}`}>
                 {run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'running' ? '执行中' : '排队中'}
               </span>

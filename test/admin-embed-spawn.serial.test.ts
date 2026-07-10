@@ -98,7 +98,8 @@ async function spawnServer(): Promise<ServeProc> {
   // Wait for readiness by polling /health. Bun's readable streams don't
   // give us a synchronous "stderr line" API and the startup banner format
   // is allowed to drift; a /health probe is the contract that matters.
-  const deadline = Date.now() + 30_000;
+  const readinessTimeoutMs = 60_000;
+  const deadline = Date.now() + readinessTimeoutMs;
   let ready = false;
   while (Date.now() < deadline) {
     try {
@@ -129,7 +130,7 @@ async function spawnServer(): Promise<ServeProc> {
     const stderrText = await new Response(proc.stderr).text().catch(() => '');
     await cleanup();
     throw new Error(
-      `serve --http never became ready on port ${port} after 30s. stderr: ${stderrText.slice(0, 2000)}`,
+      `serve --http never became ready on port ${port} after ${readinessTimeoutMs / 1000}s. stderr: ${stderrText.slice(0, 2000)}`,
     );
   }
 

@@ -1196,7 +1196,7 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
     const joined = msgs.join('\n');
     expect(joined).toContain('exhausted retries');
     expect(joined).toContain('gbrain doctor --locks');
-    expect(joined).toContain('gbrain apply-migrations --yes');
+    expect(joined).toContain('pmbrain apply-migrations --yes');
     expect(joined).toContain('Verify:');
     expect(joined).toContain('gbrain doctor');
 

@@ -1,5 +1,6 @@
 ---
 name: pm-status
+description: 汇总 PMBrain 项目健康度、进度、阻塞项和风险。
 triggers:
   - "项目状态"
   - "进度"
@@ -33,3 +34,17 @@ tools:
 - 里程碑进度条
 - 阻塞任务列表
 - 重点关注的风险
+
+## Contract
+
+- 状态结论必须来自现有 project、milestone、task 和 risk 页面。
+- 缺少数据时明确标注未知，不推测完成度或风险等级。
+
+## Anti-Patterns
+
+- 不把没有证据的判断写成已确认事实。
+- 不为生成状态报告而修改项目页面。
+
+## Output Format
+
+按项目输出状态、里程碑进度、阻塞任务和重点风险。

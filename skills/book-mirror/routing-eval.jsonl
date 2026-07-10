@@ -11,5 +11,5 @@
 // Adversarial: phrasing that pattern-matches media-ingest. IRON RULE:
 // book-mirror should NOT win on these — they're generic ingest.
 {"intent":"Process this book and ingest it into my brain","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
-{"intent":"Ingest this PDF book and extract the entities","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
+{"intent":"Ingest this PDF book and extract the entities","expected_skill":"media-ingest","ambiguous_with":["book-mirror","brain-pdf"]}
 {"intent":"Just summarize this book — I don't need it personalized to me","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}

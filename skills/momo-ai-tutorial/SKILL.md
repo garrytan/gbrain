@@ -17,7 +17,7 @@ triggers:
   - "几个点帮我展开"
   - "我列了要点帮我写成教程"
 writes_to:
-  - "brain"
+  - "writing/"
 writes_pages: true
 mutating: false
 ---

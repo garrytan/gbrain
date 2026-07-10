@@ -13,7 +13,7 @@ export const PMBRAIN_ACTION_TOOL = {
         intent: { type: 'string', enum: Array.from(INTENTS) },
         confidence: { type: 'number', minimum: 0, maximum: 1 },
         clarification: { type: 'string' },
-        content: { type: 'string' },
+        content: { type: 'string', description: 'capture_memory 时不要复述正文；后端会使用用户完整原文。' },
         query: { type: 'string' },
         path: { type: 'string' },
         pathType: { type: 'string', enum: ['file', 'directory', 'unknown'] },
@@ -24,7 +24,7 @@ export const PMBRAIN_ACTION_TOOL = {
           type: 'object',
           additionalProperties: true,
           properties: {
-            content: { type: 'string' },
+            content: { type: 'string', description: 'capture_memory 时省略此字段，不要复制用户长文。' },
             query: { type: 'string' },
             path: { type: 'string' },
             pathType: { type: 'string', enum: ['file', 'directory', 'unknown'] },
@@ -55,7 +55,7 @@ export const INTENT_SYSTEM_PROMPT = `你是 PMBrain 网页控制台里的工具�
 - doctor_check：运行系统诊断
 
 参数 slots：
-- capture_memory: {"content":"要保存的文本"}
+- capture_memory: 不要返回 content，只返回 intent 和 confidence；后端会使用用户完整原文
 - search_brain: {"query":"要搜索的问题"}
 - import_path: {"path":"本地路径","includeOffice":true,"sourceId":"可选"}
 - sync_source: {"sourceId":"source id"}
@@ -67,5 +67,7 @@ export const INTENT_SYSTEM_PROMPT = `你是 PMBrain 网页控制台里的工具�
 - 用户说"有哪些 source/数据源" => show_sources。
 - 用户说"查/搜索/问一下 ..." => search_brain。
 - 用户说"记住/保存/沉淀 ..." => capture_memory。
+
+当 intent 是 capture_memory 时，绝对不要在 JSON 或工具参数里复述用户正文，避免长文本截断。
 
 不要执行或输出 shell 命令。不要提出删除、重置、迁移、清空配置等破坏性操作。`;

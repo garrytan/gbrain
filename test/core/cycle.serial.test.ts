@@ -10,7 +10,6 @@
  */
 
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach } from 'bun:test';
-import { existsSync, unlinkSync } from 'fs';
 
 // ─── Mocks ──────────────────────────────────────────────────────────
 // Track what each phase was called with so tests can assert.
@@ -24,6 +23,7 @@ let orphansCalls: number = 0;
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
+  resolveLintContentSanity: async () => undefined,
   runLintCore: async (opts: any) => {
     lintCalls.push({ target: opts.target, fix: opts.fix, dryRun: opts.dryRun });
     return { total_issues: 2, total_fixed: opts.dryRun ? 0 : 2, pages_scanned: 5 };
@@ -289,10 +289,22 @@ describe('runCycle — cycle_already_running skip', () => {
 // ─── Engine null path ─────────────────────────────────────────────
 
 describe('runCycle — engine = null (filesystem-only mode)', () => {
-  const lockFile = require('path').join(require('os').homedir(), '.gbrain', 'cycle.lock');
+  const path = require('path');
+  const fs = require('fs');
+  const lockHome = path.join(require('os').tmpdir(), `pmbrain-cycle-lock-${process.pid}`);
+  const lockFile = path.join(lockHome, '.pmbrain', 'cycle.lock');
+  let previousPmbrainHome: string | undefined;
+
+  beforeEach(() => {
+    previousPmbrainHome = process.env.PMBRAIN_HOME;
+    process.env.PMBRAIN_HOME = lockHome;
+    fs.rmSync(lockHome, { recursive: true, force: true });
+  });
 
   afterEach(() => {
-    if (existsSync(lockFile)) { try { unlinkSync(lockFile); } catch { /* */ } }
+    fs.rmSync(lockHome, { recursive: true, force: true });
+    if (previousPmbrainHome === undefined) delete process.env.PMBRAIN_HOME;
+    else process.env.PMBRAIN_HOME = previousPmbrainHome;
   });
 
   test('filesystem phases still run when engine is null', async () => {
@@ -318,10 +330,8 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
     // With engine=null + the default phases selection, lint + backlinks
     // trigger NEEDS_LOCK_PHASES → acquireFileLock sees the live holder and
     // returns null → runCycle returns skipped/cycle_already_running.
-    const { writeFileSync, mkdirSync } = require('fs');
-    const path = require('path');
-    mkdirSync(path.dirname(lockFile), { recursive: true });
-    writeFileSync(lockFile, `1\n${new Date().toISOString()}\n`);
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    fs.writeFileSync(lockFile, `${process.ppid}\n${new Date().toISOString()}\n`);
 
     const report = await runCycle(null, { brainDir: '/tmp/brain' });
     expect(report.status).toBe('skipped');
@@ -391,8 +401,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.36.1.0: 16 phases (added `propose_takes`, `grade_takes`, `calibration_profile` between consolidate and embed).
     // v0.39.0.0: 17 phases (added `schema-suggest` between orphans and purge — T12 schema cathedral).
     // v0.41.2.0: 19 phases (added `extract_atoms` after extract_facts + `synthesize_concepts` after patterns).
-    // v0.41.11.0: 20 phases (added `conversation_facts_backfill` between consolidate and propose_takes).
-    expect(hookCalls).toBe(20);
+    // PMBrain currently runs 23 maintenance phases.
+    expect(hookCalls).toBe(23);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -405,8 +415,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.33.3: 13 phases (v0.32.2's 12 + resolve_symbol_edges).
     // v0.36.1.0: 16 phases (Hindsight calibration wave adds propose_takes, grade_takes, calibration_profile).
     // v0.39.0.0: 17 phases (T12 schema-suggest phase between orphans and purge).
-    // v0.41.11.0: 20 phases (+extract_atoms, +synthesize_concepts, +conversation_facts_backfill).
-    expect(report.phases.length).toBe(20);
+    // PMBrain currently runs 23 maintenance phases.
+    expect(report.phases.length).toBe(23);
   });
 });
 

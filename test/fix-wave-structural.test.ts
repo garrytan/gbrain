@@ -95,12 +95,13 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
   });
 });
 
-describe('v0.36.1.x #1100 — PGLite v0.11.0 phaseASchema routes in-process', () => {
-  test('phaseASchema branches on pglite and calls initSchema directly', () => {
+describe('v0.36.1.x #1100 — v0.11.0 phaseASchema routes in-process', () => {
+  test('phaseASchema delegates to the shared in-process migration helper', () => {
     const src = readFileSync('src/commands/migrations/v0_11_0.ts', 'utf8');
-    expect(src).toMatch(/cfg\?\.engine\s*===\s*'pglite'/);
-    expect(src).toMatch(/eng\.initSchema\(\)/);
+    expect(src).toMatch(/import\s+\{[^}]*runSchemaMigration[^}]*\}\s+from\s+['"]\.\/helpers\.ts['"]/);
+    expect(src).toMatch(/return\s+runSchemaMigration\(opts\)/);
     expect(src).toMatch(/await\s+phaseASchema/);
+    expect(src).not.toMatch(/exec(?:File)?Sync\(/);
   });
 
   test('apply-migrations skips pre-flight schema-version probe on PGLite', () => {
