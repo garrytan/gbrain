@@ -565,14 +565,10 @@ async function runSchemaTransition(engine: BrainEngine, targetDim: number): Prom
   // ZeroEntropy (1280d) would also change embedding_image from 1024d to
   // 1280d, making voyage-multimodal-3 unable to write to it. The same
   // class of bug applies to embedding_multimodal — leave both untouched.
+  const { alignEmbeddingDimension } = await import('./embedding-dimension-alignment.ts');
+  await alignEmbeddingDimension(engine, targetDim);
+
   await engine.transaction(async (tx) => {
-    // Text embedding column — transition to target dim.
-    await tx.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding`);
-    await tx.executeRaw(`ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding`);
-    await tx.executeRaw(`ALTER TABLE content_chunks ADD COLUMN embedding vector(${targetDim})`);
-    await tx.executeRaw(
-      `CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)`,
-    );
 
     // Image/multimodal embedding column — rebuild index but preserve
     // existing dimension. Only create it if it doesn't already exist

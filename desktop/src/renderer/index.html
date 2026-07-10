@@ -106,21 +106,19 @@
                     <option value="openai">openai</option>
                     <option value="anthropic">anthropic</option>
                     <option value="google">google</option>
-                    <option value="ollama">ollama</option>
-                    <option value="groq">groq</option>
-                    <option value="together">together</option>
                     <option value="openrouter">openrouter</option>
                   </select>
                 </label>
                 <label>
                   <span>模型名称</span>
-                  <input id="chat-model-name" list="chat-model-options" spellcheck="false" placeholder="mimo-v2.5-pro" />
+                  <span class="model-picker"><input id="chat-model-name" spellcheck="false" placeholder="mimo-v2.5-pro" autocomplete="off" /><button type="button" class="model-picker-trigger" data-model-input="chat-model-name" aria-label="展开普通模型列表">⌄</button><ul class="model-dropdown" id="chat-model-dropdown" hidden></ul></span>
                 </label>
                 <label>
                   <span>API Key</span>
                   <span class="secret-input"><input id="chat-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="chat-api-key" aria-label="显示普通模型 API Key">&#128065;</button></span>
                 </label>
               </div>
+              <small class="model-load-status" id="chat-model-load-status"></small>
               <p>用于问答、扩展、总结等普通 LLM 调用。</p>
             </section>
             <section class="model-card">
@@ -135,8 +133,8 @@
                     <option value="">请选择厂商</option>
                     <option value="zhipu">zhipu</option>
                     <option value="zeroentropy">zeroentropy</option>
-                    <option value="mimo">mimo</option>
                     <option value="openai">openai</option>
+                    <option value="openrouter">openrouter</option>
                     <option value="voyage">voyage</option>
                     <option value="google">google</option>
                     <option value="minimax">minimax</option>
@@ -148,47 +146,17 @@
                 </label>
                 <label>
                   <span>模型名称</span>
-                  <input id="embedding-model-name" list="embedding-model-options" spellcheck="false" placeholder="embedding-3" />
-                </label>
-                <label>
-                  <span>向量维度</span>
-                  <input id="embedding-dimensions" list="embedding-dimension-options" inputmode="numeric" spellcheck="false" placeholder="1024" />
+                  <span class="model-picker"><input id="embedding-model-name" spellcheck="false" placeholder="embedding-3" autocomplete="off" /><button type="button" class="model-picker-trigger" data-model-input="embedding-model-name" aria-label="展开向量模型列表">⌄</button><ul class="model-dropdown" id="embedding-model-dropdown" hidden></ul></span>
                 </label>
                 <label>
                   <span>API Key</span>
                   <span class="secret-input"><input id="embedding-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="embedding-api-key" aria-label="显示向量化模型 API Key">&#128065;</button></span>
                 </label>
               </div>
-              <p>用于知识库切片向量化和搜索召回。维度需与所选模型实际输出一致。</p>
+              <small class="model-load-status" id="embedding-model-load-status"></small>
+              <p>用于知识库切片向量化和搜索召回。PMBrain 会自动选择推荐维度，并在保存时对齐数据库；老用户已有维度保持不变。</p>
             </section>
           </div>
-          <datalist id="chat-model-options">
-            <option value="mimo-v2.5-pro"></option>
-            <option value="mimo-v2-pro"></option>
-            <option value="glm-4-plus"></option>
-            <option value="glm-4-flash"></option>
-            <option value="deepseek-v4-flash"></option>
-            <option value="deepseek-reasoner"></option>
-            <option value="claude-sonnet-4-6"></option>
-            <option value="gpt-5.2"></option>
-          </datalist>
-          <datalist id="embedding-model-options">
-            <option value="embedding-3"></option>
-            <option value="embedding-2"></option>
-            <option value="zembed-1"></option>
-            <option value="text-embedding-3-small"></option>
-            <option value="text-embedding-3-large"></option>
-          </datalist>
-          <datalist id="embedding-dimension-options">
-            <option value="1024"></option>
-            <option value="1280"></option>
-            <option value="1536"></option>
-            <option value="2048"></option>
-            <option value="3072"></option>
-            <option value="768"></option>
-            <option value="512"></option>
-            <option value="256"></option>
-          </datalist>
           <div class="form-footer">
             <p id="config-path"></p>
             <button class="primary" id="save-setup"><span>保存配置并启动</span><i></i></button>

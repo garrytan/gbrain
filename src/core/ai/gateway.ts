@@ -1325,6 +1325,28 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   }
 }
 
+/** Probe an unknown/custom embedding model without assuming its width. */
+export async function detectEmbeddingDimensions(modelStr: string = getEmbeddingModel()): Promise<number> {
+  const { model, recipe, modelId } = await resolveEmbeddingProvider(modelStr);
+  try {
+    const result = await _embedTransport({
+      model,
+      values: ['PMBrain embedding dimension probe'],
+      maxRetries: 0,
+    });
+    const embedding = result.embeddings?.[0];
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      throw new AIConfigError(
+        `Embedding provider returned no usable vector while probing ${modelId}.`,
+        'Check the model name and provider endpoint, then save the desktop configuration again.',
+      );
+    }
+    return embedding.length;
+  } catch (err) {
+    throw normalizeAIError(err, `detectEmbeddingDimensions(${recipe.id}:${modelId})`);
+  }
+}
+
 /**
  * Split texts into sub-batches that stay under the provided budget. Pure;
  * no module state. Exported for the adaptive-embed-batch test suite.

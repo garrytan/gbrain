@@ -37,12 +37,12 @@ export const zhipu: Recipe = {
       price_last_verified: '2026-06-02',
     },
     expansion: {
-      models: ['glm-4-plus', 'glm-4-air', 'glm-4-flash'],
+      models: ['glm-5.2', 'glm-5.2-flash', 'glm-5.1', 'glm-4.7', 'glm-4.7-flash'],
       cost_per_1m_tokens_usd: 0.02,
       price_last_verified: '2026-06-02',
     },
     chat: {
-      models: ['glm-4-plus', 'glm-4-air', 'glm-4-flash', 'glm-4v-plus'],
+      models: ['glm-5.2', 'glm-5.2-flash', 'glm-5.1', 'glm-4.7', 'glm-4.7-flash'],
       supports_tools: true,
       supports_subagent_loop: false,
       supports_prompt_cache: false,

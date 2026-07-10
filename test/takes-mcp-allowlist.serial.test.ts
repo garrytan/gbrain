@@ -205,7 +205,7 @@ describe('per-token takes-holder allow-list — get_versions body channel', () =
 
 describe('think op — read-only on remote callers (Lane D landed)', () => {
   test('remote save/take is forced read-only via remote_persisted_blocked flag', async () => {
-    // Without ANTHROPIC_API_KEY, runThink returns gather-only result with NO_ANTHROPIC_API_KEY warning.
+    // Without a usable configured provider, runThink returns gather-only output.
     const origKey = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
@@ -222,7 +222,7 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
       expect(env.remote_persisted_blocked).toBe(true);
       expect(env.saved_slug).toBeNull();
       // Without API key, gather succeeds but synthesis is skipped.
-      expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
+      expect(env.warnings).toContain('NO_LLM_AVAILABLE');
     } finally {
       if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
     }
@@ -241,7 +241,7 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
       };
       expect(env.remote_persisted_blocked).toBe(false);
       // Without API key, returns gather-only + warning. With key, would actually synthesize.
-      expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
+      expect(env.warnings).toContain('NO_LLM_AVAILABLE');
     } finally {
       if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
     }

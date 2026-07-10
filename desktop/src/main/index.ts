@@ -5,6 +5,7 @@ import { DesktopLogger } from './logs.js';
 import { findAvailablePort } from './port-manager.js';
 import { SidecarManager, type SidecarState } from './sidecar-manager.js';
 import { runCli, runCliChecked, type CliRuntime } from './cli-runner.js';
+import { listDesktopProviderModels, type DesktopModelTouchpoint } from './model-catalog.js';
 import {
   ensureBootstrapToken,
   getSetupInfo,
@@ -12,6 +13,7 @@ import {
   needsDesktopMigration,
   restoreConfig,
   saveSetup,
+  updateSavedEmbeddingDimension,
   type SetupPayload,
 } from './config-manager.js';
 import {
@@ -102,6 +104,15 @@ async function applySetup(payload: SetupPayload) {
   await stopSidecar();
   const saved = saveSetup(payload);
   try {
+    if (saved.needsEmbeddingDimensionProbe) {
+      const probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
+      const result = JSON.parse(probe.stdout.trim().split(/\r?\n/).at(-1) || '{}') as { dimensions?: number };
+      if (!Number.isInteger(result.dimensions) || (result.dimensions ?? 0) <= 0) {
+        throw new Error('无法从向量模型响应中判断有效维度。');
+      }
+      updateSavedEmbeddingDimension(saved.snapshot.path, result.dimensions!);
+      saved.config.embedding_dimensions = result.dimensions!;
+    }
     await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
     await syncModelDefaultsToDatabase();
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
@@ -117,6 +128,9 @@ async function applySetup(payload: SetupPayload) {
       await runCliChecked(runtime(), ['sources', 'default', sourceId]);
     }
     markDesktopMigration(app.getVersion());
+    // Keep this as the final fallible setup step: once the DB column is
+    // aligned, no later config rollback may restore an incompatible width.
+    await runCliChecked(runtime(), ['models', 'align-embedding-dimension', '--yes', '--json']);
   } catch (error) {
     restoreConfig(saved.snapshot);
     if (hadRunningSidecar && saved.snapshot.existed) {
@@ -275,6 +289,9 @@ if (!app.requestSingleInstanceLock()) {
         properties: ['openDirectory', 'createDirectory'],
       });
       return result.canceled ? null : result.filePaths[0];
+    });
+    ipcMain.handle('desktop:get-provider-models', (_event, provider: string, touchpoint: DesktopModelTouchpoint) => {
+      return listDesktopProviderModels(provider, touchpoint);
     });
     ipcMain.handle('desktop:save-setup', (_event, payload: SetupPayload) => applySetup(payload));
     ipcMain.handle('desktop:configure-integration', async (_event, client: IntegrationClient, kind: CredentialKind) => {

@@ -12,7 +12,7 @@ export const openai: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['text-embedding-3-large', 'text-embedding-3-small'],
+      models: ['text-embedding-3-small', 'text-embedding-3-large'],
       default_dims: 1536,
       dims_options: [256, 512, 768, 1024, 1536, 3072],
       cost_per_1m_tokens_usd: 0.13,
@@ -25,12 +25,12 @@ export const openai: Recipe = {
       max_batch_tokens: 100_000,
     },
     expansion: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2', 'gpt-4o-mini', 'o3'],
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
     },
     chat: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2', 'gpt-4o-mini', 'o3'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,

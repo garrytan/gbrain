@@ -347,7 +347,7 @@ export class PGLiteEngine implements BrainEngine {
       if (actualDim !== null && actualDim !== dims) {
         process.stderr.write(
           `  ⚠️  检测到 embedding 列维度不匹配：DB 为 vector(${actualDim})，配置为 ${dims}。\n` +
-          `  PGLite 不支持 ALTER COLUMN TYPE，请运行：gbrain reinit-pglite --embedding-dimensions ${dims}\n`
+          `  请运行：gbrain models align-embedding-dimension --yes\n`
         );
       }
     }

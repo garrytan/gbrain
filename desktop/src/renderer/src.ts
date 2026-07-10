@@ -17,6 +17,7 @@ declare global {
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 let state: DesktopSetupState | null = null;
 let lastResult = '';
+const providerModels: Record<'chat' | 'embedding', string[]> = { chat: [], embedding: [] };
 
 function setNotice(kind: 'error' | 'success', message = ''): void {
   const element = $<HTMLElement>(`#global-${kind}`);
@@ -30,32 +31,6 @@ function setBusy(button: HTMLButtonElement, busy: boolean, text?: string): void 
   button.classList.toggle('busy', busy);
   const span = button.querySelector('span');
   if (span && text) span.textContent = text;
-}
-
-// 已知向量化模型的默认维度映射（provider:model → 维度）
-const MODEL_DEFAULT_DIMENSIONS: Readonly<Record<string, number>> = {
-  'zhipu:embedding-3': 1024,
-  'zhipu:embedding-2': 1024,
-  'zeroentropyai:zembed-1': 1280,
-  'mimo:text-embedding-3-small': 1536,
-  'openai:text-embedding-3-small': 1536,
-  'openai:text-embedding-3-large': 3072,
-  'deepseek:deepseek-embedding': 1536,
-  'google:text-embedding-004': 768,
-  'voyage:voyage-3': 1024,
-  'voyage:voyage-3-lite': 512,
-};
-
-/** 当用户切换向量化模型厂商或模型名时，自动将维度输入框更新为模型默认值。 */
-function updateEmbeddingDimensionsDefault(): void {
-  const provider = ($<HTMLSelectElement>('#embedding-provider')).value;
-  const modelName = ($<HTMLInputElement>('#embedding-model-name')).value.trim();
-  if (!provider || !modelName) return;
-  const modelId = composeModelId(provider, modelName);
-  const defaultDim = modelId ? MODEL_DEFAULT_DIMENSIONS[modelId] : undefined;
-  if (defaultDim) {
-    ($<HTMLInputElement>('#embedding-dimensions')).value = String(defaultDim);
-  }
 }
 
 function saveButtonText(): string {
@@ -98,11 +73,6 @@ function normalizePglitePathForDisplay(value: string): string {
   return `${trimmed}${separator}brain.pglite`;
 }
 
-function parsePositiveInteger(value: string): number | undefined {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
 function splitModelId(value?: string): { provider: string; model: string } {
   if (!value) return { provider: '', model: '' };
   const index = value.indexOf(':');
@@ -136,6 +106,70 @@ function composeModelId(provider: string, model: string): string {
   const trimmedModel = model.trim();
   if (!normalizedProvider || !trimmedModel) return '';
   return `${normalizedProvider}:${trimmedModel}`;
+}
+
+type ModelKind = 'chat' | 'embedding';
+
+function syncProviderKeyField(kind: ModelKind): void {
+  const provider = ($<HTMLSelectElement>(`#${kind}-provider`)).value;
+  const input = $<HTMLInputElement>(`#${kind}-api-key`);
+  const keyId = providerKeyId(provider);
+  const local = keyId === '__none__';
+  input.disabled = local;
+  input.placeholder = local ? '本地模型无需 API Key' : '';
+  input.value = keyId && keyId !== '__none__' ? state?.setup.current.keyValues[keyId] || '' : '';
+}
+
+function renderModelDropdown(kind: 'chat' | 'embedding'): void {
+  const ul = $<HTMLUListElement>(`#${kind}-model-dropdown`);
+  const input = $<HTMLInputElement>(`#${kind}-model-name`);
+  const currentValue = input.value.trim();
+  const models = providerModels[kind];
+  ul.replaceChildren(...models.map(model => {
+    const li = document.createElement('li');
+    li.textContent = model;
+    if (model === currentValue) li.classList.add('selected');
+    li.addEventListener('click', () => {
+      input.value = model;
+      ul.hidden = true;
+    });
+    return li;
+  }));
+}
+
+async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): Promise<void> {
+  const providerSelect = $<HTMLSelectElement>(`#${kind}-provider`);
+  const provider = providerSelect.value;
+  const input = $<HTMLInputElement>(`#${kind}-model-name`);
+  const status = $<HTMLElement>(`#${kind}-model-load-status`);
+  status.classList.remove('warning');
+  if (!provider) {
+    providerModels[kind] = [];
+    status.textContent = '';
+    return;
+  }
+
+  status.textContent = provider === 'ollama' ? '正在读取本机 Ollama 模型…' : '正在加载厂商模型…';
+  try {
+    const result = await window.pmbrainDesktop.getProviderModels(provider, kind);
+    if (providerSelect.value !== provider) return;
+    providerModels[kind] = result.models;
+    if (chooseDefault) input.value = result.models[0] || '';
+    if (!($<HTMLUListElement>(`#${kind}-model-dropdown`)).hidden) renderModelDropdown(kind);
+    if (result.warning) {
+      status.textContent = result.warning;
+      status.classList.add('warning');
+    } else if (provider === 'ollama') {
+      status.textContent = `已读取 ${result.models.length} 个本机/常用 Ollama 向量模型。`;
+    } else {
+      status.textContent = result.models.length > 0
+        ? `可选择 ${result.models.length} 个已支持模型，也可以直接输入自定义模型名。`
+        : '该厂商使用自定义模型名，请直接输入。';
+    }
+  } catch (error) {
+    status.textContent = `模型列表加载失败：${error instanceof Error ? error.message : String(error)}`;
+    status.classList.add('warning');
+  }
 }
 
 function renderService(service: SidecarState | null, port?: number): void {
@@ -206,7 +240,6 @@ function populate(next: DesktopSetupState): void {
   ($<HTMLInputElement>('#chat-model-name')).value = chat.model;
   ($<HTMLSelectElement>('#embedding-provider')).value = embedding.provider === 'zeroentropyai' ? 'zeroentropy' : embedding.provider;
   ($<HTMLInputElement>('#embedding-model-name')).value = embedding.model;
-  ($<HTMLInputElement>('#embedding-dimensions')).value = String(setup.current.embeddingDimensions ?? 1024);
   const chatKey = providerKeyId(chat.provider);
   const embeddingKey = providerKeyId(embedding.provider);
   if (chatKey && chatKey !== '__none__') {
@@ -221,6 +254,10 @@ function populate(next: DesktopSetupState): void {
     ($<HTMLInputElement>('#embedding-api-key')).value = '';
   }
   ($<HTMLInputElement>('#embedding-api-key')).type = 'password';
+  syncProviderKeyField('chat');
+  syncProviderKeyField('embedding');
+  void refreshProviderModels('chat', false);
+  void refreshProviderModels('embedding', false);
   $('#chat-model-effective').textContent = setup.current.chatModel ? `当前生效：${setup.current.chatModel}` : '当前未配置';
   $('#embedding-model-effective').textContent = setup.current.embeddingModel ? `当前生效：${setup.current.embeddingModel}` : '当前未配置';
   $('#config-path').textContent = `配置写入：${setup.configPath}`;
@@ -288,8 +325,8 @@ async function save(): Promise<void> {
     if (newEmbeddingModel && oldEmbeddingModel && newEmbeddingModel !== oldEmbeddingModel) {
       if (!confirm(
         `⚠️ 向量化模型已从 "${oldEmbeddingModel}" 改为 "${newEmbeddingModel}"。\n\n` +
-        `所有已有知识库内容需要重新向量化（耗时数小时，需消耗 API 费用）。\n` +
-        `现有 brain 将被备份后重建。\n\n` +
+        `切换后会清除旧的文本向量并重新向量化，可能耗时并产生 API 费用。\n` +
+        `原始文档、页面和分块数据会保留，不会删除知识库内容。\n\n` +
         `确认更改？`
       )) {
         return;
@@ -328,7 +365,6 @@ async function save(): Promise<void> {
     modelConfig: {
       chatModel,
       embeddingModel,
-      embeddingDimensions: parsePositiveInteger(($<HTMLInputElement>('#embedding-dimensions')).value),
     },
     keys,
   };
@@ -389,8 +425,35 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
 }
 
 document.querySelectorAll<HTMLInputElement>('input[name="engine"]').forEach((input) => input.addEventListener('change', renderEngine));
-($<HTMLSelectElement>('#embedding-provider')).addEventListener('change', updateEmbeddingDimensionsDefault);
-($<HTMLInputElement>('#embedding-model-name')).addEventListener('input', updateEmbeddingDimensionsDefault);
+(['chat', 'embedding'] as const).forEach(kind => {
+  $<HTMLSelectElement>(`#${kind}-provider`).addEventListener('change', () => {
+    syncProviderKeyField(kind);
+    void refreshProviderModels(kind, true);
+  });
+});
+document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger').forEach(button => button.addEventListener('click', () => {
+  const kind = (button.dataset.modelInput ?? '').startsWith('chat') ? 'chat' : 'embedding';
+  const ul = $<HTMLUListElement>(`#${kind}-model-dropdown`);
+  if (ul.hidden) {
+    renderModelDropdown(kind);
+    ul.hidden = false;
+  } else {
+    ul.hidden = true;
+  }
+}));
+document.addEventListener('click', e => {
+  const target = e.target as HTMLElement;
+  if (!target.closest('.model-picker') && !target.closest('.model-dropdown')) {
+    $('#chat-model-dropdown').hidden = true;
+    $('#embedding-model-dropdown').hidden = true;
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    $('#chat-model-dropdown').hidden = true;
+    $('#embedding-model-dropdown').hidden = true;
+  }
+});
 document.querySelectorAll<HTMLButtonElement>('.rail-item').forEach((button) => button.addEventListener('click', () => switchPanel(button.dataset.target as Panel)));
 document.querySelectorAll<HTMLButtonElement>('.choose').forEach((button) => button.addEventListener('click', async () => {
   const input = $<HTMLInputElement>(`#${button.dataset.input}`);

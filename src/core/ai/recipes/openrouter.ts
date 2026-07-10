@@ -81,14 +81,12 @@ export const openrouter: Recipe = {
       // openai-compat tier does NOT enforce this list at runtime — users can
       // pass any model ID OR routes. Refresh quarterly; see TODOS.md.
       models: [
-        'openai/gpt-5.2',
-        'openai/gpt-5.2-chat',
+        'openai/gpt-5.6-sol',
         'openai/gpt-5.5',
-        'anthropic/claude-haiku-4.5',
         'anthropic/claude-sonnet-4.6',
         'anthropic/claude-opus-4.7',
-        'google/gemini-3-flash-preview',
-        'deepseek/deepseek-chat',
+        'google/gemini-3.5-flash',
+        'deepseek/deepseek-v4-flash',
       ],
       supports_tools: true,
       // Informational only — real gate is isAnthropicProvider() upstream.

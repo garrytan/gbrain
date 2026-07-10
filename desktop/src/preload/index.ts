@@ -3,6 +3,7 @@ import type { SidecarState } from '../main/sidecar-manager.js';
 import type { SetupInfo, SetupPayload } from '../main/config-manager.js';
 import type { CredentialKind, IntegrationClient, IntegrationInfo, IntegrationResult } from '../main/integration-manager.js';
 import type { UpdateState } from '../main/update-manager.js';
+import type { DesktopModelTouchpoint, DesktopProviderModels } from '../main/model-catalog.js';
 
 export type { SidecarState, SetupInfo, SetupPayload, CredentialKind, IntegrationClient, IntegrationInfo, IntegrationResult, UpdateState };
 
@@ -21,6 +22,7 @@ export interface PMBrainDesktopApi {
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   onShowUpdates(listener: () => void): () => void;
   chooseDirectory(initialPath?: string): Promise<string | null>;
+  getProviderModels(provider: string, touchpoint: DesktopModelTouchpoint): Promise<DesktopProviderModels>;
   saveSetup(payload: SetupPayload): Promise<DesktopSetupState & { backup?: string | null }>;
   configureIntegration(client: IntegrationClient, kind: CredentialKind): Promise<IntegrationResult>;
   copy(value: string): Promise<void>;
@@ -52,6 +54,7 @@ const api: PMBrainDesktopApi = {
     return () => ipcRenderer.removeListener('desktop:show-updates', handler);
   },
   chooseDirectory: (initialPath) => ipcRenderer.invoke('desktop:choose-directory', initialPath),
+  getProviderModels: (provider, touchpoint) => ipcRenderer.invoke('desktop:get-provider-models', provider, touchpoint),
   saveSetup: (payload) => ipcRenderer.invoke('desktop:save-setup', payload),
   configureIntegration: (client, kind) => ipcRenderer.invoke('desktop:configure-integration', client, kind),
   copy: (value) => ipcRenderer.invoke('desktop:copy', value),

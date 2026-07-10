@@ -1,9 +1,8 @@
 /**
  * v0.28: `gbrain think` — INTENT → GATHER → SYNTHESIZE → (optional) COMMIT.
  *
- * v0.28.0 ships the full pipeline. The Anthropic call is dependency-injected
- * (MessagesClient interface) so tests can stub it without an API key. Live
- * runs require ANTHROPIC_API_KEY in the environment.
+ * v0.28.0 ships the full pipeline. The LLM call is dependency-injected through
+ * an Anthropic-compatible test interface; live runs route through gateway.chat.
  *
  * --rounds scaffolding: round 1 is the only round actually exercised in
  * v0.28. Round N+1 fed by gaps from round N is the v0.29 follow-up; the
@@ -215,12 +214,22 @@ export async function runThink(
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
 
-  // Resolve the model through the 6-tier chain.
+  // Resolve the model through the normal precedence chain. Older desktop
+  // installs may have chat_model in file config but no DB-plane models.default;
+  // use that file value only when no explicit think/global/deep override exists.
+  const [thinkOverride, globalDefault, deepOverride] = await Promise.all([
+    engine.getConfig('models.think'),
+    engine.getConfig('models.default'),
+    engine.getConfig('models.tier.deep'),
+  ]);
+  const fileChatFallback = !opts.model && !thinkOverride && !globalDefault && !deepOverride
+    ? loadConfig()?.chat_model
+    : undefined;
   const modelUsed = await resolveModel(engine, {
-    cliFlag: opts.model,
+    cliFlag: opts.model ?? fileChatFallback,
     configKey: 'models.think',
     tier: 'deep',
-    fallback: 'opus',  // think is the high-stakes synthesis op; opus is the right default
+    fallback: 'opus',
   });
 
   // Optional question embedding — caller decides whether to pay the embedder.
@@ -387,6 +396,27 @@ export async function runThink(
   });
 
   let response: ThinkResponse;
+  const unavailableResult = (): ThinkResult => {
+    warnings.push('NO_LLM_AVAILABLE');
+    return {
+      question: opts.question,
+      answer: `(no LLM available for ${modelUsed} — configure that provider or choose another ordinary model)`,
+      citations: [],
+      gaps: ['no LLM available; gather succeeded but synthesis skipped'],
+      pagesGathered: gather.pages.length,
+      takesGathered: gather.takes.length,
+      graphHits: gather.graphSlugs.length,
+      modelUsed,
+      rounds: 0,
+      warnings,
+      diagnostics: {
+        pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+        takesFromKeyword: gather.diagnostics.takesFromKeyword,
+        takesFromVector: gather.diagnostics.takesFromVector,
+        graphHits: gather.diagnostics.graphHits,
+      },
+    };
+  };
   if (opts.stubResponse) {
     response = opts.stubResponse;
   } else {
@@ -404,26 +434,7 @@ export async function runThink(
     // Closes #952 (think over MCP returns "no LLM available").
     const client = opts.client ?? await tryBuildGatewayClient(modelUsed);
     if (!client) {
-      warnings.push('NO_ANTHROPIC_API_KEY');
-      // Degrade gracefully: return the gather without synthesis. Better than throwing.
-      return {
-        question: opts.question,
-        answer: '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
-        citations: [],
-        gaps: ['no LLM available; gather succeeded but synthesis skipped'],
-        pagesGathered: gather.pages.length,
-        takesGathered: gather.takes.length,
-        graphHits: gather.graphSlugs.length,
-        modelUsed,
-        rounds: 0,
-        warnings,
-        diagnostics: {
-          pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
-          takesFromKeyword: gather.diagnostics.takesFromKeyword,
-          takesFromVector: gather.diagnostics.takesFromVector,
-          graphHits: gather.diagnostics.graphHits,
-        },
-      };
+      return unavailableResult();
     }
     const result = await client.create({
       model: modelUsed,
@@ -431,6 +442,7 @@ export async function runThink(
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
+    if (result.id === 'pmbrain:no-llm') return unavailableResult();
     const block = result.content.find(b => b.type === 'text');
     const text = block && 'text' in block ? block.text : '';
     const parsed = tryParseJSON(text);
@@ -584,23 +596,12 @@ async function tryBuildGatewayClient(modelUsed: string): Promise<ThinkLLMClient 
 
   // Availability probe: resolveRecipe throws on unknown provider; assertTouchpoint
   // throws if the resolved recipe doesn't support chat. Both are AIConfigError.
-  let providerId: string;
   try {
-    const { parsed } = resolveRecipe(modelStr);
-    providerId = parsed.providerId;
+    resolveRecipe(modelStr);
   } catch (e) {
     if (e instanceof AIConfigError) return null;
     throw e;
   }
-
-  // API-key availability probe. The gateway lazily checks keys inside
-  // instantiateChat at first .chat() call and throws AIConfigError on miss.
-  // Pre-checking here preserves the legacy "NO_ANTHROPIC_API_KEY" warning
-  // signal AND avoids paying for a wasted gateway call when the user clearly
-  // has no key configured. Reads BOTH the gbrain config file (`anthropic_api_key`
-  // set via `gbrain config set`) AND the process env, matching gateway's
-  // own loadConfig precedence.
-  if (providerId === 'anthropic' && !hasAnthropicKey()) return null;
 
   return {
     create: async (params): Promise<Anthropic.Message> => {
@@ -666,17 +667,6 @@ function chatResultToMessage(result: ChatResult, modelStr: string): {
   };
 }
 
-function hasAnthropicKey(): boolean {
-  if (process.env.ANTHROPIC_API_KEY) return true;
-  try {
-    const cfg = loadConfig();
-    if (cfg?.anthropic_api_key) return true;
-  } catch {
-    // loadConfig may throw on first-run installs; treat as no key available.
-  }
-  return false;
-}
-
 function mapStopReason(s: ChatResult['stopReason']): 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' {
   switch (s) {
     case 'end': return 'end_turn';
@@ -703,11 +693,11 @@ function buildGracefulMessage(modelStr: string): {
   stop_reason: 'end_turn';
 } {
   return {
-    id: '',
+    id: 'pmbrain:no-llm',
     type: 'message',
     role: 'assistant',
     model: modelStr,
-    content: [{ type: 'text', text: '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)' }],
+    content: [{ type: 'text', text: `(no LLM available for ${modelStr} — configure that provider or choose another ordinary model)` }],
     usage: { input_tokens: 0, output_tokens: 0 },
     stop_reason: 'end_turn',
   };
@@ -722,5 +712,4 @@ export const __thinkAdapter = {
   chatResultToMessage,
   mapStopReason,
   buildGracefulMessage,
-  hasAnthropicKey,
 };

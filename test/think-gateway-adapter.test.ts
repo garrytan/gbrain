@@ -74,19 +74,10 @@ describe('think gateway adapter — model-id normalization', () => {
     expect(client).toBeNull();
   });
 
-  test('tryBuildGatewayClient returns null when ANTHROPIC_API_KEY is absent (preserves legacy NO_ANTHROPIC_API_KEY signal)', async () => {
+  test('tryBuildGatewayClient stays provider-neutral when a credential is absent', async () => {
     await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
       const client = await __thinkAdapter.tryBuildGatewayClient('claude-opus-4-7');
-      expect(client).toBeNull();
-    });
-  });
-
-  test('hasAnthropicKey reads process.env', async () => {
-    await withEnv({ ANTHROPIC_API_KEY: 'sk-test-key' }, async () => {
-      expect(__thinkAdapter.hasAnthropicKey()).toBe(true);
-    });
-    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
-      expect(__thinkAdapter.hasAnthropicKey()).toBe(false);
+      expect(client).not.toBeNull();
     });
   });
 });
@@ -98,7 +89,8 @@ describe('think gateway adapter — graceful fallback shape', () => {
     expect(m.role).toBe('assistant');
     expect(m.content[0].type).toBe('text');
     expect(m.content[0].text).toContain('no LLM available');
-    expect(m.content[0].text).toContain('gbrain config');
+    expect(m.content[0].text).toContain('anthropic:claude-opus-4-7');
+    expect(m.content[0].text).not.toContain('ANTHROPIC_API_KEY');
     expect(m.usage.input_tokens).toBe(0);
     expect(m.usage.output_tokens).toBe(0);
     expect(m.stop_reason).toBe('end_turn');

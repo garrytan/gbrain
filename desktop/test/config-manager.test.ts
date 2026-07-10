@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getRecipe } from '../../src/core/ai/recipes/index.js';
 import {
   activeConfigDirectory, desktopConfigPath, getSetupInfo, markDesktopMigration, needsDesktopMigration,
   normalizePgliteDatabasePath, preferredConfigDirectory, restoreConfig, saveSetup, writeJsonConfig,
@@ -27,6 +28,19 @@ function isolatedHome(): string {
 }
 
 describe('desktop config manager', () => {
+  test('derives new-install model defaults from the CLI recipe registry', () => {
+    const root = isolatedHome();
+    saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'brain.pglite'),
+      keys: { google: 'google-test' },
+    });
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.chat_model).toBe(`google:${getRecipe('google')!.touchpoints.chat!.models[0]}`);
+    expect(config.expansion_model).toBe(`google:${getRecipe('google')!.touchpoints.expansion!.models[0]}`);
+    expect(config.embedding_model).toBe(`google:${getRecipe('google')!.touchpoints.embedding!.models[0]}`);
+  });
+
   test('normalizes selected PGLite directories to a brain.pglite data directory', () => {
     const root = join(tmpdir(), 'pmbrain-selected-dir');
     expect(normalizePgliteDatabasePath(root)).toBe(join(root, 'brain.pglite'));
@@ -82,7 +96,6 @@ describe('desktop config manager', () => {
       modelConfig: {
         chatModel: 'zhipu:glm-4-plus',
         embeddingModel: 'zhipu:embedding-3',
-        embeddingDimensions: 1024,
       },
     });
     const path = desktopConfigPath();
@@ -132,7 +145,6 @@ describe('desktop config manager', () => {
       modelConfig: {
         chatModel: 'zhipu:glm-4-plus',
         embeddingModel: 'zhipu:embedding-3',
-        embeddingDimensions: 1024,
       },
     });
 
@@ -142,10 +154,10 @@ describe('desktop config manager', () => {
     expect(getSetupInfo().current.knowledgeSourceId).toBe('duwu');
   });
 
-  test('requires an explicit embedding dimension when an embedding model is configured', () => {
+  test('automatically selects the recipe recommendation for a new embedding model', () => {
     const root = isolatedHome();
 
-    expect(() => saveSetup({
+    saveSetup({
       engine: 'pglite',
       databasePath: join(root, 'selected-db-parent'),
       knowledgeDirectory: join(root, 'knowledge'),
@@ -154,7 +166,44 @@ describe('desktop config manager', () => {
         chatModel: 'zhipu:glm-4-plus',
         embeddingModel: 'zhipu:embedding-3',
       },
-    })).toThrow('请填写有效的向量化维度');
+    });
+
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.embedding_dimensions).toBe(1024);
+  });
+
+  test('preserves a legacy dimension until the user actively changes models', () => {
+    const root = isolatedHome();
+    writeJsonConfig(desktopConfigPath(), {
+      engine: 'pglite',
+      database_path: join(root, 'brain.pglite'),
+      embedding_model: 'zhipu:embedding-3',
+      embedding_dimensions: 1280,
+    });
+
+    saveSetup({
+      engine: 'pglite',
+      modelConfig: { embeddingModel: 'zhipu:embedding-3' },
+    });
+    let config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.embedding_dimensions).toBe(1280);
+
+    saveSetup({
+      engine: 'pglite',
+      modelConfig: { embeddingModel: 'zhipu:embedding-2' },
+    });
+    config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.embedding_dimensions).toBe(1024);
+  });
+
+  test('marks an unknown custom model for one-time dimension probing', () => {
+    const root = isolatedHome();
+    const saved = saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'brain.pglite'),
+      modelConfig: { embeddingModel: 'litellm:private-embedding-model' },
+    });
+    expect(saved.needsEmbeddingDimensionProbe).toBe(true);
   });
 
   test('switching from discovered legacy config to PGLite honors the selected local path', () => {

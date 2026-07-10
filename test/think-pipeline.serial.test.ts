@@ -205,12 +205,12 @@ describe('runThink (with stub client)', () => {
     expect(result.citations.length).toBeGreaterThanOrEqual(2);
   });
 
-  test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
+  test('degrades gracefully when the configured LLM is unavailable', async () => {
     const origKey = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
       const result = await runThink(engine, { question: 'no key test' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+      expect(result.warnings).toContain('NO_LLM_AVAILABLE');
       expect(result.answer).toContain('no LLM available');
       expect(result.rounds).toBe(0);
     } finally {

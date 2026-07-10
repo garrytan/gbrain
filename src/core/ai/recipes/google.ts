@@ -18,12 +18,12 @@ export const google: Recipe = {
       price_last_verified: '2026-04-20',
     },
     expansion: {
-      models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite'],
+      models: ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite'],
       cost_per_1m_tokens_usd: 0.10,
       price_last_verified: '2026-04-20',
     },
     chat: {
-      models: ['gemini-2.0-flash-exp', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+      models: ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,

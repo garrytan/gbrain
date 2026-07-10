@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const VALID_PANELS = ['setup', 'integrations', 'updates', 'recovery'] as const;
@@ -94,6 +95,12 @@ window.pmbrainDesktop = {
   onUpdateState: () => () => {},
   onShowUpdates: () => () => {},
   chooseDirectory: async () => null,
+  getProviderModels: async (provider, touchpoint) => ({
+    source: provider === 'ollama' ? 'ollama' : 'catalog',
+    models: touchpoint === 'embedding'
+      ? (provider === 'zhipu' ? ['embedding-3', 'embedding-2'] : ['nomic-embed-text'])
+      : ['mimo-v2.5-pro', 'mimo-v2-pro']
+  }),
   saveSetup: async () => window.pmbrainDesktop.getSetup(),
   configureIntegration: async () => ({}),
   copy: async () => {},
@@ -117,6 +124,11 @@ setTimeout(() => {
 const tempDir = mkdtempSync(join(tmpdir(), 'pmbrain-renderer-preview-'));
 const previewHtml = join(tempDir, 'preview.html');
 let html = readFileSync(rendererHtml, 'utf8');
+
+// The preview HTML lives in a temporary directory, so point built assets back
+// to the renderer output directory instead of resolving them beside the temp file.
+const rendererAssetBase = pathToFileURL(join(dirname(rendererHtml), 'assets') + '\\').href;
+html = html.replace(/(["'])\.\/assets\//g, `$1${rendererAssetBase}`);
 
 // 移除 CSP 限制
 html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]+ \/>/, '');
@@ -207,8 +219,6 @@ html = html.replace(
 // 9. "进入管理台"按钮启用
 html = html.replace('id="open-admin" disabled', 'id="open-admin"');
 html = html.replace('id="finish-open-admin"', 'id="finish-open-admin" disabled');
-
-writeFileSync(previewHtml, html, 'utf8');
 
 writeFileSync(previewHtml, html, 'utf8');
 

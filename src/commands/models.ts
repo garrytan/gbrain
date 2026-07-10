@@ -537,13 +537,25 @@ function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
 export async function runModels(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const subArg = args[0] === 'models' ? args[1] : args[0];
-  const sub = subArg === 'doctor' ? 'doctor' : subArg === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
+  const sub = subArg === 'doctor'
+    ? 'doctor'
+    : subArg === 'align-embedding-dimension'
+      ? 'align-embedding-dimension'
+      : subArg === 'detect-embedding-dimension'
+        ? 'detect-embedding-dimension'
+      : subArg === 'help' || args.includes('--help') || args.includes('-h')
+        ? 'help'
+        : 'read';
 
   if (sub === 'help') {
     process.stdout.write(
 `Usage:
   gbrain models                   Show routing table (read-only)
   gbrain models doctor [flags]    Probe each configured model (~1 token each)
+  gbrain models align-embedding-dimension --yes
+                                  Align the DB vector column to config
+  gbrain models detect-embedding-dimension --json
+                                  Probe a custom model's actual width
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
@@ -558,6 +570,46 @@ Configure routing:
 
 Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anthropic-only)
 `);
+    return;
+  }
+
+  if (sub === 'align-embedding-dimension') {
+    const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
+    const { alignEmbeddingDimension } = await import('../core/embedding-dimension-alignment.ts');
+    const targetDimensions = getEmbeddingDimensions();
+    const model = getEmbeddingModel();
+    const current = await readContentChunksEmbeddingDim(engine);
+
+    if (current.exists && current.dims !== null && current.dims !== targetDimensions && !args.includes('--yes')) {
+      const message =
+        `Embedding column vector(${current.dims}) does not match ${model} (${targetDimensions}). ` +
+        'Re-run with --yes to clear derived embeddings and rebuild the vector column; source content is preserved.';
+      if (json) process.stdout.write(JSON.stringify({ status: 'confirmation_required', message }) + '\n');
+      else process.stderr.write(message + '\n');
+      process.exit(1);
+    }
+
+    const result = await alignEmbeddingDimension(engine, targetDimensions);
+    if (json) {
+      process.stdout.write(JSON.stringify({ ...result, embedding_model: model }) + '\n');
+    } else if (result.status === 'already_aligned') {
+      process.stdout.write(`Embedding column already aligned at vector(${targetDimensions}).\n`);
+    } else {
+      process.stdout.write(
+        `Embedding column aligned from vector(${result.previous_dimensions ?? 'unknown'}) to vector(${targetDimensions}); ` +
+        `${result.cleared_embeddings} derived embeddings cleared. Source content preserved.\n`,
+      );
+    }
+    return;
+  }
+
+  if (sub === 'detect-embedding-dimension') {
+    const { detectEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    const model = getEmbeddingModel();
+    const dimensions = await detectEmbeddingDimensions(model);
+    if (json) process.stdout.write(JSON.stringify({ status: 'ok', embedding_model: model, dimensions }) + '\n');
+    else process.stdout.write(`${model} returned ${dimensions} dimensions.\n`);
     return;
   }
 

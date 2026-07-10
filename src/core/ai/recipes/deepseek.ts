@@ -26,12 +26,12 @@ export const deepseek: Recipe = {
       max_batch_tokens: 8192,
     },
     expansion: {
-      models: ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-pro'],
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
       cost_per_1m_tokens_usd: 0.07,
       price_last_verified: '2026-06-02',
     },
     chat: {
-      models: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,

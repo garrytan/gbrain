@@ -2,6 +2,38 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
+import { getRecipe } from '../../../src/core/ai/recipes/index.js';
+
+const DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>> = {
+  'zhipu:embedding-3': 1024,
+  'zhipu:embedding-2': 1024,
+  'zeroentropyai:zembed-1': 1280,
+  'mimo:text-embedding-3-small': 1536,
+  'openai:text-embedding-3-small': 1536,
+  'openai:text-embedding-3-large': 1536,
+  'deepseek:deepseek-embedding': 1536,
+  'google:gemini-embedding-001': 768,
+  'google:text-embedding-004': 768,
+  'voyage:voyage-3': 1024,
+  'voyage:voyage-3-lite': 512,
+  'dashscope:text-embedding-v3': 1024,
+  'minimax:embo-01': 1536,
+  'ollama:nomic-embed-text': 768,
+  'ollama:mxbai-embed-large': 1024,
+  'ollama:all-minilm': 384,
+};
+
+function desktopRecommendedEmbeddingDimension(model: string): number {
+  const known = DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS[model];
+  if (known) return known;
+  // OpenAI-compatible custom endpoints most commonly expose 1024d models.
+  // The CLI remains the advanced escape hatch for a custom fixed width.
+  return 1024;
+}
+
+function hasKnownDesktopEmbeddingDimension(model: string): boolean {
+  return DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS[model] !== undefined;
+}
 
 export interface SetupPayload {
   engine: 'pglite' | 'postgres';
@@ -227,79 +259,85 @@ export function restoreConfig(snapshot: ConfigSnapshot): void {
   }
 }
 
+function recipeDefault(provider: string, touchpoint: 'chat' | 'expansion' | 'embedding'): string {
+  const model = getRecipe(provider)?.touchpoints[touchpoint]?.models[0];
+  if (!model) throw new Error(`PMBrain recipe ${provider} 没有可用的 ${touchpoint} 默认模型。`);
+  return `${provider}:${model}`;
+}
+
 function selectModelDefaults(config: RawConfig): void {
   if (config.mimo_api_key) {
-    config.chat_model ??= 'mimo:mimo-v2.5-pro';
-    config.expansion_model ??= 'mimo:mimo-v2.5-pro';
-    config.embedding_model ??= 'mimo:text-embedding-3-small';
+    config.chat_model ??= recipeDefault('mimo', 'chat');
+    config.expansion_model ??= recipeDefault('mimo', 'expansion');
+    config.embedding_model ??= recipeDefault('mimo', 'embedding');
     config.embedding_dimensions ??= 1536;
     delete config.embedding_disabled;
     return;
   }
   if (config.zhipu_api_key) {
-    config.chat_model ??= 'zhipu:glm-4-plus';
-    config.expansion_model ??= 'zhipu:glm-4-flash';
-    config.embedding_model ??= 'zhipu:embedding-3';
+    config.chat_model ??= recipeDefault('zhipu', 'chat');
+    config.expansion_model ??= recipeDefault('zhipu', 'expansion');
+    config.embedding_model ??= recipeDefault('zhipu', 'embedding');
     config.embedding_dimensions ??= 1024;
     delete config.embedding_disabled;
     return;
   }
   if (config.deepseek_api_key) {
-    config.chat_model ??= 'deepseek:deepseek-v4-flash';
-    config.expansion_model ??= 'deepseek:deepseek-v4-flash';
-    config.embedding_model ??= 'deepseek:deepseek-embedding';
+    config.chat_model ??= recipeDefault('deepseek', 'chat');
+    config.expansion_model ??= recipeDefault('deepseek', 'expansion');
+    config.embedding_model ??= recipeDefault('deepseek', 'embedding');
     config.embedding_dimensions ??= 1536;
     delete config.embedding_disabled;
     return;
   }
   if (config.openai_api_key) {
-    config.chat_model ??= 'openai:gpt-5.2';
-    config.expansion_model ??= 'openai:gpt-5.2';
-    config.embedding_model ??= 'openai:text-embedding-3-small';
+    config.chat_model ??= recipeDefault('openai', 'chat');
+    config.expansion_model ??= recipeDefault('openai', 'expansion');
+    config.embedding_model ??= recipeDefault('openai', 'embedding');
     config.embedding_dimensions ??= 1536;
     delete config.embedding_disabled;
     return;
   }
   if (config.anthropic_api_key) {
-    config.chat_model ??= 'anthropic:claude-sonnet-4-6';
-    config.expansion_model ??= 'anthropic:claude-sonnet-4-6';
+    config.chat_model ??= recipeDefault('anthropic', 'chat');
+    config.expansion_model ??= recipeDefault('anthropic', 'expansion');
     delete config.embedding_disabled;
     return;
   }
   if (config.google_api_key) {
-    config.chat_model ??= 'google:gemini-2.0-flash';
-    config.expansion_model ??= 'google:gemini-2.0-flash';
-    config.embedding_model ??= 'google:text-embedding-004';
+    config.chat_model ??= recipeDefault('google', 'chat');
+    config.expansion_model ??= recipeDefault('google', 'expansion');
+    config.embedding_model ??= recipeDefault('google', 'embedding');
     config.embedding_dimensions ??= 768;
     delete config.embedding_disabled;
     return;
   }
   if (config.groq_api_key) {
-    config.chat_model ??= 'groq:llama-3.3-70b-versatile';
-    config.expansion_model ??= 'groq:llama-3.3-70b-versatile';
+    config.chat_model ??= recipeDefault('groq', 'chat');
+    config.expansion_model ??= recipeDefault('groq', 'chat');
     delete config.embedding_disabled;
     return;
   }
   if (config.together_api_key) {
-    config.chat_model ??= 'together:meta-llama/Llama-3.3-70B-Instruct-Turbo';
-    config.expansion_model ??= 'together:meta-llama/Llama-3.3-70B-Instruct-Turbo';
+    config.chat_model ??= recipeDefault('together', 'chat');
+    config.expansion_model ??= recipeDefault('together', 'chat');
     delete config.embedding_disabled;
     return;
   }
   if (config.openrouter_api_key) {
-    config.chat_model ??= 'openrouter:openai/gpt-5.2';
-    config.expansion_model ??= 'openrouter:openai/gpt-5.2';
+    config.chat_model ??= recipeDefault('openrouter', 'chat');
+    config.expansion_model ??= recipeDefault('openrouter', 'chat');
     delete config.embedding_disabled;
     return;
   }
   if (config.minimax_api_key) {
-    config.embedding_model ??= 'minimax:embo-01';
+    config.embedding_model ??= recipeDefault('minimax', 'embedding');
     config.embedding_dimensions ??= 1536;
     delete config.embedding_disabled;
     return;
   }
   if (config.dashscope_api_key) {
-    config.embedding_model ??= 'dashscope:text-embedding-v3';
+    config.embedding_model ??= recipeDefault('dashscope', 'embedding');
     config.embedding_dimensions ??= 1024;
     delete config.embedding_disabled;
     return;
@@ -307,7 +345,12 @@ function selectModelDefaults(config: RawConfig): void {
   if (!config.embedding_model) config.embedding_disabled = true;
 }
 
-export function saveSetup(payload: SetupPayload): { config: RawConfig; snapshot: ConfigSnapshot; backup: string | null } {
+export function saveSetup(payload: SetupPayload): {
+  config: RawConfig;
+  snapshot: ConfigSnapshot;
+  backup: string | null;
+  needsEmbeddingDimensionProbe: boolean;
+} {
   const readPath = desktopConfigPath();
   const path = desktopWriteConfigPath();
   const snapshot: ConfigSnapshot = {
@@ -354,16 +397,25 @@ export function saveSetup(payload: SetupPayload): { config: RawConfig; snapshot:
     config['models.default'] = chatModel;
   }
   const embeddingModel = payload.modelConfig?.embeddingModel?.trim();
+  let needsEmbeddingDimensionProbe = false;
   if (embeddingModel) {
+    const previousModel = typeof existing.embedding_model === 'string' ? existing.embedding_model : undefined;
     config.embedding_model = embeddingModel;
     delete config.embedding_disabled;
+    // Existing users keep their saved dimension while the model is unchanged.
+    // A newly selected model gets the recipe recommendation automatically.
+    if (embeddingModel !== previousModel && payload.modelConfig?.embeddingDimensions === undefined) {
+      config.embedding_dimensions = desktopRecommendedEmbeddingDimension(embeddingModel);
+      needsEmbeddingDimensionProbe = !hasKnownDesktopEmbeddingDimension(embeddingModel);
+    }
   }
   const embeddingDimensions = payload.modelConfig?.embeddingDimensions;
   if (typeof embeddingDimensions === 'number' && Number.isInteger(embeddingDimensions) && embeddingDimensions > 0) {
     config.embedding_dimensions = embeddingDimensions;
   }
 
-  // Respect the user's final input; do not invent a backend default here.
+  // Dimensions are internal desktop configuration. Legacy values remain
+  // untouched unless the user actively selects a different model.
   if (typeof config.embedding_dimensions !== 'number'
       || !Number.isInteger(config.embedding_dimensions)
       || config.embedding_dimensions <= 0) {
@@ -386,7 +438,15 @@ export function saveSetup(payload: SetupPayload): { config: RawConfig; snapshot:
 
   const backup = backupFile(path, 'config');
   writeJsonConfig(path, config);
-  return { config, snapshot, backup };
+  return { config, snapshot, backup, needsEmbeddingDimensionProbe };
+}
+
+export function updateSavedEmbeddingDimension(path: string, dimensions: number): void {
+  if (!Number.isInteger(dimensions) || dimensions <= 0) throw new Error('探测到的向量维度无效。');
+  const config = readConfig(path);
+  if (!config) throw new Error('PMBrain 配置不存在，无法保存探测到的向量维度。');
+  config.embedding_dimensions = dimensions;
+  writeJsonConfig(path, config);
 }
 
 export function ensureBootstrapToken(): string {

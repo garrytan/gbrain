@@ -80,15 +80,27 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .model-card-heading small { color: #8d9992; font-size: 12px; overflow-wrap: anywhere; text-align: right; }
 .model-fields { display: grid; gap: 12px; }
 .model-fields.chat-fields { grid-template-columns: 180px minmax(220px, 1fr) minmax(280px, 1.1fr); }
-.model-fields.embedding-fields { grid-template-columns: 160px minmax(210px, 1fr) 130px minmax(260px, 1.1fr); }
+.model-fields.embedding-fields { grid-template-columns: 180px minmax(220px, 1fr) minmax(280px, 1.1fr); }
 .model-fields label { margin: 0; }
-.model-fields span:not(.secret-input) { display: block; margin-bottom: 8px; color: #c6d0c9; font-size: 12px; font-weight: 700; }
+.model-fields label > span:first-child { display: block; margin-bottom: 8px; color: #c6d0c9; font-size: 12px; font-weight: 700; }
 .model-card p { margin: 12px 0 0; color: #738078; font-size: 12px; line-height: 1.55; }
+.model-picker { display: grid; grid-template-columns: 1fr 42px; align-items: center; position: relative; }
+.model-picker input { border-right: 0; }
+.model-picker-trigger { width: 42px; min-height: 42px; padding: 0; border-color: #37423c; color: #aab6ae; background: #131715; font-size: 18px; }
+.model-picker-trigger:hover { color: #eef4ef; }
+.model-load-status { display: block; min-height: 16px; margin-top: 8px; color: #829087; font-size: 11px; }
+.model-fields > label { position: static; }
+.model-dropdown { position: absolute; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: #1a1f1c; border: 1px solid #37423c; border-radius: 8px; max-height: 240px; overflow-y: auto; z-index: 20; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.model-dropdown li { padding: 8px 10px; border-radius: 6px; color: #c6d0c9; font-size: 13px; cursor: pointer; }
+.model-dropdown li:hover { background: #2a332e; color: #eef4ef; }
+.model-dropdown li.selected { color: #97e66c; font-weight: 600; }
+.model-load-status.warning { color: #d9b778; }
 .key-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 .key-grid label { margin: 0; }
 .key-grid small { display: block; min-height: 16px; margin-top: 5px; color: #69766e; font-weight: 400; }
 .secret-input { display: grid; grid-template-columns: 1fr 42px; align-items: center; }
 .secret-input input { border-right: 0; }
+.secret-input input:disabled { color: #748078; background: #111412; }
 .secret-toggle { width: 42px; min-height: 42px; padding: 0; border-color: #37423c; color: #9ba7a0; background: #131715; }
 .secret-toggle:hover { color: #eef4ef; }
 .form-footer { justify-content: space-between; margin-top: 34px; padding-top: 24px; border-top: 1px solid #2b332f; }
