@@ -229,8 +229,12 @@ describe('phaseBFenceFacts — happy path backfill', () => {
     await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Whatever' });
 
     const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    // v0.32.x: still `complete` (nothing more the migration CAN do — the rows
+    // are structurally unfenceable), but it must report the unfenceable backlog
+    // loudly instead of silently self-certifying success on fenced=0.
     expect(r.status).toBe('complete');
     expect(r.detail).toContain('skipped_no_local_path=1');
+    expect(r.detail).toContain('permanently unfenceable');
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query('SELECT row_num FROM facts');

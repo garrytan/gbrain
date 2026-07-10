@@ -344,6 +344,27 @@ async function phaseBFenceFacts(
         detail: `${detail} :: ${outcome.failed_pages.slice(0, 3).join(' | ')}${outcome.failed_pages.length > 3 ? '...' : ''}`,
       };
     }
+    // Rows whose source has a NULL local_path can NEVER be fenced — there is no
+    // on-disk repo to write the fence into (federated sources imported via
+    // `gbrain import --source-id` carry no local_path). They are structurally
+    // unfenceable, exactly like NULL entity_slug rows. The migration IS complete
+    // — there is nothing more it CAN do for them — but it must NOT silently
+    // self-certify "done" having fenced zero of a non-empty backlog: that reads
+    // as success and hides a real gap (this is the bug that quietly wedged the
+    // extract_facts cycle phase, which keyed off `row_num IS NULL`). Report it
+    // loudly — in the detail (so the ledger row records it) AND via console.warn
+    // (so the operator sees it) — while KEEPING status `complete`, because a
+    // `partial` here would re-run the migration forever (the rows never become
+    // fenceable). They remain DB-only legacy rows, still queryable via recall.
+    if (outcome.skipped_no_local_path > 0) {
+      const note = `${outcome.skipped_no_local_path} row(s) permanently unfenceable ` +
+        `(source has no local_path) — reported, not fenced`;
+      console.warn(
+        `  ⚠️  v0.32.2 fence_facts: ${note}. These stay DB-only legacy rows; ` +
+        `they can only be fenced if their source later gains a local_path.`,
+      );
+      return { name: 'fence_facts', status: 'complete', detail: `${detail} :: ${note}` };
+    }
     return { name: 'fence_facts', status: 'complete', detail };
   } catch (e) {
     return { name: 'fence_facts', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
