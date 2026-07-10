@@ -146,8 +146,19 @@ CANDIDATE:
 {CANDIDATE}`;
 
 /**
- * Default judge — Haiku-based rubric verdict. Production path; tests
- * inject a stub.
+ * Default judge — a cheap rubric verdict on the configured chat model.
+ * Production path; tests inject a stub.
+ *
+ * Resolves the model via the gateway default (`chat()` does
+ * `opts.model ?? getChatModel()`) rather than hardcoding one. The prior
+ * hardcoded bare `'claude-haiku-4-5'` was doubly broken: (a) no provider
+ * prefix, so model resolution rejected it outright, and (b) it pinned an
+ * anthropic-only model that a seat-proxy / litellm-only setup (no anthropic
+ * key) can't reach. Letting chat() resolve the configured default routes the
+ * judge through whatever provider the user actually has. This was latent until
+ * now because the calibration cold-brain branch short-circuits (returns before
+ * the voice gate runs) for any holder with <5 resolved takes — so the gate
+ * never fired in practice.
  */
 export async function defaultJudge(input: {
   candidate: string;
@@ -159,7 +170,6 @@ export async function defaultJudge(input: {
     .replace('{CANDIDATE}', input.candidate);
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
-    model: 'claude-haiku-4-5',
     maxTokens: 100,
   });
   return parseJudgeOutput(result.text);
