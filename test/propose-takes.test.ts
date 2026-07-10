@@ -340,8 +340,8 @@ describe('runPhaseProposeTakes — phase integration', () => {
     const details = result.details as Record<string, unknown>;
     expect(details.cache_hits).toBe(1);
     expect(details.proposals_inserted).toBe(0);
-    // v0.42: extract rollup row UPSERTs on every phase invocation (best-
-    // effort cache). Filter the assertion to take_proposals INSERTs only.
+    // v0.42: extract rollup row UPSERTs on every non-dry-run phase invocation
+    // (best-effort cache). Filter the assertion to take_proposals INSERTs only.
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 
