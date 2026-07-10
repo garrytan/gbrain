@@ -89,7 +89,7 @@ const EXIT_DRAIN_INCOMPLETE = 3;
  */
 export function shouldUseProbeOnlyConnection(args: string[]): boolean {
   const phaseIdx = args.indexOf('--phase');
-  return args.includes('--dry-run') && args[phaseIdx + 1] === 'propose_takes';
+  return phaseIdx !== -1 && args.includes('--dry-run') && args[phaseIdx + 1] === 'propose_takes';
 }
 
 /**

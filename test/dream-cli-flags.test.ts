@@ -117,6 +117,7 @@ describe('dream CLI flag wiring', () => {
       expect(shouldUseProbeOnlyConnection(['--phase', 'propose_takes'])).toBe(false);
       expect(shouldUseProbeOnlyConnection(['--phase', 'lint', '--dry-run'])).toBe(false);
       expect(shouldUseProbeOnlyConnection(['--dry-run'])).toBe(false);
+      expect(shouldUseProbeOnlyConnection(['propose_takes', '--dry-run'])).toBe(false);
     });
   });
 
