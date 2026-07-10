@@ -178,7 +178,15 @@ describe('runExtractFacts — happy path', () => {
 });
 
 describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
-  test('refuses to run when legacy v0.31 rows are pending the v0_32_2 backfill', async () => {
+  test('refuses to run when BACKFILLABLE legacy v0.31 rows are pending the v0_32_2 backfill', async () => {
+    // v0_32_2 can only fence a legacy row whose source has a local_path.
+    // Make 'default' backfillable so its legacy row genuinely gates the guard.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, config, local_path)
+       VALUES ('default', 'default', '{}'::jsonb, '/tmp/gbrain-test-default')
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+    );
     // Seed a legacy fact (row_num NULL, entity_slug NOT NULL — the
     // v0.31 hot-memory shape pre-backfill).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,6 +254,44 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
     expect(r.guardTriggered).toBe(false);
     expect(r.factsInserted).toBe(1);
+  });
+
+  test('legacy rows on a NULL-local_path source do NOT trigger the guard (federated, structurally un-backfillable)', async () => {
+    // A federated source imported via `gbrain import --source-id` carries a
+    // NULL local_path, so v0_32_2 Phase B can never fence its rows (it
+    // self-certifies `complete` having skipped them). Blocking on them would
+    // wedge the phase forever — they must be excluded like NULL entity_slug.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, config, local_path)
+       VALUES ('federated', 'federated', '{}'::jsonb, NULL)
+       ON CONFLICT (id) DO UPDATE SET local_path = NULL`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES ('federated', 'people/alice', 'db-only legacy', 'fact', 'world', 'medium',
+               now(), 'mcp:put_page', 1.0)`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | F | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    expect(r.factsInserted).toBe(1);
+
+    // The un-backfillable legacy row survives untouched (never fenced,
+    // never deleted — source_markdown_slug stays NULL).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const survived = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_id = 'federated' AND row_num IS NULL`,
+    );
+    expect(survived.rows).toHaveLength(1);
+    expect(survived.rows[0].fact).toBe('db-only legacy');
   });
 });
 

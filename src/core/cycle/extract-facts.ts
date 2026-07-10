@@ -113,12 +113,37 @@ export async function runExtractFacts(
   };
 
   // ── Empty-fence guard (Codex R2-#7) ────────────────────────────
-  // Pre-check: if any legacy fact rows exist (row_num NULL but
-  // entity_slug NOT NULL), refuse to run the destructive
-  // reconciliation pass. The v0_32_2 orchestrator must complete
-  // first.
+  // Pre-check: if any BACKFILLABLE legacy fact rows exist, refuse to run
+  // the destructive reconciliation pass — the v0_32_2 orchestrator must
+  // fence them first, else the cycle could misreport "0 facts on
+  // people/alice" while legacy rows linger.
+  //
+  // "Backfillable" excludes the two row shapes v0_32_2 Phase B can NEVER
+  // fence, so waiting on them would wedge the phase forever:
+  //   - entity_slug IS NULL          → no page to fence onto (Phase B:
+  //                                     skipped_no_entity).
+  //   - source has NULL local_path   → no on-disk repo to write the fence
+  //                                     into (Phase B: skipped_no_local_path).
+  //                                     Federated sources imported via
+  //                                     `gbrain import --source-id` carry a
+  //                                     NULL local_path, so their v0.31 facts
+  //                                     are structurally DB-only; the migration
+  //                                     self-certifies `complete` having fenced
+  //                                     zero of them. Excluding them here (the
+  //                                     same way NULL entity_slug is excluded)
+  //                                     is safe: like NULL-source_markdown_slug
+  //                                     rows they survive every reconcile
+  //                                     (deleteFactsForPage targets
+  //                                     source_markdown_slug = slug, which they
+  //                                     never have).
   const legacy = await engine.executeRaw<{ n: string }>(
-    `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NOT NULL`,
+    `SELECT COUNT(*) AS n FROM facts f
+      WHERE f.row_num IS NULL
+        AND f.entity_slug IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM sources s
+           WHERE s.id = f.source_id AND s.local_path IS NOT NULL
+        )`,
   );
   const legacyCount = parseInt(legacy[0]?.n ?? '0', 10);
   result.legacyRowsPending = legacyCount;

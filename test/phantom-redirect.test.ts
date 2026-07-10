@@ -588,6 +588,14 @@ describe('runExtractFacts — phantom-redirect integration', () => {
         `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source)
          VALUES ('default', 'people/legacy', 'Legacy claim', 'fact', '2020-01-01'::date, 'legacy-import')`,
       );
+      // v0_32_2 can only fence rows whose source has a local_path; make
+      // 'default' backfillable so this legacy row genuinely gates the guard
+      // (NULL-local_path sources are now excluded as structurally un-backfillable).
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, local_path)
+         VALUES ('default', 'default', '{}'::jsonb, '/tmp/gbrain-test-default')
+         ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      );
       // Seed a phantom that SHOULD have been redirected if the guard didn't fire
       await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
       writeMd(brainDir, 'people/alice-example', '# alice-example\n');
