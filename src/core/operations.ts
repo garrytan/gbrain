@@ -1386,6 +1386,10 @@ const list_pages: Operation = {
       description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
+    source_id: {
+      type: 'string',
+      description: "Per-call source override, mirroring `query`/`get_page`. Defaults to the caller's scope (CLI --source / GBRAIN_SOURCE / the OAuth grant). Pass '__all__' to span every source (trusted local callers; remote callers span only their grant). Without it, list_pages silently scopes to the caller's default source — the gotcha behind a 'list_pages returns nothing' when the pages live in a non-default source.",
+    },
   },
   handler: async (ctx, p) => {
     // Whitelist the sort enum at the handler before passing to the engine.
@@ -1400,7 +1404,13 @@ const list_pages: Operation = {
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
-    const scope = sourceScopeOpts(ctx);
+    // v0.42.x: per-call `source_id` override, routed through the same
+    // grant-checked resolver get_page/query use. Omitted → identical to
+    // sourceScopeOpts(ctx) (the #861 seal holds); an explicit value or '__all__'
+    // scopes per-call. Closes the list_pages analogue of the 2026-07-06 get_page
+    // source-scoping gap — a caller could see a source in a scoped `query` but
+    // `list_pages` had no way to be told to enumerate it.
+    const scope = resolveRequestedScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
