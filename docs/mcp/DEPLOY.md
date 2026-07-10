@@ -18,11 +18,16 @@ for remote clients over OAuth 2.1.
 ### Local stdio (zero setup)
 
 ```bash
-gbrain serve
+gbrain serve                  # full operation catalog (default)
+gbrain serve --surface verbs  # just the 5 memory verbs (quickstart surface)
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
+`--surface verbs` exposes exactly the five-verb memory protocol (`recall`,
+`remember`, `entity`, `synthesize`, `forget` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the full catalog;
+omit the flag (default `full`) for every operation.
 
 ### Remote over OAuth 2.1 (recommended, v0.26.0+)
 

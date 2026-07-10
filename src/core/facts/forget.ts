@@ -55,6 +55,7 @@ interface FactDbRow {
   row_num: number | null;
   source_markdown_slug: string | null;
   expired_at: Date | null;
+  visibility: string;
 }
 
 interface SourceRow {
@@ -83,15 +84,43 @@ function todayUtc(): string {
 export async function forgetFactInFence(
   engine: BrainEngine,
   factId: number,
-  opts: { reason?: string } = {},
+  opts: {
+    reason?: string;
+    /**
+     * MEMORY_VERBS v1 trust boundary [ship P1.1]: when set, the fact must
+     * belong to this source or the call returns `not_found` (indistinguishable
+     * from a truly-missing id — no cross-source existence leak). The `forget`
+     * verb passes ctx.sourceId so a remote caller scoped to source A cannot
+     * expire facts in source B by guessing global ids.
+     */
+    sourceId?: string;
+    /**
+     * When true (remote callers), the fact must be visibility='world' or the
+     * call returns `not_found` — a remote caller can't expire private facts it
+     * could never read (mirrors recall's remote posture).
+     */
+    worldOnly?: boolean;
+  } = {},
 ): Promise<ForgetFactResult> {
   const reason = opts.reason ?? 'forgotten';
 
   const rows = await engine.executeRaw<FactDbRow>(
-    `SELECT id, source_id, entity_slug, row_num, source_markdown_slug, expired_at
+    `SELECT id, source_id, entity_slug, row_num, source_markdown_slug, expired_at, visibility
        FROM facts WHERE id = $1`,
     [factId],
   );
+  // Trust-boundary scope check BEFORE any state inspection: a row outside the
+  // caller's source (or private, for remote callers) is reported as not_found,
+  // never distinguished from a missing id.
+  if (rows.length === 1) {
+    const r = rows[0];
+    const outOfScope =
+      (opts.sourceId !== undefined && r.source_id !== opts.sourceId) ||
+      (opts.worldOnly === true && r.visibility !== 'world');
+    if (outOfScope) {
+      return { ok: false, path: 'not_found', reason };
+    }
+  }
   if (rows.length === 0) {
     return { ok: false, path: 'not_found', reason };
   }

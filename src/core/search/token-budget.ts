@@ -63,50 +63,66 @@ export interface TokenBudgetMeta {
 }
 
 /**
- * Greedy top-down budget enforcement. Walks the input in order, accumulates
- * token costs, and stops as soon as adding the next result would exceed
- * the budget. Results are NOT re-ranked — caller's order is preserved.
+ * Generic greedy top-down budget packer (v1 memory-verbs protocol). Walks
+ * the input in order, accumulates per-item costs via the caller-supplied
+ * cost function, and stops as soon as adding the next item would exceed
+ * the budget. Items are NOT re-ranked — caller's order is preserved.
  *
  * Edge cases (all preserve the pre-v0.32 contract):
  *   - budget undefined / <= 0: returns input unchanged; dropped=0, kept=N.
- *   - First result alone exceeds budget: returns []; dropped=N, kept=0.
+ *   - First item alone exceeds budget: returns []; dropped=N, kept=0.
  *     (Intentionally strict: the caller asked for a hard cap.)
  *   - Input empty: returns []; budget unused.
+ */
+export function packToBudget<T>(
+  items: T[],
+  cost: (item: T) => number,
+  budget: number | undefined,
+): { items: T[]; meta: TokenBudgetMeta } {
+  const safeBudget = typeof budget === 'number' && budget > 0 ? budget : 0;
+
+  if (safeBudget === 0 || items.length === 0) {
+    return {
+      items,
+      meta: {
+        budget: safeBudget,
+        used: items.reduce((acc, it) => acc + cost(it), 0),
+        dropped: 0,
+        kept: items.length,
+      },
+    };
+  }
+
+  const kept: T[] = [];
+  let used = 0;
+  for (const it of items) {
+    const c = cost(it);
+    if (used + c > safeBudget) break;
+    kept.push(it);
+    used += c;
+  }
+
+  return {
+    items: kept,
+    meta: {
+      budget: safeBudget,
+      used,
+      dropped: items.length - kept.length,
+      kept: kept.length,
+    },
+  };
+}
+
+/**
+ * Search-pipeline budget enforcement — a thin wrapper over packToBudget
+ * with the SearchResult cost model (title + chunk_text). Behavior is
+ * byte-identical to the pre-refactor implementation; pinned by
+ * test/token-budget.test.ts.
  */
 export function enforceTokenBudget(
   results: SearchResult[],
   budget: number | undefined,
 ): { results: SearchResult[]; meta: TokenBudgetMeta } {
-  const safeBudget = typeof budget === 'number' && budget > 0 ? budget : 0;
-
-  if (safeBudget === 0 || results.length === 0) {
-    return {
-      results,
-      meta: {
-        budget: safeBudget,
-        used: results.reduce((acc, r) => acc + resultTokens(r), 0),
-        dropped: 0,
-        kept: results.length,
-      },
-    };
-  }
-
-  const kept: SearchResult[] = [];
-  let used = 0;
-  for (const r of results) {
-    const cost = resultTokens(r);
-    if (used + cost > safeBudget) break;
-    kept.push(r);
-    used += cost;
-  }
-
-  return {
-    results: kept,
-    meta: {
-      budget: safeBudget,
-      used,
-      dropped: results.length - kept.length,
-      kept: kept.length,
-    },
-  };
+  const { items, meta } = packToBudget(results, resultTokens, budget);
+  return { results: items, meta };
 }

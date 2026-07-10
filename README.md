@@ -89,12 +89,14 @@ The agent installs GBrain, creates the brain, asks for your API keys, loads 43 s
 
 Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
 
-**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
+**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel. `--surface verbs` gives your agent the five-verb memory protocol (`recall`, `remember`, `entity`, `synthesize`, `forget` — [MEMORY_VERBS v1](docs/protocol/MEMORY_VERBS_v1.md), frozen + additive-forever) instead of the full 90-tool wall; drop the flag for every operation:
 
 ```bash
-gbrain init --pglite                     # 2-second local brain (no Docker)
-claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
+gbrain init --pglite                                    # 2-second local brain (no Docker)
+claude mcp add gbrain -- gbrain serve --surface verbs   # or: codex mcp add gbrain -- gbrain serve --surface verbs
 ```
+
+If `claude` is not found, install Claude Code first — or use the per-harness blocks in the [protocol doc](docs/protocol/MEMORY_VERBS_v1.md). Heads-up: memories agents save default to brain-wide visibility (every connected agent can recall them); pass `visibility: "private"` for local-only facts.
 
 **Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
 

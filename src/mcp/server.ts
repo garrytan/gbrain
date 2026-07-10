@@ -6,6 +6,7 @@ import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import { filterOpsForSurface, allowedOpNames, type McpSurface } from './surface.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import {
@@ -15,17 +16,24 @@ import {
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 
-export async function startMcpServer(engine: BrainEngine) {
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface } = {}) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
   );
 
+  // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
+  // to pre-surface behavior) or 'verbs' (exactly the 5 protocol verbs).
+  // Enforced BOTH on the advertised list and in dispatch (fail-closed [c2]).
+  const surface: McpSurface = opts.surface ?? 'full';
+  const surfacedOps = filterOpsForSurface(operations, surface);
+  const allowedOps = surface === 'full' ? undefined : allowedOpNames(operations, surface);
+
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(operations),
+    tools: buildToolDefs(surfacedOps),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
@@ -51,6 +59,9 @@ export async function startMcpServer(engine: BrainEngine) {
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
       metaHook: getBrainHotMemoryMeta,
+      // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
+      ...(allowedOps ? { allowedOps } : {}),
+      surface,
     });
   });
 

@@ -33,6 +33,21 @@ mutating: false
 
 Answer questions using the brain's knowledge with 3-layer search and synthesis.
 
+> **Memory verbs (MEMORY_VERBS v1, gbrain ≥ 0.43).** When connected to a brain
+> over MCP, prefer the five frozen memory verbs for memory work — they carry
+> provenance, evidence, and a server-enforced token budget:
+> - **`recall(query | entity, budget_tokens)`** — the budget-packed memory read.
+>   Use it instead of bare `search` for "what do we know that we SAVED about X".
+> - **`entity(name)`** — a zero-LLM person/company/project card (aliases,
+>   last-touched, open threads, top edges). Use it instead of `get_page` +
+>   `get_backlinks` when you just need the card.
+> - **`synthesize(question)`** — the explicitly-expensive cross-page answer; the
+>   heavy version of `query`. Reach for it only when the answer must combine
+>   evidence across pages.
+> Fall back to `search`/`query`/`get_page` when the verbs aren't on the surface
+> (older brains, or `gbrain serve --surface full`). See
+> `docs/protocol/MEMORY_VERBS_v1.md`.
+
 ## Contract
 
 This skill guarantees:

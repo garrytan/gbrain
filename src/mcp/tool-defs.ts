@@ -8,6 +8,17 @@ export interface McpToolDef {
     properties: Record<string, unknown>;
     required: string[];
   };
+  /**
+   * MCP ToolAnnotations (SDK 1.29+), emitted ONLY when the op defines them —
+   * existing tools keep byte-identical definitions (the byte-equality
+   * regression test depends on absent keys staying absent).
+   */
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+  };
 }
 
 /**
@@ -50,5 +61,6 @@ export function buildToolDefs(ops: Operation[]): McpToolDef[] {
         .filter(([, v]) => v.required)
         .map(([k]) => k),
     },
+    ...(op.annotations ? { annotations: op.annotations } : {}),
   }));
 }

@@ -32,6 +32,7 @@ import { operations } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
+import { filterOpsForSurface } from './surface.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
@@ -61,6 +62,12 @@ interface HttpTransportOptions {
   engine: BrainEngine;
   /** Override limiters (for tests). Defaults to env-driven buildDefaultLimiters. */
   limiters?: { ip: RateLimiter; token: RateLimiter };
+  /**
+   * MEMORY_VERBS v1 [c1]: tool-surface mode for this transport (the SECOND
+   * HTTP path — the OAuth path in serve-http.ts carries its own). 'verbs' =
+   * exactly the five protocol verbs; 'full' (default) = everything.
+   */
+  surface?: 'verbs' | 'full';
 }
 
 interface AuthResult {
@@ -148,7 +155,13 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const limiters = opts.limiters || buildDefaultLimiters();
   const bodyCap = envInt('GBRAIN_HTTP_MAX_BODY_BYTES', DEFAULT_BODY_CAP);
   const corsAllowlist = parseCorsAllowlist();
-  const tools = buildToolDefs(operations);
+  // MEMORY_VERBS v1 [c1]: surface filter applies to THIS transport too —
+  // the advertised list AND dispatch (allowedOps), fail-closed.
+  const surface = opts.surface ?? 'full';
+  const surfacedOps = filterOpsForSurface(operations, surface);
+  const surfaceAllowedOps: ReadonlySet<string> | undefined =
+    surface === 'full' ? undefined : new Set(surfacedOps.map(o => o.name));
+  const tools = buildToolDefs(surfacedOps);
 
   /**
    * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
@@ -386,6 +399,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,
+          // MEMORY_VERBS v1 [c1/c2]: fail-closed surface enforcement here too.
+          ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
+          surface,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
