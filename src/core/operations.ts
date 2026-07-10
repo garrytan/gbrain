@@ -727,6 +727,7 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    allow_empty: { type: 'boolean', required: false, description: 'Allow overwriting an existing non-empty page with empty/whitespace-only content (default: false). Without it, put_page rejects the empty overwrite — the empty-stdin failure class.' },
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with
@@ -804,6 +805,30 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+
+    // Empty-overwrite guard: empty/whitespace-only content over an existing
+    // non-empty page is almost always an input-plumbing failure (e.g. a
+    // caller that meant file input — put has no --file flag — so the missing
+    // --content fell back to reading an empty non-interactive stdin), not an
+    // intentional write. Refuse loudly unless the caller opts in with
+    // allow_empty. The read is scoped to the exact (source_id, slug) row the
+    // write below targets (engine.putPage defaults to 'default' when
+    // sourceId is unset). New-slug creates and soft-deleted-page overwrites
+    // stay allowed — nothing recoverable is lost there.
+    if ((p.content as string).trim() === '' && p.allow_empty !== true) {
+      const existing = await ctx.engine.getPage(slug, { sourceId: ctx.sourceId ?? 'default' });
+      const existingBody = existing
+        ? `${existing.compiled_truth ?? ''}\n${existing.timeline ?? ''}`.trim()
+        : '';
+      if (existingBody !== '') {
+        throw new OperationError(
+          'invalid_params',
+          `Refusing to overwrite existing non-empty page '${slug}' with empty content.`,
+          'For file input use `gbrain capture --file PATH --slug SLUG` (put has no --file flag). To intentionally blank the page, pass allow_empty: true (CLI: --allow-empty).',
+        );
+      }
+    }
+
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
