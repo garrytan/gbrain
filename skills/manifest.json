@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -232,7 +232,7 @@
     {
       "name": "cold-start",
       "path": "cold-start/SKILL.md",
-      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling — agents never hold raw API keys."
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling \u2014 agents never hold raw API keys."
     },
     {
       "name": "ask-user",
@@ -257,17 +257,17 @@
     {
       "name": "eiirp",
       "path": "eiirp/SKILL.md",
-      "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
+      "description": "Everything In Its Right Place \u2014 post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
     },
     {
       "name": "schema-unify",
       "path": "schema-unify/SKILL.md",
-      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain \u2192 assess \u2192 propose \u2192 apply \u2192 sync \u2192 verify \u2192 commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
     },
     {
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
-      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+      "description": "Self-evolving skill optimization via gbrain skillopt \u2014 SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
     },
     {
       "name": "skill-vault-capture-policy",
@@ -283,6 +283,11 @@
       "name": "webgpu-threejs-tsl",
       "path": "webgpu-threejs-tsl/SKILL.md",
       "description": "Comprehensive guide for developing WebGPU-enabled Three.js applications using TSL (Three.js Shading Language). Covers WebGPU renderer setup, TSL syntax and node materials, compute "
+    },
+    {
+      "name": "motionklip-target-first-hybrid-pipeline",
+      "path": "motionklip-target-first-hybrid-pipeline/SKILL.md",
+      "description": "Default MotionKlip target-first hybrid: energy+score\u226598, verify 3\u00d7 before render"
     }
   ],
   "dependencies": {

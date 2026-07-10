@@ -54,6 +54,7 @@
     "skills/media-ingest",
     "skills/meeting-ingestion",
     "skills/minion-orchestrator",
+    "skills/motionklip-target-first-hybrid-pipeline",
     "skills/obsidian-gbrain-safe-index",
     "skills/perplexity-research",
     "skills/playwright-cli",
