@@ -145,7 +145,7 @@ if (import.meta.main) {
 
 export function testTemplate(v: ScaffoldVars): string {
   return `/**
- * Tests for skills/${v.name}/scripts/${v.name}.mjs
+ * Tests for skills/${v.name}/scripts/${v.name}.mjs (test stub at skills/test/)
  *
  * Scaffolded by gbrain skillify scaffold. Replace these stubs with
  * real cases — start with the regression case for the failure that
@@ -153,7 +153,7 @@ export function testTemplate(v: ScaffoldVars): string {
  */
 
 import { describe, expect, it } from 'bun:test';
-import { run } from '../skills/${v.name}/scripts/${v.name}.mjs';
+import { run } from '../${v.name}/scripts/${v.name}.mjs';
 
 describe('${v.name}', () => {
   it('is scaffolded — replace this test with a real regression case', () => {

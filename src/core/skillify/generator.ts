@@ -34,8 +34,8 @@ export interface ScaffoldOptions {
   /** Scaffold variables (name, description, triggers, etc.). */
   vars: ScaffoldVars;
   /**
-   * Repo root for the `test/` and `scripts/` directories. Falls back
-   * to `dirname(skillsDir)` when unset. Tests pass explicit values.
+   * Repo root for resolver fallback. No longer used for the test path
+   * (tests now land inside skillsDir/test/). Kept for API compatibility.
    */
   repoRoot?: string;
   /** When true, overwrite existing skill files. Per-file (D-CX-7). */
@@ -72,12 +72,11 @@ export function planScaffold(opts: ScaffoldOptions): ScaffoldPlan {
     );
   }
 
-  const repoRoot = opts.repoRoot ?? dirname(skillsDir);
   const skillDir = join(skillsDir, vars.name);
   const skillMdPath = join(skillDir, 'SKILL.md');
   const scriptPath = join(skillDir, 'scripts', `${vars.name}.mjs`);
   const routingEvalPath = join(skillDir, 'routing-eval.jsonl');
-  const testPath = join(repoRoot, 'test', `${vars.name}.test.ts`);
+  const testPath = join(skillsDir, 'test', `${vars.name}.test.ts`);
 
   const files: ScaffoldPlan['files'] = [];
 

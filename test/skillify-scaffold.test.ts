@@ -92,7 +92,7 @@ describe('planScaffold', () => {
       join(skillsDir, 'hello-world', 'scripts', 'hello-world.mjs'),
     );
     expect(paths).toContain(join(skillsDir, 'hello-world', 'routing-eval.jsonl'));
-    expect(paths).toContain(join(root, 'test', 'hello-world.test.ts'));
+    expect(paths).toContain(join(skillsDir, 'test', 'hello-world.test.ts'));
     expect(plan.files.every(f => f.kind === 'new')).toBe(true);
     expect(plan.resolverFile).toBe(join(skillsDir, 'RESOLVER.md'));
     expect(plan.resolverAppend).not.toBeNull();
@@ -285,6 +285,31 @@ describe('planScaffold', () => {
       vars: { name: 'demo', description: 'd', triggers: ['do thing'], writesTo: [], writesPages: false, mutating: false },
     });
     expect(plan.resolverAppend).not.toBeNull();
+  });
+
+  it('test file lands inside skillsDir when repoRoot is omitted (CLI path regression)', () => {
+    // Reproduces the operator pain: `gbrain skillify scaffold --skills-dir <X>`
+    // writes skill files under <X>/ but wrote the test to <X>/../test/ (one
+    // level above the skills dir). The CLI never passes repoRoot, so the
+    // default-path branch in planScaffold is what real users hit.
+    const { root, skillsDir } = scratchRepo();
+    const plan = planScaffold({
+      skillsDir,
+      // Deliberately omit repoRoot — mirrors src/commands/skillify.ts.
+      vars: {
+        name: 'path-check',
+        description: 'regression test for test-file location',
+        triggers: ['check path'],
+        writesTo: [],
+        writesPages: false,
+        mutating: false,
+      },
+    });
+    const testFile = plan.files.find(f => f.path.endsWith('path-check.test.ts'))!;
+    expect(testFile).toBeDefined();
+    // The test file MUST live inside skillsDir, not one level above it.
+    expect(testFile.path.startsWith(skillsDir)).toBe(true);
+    expect(testFile.path).toBe(join(skillsDir, 'test', 'path-check.test.ts'));
   });
 
   it('handles --triggers omitted by seeding TBD placeholder', () => {
