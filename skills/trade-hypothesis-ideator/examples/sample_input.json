@@ -1,0 +1,66 @@
+{
+  "objective": {
+    "goal": "Improve quality of breakout entries in earnings season",
+    "focus_area": "Entry filter and stop placement"
+  },
+  "strategy_context": {
+    "strategy_name": "earnings_breakout_v1",
+    "summary": "Trade post-earnings breakouts when price confirms above key intraday levels.",
+    "known_pain_points": [
+      "False breakouts on weak opening volume",
+      "Late entries after momentum exhaustion"
+    ]
+  },
+  "constraints": {
+    "execution_constraints": [
+      "Entries only during regular session",
+      "No more than one add-on per position"
+    ],
+    "risk_constraints": [
+      "Max 5 concurrent positions",
+      "risk_per_trade <= 1.0%"
+    ],
+    "data_constraints": [
+      "No reliance on sub-second data"
+    ]
+  },
+  "market_context": {
+    "summary": "Risk-on regime with concentrated earnings leadership in growth sectors.",
+    "regime_tags": [
+      "risk_on",
+      "earnings_season"
+    ],
+    "observations": [
+      "High-relative-volume names tend to hold VWAP in first hour",
+      "Continuation quality drops when index breadth weakens intraday"
+    ]
+  },
+  "trade_log_summary": {
+    "common_winner_traits": [
+      "Relative volume above 2.0 by 10:30",
+      "First pullback holds above intraday VWAP"
+    ],
+    "common_loser_traits": [
+      "Breakout fails after second retest",
+      "Volume contracts sharply before noon"
+    ]
+  },
+  "feature_inventory": [
+    "gap_pct",
+    "relative_volume_5m",
+    "open_to_vwap_distance",
+    "atr20"
+  ],
+  "journal_snippets": [
+    {
+      "date": "2026-02-22",
+      "note": "Tighter volume filter reduced false starts but lowered trade count.",
+      "outcome": "mixed"
+    },
+    {
+      "date": "2026-02-26",
+      "note": "Tick-level imbalance idea was unstable across data providers.",
+      "outcome": "rejected"
+    }
+  ]
+}

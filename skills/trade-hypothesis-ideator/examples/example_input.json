@@ -1,0 +1,89 @@
+{
+  "objective": {
+    "goal": "Improve consistency of an earnings gap-up continuation setup",
+    "focus_area": "Entry timing and exit calibration",
+    "horizon": "4-8 weeks"
+  },
+  "strategy_context": {
+    "strategy_name": "earnings_gapup_breakout",
+    "summary": "Buys post-earnings gap-up stocks when price holds above VWAP and breaks day-one high.",
+    "known_pain_points": [
+      "Late entries after noon show poor expectancy",
+      "False continuation when opening range volume is weak",
+      "Stop placement too tight in high ATR names"
+    ]
+  },
+  "constraints": {
+    "execution_constraints": [
+      "Entries only during regular session",
+      "No more than one order amendment per position"
+    ],
+    "risk_constraints": [
+      "Max 6 concurrent positions",
+      "risk_per_trade <= 1.0%",
+      "max single-position size 20%"
+    ],
+    "data_constraints": [
+      "No reliance on sub-second data"
+    ]
+  },
+  "market_context": {
+    "summary": "Risk-on tape with concentrated post-earnings leadership in software and semis.",
+    "regime_tags": [
+      "risk_on",
+      "earnings_season"
+    ],
+    "observations": [
+      "Leaders often reclaim VWAP within first 30 minutes",
+      "Continuation quality drops when market breadth deteriorates intraday"
+    ]
+  },
+  "performance_summary": {
+    "win_rate": 0.52,
+    "profit_factor": 1.18,
+    "max_drawdown": 0.14
+  },
+  "trade_log_summary": {
+    "common_winner_traits": [
+      "Relative volume above 2.0 by 10:30",
+      "First pullback holds above session VWAP"
+    ],
+    "common_loser_traits": [
+      "Entry taken after failed second breakout",
+      "Volume dries below 1.2x by noon"
+    ]
+  },
+  "feature_inventory": [
+    "gap_pct",
+    "open_to_vwap_distance",
+    "relative_volume_5m",
+    "or_high_break_time",
+    "atr20"
+  ],
+  "journal_snippets": [
+    {
+      "date": "2026-02-10",
+      "note": "Tried requiring first 15m close above VWAP; improved selectivity but fewer trades.",
+      "outcome": "mixed"
+    },
+    {
+      "date": "2026-02-15",
+      "note": "Tried adding tick-level imbalance proxy; not robust across brokers.",
+      "outcome": "rejected"
+    },
+    {
+      "date": "2026-02-21",
+      "note": "Using opening range contraction before break looked promising in top decile volume names.",
+      "outcome": "promising"
+    }
+  ],
+  "qualitative_notes": [
+    "Execution slippage spikes around macro headline releases"
+  ],
+  "artifacts": [
+    {
+      "type": "chartbook",
+      "path": "reports/earnings_gapup_review_2026w08.pdf"
+    }
+  ]
+}

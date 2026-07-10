@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TradeHypothesisOutputBundle",
+  "type": "object",
+  "required": [
+    "generated_at_utc",
+    "summary",
+    "state_assessment",
+    "hypotheses",
+    "selected_next_actions",
+    "warnings",
+    "logging_payload"
+  ],
+  "properties": {
+    "generated_at_utc": {"type": "string"},
+    "summary": {"type": "string"},
+    "state_assessment": {"type": "string"},
+    "hypotheses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "$ref": "./hypothesis_card.schema.json"
+      }
+    },
+    "selected_next_actions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "logging_payload": {
+      "type": "object",
+      "required": [
+        "objective",
+        "sources_used",
+        "hypothesis_ids",
+        "selected_next_actions",
+        "warnings"
+      ],
+      "properties": {
+        "objective": {"type": "string"},
+        "sources_used": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "hypothesis_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "selected_next_actions": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

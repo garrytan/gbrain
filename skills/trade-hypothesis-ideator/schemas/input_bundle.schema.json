@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TradeHypothesisInputBundle",
+  "type": "object",
+  "required": [
+    "objective",
+    "strategy_context",
+    "constraints",
+    "market_context"
+  ],
+  "properties": {
+    "objective": {
+      "type": "object",
+      "required": ["goal", "focus_area"],
+      "properties": {
+        "goal": {"type": "string"},
+        "focus_area": {"type": "string"},
+        "horizon": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "strategy_context": {
+      "type": "object",
+      "required": ["strategy_name", "summary"],
+      "properties": {
+        "strategy_name": {"type": "string"},
+        "summary": {"type": "string"},
+        "known_pain_points": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "constraints": {
+      "type": "object",
+      "required": ["execution_constraints", "risk_constraints"],
+      "properties": {
+        "execution_constraints": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "risk_constraints": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "data_constraints": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "market_context": {
+      "type": "object",
+      "required": ["summary"],
+      "properties": {
+        "summary": {"type": "string"},
+        "regime_tags": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "observations": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "performance_summary": {
+      "type": ["object", "null"]
+    },
+    "trade_log_summary": {
+      "type": ["object", "null"]
+    },
+    "feature_inventory": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "journal_snippets": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "qualitative_notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {"type": "object"}
+    }
+  },
+  "additionalProperties": true
+}

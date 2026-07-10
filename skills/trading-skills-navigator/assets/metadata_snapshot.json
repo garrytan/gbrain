@@ -1,0 +1,1467 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Backtest Expert",
+      "id": "backtest-expert",
+      "integrations": [
+        {
+          "id": "user_input",
+          "requirement": "required",
+          "type": "local_file"
+        }
+      ],
+      "status": "production",
+      "summary": "Expert guidance for systematic backtesting of trading strategies.",
+      "timeframe": "research"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "Breadth Chart Analyst",
+      "id": "breadth-chart-analyst",
+      "integrations": [
+        {
+          "id": "chart_image",
+          "requirement": "required",
+          "type": "image"
+        }
+      ],
+      "status": "production",
+      "summary": "This skill should be used when analyzing market breadth charts, specifically the S&P 500 Breadth Index (200-Day MA based) and the US Stock Market Uptrend Stock Ratio charts.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "Breakout Trade Planner",
+      "id": "breakout-trade-planner",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Generate Minervini-style breakout trade plans from VCP screener output with worst-case risk calculation, portfolio heat management, and Alpaca-compatible order templates (stop-limit bracket for pre-placement, limit bracket for post-confi...",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "CANSLIM Screener",
+      "id": "canslim-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Screen US stocks using William O'Neil's CANSLIM growth stock methodology.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "meta",
+      "difficulty": "beginner",
+      "display_name": "Data Quality Checker",
+      "id": "data-quality-checker",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Validate data quality in market analysis documents and blog articles before publication.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "core-portfolio",
+      "difficulty": "intermediate",
+      "display_name": "Dividend Growth Pullback Screener",
+      "id": "dividend-growth-pullback-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        },
+        {
+          "id": "finviz",
+          "requirement": "recommended",
+          "type": "screener"
+        }
+      ],
+      "status": "production",
+      "summary": "Use this skill to find high-quality dividend growth stocks (12%+ annual dividend growth, 1.5%+ yield) that are experiencing temporary pullbacks, identified by RSI oversold conditions (RSI ≤40).",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "Downtrend Duration Analyzer",
+      "id": "downtrend-duration-analyzer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Analyze historical downtrend durations and generate interactive HTML histograms showing typical correction lengths by sector and market cap.",
+      "timeframe": "research"
+    },
+    {
+      "category": "trade-planning",
+      "difficulty": "beginner",
+      "display_name": "Drawdown Circuit Breaker",
+      "id": "drawdown-circuit-breaker",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Account-level circuit breaker that reads trader-memory-core state and decides whether new trade risk is allowed today using daily loss limits, losing-streak cooldowns, and weekly/monthly drawdown halts.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "meta",
+      "difficulty": "intermediate",
+      "display_name": "Dual Axis Skill Reviewer",
+      "id": "dual-axis-skill-reviewer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Review skills in any project using a dual-axis method: (1) deterministic code-based checks (structure, scripts, tests, execution safety) and (2) LLM deep review findings.",
+      "timeframe": "research"
+    },
+    {
+      "category": "meta",
+      "difficulty": "beginner",
+      "display_name": "Earnings Calendar",
+      "id": "earnings-calendar",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "This skill retrieves upcoming earnings announcements for US stocks using the Financial Modeling Prep (FMP) API.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "intermediate",
+      "display_name": "Earnings Trade Analyzer",
+      "id": "earnings-trade-analyzer",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Analyze recent post-earnings stocks using a 5-factor scoring system (Gap Size, Pre-Earnings Trend, Volume Trend, MA200 Position, MA50 Position).",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "meta",
+      "difficulty": "beginner",
+      "display_name": "Economic Calendar Fetcher",
+      "id": "economic-calendar-fetcher",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Fetch upcoming economic events and data releases using FMP API.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Edge Candidate Agent",
+      "id": "edge-candidate-agent",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "optional",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Generate and prioritize US equity long-side edge research tickets from EOD observations, then export pipeline-ready candidate specs for trade-strategy-pipeline Phase I.",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Edge Concept Synthesizer",
+      "id": "edge-concept-synthesizer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Abstract detector tickets and hints into reusable edge concepts with thesis, invalidation signals, and strategy playbooks before strategy design/export.",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "intermediate",
+      "display_name": "Edge Hint Extractor",
+      "id": "edge-hint-extractor",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Extract edge hints from daily market observations and news reactions, with optional LLM ideation, and output canonical hints.yaml for downstream concept synthesis and auto detection.",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Edge Pipeline Orchestrator",
+      "id": "edge-pipeline-orchestrator",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Orchestrate the full edge research pipeline from candidate detection through strategy design, review, revision, and export.",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Edge Signal Aggregator",
+      "id": "edge-signal-aggregator",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Aggregate and rank signals from multiple edge-finding skills (edge-candidate-agent, theme-detector, sector-analyst, institutional-flow-tracker) into a prioritized conviction dashboard with weighted scoring, deduplication, and contradicti...",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Edge Strategy Designer",
+      "id": "edge-strategy-designer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Convert abstract edge concepts into strategy draft variants and optional exportable ticket YAMLs for edge-candidate-agent export/validation.",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Edge Strategy Reviewer",
+      "id": "edge-strategy-reviewer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Critically review strategy drafts from edge-strategy-designer for edge plausibility, overfitting risk, sample size adequacy, and execution realism.",
+      "timeframe": "research"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "beginner",
+      "display_name": "Exposure Coach",
+      "id": "exposure-coach",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Generate a one-page Market Posture summary with net exposure ceiling, growth-vs-value bias, participation breadth, and new-entry-allowed vs cash-priority recommendation by integrating signals from breadth, regime, and flow analysis skills.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "beginner",
+      "display_name": "Finviz Screener",
+      "id": "finviz-screener",
+      "integrations": [
+        {
+          "id": "finviz",
+          "requirement": "optional",
+          "type": "screener"
+        }
+      ],
+      "status": "production",
+      "summary": "Build and open FinViz screener URLs from natural language requests.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "FTD Detector",
+      "id": "ftd-detector",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Detects Follow-Through Day (FTD) signals for market bottom confirmation using William O'Neil's methodology.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "IBD Distribution Day Monitor",
+      "id": "ibd-distribution-day-monitor",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Detect IBD-style Distribution Days for QQQ/SPY (close down at least 0.2% on higher volume), track 25-session expiration and 5% invalidation, count d5/d15/d25 clusters, classify market risk (NORMAL/CAUTION/HIGH/SEVERE), and emit TQQQ/QQQ...",
+      "timeframe": "daily"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "intermediate",
+      "display_name": "Institutional Flow Tracker",
+      "id": "institutional-flow-tracker",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Use this skill to track institutional investor ownership changes and portfolio flows using 13F filings data.",
+      "timeframe": "research"
+    },
+    {
+      "category": "core-portfolio",
+      "difficulty": "beginner",
+      "display_name": "Kanchi Dividend Review Monitor",
+      "id": "kanchi-dividend-review-monitor",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "recommended",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Monitor dividend portfolios with Kanchi-style forced-review triggers (T1-T5) and convert anomalies into OK/WARN/REVIEW states without auto-selling.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "core-portfolio",
+      "difficulty": "intermediate",
+      "display_name": "Kanchi Dividend SOP",
+      "id": "kanchi-dividend-sop",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "recommended",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Convert Kanchi-style dividend investing into a repeatable US-stock operating procedure.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "core-portfolio",
+      "difficulty": "intermediate",
+      "display_name": "Kanchi Dividend US Tax Accounting",
+      "id": "kanchi-dividend-us-tax-accounting",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Provide US dividend tax and account-location workflow for Kanchi-style income portfolios.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "advanced",
+      "display_name": "Macro Regime Detector",
+      "id": "macro-regime-detector",
+      "integrations": [
+        {
+          "id": "yfinance_or_csv",
+          "requirement": "recommended",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Detect structural macro regime transitions (1-2 year horizon) using cross-asset ratio analysis.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "beginner",
+      "display_name": "Market Breadth Analyzer",
+      "id": "market-breadth-analyzer",
+      "integrations": [
+        {
+          "id": "public_csv",
+          "requirement": "required",
+          "type": "local_file"
+        }
+      ],
+      "status": "production",
+      "summary": "Quantifies market breadth health using TraderMonty's public CSV data.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "Market Environment Analysis",
+      "id": "market-environment-analysis",
+      "integrations": [
+        {
+          "id": "websearch",
+          "requirement": "required",
+          "type": "web"
+        },
+        {
+          "id": "chart_image",
+          "requirement": "optional",
+          "type": "image"
+        }
+      ],
+      "status": "production",
+      "summary": "Comprehensive market environment analysis and reporting tool.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "Market News Analyst",
+      "id": "market-news-analyst",
+      "integrations": [
+        {
+          "id": "websearch",
+          "requirement": "required",
+          "type": "web"
+        }
+      ],
+      "status": "production",
+      "summary": "This skill should be used when analyzing recent market-moving news events and their impact on equity markets and commodities.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "Market Top Detector",
+      "id": "market-top-detector",
+      "integrations": [
+        {
+          "id": "public_csv",
+          "requirement": "required",
+          "type": "local_file"
+        }
+      ],
+      "status": "production",
+      "summary": "Detects market top probability using O'Neil Distribution Days, Minervini Leading Stock Deterioration, and Monty Defensive Sector Rotation.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "advanced",
+      "display_name": "Options Strategy Advisor",
+      "id": "options-strategy-advisor",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "optional",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Options trading strategy analysis and simulation tool.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "advanced",
+      "display_name": "Pair Trade Screener",
+      "id": "pair-trade-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Statistical arbitrage tool for identifying and analyzing pair trading opportunities.",
+      "timeframe": "research"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "advanced",
+      "display_name": "Parabolic Short Trade Planner",
+      "id": "parabolic-short-trade-planner",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        },
+        {
+          "id": "alpaca",
+          "requirement": "optional",
+          "type": "broker"
+        }
+      ],
+      "status": "production",
+      "summary": "Screen US equities for parabolic exhaustion patterns and generate conditional pre-market short plans, then evaluate intraday trigger fires from live 5-min bars.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "intermediate",
+      "display_name": "PEAD Screener",
+      "id": "pead-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Screen post-earnings gap-up stocks for PEAD (Post-Earnings Announcement Drift) patterns.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "core-portfolio",
+      "difficulty": "intermediate",
+      "display_name": "Portfolio Manager",
+      "id": "portfolio-manager",
+      "integrations": [
+        {
+          "id": "alpaca",
+          "requirement": "required",
+          "type": "broker"
+        }
+      ],
+      "status": "production",
+      "summary": "Comprehensive portfolio analysis using Alpaca MCP Server integration to fetch holdings and positions, then analyze asset allocation, risk metrics, individual stock positions, diversification, and generate rebalancing recommendations.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "trade-planning",
+      "difficulty": "beginner",
+      "display_name": "Position Sizer",
+      "id": "position-sizer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Calculate risk-based position sizes for long stock trades.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "trade-planning",
+      "difficulty": "intermediate",
+      "display_name": "Pre-Trade Discipline Gate",
+      "id": "pre-trade-discipline-gate",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Offline manual-execution checklist gate that blocks planless, oversized, revenge-risk, market-regime-blocked, or circuit-breaker-blocked entries and journals the result.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Scenario Analyzer",
+      "id": "scenario-analyzer",
+      "integrations": [
+        {
+          "id": "websearch",
+          "requirement": "required",
+          "type": "web"
+        }
+      ],
+      "status": "production",
+      "summary": "Analyze 18-month scenarios from news headlines via scenario-analyst agent with strategy-reviewer second opinion; outputs primary/secondary/tertiary impact analysis and stock picks.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "Sector Analyst",
+      "id": "sector-analyst",
+      "integrations": [
+        {
+          "id": "chart_image",
+          "requirement": "required",
+          "type": "image"
+        }
+      ],
+      "status": "production",
+      "summary": "This skill should be used when analyzing sector rotation patterns and market cycle positioning.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "trade-memory",
+      "difficulty": "beginner",
+      "display_name": "Signal Postmortem",
+      "id": "signal-postmortem",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Record and analyze post-trade outcomes for signals generated by edge pipeline and other skills.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "meta",
+      "difficulty": "intermediate",
+      "display_name": "Skill Designer",
+      "id": "skill-designer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Design new Claude skills from structured idea specifications.",
+      "timeframe": "research"
+    },
+    {
+      "category": "meta",
+      "difficulty": "intermediate",
+      "display_name": "Skill Idea Miner",
+      "id": "skill-idea-miner",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Mine Claude Code session logs for skill idea candidates.",
+      "timeframe": "research"
+    },
+    {
+      "category": "meta",
+      "difficulty": "intermediate",
+      "display_name": "Skill Integration Tester",
+      "id": "skill-integration-tester",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Validate multi-skill workflows defined in CLAUDE.md by checking skill existence, inter-skill data contracts (JSON schema compatibility), file naming conventions, and handoff integrity.",
+      "timeframe": "research"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Stanley Druckenmiller Investment",
+      "id": "stanley-druckenmiller-investment",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Druckenmiller Strategy Synthesizer - Integrates 8 upstream skill outputs (Market Breadth, Uptrend Analysis, Market Top, Macro Regime, FTD Detector, VCP Screener, Theme Detector, CANSLIM Screener) into a unified conviction score (0-100),...",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Stockbee 20% Study",
+      "id": "stockbee-20pct-study",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        },
+        {
+          "id": "prices_json",
+          "requirement": "optional",
+          "type": "local_file"
+        },
+        {
+          "id": "news_events_json",
+          "requirement": "optional",
+          "type": "local_file"
+        },
+        {
+          "id": "websearch",
+          "requirement": "optional",
+          "type": "web"
+        },
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Build a daily Stockbee-style +20%/-20% mover event study, classify catalysts and setup context, update forward outcomes, and export evidence-backed edge hints without treating movers as buy/sell signals.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "advanced-satellite",
+      "difficulty": "advanced",
+      "display_name": "Stockbee Episodic Pivot Analyzer",
+      "id": "stockbee-episodic-pivot-analyzer",
+      "integrations": [
+        {
+          "id": "catalyst_events_json",
+          "requirement": "required",
+          "type": "local_file"
+        },
+        {
+          "id": "fmp",
+          "requirement": "optional",
+          "type": "market_data"
+        },
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Analyze Stockbee-style Day 1 Episodic Pivot candidates from earnings, guidance, M&A, FDA, analyst, contract, product, short-squeeze, and story/theme catalysts using catalyst quality, gap/range expansion, volume shock, neglect/revaluation context, liquidity, and EP-day-low risk.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "Stockbee Exhaustion Hammer Screener",
+      "id": "stockbee-exhaustion-hammer-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        },
+        {
+          "id": "prices_json",
+          "requirement": "optional",
+          "type": "local_file"
+        },
+        {
+          "id": "profiles_json",
+          "requirement": "optional",
+          "type": "local_file"
+        },
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Screen US stocks for Stockbee-style selling-exhaustion hammer candidates using quality/liquidity gates, prior momentum, pullback depth, undercut/reclaim, hammer geometry, volume confirmation, market gate, and risk-distance filters.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "Stockbee Momentum Burst Screener",
+      "id": "stockbee-momentum-burst-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        },
+        {
+          "id": "prices_json",
+          "requirement": "optional",
+          "type": "local_file"
+        },
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Screen US stocks for Stockbee-style 3-5 day momentum burst candidates using 4% breakout, dollar breakout, range expansion, volume expansion, setup quality, and risk-distance filters.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "trade-memory",
+      "difficulty": "intermediate",
+      "display_name": "Stockbee Setup Fluency Trainer",
+      "id": "stockbee-setup-fluency-trainer",
+      "integrations": [
+        {
+          "id": "prices_json",
+          "requirement": "optional",
+          "type": "local_file"
+        },
+        {
+          "id": "fmp",
+          "requirement": "optional",
+          "type": "market_data"
+        },
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Build a Stockbee-style setup model book from momentum-burst screener candidates, then update 3-day and 5-day forward outcomes with MFE/MAE, stop-hit status, outcome tags, and cohort statistics.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "strategy-research",
+      "difficulty": "advanced",
+      "display_name": "Strategy Pivot Designer",
+      "id": "strategy-pivot-designer",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Detect backtest iteration stagnation and generate structurally different strategy pivot proposals when parameter tuning reaches a local optimum.",
+      "timeframe": "research"
+    },
+    {
+      "category": "trade-planning",
+      "difficulty": "intermediate",
+      "display_name": "Technical Analyst",
+      "id": "technical-analyst",
+      "integrations": [
+        {
+          "id": "chart_image",
+          "requirement": "required",
+          "type": "image"
+        }
+      ],
+      "status": "production",
+      "summary": "This skill should be used when analyzing weekly price charts for stocks, stock indices, cryptocurrencies, or forex pairs.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "Theme Detector",
+      "id": "theme-detector",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "optional",
+          "type": "market_data"
+        },
+        {
+          "id": "finviz",
+          "requirement": "recommended",
+          "type": "screener"
+        }
+      ],
+      "status": "production",
+      "summary": "Detect and analyze trending market themes across sectors.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "trade-memory",
+      "difficulty": "advanced",
+      "display_name": "Trade Hypothesis Ideator",
+      "id": "trade-hypothesis-ideator",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Generate falsifiable trade strategy hypotheses from market data, trade logs, and journal snippets with ranked hypothesis cards and optional strategy.yaml export.",
+      "timeframe": "research"
+    },
+    {
+      "category": "trade-memory",
+      "difficulty": "intermediate",
+      "display_name": "Trade Performance Coach",
+      "id": "trade-performance-coach",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "beta",
+      "summary": "Review closed trades, partial exits, and monthly aggregates for process adherence, risk discipline, execution quality, and evidence-based trading behavior patterns, then produce next-session operating rules.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "trade-memory",
+      "difficulty": "beginner",
+      "display_name": "Trader Memory Core",
+      "id": "trader-memory-core",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "optional",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Track investment theses across their lifecycle — from screening idea to closed position with postmortem.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "meta",
+      "difficulty": "beginner",
+      "display_name": "Trading Skills Navigator",
+      "id": "trading-skills-navigator",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Recommend the right workflow, skillset, API profile, and setup path from a natural-language trading goal.",
+      "timeframe": "research"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "beginner",
+      "display_name": "Uptrend Analyzer",
+      "id": "uptrend-analyzer",
+      "integrations": [
+        {
+          "id": "public_csv",
+          "requirement": "required",
+          "type": "local_file"
+        }
+      ],
+      "status": "production",
+      "summary": "Analyzes market breadth using Monty's Uptrend Ratio Dashboard data to diagnose the current market environment.",
+      "timeframe": "daily"
+    },
+    {
+      "category": "market-regime",
+      "difficulty": "intermediate",
+      "display_name": "US Market Bubble Detector",
+      "id": "us-market-bubble-detector",
+      "integrations": [
+        {
+          "id": "user_input",
+          "requirement": "required",
+          "type": "local_file"
+        }
+      ],
+      "status": "production",
+      "summary": "Evaluates market bubble risk through quantitative data-driven analysis using the revised Minsky/Kindleberger framework v2.1.",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "trade-planning",
+      "difficulty": "intermediate",
+      "display_name": "US Stock Analysis",
+      "id": "us-stock-analysis",
+      "integrations": [
+        {
+          "id": "user_input",
+          "requirement": "required",
+          "type": "local_file"
+        }
+      ],
+      "status": "production",
+      "summary": "Comprehensive US stock analysis including fundamental analysis (financial metrics, business quality, valuation), technical analysis (indicators, chart patterns, support/resistance), stock comparisons, and investment report generation.",
+      "timeframe": "event-driven"
+    },
+    {
+      "category": "core-portfolio",
+      "difficulty": "intermediate",
+      "display_name": "Value Dividend Screener",
+      "id": "value-dividend-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        },
+        {
+          "id": "finviz",
+          "requirement": "recommended",
+          "type": "screener"
+        }
+      ],
+      "status": "production",
+      "summary": "Screen US stocks for high-quality dividend opportunities combining value characteristics (P/E ratio under 20, P/B ratio under 2), attractive yields (3% or higher), and consistent growth (dividend/revenue/EPS trending up over 3 years).",
+      "timeframe": "weekly"
+    },
+    {
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "VCP Screener",
+      "id": "vcp-screener",
+      "integrations": [
+        {
+          "id": "fmp",
+          "requirement": "required",
+          "type": "market_data"
+        }
+      ],
+      "status": "production",
+      "summary": "Screen S&P 500 stocks for Mark Minervini's Volatility Contraction Pattern (VCP).",
+      "timeframe": "daily"
+    },
+    {
+      "category": "trade-memory",
+      "difficulty": "beginner",
+      "display_name": "Weekly Performance Digest",
+      "id": "weekly-performance-digest",
+      "integrations": [
+        {
+          "id": "local_calculation",
+          "requirement": "not_required",
+          "type": "calculation"
+        }
+      ],
+      "status": "production",
+      "summary": "Generate a weekly performance summary from closed trades with win rate, expectancy, and pattern analysis.",
+      "timeframe": "weekly"
+    }
+  ],
+  "skillsets": [
+    {
+      "api_profile": "mixed",
+      "category": "core-portfolio",
+      "difficulty": "beginner",
+      "display_name": "Core Portfolio",
+      "id": "core-portfolio",
+      "optional_skills": [
+        "dividend-growth-pullback-screener",
+        "kanchi-dividend-sop"
+      ],
+      "recommended_skills": [
+        "kanchi-dividend-review-monitor",
+        "value-dividend-screener",
+        "kanchi-dividend-us-tax-accounting"
+      ],
+      "related_workflows": [
+        "core-portfolio-weekly"
+      ],
+      "required_skills": [
+        "portfolio-manager",
+        "trader-memory-core"
+      ],
+      "target_users": [
+        "long-term-investor",
+        "dividend-investor"
+      ],
+      "timeframe": "weekly"
+    },
+    {
+      "api_profile": "no-api-basic",
+      "category": "market-regime",
+      "difficulty": "beginner",
+      "display_name": "Market Regime",
+      "id": "market-regime",
+      "optional_skills": [
+        "breadth-chart-analyst",
+        "sector-analyst",
+        "market-environment-analysis",
+        "market-news-analyst",
+        "downtrend-duration-analyzer",
+        "us-market-bubble-detector"
+      ],
+      "recommended_skills": [
+        "market-top-detector",
+        "macro-regime-detector"
+      ],
+      "related_workflows": [
+        "market-regime-daily"
+      ],
+      "required_skills": [
+        "market-breadth-analyzer",
+        "uptrend-analyzer",
+        "exposure-coach"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "growth-investor"
+      ],
+      "timeframe": "daily"
+    },
+    {
+      "api_profile": "fmp-required",
+      "category": "swing-opportunity",
+      "difficulty": "intermediate",
+      "display_name": "Swing Opportunity",
+      "id": "swing-opportunity",
+      "optional_skills": [
+        "stockbee-momentum-burst-screener",
+        "stockbee-exhaustion-hammer-screener",
+        "finviz-screener"
+      ],
+      "recommended_skills": [
+        "canslim-screener",
+        "breakout-trade-planner",
+        "theme-detector"
+      ],
+      "related_workflows": [
+        "swing-opportunity-daily"
+      ],
+      "required_skills": [
+        "vcp-screener",
+        "drawdown-circuit-breaker",
+        "technical-analyst",
+        "position-sizer",
+        "trader-memory-core",
+        "pre-trade-discipline-gate"
+      ],
+      "target_users": [
+        "part-time-swing-trader"
+      ],
+      "timeframe": "daily"
+    },
+    {
+      "api_profile": "no-api-basic",
+      "category": "trade-memory",
+      "difficulty": "beginner",
+      "display_name": "Trade Memory",
+      "id": "trade-memory",
+      "optional_skills": [
+        "trade-hypothesis-ideator"
+      ],
+      "recommended_skills": [
+        "backtest-expert",
+        "trade-performance-coach"
+      ],
+      "related_workflows": [
+        "trade-memory-loop",
+        "monthly-performance-review"
+      ],
+      "required_skills": [
+        "trader-memory-core",
+        "signal-postmortem"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "long-term-investor",
+        "growth-investor"
+      ],
+      "timeframe": "event-driven"
+    }
+  ],
+  "workflows": [
+    {
+      "api_profile": "mixed",
+      "cadence": "weekly",
+      "difficulty": "beginner",
+      "display_name": "Core Portfolio Weekly",
+      "estimated_minutes": 60,
+      "id": "core-portfolio-weekly",
+      "optional_skills": [
+        "kanchi-dividend-review-monitor",
+        "value-dividend-screener",
+        "kanchi-dividend-us-tax-accounting"
+      ],
+      "prerequisite_workflows": [],
+      "required_skills": [
+        "portfolio-manager",
+        "trader-memory-core"
+      ],
+      "target_users": [
+        "long-term-investor",
+        "dividend-investor"
+      ]
+    },
+    {
+      "api_profile": "no-api-basic",
+      "cadence": "daily",
+      "difficulty": "beginner",
+      "display_name": "Market Regime Daily",
+      "estimated_minutes": 15,
+      "id": "market-regime-daily",
+      "optional_skills": [
+        "market-top-detector",
+        "macro-regime-detector"
+      ],
+      "prerequisite_workflows": [],
+      "required_skills": [
+        "market-breadth-analyzer",
+        "uptrend-analyzer",
+        "exposure-coach"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "growth-investor"
+      ]
+    },
+    {
+      "api_profile": "no-api-basic",
+      "cadence": "monthly",
+      "difficulty": "intermediate",
+      "display_name": "Monthly Performance Review",
+      "estimated_minutes": 90,
+      "id": "monthly-performance-review",
+      "optional_skills": [
+        "trade-performance-coach",
+        "backtest-expert",
+        "dual-axis-skill-reviewer"
+      ],
+      "prerequisite_workflows": [],
+      "required_skills": [
+        "trader-memory-core",
+        "signal-postmortem"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "long-term-investor",
+        "growth-investor"
+      ]
+    },
+    {
+      "api_profile": "mixed",
+      "cadence": "daily",
+      "difficulty": "intermediate",
+      "display_name": "Multi-Asset Opportunity Daily",
+      "estimated_minutes": 45,
+      "id": "multi-asset-opportunity-daily",
+      "optional_skills": [
+        "market-news-analyst",
+        "market-environment-analysis",
+        "sector-analyst",
+        "scenario-analyzer",
+        "stanley-druckenmiller-investment"
+      ],
+      "prerequisite_workflows": [
+        "market-regime-daily"
+      ],
+      "required_skills": [
+        "macro-regime-detector",
+        "theme-detector",
+        "trade-hypothesis-ideator",
+        "position-sizer",
+        "trader-memory-core"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "growth-investor",
+        "macro-discretionary-trader"
+      ]
+    },
+    {
+      "api_profile": "mixed",
+      "cadence": "daily",
+      "difficulty": "advanced",
+      "display_name": "Stockbee 20% Study Daily",
+      "estimated_minutes": 30,
+      "id": "stockbee-20pct-study-daily",
+      "optional_skills": [
+        "trader-memory-core",
+        "edge-candidate-agent",
+        "edge-hint-extractor",
+        "stockbee-episodic-pivot-analyzer",
+        "theme-detector",
+        "backtest-expert"
+      ],
+      "prerequisite_workflows": [],
+      "required_skills": [
+        "stockbee-20pct-study"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "growth-investor",
+        "strategy-researcher"
+      ]
+    },
+    {
+      "api_profile": "mixed",
+      "cadence": "daily",
+      "difficulty": "advanced",
+      "display_name": "Stockbee EP Daily",
+      "estimated_minutes": 40,
+      "id": "stockbee-ep-daily",
+      "optional_skills": [
+        "earnings-trade-analyzer",
+        "stockbee-momentum-burst-screener",
+        "pead-screener",
+        "theme-detector",
+        "breakout-trade-planner"
+      ],
+      "prerequisite_workflows": [
+        "market-regime-daily"
+      ],
+      "required_skills": [
+        "drawdown-circuit-breaker",
+        "stockbee-episodic-pivot-analyzer",
+        "technical-analyst",
+        "position-sizer",
+        "trader-memory-core",
+        "pre-trade-discipline-gate"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "growth-investor"
+      ]
+    },
+    {
+      "api_profile": "no-api-basic",
+      "cadence": "daily",
+      "difficulty": "intermediate",
+      "display_name": "Stockbee Setup Fluency Loop",
+      "estimated_minutes": 20,
+      "id": "stockbee-fluency-loop",
+      "optional_skills": [
+        "trader-memory-core",
+        "signal-postmortem",
+        "backtest-expert"
+      ],
+      "prerequisite_workflows": [],
+      "required_skills": [
+        "stockbee-setup-fluency-trainer"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "growth-investor"
+      ]
+    },
+    {
+      "api_profile": "fmp-required",
+      "cadence": "daily",
+      "difficulty": "intermediate",
+      "display_name": "Swing Opportunity Daily",
+      "estimated_minutes": 40,
+      "id": "swing-opportunity-daily",
+      "optional_skills": [
+        "stockbee-momentum-burst-screener",
+        "stockbee-exhaustion-hammer-screener",
+        "canslim-screener",
+        "breakout-trade-planner",
+        "theme-detector"
+      ],
+      "prerequisite_workflows": [
+        "market-regime-daily"
+      ],
+      "required_skills": [
+        "vcp-screener",
+        "drawdown-circuit-breaker",
+        "technical-analyst",
+        "position-sizer",
+        "trader-memory-core",
+        "pre-trade-discipline-gate"
+      ],
+      "target_users": [
+        "part-time-swing-trader"
+      ]
+    },
+    {
+      "api_profile": "no-api-basic",
+      "cadence": "ad-hoc",
+      "difficulty": "beginner",
+      "display_name": "Trade Memory Loop",
+      "estimated_minutes": 30,
+      "id": "trade-memory-loop",
+      "optional_skills": [
+        "trade-performance-coach",
+        "backtest-expert"
+      ],
+      "prerequisite_workflows": [],
+      "required_skills": [
+        "trader-memory-core",
+        "signal-postmortem"
+      ],
+      "target_users": [
+        "part-time-swing-trader",
+        "long-term-investor",
+        "growth-investor"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "generated_at_utc": "2026-03-05T00:00:00Z",
+  "summary": "Prioritize a VWAP-hold continuation entry filter and tighten invalidation logic for weak midday volume.",
+  "state_assessment": "Evidence quality is moderate-high; setup appears testable under current execution constraints.",
+  "hypotheses": [
+    {
+      "hypothesis_id": "H-001",
+      "title": "VWAP hold continuation after earnings gap-up",
+      "thesis": "Gap-up leaders that reclaim and hold VWAP in the first 30 minutes are more likely to continue through day-one high.",
+      "problem_target": "False continuation entries with weak early-session structure",
+      "mechanism": "Early institutional participation is proxied by sustained VWAP hold plus above-baseline opening volume.",
+      "evidence_basis": [
+        "Winners show >2.0 relative volume by 10:30",
+        "Losers often lose VWAP before noon"
+      ],
+      "proposed_rule_changes": [
+        {
+          "component": "entry_logic",
+          "change": "Require 5-minute close above VWAP for 3 consecutive bars before break of day-one high."
+        },
+        {
+          "component": "exit_logic",
+          "change": "Invalidate if price closes below VWAP with relative_volume_5m < 1.2 before 12:00."
+        }
+      ],
+      "expected_impact": "Lower false positives and improved trade quality at cost of fewer entries.",
+      "key_risks": [
+        "May reduce trade count in lower-volatility earnings windows",
+        "VWAP hold may lag in fast trend acceleration"
+      ],
+      "kill_criteria": [
+        "If 30-trade sample shows expectancy <= 0 after costs",
+        "If median adverse excursion worsens by >20% versus baseline"
+      ],
+      "minimum_viable_experiment": {
+        "goal": "Test whether VWAP hold precondition improves net expectancy.",
+        "setup": "Backtest 2019-01 to latest; compare baseline vs VWAP-hold variant.",
+        "metrics": [
+          "expectancy_after_costs",
+          "win_rate",
+          "max_drawdown"
+        ],
+        "sample_size": ">= 30 trades",
+        "duration": "2 weeks"
+      },
+      "score_components": {
+        "evidence_strength": 5,
+        "mechanism_clarity": 5,
+        "feasibility": 5,
+        "expected_payoff": 4,
+        "novelty": 3,
+        "test_efficiency": 5
+      },
+      "priority_score": 4.65,
+      "recommendation": "pursue",
+      "rationale": "Strong fit with observed winner traits and feasible with existing features.",
+      "confidence": "medium-high",
+      "assumptions": [
+        "Relative volume remains predictive in current regime"
+      ],
+      "dependencies": [
+        "Reliable intraday VWAP and 5m volume data"
+      ]
+    }
+  ],
+  "selected_next_actions": [
+    "Run A/B backtest baseline vs VWAP-hold variant",
+    "Review slippage impact around macro event windows"
+  ],
+  "warnings": [
+    "Regime shift could reduce transferability"
+  ],
+  "logging_payload": {
+    "objective": "Improve consistency of an earnings gap-up continuation setup",
+    "sources_used": [
+      "strategy_context",
+      "trade_log_summary",
+      "journal_snippets",
+      "market_context"
+    ],
+    "hypothesis_ids": [
+      "H-001"
+    ],
+    "selected_next_actions": [
+      "Run A/B backtest baseline vs VWAP-hold variant",
+      "Review slippage impact around macro event windows"
+    ],
+    "warnings": [
+      "Regime shift could reduce transferability"
+    ]
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HypothesisCard",
+  "type": "object",
+  "required": [
+    "hypothesis_id",
+    "title",
+    "thesis",
+    "problem_target",
+    "mechanism",
+    "evidence_basis",
+    "proposed_rule_changes",
+    "expected_impact",
+    "key_risks",
+    "kill_criteria",
+    "minimum_viable_experiment",
+    "score_components",
+    "priority_score",
+    "recommendation",
+    "rationale",
+    "confidence",
+    "assumptions",
+    "dependencies"
+  ],
+  "properties": {
+    "hypothesis_id": {"type": "string"},
+    "title": {"type": "string"},
+    "thesis": {"type": "string"},
+    "problem_target": {"type": "string"},
+    "mechanism": {"type": "string"},
+    "evidence_basis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "proposed_rule_changes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["component", "change"],
+        "properties": {
+          "component": {"type": "string"},
+          "change": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "expected_impact": {"type": "string"},
+    "key_risks": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "kill_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "minimum_viable_experiment": {
+      "type": "object",
+      "required": ["goal", "setup", "metrics", "sample_size", "duration"],
+      "properties": {
+        "goal": {"type": "string"},
+        "setup": {"type": "string"},
+        "metrics": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "sample_size": {"type": "string"},
+        "duration": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "score_components": {
+      "type": "object",
+      "required": [
+        "evidence_strength",
+        "mechanism_clarity",
+        "feasibility",
+        "expected_payoff",
+        "novelty",
+        "test_efficiency"
+      ],
+      "properties": {
+        "evidence_strength": {"type": "number", "minimum": 1, "maximum": 5},
+        "mechanism_clarity": {"type": "number", "minimum": 1, "maximum": 5},
+        "feasibility": {"type": "number", "minimum": 1, "maximum": 5},
+        "expected_payoff": {"type": "number", "minimum": 1, "maximum": 5},
+        "novelty": {"type": "number", "minimum": 1, "maximum": 5},
+        "test_efficiency": {"type": "number", "minimum": 1, "maximum": 5}
+      },
+      "additionalProperties": false
+    },
+    "priority_score": {"type": "number", "minimum": 1, "maximum": 5},
+    "recommendation": {
+      "type": "string",
+      "enum": ["pursue", "park", "reject"]
+    },
+    "rationale": {"type": "string"},
+    "confidence": {"type": "string"},
+    "assumptions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

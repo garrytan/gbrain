@@ -138,3 +138,5 @@ These apply to ALL brain-writing skills:
 | "unify my types", "migrate to gbrain-base-v2", "94 types to 14", "apply canonical taxonomy", "clean up my page types", "pack upgrade", "shrink type proliferation", "consolidate page types", "retype pages to canonical" (dispatcher for: gbrain onboard --check, gbrain onboard --check --explain, gbrain jobs submit unify-types, gbrain pages restore) | `skills/schema-unify/SKILL.md` |
 | "webgpu-threejs-tsl", "webgpu threejs tsl", "playwright webgpu webgpu threejs tsl" | `skills/webgpu-threejs-tsl/SKILL.md` |
 | "playwright-cli", "playwright cli", "playwright webgpu playwright cli" | `skills/playwright-cli/SKILL.md` |
+
+| crypto-12h-market-report | 12h crypto map + MoA; trading-skills enrichment |

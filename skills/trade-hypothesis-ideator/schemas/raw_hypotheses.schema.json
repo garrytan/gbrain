@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RawHypothesesInput",
+  "description": "Reference schema for --hypotheses CLI input.",
+  "type": "object",
+  "required": ["hypotheses"],
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {"type": "object"}
+    }
+  },
+  "additionalProperties": false
+}
