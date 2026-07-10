@@ -19,7 +19,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
-import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.ts';
+import { runGather, renderPagesBlock, renderAnchorPageBlock, takesHitToTakeForPrompt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
@@ -147,6 +147,10 @@ export interface ThinkResult {
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
+    /** True when an anchor was given AND its own page made it into the evidence set. */
+    anchorPageLoaded?: boolean;
+    /** True when the anchor page was loaded without prompt truncation. */
+    anchorPageComplete?: boolean;
   };
 }
 
@@ -270,7 +274,31 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+    ...(opts.allowedSources !== undefined ? { allowedSources: opts.allowedSources } : {}),
   });
+
+  // Anchored-question retrieval guarantee: the anchor's own page rides in a
+  // dedicated <anchor_page> block, fetched by slug — never left to hybrid
+  // ranking. When the fetch failed, warn loudly; the system prompt then
+  // forbids absence claims for this run (retrieval-incomplete posture).
+  const anchorEffective = gather.anchorResolvedSlug ?? opts.anchor;
+  let anchorPageBlock: string | undefined;
+  let anchorPageComplete = false;
+  if (opts.anchor) {
+    if (gather.anchorPage) {
+      const rendered = renderAnchorPageBlock(gather.anchorPage);
+      anchorPageBlock = rendered.rendered;
+      anchorPageComplete = !rendered.truncated;
+      if (rendered.truncated) warnings.push('ANCHOR_PAGE_TRUNCATED');
+      if (gather.anchorResolvedSlug) warnings.push(`ANCHOR_RESOLVED_TO: ${gather.anchorResolvedSlug}`);
+    } else {
+      warnings.push(`ANCHOR_PAGE_NOT_FOUND: ${opts.anchor}`);
+      if (gather.diagnostics.anchorAmbiguousCandidates?.length) {
+        warnings.push(`ANCHOR_AMBIGUOUS: ${gather.diagnostics.anchorAmbiguousCandidates.join(' | ')}`);
+      }
+    }
+  }
 
   // Render evidence blocks for the prompt
   const pagesBlock = renderPagesBlock(gather.pages);
@@ -280,7 +308,7 @@ export async function runThink(
     warnings.push(`SANITIZED_${sanitizedCount}_TAKE_CLAIMS`);
   }
   const graphBlock = gather.graphSlugs.length > 0
-    ? `<anchor>${opts.anchor}</anchor>\nReachable: ${gather.graphSlugs.slice(0, 30).join(', ')}`
+    ? `<anchor>${anchorEffective}</anchor>\nReachable: ${gather.graphSlugs.slice(0, 30).join(', ')}`
     : undefined;
 
   // v0.36.1.0 (E1) — optional calibration profile retrieval. When enabled
@@ -401,7 +429,9 @@ export async function runThink(
   const intent = inferIntent(opts.question, opts.anchor);
   const systemPrompt = buildThinkSystemPrompt({
     intent,
-    ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
+    ...(opts.anchor !== undefined ? { anchor: anchorEffective } : {}),
+    ...(opts.anchor !== undefined ? { anchorPageLoaded: gather.anchorPage !== null } : {}),
+    ...(opts.anchor !== undefined ? { anchorPageComplete } : {}),
     ...(opts.since !== undefined ? { since: opts.since } : {}),
     ...(opts.until !== undefined ? { until: opts.until } : {}),
     willSave: opts.save,
@@ -411,6 +441,7 @@ export async function runThink(
     question: opts.question,
     pagesBlock,
     takesBlock,
+    ...(anchorPageBlock !== undefined ? { anchorPageBlock } : {}),
     ...(graphBlock !== undefined ? { graphBlock } : {}),
     ...(calibrationBlockOpts !== undefined ? { calibration: calibrationBlockOpts } : {}),
     ...(trajectoryBlock.length > 0 ? { trajectoryBlock } : {}),
@@ -458,6 +489,8 @@ export async function runThink(
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
           takesFromVector: gather.diagnostics.takesFromVector,
           graphHits: gather.diagnostics.graphHits,
+          ...(opts.anchor !== undefined ? { anchorPageLoaded: gather.diagnostics.anchorPageLoaded } : {}),
+          ...(opts.anchor !== undefined ? { anchorPageComplete } : {}),
         },
       };
     }
@@ -516,6 +549,8 @@ export async function runThink(
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
+      ...(opts.anchor !== undefined ? { anchorPageLoaded: gather.diagnostics.anchorPageLoaded } : {}),
+      ...(opts.anchor !== undefined ? { anchorPageComplete } : {}),
     },
   };
 }

@@ -165,7 +165,10 @@ prints what would have been the input (exit 0).
     console.log('');
   }
   console.log('---');
-  console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}`);
+  const anchorNote = anchor
+    ? ` | Anchor page: ${result.diagnostics?.anchorPageLoaded ? 'loaded' : 'NOT FOUND'}`
+    : '';
+  console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}${anchorNote}`);
   if (savedSlug) {
     console.log(`Saved: ${savedSlug} (${evidenceInserted} evidence rows)`);
   }

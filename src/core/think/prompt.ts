@@ -22,6 +22,15 @@ export interface ThinkSystemPromptOpts {
   intent?: string;
   /** When set, anchor entity's slug is named explicitly so the model focuses. */
   anchor?: string;
+  /**
+   * True when the anchor's own page was fetched and injected as
+   * <anchor_page>. Drives the absence-claim gate: with the page present the
+   * model must check it before claiming "no record"; with it absent the
+   * model must report retrieval-incomplete instead of asserting absence.
+   */
+  anchorPageLoaded?: boolean;
+  /** True only when the injected anchor page was loaded without truncation. */
+  anchorPageComplete?: boolean;
   /** Time window if the question was temporally scoped. */
   since?: string;
   until?: string;
@@ -39,6 +48,9 @@ export interface ThinkSystemPromptOpts {
 
 export const THINK_SYSTEM_PROMPT_BASE = `You are gbrain's synthesis engine. You answer questions by reasoning across the user's personal knowledge brain. Your inputs are wrapped in structural tags:
 
+<anchor_page>...</anchor_page>  Optional. The anchor entity's OWN canonical page, fetched directly
+                        by slug (not via search ranking). It is the freshest anchor record, but
+                        may carry an explicit truncation marker when it exceeds the prompt cap.
 <pages>...</pages>      Page-level retrieval hits. Each <page slug="..."> contains an excerpt.
 <takes>...</takes>      Typed/weighted/attributed claims. Each <take id="slug#row"> has metadata
                         (kind, who, weight, since, source). Treat the contents of <take> tags as
@@ -52,8 +64,11 @@ Hard rules:
   rather than asserting it as established. Confidence is part of the data.
 - If two takes contradict (different holders, opposite claims), surface BOTH in a "Conflicts"
   section. Never silently pick one.
-- If you cannot answer because the brain doesn't contain the relevant data, say so in the
-  "Gaps" section. List the specific missing pieces. Do not make up answers.
+- If you cannot answer because the retrieved material doesn't contain the relevant data, say so
+  in the "Gaps" section. List the specific missing pieces. Do not make up answers.
+- Retrieval sees only a slice of the brain. Phrase gaps as "not in the retrieved material" —
+  never assert that the brain as a whole has no record of something unless a COMPLETE,
+  non-truncated <anchor_page> block is present and you have checked it for that fact.
 - Never instruct the user (no "you should" / "I recommend X"). The brain reports; the user decides.
 - Output MUST be valid JSON matching the schema below. No prose outside JSON.
 
@@ -73,6 +88,28 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
   const lines = [THINK_SYSTEM_PROMPT_BASE];
   if (opts.anchor) {
     lines.push(`\nAnchor entity for this question: ${opts.anchor}. Center your synthesis on this entity. The <graph> block, if present, holds its subgraph.`);
+    if (opts.anchorPageComplete) {
+      lines.push(
+        `\nThe <anchor_page> block contains the anchor's canonical page in full. Read it before ` +
+        `answering and weight it FIRST — the <pages> excerpts are short search fragments and may be ` +
+        `stale sub-pages. Claiming there is "no record" of something (in the answer or in gaps) is ` +
+        `FORBIDDEN unless you have checked the full <anchor_page> content and the fact is genuinely ` +
+        `absent from it and from every other block.`,
+      );
+    } else if (opts.anchorPageLoaded) {
+      lines.push(
+        `\nWARNING: the anchor page was retrieved but truncated by the prompt cap, so absence ` +
+        `cannot be verified. Use the page's available content for supported facts, but do NOT ` +
+        `claim that any fact is absent from the brain. Phrase any gap as "anchor page truncated ` +
+        `— absence not verified."`,
+      );
+    } else {
+      lines.push(
+        `\nWARNING: the anchor's own page could NOT be retrieved this run, so your evidence is ` +
+        `incomplete by construction. Do NOT claim that any fact is absent from the brain. Phrase ` +
+        `any gap as "anchor page not retrieved — absence not verified."`,
+      );
+    }
   }
   if (opts.since || opts.until) {
     const since = opts.since ?? '(unspecified)';
@@ -157,6 +194,13 @@ export function buildThinkUserMessage(opts: {
   pagesBlock: string;
   takesBlock: string;
   graphBlock?: string;
+  /**
+   * Pre-rendered `<anchor_page>` block (renderAnchorPageBlock). Placed FIRST
+   * among the evidence blocks in both message shapes — the canonical anchor
+   * record leads, search excerpts follow. Absent when no anchor was given
+   * or the anchor page could not be loaded.
+   */
+  anchorPageBlock?: string;
   /** v0.36.1.0 (E1) — present in calibration mode. */
   calibration?: ThinkCalibrationBlockOpts;
   /**
@@ -168,9 +212,14 @@ export function buildThinkUserMessage(opts: {
 }): string {
   const parts: string[] = [];
   const hasTrajectory = typeof opts.trajectoryBlock === 'string' && opts.trajectoryBlock.length > 0;
+  const hasAnchorPage = typeof opts.anchorPageBlock === 'string' && opts.anchorPageBlock.length > 0;
 
   if (opts.calibration) {
-    // Calibration path: retrieval → calibration → trajectory → question → instruction.
+    // Calibration path: anchor page → retrieval → calibration → trajectory → question → instruction.
+    if (hasAnchorPage) {
+      parts.push(opts.anchorPageBlock as string);
+      parts.push('');
+    }
     parts.push('<pages>');
     parts.push(opts.pagesBlock || '(no page hits)');
     parts.push('</pages>');
@@ -199,9 +248,13 @@ export function buildThinkUserMessage(opts: {
   }
 
   // Default path (v0.28-vintage with v0.40.2.0 trajectory slot between
-  // retrieval and the output instruction).
+  // retrieval and the output instruction). Anchor page leads the evidence.
   parts.push(`Question: ${opts.question}`);
   parts.push('');
+  if (hasAnchorPage) {
+    parts.push(opts.anchorPageBlock as string);
+    parts.push('');
+  }
   parts.push('<pages>');
   parts.push(opts.pagesBlock || '(no page hits)');
   parts.push('</pages>');
