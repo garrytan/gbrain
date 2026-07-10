@@ -159,6 +159,30 @@ export async function defaultBiasTagsGenerator(patterns: string[]): Promise<stri
   return parseBiasTagsOutput(result.text);
 }
 
+/**
+ * Reject a line that is the generating model's own scaffolding / clarifying
+ * question rather than a pattern statement about the forecaster. When the
+ * scorecard is thin (e.g. a holder with ~0 resolved takes), the model tends to
+ * answer conversationally ("Two options:", "If you have the per-domain
+ * scorecard, paste it and I'll write…") instead of producing statements, and
+ * that chain-of-thought was being serialized straight into the structured
+ * `pattern_statements` field. This is the same class as shipping raw
+ * chain-of-thought to a user-facing field. Real statements (per the prompt)
+ * open with a domain/subject ("You called…", "Geography is your blind spot",
+ * "Underconfident on high-conviction bets: …") and never take these shapes.
+ */
+export function isMetaCommentaryLine(line: string): boolean {
+  const l = line.trim();
+  if (l.length === 0) return true;
+  // Clarifying-question / list headers end with a colon ("Two options:").
+  if (/:$/.test(l)) return true;
+  // First-person model voice, offers to do work, or list scaffolding.
+  if (/^(i['’]?ll\b|i can\b|i would\b|i'?d\b|let me\b|here (is|are)\b|to (write|do)\b|okay\b|sure\b|two options\b|option \d|note:)/i.test(l)) return true;
+  // Clarifying questions asking the operator for input.
+  if (/\b(paste (it|the|them|that)|i['’]?ll write|if you (have|want|can)|if this (is|aggregate)|provide the|send (me|the))\b/i.test(l)) return true;
+  return false;
+}
+
 /** Parse a newline-separated pattern-statement block. */
 export function parsePatternStatementsOutput(raw: string): string[] {
   if (!raw || raw.trim().length === 0) return [];
@@ -167,7 +191,9 @@ export function parsePatternStatementsOutput(raw: string): string[] {
     .map(l => l.trim())
     // Strip leading numbering/bullets the LLM may emit despite the prompt.
     .map(l => l.replace(/^[-*•]\s+|^\d+[.)]\s+/, ''))
-    .filter(l => l.length > 0 && l.length <= 200);
+    .filter(l => l.length > 0 && l.length <= 200)
+    // Drop leaked scaffolding / clarifying questions (see isMetaCommentaryLine).
+    .filter(l => !isMetaCommentaryLine(l));
   return lines.slice(0, 4);
 }
 
@@ -303,7 +329,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
     result.pattern_statements = gated.text
       .split('\n')
       .map(l => l.trim())
-      .filter(l => l.length > 0);
+      .filter(l => l.length > 0 && !isMetaCommentaryLine(l));
 
     // Bias tags from the patterns. Best-effort; failure is non-fatal.
     try {
@@ -403,4 +429,5 @@ export const __testing = {
   parsePatternStatementsOutput,
   parseBiasTagsOutput,
   pickFallbackSlots,
+  isMetaCommentaryLine,
 };

@@ -2051,7 +2051,16 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.calibration_profile');
           const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          // Honor GBRAIN_CALIBRATION_HOLDER so a scheduled runner can target the
+          // brain owner (or any holder) instead of the hardcoded 'garry' default.
+          // Without this the phase was ALWAYS called with `{}`, so it generated a
+          // profile for 'garry' regardless of the env the runner set — a per-owner
+          // profile never refreshed, and 'garry' having 0 resolved takes gave the
+          // generator an empty scorecard, which made it emit clarifying-question
+          // scaffolding into pattern_statements. Undefined env → 'garry' (unchanged).
+          const _calHolder = process.env.GBRAIN_CALIBRATION_HOLDER?.trim();
+          const { result, duration_ms } = await timePhase(() =>
+            runPhaseCalibrationProfile(calibrationCtx, _calHolder ? { holder: _calHolder } : {}) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

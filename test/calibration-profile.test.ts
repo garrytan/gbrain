@@ -96,6 +96,31 @@ describe('parsePatternStatementsOutput', () => {
   test('returns [] on empty input', () => {
     expect(parsePatternStatementsOutput('')).toEqual([]);
   });
+
+  test('drops leaked model scaffolding / clarifying questions, keeps real statements', () => {
+    // Observed real-world leak (thin scorecard → model answered conversationally):
+    const raw = [
+      'Two options:',
+      'If you have the per-domain scorecard (an array or object keyed by domain), paste it and I\'ll write the 2-4 statements from that.',
+      'If this aggregate is genuinely all that\'s available, I can write aggregate-level pattern statements instead — but they\'d describe overall calibration, not domains. For example:',
+      'Underconfident on high-conviction bets: 17 takes priced 0.7+ resolved right ~100%. Push strong calls up.',
+      'Mostly right, but rarely clean — 13 of 39 resolved calls landed partial, not full hits.',
+    ].join('\n');
+    expect(parsePatternStatementsOutput(raw)).toEqual([
+      'Underconfident on high-conviction bets: 17 takes priced 0.7+ resolved right ~100%. Push strong calls up.',
+      'Mostly right, but rarely clean — 13 of 39 resolved calls landed partial, not full hits.',
+    ]);
+  });
+
+  test('isMetaCommentaryLine flags scaffolding but not real statements', () => {
+    const meta = __testing.isMetaCommentaryLine;
+    expect(meta('Two options:')).toBe(true);
+    expect(meta('If you have the scorecard, paste it and I\'ll write them.')).toBe(true);
+    expect(meta('I can write aggregate-level statements instead. For example:')).toBe(true);
+    expect(meta('You called early-stage tactics well — 8 of 10 held up.')).toBe(false);
+    expect(meta('Geography is your blind spot. 4 of 6 missed.')).toBe(false);
+    expect(meta('Underconfident on high-conviction bets: 17 priced 0.7+ hit ~100%.')).toBe(false);
+  });
 });
 
 describe('parseBiasTagsOutput', () => {
