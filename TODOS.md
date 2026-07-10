@@ -1,5 +1,91 @@
 # TODOS
 
+## provider-agnostic follow-ups (filed v0.42.58.0)
+
+Deferred from the provider-agnostic plumbing wave (#1249/#1250/#1292/#2271/#2209).
+Plan + review trail at `~/.claude/plans/system-instruction-you-are-working-keen-newell.md`.
+The eng-review + Codex outside-voice narrowed the wave to these deferrals:
+
+- [ ] **P2 — Capability-aware query expansion on OpenAI-compat providers (#2372).**
+  Expansion only runs for recipes that declare an `expansion` touchpoint, and only the
+  native providers (anthropic/openai/google) do. To make expansion work on
+  litellm/openrouter/groq/together/deepseek you must ADD expansion touchpoints to those
+  chat-capable recipes AND add a `generateObject`→`generateText` capability fallback for
+  backends without strict structured outputs. Feature-shaped; overlaps the general
+  OpenAI-compat proxy story (`docs/designs/COMMUNITY_IDEAS.md`). Community PR #2373 is a
+  starting point. Where: `src/core/ai/gateway.ts:expand`, recipe files, `types.ts` (ExpansionTouchpoint).
+- [ ] **P2 — LiteLLM as a chat/expansion backend.** `litellm-proxy` declares ONLY an
+  embedding touchpoint, so `think`/chat on LiteLLM is dead. Add chat (and expansion) so a
+  LiteLLM proxy is a full LLM backend, not embedding-only. The general OpenAI-compat proxy story.
+- [ ] **P3 — Per-model embedding dims metadata on `EmbeddingTouchpoint`.** `default_dims`
+  is recipe-wide, so a recipe (ollama) can't carry different native dims per model. This
+  wave added the modern ollama model NAMES + a `trust_custom_dims` passthrough (user supplies
+  `--embedding-dimensions`); per-model dims would let gbrain pick the right default. Then
+  ollama could fail-closed at preflight like litellm/llama-server instead of at first embed.
+- [ ] **P3 — Google native baseURL normalization (#1250 follow-up).** `resolveNativeBaseUrl`
+  covers anthropic + openai; Google was deferred because Gemini's native suffix is unproven
+  (its OpenAI-compat route is `/v1beta/openai`). Verify the correct `@ai-sdk/google` suffix,
+  then add `google` to the helper. Where: `src/core/ai/gateway.ts:resolveNativeBaseUrl`.
+- [ ] **P3 — Fold Voyage/Google/LiteLLM/OpenRouter API keys into `buildGatewayConfig`.**
+  It folds only OPENAI/ANTHROPIC/ZEROENTROPY file-plane keys today, so `config.json`-set keys
+  for other providers only work if also in `process.env`. Extend the mapping. Where:
+  `src/core/ai/build-gateway-config.ts`.
+- [ ] **P3 — OpenRouter per-model custom-dim handling.** OpenRouter declares recipe-wide
+  `dims_options` and mixes fixed-dim + arbitrary models, so it's excluded from `trust_custom_dims`.
+  A per-model story would let OpenRouter accept custom dims for models that support them.
+- [ ] **P1 — Gateway subagent-loop tool-result persistence + Date normalization (#2273/#2256).**
+  Confirmed crash-block: non-Anthropic subagent jobs dead-letter after any interruption
+  (tool-result user turns aren't persisted; raw Date values fail the AI SDK's strict JSON
+  check). Larger self-contained change with 6 competing community PRs
+  (#2274/#2257/#1934/#2065/#2112/#2336) — pick one canonical impl, preserve authorship.
+  This is the immediate fast-follow to the provider-agnostic wave. Where:
+  `src/core/ai/gateway.ts:toolLoop`/`toModelMessages`, `src/core/minions/handlers/subagent.ts`.
+
+## Life Chronicle follow-ups (filed v0.42.56.0, #2390)
+
+Deferred from the Life Chronicle wave (CEO Scope-Expansion + eng review CLEARED,
+3 codex rounds absorbed, PR #2533). Every item was an explicit review decision,
+not an oversight; each names its decision provenance.
+
+- [ ] **P1 — Eval-gated auto-emit default-flip (D5.5 fast-follow).** Auto-emission
+  ships OFF (`auto_chronicle=false`) per spend/consent posture. The headline
+  fast-follow: run `gbrain eval chronicle` + a live-LLM OFF-vs-ON agent arm on a
+  real brain, and if the lift holds, flip the default ON in the next minor with
+  an upgrade notice. Where: `src/core/chronicle/config.ts`, upgrade banner in
+  `src/commands/upgrade.ts`.
+- [ ] **P2 — Live-LLM OFF-vs-ON eval arm + LongMemEval temporal slice.** The
+  shipped `gbrain eval chronicle` is the deterministic CI bar (6 gold tasks).
+  The full North-Star proof adds (a) a live agent reconstructing a day with the
+  chronicle ops ON vs OFF, and (b) the LongMemEval `question_type:
+  temporal-reasoning` slice as secondary corroboration — verify the adapter can
+  filter by question type first. Where: `src/eval/chronicle/harness.ts`,
+  `src/commands/eval-longmemeval.ts`.
+- [ ] **P2 — Passive diary capture + consent model (D3.5/E5).** Active-only in v1
+  by explicit decision (highest consent-risk surface). Passive detection of
+  first-person interiority in transcripts requires a dedicated consent design:
+  an explicit `chronicle.diary.passive` opt-in, a consent prompt, and
+  provenance-aware redaction (the facts `visibility` lane is already in place).
+- [ ] **P2 — Ontology interval-splitting for backdated conflicts (G4).** A
+  backdated observation whose validity window overlaps an existing row is
+  flagged (not rewritten) in v1. Real interval algebra (split the prior window
+  around the backdated fact) is deliberate follow-up scope; the conflict lane
+  (`findOntologyConflicts`) is the holding surface. Where: both engines'
+  `mergeOntologyFact`.
+- [ ] **P3 — Cross-brain federated timeline (D3.6/E6).** v1 holds source
+  isolation (scoped-default, `--all-sources` opt-in within the host brain).
+  Unifying across mounted team brains is its own epic with an access-policy
+  surface.
+- [ ] **P3 — Place-as-entity (`gbrain where <venue>`).** `event.where` is
+  captured as free text; resolving venues to entity pages + geo-adjacency
+  queries is a follow-up.
+- [ ] **P3 — Richer meta-ontology dashboard.** `gbrain ontology-dimensions` is
+  the v1 surface; a full dashboard (per-dimension drill-down, quarantine review
+  queue for novel dimensions) is deferred until usage shows demand.
+- [ ] **P3 — Materialized daily timeline pages / emotional-arc view.** The
+  query-time aggregator won D5.6; embeddable `life/timeline/YYYY/MM/DD.md`
+  narrative pages (a single `materialize_timeline` cycle phase) revisit after
+  the eval shows `reflect`-style recall needs them.
+
 ## reliability fix-wave follow-ups (filed v0.42.52.0)
 
 Deferred from the autopilot/supervisor + sync/status/minion reliability wave
@@ -78,17 +164,23 @@ job) and sync. See CLAUDE.md "Pace Mode".
   `get_timeline` through the federated source scope and taught the engine methods to honor
   `sourceIds[]`. The adversarial review (Codex + Claude) flagged sibling read ops in the
   SAME class that still use scalar-only `ctx.sourceId ? {sourceId} : {}` and never thread
-  `ctx.auth.allowedSources`: `get_chunks`, `get_raw_data`, `get_versions`, and `resolve_slugs`
-  (the standalone op — `resolve_slugs` passes NO scope at all). A remote federated client
-  (grant set, dispatch-default `ctx.sourceId='default'`) reads these against `default` or
-  unscoped, not its grant.
+  `ctx.auth.allowedSources`: `get_chunks`, `get_raw_data`, `get_versions`, `resolve_slugs`
+  (the standalone op — `resolve_slugs` passes NO scope at all), plus (per the v0.42.55.0
+  eng-review codex pass) `takes_search` (`operations.ts:1727` — holder-allowlist only, no
+  `sourceScopeOpts`) and `code_def` (`operations.ts:4155` — brain-wide raw SQL over
+  `content_chunks`; confirm whether brain-wide is intentional before scoping). A remote
+  federated client (grant set, dispatch-default `ctx.sourceId='default'`) reads these against
+  `default` or unscoped, not its grant.
   - **Why:** same cross-source correctness/isolation class #2200 targets; a federated client
-    can't read chunks/raw-data/versions for an authorized non-default source, and `resolve_slugs`
-    can fuzzy-resolve across all sources.
+    can't read chunks/raw-data/versions for an authorized non-default source, `resolve_slugs`
+    can fuzzy-resolve across all sources, and `takes_search`/`code_def` query without the grant.
+    The #2399 close-list deliberately did NOT blanket-close #1371/#2200 because of these residual
+    surfaces — close those issues only after this TODO lands.
   - **How to start:** mirror the #2200 pattern — route each handler through `sourceScopeOpts(ctx)`
     (or `linkReadScopeOpts` if a far endpoint exists), add `sourceIds?: string[]` to the engine
-    methods (`getChunks` / `getRawData` / `getVersions` / `resolveSlugs`) with `source_id = ANY($::text[])`
-    precedence, and add federated/isolation tests + engine-parity arms.
+    methods (`getChunks` / `getRawData` / `getVersions` / `resolveSlugs` / the takes-search +
+    code-def queries) with `source_id = ANY($::text[])` precedence, and add federated/isolation
+    tests + engine-parity arms.
   - **Depends on:** nothing; #2200 established the pattern and the `linkReadScopeOpts` helper.
 
 ## Spend-controls wave follow-ups (filed v0.42.45.0, #2139)

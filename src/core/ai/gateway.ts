@@ -389,11 +389,47 @@ export function applyOpenAICompatConfig(
   return { baseURL };
 }
 
+/**
+ * #1250: native providers (anthropic/openai) are instantiated as
+ * `create<Provider>({ apiKey })` with NO explicit baseURL, so the AI SDK reads
+ * `<PROVIDER>_BASE_URL` verbatim. When a host injects a BARE base URL (Claude
+ * Code sets `ANTHROPIC_BASE_URL=https://api.anthropic.com` with no `/v1`), the
+ * SDK POSTs `<base>/messages` → 404 and every chat/expansion/embedding call
+ * breaks. This normalizes a configured native base URL to carry the `/v1`
+ * suffix and returns it so callers can pass it explicitly.
+ *
+ * Returns undefined when the env provides no base URL, so the SDK's own default
+ * (which already includes `/v1`) is preserved untouched — the happy path is not
+ * altered. Google is intentionally NOT handled here: its native suffix is
+ * unproven (Gemini's OpenAI-compat route is `/v1beta/openai`), so it's deferred
+ * to a follow-up rather than risk a regression on a wrong assumption.
+ *
+ * @internal exported for tests.
+ */
+export function resolveNativeBaseUrl(
+  provider: 'anthropic' | 'openai',
+  cfg: AIGatewayConfig,
+): string | undefined {
+  const envKey = provider === 'anthropic' ? 'ANTHROPIC_BASE_URL' : 'OPENAI_BASE_URL';
+  const raw = cfg.env[envKey];
+  if (!raw || !raw.trim()) return undefined;
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
   _config = {
     embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
-    embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    // #1292/D6: do NOT fabricate a default here. Every gateway-internal reader
+    // already applies `?? DEFAULT_EMBEDDING_DIMENSIONS` (getEmbeddingDimensions,
+    // embedQuery, the dim self-check) or `?? 0` (the multimodal path, which is
+    // designed to SKIP validation when the dim is unknown rather than fabricate
+    // one). Backfilling 1280 here erased the "user never set a dimension" signal,
+    // which (a) defeated that intended skip and (b) let a user-provided recipe
+    // with no explicit dim look fully-configured to diagnoseEmbedding and then
+    // fail with a cryptic wrong-width error at embed time. Keep it honest.
+    embedding_dimensions: config.embedding_dimensions,
     embedding_multimodal_model: config.embedding_multimodal_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
@@ -656,7 +692,7 @@ export type EmbeddingDiagnosis =
   | { ok: false; reason: 'no_model_configured' }
   | { ok: false; reason: 'unknown_provider'; model: string; provider: string; message: string }
   | { ok: false; reason: 'no_touchpoint'; model: string; provider: string; recipeId: string }
-  | { ok: false; reason: 'user_provided_model_unset'; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'user_provided_dims_unset'; model: string; provider: string; recipeId: string }
   | { ok: false; reason: 'missing_env'; model: string; provider: string; recipeId: string; missingEnvVars: string[] };
 
 export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
@@ -704,16 +740,24 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
+  // #1292/D6: a user-provided / proxy embedding recipe that ships no default
+  // dimension (LiteLLM declares default_dims:0) needs an explicit
+  // embedding_dimensions — otherwise embed() silently falls back to a wrong
+  // vector width at write time. Fail closed here with a clear, actionable reason.
+  //
+  // This REPLACES the prior `user_provided_model_unset` guard, which was a
+  // structurally-unreachable "no model picked" check: parseModelId throws on a
+  // bare provider (model-resolver.ts), so by the time we reach here
+  // parsed.modelId is ALWAYS non-empty. That guard only ever false-positived for
+  // a fully-specified litellm:<model> with dims set, silently disabling vector
+  // search. The genuine "picked a user-provided provider but no model" UX is
+  // handled at the config/init layer, where a bare provider string still exists.
   const isUserProvided = (tp as any).user_provided_models === true;
-  if (
-    Array.isArray(tp.models) &&
-    tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
-  ) {
+  const recipeDefaultDims = tp.default_dims ?? 0;
+  if ((isUserProvided || recipeDefaultDims === 0) && !_config!.embedding_dimensions) {
     return {
       ok: false,
-      reason: 'user_provided_model_unset',
+      reason: 'user_provided_dims_unset',
       model: modelStr,
       provider: parsed.providerId,
       recipeId: recipe.id,
@@ -1200,7 +1244,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         `OpenAI embedding requires OPENAI_API_KEY.`,
         recipe.setup_hint,
       );
-      const client = createOpenAI({ apiKey });
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      const client = createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
@@ -2123,7 +2168,8 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      return createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -2133,7 +2179,8 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     case 'native-anthropic': {
       const apiKey = cfg.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AIConfigError(`Anthropic expansion requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('anthropic', cfg);
+      return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2495,7 +2542,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI chat requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      return createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -2505,7 +2553,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
     case 'native-anthropic': {
       const apiKey = cfg.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('anthropic', cfg);
+      return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).

@@ -26,6 +26,7 @@ import { dirname, join } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
+import { isWriteTargetContained } from './path-confine.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -45,8 +46,10 @@ export interface WriteThroughResult {
    *     — #2018: writing here would pollute that sibling's repo, so we skip.
    *   - page_not_found_after_write: the DB row isn't readable back (the caller's
    *     DB write failed or targeted a different source).
+   *   - path_escapes_source_root: the computed file path resolves outside the
+   *     source's working tree (hostile slug row / symlinked subtree) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write';
+  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -83,6 +86,7 @@ export async function writePageThrough(
     //      `local_path`, nesting this page there would pollute that sibling's
     //      git repo (the reported bug). Skip instead.
     let filePath: string;
+    let writeRoot: string;
     const srcRows = await engine.executeRaw<{ local_path: string | null }>(
       `SELECT local_path FROM sources WHERE id = $1`,
       [sourceId],
@@ -93,6 +97,7 @@ export async function writePageThrough(
         return { written: false, skipped: 'repo_not_found' };
       }
       filePath = join(sourceLocalPath, `${slug}.md`);
+      writeRoot = sourceLocalPath;
     } else {
       const repoPath = await engine.getConfig('sync.repo_path');
       if (!repoPath) {
@@ -111,6 +116,16 @@ export async function writePageThrough(
         return { written: false, skipped: 'source_repo_belongs_to_other_source' };
       }
       filePath = resolvePageFilePath(repoPath, slug, sourceId);
+      writeRoot = repoPath;
+    }
+
+    // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
+    // stays within the source's working tree before any mkdir/write. validateSlug
+    // already rejects `..`/backslash/control/%2e in the slug at write time, so
+    // this guards a pre-existing hostile row or a symlinked intermediate dir
+    // under the source tree from escaping to an arbitrary filesystem location.
+    if (!isWriteTargetContained(filePath, writeRoot)) {
+      return { written: false, skipped: 'path_escapes_source_root' };
     }
 
     const writtenPage = await engine.getPage(slug, { sourceId });

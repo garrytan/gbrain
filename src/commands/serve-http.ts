@@ -261,6 +261,11 @@ interface ServeHttpOptions {
   tokenTtl: number;
   enableDcr: boolean;
   /**
+   * #1353: allow the consent-bypassing client_credentials grant on the DCR path.
+   * Off by default; DCR clients default to authorization_code. Implies enableDcr.
+   */
+  enableDcrInsecure?: boolean;
+  /**
    * Public URL the server is reachable at (e.g., https://brain.example.com).
    * Used as the OAuth issuer in discovery metadata. Defaults to
    * http://localhost:{port} when unset. Required for production deployments
@@ -397,7 +402,7 @@ export function skillPublishStatus(publishSkills: boolean): { bannerValue: strin
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
@@ -480,7 +485,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    allowClientCredentialsDcr: enableDcrInsecure === true,
   });
+
+  // #1353: loud stderr security WARN when DCR is enabled. DCR is an
+  // unauthenticated network registration endpoint; surface the posture change
+  // (and the extra blast radius of --enable-dcr-insecure) so it's visible in
+  // logs, not buried in the neutral "DCR: enabled" banner line.
+  if (enableDcr) {
+    console.error(
+      'SECURITY WARNING: Dynamic Client Registration (--enable-dcr) is ON. ' +
+      'Any network caller can self-register an OAuth client. DCR clients default ' +
+      'to the authorization_code (consent-bearing) grant. See SECURITY.md.',
+    );
+    if (enableDcrInsecure) {
+      console.error(
+        'SECURITY WARNING: --enable-dcr-insecure is ON — self-registered DCR ' +
+        'clients may request the client_credentials grant, which BYPASSES the ' +
+        '/authorize consent screen. Only use this on a trusted network.',
+      );
+    }
+  }
 
   // Sweep expired tokens on startup (non-blocking)
   try {
@@ -2134,7 +2159,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
-║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
+║  DCR:       ${(enableDcr ? (enableDcrInsecure ? 'enabled (INSECURE: client_credentials)' : 'enabled') : 'disabled').padEnd(40)}║
 ║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣

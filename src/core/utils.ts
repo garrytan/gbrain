@@ -19,10 +19,35 @@ export function generateToken(prefix: string): string {
 /**
  * Validate and normalize a slug. Slugs are lowercased repo-relative paths.
  * Rejects empty slugs, path traversal (..), and leading /.
+ *
+ * SECURITY (#1647-slug / codex #6): also rejects a small set of dangerous
+ * characters that survive the `..` check but can still produce a hostile
+ * filename at the write-through FS sink or hide the real target — NUL/control
+ * bytes, Unicode bidirectional/RTL overrides, backslashes, and URL-encoded
+ * path separators/traversal. None appear in legitimate slugs (lowercase
+ * alphanumerics, hyphens, dots, underscores, slashes, unicode letters, and CJK
+ * all still pass), so this is pure hardening, not a behavior change. This is the
+ * shared chokepoint for both `putPage` and `updateSlug` on both engines.
  */
 export function validateSlug(slug: string): string {
   if (!slug || /(^|\/)\.\.($|\/)/.test(slug) || /^\//.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". Slugs cannot be empty, start with /, or contain path traversal.`);
+  }
+  // Control / NUL bytes (C0 + DEL + C1).
+  if (/[\x00-\x1f\x7f-\x9f]/.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}". Slugs cannot contain control characters.`);
+  }
+  // Unicode bidirectional / RTL overrides (visual-spoofing of the real path).
+  if (/[\u202a-\u202e\u2066-\u2069]/.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}". Slugs cannot contain bidirectional/RTL override characters.`);
+  }
+  // Backslash (Windows-style separator / escape).
+  if (slug.includes('\\')) {
+    throw new Error(`Invalid slug: "${slug}". Backslashes are not allowed in slugs.`);
+  }
+  // URL-encoded path separators / traversal (%2e=., %2f=/, %5c=\).
+  if (/%2e|%2f|%5c/i.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}". URL-encoded path separators are not allowed in slugs.`);
   }
   return slug.toLowerCase();
 }

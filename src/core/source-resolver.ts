@@ -13,10 +13,11 @@
  * commands (Steps 4/5), and the operation layer (Step 2+).
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, lstatSync, type Stats } from 'fs';
 import { join, dirname, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_ID_RE, isValidSourceId } from './source-id.ts';
+import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
 
 const DOTFILE = '.gbrain-source';
 // Canonical SOURCE_ID_RE imported from `source-id.ts` (single source of truth).
@@ -34,7 +35,15 @@ function readDotfileWalk(startDir: string): string | null {
   // Guard against infinite loops on malformed paths.
   for (let i = 0; i < 50; i++) {
     const candidate = join(dir, DOTFILE);
-    if (existsSync(candidate)) {
+    // lstatSync (NOT statSync) so a planted symlink is seen here, not silently
+    // followed-then-trusted. Any stat error (ENOENT / permission) → skip this
+    // candidate and keep walking (fail-closed). On a multi-user host an
+    // attacker who can write a shared ancestor dir could otherwise plant a
+    // forged `.gbrain-source`; `isTrustedDotfile` refuses symlinks,
+    // foreign-owned, and world-writable files (#418).
+    let st: Stats | null = null;
+    try { st = lstatSync(candidate); } catch { st = null; }
+    if (st && isTrustedDotfile(st)) {
       try {
         const content = readFileSync(candidate, 'utf8').trim().split('\n')[0].trim();
         // Silent-fallback tier per codex P1-F: invalid dotfile content
@@ -105,10 +114,15 @@ export async function resolveSourceId(
   const registered = await engine.executeRaw<{ id: string; local_path: string }>(
     `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
   );
-  const cwdResolved = resolve(cwd);
+  // realpath BOTH sides (not bare resolve) so a symlinked CWD can't forge a
+  // prefix match against a registered local_path it doesn't really live under
+  // (codex #9). realpathOrResolve falls back to lexical resolve() for a stale
+  // registration whose path no longer exists. Resolving both sides keeps a
+  // legitimately symlinked vault matching — only one-sided symlinks break.
+  const cwdResolved = realpathOrResolve(cwd);
   let best: { id: string; pathLen: number } | null = null;
   for (const r of registered) {
-    const p = resolve(r.local_path);
+    const p = realpathOrResolve(r.local_path);
     if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
       if (!best || p.length > best.pathLen) {
         best = { id: r.id, pathLen: p.length };
@@ -303,10 +317,11 @@ export async function resolveSourceWithTier(
   const registered = await engine.executeRaw<{ id: string; local_path: string }>(
     `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
   );
-  const cwdResolved = resolve(cwd);
+  // realpath both sides — see the matching block in resolveSourceId (codex #9).
+  const cwdResolved = realpathOrResolve(cwd);
   let best: { id: string; path: string; pathLen: number } | null = null;
   for (const r of registered) {
-    const p = resolve(r.local_path);
+    const p = realpathOrResolve(r.local_path);
     if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
       if (!best || p.length > best.pathLen) {
         best = { id: r.id, path: p, pathLen: p.length };
