@@ -1843,7 +1843,7 @@ const think: Operation = {
     // forwards to findTrajectory. CLI callers don't go through this op
     // and get default scope + remote=false from runThink's CLI path.
     const scope = sourceScopeOpts(ctx);
-    const { runThink, persistSynthesis } = await import('./think/index.ts');
+    const { runThink, persistSynthesis, persistThinkTake } = await import('./think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
       anchor: p.anchor ? String(p.anchor) : undefined,
@@ -1863,15 +1863,30 @@ const think: Operation = {
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
       remote: ctx.remote === true,
     });
+    if (remote && (Boolean(p.save) || Boolean(p.take))) {
+      result.warnings.push('REMOTE_PERSISTED_BLOCKED');
+    }
 
     // Persist if --save was passed locally
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
+    let takeRow: number | null = null;
+    let takeInserted = 0;
     if (safeSave) {
       const persisted = await persistSynthesis(ctx.engine, result);
       savedSlug = persisted.slug;
       evidenceInserted = persisted.evidenceInserted;
       for (const w of persisted.warnings) result.warnings.push(w);
+    }
+    if (safeTake) {
+      const persistedTake = await persistThinkTake(ctx.engine, result, {
+        anchor: p.anchor ? String(p.anchor) : undefined,
+        ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
+        ...(scope.sourceIds !== undefined ? { sourceIds: scope.sourceIds } : {}),
+      });
+      takeRow = persistedTake.rowNum;
+      takeInserted = persistedTake.inserted;
+      for (const w of persistedTake.warnings) result.warnings.push(w);
     }
 
     return {
@@ -1880,6 +1895,8 @@ const think: Operation = {
       // falsy) to null so callers never see an empty-string "slug".
       saved_slug: savedSlug || null,
       evidence_inserted: evidenceInserted,
+      take_row: takeRow,
+      take_inserted: takeInserted,
       remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
     };
   },
