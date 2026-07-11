@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   canonicalJson,
   computeRequestHash,
+  createConversionManifest,
   normalizeMimeType,
   normalizeSourceSha256,
   sanitizeManifest,
@@ -87,6 +88,15 @@ describe('conversion manifest data-foundation contract', () => {
     expect(() => validateMapping({ sourceRange: { kind: 'ordinal', unitKind: 'page', start: 0, end: 1 }, unitKind: 'document' })).toThrow();
     expect(() => validateMapping({ sourceRange: { kind: 'time_ms', start: 0, end: 10 }, unitKind: 'page', durationMs: 10 })).toThrow();
   });
+  test('rejects standalone ordinal ranges with invalid endpoints', () => {
+    for (const sourceRange of [
+      { kind: 'ordinal', unitKind: 'page', start: -1, end: 1 },
+      { kind: 'ordinal', unitKind: 'page', start: 1, end: 1 },
+      { kind: 'ordinal', unitKind: 'page', start: 2, end: 1 },
+      { kind: 'ordinal', unitKind: 'page', start: Number.MAX_SAFE_INTEGER + 1, end: Number.MAX_SAFE_INTEGER + 2 },
+    ]) expect(() => validateMapping({ sourceRange, unitKind: 'page' } as never)).toThrow();
+    expect(() => validateMapping({ sourceRange: { kind: 'ordinal', unitKind: 'page', start: 0, end: 1 }, unitKind: 'page' })).not.toThrow();
+  });
 
   test('unknown visual kind has warning floor and completeness reason', () => {
     expect(validateVisualObservation({ sourceVisualKind: 'unknown', risk: 'pass', reasonCodes: [] })).toMatchObject({
@@ -98,12 +108,38 @@ describe('conversion manifest data-foundation contract', () => {
     expect(() => validateVisualObservation({ sourceVisualKind: 'text', risk: 'pass', reasonCodes: ['checked_match'] })).toThrow();
     expect(() => validateVisualObservation({ sourceVisualKind: 'text', risk: 'pass', reasonCodes: ['COVERAGE_INVALID'] })).not.toThrow();
   });
-  test('rejects lossy settings and warning sanitization', () => {
-    expect(() => sanitizeManifest({ settings: { safe: 'yes', secret: 'drop', nested: { x: 1 } }, warnings: [] })).toThrow();
-    expect(() => sanitizeManifest({ settings: { safe: 'yes' }, warnings: Array.from({ length: 33 }, () => 'synthetic-warning') })).toThrow();
-    expect(() => sanitizeManifest({ settings: { safe: 'yes' }, warnings: ['synthetic-warning', 4] as unknown as string[] })).toThrow();
-    expect(() => sanitizeManifest({ settings: { safe: 'yes' }, warnings: ['x'.repeat(8193)] })).toThrow();
-    expect(sanitizeManifest({ settings: { safe: 'yes' }, warnings: ['synthetic-warning'] })).toEqual({ settings: { safe: 'yes' }, warnings: ['synthetic-warning'] });
+  test('uses adapter-scoped settings allowlisting and redacts sensitive evidence text', () => {
+    expect(() => sanitizeManifest({ settings: { safe: 'yes' }, warnings: [] }, 'image-import')).toThrow();
+    expect(() => sanitizeManifest({ settings: { format: 'png', unknown: true }, warnings: [] }, 'image-import')).toThrow();
+    expect(sanitizeManifest({
+      settings: { format: 'path=/tmp/input.png https://example.test/x token=abc123' },
+      warnings: ['warning /var/tmp/file https://warn.test token=secret'],
+      mappings: [{ sectionRef: 'file:///private/x?password=secret', sourceRange: { kind: 'document' } }],
+    }, 'image-import')).toEqual({
+      settings: { format: 'path=<redacted:path> <redacted:url> <redacted:credential>' },
+      warnings: ['warning <redacted:path> <redacted:url> <redacted:credential>'],
+      mappings: [{ sectionRef: '<redacted:url>', sourceRange: { kind: 'document' } }],
+    });
+    expect(sanitizeManifest({
+      settings: { format: 'Authorization: Bearer bearer-secret' },
+      warnings: [
+        'Authorization: Basic basic-secret',
+        'token="quoted-secret" Cookie: session=cookie-secret',
+        'Windows C:\\Users\\synthetic\\private.txt POSIX /home/synthetic/private.txt',
+        'https://example.test/callback?user=synthetic&password=url-secret',
+      ],
+      mappings: [],
+    }, 'image-import')).toEqual({
+      settings: { format: '<redacted:credential>' },
+      warnings: [
+        '<redacted:credential>',
+        '<redacted:credential> <redacted:credential>',
+        'Windows <redacted:path> POSIX <redacted:path>',
+        '<redacted:url>',
+      ],
+      mappings: [],
+    });
+    expect(sanitizeManifest({ settings: { format: 'png' }, warnings: ['synthetic-warning'] }, 'image-import')).toEqual({ settings: { format: 'png' }, warnings: ['synthetic-warning'] });
   });
 
   test('rejects bounded values rather than truncating', () => {
@@ -111,6 +147,11 @@ describe('conversion manifest data-foundation contract', () => {
     let nested: unknown = 1;
     for (let depth = 0; depth < 9; depth += 1) nested = { nested };
     expect(() => sanitizeManifest({ settings: nested as Record<string, unknown>, warnings: [] })).toThrow();
+  });
+  test('requires complete visual candidates and coupled OCR state', () => {
+    expect(validateObservations({ sourceVisualKind: 'image', candidates: { images: 1 }, confidence: null, ocr: { state: 'success', confidence: 1, textExtracted: true }, imageDimensions: { width: 1, height: 1 } }).reasons).toContain('OBSERVATION_INCOMPLETE');
+    expect(() => validateObservations({ sourceVisualKind: 'image', candidates: { images: 1, tables: 0, equations: 0, charts: 0 }, confidence: null, ocr: { state: 'disabled', confidence: null, textExtracted: true }, imageDimensions: { width: 1, height: 1 } })).toThrow();
+    expect(validateObservations({ sourceVisualKind: 'image', candidates: { images: 0, tables: 0, equations: 0, charts: 0 }, confidence: null, ocr: { state: 'success' }, imageDimensions: { width: 1, height: 1 } }).reasons).toContain('OBSERVATION_INCOMPLETE');
   });
 
   test('validates closed observation objects', () => {
@@ -127,11 +168,98 @@ describe('conversion manifest data-foundation contract', () => {
     expect(computeRequestHash(base)).not.toBe(computeRequestHash({ ...base, converterVersion: '2' }));
     expect(computeRequestHash(base)).not.toBe(computeRequestHash({ ...base, sourceSha256: 'b'.repeat(64) }));
     expect(computeRequestHash(base)).toBe(computeRequestHash({ ...base, risk: 'warning', reasonCodes: ['COVERAGE_LOSS'] }));
+    expect(computeRequestHash(base)).toBe(computeRequestHash({ ...base, producer: { kind: 'local_cli', id: null }, transport: 'oauth_http', remote: true, auth: { clientId: 'spoofed' } }));
+  });
+  test('hashes persisted duration and ignores mapping helper fields', () => {
+    const base = {
+      adapterKind: 'synthetic', sourceVisualKind: 'text', converter: 'fixture', converterVersion: '1',
+      sourceSha256: 'a'.repeat(64), sourceMimeType: 'text/plain', unitKind: 'document',
+      totalUnits: 1, succeededUnits: 1, failedUnits: 0, durationMs: 1000,
+      mappings: [{ sourceRange: { kind: 'document' }, mappingOrdinal: 0, unitKind: 'document', durationMs: 1000, chunkCount: 4 }],
+    };
+    expect(computeRequestHash(base)).toBe(computeRequestHash({
+      ...base, mappings: [{ sourceRange: { kind: 'document' }, mappingOrdinal: 9, unitKind: 'page', durationMs: 999, chunkCount: 1 }],
+    }));
+    expect(computeRequestHash(base)).not.toBe(computeRequestHash({ ...base, durationMs: 1001 }));
   });
 
   test('enforces producer coupling', () => {
     expect(validateProducerCoupling({ producerKind: 'oauth_client', producerId: 'synthetic.client' })).toBeTruthy();
     expect(() => validateProducerCoupling({ producerKind: 'oauth_client', producerId: null })).toThrow();
     expect(() => validateProducerCoupling({ producerKind: 'local_cli', producerId: 'caller-supplied' })).toThrow();
+  });
+  test('rejects credential, URL, and filesystem-path identities while preserving identifiers', () => {
+    const base = {
+      adapterKind: 'image-import',
+      converter: 'openai/tiktoken',
+      converterVersion: '1.2.3',
+      model: 'gpt-4o-mini',
+      modelVersion: '2026-01',
+      sourceSha256: 'a'.repeat(64),
+      sourceMimeType: 'text/plain',
+    };
+    const attacks: Array<[keyof typeof base, string]> = [
+      ['adapterKind', 'https://evil.example/token'],
+      ['converter', 'token=super-secret'],
+      ['converterVersion', '/private/credentials.json'],
+      ['model', 'C:\\Users\\alice\\secret.txt'],
+      ['modelVersion', 'Authorization: Bearer secret-value'],
+    ];
+    for (const [field, value] of attacks) {
+      expect(() => computeRequestHash({ ...base, [field]: value })).toThrow();
+    }
+    expect(computeRequestHash(base)).toBe(computeRequestHash({
+      ...base,
+      adapterKind: 'image-import',
+      converter: 'openai/tiktoken',
+      converterVersion: '1.2.3',
+      model: 'gpt-4o-mini',
+      modelVersion: '2026-01',
+    }));
+    expect(computeRequestHash({ ...base, model: null, modelVersion: null })).not.toBe(computeRequestHash(base));
+  });
+  test('service rejects credential, URI-authority, and UNC identities in every immutable field before hashing or persistence', async () => {
+    const input = {
+      sourceId: 'synthetic-source',
+      fileId: 1,
+      idempotencyKey: 'synthetic-key',
+      adapterKind: 'synthetic-adapter',
+      sourceVisualKind: 'text',
+      converter: 'synthetic-converter',
+      converterVersion: '1.0.0',
+      model: 'synthetic-model',
+      modelVersion: '1.0.0',
+      settings: {},
+      unitKind: 'document',
+      coverage: { total: 1, succeeded: 1, failed: 0, failedRanges: [] },
+      candidates: {},
+      confidence: null,
+      ocr: {},
+      imageDimensions: null,
+      unreadableRegions: [],
+      warnings: [],
+      mappings: [],
+    };
+    const queries: string[] = [];
+    const engine = {
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
+        executeRaw: async (query: string) => {
+          queries.push(query);
+          return [];
+        },
+      }),
+    } as any;
+    const fields = ['adapterKind', 'converter', 'converterVersion', 'model', 'modelVersion'] as const;
+    const payloads = ['Bearer secret-value', 'Basic secret-value', 'postgres://user:secret@host/db', '\\\\server\\share\\credential', 'wrapper(\\\\server\\share\\secret)'];
+    for (const field of fields) {
+      for (const payload of payloads) {
+        queries.length = 0;
+        await expect(createConversionManifest(engine, { ...input, [field]: payload }, {
+          transport: 'local_cli',
+          remote: false,
+        })).rejects.toThrow();
+        expect(queries).toEqual([]);
+      }
+    }
   });
 });

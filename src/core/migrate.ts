@@ -5522,7 +5522,7 @@ export const MIGRATIONS: Migration[] = [
         idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 128 AND idempotency_key ~ '^[A-Za-z0-9._:-]+$'),
         request_hash TEXT NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
         producer_kind TEXT NOT NULL CHECK(producer_kind IN ('local_cli','stdio_mcp','oauth_client','internal_adapter')),
-        producer_id TEXT NULL CHECK((producer_kind = 'oauth_client' AND producer_id ~ '^[A-Za-z0-9._:-]+$' AND length(producer_id) BETWEEN 1 AND 255) OR (producer_kind <> 'oauth_client' AND producer_id IS NULL)),
+        producer_id TEXT NULL CHECK((producer_kind = 'oauth_client' AND producer_id IS NOT NULL AND producer_id ~ '^[A-Za-z0-9._:-]+$' AND length(producer_id) BETWEEN 1 AND 255) OR (producer_kind <> 'oauth_client' AND producer_id IS NULL)),
         adapter_kind TEXT NOT NULL CHECK(length(adapter_kind) BETWEEN 1 AND 64),
         source_visual_kind TEXT NOT NULL CHECK(source_visual_kind IN ('text','scan','image','mixed','unknown')),
         converter TEXT NOT NULL CHECK(length(converter) BETWEEN 1 AND 128),
@@ -5586,7 +5586,7 @@ export const MIGRATIONS: Migration[] = [
         chunk_end INTEGER NULL,
         PRIMARY KEY(receipt_id,mapping_ordinal),
         CONSTRAINT conversion_mapping_page_source_fk FOREIGN KEY(derived_page_id,derived_source_id) REFERENCES pages(id,source_id) ON DELETE RESTRICT,
-        CONSTRAINT conversion_mapping_chunk_bounds CHECK((chunk_start IS NULL AND chunk_end IS NULL) OR (chunk_start>=0 AND chunk_end>chunk_start))
+        CONSTRAINT conversion_mapping_chunk_bounds CHECK((chunk_start IS NULL AND chunk_end IS NULL) OR (chunk_start IS NOT NULL AND chunk_end IS NOT NULL AND chunk_start>=0 AND chunk_end>chunk_start))
       );
       CREATE OR REPLACE FUNCTION conversion_evidence_immutable() RETURNS trigger
       LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
@@ -5617,15 +5617,14 @@ export const MIGRATIONS: Migration[] = [
       FOR EACH ROW EXECUTE FUNCTION conversion_mapping_guard();
       CREATE INDEX IF NOT EXISTS idx_conversion_manifest_file_latest ON conversion_manifests(source_id,file_id,completed_at DESC,receipt_id DESC);
       CREATE INDEX IF NOT EXISTS idx_conversion_manifest_risk ON conversion_manifests(source_id,risk,completed_at DESC,receipt_id DESC);
-    `,
-    handler: async (engine) => {
-      if (engine.kind === 'postgres') {
-        await engine.executeRaw(`
+      DO $$
+      BEGIN
+        IF current_setting('server_version_num', true) IS NOT NULL THEN
           ALTER TABLE conversion_manifests ENABLE ROW LEVEL SECURITY;
           ALTER TABLE conversion_manifest_mappings ENABLE ROW LEVEL SECURITY;
-        `);
-      }
-    },
+        END IF;
+      END $$;
+    `,
     verify: async (engine) => {
       const rows = await engine.executeRaw<{ ok: boolean }>(`
         SELECT
@@ -5671,6 +5670,69 @@ export const MIGRATIONS: Migration[] = [
             WHERE n.nspname = 'public' AND c.relname = 'conversion_manifest_mappings'
               AND c.relrowsecurity
           ))
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = 'public.conversion_manifests'::regclass
+              AND c.conname = 'conversion_manifest_counts'
+              AND pg_get_constraintdef(c.oid) ~* 'total_units.*succeeded_units.*failed_units'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = 'public.conversion_manifests'::regclass
+              AND c.conname = 'conversion_manifest_file_source_fk'
+              AND pg_get_constraintdef(c.oid) ILIKE '%FOREIGN KEY (file_id, source_id)%ON DELETE RESTRICT%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = 'public.conversion_manifests'::regclass
+              AND pg_get_constraintdef(c.oid) ~* 'producer_kind.*oauth_client.*producer_id IS NOT NULL'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = 'public.conversion_manifest_mappings'::regclass
+              AND c.conname = 'conversion_mapping_chunk_bounds'
+              AND pg_get_constraintdef(c.oid) ILIKE '%chunk_start IS NOT NULL%'
+              AND pg_get_constraintdef(c.oid) ILIKE '%chunk_end IS NOT NULL%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'public' AND indexname = 'idx_conversion_manifest_file_latest'
+              AND indexdef ILIKE '%(source_id, file_id, completed_at DESC, receipt_id DESC)%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'public' AND indexname = 'idx_conversion_manifest_risk'
+              AND indexdef ILIKE '%(source_id, risk, completed_at DESC, receipt_id DESC)%'
+          )
+          AND EXISTS (
+            SELECT
+              count(DISTINCT p.proname) = 2
+              AND count(DISTINCT p.proname) FILTER (
+                WHERE p.proconfig @> ARRAY['search_path=pg_catalog, public']::text[]
+              ) = 2
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.proname IN ('conversion_evidence_immutable','conversion_mapping_guard')
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            WHERE c.relnamespace = 'public'::regnamespace
+              AND t.tgname = 'conversion_manifest_immutable'
+              AND (t.tgtype & 2) <> 0
+              AND (t.tgtype & 8) <> 0
+              AND (t.tgtype & 16) <> 0
+              AND pg_get_triggerdef(t.oid) ILIKE '%conversion_evidence_immutable%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            WHERE c.relnamespace = 'public'::regnamespace
+              AND t.tgname = 'conversion_mapping_source_guard'
+              AND pg_get_triggerdef(t.oid) ILIKE '%BEFORE INSERT%'
+              AND pg_get_triggerdef(t.oid) ILIKE '%conversion_mapping_guard%'
+          )
           AS ok
       `, [engine.kind]);
       return rows[0]?.ok === true;
@@ -6100,15 +6162,21 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     // idempotent — if true, log + retry the same migration once; if false,
     // throw MigrationDriftError so operator runs --skip-verify deliberately.
     if (m.verify) {
-      const verifyOk = await m.verify(engine).catch(() => false);
+      let verifyOk = await m.verify(engine).catch(() => false);
       if (!verifyOk) {
         const idempotent = isMigrationIdempotent(m);
         if (idempotent) {
           console.warn(`  [${m.version}] ⚠️  verify failed; re-running idempotent migration once`);
           if (sql) await runMigrationSQLWithRetry(engine, m, sql);
           if (m.handler) await m.handler(engine);
-          // Best-effort: don't double-throw if second run still fails verify.
-          // Operator's next run of doctor will re-detect drift.
+          verifyOk = await m.verify(engine).catch(() => false);
+          if (!verifyOk) {
+            throw new MigrationDriftError(
+              m.version,
+              m.name,
+              `Schema does not match expected post-condition after idempotent retry. Run with --skip-verify to force.`,
+            );
+          }
         } else {
           throw new MigrationDriftError(
             m.version,

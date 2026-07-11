@@ -28,7 +28,23 @@ const fail = (message: string, code: ConversionManifestErrorCode = 'invalid_para
 const units = new Set<UnitKind>(['document', 'page', 'frame', 'segment']);
 const visuals = new Set<VisualKind>(['text', 'scan', 'image', 'mixed', 'unknown']);
 const reasons = new Set<PlatformReason>(['DB_SOURCE_FILE_MISSING', 'DB_SOURCE_HASH_MISMATCH', 'DB_SOURCE_MIME_MISMATCH', 'PHYSICAL_SOURCE_HASH_MISMATCH', 'PHYSICAL_SOURCE_UNAVAILABLE', 'COVERAGE_INVALID', 'COVERAGE_LOSS', 'MAPPING_MISSING', 'UNREADABLE_REGION', 'VISUAL_CANDIDATE', 'CONFIDENCE_BELOW_POLICY', 'CONVERTER_WARNING', 'OBSERVATION_INCOMPLETE', 'UNSUPPORTED_MANIFEST_VERSION']);
-const secretKey = /secret|token|password|credential|api.?key|authorization|cookie|private.?key/i;
+const IDENTITY_FIELDS = ['adapterKind', 'converter', 'converterVersion', 'model', 'modelVersion'] as const;
+type IdentityField = typeof IDENTITY_FIELDS[number];
+const identityCredential = /\b(?:authorization|bearer|basic|cookie|password|passwd|token|secret|api[_-]?key|credential|private[_-]?key)\b\s*[:=]|\b(?:bearer|basic)\s+\S+|\b[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+|\\\\[^\\]+\\[^\\]+|\b(?:sk|gh[opsu]|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b|^eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i;
+const sanitizeIdentity = (value: unknown, name: IdentityField): string | null => {
+  if ((value === null || value === undefined) && (name === 'model' || name === 'modelVersion')) return null;
+  if (typeof value !== 'string') return fail(`invalid ${name}`);
+  if (value.length === 0 || value.length > (name === 'adapterKind' ? 64 : 128)) fail(`invalid ${name}`);
+  if (identityCredential.test(value) || sanitizeEvidenceText(value) !== value) fail(`invalid ${name}`);
+  return value;
+};
+const sanitizeIdentities = (input: Record<string, unknown>): Record<IdentityField, string | null> => ({
+  adapterKind: sanitizeIdentity(input.adapterKind, 'adapterKind') as string,
+  converter: sanitizeIdentity(input.converter, 'converter') as string,
+  converterVersion: sanitizeIdentity(input.converterVersion, 'converterVersion') as string,
+  model: sanitizeIdentity(input.model, 'model'),
+  modelVersion: sanitizeIdentity(input.modelVersion, 'modelVersion'),
+});
 const safeInt = (value: unknown, name: string): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new ConversionManifestError('invalid_params', `${name} must be a non-negative safe integer`);
@@ -61,10 +77,35 @@ export function canonicalJson(value: unknown): string {
   };
   return JSON.stringify(walk(value));
 }
-const HASH_FIELDS = ['adapterKind', 'sourceVisualKind', 'converter', 'converterVersion', 'model', 'modelVersion', 'settings', 'coverage', 'candidates', 'confidence', 'ocr', 'imageDimensions', 'unreadableRegions', 'warnings', 'mappings', 'sourceSha256', 'sourceMimeType'] as const;
+const HASH_FIELDS = ['adapterKind', 'sourceVisualKind', 'converter', 'converterVersion', 'model', 'modelVersion', 'settings', 'unitKind', 'totalUnits', 'succeededUnits', 'failedUnits', 'durationMs', 'failedRanges', 'candidates', 'confidence', 'ocr', 'imageDimensions', 'unreadableRegions', 'warnings', 'mappings', 'sourceSha256', 'sourceMimeType'] as const;
+const normalizeHashMapping = (mapping: unknown): unknown => {
+  if (!plain(mapping as Record<string, unknown>)) fail('invalid mapping');
+  const value = mapping as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+  for (const key of ['sourceRange', 'derivedPageId', 'derivedSourceId', 'derivedPageSlug', 'sectionRef', 'chunkStart', 'chunkEnd']) {
+    if (value[key] !== undefined) normalized[key] = value[key];
+  }
+  return normalized;
+};
 export function computeRequestHash(input: Record<string, unknown>): string {
+  const normalizedInput: Record<string, unknown> = { ...input };
+  if (plain(input.coverage)) {
+    const coverage = input.coverage as Record<string, unknown>;
+    normalizedInput.unitKind ??= coverage.unitKind;
+    normalizedInput.totalUnits ??= coverage.total;
+    normalizedInput.succeededUnits ??= coverage.succeeded;
+    normalizedInput.failedUnits ??= coverage.failed;
+    normalizedInput.failedRanges ??= coverage.failedRanges;
+  }
+  for (const field of IDENTITY_FIELDS) {
+    if (normalizedInput[field] !== undefined) normalizedInput[field] = sanitizeIdentity(normalizedInput[field], field);
+  }
   const payload: Record<string, unknown> = {};
-  for (const key of HASH_FIELDS) if (input[key] !== undefined) payload[key] = input[key];
+  for (const key of HASH_FIELDS) if (normalizedInput[key] !== undefined) {
+    payload[key] = key === 'mappings' && Array.isArray(normalizedInput[key])
+      ? normalizedInput[key].map(normalizeHashMapping)
+      : normalizedInput[key];
+  }
   if (typeof payload.sourceSha256 === 'string') payload.sourceSha256 = normalizeSourceSha256(payload.sourceSha256);
   if (typeof payload.sourceMimeType === 'string') payload.sourceMimeType = normalizeMimeType(payload.sourceMimeType);
   return createHash('sha256').update(canonicalJson(payload), 'utf8').digest('hex');
@@ -131,6 +172,8 @@ export function validateMapping(mapping: MappingInput, context?: MappingContext)
     if (mapping.sourceRange.unitKind !== unitKind) fail('mapping unit mismatch');
     keysExactly(mapping.sourceRange, ['kind', 'unitKind', 'start', 'end'], 'range');
     const ordinal = mapping.sourceRange as OrdinalRange;
+    const start = safeInt(ordinal.start, 'range start'); const end = safeInt(ordinal.end, 'range end');
+    if (start >= end) fail('invalid ordinal range');
     if (context) validateFailedRanges(unitKind, context.total, [ordinal]);
   }
   if (mapping.sourceRange.kind === 'time_ms') {
@@ -156,15 +199,17 @@ export function validateObservations(input: { sourceVisualKind: string; candidat
   for (const value of Object.values(input.candidates)) if (value !== null) safeInt(value, 'candidate count');
   if (input.confidence) { keysExactly(input.confidence, ['overall', 'threshold'], 'confidence'); for (const [key, value] of Object.entries(input.confidence)) nullableProbability(value, key); }
   keysExactly(input.ocr, ['state', 'confidence', 'textExtracted'], 'OCR');
-  if (input.ocr.state !== undefined && !['disabled', 'unavailable', 'empty', 'failed', 'success'].includes(String(input.ocr.state))) fail('invalid OCR state');
+  const ocrState = input.ocr.state;
+  if (ocrState !== undefined && !['disabled', 'unavailable', 'empty', 'failed', 'success'].includes(String(ocrState))) fail('invalid OCR state');
   if (input.ocr.confidence !== undefined) nullableProbability(input.ocr.confidence, 'OCR confidence');
   if (input.ocr.textExtracted !== undefined && typeof input.ocr.textExtracted !== 'boolean') fail('invalid OCR textExtracted');
+  if (ocrState !== undefined && input.ocr.textExtracted !== undefined && input.ocr.textExtracted !== (ocrState === 'success')) fail('OCR state/textExtracted mismatch');
   if (input.imageDimensions) { keysExactly(input.imageDimensions, ['width', 'height'], 'image dimension'); for (const value of Object.values(input.imageDimensions)) { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) fail('invalid image dimension'); } }
   const out: PlatformReason[] = [];
-  if (['image', 'scan', 'mixed'].includes(input.sourceVisualKind)) {
-    const hasNull = Object.values(input.candidates).some((value) => value === null);
-    if (hasNull || Object.keys(input.candidates).length === 0 || Object.keys(input.ocr).length === 0) out.push('OBSERVATION_INCOMPLETE');
-  }
+  const visual = ['image', 'scan', 'mixed'].includes(input.sourceVisualKind);
+  const candidatesIncomplete = visual && ['images', 'tables', 'equations', 'charts'].some((key) => !(key in input.candidates) || input.candidates[key] === null);
+  const ocrIncomplete = visual && (!('state' in input.ocr) || !('confidence' in input.ocr) || !('textExtracted' in input.ocr));
+  if (visual && (candidatesIncomplete || ocrIncomplete || input.imageDimensions === null)) out.push('OBSERVATION_INCOMPLETE');
   return { ...input, reasons: out };
 }
 export type NormalizedEvidence = {
@@ -185,7 +230,7 @@ export function deriveNormalizedVerdict(input: NormalizedEvidence): { risk: Risk
   const visual = ['image', 'scan', 'mixed'].includes(input.sourceVisualKind);
   if (visual && Object.values(input.candidates).some((value) => typeof value === 'number' && value > 0)) out.push('VISUAL_CANDIDATE');
   if (input.confidence?.overall !== undefined && input.confidence?.threshold !== undefined && input.confidence.overall !== null && input.confidence.threshold !== null && input.confidence.overall < input.confidence.threshold) out.push('CONFIDENCE_BELOW_POLICY');
-  if (visual && (input.imageDimensions === null || Object.values(input.candidates).some((value) => value === null) || Object.keys(input.candidates).length === 0 || Object.keys(input.ocr).length === 0)) out.push('OBSERVATION_INCOMPLETE');
+  if (visual && (input.imageDimensions === null || ['images', 'tables', 'equations', 'charts'].some((key) => !(key in input.candidates) || input.candidates[key] === null) || !('state' in input.ocr) || !('confidence' in input.ocr) || !('textExtracted' in input.ocr))) out.push('OBSERVATION_INCOMPLETE');
   if (input.sourceVisualKind === 'unknown') out.push('OBSERVATION_INCOMPLETE');
   const reasonCodes = [...new Set(out)].sort();
   const visualReview = reasonCodes.includes('VISUAL_CANDIDATE') || reasonCodes.includes('CONFIDENCE_BELOW_POLICY');
@@ -196,25 +241,36 @@ export function deriveNormalizedVerdict(input: NormalizedEvidence): { risk: Risk
 type JsonRecord = Record<string, unknown>;
 const isJsonRecord = (value: unknown): value is JsonRecord =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-function boundedValue(value: unknown, depth: number): unknown {
+const SETTINGS_KEYS: Record<string, readonly string[]> = { 'image-import': ['format', 'maxDimension', 'quality'] };
+const sanitizeEvidenceText = (value: string): string => value
+  .replace(/\b(?:https?|ftp|file):\/\/[^\s"'<>]+/gi, '<redacted:url>')
+  .replace(/((?:^|[\s=(]))(?:"(?:\/|[A-Za-z]:[\\/])[^"<>]+"|'(?:\/|[A-Za-z]:[\\/])[^'<>]+')/g, '$1<redacted:path>')
+  .replace(/((?:^|[\s=(]))(?:\/|[A-Za-z]:[\\/])[^"'<> \s]*/g, '$1<redacted:path>')
+  .replace(/\bauthorization(?:\s*[:=]\s*|\s+)(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '<redacted:credential>')
+  .replace(/\bcookie\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\r\n]+)/gi, '<redacted:credential>')
+  .replace(/\b(?:password|passwd|token|secret|api[_-]?key|credential)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '<redacted:credential>');
+function boundedValue(value: unknown, depth: number, sanitizeText = false, allowedKeys?: readonly string[]): unknown {
   if (depth > 8) fail('manifest exceeds nesting depth');
   if (Array.isArray(value)) {
     if (value.length > 128) fail('manifest array exceeds bound');
-    return value.map((entry) => boundedValue(entry, depth + 1));
+    return value.map((entry) => boundedValue(entry, depth + 1, sanitizeText, allowedKeys));
   }
   if (value !== null && typeof value === 'object' && plain(value)) {
     const result: JsonRecord = {};
     for (const [key, entry] of Object.entries(value)) {
-      if (secretKey.test(key)) fail('secret-like setting key');
-      result[key] = boundedValue(entry, depth + 1);
+      if (allowedKeys && !allowedKeys.includes(key)) fail('unknown setting key');
+      result[key] = boundedValue(entry, depth + 1, sanitizeText, allowedKeys);
     }
     return result;
   }
-  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return sanitizeText ? sanitizeEvidenceText(value) : value;
   fail('unsupported manifest value');
 }
-export function sanitizeManifest(input: JsonRecord): JsonRecord {
-  const sanitized = boundedValue(input, 0);
+export function sanitizeManifest(input: JsonRecord, adapterKind?: string): JsonRecord {
+  if (!plain(input.settings)) fail('invalid settings');
+  const allowed = adapterKind === 'image-import' ? SETTINGS_KEYS['image-import'] : [];
+  const sanitized = boundedValue({ ...input, settings: boundedValue(input.settings, 0, true, allowed) }, 0, true);
   if (!isJsonRecord(sanitized)) throw new ConversionManifestError('invalid_params', 'invalid manifest');
   const rawWarnings: unknown = sanitized.warnings;
   if (!Array.isArray(rawWarnings) || rawWarnings.some((value: unknown) => typeof value !== 'string') || rawWarnings.length > 32) fail('invalid warnings');
@@ -227,7 +283,12 @@ function normalizeFile(row: FileRow): FileRow { return { ...row, id: Number(row.
 export async function getFileById(engine: BrainEngine, sourceId: string, fileId: number): Promise<FileRow | null> { const rows = await engine.executeRaw<FileRow>('SELECT id,source_id,page_slug,page_id,filename,storage_path,mime_type,size_bytes,content_hash,metadata,created_at FROM files WHERE source_id=$1 AND id=$2', [sourceId, fileId]); return rows[0] ? normalizeFile(rows[0]) : null; }
 export async function getFileByIdForUpdate(engine: BrainEngine, sourceId: string, fileId: number): Promise<FileRow | null> { const rows = await engine.executeRaw<FileRow>('SELECT id,source_id,page_slug,page_id,filename,storage_path,mime_type,size_bytes,content_hash,metadata,created_at FROM files WHERE source_id=$1 AND id=$2 FOR UPDATE', [sourceId, fileId]); return rows[0] ? normalizeFile(rows[0]) : null; }
 
-export interface ConversionManifestInput { sourceId: string; fileId: number; idempotencyKey: string; adapterKind: string; sourceVisualKind: string; converter: string; converterVersion: string; model?: string | null; modelVersion?: string | null; settings: JsonRecord; unitKind: string; coverage: { total: number; succeeded: number; failed: number; failedRanges: ConversionRange[] }; candidates: JsonRecord; confidence: JsonRecord | null; ocr: JsonRecord; imageDimensions: JsonRecord | null; unreadableRegions: ConversionRange[]; warnings: string[]; mappings: MappingInput[]; producer: { kind: string; id: string | null }; transport?: 'local_cli' | 'stdio_mcp' | 'oauth_http'; remote?: boolean; auth?: { clientId?: string; sourceId?: string }; startedAt?: string | Date; completedAt?: string | Date; durationMs?: number | null; risk?: string; reasonCodes?: PlatformReason[]; }
+export type ConversionOperationContext =
+  | { transport: 'local_cli'; remote: false; sourceId?: string }
+  | { transport: 'stdio_mcp'; remote: true; sourceId: string }
+  | { transport: 'oauth_http'; remote: true; sourceId: string; auth: { clientId: string } }
+  | { transport: 'internal_adapter' };
+export interface ConversionManifestInput { sourceId: string; fileId: number; idempotencyKey: string; adapterKind: string; sourceVisualKind: string; converter: string; converterVersion: string; model?: string | null; modelVersion?: string | null; settings: JsonRecord; unitKind: string; coverage: { total: number; succeeded: number; failed: number; failedRanges: ConversionRange[] }; candidates: JsonRecord; confidence: JsonRecord | null; ocr: JsonRecord; imageDimensions: JsonRecord | null; unreadableRegions: ConversionRange[]; warnings: string[]; mappings: MappingInput[]; startedAt?: string | Date; completedAt?: string | Date; durationMs?: number | null; risk?: string; reasonCodes?: PlatformReason[]; }
 export type ManifestRow = JsonRecord & { receiptId: string; sourceId: string; fileId: number; manifestVersion: number; totalUnits: number; succeededUnits: number; failedUnits: number; durationMs: number | null; startedAt: string; completedAt: string };
 function rowManifest(row: JsonRecord): ManifestRow {
   const result: JsonRecord = {
@@ -267,29 +328,37 @@ function rowManifest(row: JsonRecord): ManifestRow {
   };
   return result as ManifestRow;
 }
-function producerFor(input: ConversionManifestInput): { kind: string; id: string | null } {
-  if (input.transport === 'oauth_http') {
-    const auth = input.auth;
-    if (!auth || auth.sourceId !== input.sourceId || typeof auth.clientId !== 'string' || auth.clientId.length === 0) {
-      throw new ConversionManifestError('permission_denied', 'permission denied');
-    }
-    return { kind: 'oauth_client', id: auth.clientId };
-  }
-  if (input.transport === 'stdio_mcp' && input.remote !== true) fail('permission denied', 'permission_denied');
-  if (input.transport === 'local_cli' && input.remote === true) fail('permission denied', 'permission_denied');
-  return input.producer;
+function producerFor(input: ConversionManifestInput, context: ConversionOperationContext): { kind: string; id: string | null } {
+  if (!context || typeof context !== 'object') fail('missing operation context', 'permission_denied');
+  switch (context.transport) {
+    case 'local_cli':
+      if (context.remote !== false || (context.sourceId !== undefined && context.sourceId !== input.sourceId)) fail('permission denied', 'permission_denied');
+      return { kind: 'local_cli', id: null };
+    case 'stdio_mcp':
+      if (context.remote !== true || !context.sourceId || context.sourceId !== input.sourceId) fail('permission denied', 'permission_denied');
+      return { kind: 'stdio_mcp', id: null };
+    case 'oauth_http':
+      if (context.remote !== true || context.sourceId !== input.sourceId || !/^[A-Za-z0-9._:-]{1,255}$/.test(context.auth.clientId)) fail('permission denied', 'permission_denied');
+      return { kind: 'oauth_client', id: context.auth.clientId };
+    case 'internal_adapter':
+      if (input.adapterKind !== 'image-import') fail('permission denied', 'permission_denied');
+      return { kind: 'internal_adapter', id: null };
+    default:
+      return fail('permission denied', 'permission_denied');
 }
-
+}
 export async function createConversionManifest(
   engine: BrainEngine,
   input: ConversionManifestInput,
+  context: ConversionOperationContext,
 ): Promise<{ created: boolean; receipt: ManifestRow }> {
   return engine.transaction(async (tx) => {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(input.idempotencyKey)) {
       fail('invalid idempotency key');
     }
     if (input.risk !== undefined || input.reasonCodes !== undefined) fail('caller verdict fields are not accepted');
-    const producer = producerFor(input);
+    const identity = sanitizeIdentities(input as unknown as Record<string, unknown>);
+    const producer = producerFor(input, context);
     validateProducerCoupling({ producerKind: producer.kind, producerId: producer.id });
 
     const lockedFile = await getFileByIdForUpdate(tx, input.sourceId, input.fileId);
@@ -327,7 +396,8 @@ export async function createConversionManifest(
       imageDimensions: observations.imageDimensions,
       unreadableRegions: input.unreadableRegions,
       warnings: input.warnings,
-    });
+      mappings: input.mappings,
+    }, identity.adapterKind as string);
     const verdict = deriveNormalizedVerdict({
       sourceVisualKind: input.sourceVisualKind,
       coverage: input.coverage,
@@ -343,23 +413,43 @@ export async function createConversionManifest(
       risk: verdict.risk,
       reasonCodes: verdict.reasonCodes,
     });
+    if (!Array.isArray(safeInput.mappings)) fail('invalid mappings');
+    const safeMappings = safeInput.mappings as unknown[];
 
     const requestHash = computeRequestHash({
-      ...input,
-      producer: undefined,
-      transport: undefined,
-      remote: undefined,
-      sourceSha256,
-      sourceMimeType,
+      adapterKind: identity.adapterKind,
+      sourceVisualKind: input.sourceVisualKind,
+      converter: identity.converter,
+      converterVersion: identity.converterVersion,
+      model: identity.model,
+      modelVersion: identity.modelVersion,
       settings: safeInput.settings,
+      unitKind: input.unitKind,
+      totalUnits: input.coverage.total,
+      succeededUnits: input.coverage.succeeded,
+      failedUnits: input.coverage.failed,
+      durationMs: input.durationMs ?? null,
+      failedRanges: input.coverage.failedRanges,
       candidates: safeInput.candidates,
       confidence: safeInput.confidence,
       ocr: safeInput.ocr,
       imageDimensions: safeInput.imageDimensions,
       unreadableRegions: safeInput.unreadableRegions,
-      risk: visual.risk,
-      reasonCodes: visual.reasonCodes,
       warnings: safeInput.warnings,
+      mappings: safeMappings.map((mapping: unknown) => {
+        const value = mapping as JsonRecord;
+        return {
+          sourceRange: value.sourceRange,
+          derivedPageId: value.derivedPageId,
+          derivedSourceId: input.sourceId,
+          derivedPageSlug: value.derivedPageSlug,
+          sectionRef: value.sectionRef,
+          chunkStart: value.chunkStart,
+          chunkEnd: value.chunkEnd,
+        };
+      }),
+      sourceSha256,
+      sourceMimeType,
     });
 
     const existing = await tx.executeRaw<JsonRecord>(
@@ -417,12 +507,12 @@ export async function createConversionManifest(
       requestHash,
       producer.kind,
       producer.id,
-      input.adapterKind,
+      identity.adapterKind,
       input.sourceVisualKind,
-      input.converter,
-      input.converterVersion,
-      input.model ?? null,
-      input.modelVersion ?? null,
+      identity.converter,
+      identity.converterVersion,
+      identity.model,
+      identity.modelVersion,
       canonicalJson(safeInput.settings),
       started,
       completed,
@@ -455,7 +545,7 @@ export async function createConversionManifest(
           mapping.derivedPageId,
           input.sourceId,
           mapping.derivedPageSlug,
-          mapping.sectionRef ?? null,
+          (safeInput.mappings as JsonRecord[])[ordinal]?.sectionRef ?? null,
           mapping.chunkStart ?? null,
           mapping.chunkEnd ?? null,
         ],
@@ -567,10 +657,11 @@ export async function verifyConversionManifestLinkage(
   if (manifest.manifestVersion !== 1) {
     return { status: 'unsupported', matchesHash: null, matchesMime: null, reasons: ['UNSUPPORTED_MANIFEST_VERSION'], byteCheck: empty };
   }
-  const hashMatches =
-    manifest.sourceSha256 === normalizeSourceSha256(file.content_hash ?? '');
-  const mimeMatches =
-    manifest.sourceMimeType === normalizeMimeType(file.mime_type ?? '');
+  let hashMatches = false;
+  let mimeMatches = false;
+  let malformedSnapshot = false;
+  try { hashMatches = manifest.sourceSha256 === normalizeSourceSha256(file.content_hash ?? ''); } catch { malformedSnapshot = true; }
+  try { mimeMatches = manifest.sourceMimeType === normalizeMimeType(file.mime_type ?? ''); } catch { malformedSnapshot = true; }
   const out: PlatformReason[] = [];
   if (!hashMatches) out.push('DB_SOURCE_HASH_MISMATCH');
   if (!mimeMatches) out.push('DB_SOURCE_MIME_MISMATCH');
@@ -596,7 +687,7 @@ export async function verifyConversionManifestLinkage(
     }
   }
   return {
-    status: (out.includes('DB_SOURCE_HASH_MISMATCH') || out.includes('DB_SOURCE_MIME_MISMATCH') || out.includes('PHYSICAL_SOURCE_HASH_MISMATCH')) ? 'mismatch' : 'verified',
+    status: malformedSnapshot ? 'corrupt' : (out.includes('DB_SOURCE_HASH_MISMATCH') || out.includes('DB_SOURCE_MIME_MISMATCH') || out.includes('PHYSICAL_SOURCE_HASH_MISMATCH')) ? 'mismatch' : 'verified',
     matchesHash: hashMatches,
     matchesMime: mimeMatches,
     reasons: out,

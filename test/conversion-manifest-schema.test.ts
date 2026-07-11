@@ -83,6 +83,72 @@ describe('conversion evidence v123 schema foundation', () => {
       await expect(insert(`ARRAY['COVERAGE_LOSS','COVERAGE_LOSS']::text[]`, 'synthetic-duplicate')).rejects.toBeDefined();
       await expect(insert(`ARRAY['NOT_A_PLATFORM_REASON']::text[]`, 'synthetic-unknown')).rejects.toBeDefined();
   });
+  test('producer coupling rejects missing, empty, and malformed OAuth IDs while allowing valid OAuth and non-OAuth NULL', async () => {
+      const file = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO files(source_id,filename,storage_path,content_hash)
+         VALUES ('default','synthetic-producer.txt','/synthetic/producer.txt',repeat('d',64))
+         RETURNING id`,
+      );
+      const insert = (receipt: string, kind: string, producer: string | null) => engine.executeRaw(`
+        INSERT INTO conversion_manifests (
+          receipt_id,source_id,file_id,source_sha256,source_mime_type,manifest_version,
+          idempotency_key,request_hash,producer_kind,producer_id,adapter_kind,
+          source_visual_kind,converter,converter_version,settings,started_at,completed_at,
+          unit_kind,total_units,succeeded_units,failed_units,failed_ranges,candidates,ocr,
+          unreadable_regions,adapter_warnings,risk,reason_codes
+        ) VALUES (
+          '${receipt}','default',${file[0].id},repeat('e',64),'text/plain',1,
+          '${receipt}',repeat('f',64),'${kind}',${producer === null ? 'NULL' : `'${producer}'`},'synthetic',
+          'text','synthetic-converter','1','{}'::jsonb,'2026-01-01T00:00:00Z',
+          '2026-01-01T00:00:00Z','document',1,1,0,'[]'::jsonb,'{}'::jsonb,'{}'::jsonb,
+          '[]'::jsonb,'[]'::jsonb,'pass',ARRAY[]::text[]
+        )
+      `);
+      await expect(insert('00000000-0000-4000-8000-000000000010', 'oauth_client', null)).rejects.toBeDefined();
+      await expect(insert('00000000-0000-4000-8000-000000000011', 'oauth_client', '')).rejects.toBeDefined();
+      await expect(insert('00000000-0000-4000-8000-000000000012', 'oauth_client', 'bad id')).rejects.toBeDefined();
+      await insert('00000000-0000-4000-8000-000000000013', 'oauth_client', 'client.synthetic');
+      await insert('00000000-0000-4000-8000-000000000014', 'internal_adapter', null);
+  });
+
+  test('mapping bounds reject every half-null combination and preserve valid rows; page FK is RESTRICT', async () => {
+      const file = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO files(source_id,filename,storage_path,content_hash)
+         VALUES ('default','synthetic-mapping.txt','/synthetic/mapping.txt',repeat('1',64))
+         RETURNING id`,
+      );
+      await engine.executeRaw(`
+        INSERT INTO conversion_manifests (
+          receipt_id,source_id,file_id,source_sha256,source_mime_type,manifest_version,
+          idempotency_key,request_hash,producer_kind,producer_id,adapter_kind,
+          source_visual_kind,converter,converter_version,settings,started_at,completed_at,
+          unit_kind,total_units,succeeded_units,failed_units,failed_ranges,candidates,ocr,
+          unreadable_regions,adapter_warnings,risk,reason_codes
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000020','default',${file[0].id},repeat('2',64),
+          'text/plain',1,'synthetic-mapping-key',repeat('3',64),'internal_adapter',NULL,
+          'synthetic','text','synthetic-converter','1','{}'::jsonb,'2026-01-01T00:00:00Z',
+          '2026-01-01T00:00:00Z','document',1,1,0,'[]'::jsonb,'{}'::jsonb,'{}'::jsonb,
+          '[]'::jsonb,'[]'::jsonb,'pass',ARRAY[]::text[]
+        )
+      `);
+      await engine.putPage('synthetic-mapping-page', { type: 'concept', title: 'Synthetic mapping page', compiled_truth: '', timeline: '' });
+      const page = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE source_id='default' AND slug='synthetic-mapping-page'`,
+      );
+      const insert = (ordinal: number, start: string, end: string) => engine.executeRaw(`
+        INSERT INTO conversion_manifest_mappings
+          (receipt_id,mapping_ordinal,source_range,derived_page_id,derived_source_id,derived_page_slug,chunk_start,chunk_end)
+        VALUES ('00000000-0000-4000-8000-000000000020',${ordinal},'{}'::jsonb,${page[0].id},'default','synthetic-mapping-page',${start},${end})
+      `);
+      await insert(0, 'NULL', 'NULL');
+      await expect(insert(1, 'NULL', '1')).rejects.toBeDefined();
+      await expect(insert(2, '0', 'NULL')).rejects.toBeDefined();
+      await insert(3, '0', '1');
+      await expect(insert(4, '-1', '1')).rejects.toBeDefined();
+      await expect(insert(5, '1', '1')).rejects.toBeDefined();
+      await expect(engine.executeRaw(`DELETE FROM pages WHERE id=${page[0].id}`)).rejects.toBeDefined();
+  });
 
   test('catalog exposes UUID/hash/MIME/idempotency/producer and coverage constraints', async () => {
       const columns = await engine.executeRaw<{ column_name: string; is_nullable: string }>(

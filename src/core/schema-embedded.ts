@@ -1456,7 +1456,7 @@ CREATE TABLE IF NOT EXISTS conversion_manifests (
   idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 128 AND idempotency_key ~ '^[A-Za-z0-9._:-]+\$'),
   request_hash TEXT NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}\$'),
   producer_kind TEXT NOT NULL CHECK(producer_kind IN ('local_cli','stdio_mcp','oauth_client','internal_adapter')),
-  producer_id TEXT NULL CHECK((producer_kind = 'oauth_client' AND producer_id ~ '^[A-Za-z0-9._:-]+\$' AND length(producer_id) BETWEEN 1 AND 255) OR (producer_kind <> 'oauth_client' AND producer_id IS NULL)),
+  producer_id TEXT NULL CHECK((producer_kind = 'oauth_client' AND producer_id IS NOT NULL AND producer_id ~ '^[A-Za-z0-9._:-]+\$' AND length(producer_id) BETWEEN 1 AND 255) OR (producer_kind <> 'oauth_client' AND producer_id IS NULL)),
   adapter_kind TEXT NOT NULL CHECK(length(adapter_kind) BETWEEN 1 AND 64),
   source_visual_kind TEXT NOT NULL CHECK(source_visual_kind IN ('text','scan','image','mixed','unknown')),
   converter TEXT NOT NULL CHECK(length(converter) BETWEEN 1 AND 128),
@@ -1521,7 +1521,7 @@ CREATE TABLE IF NOT EXISTS conversion_manifest_mappings (
   chunk_end INTEGER NULL,
   PRIMARY KEY(receipt_id,mapping_ordinal),
   CONSTRAINT conversion_mapping_page_source_fk FOREIGN KEY(derived_page_id,derived_source_id) REFERENCES pages(id,source_id) ON DELETE RESTRICT,
-  CONSTRAINT conversion_mapping_chunk_bounds CHECK((chunk_start IS NULL AND chunk_end IS NULL) OR (chunk_start>=0 AND chunk_end>chunk_start))
+  CONSTRAINT conversion_mapping_chunk_bounds CHECK((chunk_start IS NULL AND chunk_end IS NULL) OR (chunk_start IS NOT NULL AND chunk_end IS NOT NULL AND chunk_start>=0 AND chunk_end>chunk_start))
 );
 
 CREATE OR REPLACE FUNCTION conversion_evidence_immutable() RETURNS trigger
