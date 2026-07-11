@@ -97,6 +97,16 @@ describe('fixContent', () => {
     expect(fixed).toContain('# Title');
   });
 
+  test('preserves a normal document ending in a fenced example', () => {
+    const input = '# Format Guide\n\n## Example\n\n```yaml\nkind: Example\n```\n';
+    expect(fixContent(input)).toBe(input);
+  });
+
+  test('preserves multiple fenced examples', () => {
+    const input = '# Examples\n\n```json\n{"ok":true}\n```\n\n```yaml\nok: true\n```\n';
+    expect(fixContent(input)).toBe(input);
+  });
+
   test('cleans up excessive blank lines after fix', () => {
     const input = 'Of course. Here is the brain page.\n\n\n\n# Title\n\nContent.';
     const fixed = fixContent(input);
