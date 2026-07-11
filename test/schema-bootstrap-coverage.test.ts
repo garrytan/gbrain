@@ -184,7 +184,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
       ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
       DROP INDEX IF EXISTS idx_pages_source_id;
-      ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
       DROP TABLE IF EXISTS sources CASCADE;
 
       DROP INDEX IF EXISTS idx_links_source;
@@ -234,7 +234,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS idx_files_source_id;
       DROP INDEX IF EXISTS idx_files_page_id;
-      ALTER TABLE files DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS source_id CASCADE;
       ALTER TABLE files DROP COLUMN IF EXISTS page_id;
 
       DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
@@ -305,7 +305,7 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
       ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
       DROP INDEX IF EXISTS idx_pages_source_id;
-      ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
       DROP TABLE IF EXISTS sources CASCADE;
       DROP INDEX IF EXISTS idx_links_source;
       DROP INDEX IF EXISTS idx_links_origin;

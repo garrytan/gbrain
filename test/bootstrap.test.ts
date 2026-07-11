@@ -59,7 +59,7 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
         ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
         ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
         DROP INDEX IF EXISTS idx_pages_source_id;
-        ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+        ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
         DROP TABLE IF EXISTS sources CASCADE;
       `);
 
@@ -113,7 +113,7 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
         ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
         ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
         DROP INDEX IF EXISTS idx_pages_source_id;
-        ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+        ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
         DROP TABLE IF EXISTS sources CASCADE;
         ALTER TABLE links DROP CONSTRAINT IF EXISTS links_resolution_type_check;
         ALTER TABLE links DROP COLUMN IF EXISTS resolution_type;
