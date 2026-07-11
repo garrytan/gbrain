@@ -292,6 +292,41 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
     expect(banked).not.toContain('notes/bad.md');
   }, 60_000);
 
+  test('source-scoped no-op sync refreshes last_sync_at without advancing last_commit', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    const sid = 'srcNoopFreshness';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      [sid, sid, repoPath],
+    );
+
+    const first = await performSync(engine, { repoPath, sourceId: sid, full: true, noPull: true, noEmbed: true });
+    expect(['first_sync', 'synced']).toContain(first.status);
+
+    const beforeRows = await engine.executeRaw<{ last_commit: string | null; last_sync_at: string | Date | null }>(
+      `SELECT last_commit, last_sync_at FROM sources WHERE id = $1`, [sid],
+    );
+    const anchoredCommit = beforeRows[0].last_commit!;
+    expect(anchoredCommit).toBeTruthy();
+
+    await engine.executeRaw(
+      `UPDATE sources SET last_sync_at = TIMESTAMPTZ '2000-01-01T00:00:00Z' WHERE id = $1`,
+      [sid],
+    );
+
+    const noop = await performSync(engine, { repoPath, sourceId: sid, noPull: true, noEmbed: true });
+    expect(noop.status).toBe('up_to_date');
+
+    const afterRows = await engine.executeRaw<{ last_commit: string | null; last_sync_at: string | Date | null }>(
+      `SELECT last_commit, last_sync_at FROM sources WHERE id = $1`, [sid],
+    );
+    expect(afterRows[0].last_commit).toBe(anchoredCommit);
+    expect(new Date(String(afterRows[0].last_sync_at)).getTime()).toBeGreaterThan(
+      Date.parse('2000-01-02T00:00:00Z'),
+    );
+  }, 60_000);
+
   // ── F. Codex #3: file added in range but deleted from disk → skip, not block
   test('[Codex #3] vanished-on-disk added file is skipped, not a failure', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
