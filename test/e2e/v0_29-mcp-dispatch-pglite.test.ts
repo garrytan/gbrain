@@ -62,6 +62,16 @@ beforeAll(async () => {
     weight: computeEmotionalWeight({ tags: r.tags, takes: r.takes }),
   }));
   await engine.setEmotionalWeightBatch(rows);
+
+  await engine.putPage('future/routine', {
+    type: 'note',
+    title: 'Routine future page',
+    compiled_truth: 'No structured salience signal.',
+  });
+  await engine.executeRaw(
+    `UPDATE pages SET effective_date = now() + interval '30 days'
+      WHERE slug = 'future/routine'`,
+  );
 });
 
 afterAll(async () => {
@@ -83,6 +93,27 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
     expect(rows.length).toBeGreaterThan(0);
     // Wedding pages should be at or near the top (max tag-emotion boost).
     expect(rows[0].slug).toMatch(/^personal\/wedding\//);
+  });
+
+  test('get_recent_salience honors include_future through MCP dispatch', async () => {
+    const hidden = await dispatchToolCall(engine, 'get_recent_salience', {
+      days: 7,
+      slugPrefix: 'future/',
+      recency_bias: 'on',
+    }, { remote: true });
+    const included = await dispatchToolCall(engine, 'get_recent_salience', {
+      days: 7,
+      slugPrefix: 'future/',
+      recency_bias: 'on',
+      include_future: true,
+    }, { remote: true });
+
+    expect(hidden.isError).toBeFalsy();
+    expect(included.isError).toBeFalsy();
+    expect(JSON.parse(hidden.content[0].text)).toEqual([]);
+    const rows = JSON.parse(included.content[0].text);
+    expect(rows.map((row: { slug: string }) => row.slug)).toEqual(['future/routine']);
+    expect(Number.isFinite(rows[0].score)).toBe(true);
   });
 
   test('find_anomalies returns cohort outliers via the MCP dispatch path', async () => {

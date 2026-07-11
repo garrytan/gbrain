@@ -5733,8 +5733,10 @@ export class PostgresEngine implements BrainEngine {
     const days = Math.max(0, opts.days ?? 14);
     const limit = clampSearchLimit(opts.limit, 20, 100);
     const slugPrefix = opts.slugPrefix;
+    const includeFuture = opts.includeFuture === true;
     // Compute the boundary in JS so the SQL is identical across engines (eng review D5).
     const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+    const nowIso = new Date().toISOString();
     // Escape LIKE meta for the optional prefix match.
     const prefixCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
@@ -5771,6 +5773,17 @@ export class PostgresEngine implements BrainEngine {
         FROM pages p
         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
        WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
+         AND p.deleted_at IS NULL
+         AND (
+           ${includeFuture}
+           OR p.effective_date IS NULL
+           OR p.effective_date <= ${nowIso}::timestamptz
+           OR p.emotional_weight > 0
+           OR EXISTS (
+             SELECT 1 FROM takes signal_take
+              WHERE signal_take.page_id = p.id AND signal_take.active = TRUE
+           )
+         )
          ${prefixCondition}
        GROUP BY p.id
        ORDER BY score DESC

@@ -14,22 +14,26 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import type { SalienceOpts } from '../core/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
-interface RunOpts {
+export interface SalienceRunOpts {
   days?: number;
   limit?: number;
   slugPrefix?: string;
+  recencyBias?: 'flat' | 'on';
+  includeFuture?: boolean;
   json?: boolean;
 }
 
-function parseArgs(args: string[]): RunOpts | { help: true } {
-  const opts: RunOpts = {};
+export function parseSalienceArgs(args: string[]): SalienceRunOpts | { help: true } {
+  const opts: SalienceRunOpts = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--help' || a === '-h') return { help: true };
     if (a === '--json') { opts.json = true; continue; }
+    if (a === '--include-future') { opts.includeFuture = true; continue; }
     if (a === '--days') {
       const n = parseInt(args[++i] ?? '', 10);
       if (Number.isFinite(n) && n >= 0) opts.days = n;
@@ -45,8 +49,35 @@ function parseArgs(args: string[]): RunOpts | { help: true } {
       if (v) opts.slugPrefix = v;
       continue;
     }
+    if (a === '--recency-bias') {
+      const value = args[++i];
+      if (value === 'flat' || value === 'on') opts.recencyBias = value;
+      continue;
+    }
   }
   return opts;
+}
+
+export function buildSalienceQueryArgs(parsed: SalienceRunOpts): {
+  engine: SalienceOpts;
+  remote: Record<string, unknown>;
+} {
+  return {
+    engine: {
+      days: parsed.days,
+      limit: parsed.limit,
+      slugPrefix: parsed.slugPrefix,
+      recency_bias: parsed.recencyBias,
+      includeFuture: parsed.includeFuture,
+    },
+    remote: {
+      days: parsed.days,
+      limit: parsed.limit,
+      slugPrefix: parsed.slugPrefix,
+      recency_bias: parsed.recencyBias,
+      include_future: parsed.includeFuture,
+    },
+  };
 }
 
 const HELP = `Usage: gbrain salience [options]
@@ -59,16 +90,19 @@ Options:
   --limit N           Max results (default 20, capped at 100)
   --kind PREFIX       Slug-prefix filter (e.g. personal, wiki/people)
   --slug-prefix P     Same as --kind
+  --recency-bias MODE Recency scoring: flat (default) or on
+  --include-future    Include future-effective pages without salience signals
   --json              JSON output for agents
   --help, -h          Show this help
 `;
 
 export async function runSalience(engine: BrainEngine, args: string[]): Promise<void> {
-  const parsed = parseArgs(args);
+  const parsed = parseSalienceArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
     return;
   }
+  const queryArgs = buildSalienceQueryArgs(parsed);
 
   // v0.31.1 (Issue #734): on thin-client installs, route the engine call
   // through the remote `get_recent_salience` MCP op. Output format is
@@ -77,18 +111,15 @@ export async function runSalience(engine: BrainEngine, args: string[]): Promise<
   let rows;
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
-    const raw = await callRemoteTool(cfg!, 'get_recent_salience', {
-      days: parsed.days,
-      limit: parsed.limit,
-      slugPrefix: parsed.slugPrefix,
-    }, { timeoutMs: 30_000 });
+    const raw = await callRemoteTool(
+      cfg!,
+      'get_recent_salience',
+      queryArgs.remote,
+      { timeoutMs: 30_000 },
+    );
     rows = unpackToolResult<Awaited<ReturnType<BrainEngine['getRecentSalience']>>>(raw);
   } else {
-    rows = await engine.getRecentSalience({
-      days: parsed.days,
-      limit: parsed.limit,
-      slugPrefix: parsed.slugPrefix,
-    });
+    rows = await engine.getRecentSalience(queryArgs.engine);
   }
   if (parsed.json) {
     console.log(JSON.stringify(rows, null, 2));

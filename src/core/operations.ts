@@ -3282,6 +3282,11 @@ const get_recent_salience: Operation = {
         "                     ('what's been salient lately' vs 'what matters\n" +
         "                     in this brain regardless of when').",
     },
+    include_future: {
+      type: 'boolean',
+      description:
+        'Include future-effective pages even when they have no emotional weight or active takes. Default false.',
+    },
   },
   handler: async (ctx, p) => {
     const recencyBias = p.recency_bias === 'on' ? 'on' : 'flat';
@@ -3290,6 +3295,7 @@ const get_recent_salience: Operation = {
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
       recency_bias: recencyBias,
+      includeFuture: p.include_future === true,
     });
   },
   cliHints: { name: 'salience' },

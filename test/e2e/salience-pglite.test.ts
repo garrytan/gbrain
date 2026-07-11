@@ -64,6 +64,44 @@ beforeAll(async () => {
     weight: computeEmotionalWeight({ tags: r.tags, takes: r.takes }),
   }));
   await engine.setEmotionalWeightBatch(writes);
+
+  // Eligibility fixture: zero-signal past/today pages remain useful, while
+  // a routine future page is hidden unless requested. Future pages with an
+  // explicit emotional/take signal remain eligible. Soft-deleted rows never
+  // surface, including under includeFuture.
+  for (const slug of [
+    'eligibility/past-zero',
+    'eligibility/today-zero',
+    'eligibility/future-zero',
+    'eligibility/future-emotional',
+    'eligibility/future-take',
+    'eligibility/deleted',
+  ]) {
+    await engine.putPage(slug, {
+      type: 'note',
+      title: slug,
+      compiled_truth: 'salience eligibility fixture',
+    });
+  }
+  await engine.executeRaw(
+    `UPDATE pages
+        SET effective_date = CASE slug
+          WHEN 'eligibility/past-zero' THEN now() - interval '1 day'
+          WHEN 'eligibility/today-zero' THEN now()
+          ELSE now() + interval '30 days'
+        END
+      WHERE slug LIKE 'eligibility/%'`,
+  );
+  await engine.executeRaw(
+    `UPDATE pages SET emotional_weight = 0.1
+      WHERE slug = 'eligibility/future-emotional'`,
+  );
+  await engine.executeRaw(
+    `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+       SELECT id, 1, 'future signal', 'take', 'self', 0.7, TRUE
+         FROM pages WHERE slug = 'eligibility/future-take'`,
+  );
+  await engine.softDeletePage('eligibility/deleted');
 });
 
 afterAll(async () => {
@@ -111,5 +149,37 @@ describe('v0.29 E2E — getRecentSalience (Garry test)', () => {
   test('empty-window slugPrefix returns []', async () => {
     const rows = await engine.getRecentSalience({ days: 7, slugPrefix: 'nope/does-not-exist/' });
     expect(rows).toEqual([]);
+  });
+
+  test('default excludes only future zero-signal and soft-deleted fixtures', async () => {
+    const rows = await engine.getRecentSalience({
+      days: 7,
+      limit: 20,
+      slugPrefix: 'eligibility/',
+      recency_bias: 'on',
+    });
+    const slugs = new Set(rows.map(row => row.slug));
+    expect(slugs).toEqual(new Set([
+      'eligibility/past-zero',
+      'eligibility/today-zero',
+      'eligibility/future-emotional',
+      'eligibility/future-take',
+    ]));
+    expect(rows.every(row => Number.isFinite(row.score))).toBe(true);
+  });
+
+  test('includeFuture admits routine future pages but never deleted pages', async () => {
+    const rows = await engine.getRecentSalience({
+      days: 7,
+      limit: 20,
+      slugPrefix: 'eligibility/',
+      recency_bias: 'on',
+      includeFuture: true,
+    });
+    const slugs = new Set(rows.map(row => row.slug));
+    expect(slugs.has('eligibility/future-zero')).toBe(true);
+    expect(slugs.has('eligibility/deleted')).toBe(false);
+    expect(rows).toHaveLength(5);
+    expect(rows.every(row => Number.isFinite(row.score))).toBe(true);
   });
 });

@@ -160,8 +160,26 @@ describe('buildRecencyComponentSql', () => {
       decayMap: mini,
       fallback: DEFAULT_FALLBACK,
     });
-    expect(sql).toContain('EXTRACT(EPOCH FROM (NOW() - p.updated_at)) / 86400.0');
-    expect(sql).toContain('1.5 * 14.0 / (14.0 + EXTRACT(EPOCH');
+    expect(sql).toContain(
+      'GREATEST(0.0, EXTRACT(EPOCH FROM (NOW() - p.updated_at)) / 86400.0)',
+    );
+    expect(sql).toContain('1.5 * 14.0 / (14.0 + GREATEST(0.0, EXTRACT(EPOCH');
+  });
+
+  test('clamps every non-zero branch and fallback denominator', () => {
+    const sql = buildRecencyComponentSql({
+      slugColumn: 'p.slug',
+      dateExpr: 'COALESCE(p.effective_date, p.updated_at)',
+      decayMap: {
+        'daily/': { halflifeDays: 14, coefficient: 1.5 },
+        'media/': { halflifeDays: 90, coefficient: 0.5 },
+        'concepts/': { halflifeDays: 0, coefficient: 0 },
+      },
+      fallback: { halflifeDays: 30, coefficient: 1 },
+    });
+    const clamps = sql.match(/GREATEST\(0\.0, EXTRACT\(EPOCH/g) ?? [];
+    expect(clamps).toHaveLength(3);
+    expect(sql).not.toMatch(/\+ EXTRACT\(EPOCH/);
   });
 
   test('NowExpr.fixed is escaped (single-quote doubling) and timestamptz-cast', () => {

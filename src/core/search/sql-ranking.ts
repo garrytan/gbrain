@@ -256,7 +256,11 @@ export function buildRecencyComponentSql(opts: {
   const { slugColumn, dateExpr, decayMap, fallback } = opts;
   const now = opts.now ?? { kind: 'now' };
   const nowSql = nowExprToSql(now);
-  const daysOldSql = `EXTRACT(EPOCH FROM (${nowSql} - ${dateExpr})) / 86400.0`;
+  // Effective dates can legitimately be in the future (calendar events,
+  // plans). Clamp their age to zero so recency stays finite and never turns
+  // into an amplified or singular denominator.
+  const daysOldSql =
+    `GREATEST(0.0, EXTRACT(EPOCH FROM (${nowSql} - ${dateExpr})) / 86400.0)`;
 
   const prefixes = Object.keys(decayMap).sort((a, b) => b.length - a.length);
   const branches: string[] = [];

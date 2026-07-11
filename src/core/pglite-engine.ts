@@ -5607,8 +5607,10 @@ export class PGLiteEngine implements BrainEngine {
     const limit = clampSearchLimit(opts.limit, 20, 100);
     const slugPrefix = opts.slugPrefix;
     const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+    const nowIso = new Date().toISOString();
+    const includeFuture = opts.includeFuture === true;
 
-    const params: unknown[] = [boundaryIso];
+    const params: unknown[] = [boundaryIso, includeFuture, nowIso];
     let prefixCondition = '';
     if (slugPrefix) {
       const escaped = slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
@@ -5649,6 +5651,17 @@ export class PGLiteEngine implements BrainEngine {
          FROM pages p
          LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
         WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz
+          AND p.deleted_at IS NULL
+          AND (
+            $2::boolean
+            OR p.effective_date IS NULL
+            OR p.effective_date <= $3::timestamptz
+            OR p.emotional_weight > 0
+            OR EXISTS (
+              SELECT 1 FROM takes signal_take
+               WHERE signal_take.page_id = p.id AND signal_take.active = TRUE
+            )
+          )
           ${prefixCondition}
         GROUP BY p.id
         ORDER BY score DESC

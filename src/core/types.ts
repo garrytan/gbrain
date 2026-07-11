@@ -429,6 +429,12 @@ export interface SalienceOpts {
    * Default preserves v0.29.0 ranking; 'on' is opt-in.
    */
   recency_bias?: 'flat' | 'on';
+  /**
+   * Include pages whose effective date is in the future even when they have
+   * no structured salience signal. By default, future-effective pages are
+   * admitted only when they carry emotional weight or an active take.
+   */
+  includeFuture?: boolean;
 }
 
 export interface SalienceResult {

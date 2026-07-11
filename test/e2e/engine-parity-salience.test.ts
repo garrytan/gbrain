@@ -49,6 +49,44 @@ async function seedFixture(engine: BrainEngine): Promise<void> {
         SET updated_at = now() - interval '1 day' - (random() * interval '29 days')
       WHERE slug LIKE 'notes/random-%'`
   );
+  await engine.executeRaw(
+    `UPDATE pages SET emotional_weight = 0.5
+      WHERE slug LIKE 'personal/wedding/%'`,
+  );
+
+  for (const slug of [
+    'eligibility/past-zero',
+    'eligibility/today-zero',
+    'eligibility/future-zero',
+    'eligibility/future-emotional',
+    'eligibility/future-take',
+    'eligibility/deleted',
+  ]) {
+    await engine.putPage(slug, {
+      type: 'note',
+      title: slug,
+      compiled_truth: 'salience parity fixture',
+    });
+  }
+  await engine.executeRaw(
+    `UPDATE pages
+        SET effective_date = CASE slug
+          WHEN 'eligibility/past-zero' THEN now() - interval '1 day'
+          WHEN 'eligibility/today-zero' THEN now()
+          ELSE now() + interval '30 days'
+        END
+      WHERE slug LIKE 'eligibility/%'`,
+  );
+  await engine.executeRaw(
+    `UPDATE pages SET emotional_weight = 0.1
+      WHERE slug = 'eligibility/future-emotional'`,
+  );
+  await engine.executeRaw(
+    `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+       SELECT id, 1, 'future signal', 'take', 'self', 0.7, TRUE
+         FROM pages WHERE slug = 'eligibility/future-take'`,
+  );
+  await engine.softDeletePage('eligibility/deleted');
 }
 
 describeBoth('v0.29 engine parity — getRecentSalience', () => {
@@ -86,6 +124,27 @@ describeBoth('v0.29 engine parity — getRecentSalience', () => {
     const postgresWedding = new Set(postgresRows.filter(r => r.slug.startsWith('personal/wedding/')).map(r => r.slug));
     expect(pgliteWedding.size).toBe(postgresWedding.size);
     for (const s of pgliteWedding) expect(postgresWedding.has(s)).toBe(true);
+  });
+
+  test('future eligibility, deletion, finite scoring, and explicit inclusion match', async () => {
+    for (const includeFuture of [false, true]) {
+      const opts = {
+        days: 7,
+        limit: 20,
+        slugPrefix: 'eligibility/',
+        recency_bias: 'on' as const,
+        includeFuture,
+      };
+      const pgliteRows = await pglite.getRecentSalience(opts);
+      const postgresRows = await postgres.getRecentSalience(opts);
+      const pgliteSlugs = pgliteRows.map(row => row.slug).sort();
+      const postgresSlugs = postgresRows.map(row => row.slug).sort();
+      expect(pgliteSlugs).toEqual(postgresSlugs);
+      expect(pgliteRows.every(row => Number.isFinite(row.score))).toBe(true);
+      expect(postgresRows.every(row => Number.isFinite(row.score))).toBe(true);
+      expect(pgliteSlugs).not.toContain('eligibility/deleted');
+      expect(pgliteSlugs.includes('eligibility/future-zero')).toBe(includeFuture);
+    }
   });
 });
 
