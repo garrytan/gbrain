@@ -372,7 +372,7 @@ function firstErrorText(run: ConsoleRun, report: DreamCycleReport | null): strin
   return line ?? '';
 }
 
-function describeDreamRun(run: ConsoleRun): {
+export function describeDreamRun(run: ConsoleRun): {
   headline: string;
   diagnosis: string;
   actions: string[];
@@ -389,10 +389,17 @@ function describeDreamRun(run: ConsoleRun): {
   const childOutcomes = asArray(synthDetails.child_outcomes) as Array<{ status?: string; jobId?: number }>;
   const failedChildren = childOutcomes.filter(item => item.status && item.status !== 'completed').length;
   const isDryRun = run.command.includes('--dry-run') || synthDetails.dryRun === true;
-  const locked = report?.reason === 'cycle_already_running' || /already running|locked/i.test(text);
+  // A completed report can legitimately mention lock maintenance in phase logs.
+  // Only use text matching when there is no structured report to classify.
+  const locked = report?.reason === 'cycle_already_running'
+    || (!report && /(?:cycle[_ ]already[_ ]running|could not acquire cycle lock)/i.test(text));
   const duration = report?.duration_ms ?? run.durationMs ?? 0;
   const phaseCount = report?.phases?.length ?? 0;
   const pagesWritten = Number(totals.synth_pages_written ?? synthDetails.pages_written ?? 0);
+  const patternsWritten = Number(totals.patterns_written ?? 0);
+  const pagesSynced = Number(totals.pages_synced ?? 0);
+  const pagesEmbedded = Number(totals.pages_embedded ?? 0);
+  const takesWritten = Number(totals.consolidate_takes_written ?? 0);
   const transcriptsProcessed = Number(totals.transcripts_processed ?? synthDetails.transcripts_processed ?? 0);
   const transcriptsDiscovered = Number(synthDetails.transcripts_discovered ?? 0);
 
@@ -433,6 +440,7 @@ function describeDreamRun(run: ConsoleRun): {
   const details: string[] = [
     `检查阶段: ${phaseCount}`,
     `耗时约 ${(duration / 1000).toFixed(1)} 秒`,
+    `run id: ${run.id}`,
   ];
   if (transcriptsDiscovered > 0) details.push(`发现 transcript: ${transcriptsDiscovered}`);
   if (transcriptsProcessed > 0 || synth) details.push(`进入综合处理: ${transcriptsProcessed}`);
@@ -456,7 +464,6 @@ function describeDreamRun(run: ConsoleRun): {
     outputs.push(`生成 ${pagesWritten} 个知识页。`);
     headline = `Dream 已生成 ${pagesWritten} 个知识点/页面`;
   } else if (!isDryRun && synth) {
-    outputs.push('没有生成新的知识页。');
     if (failedChildren > 0) {
       diagnosis = '这不是操作方式问题，而是综合阶段的子任务失败、超时或被取消，导致没有可收集的 put_page 写入。';
     } else if (transcriptsProcessed === 0) {
@@ -465,6 +472,16 @@ function describeDreamRun(run: ConsoleRun): {
   } else if (isDryRun && synth) {
     const verdicts = asArray(synthDetails.verdicts) as Array<{ worth?: boolean }>;
     outputs.push(`预演发现 ${transcriptsDiscovered} 份输入，其中 ${verdicts.filter(v => v?.worth === true).length} 份可能需要综合。`);
+  }
+
+  if (!isDryRun && patternsWritten > 0) outputs.push(`写入或更新 ${patternsWritten} 个模式知识页。`);
+  if (!isDryRun && takesWritten > 0) outputs.push(`形成 ${takesWritten} 条长期知识判断。`);
+  if (!isDryRun && pagesSynced > 0) outputs.push(`同步 ${pagesSynced} 个新增或有变化的页面。`);
+  if (!isDryRun && pagesEmbedded > 0) outputs.push(`为 ${pagesEmbedded} 个内容块更新搜索索引。`);
+
+  const totalKnowledgeUpdates = pagesWritten + patternsWritten + takesWritten;
+  if (!isDryRun && totalKnowledgeUpdates > 0 && pagesWritten === 0) {
+    headline = `Dream 已完成，产生 ${totalKnowledgeUpdates} 项知识更新`;
   }
 
   if (run.status === 'failed') {
@@ -533,9 +550,21 @@ function phaseProgressFromRun(run: ConsoleRun | null): { completed: Set<string>;
   return { completed, active, report };
 }
 
+export function isKnowledgeJourneyComplete(run: ConsoleRun | null): boolean {
+  if (!run || run.status !== 'completed' || run.command.includes('--dry-run')) return false;
+  const report = parseDreamReport(run);
+  const embedStatus = report?.phases?.find(phase => phase.phase === 'embed')?.status;
+  return !!report
+    && report.status !== 'failed'
+    && !report.reason
+    && (embedStatus === 'ok' || embedStatus === 'skipped')
+    && (report.phases?.length ?? 0) > 1;
+}
+
 function KnowledgeJourney({ run }: { run: ConsoleRun | null }) {
   const progress = phaseProgressFromRun(run);
   const running = run?.status === 'running' || run?.status === 'queued';
+  const successfulRun = isKnowledgeJourneyComplete(run);
   return (
     <section className={`dream-journey ${running ? 'is-running' : ''}`} aria-label="知识整理进度">
       <div className="dream-journey-head">
@@ -551,7 +580,7 @@ function KnowledgeJourney({ run }: { run: ConsoleRun | null }) {
           const hasWarning = phaseStates.some(status => status === 'warn' || status === 'error');
           const isActive = !!progress.active && step.phases.includes(progress.active as never);
           const isDone = step.phases.some(phase => progress.completed.has(phase));
-          const state: JourneyState = hasWarning ? 'warning' : isActive ? 'active' : isDone ? 'done' : 'idle';
+          const state: JourneyState = successfulRun ? 'done' : hasWarning ? 'warning' : isActive ? 'active' : isDone ? 'done' : 'idle';
           return (
             <div className={`dream-journey-step ${state}`} key={step.key}>
               <div className="dream-step-marker" aria-hidden="true">{state === 'done' ? '✓' : index + 1}</div>
@@ -565,6 +594,53 @@ function KnowledgeJourney({ run }: { run: ConsoleRun | null }) {
       </div>
     </section>
   );
+}
+
+function phaseStatusZh(status: string): string {
+  return ({ ok: '完成', warn: '已完成，有提醒', skipped: '已跳过', fail: '失败', error: '失败' } as Record<string, string>)[status] ?? status;
+}
+
+export function phaseSummaryZh(phase: DreamPhaseReport): string {
+  const details = phase.details ?? {};
+  const number = (key: string) => Number(details[key] ?? 0);
+  const baseAction = PHASE_USER_ACTIONS[phase.phase] ?? PHASE_LABELS[phase.phase] ?? '完成本阶段处理';
+
+  if (phase.status === 'skipped') {
+    if (/active pack does not declare/i.test(phase.summary ?? '')) {
+      return `当前启用的 Skill 包未开放“${PHASE_LABELS[phase.phase] ?? phase.phase}”，本轮已安全跳过。`;
+    }
+    if (phase.phase === 'synthesize' && /cooldown/i.test(phase.summary ?? '')) {
+      return '近期已经整理过相同内容，本轮处于冷却期，已避免重复生成。';
+    }
+    return `本轮已跳过：${baseAction}`;
+  }
+
+  switch (phase.phase) {
+    case 'lint':
+      return `已检查内容规范，修复 ${number('fixed')} 项，仍有 ${Math.max(0, number('issues') - number('fixed'))} 项需要后续处理。`;
+    case 'backlinks':
+      return number('gaps') > 0
+        ? `发现 ${number('gaps')} 条缺失的反向链接；本轮只检查，没有改写原文。`
+        : '未发现缺失的反向链接。';
+    case 'sync':
+      return `已同步资料：新增 ${number('added')} 项，更新 ${number('modified')} 项，删除 ${number('deleted')} 项。`;
+    case 'extract':
+      return `已建立 ${number('linksCreated')} 条知识链接和 ${number('timelineCreated')} 条时间线记录。`;
+    case 'extract_facts':
+      return `已检查 ${number('pagesScanned')} 个页面，核对并写入 ${number('factsInserted')} 条事实。`;
+    case 'resolve_symbol_edges':
+      return number('chunks_walked') > 0
+        ? `已检查 ${number('chunks_walked')} 个内容块，确认 ${number('edges_resolved')} 条关系，${number('edges_ambiguous')} 条仍需消歧。`
+        : '当前没有需要解析的知识关系。';
+    case 'embed':
+      return `已为 ${number('embedded')} 个内容块更新搜索索引，${number('skipped')} 个内容块已有有效索引。`;
+    case 'orphans':
+      return `发现 ${number('total_orphans')} 个暂时缺少关联的页面，共检查 ${number('total_pages')} 个页面。`;
+  }
+
+  if (phase.status === 'warn') return `已完成但有待处理项：${baseAction}`;
+  if (phase.status === 'fail' || phase.status === 'error') return `本阶段执行失败：${baseAction}。请展开原始日志查看技术原因。`;
+  return `已完成：${baseAction}`;
 }
 
 function DreamTechnicalDetails({ run }: { run: ConsoleRun }) {
@@ -585,10 +661,10 @@ function DreamTechnicalDetails({ run }: { run: ConsoleRun }) {
               return (
                 <tr key={phase.phase}>
                   <td><code>{phase.phase}</code></td>
-                  <td><span className={`pm-pill run-${phase.status}`}>{phase.status}</span></td>
+                  <td><span className={`pm-pill run-${phase.status}`}>{phaseStatusZh(phase.status)}</span></td>
                   <td>{String(details.model_id ?? details.verdict_model_id ?? '—')}</td>
                   <td>{tokens > 0 ? tokens.toLocaleString() : '—'}</td>
-                  <td>{phase.summary ?? PHASE_LABELS[phase.phase] ?? '—'}</td>
+                  <td>{phaseSummaryZh(phase)}</td>
                 </tr>
               );
             })}
@@ -672,7 +748,9 @@ function DreamOpsDiagnostics({
       <div className="dream-ops-head">
         <div>
           <h3>运行诊断</h3>
-          {stuckReason ? <p className="pm-warning">{stuckReason}</p> : <p className="pm-hint">Worker、锁和 subagent 队列状态会在这里同步显示。</p>}
+          {stuckReason
+            ? <p className="pm-warning">{stuckReason}</p>
+            : <p className="pm-hint">一键整理和会议整理会在需要时自动启动 Worker，通常不需要手动操作。这里用于故障诊断和恢复。</p>}
         </div>
         <div className="dream-run-actions">
           {supervisor?.running ? (
@@ -852,12 +930,22 @@ function DreamRunPanel({
       return;
     }
     try {
+      const effectiveDryRun = dryRunOverride ?? dryRun;
+      const needsSubagentWorker = !effectiveDryRun && (
+        runMode === 'cycle'
+        || runMode === 'meeting'
+        || (runMode === 'advanced' && (phase === 'synthesize' || phase === 'patterns'))
+      );
+      if (needsSubagentWorker && !supervisor?.running) {
+        await api.startSupervisor();
+        onDone?.();
+      }
       const res = await api.startDreamRun({
         preset: runMode === 'meeting' ? 'meeting' : runMode === 'cycle' ? 'full' : undefined,
         phase: runMode === 'advanced' ? phase : undefined,
         sourceId: sourceId.trim() || undefined,
         maxPages: maxPages.trim() ? Number(maxPages) : undefined,
-        dryRun: dryRunOverride ?? dryRun,
+        dryRun: effectiveDryRun,
         input: inputEnabled ? input.trim() || undefined : undefined,
         date: dateEnabled ? date.trim() || undefined : undefined,
         from: dateEnabled ? from.trim() || undefined : undefined,
@@ -1079,7 +1167,6 @@ export function DreamOverviewPage() {
           <h1>让知识自己长起来</h1>
           <p>AI 会阅读最近新增的资料，理解内容、建立联系、形成长期记忆，并更新搜索能力。</p>
           <div className="dream-hero-actions">
-            <button className="pm-primary dream-primary-action" onClick={() => document.getElementById('dream-launcher')?.scrollIntoView({ behavior: 'smooth' })}>开始整理</button>
             <button className="pm-ghost" onClick={() => void reload()}>刷新状态</button>
           </div>
         </div>
