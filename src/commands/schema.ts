@@ -776,16 +776,17 @@ async function runExplainCmd(args: string[]): Promise<void> {
 
 async function runReviewOrphansCmd(args: string[]): Promise<void> {
   const { json, source } = parseFlags(args);
-  const result = await withConnectedEngine((engine) =>
-    runReviewOrphans(engine, { sourceId: source }),
-  );
+  const result = await withConnectedEngine((engine) => {
+    const ctx = { engine, config: loadConfig(), logger: console, dryRun: false, remote: false, sourceId: source ?? 'default' } as never;
+    return runReviewOrphans(ctx, { sourceId: source ?? 'default' });
+  });
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
     return;
   }
-  console.log(`Orphan pages (no active-pack type match): ${result.orphan_count}`);
+  console.log(`Active-pack conformance gaps: ${result.orphan_count}`);
   for (const o of result.orphans.slice(0, 20)) {
-    console.log(`  ${o.slug}`);
+    console.log(`  ${o.slug} (${o.reason}${o.stored_type ? `: ${o.stored_type}` : ''})`);
   }
   if (result.orphan_count > 20) {
     console.log(`  ... and ${result.orphan_count - 20} more (use --json to see all)`);
@@ -935,7 +936,7 @@ function handleMutationError(err: unknown): never {
 async function runStatsCmd(args: string[]): Promise<void> {
   const { json, source } = parseFlags(args);
   await withConnectedEngine(async (engine) => {
-    const ctx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: source } as never;
+    const ctx = { engine, config: loadConfig(), logger: console, dryRun: false, remote: false, sourceId: source } as never;
     const result = await runStatsCore(ctx, source ? { sourceId: source } : {});
     if (json) {
       console.log(JSON.stringify(result, null, 2));
@@ -945,9 +946,17 @@ async function runStatsCmd(args: string[]): Promise<void> {
     console.log(`Total pages: ${result.aggregate.total_pages}`);
     console.log(`Typed: ${result.aggregate.typed_pages} (${(result.aggregate.coverage * 100).toFixed(1)}%)`);
     console.log(`Untyped: ${result.aggregate.untyped_pages}`);
+    console.log(`Declared by active pack: ${result.aggregate.declared_pages} (${(result.aggregate.declared_coverage * 100).toFixed(1)}%)`);
+    console.log(`Undeclared stored types: ${result.aggregate.undeclared_pages}`);
     if (result.aggregate.by_type.length > 0) {
       console.log(`\nBy type:`);
       for (const t of result.aggregate.by_type) {
+        console.log(`  ${t.type.padEnd(20)} ${t.count}`);
+      }
+    }
+    if (result.aggregate.undeclared_types.length > 0) {
+      console.log(`\nUndeclared types:`);
+      for (const t of result.aggregate.undeclared_types) {
         console.log(`  ${t.type.padEnd(20)} ${t.count}`);
       }
     }

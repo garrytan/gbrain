@@ -69,13 +69,13 @@ async function seedPage(slug: string, opts: { type?: string; sourceId?: string; 
   );
 }
 
-function seedTinyPack(packName: string, types: Array<{ name: string; prefix: string }>): void {
+function seedTinyPack(packName: string, types: Array<{ name: string; prefix: string; aliases?: string[] }>): void {
   const dir = join(tmpDir, packName);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'pack.yaml');
   let body = `api_version: gbrain-schema-pack-v1\nname: ${packName}\nversion: 1.0.0\ndescription: ""\ngbrain_min_version: 0.38.0\nextends: null\nborrow_from: []\npage_types:\n`;
   for (const t of types) {
-    body += `  - name: ${t.name}\n    primitive: entity\n    path_prefixes:\n      - ${t.prefix}\n    aliases: []\n    extractable: false\n    expert_routing: false\n`;
+    body += `  - name: ${t.name}\n    primitive: entity\n    path_prefixes:\n      - ${t.prefix}\n    aliases: [${(t.aliases ?? []).join(', ')}]\n    extractable: false\n    expert_routing: false\n`;
   }
   body += `link_types: []\nfrontmatter_links: []\ntakes_kinds:\n  - fact\n  - take\n  - bet\n  - hunch\nenrichable_types: []\nfiling_rules: []\n`;
   writeFileSync(path, body, 'utf-8');
@@ -236,6 +236,66 @@ describe('runStatsCore — type/untyped split', () => {
       expect(result.aggregate.typed_pages).toBe(1);
       // empty-string type does NOT appear as its own type bucket.
       expect(result.aggregate.by_type.find((t) => t.type === '')).toBeUndefined();
+    });
+  });
+});
+
+describe('runStatsCore — active-pack conformance', () => {
+  it('adds declared/undeclared metrics without changing legacy coverage', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
+      seedTinyPack('tiny', [
+        { name: 'person', prefix: 'people/', aliases: ['researcher'] },
+        { name: 'researcher', prefix: 'researchers/' },
+      ]);
+      await seedPage('people/a', { type: 'person' });
+      await seedPage('researchers/b', { type: 'researcher' });
+      await seedPage('custom/c', { type: 'custom-record' });
+      await seedPage('untyped/d');
+
+      const result = await runStatsCore(ctxOf());
+      expect(result.schema_version).toBe(1);
+      expect(result.aggregate.typed_pages).toBe(3);
+      expect(result.aggregate.coverage).toBe(0.75);
+      expect(result.aggregate.declared_pages).toBe(2);
+      expect(result.aggregate.undeclared_pages).toBe(1);
+      expect(result.aggregate.untyped_pages).toBe(1);
+      expect(result.aggregate.declared_coverage).toBe(0.5);
+      expect(result.aggregate.undeclared_types).toEqual([{ type: 'custom-record', count: 1 }]);
+      expect(
+        result.aggregate.declared_pages +
+        result.aggregate.undeclared_pages +
+        result.aggregate.untyped_pages,
+      ).toBe(result.aggregate.total_pages);
+    });
+  });
+
+  it('treats all nonempty types as undeclared when no pack resolves', async () => {
+    await withEnv({ GBRAIN_SCHEMA_PACK: 'missing-pack' }, async () => {
+      __setPackLocatorForTests(() => null);
+      await seedPage('a', { type: 'person' });
+      await seedPage('b');
+      const result = await runStatsCore(ctxOf());
+      expect(result.pack_identity).toBeNull();
+      expect(result.aggregate.typed_pages).toBe(1);
+      expect(result.aggregate.declared_pages).toBe(0);
+      expect(result.aggregate.undeclared_pages).toBe(1);
+      expect(result.aggregate.declared_coverage).toBe(0);
+      expect(result.aggregate.undeclared_types).toEqual([{ type: 'person', count: 1 }]);
+    });
+  });
+
+  it('computes conformance independently for each federated source', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
+      seedTinyPack('tiny', [{ name: 'person', prefix: 'people/' }]);
+      await seedPage('a', { type: 'person', sourceId: 'src-a' });
+      await seedPage('b', { type: 'custom-record', sourceId: 'src-b' });
+      await seedPage('c', { type: 'custom-record', sourceId: 'src-c' });
+      const result = await runStatsCore(ctxOf(), { sourceIds: ['src-a', 'src-b'] });
+      expect(result.aggregate.total_pages).toBe(2);
+      expect(result.aggregate.declared_pages).toBe(1);
+      expect(result.aggregate.undeclared_pages).toBe(1);
+      expect(result.per_source.find((s) => s.source_id === 'src-a')?.declared_pages).toBe(1);
+      expect(result.per_source.find((s) => s.source_id === 'src-b')?.undeclared_pages).toBe(1);
     });
   });
 });

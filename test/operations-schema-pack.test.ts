@@ -47,7 +47,7 @@ afterEach(() => {
   }
 });
 
-function ctxOf(opts: { remote?: boolean; clientId?: string; sourceId?: string } = {}): OperationContext {
+function ctxOf(opts: { remote?: boolean; clientId?: string; sourceId?: string; allowedSources?: string[] } = {}): OperationContext {
   return {
     engine,
     config: {},
@@ -55,7 +55,9 @@ function ctxOf(opts: { remote?: boolean; clientId?: string; sourceId?: string } 
     dryRun: false,
     remote: opts.remote ?? true,
     sourceId: opts.sourceId,
-    auth: opts.clientId ? { clientId: opts.clientId, scopes: ['admin'] } : undefined,
+    auth: opts.clientId || opts.allowedSources
+      ? { clientId: opts.clientId ?? 'test-client', scopes: ['admin'], allowedSources: opts.allowedSources }
+      : undefined,
   } as unknown as OperationContext;
 }
 
@@ -242,6 +244,46 @@ describe('schema_review_orphans', () => {
     }
     const result = await operationsByName.schema_review_orphans!.handler(ctxOf(), { limit: 2 }) as Record<string, unknown>;
     expect(result.orphan_count).toBe(2);
+  });
+
+  it('uses active-pack semantics and returns a reason without page content', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'mine' }, async () => {
+      const packPath = seedPack('mine');
+      __setPackLocatorForTests((name) => name === 'mine' ? packPath : null);
+      await engine.executeRaw(
+        `INSERT INTO pages (slug, source_id, source_path, type, title, compiled_truth, timeline, content_hash)
+         VALUES
+           ('declared', 'default', 'people/declared.md', 'person', 'd', 'private body', '', ''),
+           ('undeclared', 'default', 'custom/u.md', 'custom-record', 'u', 'private body', '', ''),
+           ('untyped', 'default', 'misc/x.md', '', 'x', 'private body', '', '')`,
+      );
+      const result = await operationsByName.schema_review_orphans!.handler(ctxOf(), {}) as {
+        orphan_count: number;
+        orphans: Array<Record<string, unknown>>;
+      };
+      expect(result.orphan_count).toBe(2);
+      expect(result.orphans).toEqual([
+        { slug: 'undeclared', source_id: 'default', stored_type: 'custom-record', reason: 'undeclared_type' },
+        { slug: 'untyped', source_id: 'default', stored_type: null, reason: 'untyped' },
+      ]);
+      expect(JSON.stringify(result)).not.toContain('private body');
+    });
+  });
+
+  it('honors federated source scope before returning conformance gaps', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('src-a','a'), ('src-b','b'), ('src-c','c')`);
+    for (const source of ['src-a', 'src-b', 'src-c']) {
+      await engine.executeRaw(
+        `INSERT INTO pages (slug, source_id, source_path, type, title, compiled_truth, timeline, content_hash)
+         VALUES ($1, $2, $3, '', $1, '', '', '')`,
+        [`gap-${source}`, source, `${source}/gap.md`],
+      );
+    }
+    const result = await operationsByName.schema_review_orphans!.handler(
+      ctxOf({ allowedSources: ['src-a', 'src-b'] }),
+      {},
+    ) as { orphans: Array<{ source_id: string }> };
+    expect(result.orphans.map((row) => row.source_id).sort()).toEqual(['src-a', 'src-b']);
   });
 });
 

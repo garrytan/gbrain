@@ -4540,7 +4540,7 @@ const list_schema_packs: Operation = {
 
 const schema_stats: Operation = {
   name: 'schema_stats',
-  description: 'v0.40.6.0: per-type page counts + typed-coverage from the DB. Returns {schema_version:1, pack_identity, aggregate, per_source, dead_prefixes}. Multi-source aware via ctx.sourceId/allowedSources.',
+  description: 'v0.40.6.0: per-type page counts with both stored typing coverage and active-pack declared coverage. Returns {schema_version:1, pack_identity, aggregate, per_source, dead_prefixes}. Multi-source aware via ctx.sourceId/allowedSources.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -4639,7 +4639,7 @@ const schema_explain_type: Operation = {
 
 const schema_review_orphans: Operation = {
   name: 'schema_review_orphans',
-  description: 'v0.40.6.0: list pages with no active-pack type match. Returns {orphan_count, orphans: [{slug, source_id}]}.',
+  description: "v0.40.6.0: list active-pack conformance gaps. Returns bounded {orphan_count, orphans: [{slug, source_id, stored_type, reason:'untyped'|'undeclared_type'}]}.",
   params: {
     limit: { type: 'number', description: 'Max orphans to return (default 100)' },
   },
@@ -4647,25 +4647,15 @@ const schema_review_orphans: Operation = {
   handler: async (ctx, p) => {
     const limit = Math.max(1, Math.min(10000, (p.limit as number) ?? 100));
     const scope = sourceScopeOpts(ctx);
-    let where = `WHERE deleted_at IS NULL AND (type IS NULL OR type = '')`;
-    const params: unknown[] = [];
-    if (scope.sourceIds && scope.sourceIds.length > 0) {
-      where += ` AND source_id = ANY($1::text[])`;
-      params.push(scope.sourceIds);
-    } else if (scope.sourceId) {
-      where += ` AND source_id = $1`;
-      params.push(scope.sourceId);
-    }
     try {
-      const rows = await ctx.engine.executeRaw<{ slug: string; source_id: string }>(
-        `SELECT slug, COALESCE(source_id, 'default') AS source_id FROM pages ${where} ORDER BY source_id, slug LIMIT ${limit}`,
-        params,
-      );
-      return {
-        schema_version: 1,
-        orphan_count: rows.length,
-        orphans: rows.map((r) => ({ slug: r.slug, source_id: r.source_id })),
-      };
+      const { runReviewOrphans } = await import('./schema-pack/review.ts');
+      const result = await runReviewOrphans(ctx, {
+        limit,
+        ...(scope.sourceIds && scope.sourceIds.length > 0
+          ? { sourceIds: scope.sourceIds }
+          : scope.sourceId ? { sourceId: scope.sourceId } : {}),
+      });
+      return { schema_version: 1, ...result };
     } catch {
       return { schema_version: 1, orphan_count: 0, orphans: [] };
     }

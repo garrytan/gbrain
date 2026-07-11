@@ -15,6 +15,7 @@ import { runDetect } from '../../src/core/schema-pack/detect.ts';
 import { runReviewCandidates, runReviewOrphans } from '../../src/core/schema-pack/review.ts';
 import { knobsHash } from '../../src/core/search/mode.ts';
 import { detectArtifactKind, validateManifestByKind } from '../../src/core/artifact/index.ts';
+import type { OperationContext } from '../../src/core/operations.ts';
 
 let engine: PGLiteEngine;
 
@@ -98,6 +99,30 @@ describe('v0.39 T22b — federated_read 2-source pack-divergence', () => {
     expect(SchemaPackTrustGateError.prototype).toBeDefined();
     const err = new SchemaPackTrustGateError('test');
     expect(err.code).toBe('permission_denied');
+  });
+});
+
+describe('active-pack orphan review', () => {
+  test('shared core distinguishes untyped from undeclared stored types', async () => {
+    await seedPages([
+      { slug: 'people/declared', type: 'person' },
+      { slug: 'custom/undeclared', type: 'synthetic-record' },
+    ]);
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, source_path, type, title, compiled_truth, timeline, content_hash)
+       VALUES ('misc/untyped', 'default', 'misc/untyped.md', '', 'untyped', '', '', '')`,
+    );
+    const context = {
+      engine,
+      config: {},
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: false,
+    } as unknown as OperationContext;
+    const result = await runReviewOrphans(context, { sourceId: 'default' });
+    expect(result.orphans.find((row) => row.slug === 'people/declared')).toBeUndefined();
+    expect(result.orphans.find((row) => row.slug === 'custom/undeclared')?.reason).toBe('undeclared_type');
+    expect(result.orphans.find((row) => row.slug === 'misc/untyped')?.reason).toBe('untyped');
   });
 });
 

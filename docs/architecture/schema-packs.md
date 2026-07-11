@@ -136,7 +136,27 @@ $EDITOR ~/.gbrain/schema-packs/my-pack/pack.yaml
 gbrain schema validate my-pack        # check shape
 gbrain schema use my-pack             # activate
 gbrain schema active                  # confirm
+gbrain schema stats                   # compare stored typing with active-pack conformance
+gbrain schema review-orphans          # review untyped and undeclared-type pages
 ```
+
+### Stored typing vs active-pack conformance
+
+`gbrain schema stats` reports two intentionally different coverage measures:
+
+- **Stored typing coverage** (`coverage`) is the backward-compatible measure:
+  any nonempty `pages.type` value counts as typed, even if the active pack does
+  not declare it.
+- **Active-pack declared coverage** (`declared_coverage`) counts only pages
+  whose stored type is a declared type (or query-equivalent alias) in the
+  resolved active pack. `undeclared_types` contains aggregate type/count rows;
+  it never exposes page bodies.
+
+The counts obey `declared_pages + undeclared_pages + untyped_pages =
+total_pages`. When no pack can be resolved, nonempty stored types remain typed
+for the legacy metric but are classified as undeclared for conformance.
+`schema review-orphans` uses the same classification and labels each bounded
+result as either `untyped` or `undeclared_type`.
 
 A minimal pack:
 

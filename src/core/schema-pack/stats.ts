@@ -16,7 +16,8 @@
 // the operation envelope.
 
 import type { BrainEngine } from '../engine.ts';
-import { loadActivePackBestEffort } from './best-effort.ts';
+import { loadActivePack } from './load-active.ts';
+import type { ResolvedPack } from './registry.ts';
 import type { OperationContext } from '../operations.ts';
 
 export interface StatsOpts {
@@ -38,8 +39,16 @@ export interface PerSourceStats {
   total_pages: number;
   typed_pages: number;
   untyped_pages: number;
+  /** Pages whose stored type is declared by the active schema pack. */
+  declared_pages: number;
+  /** Pages with a nonempty stored type absent from the active schema pack. */
+  undeclared_pages: number;
   coverage: number;
+  /** Active-pack declared pages / total pages. */
+  declared_coverage: number;
   by_type: TypeStats[];
+  /** Aggregate counts only; never includes page bodies or slugs. */
+  undeclared_types: TypeStats[];
 }
 
 export interface DeadPrefixHint {
@@ -65,6 +74,48 @@ interface RawCountRow {
   source_id: string | null;
   type: string | null;
   cnt: string;
+}
+
+/**
+ * Resolve the pack used by schema read surfaces, including the DB-backed
+ * brain-wide and scalar per-source tiers that a plain filesystem-only load
+ * would miss. Failure is represented as null so stats remain available on a
+ * fresh or misconfigured brain.
+ */
+export async function resolvePackForSchemaRead(ctx: OperationContext): Promise<ResolvedPack | null> {
+  let dbConfig: string | undefined;
+  let perSourceDb: ReadonlyMap<string, string> | undefined;
+  try {
+    dbConfig = (await ctx.engine.getConfig('schema_pack')) ?? undefined;
+    if (ctx.sourceId) {
+      const sourcePack = await ctx.engine.getConfig(`schema_pack.source.${ctx.sourceId}`);
+      if (sourcePack) perSourceDb = new Map([[ctx.sourceId, sourcePack]]);
+    }
+  } catch {
+    // Pre-init or unavailable config table: continue through file/env tiers.
+  }
+  try {
+    return await loadActivePack({
+      cfg: ctx.config,
+      remote: ctx.remote,
+      sourceId: ctx.sourceId,
+      perSourceDb,
+      dbConfig,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Shared active-pack type membership for stats and orphan review. */
+export function declaredTypesForPack(pack: ResolvedPack | null): Set<string> {
+  const declaredTypes = new Set<string>();
+  if (!pack) return declaredTypes;
+  for (const pageType of pack.manifest.page_types) {
+    declaredTypes.add(pageType.name);
+    for (const alias of pageType.aliases ?? []) declaredTypes.add(alias);
+  }
+  return declaredTypes;
 }
 
 function computeCoverage(typed: number, total: number): number {
@@ -96,8 +147,14 @@ function aggregateRows(rows: RawCountRow[]): PerSourceStats[] {
       total_pages: b.total,
       typed_pages: b.typed,
       untyped_pages: b.untyped,
+      declared_pages: 0,
+      undeclared_pages: b.typed,
       coverage: computeCoverage(b.typed, b.total),
+      declared_coverage: computeCoverage(0, b.total),
       by_type: [...b.byType.entries()]
+        .map(([type, count]) => ({ type, count }))
+        .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type)),
+      undeclared_types: [...b.byType.entries()]
         .map(([type, count]) => ({ type, count }))
         .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type)),
     });
@@ -121,11 +178,29 @@ function mergeAggregate(per: PerSourceStats[]): PerSourceStats {
     total_pages: total,
     typed_pages: typed,
     untyped_pages: untyped,
+    declared_pages: 0,
+    undeclared_pages: typed,
     coverage: computeCoverage(typed, total),
+    declared_coverage: computeCoverage(0, total),
     by_type: [...byType.entries()]
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type)),
+    undeclared_types: [...byType.entries()]
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type)),
   };
+}
+
+/**
+ * Add active-pack conformance without changing the legacy typed/untyped
+ * contract. Aliases participate because schema-pack aliases are documented as
+ * query-equivalent page types; invalid dangling aliases are harmless here.
+ */
+function applyDeclaredConformance(stats: PerSourceStats, declaredTypes: ReadonlySet<string>): void {
+  stats.undeclared_types = stats.by_type.filter((row) => !declaredTypes.has(row.type));
+  stats.undeclared_pages = stats.undeclared_types.reduce((sum, row) => sum + row.count, 0);
+  stats.declared_pages = stats.typed_pages - stats.undeclared_pages;
+  stats.declared_coverage = computeCoverage(stats.declared_pages, stats.total_pages);
 }
 
 /**
@@ -229,11 +304,15 @@ export async function runStatsCore(
   // Pack identity + dead-prefix scan — best-effort.
   let pack_identity: string | null = null;
   let dead_prefixes: DeadPrefixHint[] = [];
-  const pack = await loadActivePackBestEffort(ctx);
+  const pack = await resolvePackForSchemaRead(ctx);
   if (pack) {
     pack_identity = pack.identity;
     dead_prefixes = await detectDeadPrefixes(ctx.engine, pack, opts);
   }
+
+  const declaredTypes = declaredTypesForPack(pack);
+  for (const stats of per_source) applyDeclaredConformance(stats, declaredTypes);
+  applyDeclaredConformance(aggregate, declaredTypes);
 
   return {
     schema_version: 1,

@@ -19,9 +19,11 @@ export const collectUsageShape: AdvisorCollector = {
     const findings: AdvisorFinding[] = [];
 
     let pageCount = 0;
+    let entityCount = 0;
     try {
       const stats = await ctx.engine.getStats();
       pageCount = stats.page_count;
+      entityCount = (stats.pages_by_type.person ?? 0) + (stats.pages_by_type.company ?? 0);
     } catch {
       return []; // no stats → empty brain or unreachable; nothing to advise
     }
@@ -57,6 +59,28 @@ export const collectUsageShape: AdvisorCollector = {
           severity: 'info',
           title: `${health.dead_links} link${health.dead_links === 1 ? '' : 's'} point to a page that no longer exists.`,
           fix: { command_argv: ['gbrain', 'doctor'] },
+          collector: 'usage-shape',
+          ask_user: true,
+        });
+      }
+      if (entityCount >= 10 && health.link_coverage < 0.5) {
+        findings.push({
+          id: 'low_entity_link_coverage',
+          severity: 'warn',
+          title: `Only ${Math.round(health.link_coverage * 100)}% of entity pages have an inbound link.`,
+          detail: 'Preview stale link extraction before writing, then inspect graph health with doctor.',
+          fix: { command_argv: ['gbrain', 'extract', '--stale', '--dry-run'] },
+          collector: 'usage-shape',
+          ask_user: true,
+        });
+      }
+      if (entityCount >= 10 && health.timeline_coverage < 0.5) {
+        findings.push({
+          id: 'low_entity_timeline_coverage',
+          severity: 'info',
+          title: `Only ${Math.round(health.timeline_coverage * 100)}% of entity pages have a structured timeline entry.`,
+          detail: 'Review timeline extraction in dry-run mode; Chronicle events are measured separately.',
+          fix: { command_argv: ['gbrain', 'extract', '--stale', '--dry-run'] },
           collector: 'usage-shape',
           ask_user: true,
         });

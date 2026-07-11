@@ -11,6 +11,7 @@ import { rankFindings, runAdvisor } from '../src/core/advisor/run.ts';
 import { collectUsageShape } from '../src/core/advisor/collect-usage-shape.ts';
 import { collectStalledJobs } from '../src/core/advisor/collect-stalled-jobs.ts';
 import { collectSetupSmells } from '../src/core/advisor/collect-setup-smells.ts';
+import { collectSchemaPack } from '../src/core/advisor/collect-schema-pack.ts';
 import { appendAdvisorRun, summarizeDeltas } from '../src/core/advisor/history.ts';
 import { renderAdvisorReport } from '../src/core/advisor/render.ts';
 import type { AdvisorContext, AdvisorFinding, AdvisorReport } from '../src/core/advisor/types.ts';
@@ -101,6 +102,45 @@ describe('collect-usage-shape', () => {
   test('empty brain → no findings', async () => {
     const engine = { getStats: async () => ({ page_count: 0, chunk_count: 0, embedded_count: 0, link_count: 0, tag_count: 0, timeline_entry_count: 0, pages_by_type: {} }) };
     expect(await collectUsageShape.collect(ctx(engine as never))).toEqual([]);
+  });
+
+  test('flags low entity link and timeline coverage only at meaningful scale', async () => {
+    const engine = {
+      getStats: async () => ({
+        page_count: 100, chunk_count: 0, embedded_count: 0, link_count: 0,
+        tag_count: 0, timeline_entry_count: 0, pages_by_type: { person: 8, company: 4 },
+      }),
+      getHealth: async () => ({
+        page_count: 100, embed_coverage: 1, stale_pages: 0, orphan_pages: 0, missing_embeddings: 0,
+        brain_score: 50, dead_links: 0, link_coverage: 0.25, timeline_coverage: 0.1, most_connected: [],
+        embed_coverage_score: 35, link_density_score: 0, timeline_coverage_score: 0,
+        no_orphans_score: 15, no_dead_links_score: 10,
+      }),
+    };
+    const out = await collectUsageShape.collect(ctx(engine as never));
+    expect(out.map((row) => row.id)).toContain('low_entity_link_coverage');
+    expect(out.map((row) => row.id)).toContain('low_entity_timeline_coverage');
+    expect(out.find((row) => row.id === 'low_entity_link_coverage')?.fix.command_argv)
+      .toEqual(['gbrain', 'extract', '--stale', '--dry-run']);
+  });
+});
+
+describe('collect-schema-pack', () => {
+  test('reports aggregate undeclared-type drift without exposing page content', async () => {
+    const engine = {
+      getConfig: async () => null,
+      executeRaw: async (sql: string) => sql.includes('GROUP BY source_id')
+        ? [
+            { source_id: 'default', type: 'person', cnt: '80' },
+            { source_id: 'default', type: 'synthetic-record', cnt: '20' },
+          ]
+        : [{ cnt: '1' }],
+    };
+    const out = await collectSchemaPack.collect(ctx(engine as never));
+    const finding = out.find((row) => row.id === 'schema_pack_undeclared_pages');
+    expect(finding?.title).toContain('20 pages');
+    expect(finding?.detail).toContain('synthetic-record');
+    expect(JSON.stringify(finding)).not.toContain('compiled_truth');
   });
 });
 

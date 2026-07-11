@@ -11,6 +11,8 @@
 // current brain state" so users understand what they're reviewing.
 
 import type { BrainEngine } from '../engine.ts';
+import type { OperationContext } from '../operations.ts';
+import { declaredTypesForPack, resolvePackForSchemaRead } from './stats.ts';
 import { runDetect } from './detect.ts';
 import { loadActivePack } from './load-active.ts';
 import { loadConfig, gbrainPath, configPath } from '../config.ts';
@@ -102,31 +104,63 @@ export async function runReviewCandidates(
 
 export interface ReviewOrphansOpts {
   sourceId?: string;
+  sourceIds?: string[];
+  limit?: number;
 }
 
 export interface ReviewOrphansResult {
-  orphans: Array<{ slug: string; source_id: string }>;
+  orphans: Array<{
+    slug: string;
+    source_id: string;
+    stored_type: string | null;
+    reason: 'untyped' | 'undeclared_type';
+  }>;
   orphan_count: number;
-  source_id: string;
+  source_id: string | null;
+  source_ids?: string[];
 }
 
 export async function runReviewOrphans(
-  engine: BrainEngine,
+  ctx: OperationContext,
   opts: ReviewOrphansOpts = {},
 ): Promise<ReviewOrphansResult> {
-  const sourceId = opts.sourceId ?? 'default';
-  const rows = await engine.executeRaw<{ slug: string; source_id: string }>(
-    `SELECT slug, source_id FROM pages
-     WHERE source_id = $1
-       AND deleted_at IS NULL
-       AND (type IS NULL OR type = '')
-     ORDER BY slug
-     LIMIT 1000`,
-    [sourceId],
+  const limit = Math.max(1, Math.min(10000, opts.limit ?? 1000));
+  const pack = await resolvePackForSchemaRead(ctx);
+  const declaredTypes = declaredTypesForPack(pack);
+
+  const params: unknown[] = [];
+  let where = `WHERE deleted_at IS NULL`;
+  if (opts.sourceIds && opts.sourceIds.length > 0) {
+    params.push(opts.sourceIds);
+    where += ` AND source_id = ANY($${params.length}::text[])`;
+  } else if (opts.sourceId) {
+    params.push(opts.sourceId);
+    where += ` AND source_id = $${params.length}`;
+  }
+  if (declaredTypes.size > 0) {
+    params.push([...declaredTypes]);
+    where += ` AND (type IS NULL OR type = '' OR NOT (type = ANY($${params.length}::text[])))`;
+  }
+  // With no resolvable pack, every nonempty stored type is undeclared and
+  // every empty type is untyped, so no additional type predicate is needed.
+  params.push(limit);
+  const rows = await ctx.engine.executeRaw<{ slug: string; source_id: string | null; stored_type: string | null }>(
+    `SELECT slug, COALESCE(source_id, 'default') AS source_id, NULLIF(type, '') AS stored_type
+     FROM pages
+     ${where}
+     ORDER BY source_id, slug
+     LIMIT $${params.length}`,
+    params,
   );
   return {
-    orphans: rows.map((r) => ({ slug: r.slug, source_id: r.source_id })),
+    orphans: rows.map((r) => ({
+      slug: r.slug,
+      source_id: r.source_id ?? 'default',
+      stored_type: r.stored_type,
+      reason: r.stored_type ? 'undeclared_type' : 'untyped',
+    })),
     orphan_count: rows.length,
-    source_id: sourceId,
+    source_id: opts.sourceId ?? null,
+    ...(opts.sourceIds && opts.sourceIds.length > 0 ? { source_ids: opts.sourceIds } : {}),
   };
 }
