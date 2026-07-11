@@ -157,6 +157,7 @@ describe.skipIf(!DATABASE_URL)('conversion manifest PGLite/Postgres differential
       const postgres = new PostgresEngine();
       try {
         await prepare(pglite, seed); await prepare(postgres, seed);
+        await operation(pglite, postgres, seed, (engine) => verifyConversionManifestLinkage(engine, { sourceId: seed.sourceId, fileId: seed.fileId }), value({ status: 'legacy_absent', matchesHash: null, matchesMime: null, reasons: [], byteCheck: { reason: 'not_requested', reasons: [] } }, [0, 0]));
         await operation(pglite, postgres, seed, (engine) => createConversionManifest(engine, input(seed, 'synthetic-b'), context), value({ created: true, receipt: manifestExpected(seed, 'synthetic-b') }, [1, 0], ['synthetic-b']));
         const receiptIds = {
           pglite: (await listConversionManifests(pglite, seed.sourceId, { fileId: seed.fileId }))[0]?.receiptId,

@@ -112,6 +112,29 @@ describe('conversion manifest data-foundation contract', () => {
     expect(() => sanitizeManifest({ settings: { safe: 'yes' }, warnings: [] }, 'image-import')).toThrow();
     expect(() => sanitizeManifest({ settings: { format: 'png', unknown: true }, warnings: [] }, 'image-import')).toThrow();
     expect(sanitizeManifest({
+      settings: {
+        format: {
+          nested: 'https://nested.example.test/x token=nested-secret',
+          array: ['/tmp/nested.txt', { credential: 'token=deep-secret' }],
+        },
+        maxDimension: [{ value: 2048 }],
+      },
+      warnings: [],
+    }, 'image-import')).toEqual({
+      settings: {
+        format: {
+          nested: '<redacted:url> <redacted:credential>',
+          array: ['<redacted:path>', { credential: '<redacted:credential>' }],
+        },
+        maxDimension: [{ value: 2048 }],
+      },
+      warnings: [],
+    });
+    expect(() => sanitizeManifest({
+      settings: { format: 'png', nested: { allowed: true } },
+      warnings: [],
+    }, 'image-import')).toThrow();
+    expect(sanitizeManifest({
       settings: { format: 'path=/tmp/input.png https://example.test/x token=abc123' },
       warnings: ['warning /var/tmp/file https://warn.test token=secret'],
       mappings: [{ sectionRef: 'file:///private/x?password=secret', sourceRange: { kind: 'document' } }],
@@ -143,10 +166,16 @@ describe('conversion manifest data-foundation contract', () => {
   });
 
   test('rejects bounded values rather than truncating', () => {
-    expect(() => sanitizeManifest({ settings: { values: Array.from({ length: 129 }, () => 1) }, warnings: [] })).toThrow();
+    expect(() => sanitizeManifest({
+      settings: { format: { values: Array.from({ length: 129 }, () => 1) } },
+      warnings: [],
+    }, 'image-import')).toThrow();
     let nested: unknown = 1;
     for (let depth = 0; depth < 9; depth += 1) nested = { nested };
-    expect(() => sanitizeManifest({ settings: nested as Record<string, unknown>, warnings: [] })).toThrow();
+    expect(() => sanitizeManifest({
+      settings: { format: nested as Record<string, unknown> },
+      warnings: [],
+    }, 'image-import')).toThrow();
   });
   test('requires complete visual candidates and coupled OCR state', () => {
     expect(validateObservations({ sourceVisualKind: 'image', candidates: { images: 1 }, confidence: null, ocr: { state: 'success', confidence: 1, textExtracted: true }, imageDimensions: { width: 1, height: 1 } }).reasons).toContain('OBSERVATION_INCOMPLETE');

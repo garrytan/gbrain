@@ -190,16 +190,25 @@ describe('conversion manifest storage/service contract', () => {
 
   test('source isolation, missing/unsupported inspection, and mapping guards are explicit', async () => {
     await setup();
-      await expect(createConversionManifest(engine, { ...BASE, sourceId: 'other-source' }, LOCAL_CONTEXT)).rejects.toMatchObject({ code: expect.any(String) });
-      expect(await inspectConversionFile(engine, { sourceId: BASE.sourceId, fileId: 999 })).toMatchObject({ state: 'file_missing' });
-      await expect(createConversionManifest(engine, { ...BASE, mappings: [{ sourceRange: { kind: 'ordinal', unitKind: 'page', start: 0, end: 1 }, derivedPageId: 404, derivedSourceId: BASE.sourceId, derivedPageSlug: 'missing' }] }, LOCAL_CONTEXT)).rejects.toThrow();
+    expect(await inspectConversionFile(engine, { sourceId: BASE.sourceId, fileId: BASE.fileId })).toMatchObject({ state: 'legacy_absent' });
+    await expect(createConversionManifest(engine, { ...BASE, sourceId: 'other-source' }, LOCAL_CONTEXT)).rejects.toMatchObject({ code: expect.any(String) });
+    expect(await inspectConversionFile(engine, { sourceId: BASE.sourceId, fileId: 999 })).toMatchObject({ state: 'file_missing' });
+    await expect(createConversionManifest(engine, { ...BASE, mappings: [{ sourceRange: { kind: 'ordinal', unitKind: 'page', start: 0, end: 1 }, derivedPageId: 404, derivedSourceId: BASE.sourceId, derivedPageSlug: 'missing' }] }, LOCAL_CONTEXT)).rejects.toThrow();
   });
 
   test('DB linkage status and physical ByteCheck remain separate contracts', async () => {
     await setup();
-      const result = await verifyConversionManifestLinkage(engine, { sourceId: BASE.sourceId, fileId: 999, physical: false });
-      expect(result).toMatchObject({ status: 'file_missing', byteCheck: { reason: 'not_requested', reasons: [] } });
-      expect(result.reasons).not.toContain('not_requested');
+    const legacy = await verifyConversionManifestLinkage(engine, { sourceId: BASE.sourceId, fileId: BASE.fileId });
+    expect(legacy).toEqual({
+      status: 'legacy_absent',
+      matchesHash: null,
+      matchesMime: null,
+      reasons: [],
+      byteCheck: { reason: 'not_requested', reasons: [] },
+    });
+    const result = await verifyConversionManifestLinkage(engine, { sourceId: BASE.sourceId, fileId: 999, physical: false });
+    expect(result).toMatchObject({ status: 'file_missing', byteCheck: { reason: 'not_requested', reasons: [] } });
+    expect(result.reasons).not.toContain('not_requested');
   });
   test('linkage precedence preserves baseline on physical unavailable/read errors and reports unsupported', async () => {
     await setup();

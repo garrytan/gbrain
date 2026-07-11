@@ -258,7 +258,7 @@ function boundedValue(value: unknown, depth: number, sanitizeText = false, allow
   if (value !== null && typeof value === 'object' && plain(value)) {
     const result: JsonRecord = {};
     for (const [key, entry] of Object.entries(value)) {
-      if (allowedKeys && !allowedKeys.includes(key)) fail('unknown setting key');
+      if (allowedKeys && depth === 0 && !allowedKeys.includes(key)) fail('unknown setting key');
       result[key] = boundedValue(entry, depth + 1, sanitizeText, allowedKeys);
     }
     return result;
@@ -477,11 +477,13 @@ export async function createConversionManifest(
       );
       if (!page[0]) fail('mapping target is missing');
       if (mapping.chunkStart != null && mapping.chunkEnd != null) {
-        const chunks = await tx.executeRaw<JsonRecord>(
-          'SELECT chunk_index FROM content_chunks WHERE page_id=$1 AND chunk_index >= $2 AND chunk_index < $3',
+        const chunkRows = await tx.executeRaw<JsonRecord>(
+          'SELECT COUNT(*) AS count FROM content_chunks WHERE page_id=$1 AND chunk_index >= $2 AND chunk_index < $3',
           [mapping.derivedPageId, mapping.chunkStart, mapping.chunkEnd],
         );
-        if (chunks.length !== mapping.chunkEnd - mapping.chunkStart) {
+        const rawCount = chunkRows[0]?.count;
+        const chunkCount = typeof rawCount === 'bigint' ? Number(rawCount) : Number(rawCount ?? 0);
+        if (!Number.isSafeInteger(chunkCount) || chunkCount !== mapping.chunkEnd - mapping.chunkStart) {
           fail('mapping chunk bounds invalid');
         }
       }
@@ -647,10 +649,10 @@ export async function verifyConversionManifestLinkage(
   )[0];
   if (!manifest) {
     return {
-      status: 'corrupt',
+      status: 'legacy_absent',
       matchesHash: null,
       matchesMime: null,
-      reasons: ['MAPPING_MISSING'],
+      reasons: [],
       byteCheck: empty,
     };
   }
