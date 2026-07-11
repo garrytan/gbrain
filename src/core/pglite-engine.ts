@@ -246,6 +246,7 @@ async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export class PGLiteEngine implements BrainEngine {
+  readonly supportsQueryCancellation = false;
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
@@ -969,7 +970,12 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: r.slug, id: Number(r.id) };
   }
 
-  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
+  async putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; signal?: AbortSignal },
+  ): Promise<Page> {
+    if (opts?.signal?.aborted) throw opts.signal.reason;
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
@@ -1000,7 +1006,7 @@ export class PGLiteEngine implements BrainEngine {
     const sourceUri = page.source_uri ?? null;
     const ingestedVia = page.ingested_via ?? null;
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date().toISOString() : null;
-    const { rows } = await this.db.query(
+    const rows = await this.executeRaw<Record<string, unknown>>(
       `INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now(), $10::timestamptz, $11, $12, COALESCE($13, 1), $14, $15, $16, $17, $18::timestamptz)
        ON CONFLICT (source_id, slug) DO UPDATE SET
@@ -1022,7 +1028,8 @@ export class PGLiteEngine implements BrainEngine {
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
        RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
-      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
+      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt],
+      { signal: opts?.signal },
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }

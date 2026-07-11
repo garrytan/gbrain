@@ -1951,15 +1951,11 @@ export async function registerBuiltinHandlers(
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     const windowSeconds =
       typeof job.data.window === 'number' && job.data.window > 0 ? job.data.window : 120;
-    const repoPath =
-      typeof job.data.repoPath === 'string'
-        ? job.data.repoPath
-        : ((await engine.getConfig('sync.repo_path')) ?? undefined);
     try {
       return await runExtractAtomsDrainForSource(engine, {
         sourceId,
         windowSeconds,
-        brainDir: repoPath,
+        abortSignal: job.signal,
       });
     } catch (e) {
       if (e instanceof LockUnavailableError) {

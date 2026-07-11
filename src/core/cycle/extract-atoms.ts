@@ -51,8 +51,12 @@ import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { contentHash } from '../utils.ts';
+import { sanitizeForJsonb } from '../batch-rows.ts';
+import { createHash } from 'crypto';
 
 const DEFAULT_BUDGET_USD = 0.3;
+const BOOKKEEPING_GRACE_MS = 5_000;
 
 // v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
@@ -110,6 +114,8 @@ export interface ExtractAtomsOpts {
    * `heartbeat()` on the passed reporter.
    */
   progress?: ProgressReporter;
+  /** Optional caller deadline/cancellation, forwarded to every gateway call. */
+  abortSignal?: AbortSignal;
 }
 
 interface ExtractedAtom {
@@ -167,6 +173,7 @@ export async function discoverExtractablePages(
   engine: BrainEngine,
   sourceId: string,
   affectedSlugs?: string[],
+  abortSignal?: AbortSignal,
 ): Promise<DiscoveredPage[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const sql = `
@@ -206,13 +213,14 @@ export async function discoverExtractablePages(
       slug: string;
       compiled_truth: string;
       content_hash: string;
-    }>(sql, params);
+    }>(sql, params, { signal: abortSignal });
     return rows.map((r) => ({
       slug: r.slug,
       content: r.compiled_truth,
       contentHash: r.content_hash,
     }));
   } catch (err) {
+    if (abortSignal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
     return []; // fail-soft: transcript path still proceeds
@@ -237,6 +245,7 @@ export async function discoverExtractablePages(
 export async function countExtractAtomsBacklog(
   engine: BrainEngine,
   sourceId?: string,
+  abortSignal?: AbortSignal,
 ): Promise<number | null> {
   try {
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
@@ -275,9 +284,10 @@ export async function countExtractAtomsBacklog(
     const params = scoped
       ? [sourceId, EXTRACTABLE_PAGE_TYPES as unknown as string[], MIN_PAGE_CHARS_FOR_EXTRACTION]
       : [EXTRACTABLE_PAGE_TYPES as unknown as string[], MIN_PAGE_CHARS_FOR_EXTRACTION];
-    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params);
+    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: abortSignal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
+    if (abortSignal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] backlog count failed: ${msg}`);
     return null;
@@ -304,6 +314,7 @@ export async function atomsExistingForHashes(
   engine: BrainEngine,
   sourceId: string,
   contentHash16s: string[],
+  abortSignal?: AbortSignal,
 ): Promise<Set<string>> {
   if (contentHash16s.length === 0) return new Set();
   try {
@@ -315,9 +326,11 @@ export async function atomsExistingForHashes(
           AND deleted_at IS NULL
           AND frontmatter->>'source_hash' = ANY($2::text[])`,
       [sourceId, contentHash16s],
+      { signal: abortSignal },
     );
     return new Set(rows.map(r => r.h));
   } catch (err) {
+    if (abortSignal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] batch idempotency check failed (assuming none extracted): ${msg}`);
     return new Set();
@@ -338,6 +351,7 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
+  if (opts.abortSignal?.aborted) throw opts.abortSignal.reason;
 
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
@@ -379,7 +393,7 @@ export async function runPhaseExtractAtoms(
   if (opts._pages !== undefined) {
     pages = opts._pages;
   } else {
-    pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs);
+    pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs, opts.abortSignal);
   }
 
   // 2. Apply transcript-side source-hash idempotency in ONE batch query
@@ -391,7 +405,7 @@ export async function runPhaseExtractAtoms(
   // Surface a heartbeat before the batch query so even an instant
   // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
   opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
-  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
+  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16, opts.abortSignal);
   for (const t of transcripts) {
     if (existingHashes.has(t.contentHash.slice(0, 16))) {
       duplicatesSkipped++;
@@ -455,6 +469,7 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
+  let deadlineAborted = false;
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -480,6 +495,10 @@ export async function runPhaseExtractAtoms(
   }
 
   for (const item of work) {
+    if (opts.abortSignal?.aborted) {
+      deadlineAborted = true;
+      break;
+    }
     await maybeYield();
     if (estimatedSpendUsd >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
@@ -498,15 +517,20 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: 2000,
+        abortSignal: opts.abortSignal,
       });
+      // A completed gateway call is billable even if the caller deadline fires
+      // immediately afterward. Record usage before observing post-await abort.
+      estimatedSpendUsd +=
+        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
+      if (opts.abortSignal?.aborted) {
+        deadlineAborted = true;
+        break;
+      }
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
-
-      // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
-      estimatedSpendUsd +=
-        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
@@ -515,42 +539,104 @@ export async function runPhaseExtractAtoms(
         continue;
       }
 
+      const extractedAt = new Date().toISOString();
+      const originHash = createHash('sha256').update(originLabel).digest('hex').slice(0, 10);
+      const slugHashes = new Map<string, string>();
+      const rows: Array<{
+        slug: string;
+        title: string;
+        compiled_truth: string;
+        frontmatter: Record<string, unknown>;
+        content_hash: string;
+      }> = [];
+      for (const atom of atoms) {
+        const title = sanitizeForJsonb(atom.title);
+        const body = sanitizeForJsonb(atom.body);
+        const originFrontmatter = item.kind === 'transcript'
+          ? { source_path: item.filePath }
+          : { source_slug: item.slug };
+        const page = {
+          title,
+          type: 'atom' as const,
+          compiled_truth: body,
+          timeline: '',
+          frontmatter: {
+            type: 'atom',
+            atom_type: atom.atom_type,
+            ...originFrontmatter,
+            source_hash: item.contentHash.slice(0, 16),
+            ...(atom.source_quote && { source_quote: sanitizeForJsonb(atom.source_quote) }),
+            ...(atom.lesson && { lesson: sanitizeForJsonb(atom.lesson) }),
+            ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
+            ...(atom.emotional_register && {
+              emotional_register: sanitizeForJsonb(atom.emotional_register),
+            }),
+            extracted_at: extractedAt,
+            extracted_by: 'extract_atoms-v0.41.2.1',
+          },
+        };
+        const pageHash = contentHash(page);
+        // Slug identity must survive re-extraction timestamps/source hashes.
+        // Use only stable sanitized semantic fields for collision suffixes.
+        const semanticHash = contentHash({
+          title,
+          type: 'atom',
+          compiled_truth: body,
+          timeline: '',
+          frontmatter: { atom_type: atom.atom_type },
+        });
+        const baseSlug = `atoms/${todayDate()}/${slugify(title)}-${originHash}`;
+        const baseHash = slugHashes.get(baseSlug);
+        if (baseHash === semanticHash) continue; // exact semantic duplicate from the model
+        let slug = baseHash === undefined ? baseSlug : `${baseSlug}-${semanticHash.slice(0, 12)}`;
+        const collisionHash = slugHashes.get(slug);
+        if (collisionHash === semanticHash) continue;
+        if (collisionHash !== undefined) slug = `${baseSlug}-${semanticHash}`;
+        slugHashes.set(slug, semanticHash);
+        rows.push({
+          slug,
+          title: page.title,
+          compiled_truth: page.compiled_truth,
+          frontmatter: page.frontmatter,
+          content_hash: pageHash,
+        });
+      }
+
       if (!opts.dryRun) {
-        for (const atom of atoms) {
-          const slug = `atoms/${todayDate()}/${slugify(atom.title)}`;
-          const originFrontmatter =
-            item.kind === 'transcript'
-              ? { source_path: item.filePath }
-              : { source_slug: item.slug };
-          // v0.41.2.1 D9 #1 — thread sourceId through every putPage so
-          // atoms land in the source we discovered them from. Pre-fix
-          // the third arg was missing and atoms always wrote to 'default'.
-          await engine.putPage(
-            slug,
-            {
-              title: atom.title,
-              type: 'atom',
-              compiled_truth: atom.body,
-              frontmatter: {
-                type: 'atom',
-                atom_type: atom.atom_type,
-                ...originFrontmatter,
-                source_hash: item.contentHash.slice(0, 16),
-                ...(atom.source_quote && { source_quote: atom.source_quote }),
-                ...(atom.lesson && { lesson: atom.lesson }),
-                ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
-                ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
-                extracted_at: new Date().toISOString(),
-                extracted_by: 'extract_atoms-v0.41.2.1',
-              },
-              timeline: '',
-            },
-            { sourceId },
-          );
-          totalAtomsExtracted++;
-        }
+        // One source response is the idempotency unit: discovery treats ANY
+        // atom with this source_hash as complete. One INSERT statement commits
+        // all 1–3 atoms atomically and is directly cancellable by Postgres.
+        await engine.executeRaw(
+          `WITH input AS (
+             SELECT elem->>'slug' AS slug,
+                    elem->>'title' AS title,
+                    elem->>'compiled_truth' AS compiled_truth,
+                    elem->'frontmatter' AS frontmatter,
+                    elem->>'content_hash' AS content_hash
+               FROM jsonb_array_elements($1::text::jsonb) elem
+           )
+           INSERT INTO pages (
+             source_id, slug, type, page_kind, title, compiled_truth,
+             timeline, frontmatter, content_hash, updated_at
+           )
+           SELECT $2, slug, 'atom', 'markdown', title, compiled_truth,
+                  '', frontmatter, content_hash, NOW()
+             FROM input
+           ON CONFLICT (source_id, slug) DO UPDATE SET
+             type = EXCLUDED.type,
+             page_kind = EXCLUDED.page_kind,
+             title = EXCLUDED.title,
+             compiled_truth = EXCLUDED.compiled_truth,
+             timeline = EXCLUDED.timeline,
+             frontmatter = EXCLUDED.frontmatter,
+             content_hash = EXCLUDED.content_hash,
+             updated_at = NOW()`,
+          [JSON.stringify(rows), sourceId],
+          { signal: opts.abortSignal },
+        );
+        totalAtomsExtracted += rows.length;
       } else {
-        totalAtomsExtracted += atoms.length; // count for dry-run reporting
+        totalAtomsExtracted += rows.length; // count final deduped rows in dry-run
       }
       if (item.kind === 'transcript') transcriptsProcessed++;
       else pagesProcessed++;
@@ -558,6 +644,10 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (opts.abortSignal?.aborted) {
+        deadlineAborted = true;
+        break;
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
@@ -568,6 +658,13 @@ export async function runPhaseExtractAtoms(
   // v0.42 Wave B2: write extract receipt + rollup row when the phase
   // actually extracted atoms. Both are best-effort per F-OUT-19 —
   // audit-trail / search-visibility surfaces don't block the phase result.
+  // If the caller deadline fired after partial writes, use a short fresh
+  // signal for bookkeeping. Otherwise those committed atoms become
+  // idempotency-skipped next run while their cost/receipt disappears forever.
+  // Always start a fresh grace window. The work deadline may fire while the
+  // first bookkeeping write is in flight; reusing it would abort both receipt
+  // and rollup even though the atom writes already committed.
+  const bookkeepingSignal = AbortSignal.timeout(BOOKKEEPING_GRACE_MS);
   if (!opts.dryRun && totalAtomsExtracted > 0) {
     const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
     try {
@@ -582,19 +679,23 @@ export async function runPhaseExtractAtoms(
         summary:
           `Extracted ${totalAtomsExtracted} atoms from ` +
           `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.`,
-      });
+      }, { signal: bookkeepingSignal });
     } catch (err) {
       console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);
     }
   }
   if (!opts.dryRun) {
-    await upsertExtractRollup(engine, {
-      kind: 'atoms',
-      source_id: sourceId,
-      cost_delta: estimatedSpendUsd,
-      round_completed_delta: failures.length === 0 ? 1 : 0,
-      halt_delta: failures.length > 0 ? 1 : 0,
-    });
+    try {
+      await upsertExtractRollup(engine, {
+        kind: 'atoms',
+        source_id: sourceId,
+        cost_delta: estimatedSpendUsd,
+        round_completed_delta: failures.length === 0 && !deadlineAborted ? 1 : 0,
+        halt_delta: failures.length > 0 ? 1 : 0,
+      }, { signal: bookkeepingSignal });
+    } catch (err) {
+      console.error(`[extract_atoms] rollup write failed: ${(err as Error).message}`);
+    }
   }
 
   return {
@@ -623,6 +724,7 @@ export async function runPhaseExtractAtoms(
       budget_usd: budgetCap,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
+      deadline_aborted: deadlineAborted,
     },
   };
 }

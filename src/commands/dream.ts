@@ -449,7 +449,6 @@ async function runDrain(
   engine: BrainEngine,
   opts: DreamArgs,
   resolvedSourceId: string | undefined,
-  brainDir: string | null,
 ): Promise<void> {
   const { LockUnavailableError } = await import('../core/db-lock.ts');
   const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
@@ -479,7 +478,6 @@ async function runDrain(
     result = await runExtractAtomsDrainForSource(engine, {
       sourceId: resolvedSourceId,
       windowSeconds: opts.windowSeconds,
-      brainDir: brainDir ?? undefined,
       onBatch: opts.json ? undefined : ({ batch, extracted, remaining }) => {
         process.stderr.write(`[drain] batch ${batch}: +${extracted} atom(s), ~${remaining ?? '?'} remaining\n`);
       },
@@ -578,7 +576,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       console.error('gbrain dream --drain requires a connected brain (no engine available)');
       process.exit(1);
     }
-    return runDrain(engine, opts, resolvedSourceId, brainDir);
+    return runDrain(engine, opts, resolvedSourceId);
   }
 
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;

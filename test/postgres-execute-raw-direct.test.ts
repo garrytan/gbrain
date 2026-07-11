@@ -98,14 +98,64 @@ describe('PostgresEngine.executeRawDirect — routing decision (PR #1816)', () =
   });
 
   test('already-aborted signal short-circuits with AbortError before routing the query', async () => {
-    const readConn = fakeSql('read');
+    let unsafeCalls = 0;
+    let ddlCalls = 0;
+    const readConn: FakeSql = { unsafe: async () => { unsafeCalls++; return []; } };
     const directConn = fakeSql('direct');
     const engine = makeEngine({ dualPoolActive: true, readConn, directConn });
+    const e = engine as unknown as { connectionManager: { ddl: () => Promise<FakeSql> } };
+    e.connectionManager.ddl = async () => { ddlCalls++; return directConn; };
 
     const ac = new AbortController();
     ac.abort();
     await expect(
       engine.executeRawDirect('UPDATE minion_jobs SET x=1', [], { signal: ac.signal }),
     ).rejects.toThrow(/abort/i);
+    expect(ddlCalls).toBe(0);
+    expect(unsafeCalls).toBe(0);
+  });
+
+  test('signal bounds stalled direct-pool acquisition before unsafe starts', async () => {
+    let unsafeCalls = 0;
+    const readConn: FakeSql = { unsafe: async () => { unsafeCalls++; return []; } };
+    const directConn = fakeSql('direct');
+    const engine = makeEngine({ dualPoolActive: true, readConn, directConn });
+    const e = engine as unknown as { connectionManager: { ddl: () => Promise<FakeSql> } };
+    e.connectionManager.ddl = () => new Promise<FakeSql>(() => {});
+
+    const started = Date.now();
+    await expect(engine.executeRawDirect(
+      'DELETE FROM gbrain_cycle_locks',
+      [],
+      { signal: AbortSignal.timeout(10) },
+    )).rejects.toThrow(/abort/i);
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(unsafeCalls).toBe(0);
+  });
+
+  test('abort during unsafe creation is observed by the post-listener recheck', async () => {
+    const ac = new AbortController();
+    let cancelCalls = 0;
+    let rejectPending!: (err: unknown) => void;
+    const pending = new Promise<unknown[]>((_resolve, reject) => { rejectPending = reject; }) as
+      Promise<unknown[]> & { cancel?: () => void };
+    pending.cancel = () => {
+      cancelCalls++;
+      rejectPending(new DOMException('aborted', 'AbortError'));
+    };
+    const readConn: FakeSql = {
+      unsafe: () => {
+        ac.abort();
+        return pending;
+      },
+    };
+    const engine = makeEngine({ dualPoolActive: false, readConn, directConn: fakeSql('direct') });
+
+    await expect(engine.executeRawDirect(
+      'UPDATE minion_jobs SET x=1',
+      [],
+      { signal: ac.signal },
+    )).rejects.toThrow(/abort/i);
+    expect(cancelCalls).toBe(1);
   });
 });

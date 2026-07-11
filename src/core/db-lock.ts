@@ -26,12 +26,19 @@ import type { BrainEngine } from './engine.ts';
 
 export interface DbLockHandle {
   id: string;
-  release: () => Promise<void>;
-  refresh: () => Promise<void>;
+  release: (signal?: AbortSignal) => Promise<void>;
+  refresh: (signal?: AbortSignal) => Promise<void>;
 }
 
 /** Default TTL: 30 minutes, same as cycle lock. */
 const DEFAULT_TTL_MINUTES = 30;
+let lastLockAttemptMs = 0;
+
+function nextLockAttemptAt(): Date {
+  const now = Date.now();
+  lastLockAttemptMs = Math.max(now, lastLockAttemptMs + 1);
+  return new Date(lastLockAttemptMs);
+}
 
 /**
  * v0.42 (#1780 Gap 3): grace window before a same-host dead-pid lock is
@@ -173,9 +180,14 @@ export async function tryAcquireDbLock(
   engine: BrainEngine,
   lockId: string,
   ttlMinutes: number = DEFAULT_TTL_MINUTES,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<DbLockHandle | null> {
   const pid = process.pid;
   const host = hostname();
+  // `acquired_at` doubles as an attempt-unique owner token. Guarding every
+  // refresh/release/abort-cleanup with it prevents a cancelled second acquire
+  // in the same PID from deleting the first live lock.
+  const acquiredAt = nextLockAttemptAt();
   // v0.42.x (#1794): a holder that refreshed within this window is protected
   // from the ON CONFLICT steal even if its TTL lapsed (starved-but-alive).
   const stealGraceSeconds = resolveStealGraceSeconds(ttlMinutes);
@@ -205,30 +217,50 @@ export async function tryAcquireDbLock(
     // `gbrain sync --break-lock --max-age <s>` uses last_refreshed_at (not
     // acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const rows: Array<{ id: string }> = await sql`
+    let rows: Array<{ id: string }>;
+    try {
+      rows = await engine.executeRaw<{ id: string }>(`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
-      VALUES (${lockId}, ${pid}, ${host}, NOW(), NOW() + ${ttl}::interval, NOW())
+      VALUES ($1, $2, $3, $6, NOW() + $4::interval, NOW())
       ON CONFLICT (id) DO UPDATE
-        SET holder_pid = ${pid},
-            holder_host = ${host},
-            acquired_at = NOW(),
-            ttl_expires_at = NOW() + ${ttl}::interval,
+        SET holder_pid = $2,
+            holder_host = $3,
+            acquired_at = $6,
+            ttl_expires_at = NOW() + $4::interval,
             last_refreshed_at = NOW()
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
           AND (gbrain_cycle_locks.last_refreshed_at IS NULL
-               OR gbrain_cycle_locks.last_refreshed_at < NOW() - ${stealGraceSeconds} * INTERVAL '1 second')
+               OR gbrain_cycle_locks.last_refreshed_at < NOW() - $5 * INTERVAL '1 second')
       RETURNING id
-    `;
+      `, [lockId, pid, host, ttl, stealGraceSeconds, acquiredAt], { signal: opts.signal });
+    } catch (err) {
+      if (opts.signal?.aborted) {
+        // Query cancellation is normally transactional, but response loss can
+        // make commit status ambiguous. Remove only this process/host holder.
+        const cleanupSignal = AbortSignal.timeout(5_000);
+        try {
+          await engine.executeRawDirect(
+            `DELETE FROM gbrain_cycle_locks
+              WHERE id = $1 AND holder_pid = $2 AND holder_host = $3
+                AND acquired_at = $4`,
+            [lockId, pid, host, acquiredAt],
+            { signal: cleanupSignal },
+          );
+        } catch { /* TTL remains the final backstop */ }
+      }
+      throw err;
+    }
     if (rows.length === 0) return null;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
         DELETE FROM gbrain_cycle_locks
         WHERE id = ${lockId} AND holder_pid = ${pid}
+          AND holder_host = ${host} AND acquired_at = ${acquiredAt}
       `;
     });
     return {
       id: lockId,
-      refresh: async () => {
+      refresh: async (signal) => {
         // v0.41.13.0: bump BOTH ttl_expires_at AND last_refreshed_at.
         // v0.42.x (#1794): route through the DIRECT session pool, not the
         // transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION)
@@ -237,16 +269,21 @@ export async function tryAcquireDbLock(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + ($1)::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2 AND holder_pid = $3 AND holder_host = $4
+              AND acquired_at = $5`,
+          [ttl, lockId, pid, host, acquiredAt],
+          { signal },
         );
       },
-      release: async () => {
+      release: async (signal) => {
         deregister();
-        await sql`
-          DELETE FROM gbrain_cycle_locks
-          WHERE id = ${lockId} AND holder_pid = ${pid}
-        `;
+        await engine.executeRawDirect(
+          `DELETE FROM gbrain_cycle_locks
+            WHERE id = $1 AND holder_pid = $2 AND holder_host = $3
+              AND acquired_at = $4`,
+          [lockId, pid, host, acquiredAt],
+          { signal },
+        );
       },
     };
   }
@@ -256,24 +293,25 @@ export async function tryAcquireDbLock(
     const ttl = `${ttlMinutes} minutes`;
     const { rows } = await db.query(
       `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
-       VALUES ($1, $2, $3, NOW(), NOW() + $4::interval, NOW())
+       VALUES ($1, $2, $3, $6, NOW() + $4::interval, NOW())
        ON CONFLICT (id) DO UPDATE
          SET holder_pid = $2,
              holder_host = $3,
-             acquired_at = NOW(),
+             acquired_at = $6,
              ttl_expires_at = NOW() + $4::interval,
              last_refreshed_at = NOW()
          WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
            AND (gbrain_cycle_locks.last_refreshed_at IS NULL
                 OR gbrain_cycle_locks.last_refreshed_at < NOW() - $5 * INTERVAL '1 second')
        RETURNING id`,
-      [lockId, pid, host, ttl, stealGraceSeconds],
+      [lockId, pid, host, ttl, stealGraceSeconds, acquiredAt],
     );
     if (rows.length === 0) return null;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await db.query(
-        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-        [lockId, pid],
+        `DELETE FROM gbrain_cycle_locks
+          WHERE id = $1 AND holder_pid = $2 AND holder_host = $3 AND acquired_at = $4`,
+        [lockId, pid, host, acquiredAt],
       );
     });
     return {
@@ -283,15 +321,16 @@ export async function tryAcquireDbLock(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + $1::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2 AND holder_pid = $3 AND holder_host = $4 AND acquired_at = $5`,
+          [ttl, lockId, pid, host, acquiredAt],
         );
       },
       release: async () => {
         deregister();
         await db.query(
-          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-          [lockId, pid],
+          `DELETE FROM gbrain_cycle_locks
+            WHERE id = $1 AND holder_pid = $2 AND holder_host = $3 AND acquired_at = $4`,
+          [lockId, pid, host, acquiredAt],
         );
       },
     };
@@ -302,6 +341,12 @@ export async function tryAcquireDbLock(
 
   const first = await acquireOnce();
   if (first) return first;
+
+  // Deadline-bound callers prefer an honest busy result over entering the
+  // best-effort same-host takeover path, whose inspection/delete calls do not
+  // share one cancellable transaction. The initial upsert already reclaims
+  // expired locks; live-TTL dead holders remain a normal contention result.
+  if (opts.signal) return null;
 
   // v0.42 (#1780 Gap 3): the lock is held and its TTL hasn't expired (the
   // upsert's ON CONFLICT ... WHERE ttl_expires_at < NOW() returned no row).
@@ -796,6 +841,10 @@ export interface WithRefreshingLockOpts {
   ttlMinutes?: number;
   /** Heartbeat-fail threshold in ms — abort if SELECT 1 takes longer. Default 30000. */
   heartbeatTimeoutMs?: number;
+  /** Cancel lock acquisition with the caller's total deadline. */
+  signal?: AbortSignal;
+  /** Fresh cleanup budget for lock release after caller abort. Default 5000. */
+  releaseTimeoutMs?: number;
 }
 
 /**
@@ -815,7 +864,7 @@ export async function withRefreshingLock<T>(
   // Refresh 6x per TTL window so a missed tick doesn't expire the lock.
   const refreshIntervalMs = Math.max(15000, (ttlMinutes * 60 * 1000) / 6);
 
-  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes, { signal: opts.signal });
   if (!handle) throw new LockUnavailableError(lockId);
 
   let healthOk = true;
@@ -854,7 +903,10 @@ export async function withRefreshingLock<T>(
     return await work();
   } finally {
     clearInterval(interval);
-    try { await handle.release(); } catch { /* idempotent */ }
+    const releaseSignal = opts.signal
+      ? AbortSignal.timeout(opts.releaseTimeoutMs ?? 5_000)
+      : undefined;
+    try { await handle.release(releaseSignal); } catch { /* idempotent; TTL backstop */ }
     if (!healthOk) {
       // Surface that the heartbeat detected backend trouble — caller can
       // log to the connection-events audit if desired.

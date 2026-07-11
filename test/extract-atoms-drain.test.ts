@@ -13,8 +13,11 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   runExtractAtomsDrain,
+  runExtractAtomsDrainForSource,
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { isProtectedJobName, PROTECTED_JOB_NAMES } from '../src/core/minions/protected-names.ts';
 
 function seq(values: Array<number | null>): () => Promise<number | null> {
@@ -44,23 +47,129 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
   });
 
   it('stops at the wallclock window with remaining > 0', async () => {
-    // SYNC stepping clock: now() #1 sets deadline (0+100=100); the while-check
-    // then sees 50, 50 (two batches), then 999999 → past deadline → stop.
-    const times = [0, 50, 50, 999_999];
-    let ti = 0;
-    const now = () => times[Math.min(ti++, times.length - 1)];
+    let now = 0;
     const result = await runExtractAtomsDrain(
       {
         withLock: passThroughLock,
         countRemaining: async () => 5, // never drains
-        runBatch: async () => ({ extracted: 1, skipped: 0 }),
-        now,
+        runBatch: async () => {
+          now += 60;
+          return { extracted: 1, skipped: 0 };
+        },
+        now: () => now,
       },
       { windowMs: 100 },
     );
     expect(result.stopped).toBe('window');
-    expect(result.remaining).toBe(5);
+    expect(result.remaining).toBeNull();
     expect(result.batches).toBe(2);
+  });
+
+  it('passes one drain-level deadline signal into count and batch', async () => {
+    const seen: AbortSignal[] = [];
+    const controller = new AbortController();
+    let now = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async (signal) => {
+          seen.push(signal);
+          return 5;
+        },
+        runBatch: async (signal) => {
+          seen.push(signal);
+          now = 100;
+          return { extracted: 1, skipped: 0 };
+        },
+        now: () => now,
+      },
+      { windowMs: 100, abortSignal: controller.signal },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.batches).toBe(1);
+    expect(seen.length).toBe(2);
+    expect(seen[0]).toBe(seen[1]);
+    expect(seen[0]).not.toBe(controller.signal);
+  });
+
+  it('aborts a hung backlog count and releases the lock', async () => {
+    let released = false;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: async (work) => {
+          try { return await work(); }
+          finally { released = true; }
+        },
+        countRemaining: (signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        runBatch: async () => ({ extracted: 0, skipped: 0 }),
+        now: () => 0,
+      },
+      { windowMs: 10 },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.remaining).toBeNull();
+    expect(released).toBe(true);
+  });
+
+  it('rethrows external cancellation after releasing the lock', async () => {
+    const controller = new AbortController();
+    let released = false;
+    const pending = runExtractAtomsDrain(
+      {
+        withLock: async (work) => {
+          try { return await work(); }
+          finally { released = true; }
+        },
+        countRemaining: (signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        runBatch: async () => ({ extracted: 0, skipped: 0 }),
+        now: () => 0,
+      },
+      { windowMs: 1_000, abortSignal: controller.signal },
+    );
+    controller.abort(new DOMException('worker timeout', 'AbortError'));
+    await expect(pending).rejects.toThrow('worker timeout');
+    expect(released).toBe(true);
+  });
+
+  it('classifies a deadline-aborted zero-progress batch as window', async () => {
+    let now = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => 5,
+        runBatch: async () => {
+          now = 100;
+          return { extracted: 0, skipped: 0 };
+        },
+        now: () => now,
+      },
+      { windowMs: 100 },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.batches).toBe(1);
+  });
+
+  it('reports remaining unknown when the last extraction lands at deadline', async () => {
+    let now = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => 1,
+        runBatch: async () => {
+          now = 100;
+          return { extracted: 1, skipped: 0 };
+        },
+        now: () => now,
+      },
+      { windowMs: 100 },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.extracted).toBe(1);
+    expect(result.remaining).toBeNull();
   });
 
   it('stops on a zero-progress batch (no hot loop)', async () => {
@@ -92,6 +201,22 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
         { windowMs: 1000 },
       ),
     ).rejects.toThrow('held');
+  });
+
+  it('bounds a hung lock acquisition with the drain deadline signal', async () => {
+    const started = Date.now();
+    await expect(runExtractAtomsDrain(
+      {
+        withLock: (_work, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        countRemaining: async () => 1,
+        runBatch: async () => ({ extracted: 0, skipped: 0 }),
+        now: Date.now,
+      },
+      { windowMs: 10 },
+    )).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(250);
   });
 
   it('respects maxBatches as a belt-and-suspenders cap', async () => {
@@ -128,9 +253,61 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
     join(import.meta.dir, '../src/core/cycle/extract-atoms-drain.ts'),
     'utf8',
   );
+  const jobsSrc = readFileSync(join(import.meta.dir, '../src/commands/jobs.ts'), 'utf8');
   it('runExtractAtomsDrainForSource uses cycleLockIdFor(opts.sourceId) + withRefreshingLock', () => {
     expect(src).toContain('runExtractAtomsDrainForSource');
     expect(src).toContain('cycleLockIdFor(opts.sourceId)');
     expect(src).toContain('withRefreshingLock(engine, lockId');
+    expect(src).toContain('abortSignal: signal');
+    expect(src).toContain('countExtractAtomsBacklog(engine, extractionSourceId, signal)');
+    expect(src).toContain('_transcripts: []');
+    expect(jobsSrc).toContain('abortSignal: job.signal');
+  });
+
+  it('refuses PGLite because its query abort only abandons the waiter', async () => {
+    const engine = { supportsQueryCancellation: false } as BrainEngine;
+    await expect(runExtractAtomsDrainForSource(engine, {
+      sourceId: 'default',
+      windowSeconds: 1,
+    })).rejects.toThrow('requires an engine with real query cancellation');
+  });
+
+});
+
+describe('deadline-bound DB lock acquisition', () => {
+  it('an aborted second attempt cannot delete the first lock from the same PID', async () => {
+    const controller = new AbortController();
+    let heldAttempt: Date | null = null;
+    let acquireCalls = 0;
+    const engine = {
+      kind: 'postgres',
+      sql: () => Promise.resolve([]),
+      executeRaw: async (_sql: string, params?: unknown[]) => {
+        acquireCalls++;
+        const attempt = params?.[5] as Date;
+        if (acquireCalls === 1) {
+          heldAttempt = attempt;
+          return [{ id: 'same-lock' }];
+        }
+        controller.abort(new DOMException('deadline', 'TimeoutError'));
+        throw controller.signal.reason;
+      },
+      executeRawDirect: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('DELETE FROM gbrain_cycle_locks')) {
+          const attempt = params?.[3] as Date;
+          if (heldAttempt?.getTime() === attempt.getTime()) heldAttempt = null;
+        }
+        return [];
+      },
+    } as unknown as BrainEngine;
+
+    const first = await tryAcquireDbLock(engine, 'same-lock');
+    const firstAttempt = heldAttempt;
+    await expect(tryAcquireDbLock(engine, 'same-lock', 5, {
+      signal: controller.signal,
+    })).rejects.toThrow();
+    expect(heldAttempt).toEqual(firstAttempt);
+    await first?.release();
+    expect(heldAttempt).toBeNull();
   });
 });
