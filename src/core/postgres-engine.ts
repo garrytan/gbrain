@@ -5394,11 +5394,11 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
+    if (opts?.signal?.aborted) {
+      throw new DOMException('aborted', 'AbortError');
+    }
+    const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
     if (opts?.signal) {
-      if (opts.signal.aborted) {
-        throw new DOMException('aborted', 'AbortError');
-      }
-      const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
       const onAbort = () => {
         try {
           (pending as unknown as { cancel?: () => void }).cancel?.();
@@ -5412,7 +5412,7 @@ export class PostgresEngine implements BrainEngine {
         opts.signal?.removeEventListener('abort', onAbort);
       });
     }
-    return conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as Promise<T[]>;
+    return pending as unknown as Promise<T[]>;
   }
 
   async executeRaw<T = Record<string, unknown>>(
