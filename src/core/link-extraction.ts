@@ -1094,20 +1094,45 @@ export async function extractFrontmatterLinks(
 export interface TimelineCandidate {
   /** ISO date YYYY-MM-DD. */
   date: string;
+  /** Optional provenance parsed from `| Source — Summary` entries. */
+  source?: string;
   /** First-line summary. */
   summary: string;
   /** Optional detail (subsequent lines until next entry/heading). */
   detail: string;
 }
 
-// Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
-// or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
-const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+const BOLD_PIPE_TIMELINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*$/;
+const BOLD_DASH_TIMELINE_RE = /^\s*-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*(?:--|[-–—])\s*(.+?)\s*$/;
+const PLAIN_TIMELINE_RE = /^\s*-\s+(\d{4}-\d{2}-\d{2})\s+—\s+(.+?)\s*$/;
+const HEADER_TIMELINE_RE = /^\s*###\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+?)\s*$/;
+const SOURCE_SUMMARY_RE = /^(.+?)\s+(?:—|–|--|-)\s+(.+)$/;
+
+type ParsedTimelineLine = Omit<TimelineCandidate, 'detail'> & { kind: 'bullet' | 'header' };
+
+function parseTimelineLine(line: string): ParsedTimelineLine | null {
+  let match = BOLD_PIPE_TIMELINE_RE.exec(line);
+  if (match) {
+    const sourceSummary = SOURCE_SUMMARY_RE.exec(match[2].trim());
+    return sourceSummary
+      ? { date: match[1], source: sourceSummary[1].trim(), summary: sourceSummary[2].trim(), kind: 'bullet' }
+      : { date: match[1], summary: match[2].trim(), kind: 'bullet' };
+  }
+
+  match = BOLD_DASH_TIMELINE_RE.exec(line) ?? PLAIN_TIMELINE_RE.exec(line);
+  if (match) return { date: match[1], summary: match[2].trim(), kind: 'bullet' };
+
+  match = HEADER_TIMELINE_RE.exec(line);
+  if (match) return { date: match[1], summary: match[2].trim(), kind: 'header' };
+
+  return null;
+}
 
 /**
  * Parse timeline entries from content. Looks at:
  *   - The full content (most pages have a top-level "## Timeline" heading).
- *   - Free-form `- **DATE** | text` lines anywhere.
+ *   - Supported bold-date and canonical plain-date bullets anywhere.
+ *   - `### DATE — Title` entries with detail through the next peer/parent heading.
  *
  * Skips dates that don't represent valid calendar dates (e.g. 2026-13-45).
  * Multi-line entries: a date line followed by indented or blank-then-text
@@ -1119,13 +1144,12 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
 
   let i = 0;
   while (i < lines.length) {
-    const m = TIMELINE_LINE_RE.exec(lines[i]);
-    if (!m) {
+    const parsed = parseTimelineLine(lines[i]);
+    if (!parsed) {
       i++;
       continue;
     }
-    const date = m[1];
-    const summary = m[2].trim();
+    const { date, source, summary, kind } = parsed;
     if (!isValidDate(date) || summary.length === 0) {
       i++;
       continue;
@@ -1136,8 +1160,14 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     let j = i + 1;
     while (j < lines.length) {
       const next = lines[j];
-      if (TIMELINE_LINE_RE.test(next)) break;
-      if (/^#{1,6}\s/.test(next)) break;
+      if (parseTimelineLine(next)) break;
+      const heading = /^\s*(#{1,6})\s/.exec(next);
+      if (heading && (kind === 'bullet' || heading[1].length <= 3)) break;
+      if (kind === 'header') {
+        detailLines.push(next.trim());
+        j++;
+        continue;
+      }
       if (next.trim().length === 0 && detailLines.length === 0) {
         // skip leading blank line; if we hit a blank after detail content
         // and still no new entry, treat detail as ended.
@@ -1153,7 +1183,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       }
       break;
     }
-    result.push({ date, summary, detail: detailLines.join(' ').trim() });
+    result.push({ date, ...(source ? { source } : {}), summary, detail: detailLines.join(' ').trim() });
     i = j;
   }
   return result;

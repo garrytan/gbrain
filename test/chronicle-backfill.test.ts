@@ -43,4 +43,26 @@ describe('chronicle_backfill op', () => {
     const jobs = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM minion_jobs WHERE name='chronicle_extract'`);
     expect(Number(jobs[0].n)).toBe(2);
   });
+
+  test('keeps canonical entity timelines separate from Chronicle eligibility', async () => {
+    await engine.putPage('people/timeline-owner', {
+      type: 'person',
+      title: 'timeline owner',
+      compiled_truth: `${LONG}\n- 2026-07-11 — Canonical entity event`,
+    });
+    await engine.putPage('meetings/eligible', { type: 'meeting', title: 'eligible', compiled_truth: LONG });
+
+    const r = await operationsByName.chronicle_backfill.handler(mkCtx(), {}) as {
+      eligible: number;
+      enqueued: number;
+      errors: unknown[];
+    };
+    expect(r.eligible).toBe(1);
+    expect(r.enqueued).toBe(1);
+    expect(r.errors).toHaveLength(0);
+    const jobs = await engine.executeRaw<{ data: { slug: string } }>(
+      `SELECT data FROM minion_jobs WHERE name='chronicle_extract'`,
+    );
+    expect(jobs.map(job => job.data.slug)).toEqual(['meetings/eligible']);
+  });
 });

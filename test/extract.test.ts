@@ -135,6 +135,16 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
   });
+
+  it('is a source-defaulting adapter over the shared canonical parser', () => {
+    expect(extractTimelineFromContent('- 2026-07-11 — Canonical event', 'people/test')).toEqual([{
+      slug: 'people/test',
+      date: '2026-07-11',
+      source: 'markdown',
+      summary: 'Canonical event',
+      detail: undefined,
+    }]);
+  });
 });
 
 describe('walkMarkdownFiles', () => {

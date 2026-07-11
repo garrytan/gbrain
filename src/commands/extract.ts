@@ -471,30 +471,13 @@ export async function extractLinksFromFile(
 
 /** Extract timeline entries from markdown content */
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
-  const entries: ExtractedTimelineEntry[] = [];
-
-  // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
-  let match;
-  while ((match = bulletPattern.exec(content)) !== null) {
-    entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
-  }
-
-  // Format 2: Header — ### YYYY-MM-DD — Title
-  const headerPattern = /^###\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
-  while ((match = headerPattern.exec(content)) !== null) {
-    const afterIdx = match.index + match[0].length;
-    const nextHeader = content.indexOf('\n### ', afterIdx);
-    const nextSection = content.indexOf('\n## ', afterIdx);
-    const endIdx = Math.min(
-      nextHeader >= 0 ? nextHeader : content.length,
-      nextSection >= 0 ? nextSection : content.length,
-    );
-    const detail = content.slice(afterIdx, endIdx).trim();
-    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
-  }
-
-  return entries;
+  return parseTimelineEntries(content).map((entry) => ({
+    slug,
+    date: entry.date,
+    source: entry.source ?? 'markdown',
+    summary: entry.summary,
+    detail: entry.detail || undefined,
+  }));
 }
 
 // --- Main command ---
@@ -1194,7 +1177,7 @@ async function extractTimelineFromDir(
         const slug = pathToSlug(file.relPath);
         for (const entry of extractTimelineFromContent(content, slug)) {
           if (dryRunSeen) {
-            const key = `${entry.slug}::${entry.date}::${entry.summary}`;
+            const key = `${entry.slug}::${entry.date}::${entry.source}::${entry.summary}`;
             if (dryRunSeen.has(key)) continue;
             dryRunSeen.add(key);
             if (!jsonMode) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
@@ -1536,13 +1519,14 @@ async function extractTimelineFromDB(
 
     for (const entry of entries) {
       if (dryRunSeen) {
-        const key = `${source_id}::${slug}::${entry.date}::${entry.summary}`;
+        const key = `${source_id}::${slug}::${entry.date}::${entry.source ?? 'markdown'}::${entry.summary}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
             action: 'add_timeline', slug, source_id, date: entry.date,
-            summary: entry.summary, ...(entry.detail ? { detail: entry.detail } : {}),
+            source: entry.source ?? 'markdown', summary: entry.summary,
+            ...(entry.detail ? { detail: entry.detail } : {}),
           }) + '\n');
         } else {
           console.log(`  ${slug}: ${entry.date} — ${entry.summary}`);
@@ -1551,7 +1535,7 @@ async function extractTimelineFromDB(
       } else {
         // v0.32.8 F4: thread source_id so the JOIN matches the right page
         // when two sources share the same slug.
-        batch.push({ slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id });
+        batch.push({ slug, date: entry.date, source: entry.source ?? 'markdown', summary: entry.summary, detail: entry.detail || '', source_id });
         if (batch.length >= BATCH_SIZE) await flush();
       }
     }
@@ -1663,7 +1647,7 @@ async function extractStaleFromDB(
         });
       }
       for (const entry of parseTimelineEntries(fullContent)) {
-        timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+        timelineRows.push({ slug: page.slug, date: entry.date, source: entry.source ?? 'markdown', summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
       // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
       // stamp with the row's READ updated_at, NOT now() — a concurrent edit

@@ -662,27 +662,15 @@ describe('inferLinkType', () => {
 // ─── parseTimelineEntries ──────────────────────────────────────
 
 describe('parseTimelineEntries', () => {
-  test('parses standard format: - **YYYY-MM-DD** | summary', () => {
-    const entries = parseTimelineEntries('- **2026-01-15** | Met with Alice');
-    expect(entries.length).toBe(1);
-    expect(entries[0]).toEqual({ date: '2026-01-15', summary: 'Met with Alice', detail: '' });
-  });
-
-  test('parses dash variant: - **YYYY-MM-DD** -- summary', () => {
-    const entries = parseTimelineEntries('- **2026-01-15** -- Met with Bob');
-    expect(entries.length).toBe(1);
-    expect(entries[0].summary).toBe('Met with Bob');
-  });
-
-  test('parses single dash: - **YYYY-MM-DD** - summary', () => {
-    const entries = parseTimelineEntries('- **2026-01-15** - Met with Carol');
-    expect(entries.length).toBe(1);
-    expect(entries[0].summary).toBe('Met with Carol');
-  });
-
-  test('parses without leading dash: **YYYY-MM-DD** | summary', () => {
-    const entries = parseTimelineEntries('**2026-01-15** | Standalone entry');
-    expect(entries.length).toBe(1);
+  test.each([
+    ['- **2026-01-15** | Met with Alice', { date: '2026-01-15', summary: 'Met with Alice', detail: '' }],
+    ['- **2026-01-15** | Meeting — Discussed partnership', { date: '2026-01-15', source: 'Meeting', summary: 'Discussed partnership', detail: '' }],
+    ['- **2026-01-15** -- Met with Bob', { date: '2026-01-15', summary: 'Met with Bob', detail: '' }],
+    ['- **2026-01-15** - Met with Carol', { date: '2026-01-15', summary: 'Met with Carol', detail: '' }],
+    ['**2026-01-15** | Standalone entry', { date: '2026-01-15', summary: 'Standalone entry', detail: '' }],
+    ['- 2026-01-15 — Canonical entity event', { date: '2026-01-15', summary: 'Canonical entity event', detail: '' }],
+  ])('parses supported timeline form %s', (line, expected) => {
+    expect(parseTimelineEntries(line)).toEqual([expected]);
   });
 
   test('parses multiple entries', () => {
@@ -706,7 +694,27 @@ describe('parseTimelineEntries', () => {
   });
 
   test('returns empty when no timeline lines found', () => {
-    expect(parseTimelineEntries('Just some plain text.')).toEqual([]);
+    expect(parseTimelineEntries('Just some plain text about 2026-01-15 — not a timeline bullet.')).toEqual([]);
+  });
+
+  test('preserves duplicate candidates for the idempotent write boundary', () => {
+    const line = '- 2026-01-15 — Repeated event';
+    expect(parseTimelineEntries(`${line}\n${line}`)).toHaveLength(2);
+  });
+
+  test('parses header detail until the next peer heading', () => {
+    const entries = parseTimelineEntries(`### 2026-01-15 — Round Closed
+
+All docs signed.
+#### Participants
+Alice and Bob.
+### 2026-02-01 — Launch`);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toEqual({
+      date: '2026-01-15',
+      summary: 'Round Closed',
+      detail: 'All docs signed. #### Participants Alice and Bob.',
+    });
   });
 
   test('handles mixed content (timeline lines interspersed with prose)', () => {
@@ -1264,4 +1272,3 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
     expect(v22!.sql).toContain("unqualified");
   });
 });
-

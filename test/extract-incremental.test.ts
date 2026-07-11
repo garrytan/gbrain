@@ -11,7 +11,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { runExtractCore } from '../src/commands/extract.ts';
+import { extractTimelineForSlugs, runExtractCore } from '../src/commands/extract.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -189,5 +189,26 @@ describe('runExtractCore — incremental cycle path (#417)', () => {
     expect(result.pages_processed).toBe(1);
     // Link from alice to bob was extracted successfully via the full allSlugs set
     expect(result.links_created).toBeGreaterThan(0);
+  });
+
+  test('9. canonical timeline projection is source-scoped and idempotent', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('other', 'other', '{}'::jsonb) ON CONFLICT DO NOTHING`,
+    );
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'default alice', compiled_truth: '', timeline: '', frontmatter: {}, content_hash: 'default',
+    }, { sourceId: 'default' });
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'other alice', compiled_truth: '', timeline: '', frontmatter: {}, content_hash: 'other',
+    }, { sourceId: 'other' });
+    writeFileSync(join(tempDir, 'people/alice-example.md'), '- 2026-07-11 — Canonical event');
+
+    await extractTimelineForSlugs(engine, tempDir, ['people/alice-example'], { sourceId: 'other' });
+    await extractTimelineForSlugs(engine, tempDir, ['people/alice-example'], { sourceId: 'other' });
+
+    expect(await engine.getTimeline('people/alice-example', { sourceId: 'default' })).toHaveLength(0);
+    const otherTimeline = await engine.getTimeline('people/alice-example', { sourceId: 'other' });
+    expect(otherTimeline).toHaveLength(1);
+    expect(otherTimeline[0]).toMatchObject({ source: 'markdown', summary: 'Canonical event' });
   });
 });
