@@ -475,6 +475,29 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // covers the whole request. A mid-call renewal loop would add
       // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
       try {
+        // --- Patch B (borrow-ahead, hand-authored): rolling conversation prompt-cache ---
+        // Direct path marks cache_control only on static system(485)+last-tool(498) ~5.2K;
+        // the growing anthroMessages conversation is re-billed every turn (6/18 v0.42.51
+        // regression). Anthropic caches up to the last cache_control block, so mark the last
+        // content block of the last message and strip stale message markers to stay within
+        // the 4-breakpoint API limit (system + last-tool + 1 rolling = 3).
+        if (anthroMessages.length > 0) {
+          for (const m of anthroMessages as any[]) {
+            if (Array.isArray(m.content)) {
+              for (const b of m.content) {
+                if (b && typeof b === 'object' && 'cache_control' in b) delete b.cache_control;
+              }
+            }
+          }
+          const lastMsg = anthroMessages[anthroMessages.length - 1] as any;
+          if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
+            const lastBlock = lastMsg.content[lastMsg.content.length - 1];
+            if (lastBlock && typeof lastBlock === 'object') {
+              lastBlock.cache_control = { type: 'ephemeral' };
+            }
+          }
+        }
+        // --- end Patch B ---
         const params: Anthropic.MessageCreateParamsNonStreaming = {
           // v0.41 Bug 3: strip `provider:` prefix at the SDK call site only.
           // `model` stays qualified everywhere else (persistence, recipe
