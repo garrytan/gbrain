@@ -125,8 +125,9 @@ describe('admin console intent planning', () => {
   });
 
   test('Markdown export always creates a new PMBrain snapshot subdirectory', () => {
+    const absoluteVault = process.platform === 'win32' ? 'D:\\Obsidian\\Vault' : '/tmp/Obsidian/Vault';
     const result = buildMarkdownExportCommand(
-      'D:\\Obsidian\\Vault',
+      absoluteVault,
       new Date('2026-07-11T03:04:05.000Z'),
       'abc123',
     );

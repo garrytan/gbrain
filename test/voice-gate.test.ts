@@ -290,7 +290,7 @@ describe('voice-gate templates', () => {
       nRecentTotal: 3,
       hushPattern: 'over-confident-macro',
     });
-    expect(out).toContain('gbrain takes nudge --hush over-confident-macro');
+    expect(out).toContain('pmbrain takes nudge --hush over-confident-macro');
     expect(out).toContain('0.85');
     expect(out).toContain('2 of 3 missed');
   });
