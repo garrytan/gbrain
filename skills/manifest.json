@@ -758,6 +758,121 @@
       "name": "browse",
       "path": "browse/SKILL.md",
       "description": "browse"
+    },
+    {
+      "name": "n8n:community-pr-readiness-check",
+      "path": "n8n:community-pr-readiness-check/SKILL.md",
+      "description": "n8n:community-pr-readiness-check"
+    },
+    {
+      "name": "n8n:content-design",
+      "path": "n8n:content-design/SKILL.md",
+      "description": "n8n:content-design"
+    },
+    {
+      "name": "n8n:conventions",
+      "path": "n8n:conventions/SKILL.md",
+      "description": "n8n:conventions"
+    },
+    {
+      "name": "n8n:create-community-node-lint-rule",
+      "path": "n8n:create-community-node-lint-rule/SKILL.md",
+      "description": "n8n:create-community-node-lint-rule"
+    },
+    {
+      "name": "n8n:create-instance-ai-eval",
+      "path": "n8n:create-instance-ai-eval/SKILL.md",
+      "description": "n8n:create-instance-ai-eval"
+    },
+    {
+      "name": "n8n:create-issue",
+      "path": "n8n:create-issue/SKILL.md",
+      "description": "n8n:create-issue"
+    },
+    {
+      "name": "n8n:create-pr",
+      "path": "n8n:create-pr/SKILL.md",
+      "description": "n8n:create-pr"
+    },
+    {
+      "name": "n8n:create-skill",
+      "path": "n8n:create-skill/SKILL.md",
+      "description": "n8n:create-skill"
+    },
+    {
+      "name": "n8n:db-migrations",
+      "path": "n8n:db-migrations/SKILL.md",
+      "description": "n8n:db-migrations"
+    },
+    {
+      "name": "n8n:design-system",
+      "path": "n8n:design-system/SKILL.md",
+      "description": "n8n:design-system"
+    },
+    {
+      "name": "n8n:experiments",
+      "path": "n8n:experiments/SKILL.md",
+      "description": "n8n:experiments"
+    },
+    {
+      "name": "n8n:human-like-code-review",
+      "path": "n8n:human-like-code-review/SKILL.md",
+      "description": "n8n:human-like-code-review"
+    },
+    {
+      "name": "n8n:linear-issue",
+      "path": "n8n:linear-issue/SKILL.md",
+      "description": "n8n:linear-issue"
+    },
+    {
+      "name": "n8n:loom-transcript",
+      "path": "n8n:loom-transcript/SKILL.md",
+      "description": "n8n:loom-transcript"
+    },
+    {
+      "name": "n8n:node-add-oauth",
+      "path": "n8n:node-add-oauth/SKILL.md",
+      "description": "n8n:node-add-oauth"
+    },
+    {
+      "name": "n8n:protect-endpoints",
+      "path": "n8n:protect-endpoints/SKILL.md",
+      "description": "n8n:protect-endpoints"
+    },
+    {
+      "name": "n8n:reproduce-bug",
+      "path": "n8n:reproduce-bug/SKILL.md",
+      "description": "n8n:reproduce-bug"
+    },
+    {
+      "name": "n8n:spec-driven-development",
+      "path": "n8n:spec-driven-development/SKILL.md",
+      "description": "n8n:spec-driven-development"
+    },
+    {
+      "name": "browser-use",
+      "path": "browser-use/SKILL.md",
+      "description": "browser-use"
+    },
+    {
+      "name": "cloud",
+      "path": "cloud/SKILL.md",
+      "description": "cloud"
+    },
+    {
+      "name": "open-source",
+      "path": "open-source/SKILL.md",
+      "description": "open-source"
+    },
+    {
+      "name": "remote-browser",
+      "path": "remote-browser/SKILL.md",
+      "description": "remote-browser"
+    },
+    {
+      "name": "x402",
+      "path": "x402/SKILL.md",
+      "description": "x402"
     }
   ],
   "dependencies": {

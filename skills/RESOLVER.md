@@ -150,3 +150,6 @@ These apply to ALL brain-writing skills:
 
 | last30days | mvanhorn last30days-skill (social research) |
 | gstack/* | garrytan gstack engineering slash-commands |
+
+| n8n:* | n8n-io engineering agent skills |
+| browser-use/* | browser-use automation skills |

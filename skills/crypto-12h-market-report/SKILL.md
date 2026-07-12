@@ -60,6 +60,8 @@ Equity-only screeners are optional context only — never force US stock picks i
 - Never auto-register AI-Trader agents without Adam's explicit email/token approval
 - Futures max loss **$1–$4** per trade if plan emitted
 - Plans only after **3/3** verification (`crypto-trade-verification-gate`)
+- **Range-edge blocker:** when 1h and 4h context are both `range`, do not emit an execution plan for a short entered in the lower range quartile or a long entered in the upper range quartile unless there is a confirmed breakout plus retest. Label it `WATCH` or `NO TRADE`.
+- **Regime/plan consistency:** if the report says `range` and no candidate is execution-eligible, never present a watchlist candidate with exact entry/stop language that can be mistaken for an actionable setup.
 - Manual execution by Adam only
 - Fail-closed on stale/missing multi-exchange data → `NO TRADE`
 
