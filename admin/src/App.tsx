@@ -21,9 +21,11 @@ import {
   ModelConfigPage,
   NaturalLanguagePage,
   DocumentationPage,
+  SettingsPage,
   SystemDiagnosticPage,
 } from './pages/Console';
 import { api } from './api';
+import { applyThemeMode, readThemeMode, saveThemeMode, type ThemeMode } from './lib/theme';
 
 const PAGES = [
   'login', 'dashboard', 'natural',
@@ -41,29 +43,34 @@ function getPage(): Page {
 
 export function App() {
   const [page, setPage] = useState<Page>(getPage);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const [helpOpen, setHelpOpen] = useState(false);
   const [supportPanel, setSupportPanel] = useState<'wecom' | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const wecomQrSrc = `${import.meta.env.BASE_URL}wecom-helper.jpg`;
   const navGroups: Array<{ title: string; items: Array<{ page: Page; label: string }> }> = useMemo(() => [
     {
-      title: '总控制室',
+      title: '概览',
       items: [
-        { page: 'dashboard', label: '知识库总览' },
+        { page: 'dashboard', label: '总体概览' },
       ],
     },
     {
-      title: '知识收集',
+      title: '知识工作台',
       items: [
-        { page: 'import', label: '原始数据导入' },
-        { page: 'natural', label: '自然语言任务' },
-        { page: 'data', label: '知识库数据浏览' },
+        { page: 'import', label: '知识工作台' },
+      ],
+    },
+    {
+      title: '知识库',
+      items: [
+        { page: 'data', label: '知识库' },
       ],
     },
     {
       title: '知识整理',
       items: [
-        { page: 'dream', label: 'AI 知识整理' },
+        { page: 'dream', label: '知识整理' },
       ],
     },
     {
@@ -74,11 +81,10 @@ export function App() {
       ],
     },
     {
-      title: '基础信息',
+      title: '系统与设置',
       items: [
         { page: 'jobs', label: '任务监控' },
         { page: 'diagnostics', label: '系统诊断' },
-        { page: 'config', label: 'API 与模型配置' },
         { page: 'settings', label: '设置' },
       ],
     },
@@ -89,6 +95,11 @@ export function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  useEffect(() => {
+    saveThemeMode(themeMode);
+    return applyThemeMode(themeMode);
+  }, [themeMode]);
 
   const navigate = (target: Page) => {
     window.location.hash = target;
@@ -146,29 +157,30 @@ export function App() {
             if (group.items.length === 1) {
               const item = group.items[0];
               return (
-                <a
+                <button
+                  type="button"
                   key={item.page}
                   className={`nav-item nav-item-top ${page === item.page ? 'active' : ''}`}
                   onClick={() => navigate(item.page)}
                 >
                   {item.label}
-                </a>
+                </button>
               );
             }
             return (
               <div className={`nav-group ${expandedGroups.has(group.title) ? 'expanded' : ''}`} key={group.title}>
-                <div className="nav-group-title" onClick={() => toggleGroup(group.title)}>
-                  <span className="nav-arrow">{expandedGroups.has(group.title) ? '▾' : '▸'}</span>
+                <button type="button" className="nav-group-title" onClick={() => toggleGroup(group.title)} aria-expanded={expandedGroups.has(group.title)}>
                   {group.title}
-                </div>
+                </button>
                 {group.items.map(item => (
-                  <a
+                  <button
+                    type="button"
                     key={item.page}
                     className={`nav-item ${page === item.page ? 'active' : ''}`}
                     onClick={() => navigate(item.page)}
                   >
                     {item.label}
-                  </a>
+                  </button>
                 ))}
               </div>
             );
@@ -198,6 +210,23 @@ export function App() {
           </button>
         </div>
       </nav>
+      <header className="mobile-nav">
+        <div className="mobile-brand"><span className="brand-mark">P</span><b>PMBrain</b></div>
+        <select
+          aria-label="选择管理台页面"
+          value={navGroups.some(group => group.items.some(item => item.page === page)) ? page : 'dashboard'}
+          onChange={event => navigate(event.target.value as Page)}
+        >
+          {navGroups.map(group => group.items.length === 1 ? (
+            <option key={group.items[0].page} value={group.items[0].page}>{group.items[0].label}</option>
+          ) : (
+            <optgroup key={group.title} label={group.title}>
+              {group.items.map(item => <option key={item.page} value={item.page}>{item.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <button type="button" className="mobile-signout" onClick={handleSignOutEverywhere}>退出</button>
+      </header>
       <main className="main">
         {page === 'dashboard' && <KnowledgeWorkbenchPage onNavigate={(p) => navigate(p as Page)} />}
         {page === 'dream' && <DreamOverviewPage />}
@@ -218,7 +247,13 @@ export function App() {
         {page === 'calibration' && <CalibrationPage />}
         {page === 'jobs' && <JobsWatchPage />}
         {page === 'diagnostics' && <SystemDiagnosticPage />}
-        {page === 'settings' && <ModelConfigPage />}
+        {page === 'settings' && (
+          <SettingsPage
+            themeMode={themeMode}
+            onThemeModeChange={setThemeMode}
+            onNavigate={(target) => navigate(target as Page)}
+          />
+        )}
       </main>
       {supportPanel && (
         <div className="modal-overlay" onClick={() => setSupportPanel(null)}>

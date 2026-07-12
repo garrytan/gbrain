@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const VALID_PANELS = ['setup', 'integrations', 'updates', 'recovery'] as const;
+const VALID_PANELS = ['basic', 'models', 'integrations', 'updates', 'recovery'] as const;
 type Panel = (typeof VALID_PANELS)[number];
 
 const root = process.cwd();
@@ -13,7 +13,7 @@ const rendererHtml = join(root, 'out', 'renderer', 'index.html');
 const panelArg = process.argv.find((arg) => arg.startsWith('--panel='));
 const panel: Panel = panelArg
   ? (panelArg.slice('--panel='.length) as Panel)
-  : 'setup';
+  : 'basic';
 if (!VALID_PANELS.includes(panel)) {
   throw new Error(`Invalid panel "${panel}". Valid values: ${VALID_PANELS.join(', ')}`);
 }
@@ -22,6 +22,8 @@ const outputArg = process.argv.find((arg) => arg.startsWith('--out='));
 const output = outputArg
   ? outputArg.slice('--out='.length)
   : join(root, 'out', `renderer-preview-${panel}.png`);
+const prepareOnly = process.argv.includes('--prepare-only');
+const preparedHtmlArg = process.argv.find((arg) => arg.startsWith('--html='));
 
 function chromePath(): string | null {
   const candidates = [
@@ -39,14 +41,15 @@ if (!existsSync(rendererHtml)) {
 }
 
 const browser = chromePath();
-if (!browser) {
+if (!prepareOnly && !browser) {
   throw new Error('Chrome or Edge was not found. Set CHROME_PATH to a browser executable.');
 }
 
 // 按 --panel 参数切换到指定面板，并滚动到对应区域
 // panelScrollMap 和 switchPanel 逻辑已内联到 mock 脚本中
 const panelScrollTarget: Record<Panel, string> = {
-  setup: '#chat-provider',
+  basic: '#database-path',
+  models: '#chat-provider',
   integrations: '#integration-grid',
   updates: '#update-current',
   recovery: '#recovery-message',
@@ -66,6 +69,7 @@ window.pmbrainDesktop = {
       },
       current: {
         engine: 'pglite',
+        theme: 'system',
         databasePath: 'D:\\\\tmp\\\\brain.pglite',
         databaseConfigured: true,
         knowledgeDirectory: 'C:\\\\Users\\\\zhengyunhui\\\\Documents\\\\PMBrain',
@@ -82,7 +86,7 @@ window.pmbrainDesktop = {
     },
     integrations: [
       { id: 'codebuddy', name: 'CodeBuddy', path: 'C:\\Users\\zhengyunhui\\.codebuddy\\mcp.json', configured: true, automatic: true },
-      { id: 'workbuddy', name: 'Workbuddy', path: 'C:\\Users\\zhengyunhui\\.workbuddy\\.mcp.json', configured: false, automatic: true },
+      { id: 'workbuddy', name: 'Workbuddy', path: 'C:\\Users\\zhengyunhui\\.workbuddy\\mcp.json', configured: false, automatic: true },
       { id: 'cursor', name: 'Cursor', path: 'C:\\Users\\zhengyunhui\\.cursor\\mcp.json', configured: true, automatic: true },
       { id: 'claude', name: 'Claude', path: null, configured: false, automatic: false },
       { id: 'codex', name: 'Codex', path: 'C:\\Users\\zhengyunhui\\.codex\\config.toml', configured: false, automatic: true },
@@ -90,10 +94,16 @@ window.pmbrainDesktop = {
     port: 3132
   }),
   getState: async () => ({ phase: 'ready', port: 3132 }),
-  getUpdateState: async () => null,
+  getStartupProgress: async () => ({ visible: false, stage: 'sidecar', title: '', message: '' }),
+  onStartupProgress: () => () => {},
+  getTheme: async () => ({ source: 'system', resolved: 'dark' }),
+  setTheme: async (source) => ({ source, resolved: source === 'light' ? 'light' : 'dark' }),
+  onThemeState: () => () => {},
+  getUpdateState: async () => ({ phase: 'up-to-date', currentVersion: '1.0.55', previousVersion: '1.0.54', message: '当前已经是最新版本' }),
   onState: () => () => {},
   onUpdateState: () => () => {},
   onShowUpdates: () => () => {},
+  onShowPanel: () => () => {},
   chooseDirectory: async () => null,
   getProviderModels: async (provider, touchpoint) => ({
     source: provider === 'ollama' ? 'ollama' : 'catalog',
@@ -101,12 +111,20 @@ window.pmbrainDesktop = {
       ? (provider === 'zhipu' ? ['embedding-3', 'embedding-2'] : ['nomic-embed-text'])
       : ['mimo-v2.5-pro', 'mimo-v2-pro']
   }),
+  getAdvancedModelConfig: async () => ({ tiers: {
+    utility: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
+    reasoning: { override: 'deepseek:deepseek-v4-flash', resolved: 'deepseek:deepseek-v4-flash', source: 'models.tier.reasoning' },
+    deep: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
+    subagent: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' }
+  }}),
+  saveAdvancedModelConfig: async () => window.pmbrainDesktop.getAdvancedModelConfig(),
   saveSetup: async () => window.pmbrainDesktop.getSetup(),
   configureIntegration: async () => ({}),
   copy: async () => {},
   openAdmin: async () => {},
   checkUpdates: async () => null,
   installUpdate: async () => {},
+  openPreviousRelease: async () => {},
   retry: async () => {},
   openLogs: async () => '',
   quit: async () => {}
@@ -121,13 +139,19 @@ setTimeout(() => {
 </script>
 `;
 
-const tempDir = mkdtempSync(join(tmpdir(), 'pmbrain-renderer-preview-'));
-const previewHtml = join(tempDir, 'preview.html');
+const tempDir = prepareOnly ? null : mkdtempSync(join(tmpdir(), 'pmbrain-renderer-preview-'));
+const previewHtml = preparedHtmlArg
+  ? preparedHtmlArg.slice('--html='.length)
+  : prepareOnly
+    ? join(root, 'out', `renderer-preview-${panel}.html`)
+    : join(tempDir!, 'preview.html');
 let html = readFileSync(rendererHtml, 'utf8');
 
 // The preview HTML lives in a temporary directory, so point built assets back
 // to the renderer output directory instead of resolving them beside the temp file.
-const rendererAssetBase = pathToFileURL(join(dirname(rendererHtml), 'assets') + '\\').href;
+const rendererAssetBase = prepareOnly
+  ? './renderer/assets/'
+  : pathToFileURL(join(dirname(rendererHtml), 'assets') + '\\').href;
 html = html.replace(/(["'])\.\/assets\//g, `$1${rendererAssetBase}`);
 
 // 移除 CSP 限制
@@ -154,10 +178,11 @@ html = html.replace(
 
 // 3. 页眉标题按面板调整
 const panelTitles: Record<Panel, { eyebrow: string; title: string }> = {
-  setup:       { eyebrow: 'DESKTOP SETTINGS', title: '配置数据库与 AI 接入' },
-  integrations:{ eyebrow: 'INTEGRATIONS',     title: 'MCP / API 配置助手' },
-  updates:     { eyebrow: 'SOFTWARE UPDATES', title: '软件更新' },
-  recovery:    { eyebrow: 'RECOVERY',         title: '恢复 PMBrain 本地服务' },
+  basic:       { eyebrow: 'DESKTOP SETTINGS / 01', title: '配置数据库、原始资料与主源' },
+  models:      { eyebrow: 'DESKTOP SETTINGS / 02', title: '配置普通模型与向量模型' },
+  integrations:{ eyebrow: 'MCP / 03',               title: '把 PMBrain 接入 AI 客户端' },
+  updates:     { eyebrow: 'UPDATES / 04',           title: '保持桌面端安全更新' },
+  recovery:    { eyebrow: 'RECOVERY',               title: '恢复 PMBrain 本地服务' },
 };
 const t = panelTitles[panel];
 html = html.replace(/(id="page-eyebrow">)[^<]+(<\/p>)/, `$1${t.eyebrow}$2`);
@@ -169,7 +194,7 @@ interface MockIntegration {
 }
 const mockIntegrations: MockIntegration[] = [
   { id: 'codebuddy', name: 'CodeBuddy', path: 'C:\\Users\\zhengyunhui\\.codebuddy\\mcp.json', configured: true, automatic: true },
-  { id: 'workbuddy', name: 'Workbuddy', path: 'C:\\Users\\zhengyunhui\\.workbuddy\\.mcp.json', configured: false, automatic: true },
+  { id: 'workbuddy', name: 'Workbuddy', path: 'C:\\Users\\zhengyunhui\\.workbuddy\\mcp.json', configured: false, automatic: true },
   { id: 'cursor', name: 'Cursor', path: 'C:\\Users\\zhengyunhui\\.cursor\\mcp.json', configured: true, automatic: true },
   { id: 'claude', name: 'Claude', path: null, configured: false, automatic: false },
   { id: 'codex', name: 'Codex', path: 'C:\\Users\\zhengyunhui\\.codex\\config.toml', configured: false, automatic: true },
@@ -222,8 +247,13 @@ html = html.replace('id="finish-open-admin"', 'id="finish-open-admin" disabled')
 
 writeFileSync(previewHtml, html, 'utf8');
 
+if (prepareOnly) {
+  console.log(`[${new Date().toISOString()}] Prepared browser-use preview: panel=${panel}, html=${previewHtml}`);
+  process.exit(0);
+}
+
 const fileUrl = `file:///${previewHtml.replace(/\\/g, '/')}`;
-const result = spawnSync(browser, [
+const result = spawnSync(browser!, [
   '--headless=new',
   '--disable-gpu',
   '--allow-file-access-from-files',

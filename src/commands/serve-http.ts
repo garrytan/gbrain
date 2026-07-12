@@ -52,6 +52,7 @@ import {
 import {
   executePreview,
   getAdminBrainOverview,
+  getAdminBrainPageDetail,
   getAdminBrainPageChunks,
   getAdminDreamOverview,
   getAdminLlmStatus,
@@ -64,7 +65,9 @@ import {
   startActionRun,
   startDreamRun,
   startImportRun,
+  startMarkdownExportRun,
   startSourceAddRun,
+  startThinkRun,
 } from './admin-console.ts';
 import {
   buildChatGptTunnelProfile,
@@ -1544,6 +1547,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json(await listAdminBrainPages(engine, {
         source: req.query.source as string | undefined,
         type: req.query.type as string | undefined,
+        view: req.query.view as string | undefined,
         q: req.query.q as string | undefined,
         embedded: req.query.embedded as string | undefined,
         page: req.query.page as string | undefined,
@@ -1551,6 +1555,49 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }));
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'pages_failed' });
+    }
+  });
+
+  app.get('/admin/api/brain/pages/:sourceId/:slug', requireAdmin, async (req: Request, res: Response) => {
+    const sourceId = Array.isArray(req.params.sourceId) ? req.params.sourceId[0] : req.params.sourceId;
+    const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+    try {
+      const page = await getAdminBrainPageDetail(engine, sourceId, slug);
+      if (!page) {
+        res.status(404).json({ error: 'page_not_found' });
+        return;
+      }
+      res.json(page);
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'page_detail_failed' });
+    }
+  });
+
+  const runAdminPageOperation = async (operation: 'delete_page' | 'restore_page', sourceId: string, slug: string) => {
+    const result = await dispatchToolCall(engine, operation, { slug }, { remote: false, sourceId });
+    const text = (result.content[0] as { text?: string } | undefined)?.text ?? '{}';
+    return { payload: JSON.parse(text) as Record<string, unknown>, isError: result.isError === true };
+  };
+
+  app.post('/admin/api/brain/pages/:sourceId/:slug/delete', requireAdmin, async (req: Request, res: Response) => {
+    const sourceId = Array.isArray(req.params.sourceId) ? req.params.sourceId[0] : req.params.sourceId;
+    const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+    try {
+      const result = await runAdminPageOperation('delete_page', sourceId, slug);
+      res.status(result.isError ? 400 : 200).json(result.payload);
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'page_delete_failed' });
+    }
+  });
+
+  app.post('/admin/api/brain/pages/:sourceId/:slug/restore', requireAdmin, async (req: Request, res: Response) => {
+    const sourceId = Array.isArray(req.params.sourceId) ? req.params.sourceId[0] : req.params.sourceId;
+    const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+    try {
+      const result = await runAdminPageOperation('restore_page', sourceId, slug);
+      res.status(result.isError ? 400 : 200).json(result.payload);
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'page_restore_failed' });
     }
   });
 
@@ -1590,6 +1637,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json({ runId: run.id, status: run.status });
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'intent_execute_failed' });
+    }
+  });
+
+  app.post('/admin/api/think-runs', requireAdmin, express.json({ limit: '64kb' }), async (req: Request, res: Response) => {
+    const question = typeof req.body?.question === 'string' ? req.body.question : '';
+    try {
+      const run = await startThinkRun(question, process.cwd(), runHooks);
+      res.status(202).json({ runId: run.id, status: run.status });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'think_run_failed' });
     }
   });
 
@@ -1647,6 +1704,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  app.post('/admin/api/export-runs', requireAdmin, express.json({ limit: '8kb' }), async (req: Request, res: Response) => {
+    const rootPath = typeof req.body?.rootPath === 'string' ? req.body.rootPath : '';
+    try {
+      const { run, outputDir } = await startMarkdownExportRun(rootPath, process.cwd(), runHooks);
+      res.status(202).json({ runId: run.id, status: run.status, outputDir });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'export_run_failed' });
+    }
+  });
+
   app.post('/admin/api/dream-runs', requireAdmin, express.json({ limit: '16kb' }), async (req: Request, res: Response) => {
     try {
       const rawMaxPages = req.body?.maxPages;
@@ -1696,6 +1763,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       return;
     }
     try {
+      if (id === await resolveMainSourceId(engine)) {
+        res.status(400).json({ error: 'main_source_cannot_be_archived', message: '请先在设置中切换主知识库源。' });
+        return;
+      }
       const impact = await assessDestructiveImpact(engine, id);
       if (!impact) {
         res.status(404).json({ error: 'source_not_found' });

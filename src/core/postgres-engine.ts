@@ -58,7 +58,6 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
-import { hasCJK, expandCjkSearchTerms } from './cjk.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -1539,13 +1538,10 @@ export class PostgresEngine implements BrainEngine {
     // not a temporal preference.
     const visibilityClause = buildVisibilityClause('p', 's');
 
-    if (hasCJK(query)) {
-      return this._searchKeywordCJK(query, {
-        limit, offset, innerLimit, sourceFactorCase,
-        hardExcludeClause, visibilityClause, detailLow, opts,
-      });
-    }
-
+    // Postgres search_vector already tokenizes CJK characters and is backed by
+    // idx_chunks_search_vector. Keep CJK queries on this indexed path; the
+    // raw ILIKE fallback is reserved for PGLite, where the FTS tokenizer does
+    // not provide equivalent CJK coverage.
     const rawQuery = `
       WITH ranked_chunks AS (
         SELECT
@@ -1592,124 +1588,6 @@ export class PostgresEngine implements BrainEngine {
 
     // Search-only timeout. SET LOCAL inside sql.begin() scopes the GUC
     // to the transaction so it can never leak onto a pooled connection.
-    const rows = await sql.begin(async sql => {
-      await sql`SET LOCAL statement_timeout = '8s'`;
-      return await sql.unsafe(rawQuery, params as Parameters<typeof sql.unsafe>[1]);
-    });
-    return rows.map(rowToSearchResult);
-  }
-
-  private async _searchKeywordCJK(
-    query: string,
-    ctx: {
-      limit: number;
-      offset: number;
-      innerLimit: number;
-      sourceFactorCase: string;
-      hardExcludeClause: string;
-      visibilityClause: string;
-      detailLow: boolean;
-      opts: SearchOpts | undefined;
-    },
-  ): Promise<SearchResult[]> {
-    const sql = this.sql;
-    const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailLow, opts } = ctx;
-    const terms = expandCjkSearchTerms(query).filter(Boolean);
-    if (terms.length === 0) return [];
-    const likePatterns = terms.map(term => `%${term}%`);
-    const rawForRank = terms[0];
-    const params: unknown[] = [likePatterns, rawForRank];
-
-    let extraFilter = '';
-    if (opts?.type) {
-      params.push(opts.type);
-      extraFilter += ` AND p.type = $${params.length}`;
-    }
-    if (opts?.types && opts.types.length > 0) {
-      params.push(opts.types);
-      extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
-    }
-    if (opts?.exclude_slugs?.length) {
-      params.push(opts.exclude_slugs);
-      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
-    }
-    if (opts?.language) {
-      params.push(opts.language);
-      extraFilter += ` AND cc.language = $${params.length}`;
-    }
-    if (opts?.symbolKind) {
-      params.push(opts.symbolKind);
-      extraFilter += ` AND cc.symbol_type = $${params.length}`;
-    }
-    if (opts?.afterDate) {
-      params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
-    }
-    if (opts?.beforeDate) {
-      params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
-    }
-    if (opts?.sourceIds && opts.sourceIds.length > 0) {
-      params.push(opts.sourceIds);
-      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
-    } else if (opts?.sourceId) {
-      params.push(opts.sourceId);
-      extraFilter += ` AND p.source_id = $${params.length}`;
-    }
-    params.push(innerLimit);
-    const innerLimitParam = `$${params.length}`;
-    params.push(limit);
-    const limitParam = `$${params.length}`;
-    params.push(offset);
-    const offsetParam = `$${params.length}`;
-
-    const scoreExpr = `
-      (
-        CASE WHEN p.title ILIKE ANY($1::text[]) THEN 8 ELSE 0 END +
-        CASE WHEN p.slug ILIKE ANY($1::text[]) THEN 6 ELSE 0 END +
-        CASE WHEN cc.chunk_text ILIKE ANY($1::text[]) THEN 4 ELSE 0 END +
-        CASE WHEN p.compiled_truth ILIKE ANY($1::text[]) THEN 2 ELSE 0 END +
-        COALESCE((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real, 0)
-      ) * ${sourceFactorCase}
-    `;
-    const rawQuery = `
-      WITH ranked_chunks AS (
-        SELECT
-          p.slug, p.id as page_id, p.title, p.type, p.source_id,
-          p.effective_date, p.effective_date_source,
-          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          ${scoreExpr} AS score
-        FROM content_chunks cc
-        JOIN pages p ON p.id = cc.page_id
-        JOIN sources s ON s.id = p.source_id
-        WHERE (
-            cc.chunk_text ILIKE ANY($1::text[])
-            OR p.compiled_truth ILIKE ANY($1::text[])
-            OR p.title ILIKE ANY($1::text[])
-            OR p.slug ILIKE ANY($1::text[])
-          )
-          ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
-          ${extraFilter}
-          ${hardExcludeClause}
-          ${visibilityClause}
-          AND cc.modality = 'text'
-        ORDER BY score DESC
-        LIMIT ${innerLimitParam}
-      ),
-      best_per_page AS (
-        SELECT DISTINCT ON (slug) *
-        FROM ranked_chunks
-        ORDER BY slug, score DESC
-      )
-      SELECT slug, page_id, title, type, source_id,
-        effective_date, effective_date_source,
-        chunk_id, chunk_index, chunk_text, chunk_source, score,
-        false AS stale
-      FROM best_per_page
-      ORDER BY score DESC
-      LIMIT ${limitParam}
-      OFFSET ${offsetParam}
-    `;
     const rows = await sql.begin(async sql => {
       await sql`SET LOCAL statement_timeout = '8s'`;
       return await sql.unsafe(rawQuery, params as Parameters<typeof sql.unsafe>[1]);

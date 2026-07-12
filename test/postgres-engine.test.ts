@@ -65,6 +65,13 @@ describe('postgres-engine / search path timeout isolation', () => {
     expect(vector).toMatch(/SET\s+LOCAL\s+statement_timeout/);
   });
 
+  test('Postgres CJK keyword search stays on the indexed search_vector path', () => {
+    const keyword = extractMethod(SRC, 'searchKeyword');
+    expect(keyword).toMatch(/search_vector\s+@@\s+websearch_to_tsquery\('english',\s*\$1\)/);
+    expect(keyword).not.toContain('hasCJK(query)');
+    expect(SRC).not.toContain('private async _searchKeywordCJK');
+  });
+
   test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {
     // Regression: worker-instance pools were NOT honoring the prepare decision
     // before v0.15.4. Module singleton connect() in db.ts was fixed by #284 but

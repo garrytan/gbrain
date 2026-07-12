@@ -28,7 +28,7 @@ export function commandForPreview(preview: IntentPreview): string[] {
     case 'capture_memory':
       return [...prefix, 'capture', String(s.content ?? '')];
     case 'search_brain':
-      return [...prefix, 'search', String(s.query ?? '')];
+      return [...prefix, 'think', String(s.query ?? ''), '--json'];
     case 'import_path': {
       const cmd = [...prefix, 'import', String(s.path ?? '')];
       if (s.includeOffice !== false) cmd.push('--include-office');

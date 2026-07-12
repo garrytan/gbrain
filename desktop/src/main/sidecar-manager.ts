@@ -40,8 +40,8 @@ export class SidecarManager {
 
   async start(): Promise<string> {
     this.stopping = false;
-    this.options.onState?.({ phase: 'starting', port: this.port });
     this.spawnProcess();
+    this.options.onState?.({ phase: 'starting', port: this.port });
     try {
       await this.waitUntilHealthy();
     } catch (error) {
@@ -188,8 +188,8 @@ export class SidecarManager {
         this.restartTimes.push(now);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
         if (this.stopping) return;
-        this.options.onState?.({ phase: 'starting', port: this.port });
         this.spawnProcess();
+        this.options.onState?.({ phase: 'starting', port: this.port });
         try {
           await this.waitUntilHealthy();
           const adminUrl = await this.issueMagicLink();

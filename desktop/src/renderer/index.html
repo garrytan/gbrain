@@ -14,9 +14,12 @@
           <div><b>PMBrain</b><small>DESKTOP</small></div>
         </div>
         <nav aria-label="配置步骤">
-          <button class="rail-item active" data-target="setup"><span>01</span>基础配置</button>
-          <button class="rail-item" data-target="integrations"><span>02</span>MCP 接入</button>
-          <button class="rail-item" data-target="updates"><span>03</span>软件更新</button>
+          <span class="rail-group">设置</span>
+          <button class="rail-item active" data-target="basic" title="基础配置"><span>01</span>基础配置</button>
+          <button class="rail-item" data-target="models" title="模型配置"><span>02</span>模型配置</button>
+          <span class="rail-group separated">连接与维护</span>
+          <button class="rail-item" data-target="integrations" title="MCP 接入"><span>03</span>MCP 接入</button>
+          <button class="rail-item" data-target="updates" title="软件更新"><span>04</span>软件更新</button>
         </nav>
         <div class="service-status">
           <i id="service-dot"></i>
@@ -31,6 +34,7 @@
             <h1 id="page-title">把 PMBrain 安顿在这台电脑上</h1>
           </div>
           <div class="top-actions">
+            <label class="theme-control" for="theme-select"><span>外观</span><select id="theme-select" aria-label="界面主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
             <button class="ghost" id="open-logs">日志</button>
             <button class="solid" id="open-admin" disabled>进入管理台</button>
           </div>
@@ -39,13 +43,13 @@
         <div class="notice error" id="global-error" hidden></div>
         <div class="notice success" id="global-success" hidden></div>
 
-        <section class="panel active" id="panel-setup">
+        <section class="panel active" id="panel-basic">
           <div class="existing-config" id="existing-config" hidden>
             <span>LOCAL CONFIG</span>
             <div><b>已自动接入本机配置</b><small>数据库与 API Key 均沿用现有值；留空不会清除原配置。</small></div>
           </div>
           <div class="section-heading">
-            <div><span class="index">01</span><h2>数据库</h2></div>
+            <div><span class="index">01A</span><h2>数据库</h2></div>
             <p>PGLite 无需外部服务；Docker 模式连接你已有的 Postgres。</p>
           </div>
           <div class="mode-grid" role="radiogroup" aria-label="数据库模式">
@@ -61,32 +65,42 @@
               <span><b>Docker Postgres</b><small>适合已有 pgvector 容器或更大规模知识库。</small></span>
             </label>
           </div>
+          <div class="database-safety"><b>数据库切换说明</b><p>切换 PGLite / Postgres 只会改变连接目标，不会自动迁移、删除或备份原数据库。PGLite 数据仍保留在原位置；切换前请确认目标数据库和数据范围。</p></div>
           <div class="field-group" id="pglite-fields">
-            <label for="database-path">PGLite 数据库路径</label>
+            <label for="database-path">数据库位置</label>
             <div class="input-action"><input id="database-path" spellcheck="false" /><button class="ghost choose" data-input="database-path">选择</button></div>
+            <small>选择保存 PMBrain 数据库的本机位置；现有用户会继续使用原位置。</small>
           </div>
           <div class="field-group" id="postgres-fields" hidden>
             <label for="database-url">Postgres 连接地址</label>
             <input id="database-url" type="password" spellcheck="false" placeholder="postgresql://postgres:postgres@127.0.0.1:5433/pmbrain" />
-            <small id="postgres-status">桌面端只连接数据库，不会自动安装或启动 Docker。</small>
+            <div class="field-help"><small id="postgres-status">桌面端只连接数据库，不会自动安装或启动 Docker。</small><button type="button" class="text-button" id="docker-help-open">第一次使用 Docker？查看四步教程</button></div>
           </div>
 
           <div class="section-heading separated">
-            <div><span class="index">02</span><h2>知识库目录</h2></div>
-            <p>完成后注册为可归档、可恢复的独立 Source。</p>
+            <div><span class="index">01B</span><h2>原始资料与主源</h2></div>
+            <p>原始资料保留在所选目录；PMBrain 将目录注册为主源，后续导入与 MCP 默认使用它。</p>
           </div>
           <div class="field-group">
-            <label for="knowledge-directory">本地资料目录</label>
+            <label for="knowledge-directory">原始资料目录</label>
             <div class="input-action"><input id="knowledge-directory" spellcheck="false" /><button class="ghost choose" data-input="knowledge-directory">选择</button></div>
+            <small>这里保存你自己的 Markdown、文档与资料；配置和升级不会删除或覆盖这些文件。</small>
           </div>
-          <div class="field-group">
-            <label for="knowledge-source-id">主知识库源</label>
-            <input id="knowledge-source-id" spellcheck="false" placeholder="例如 duwu" />
-            <small id="knowledge-source-hint">保存后，导入默认写入该源，MCP 默认读取该源。留空时会按目录自动生成。</small>
-          </div>
+          <div class="source-summary"><b>主源</b><p id="main-source-copy">保存后，原始资料目录会注册为主源；导入默认写入该源，MCP 默认读取该源。</p></div>
+          <details class="advanced-block source-advanced">
+            <summary>高级：自定义主源 ID</summary>
+            <div class="field-group">
+              <label for="knowledge-source-id">主源 ID</label>
+              <input id="knowledge-source-id" spellcheck="false" placeholder="留空时按目录自动生成，例如 desktop-a1b2c3d4" />
+              <small id="knowledge-source-hint">主源 ID 用于 CLI 和 MCP 路由。普通用户保持自动生成即可。</small>
+            </div>
+          </details>
+          <div class="panel-next"><button class="primary" id="next-models"><span>下一步：模型配置</span></button></div>
+        </section>
 
-          <div class="section-heading separated">
-            <div><span class="index">03</span><h2>模型配置</h2></div>
+        <section class="panel" id="panel-models">
+          <div class="section-heading">
+            <div><span class="index">02</span><h2>模型配置</h2></div>
             <p>普通模型和向量模型各配置一组；厂商、模型名和 API Key 会写入本机配置。</p>
           </div>
           <div class="model-stack">
@@ -157,6 +171,45 @@
               <p>用于知识库切片向量化和搜索召回。PMBrain 会自动选择推荐维度，并在保存时对齐数据库；老用户已有维度保持不变。</p>
             </section>
           </div>
+          <details class="advanced-block model-advanced" id="advanced-model-settings">
+            <summary>高级：按任务层级指定模型</summary>
+            <div class="advanced-copy">按任务选择厂商和模型即可，不需要手动拼写 <code>provider:model</code>。API Key 会复用上方模型配置；未指定时沿用当前解析结果，保存基础配置不会清空这里的覆盖。</div>
+            <div class="advanced-model-grid">
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>轻量任务</b><small>规则判断、意图识别、短文本处理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="utility">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>厂商</span><select id="advanced-utility-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-utility-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="utility" aria-label="展开轻量任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-utility-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-utility-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-utility-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>推理任务</b><small>需要分析、归纳和检索的普通任务</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="reasoning">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>厂商</span><select id="advanced-reasoning-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-reasoning-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="reasoning" aria-label="展开推理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-reasoning-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-reasoning-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-reasoning-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>深度任务</b><small>复杂问题、多步规划和长文本推理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="deep">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>厂商</span><select id="advanced-deep-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-deep-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="deep" aria-label="展开深度任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-deep-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-deep-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-deep-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>子代理任务</b><small>Dream 和后台子代理的长流程执行</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="subagent">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>厂商</span><select id="advanced-subagent-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-subagent-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="subagent" aria-label="展开子代理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-subagent-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-subagent-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-subagent-effective">尚未读取</small>
+              </article>
+            </div>
+            <div class="advanced-actions"><small id="advanced-model-status">展开后读取当前高级路由。</small><button type="button" class="solid" id="save-advanced-models" disabled><span>保存高级路由</span><i></i></button></div>
+          </details>
           <div class="form-footer">
             <p id="config-path"></p>
             <button class="primary" id="save-setup"><span>保存配置并启动</span><i></i></button>
@@ -165,7 +218,7 @@
 
         <section class="panel" id="panel-integrations">
           <div class="section-heading">
-            <div><span class="index">04</span><h2>MCP / API 配置助手</h2></div>
+            <div><span class="index">03</span><h2>MCP / API 配置助手</h2></div>
             <p>为每个客户端创建独立凭证，写入前自动备份并执行 MCP smoke test。</p>
           </div>
           <div class="credential-switch">
@@ -186,19 +239,23 @@
 
         <section class="panel" id="panel-updates">
           <div class="section-heading">
-            <div><span class="index">05</span><h2>软件更新</h2></div>
+            <div><span class="index">04</span><h2>软件更新</h2></div>
             <p>自动从 GitHub Releases 检查并下载桌面版更新。</p>
           </div>
           <article class="update-card">
             <div class="update-version"><span>CURRENT</span><b id="update-current">—</b></div>
-            <div class="update-copy"><b id="update-title">等待检查更新</b><p id="update-message">PMBrain 会在启动后自动检查，此处也可以手动检查。</p></div>
+            <div class="update-copy"><b id="update-title">等待检查更新</b><p id="update-message">PMBrain 会在启动后自动检查，此处也可以手动检查。</p><p class="update-metrics" id="update-metrics" hidden></p></div>
             <button class="primary" id="update-action"><span>检查更新</span><i></i></button>
           </article>
-          <div class="update-progress" id="update-progress" hidden><i></i></div>
+          <div class="update-progress" id="update-progress" hidden role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
           <div class="update-safety">
             <span>SAFE UPDATE</span>
-            <p>安装前自动停止 sidecar；更新后自动执行数据库迁移，再启动服务并完成健康检查。你的现有数据库、API Key 和知识库目录不会被覆盖。</p>
+            <p>安装前自动停止 sidecar；更新后自动执行数据库迁移，再启动服务并完成健康检查。现有数据库、API Key 和原始资料目录不会被覆盖。桌面端不会自动降级数据库，也不会自动备份 PGLite；重要升级或手动回退前请保留数据库副本。</p>
           </div>
+          <article class="previous-version-card">
+            <div><span>PREVIOUS</span><b id="previous-version">暂无记录</b><p id="previous-version-note">升级一次后，桌面端会在这里保留上一版本号。</p></div>
+            <button type="button" class="ghost" id="previous-version-action" disabled>回退版本（打开下载页）</button>
+          </article>
         </section>
 
         <section class="panel recovery-panel" id="panel-recovery">
@@ -214,10 +271,21 @@
         </section>
       </section>
     </main>
-    <div class="wait-overlay" id="setup-wait" hidden role="status" aria-live="polite">
-      <div class="wait-dialog">
+    <dialog class="help-dialog" id="docker-help" aria-labelledby="docker-help-title">
+      <div class="help-dialog-head"><div><span>DOCKER POSTGRES</span><h2 id="docker-help-title">四步启动本机数据库</h2></div><button type="button" class="ghost icon-button" id="docker-help-close" aria-label="关闭 Docker 教程">×</button></div>
+      <ol class="docker-steps">
+        <li><b>安装并启动 Docker Desktop</b><p>Windows 10/11 需要先确认 Docker Desktop 正常运行；如提示 WSL2，请按引导安装并重启电脑。</p></li>
+        <li><b>在 PowerShell 启动 pgvector Postgres</b><pre id="docker-command">docker run -d --name pmbrain-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pmbrain -p 5433:5432 -v pmbrain-postgres-data:/var/lib/postgresql/data pgvector/pgvector:pg16</pre><button type="button" class="text-button" id="docker-copy-command">复制命令</button></li>
+        <li><b>启用向量扩展</b><pre>docker exec -it pmbrain-postgres psql -U postgres -d pmbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"</pre></li>
+        <li><b>回到 PMBrain 填写连接地址</b><pre>postgresql://postgres:postgres@127.0.0.1:5433/pmbrain</pre><p>选择 Docker Postgres，填写上面的地址，再保存配置。首次迁移可能需要等待几十秒。</p></li>
+      </ol>
+      <div class="help-dialog-foot"><small>本教程摘自 docs/desktop/首次安装使用DockerPostgres.md。PMBrain 不会自动安装、启动或删除 Docker 容器。</small><button type="button" class="solid" id="docker-help-done">我知道了</button></div>
+    </dialog>
+    <div class="wait-overlay" id="setup-wait" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wait-title" aria-describedby="setup-wait-message">
+      <div class="wait-dialog" aria-live="polite">
         <div class="wait-spinner" aria-hidden="true"></div>
         <div>
+          <span class="wait-stage" id="setup-wait-stage">正在处理</span>
           <b id="setup-wait-title">正在保存配置</b>
           <p id="setup-wait-message">第一次配置会比较慢，请耐心等待。请不要关闭窗口或重复点击按钮。</p>
         </div>

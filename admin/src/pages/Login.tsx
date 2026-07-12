@@ -55,14 +55,14 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
           </div>
           你可以向 AI Agent 索取一次性管理员登录链接。Agent 会返回一个 URL，直接在浏览器打开即可登录：
           <div style={{
-            background: '#ffffff',
-            border: '1px solid #b8c7ff',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border)',
             borderRadius: 6,
             padding: '8px 12px',
             marginTop: 8,
             fontFamily: 'var(--font-mono)',
             fontSize: 12,
-            color: '#2443b8',
+            color: 'var(--accent)',
             fontWeight: 700,
             wordBreak: 'break-all',
           }}>

@@ -77,11 +77,12 @@ postgresql://postgres:postgres@127.0.0.1:5433/pmbrain
 
 然后继续填写：
 
-- 本地知识库目录：例如 `C:\Users\你的用户名\Documents\PMBrain`
-- 普通模型：按实际 API Key 选择，例如 `mimo:mimo-v2-pro`
+- 原始资料目录：例如 `C:\Users\你的用户名\Documents\PMBrain`
+- 普通模型：按实际 API Key 选择，例如 `mimo:mimo-v2.5-pro`
 - 向量化模型：例如 `zhipu:embedding-3`
-- 向量维度：智谱 `embedding-3` 填 `1024`
 - API Key：填写对应厂商的 Key
+
+向量维度由桌面端按模型自动选择；已有用户原来的维度会继续保留。
 
 最后点击：
 
@@ -93,7 +94,7 @@ postgresql://postgres:postgres@127.0.0.1:5433/pmbrain
 
 ## 第四步：进入管理台
 
-初始化成功后，桌面端会进入 PMBrain 管理台。
+初始化成功后，桌面端会进入“MCP 接入”页。MCP 配置可以先跳过，再点击右上角“进入管理台”。
 
 如果页面没有自动跳转，可以从 PMBrain 菜单中点击“打开管理控制台”。
 
@@ -168,5 +169,5 @@ docker run -d --name pmbrain-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASS
 启动 PMBrain 后，在数据库里选择 Docker Postgres，连接地址填：
 postgresql://postgres:postgres@127.0.0.1:5433/pmbrain
 
-然后填写知识库目录、模型和 API Key，点击“保存配置并启动”。
+然后填写原始资料目录、模型和 API Key，点击“保存配置并启动”。
 ```

@@ -7,7 +7,12 @@ electronVersion: 36.5.0
 directories:
   output: dist
 files:
-  - out/**/*
+  # Only production Electron output belongs in app.asar. Preview files created
+  # by preview-renderer.ts live beside these directories and may contain local
+  # example paths, so never package the whole out/ directory.
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
 extraResources:
   - from: build/extraResources/pmbrain-runtime
     to: pmbrain-runtime

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
-import { isAbsolute, relative, resolve } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import type { BrainEngine } from '../../core/engine.ts';
 import type { GBrainConfig } from '../../core/config.ts';
 import { loadAllSources } from '../../core/sources-load.ts';
@@ -142,6 +142,38 @@ export async function startImportRun(engine: BrainEngine, input: {
   if (sourceId) cmd.push('--source-id', sourceId);
   if (input.workers && input.workers > 1) cmd.push('--workers', String(Math.min(8, Math.floor(input.workers))));
   return await startRun('import_path', cmd, cwd, hooks);
+}
+
+export async function startThinkRun(question: string, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
+  const trimmed = question.trim();
+  if (!trimmed) throw new Error('Question is required');
+  if (trimmed.length > MAX_NATURAL_TASK_CHARACTERS) {
+    throw new Error(`问题不能超过 ${MAX_NATURAL_TASK_CHARACTERS.toLocaleString('zh-CN')} 字。`);
+  }
+  return await startRun('search_brain', [...resolveCliEntry(), 'think', trimmed, '--json'], cwd, hooks);
+}
+
+export async function startMarkdownExportRun(
+  rootPath: string,
+  cwd: string,
+  hooks?: RunHooks,
+): Promise<{ run: ConsoleRun; outputDir: string }> {
+  const { command, outputDir } = buildMarkdownExportCommand(rootPath);
+  const run = await startRun('export_markdown', command, cwd, hooks);
+  return { run, outputDir };
+}
+
+export function buildMarkdownExportCommand(
+  rootPath: string,
+  now = new Date(),
+  suffix = randomUUID().slice(0, 6),
+): { command: string[]; outputDir: string } {
+  const trimmed = rootPath.trim();
+  if (!trimmed) throw new Error('Export directory is required');
+  if (!isAbsolute(trimmed)) throw new Error('Export directory must be an absolute path');
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, '');
+  const outputDir = join(resolve(trimmed), `PMBrain-Export-${stamp}-${suffix}`);
+  return { command: [...resolveCliEntry(), 'export', '--dir', outputDir], outputDir };
 }
 
 export async function startSourceAddRun(input: {

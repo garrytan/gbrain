@@ -1,5 +1,23 @@
 # Bug 修复台账
 
+## 2026-07-12 Postgres 中文搜索超时修复
+
+- 时间：2026-07-12 09:39:20
+- 版本号：PMBrain 1.1.1
+- 标题：修复更新后中文搜索触发 statement timeout 的问题
+- 描述：PMBrain 1.0.81 的中文搜索增强新增 `_searchKeywordCJK()`，对正文执行 `ILIKE '%关键词%'`，绕过 GIN 索引并在 21421 个切片上顺序扫描；单字查询“水”在 8 秒限制内无法完成。原版 GBrain 没有该 Postgres 分支。
+- 是否完成：是
+- 最终结果：Postgres 中文查询恢复使用现有 `search_vector` GIN 索引；同库 SQL 实测命中 6 条、执行约 18ms。未修改知识库数据、Docker 配置或索引结构；PGLite CJK fallback 保持原行为。
+
+## 2026-07-12 Admin 搜索无结果诊断与超时状态纠正
+
+- 时间：2026-07-12 07:00:26
+- 版本号：PMBrain 1.0.98
+- 标题：区分数据库检索超时与知识库确实没有结果
+- 描述：Admin 最近多次搜索虽然进程以 exit code 0 完成，但 stderr 均包含 Postgres `statement timeout`，混合检索返回 0 页面、0 观点，界面仍显示“已完成”和模型的“知识库没有信息”，让用户误以为搜索按钮无效或库内没有数据。本次在 Admin 结果区识别该原生错误，显示“检索超时”状态和明确说明，不再把超时伪装成空结果。
+- 是否完成：部分完成
+- 最终结果：概览确认数据库现有 4231 个页面、21420 个搜索切片且向量覆盖率为 100%；Admin 请求、运行创建、轮询和 JSON 解析均正常。真实故障已进一步用 `pmbrain search "订单现状" --limit 5` 复现，约 8.9 秒后由共享 Postgres 搜索层取消，因此模型实际收到 0 条资料。界面误导已修复；核心搜索超时或索引性能尚未修改，因为该层由 CLI、GUI、MCP 共用，按项目约束需用户确认后另行处理。
+
 ## 2026-07-11 Dream 运行结果恢复与完成状态一致性修复
 
 - 时间：2026-07-11
@@ -619,3 +637,14 @@
 - 解决方案：Meeting Preset 通过 `forcePackPhases` 仅绕过 `extract_atoms` 的 Pack 门禁，其他运行方式仍保持原门禁；桌面显式保存简单模式时清理 `models.tier.*`、`models.dream.*` 并同步 `chat_model` 与 `models.default`，升级迁移不删除高级配置；模型报告改用统一解析结果显示真实来源，并将运行期品牌日志与命令提示改为 PMBrain。
 - 是否完成：是
 - 最终结果：会议链路不再因活动 Pack 缺少声明而跳过 `extract_atoms`；当前数据库已清除陈旧模型覆盖并统一解析为 `deepseek:deepseek-v4-flash`；高级模式阶段覆盖优先级保持不变，用户可见运行日志不再沿用本次审计发现的 GBrain 前缀。
+
+## 2026-07-12 桌面端安装包构建机路径泄漏
+
+- 时间：2026-07-12
+- 版本号：Desktop 1.0.55
+- 标题：修复安装包校验发现预览文件携带本机路径
+- 描述：桌面端打包时，`electron-builder` 通过 `out/**/*` 把预览脚本生成的 HTML 一并写入 `app.asar`；预览 HTML 含有本机示例路径，导致 `verify-package.ts` 报 `C:\Users\zhengyunhui` 泄漏并使 `build:win` 失败。
+- 根因：生产输出目录与本地预览产物共用 `desktop/out/`，打包配置未限制生产文件范围。
+- 解决方案：将 `electron-builder.yml` 的文件白名单收窄为 `out/main/**/*`、`out/preload/**/*` 和 `out/renderer/**/*`，保留预览脚本但不再把预览文件打进安装包；桌面版本递增到 1.0.55。
+- 是否完成：是
+- 最终结果：预览 HTML 不再进入 `app.asar`，构建机路径校验不会再被本地预览样例触发；最终 `bun run build:win` 仍由用户执行。

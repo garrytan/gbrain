@@ -40,18 +40,28 @@ export const api = {
   brainOverview: () => apiFetch('/admin/api/brain/overview'),
   docs: () => apiFetch('/admin/api/docs'),
   brainPages: (qs = '') => apiFetch(`/admin/api/brain/pages${qs}`),
+  brainPage: (sourceId: string, slug: string) =>
+    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}`),
   brainPageChunks: (sourceId: string, slug: string) =>
     apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}/chunks`),
+  deleteBrainPage: (sourceId: string, slug: string) =>
+    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}/delete`, { method: 'POST' }),
+  restoreBrainPage: (sourceId: string, slug: string) =>
+    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}/restore`, { method: 'POST' }),
   llmStatus: () => apiFetch('/admin/api/llm/status'),
   previewIntent: (text: string) => apiFetch('/admin/api/intent/preview', { method: 'POST', body: JSON.stringify({ text }) }),
   executeIntent: (previewId: string, confirmed = false) =>
     apiFetch('/admin/api/intent/execute', { method: 'POST', body: JSON.stringify({ previewId, confirmed }) }),
+  startThinkRun: (question: string) =>
+    apiFetch('/admin/api/think-runs', { method: 'POST', body: JSON.stringify({ question }) }),
   runs: () => apiFetch('/admin/api/runs'),
   run: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}`),
   cancelRun: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   startActionRun: (action: string) => apiFetch('/admin/api/runs/action', { method: 'POST', body: JSON.stringify({ action }) }),
   startImportRun: (body: { path: string; sourceId?: string; includeOffice: boolean; includeImages: boolean; autoEmbed: boolean; workers: number }) =>
     apiFetch('/admin/api/import-runs', { method: 'POST', body: JSON.stringify(body) }),
+  startMarkdownExportRun: (rootPath: string) =>
+    apiFetch('/admin/api/export-runs', { method: 'POST', body: JSON.stringify({ rootPath }) }),
   dreamOverview: () => apiFetch('/admin/api/dream/overview'),
   startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
     apiFetch('/admin/api/dream-runs', { method: 'POST', body: JSON.stringify(body) }),

@@ -1,15 +1,15 @@
 // AUTO-GENERATED — do not edit by hand.
 // Run `bun run scripts/build-admin-embedded.ts` to regenerate.
-// Source: admin/dist/ at 2026-07-10.
+// Source: admin/dist/ at 2026-07-12.
 //
 // Bun resolves the file: imports to a path that works at runtime even
 // inside a compiled binary (`bun build --compile`). The manifest maps
 // the request path the express handler sees to (resolved-path, mime).
 
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
-import A_0_assets_index_4h9KGoW2_css from '../admin/dist/assets/index-4h9KGoW2.css' with { type: 'file' };
+import A_0_assets_index_BXlnJIfV_css from '../admin/dist/assets/index-BXlnJIfV.css' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
-import A_1_assets_index_BFo49Nrd_js from '../admin/dist/assets/index-BFo49Nrd.js' with { type: 'file' };
+import A_1_assets_index_V7RNyrkz_js from '../admin/dist/assets/index-V7RNyrkz.js' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
 import A_2_index_html from '../admin/dist/index.html' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
@@ -21,8 +21,8 @@ export interface AdminAsset {
 }
 
 export const ADMIN_ASSETS: Record<string, AdminAsset> = {
-  "/admin/assets/index-4h9KGoW2.css": { path: A_0_assets_index_4h9KGoW2_css as unknown as string, mime: "text/css; charset=utf-8" },
-  "/admin/assets/index-BFo49Nrd.js": { path: A_1_assets_index_BFo49Nrd_js as unknown as string, mime: "application/javascript; charset=utf-8" },
+  "/admin/assets/index-BXlnJIfV.css": { path: A_0_assets_index_BXlnJIfV_css as unknown as string, mime: "text/css; charset=utf-8" },
+  "/admin/assets/index-V7RNyrkz.js": { path: A_1_assets_index_V7RNyrkz_js as unknown as string, mime: "application/javascript; charset=utf-8" },
   "/admin/index.html": { path: A_2_index_html as unknown as string, mime: "text/html; charset=utf-8" },
   "/admin/wecom-helper.jpg": { path: A_3_wecom_helper_jpg as unknown as string, mime: "image/jpeg" },
 };

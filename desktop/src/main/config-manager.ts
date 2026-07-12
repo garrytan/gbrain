@@ -23,6 +23,12 @@ const DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>>
   'ollama:all-minilm': 384,
 };
 
+export type DesktopTheme = 'system' | 'light' | 'dark';
+
+export function normalizeDesktopTheme(value: unknown): DesktopTheme {
+  return value === 'light' || value === 'dark' ? value : 'system';
+}
+
 function desktopRecommendedEmbeddingDimension(model: string): number {
   const known = DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS[model];
   if (known) return known;
@@ -37,6 +43,8 @@ function hasKnownDesktopEmbeddingDimension(model: string): boolean {
 
 export interface SetupPayload {
   engine: 'pglite' | 'postgres';
+  theme?: DesktopTheme;
+  resetAdvancedModelRouting?: boolean;
   databasePath?: string;
   databaseUrl?: string;
   knowledgeDirectory?: string;
@@ -66,6 +74,7 @@ export interface SetupInfo {
     chatModel?: string;
     embeddingModel?: string;
     embeddingDimensions?: number;
+    theme: DesktopTheme;
     keyStatus: Record<string, boolean>;
     keyValues: Record<string, string | undefined>;
     lastMigratedVersion?: string;
@@ -83,7 +92,12 @@ type RawConfig = Record<string, unknown> & {
   database_path?: string;
   database_url?: string;
   admin_bootstrap_token?: string;
-  desktop?: { knowledge_directory?: string; knowledge_source_id?: string; last_migrated_version?: string };
+  desktop?: {
+    knowledge_directory?: string;
+    knowledge_source_id?: string;
+    last_migrated_version?: string;
+    theme?: DesktopTheme;
+  };
 };
 
 function preferredHome(): string {
@@ -191,6 +205,7 @@ export function getSetupInfo(): SetupInfo {
       chatModel: typeof config?.chat_model === 'string' ? config.chat_model : undefined,
       embeddingModel: typeof config?.embedding_model === 'string' ? config.embedding_model : undefined,
       embeddingDimensions: typeof config?.embedding_dimensions === 'number' ? config.embedding_dimensions : undefined,
+      theme: normalizeDesktopTheme(desktop?.theme),
       keyStatus: {
         mimo: Boolean(config?.mimo_api_key),
         zhipu: Boolean(config?.zhipu_api_key),
@@ -433,12 +448,25 @@ export function saveSetup(payload: SetupPayload): {
     : existing.desktop?.knowledge_source_id);
   config.desktop = {
     ...existing.desktop,
+    theme: normalizeDesktopTheme(payload.theme ?? existing.desktop?.theme),
     ...(knowledgeDirectory ? { knowledge_directory: knowledgeDirectory, knowledge_source_id: sourceId } : {}),
   };
 
   const backup = backupFile(path, 'config');
   writeJsonConfig(path, config);
   return { config, snapshot, backup, needsEmbeddingDimensionProbe };
+}
+
+export function saveDesktopTheme(theme: DesktopTheme): string | null {
+  const path = desktopConfigPath();
+  const config = readConfig(path);
+  if (!config) return null;
+  const normalized = normalizeDesktopTheme(theme);
+  if (normalizeDesktopTheme(config.desktop?.theme) === normalized) return null;
+  const backup = backupFile(path, 'config');
+  config.desktop = { ...config.desktop, theme: normalized };
+  writeJsonConfig(path, config);
+  return backup;
 }
 
 export function updateSavedEmbeddingDimension(path: string, dimensions: number): void {

@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { getRecipe } from '../../src/core/ai/recipes/index.js';
 import {
   activeConfigDirectory, desktopConfigPath, getSetupInfo, markDesktopMigration, needsDesktopMigration,
-  normalizePgliteDatabasePath, preferredConfigDirectory, restoreConfig, saveSetup, writeJsonConfig,
+  normalizeDesktopTheme, normalizePgliteDatabasePath, preferredConfigDirectory, restoreConfig,
+  saveDesktopTheme, saveSetup, writeJsonConfig,
 } from '../src/main/config-manager.js';
 
 const originalHome = process.env.PMBRAIN_HOME;
@@ -28,6 +29,28 @@ function isolatedHome(): string {
 }
 
 describe('desktop config manager', () => {
+  test('defaults, persists, and independently updates the desktop theme', () => {
+    const root = isolatedHome();
+    expect(normalizeDesktopTheme('unexpected')).toBe('system');
+
+    saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'brain.pglite'),
+      knowledgeDirectory: join(root, 'knowledge'),
+      theme: 'dark',
+      keys: { zhipu: 'zhipu-test' },
+    });
+    expect(getSetupInfo().current.theme).toBe('dark');
+
+    const backup = saveDesktopTheme('light');
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(backup).not.toBeNull();
+    expect(existsSync(backup!)).toBe(true);
+    expect(config.desktop.theme).toBe('light');
+    expect(config.desktop.knowledge_directory).toBe(join(root, 'knowledge'));
+    expect(getSetupInfo().current.theme).toBe('light');
+  });
+
   test('derives new-install model defaults from the CLI recipe registry', () => {
     const root = isolatedHome();
     saveSetup({

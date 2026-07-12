@@ -1,12 +1,17 @@
 import './style.css';
 import type {
+  AdvancedModelConfig,
+  AdvancedModelTier,
   CredentialKind,
   DesktopSetupState,
+  DesktopTheme,
+  DesktopThemeState,
   IntegrationClient,
   IntegrationInfo,
   PMBrainDesktopApi,
   SetupPayload,
   SidecarState,
+  StartupProgress,
   UpdateState,
 } from '../preload/index.js';
 
@@ -17,7 +22,15 @@ declare global {
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 let state: DesktopSetupState | null = null;
 let lastResult = '';
+let advancedModelsLoaded = false;
+let advancedOverrides: Partial<Record<AdvancedModelTier, string>> = {};
 const providerModels: Record<'chat' | 'embedding', string[]> = { chat: [], embedding: [] };
+const advancedProviderModels: Record<AdvancedModelTier, string[]> = {
+  utility: [],
+  reasoning: [],
+  deep: [],
+  subagent: [],
+};
 
 function setNotice(kind: 'error' | 'success', message = ''): void {
   const element = $<HTMLElement>(`#global-${kind}`);
@@ -37,21 +50,42 @@ function saveButtonText(): string {
   return state?.setup.needsSetup === false ? '保存修改并重启' : '保存配置并启动';
 }
 
-function setSetupWait(visible: boolean, title = '', message = ''): void {
+function setSetupWait(visible: boolean, title = '', message = '', stage = '正在处理'): void {
   const overlay = $('#setup-wait');
   overlay.hidden = !visible;
+  $('#setup-wait-stage').textContent = stage;
   if (title) $('#setup-wait-title').textContent = title;
   if (message) $('#setup-wait-message').textContent = message;
 }
 
-type Panel = 'setup' | 'integrations' | 'updates' | 'recovery';
+type Panel = 'basic' | 'models' | 'integrations' | 'updates' | 'recovery';
+
+const PANEL_COPY: Record<Panel, { eyebrow: string; title: string }> = {
+  basic: { eyebrow: 'DESKTOP SETTINGS / 01', title: '配置数据库、原始资料与主源' },
+  models: { eyebrow: 'DESKTOP SETTINGS / 02', title: '配置普通模型与向量模型' },
+  integrations: { eyebrow: 'MCP / 03', title: '把 PMBrain 接入 AI 客户端' },
+  updates: { eyebrow: 'UPDATES / 04', title: '保持桌面端安全更新' },
+  recovery: { eyebrow: 'RECOVERY', title: '恢复 PMBrain 本地服务' },
+};
 
 function switchPanel(target: Panel): void {
   document.querySelectorAll('.rail-item').forEach((item) => item.classList.toggle('active', (item as HTMLElement).dataset.target === target));
-  $('#panel-setup').classList.toggle('active', target === 'setup');
-  $('#panel-integrations').classList.toggle('active', target === 'integrations');
-  $('#panel-updates').classList.toggle('active', target === 'updates');
-  $('#panel-recovery').classList.toggle('active', target === 'recovery');
+  document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === `panel-${target}`));
+  const copy = PANEL_COPY[target];
+  $('#page-eyebrow').textContent = state?.setup.needsSetup && target === 'basic' ? 'FIRST RUN / 01' : copy.eyebrow;
+  $('#page-title').textContent = state?.setup.needsSetup && target === 'basic'
+    ? '把 PMBrain 安顿在这台电脑上'
+    : copy.title;
+}
+
+function renderTheme(theme: DesktopThemeState): void {
+  document.documentElement.dataset.theme = theme.resolved;
+  ($<HTMLSelectElement>('#theme-select')).value = theme.source;
+}
+
+function renderStartupProgress(progress: StartupProgress): void {
+  const stages = { migration: '数据库迁移', sidecar: '本地服务启动', health: '健康检查' } as const;
+  setSetupWait(progress.visible, progress.title, progress.message, stages[progress.stage]);
 }
 
 function selectedEngine(): 'pglite' | 'postgres' {
@@ -109,6 +143,13 @@ function composeModelId(provider: string, model: string): string {
 }
 
 type ModelKind = 'chat' | 'embedding';
+const ADVANCED_TIERS = ['utility', 'reasoning', 'deep', 'subagent'] as const satisfies readonly AdvancedModelTier[];
+const ADVANCED_TIER_LABELS: Record<AdvancedModelTier, string> = {
+  utility: '轻量任务',
+  reasoning: '推理任务',
+  deep: '深度任务',
+  subagent: '子代理任务',
+};
 
 function syncProviderKeyField(kind: ModelKind): void {
   const provider = ($<HTMLSelectElement>(`#${kind}-provider`)).value;
@@ -172,6 +213,125 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
   }
 }
 
+function renderAdvancedModelDropdown(tier: AdvancedModelTier): void {
+  const ul = $<HTMLUListElement>(`#advanced-${tier}-model-dropdown`);
+  const input = $<HTMLInputElement>(`#advanced-${tier}-model-name`);
+  const currentValue = input.value.trim();
+  ul.replaceChildren(...advancedProviderModels[tier].map(model => {
+    const li = document.createElement('li');
+    li.textContent = model;
+    if (model === currentValue) li.classList.add('selected');
+    li.addEventListener('click', () => {
+      input.value = model;
+      ul.hidden = true;
+    });
+    return li;
+  }));
+}
+
+async function refreshAdvancedProviderModels(tier: AdvancedModelTier, chooseDefault: boolean): Promise<void> {
+  const providerSelect = $<HTMLSelectElement>(`#advanced-${tier}-provider`);
+  const provider = providerSelect.value;
+  const input = $<HTMLInputElement>(`#advanced-${tier}-model-name`);
+  const status = $<HTMLElement>(`#advanced-${tier}-model-status`);
+  input.disabled = !provider;
+  status.classList.remove('warning');
+  if (!provider) {
+    advancedProviderModels[tier] = [];
+    status.textContent = '';
+    return;
+  }
+
+  status.textContent = '正在加载模型列表…';
+  try {
+    const result = await window.pmbrainDesktop.getProviderModels(provider, 'chat');
+    if (providerSelect.value !== provider) return;
+    advancedProviderModels[tier] = result.models;
+    if (chooseDefault) input.value = result.models[0] || '';
+    if (!($<HTMLUListElement>(`#advanced-${tier}-model-dropdown`)).hidden) renderAdvancedModelDropdown(tier);
+    if (result.warning) {
+      status.textContent = result.warning;
+      status.classList.add('warning');
+    } else {
+      status.textContent = result.models.length > 0
+        ? `可选择 ${result.models.length} 个已支持模型，也可以直接输入自定义模型名。`
+        : '该厂商使用自定义模型名，请直接输入。';
+    }
+  } catch (error) {
+    status.textContent = `模型列表加载失败：${error instanceof Error ? error.message : String(error)}`;
+    status.classList.add('warning');
+  }
+}
+
+function renderAdvancedModelConfig(config: AdvancedModelConfig): void {
+  for (const tier of ADVANCED_TIERS) {
+    const entry = config.tiers[tier];
+    const override = splitModelId(entry.override);
+    ($<HTMLSelectElement>(`#advanced-${tier}-provider`)).value = override.provider;
+    const input = $<HTMLInputElement>(`#advanced-${tier}-model-name`);
+    input.value = override.model;
+    input.disabled = !override.provider;
+    advancedOverrides[tier] = entry.override;
+    $(`#advanced-${tier}-effective`).textContent = entry.resolved
+      ? `当前解析：${entry.resolved}${entry.source ? ` · 来源 ${entry.source}` : ''}`
+      : '当前没有可用路由';
+  }
+}
+
+async function loadAdvancedModels(force = false): Promise<void> {
+  const button = $<HTMLButtonElement>('#save-advanced-models');
+  const status = $('#advanced-model-status');
+  if (advancedModelsLoaded && !force) return;
+  if (state?.setup.needsSetup) {
+    status.textContent = '请先保存基础配置，再读取和设置任务层级路由。';
+    button.disabled = true;
+    return;
+  }
+  status.textContent = '正在读取当前高级路由并安全检查本地服务…';
+  button.disabled = true;
+  try {
+    const config = await window.pmbrainDesktop.getAdvancedModelConfig();
+    renderAdvancedModelConfig(config);
+    await Promise.all(ADVANCED_TIERS.map(tier => refreshAdvancedProviderModels(tier, false)));
+    advancedModelsLoaded = true;
+    status.textContent = '只保存你在这里明确填写的覆盖；基础配置不会清空高级路由。';
+    button.disabled = false;
+  } catch (error) {
+    status.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function saveAdvancedModels(): Promise<void> {
+  const button = $<HTMLButtonElement>('#save-advanced-models');
+  const status = $('#advanced-model-status');
+  const values: Partial<Record<AdvancedModelTier, string>> = {};
+  for (const tier of ADVANCED_TIERS) {
+    const provider = ($<HTMLSelectElement>(`#advanced-${tier}-provider`)).value;
+    const model = ($<HTMLInputElement>(`#advanced-${tier}-model-name`)).value.trim();
+    if ((provider && !model) || (!provider && model)) {
+      status.textContent = `${ADVANCED_TIER_LABELS[tier]}需要同时选择厂商和填写模型名称，或点击“跟随普通模型”。`;
+      return;
+    }
+    const next = composeModelId(provider, model);
+    if (next !== (advancedOverrides[tier] ?? '')) values[tier] = next;
+  }
+  if (Object.keys(values).length === 0) {
+    status.textContent = '高级路由没有修改。';
+    return;
+  }
+  setBusy(button, true, '正在保存…');
+  status.textContent = '正在保存高级路由；如 PGLite 正在使用，桌面端会安全重启本地服务。';
+  try {
+    renderAdvancedModelConfig(await window.pmbrainDesktop.saveAdvancedModelConfig(values));
+    advancedModelsLoaded = true;
+    status.textContent = '高级路由已保存，未提交的层级不会被清空。';
+  } catch (error) {
+    status.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    setBusy(button, false, '保存高级路由');
+  }
+}
+
 function renderService(service: SidecarState | null, port?: number): void {
   const dot = $('#service-dot');
   dot.className = service?.phase ?? (port ? 'ready' : '');
@@ -181,10 +341,18 @@ function renderService(service: SidecarState | null, port?: number): void {
       : service?.phase === 'failed' ? '启动失败' : '等待配置';
   $('#service-detail').textContent = service?.port ? `127.0.0.1:${service.port}` : port ? `127.0.0.1:${port}` : 'LOCAL';
   ($<HTMLButtonElement>('#open-admin')).disabled = !ready;
+  if (service?.phase === 'starting') {
+    setSetupWait(
+      true,
+      '正在等待本地服务健康检查',
+      'PMBrain 已启动 sidecar，正在确认数据库与 HTTP 服务可用；首次启动最长可能需要约 45 秒。',
+      '健康检查',
+    );
+  } else if (service?.phase === 'ready' || service?.phase === 'failed') {
+    setSetupWait(false);
+  }
   if (service?.phase === 'failed' && state && !state.setup.needsSetup) {
     $('#recovery-message').textContent = service.message || 'PMBrain 服务启动失败，请重试或查看日志。';
-    $('#page-eyebrow').textContent = 'RECOVERY';
-    $('#page-title').textContent = '恢复 PMBrain 本地服务';
     switchPanel('recovery');
   }
 }
@@ -223,17 +391,21 @@ function renderIntegrations(integrations: IntegrationInfo[]): void {
 function populate(next: DesktopSetupState): void {
   state = next;
   const { setup } = next;
-  $('#page-eyebrow').textContent = setup.needsSetup ? 'FIRST RUN' : 'DESKTOP SETTINGS';
-  $('#page-title').textContent = setup.needsSetup ? '把 PMBrain 安顿在这台电脑上' : '配置数据库与 AI 接入';
+  const activePanel = (document.querySelector<HTMLElement>('.panel.active')?.id.replace('panel-', '') || 'basic') as Panel;
+  switchPanel(activePanel);
   $('#existing-config').hidden = setup.needsSetup;
+  ($<HTMLSelectElement>('#theme-select')).value = setup.current.theme;
   const radio = document.querySelector<HTMLInputElement>(`input[name="engine"][value="${setup.current.engine}"]`);
   if (radio) radio.checked = true;
   ($<HTMLInputElement>('#database-path')).value = setup.current.databasePath || setup.defaults.databasePath;
   ($<HTMLInputElement>('#knowledge-directory')).value = setup.current.knowledgeDirectory || setup.defaults.knowledgeDirectory;
   ($<HTMLInputElement>('#knowledge-source-id')).value = setup.current.knowledgeSourceId || '';
   $('#knowledge-source-hint').textContent = setup.current.knowledgeSourceId
-    ? `当前主知识库源：${setup.current.knowledgeSourceId}。保存后，导入默认写入该源，MCP 默认读取该源。`
-    : '保存后，导入默认写入该源，MCP 默认读取该源。留空时会按目录自动生成。';
+    ? `当前主源 ID：${setup.current.knowledgeSourceId}。只有 CLI/MCP 路由或多源管理需要识别这个值。`
+    : '主源 ID 用于 CLI 和 MCP 路由。普通用户保持自动生成即可。';
+  $('#main-source-copy').textContent = setup.current.knowledgeSourceId
+    ? `当前主源为 ${setup.current.knowledgeSourceId}；导入默认写入该源，MCP 默认读取该源。`
+    : '保存后，原始资料目录会注册为主源；导入默认写入该源，MCP 默认读取该源。';
   const chat = splitModelId(setup.current.chatModel);
   const embedding = splitModelId(setup.current.embeddingModel);
   ($<HTMLSelectElement>('#chat-provider')).value = chat.provider;
@@ -270,14 +442,46 @@ function populate(next: DesktopSetupState): void {
   $('#save-setup').querySelector('span')!.textContent = saveButtonText();
 }
 
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value < 1024) return `${Math.round(value)} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let size = value;
+  let unit = -1;
+  do {
+    size /= 1024;
+    unit += 1;
+  } while (size >= 1024 && unit < units.length - 1);
+  return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
 function renderUpdate(update: UpdateState | null): void {
   if (!update) return;
   $('#update-current').textContent = `v${update.currentVersion}`;
   $('#update-title').textContent = update.availableVersion ? `PMBrain v${update.availableVersion}` : 'PMBrain Desktop';
   $('#update-message').textContent = update.message;
+  $('#previous-version').textContent = update.previousVersion ? `v${update.previousVersion}` : '暂无记录';
+  $('#previous-version-note').textContent = update.previousVersion
+    ? '点击后打开上一版本的官方 Release 下载页。安装旧版前请先备份数据库；数据库结构不会自动降级。'
+    : '升级一次后，桌面端会在这里保留上一版本号。';
+  ($<HTMLButtonElement>('#previous-version-action')).disabled = !update.previousVersion;
+  const metrics = $('#update-metrics');
+  const details = [
+    update.fileName ? `文件：${update.fileName}` : '',
+    update.transferred !== undefined && update.total !== undefined
+      ? `已下载 ${formatBytes(update.transferred)} / ${formatBytes(update.total)}`
+      : update.total !== undefined ? `大小：${formatBytes(update.total)}` : '',
+    update.bytesPerSecond !== undefined && update.phase === 'downloading'
+      ? `速度：${formatBytes(update.bytesPerSecond)}/s`
+      : '',
+  ].filter(Boolean);
+  metrics.textContent = details.join(' · ');
+  metrics.hidden = details.length === 0;
   const progress = $('#update-progress');
-  progress.hidden = update.phase !== 'downloading';
+  progress.hidden = update.phase !== 'downloading' && update.phase !== 'downloaded';
   progress.querySelector<HTMLElement>('i')!.style.width = `${update.percent ?? 0}%`;
+  progress.setAttribute('aria-valuenow', String(update.percent ?? 0));
+  progress.setAttribute('aria-valuetext', update.message);
   const button = $<HTMLButtonElement>('#update-action');
   const busy = update.phase === 'checking' || update.phase === 'downloading' || update.phase === 'installing';
   button.disabled = busy;
@@ -358,6 +562,8 @@ async function save(): Promise<void> {
   }
   const payload: SetupPayload = {
     engine: selectedEngine(),
+    theme: ($<HTMLSelectElement>('#theme-select')).value as DesktopTheme,
+    resetAdvancedModelRouting: false,
     databasePath: ($<HTMLInputElement>('#database-path')).value,
     databaseUrl: ($<HTMLInputElement>('#database-url')).value,
     knowledgeDirectory: ($<HTMLInputElement>('#knowledge-directory')).value,
@@ -375,10 +581,12 @@ async function save(): Promise<void> {
     firstSetup
       ? '第一次配置需要初始化数据库、执行迁移并启动服务，可能会比较慢，请耐心等待。请不要关闭窗口或重复点击按钮。'
       : '正在保存配置、执行必要检查并重启 PMBrain，请耐心等待。',
+    firstSetup ? '数据库初始化' : '配置保存',
   );
   setBusy(button, true, firstSetup ? '正在首次配置…' : '正在保存并重启…');
   try {
     const next = await window.pmbrainDesktop.saveSetup(payload);
+    advancedModelsLoaded = false;
     populate(next);
     setNotice('success', `配置完成，PMBrain 已在 127.0.0.1:${next.port} 启动。`);
     switchPanel('integrations');
@@ -425,10 +633,23 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
 }
 
 document.querySelectorAll<HTMLInputElement>('input[name="engine"]').forEach((input) => input.addEventListener('change', renderEngine));
+$('#theme-select').addEventListener('change', async () => {
+  const theme = ($<HTMLSelectElement>('#theme-select')).value as DesktopTheme;
+  try {
+    renderTheme(await window.pmbrainDesktop.setTheme(theme));
+  } catch (error) {
+    setNotice('error', error instanceof Error ? error.message : String(error));
+  }
+});
 (['chat', 'embedding'] as const).forEach(kind => {
   $<HTMLSelectElement>(`#${kind}-provider`).addEventListener('change', () => {
     syncProviderKeyField(kind);
     void refreshProviderModels(kind, true);
+  });
+});
+ADVANCED_TIERS.forEach(tier => {
+  $<HTMLSelectElement>(`#advanced-${tier}-provider`).addEventListener('change', () => {
+    void refreshAdvancedProviderModels(tier, true);
   });
 });
 document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger').forEach(button => button.addEventListener('click', () => {
@@ -441,20 +662,47 @@ document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger').forEach(bu
     ul.hidden = true;
   }
 }));
+document.querySelectorAll<HTMLButtonElement>('.advanced-model-picker-trigger').forEach(button => button.addEventListener('click', () => {
+  const tier = button.dataset.advancedTier as AdvancedModelTier;
+  const ul = $<HTMLUListElement>(`#advanced-${tier}-model-dropdown`);
+  if (ul.hidden) {
+    renderAdvancedModelDropdown(tier);
+    ul.hidden = false;
+  } else {
+    ul.hidden = true;
+  }
+}));
 document.addEventListener('click', e => {
   const target = e.target as HTMLElement;
   if (!target.closest('.model-picker') && !target.closest('.model-dropdown')) {
-    $('#chat-model-dropdown').hidden = true;
-    $('#embedding-model-dropdown').hidden = true;
+    document.querySelectorAll<HTMLUListElement>('.model-dropdown').forEach(dropdown => { dropdown.hidden = true; });
   }
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    $('#chat-model-dropdown').hidden = true;
-    $('#embedding-model-dropdown').hidden = true;
+    document.querySelectorAll<HTMLUListElement>('.model-dropdown').forEach(dropdown => { dropdown.hidden = true; });
   }
 });
-document.querySelectorAll<HTMLButtonElement>('.rail-item').forEach((button) => button.addEventListener('click', () => switchPanel(button.dataset.target as Panel)));
+document.querySelectorAll<HTMLButtonElement>('.rail-item').forEach((button) => button.addEventListener('click', () => {
+  const target = button.dataset.target as Panel;
+  switchPanel(target);
+  if (target === 'models' && ($<HTMLDetailsElement>('#advanced-model-settings')).open) {
+    void loadAdvancedModels(true);
+  }
+}));
+$('#next-models').addEventListener('click', () => switchPanel('models'));
+$('#advanced-model-settings').addEventListener('toggle', () => {
+  if (($<HTMLDetailsElement>('#advanced-model-settings')).open) void loadAdvancedModels();
+});
+document.querySelectorAll<HTMLButtonElement>('.advanced-inherit').forEach(button => button.addEventListener('click', () => {
+  const tier = button.dataset.advancedTier as AdvancedModelTier;
+  ($<HTMLSelectElement>(`#advanced-${tier}-provider`)).value = '';
+  const input = $<HTMLInputElement>(`#advanced-${tier}-model-name`);
+  input.value = '';
+  input.disabled = true;
+  $<HTMLElement>(`#advanced-${tier}-model-status`).textContent = '已恢复跟随当前解析结果。';
+}));
+$('#save-advanced-models').addEventListener('click', () => void saveAdvancedModels());
 document.querySelectorAll<HTMLButtonElement>('.choose').forEach((button) => button.addEventListener('click', async () => {
   const input = $<HTMLInputElement>(`#${button.dataset.input}`);
   const selected = await window.pmbrainDesktop.chooseDirectory(input.value);
@@ -482,8 +730,13 @@ $('#recovery-retry').addEventListener('click', async () => {
 $('#recovery-logs').addEventListener('click', () => void window.pmbrainDesktop.openLogs());
 $('#recovery-settings').addEventListener('click', () => {
   if (state) populate(state);
-  switchPanel('setup');
+  switchPanel('basic');
 });
+const dockerHelp = $<HTMLDialogElement>('#docker-help');
+$('#docker-help-open').addEventListener('click', () => dockerHelp.showModal());
+$('#docker-help-close').addEventListener('click', () => dockerHelp.close());
+$('#docker-help-done').addEventListener('click', () => dockerHelp.close());
+$('#docker-copy-command').addEventListener('click', () => void window.pmbrainDesktop.copy($('#docker-command').textContent || ''));
 $('#update-action').addEventListener('click', async () => {
   const button = $<HTMLButtonElement>('#update-action');
   try {
@@ -493,7 +746,12 @@ $('#update-action').addEventListener('click', async () => {
     setNotice('error', error instanceof Error ? error.message : String(error));
   }
 });
+$('#previous-version-action').addEventListener('click', () => void window.pmbrainDesktop.openPreviousRelease());
 
+void window.pmbrainDesktop.getTheme().then(renderTheme).catch(() => undefined);
+window.pmbrainDesktop.onThemeState(renderTheme);
+void window.pmbrainDesktop.getStartupProgress().then(renderStartupProgress).catch(() => undefined);
+window.pmbrainDesktop.onStartupProgress(renderStartupProgress);
 void window.pmbrainDesktop.getSetup().then(async (next) => {
   populate(next);
   renderService(await window.pmbrainDesktop.getState(), next.port);
@@ -502,3 +760,9 @@ window.pmbrainDesktop.onState((service) => renderService(service, service.port))
 void window.pmbrainDesktop.getUpdateState().then(renderUpdate);
 window.pmbrainDesktop.onUpdateState(renderUpdate);
 window.pmbrainDesktop.onShowUpdates(() => switchPanel('updates'));
+window.pmbrainDesktop.onShowPanel((panel) => {
+  switchPanel(panel);
+  if (panel === 'models' && ($<HTMLDetailsElement>('#advanced-model-settings')).open) {
+    void loadAdvancedModels(true);
+  }
+});

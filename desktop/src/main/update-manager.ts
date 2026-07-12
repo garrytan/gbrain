@@ -1,4 +1,5 @@
 import type { DesktopLogger } from './logs.js';
+import { basename } from 'node:path';
 
 export type UpdatePhase =
   | 'disabled'
@@ -14,13 +15,38 @@ export type UpdatePhase =
 export interface UpdateState {
   phase: UpdatePhase;
   currentVersion: string;
+  previousVersion?: string;
   availableVersion?: string;
+  fileName?: string;
   percent?: number;
+  transferred?: number;
+  total?: number;
+  bytesPerSecond?: number;
   message: string;
 }
 
-interface UpdateInfo { version: string }
-interface DownloadProgress { percent: number }
+interface UpdateInfo {
+  version: string;
+  files?: Array<{ url: string; size?: number }>;
+  downloadedFile?: string;
+}
+interface DownloadProgress {
+  percent: number;
+  transferred: number;
+  total: number;
+  bytesPerSecond: number;
+}
+
+function updateFileName(info: UpdateInfo): string | undefined {
+  const candidate = info.downloadedFile || info.files?.[0]?.url;
+  if (!candidate) return undefined;
+  const clean = candidate.split(/[?#]/, 1)[0];
+  try {
+    return decodeURIComponent(basename(clean)) || undefined;
+  } catch {
+    return basename(clean) || undefined;
+  }
+}
 
 export interface UpdaterLike {
   autoDownload: boolean;
@@ -38,6 +64,7 @@ interface UpdateManagerOptions {
   updater: UpdaterLike;
   packaged: boolean;
   currentVersion: string;
+  previousVersion?: string;
   logger: DesktopLogger;
   beforeInstall: () => Promise<void>;
   onState?: (state: UpdateState) => void;
@@ -56,8 +83,8 @@ export class UpdateManager {
   constructor(options: UpdateManagerOptions) {
     this.options = options;
     this.state = options.packaged
-      ? { phase: 'idle', currentVersion: options.currentVersion, message: '等待检查更新' }
-      : { phase: 'disabled', currentVersion: options.currentVersion, message: '开发模式不检查更新' };
+      ? { phase: 'idle', currentVersion: options.currentVersion, previousVersion: options.previousVersion, message: '等待检查更新' }
+      : { phase: 'disabled', currentVersion: options.currentVersion, previousVersion: options.previousVersion, message: '开发模式不检查更新' };
     options.updater.autoDownload = false;
     options.updater.autoInstallOnAppQuit = false;
     this.bindEvents();
@@ -104,7 +131,8 @@ export class UpdateManager {
 
   async install(): Promise<void> {
     if (this.state.phase !== 'downloaded') throw new Error('更新包尚未下载完成。');
-    this.emit({ ...this.state, phase: 'installing', message: '正在停止 PMBrain 并安装更新…' });
+    const target = this.state.fileName ? ` ${this.state.fileName}` : '更新包';
+    this.emit({ ...this.state, phase: 'installing', message: `正在停止 PMBrain 并安装${target}…` });
     await this.options.beforeInstall();
     this.options.updater.quitAndInstall(false, true);
   }
@@ -112,27 +140,43 @@ export class UpdateManager {
   private bindEvents(): void {
     const updater = this.options.updater;
     updater.on('checking-for-update', () => {
-      this.emit({ phase: 'checking', currentVersion: this.options.currentVersion, message: '正在检查 GitHub Releases…' });
+      this.emit({ phase: 'checking', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion, message: '正在检查 GitHub Releases…' });
     });
     updater.on('update-not-available', () => {
-      this.emit({ phase: 'up-to-date', currentVersion: this.options.currentVersion, message: '当前已经是最新版本' });
+      this.emit({ phase: 'up-to-date', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion, message: '当前已经是最新版本' });
     });
     updater.on('update-available', (info) => {
+      const file = info.files?.[0];
       this.emit({
-        phase: 'available', currentVersion: this.options.currentVersion,
-        availableVersion: info.version, message: `发现新版本 ${info.version}，准备下载…`,
+        phase: 'available', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion,
+        availableVersion: info.version, fileName: updateFileName(info), total: file?.size,
+        message: `发现新版本 ${info.version}，准备下载…`,
       });
       void this.download(info.version);
     });
     updater.on('download-progress', (progress) => {
       const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
-      this.emit({ ...this.state, phase: 'downloading', percent, message: `正在下载更新 ${percent}%` });
+      this.emit({
+        ...this.state,
+        phase: 'downloading',
+        percent,
+        transferred: progress.transferred,
+        total: progress.total,
+        bytesPerSecond: progress.bytesPerSecond,
+        message: `正在下载更新 ${percent}%`,
+      });
     });
     updater.on('update-downloaded', (info) => {
       this.downloading = false;
       this.emit({
-        phase: 'downloaded', currentVersion: this.options.currentVersion,
-        availableVersion: info.version, percent: 100, message: `版本 ${info.version} 已下载，可以安装`,
+        phase: 'downloaded', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion,
+        availableVersion: info.version,
+        fileName: updateFileName(info) ?? this.state.fileName,
+        percent: 100,
+        transferred: this.state.total ?? this.state.transferred,
+        total: this.state.total,
+        bytesPerSecond: this.state.bytesPerSecond,
+        message: `版本 ${info.version} 已下载，可以安装`,
       });
     });
     updater.on('error', (error) => this.handleError(error));
@@ -142,7 +186,7 @@ export class UpdateManager {
     if (this.downloading) return;
     this.downloading = true;
     this.emit({
-      phase: 'downloading', currentVersion: this.options.currentVersion,
+      ...this.state, phase: 'downloading', currentVersion: this.options.currentVersion,
       availableVersion: version, percent: 0, message: `正在下载版本 ${version}…`,
     });
     try {
@@ -159,7 +203,7 @@ export class UpdateManager {
     if (this.state.phase === 'error' && this.state.message === displayMessage) return;
     this.options.logger.write('updater', message);
     this.emit({
-      phase: 'error', currentVersion: this.options.currentVersion,
+      phase: 'error', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion,
       message: displayMessage,
     });
   }

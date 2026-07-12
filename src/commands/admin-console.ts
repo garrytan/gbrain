@@ -159,7 +159,7 @@ export async function getAdminBrainOverview(engine: BrainEngine, config: GBrainC
 
 export async function listAdminBrainPages(
   engine: BrainEngine,
-  query: { source?: string; type?: string; q?: string; embedded?: string; page?: string; limit?: string },
+  query: { source?: string; type?: string; view?: string; q?: string; embedded?: string; page?: string; limit?: string },
 ) {
   const page = Math.max(1, Number.parseInt(query.page ?? '1', 10) || 1);
   const requestedLimit = Number.parseInt(query.limit ?? '10', 10) || 10;
@@ -175,6 +175,19 @@ export async function listAdminBrainPages(
   if (query.type && query.type !== 'all') {
     params.push(query.type);
     filters.push(`p.type = $${params.length}`);
+  }
+  const viewTypes: Record<string, string[]> = {
+    materials: ['material', 'reference', 'source', 'conversation', 'meeting', 'note', 'cover'],
+    structured: ['atom', 'fact', 'concept'],
+    insights: ['take', 'original', 'originals', 'reflection', 'pattern'],
+  };
+  const selectedViewTypes = query.view ? viewTypes[query.view] : undefined;
+  if (selectedViewTypes) {
+    const placeholders = selectedViewTypes.map(value => {
+      params.push(value);
+      return `$${params.length}`;
+    });
+    filters.push(`p.type IN (${placeholders.join(', ')})`);
   }
   if (query.q) {
     params.push(`%${query.q}%`);
@@ -235,6 +248,52 @@ export async function listAdminBrainPages(
     limit,
     pages: Math.max(1, Math.ceil((count?.total ?? 0) / limit)),
   };
+}
+
+export async function getAdminBrainPageDetail(engine: BrainEngine, sourceId: string, slug: string) {
+  const rows = await engine.executeRaw<{
+    id: number;
+    slug: string;
+    title: string;
+    source_id: string;
+    source_name: string | null;
+    source_path: string | null;
+    type: string;
+    page_kind: string;
+    compiled_truth: string;
+    timeline: string;
+    frontmatter: unknown;
+    source_kind: string | null;
+    source_uri: string | null;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT p.id, p.slug, p.title, p.source_id, s.name AS source_name, s.local_path AS source_path,
+            p.type, p.page_kind, p.compiled_truth, p.timeline, p.frontmatter,
+            p.source_kind, p.source_uri, p.created_at::text AS created_at, p.updated_at::text AS updated_at
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+      LIMIT 1`,
+    [sourceId, slug],
+  );
+  const page = rows[0];
+  if (!page) return null;
+  const takes = await engine.executeRaw<{
+    row_num: number;
+    claim: string;
+    kind: string;
+    holder: string;
+    weight: number;
+    source: string | null;
+  }>(
+    `SELECT row_num::int AS row_num, claim, kind, holder, weight, source
+       FROM takes
+      WHERE page_id = $1 AND active = TRUE
+      ORDER BY row_num ASC`,
+    [page.id],
+  );
+  return { ...page, takes };
 }
 
 export async function getAdminBrainPageChunks(engine: BrainEngine, sourceId: string, slug: string) {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { buildDreamCommand, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
+import { buildDreamCommand, buildMarkdownExportCommand, commandForPreview, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
 describe('admin console intent planning', () => {
@@ -109,6 +109,30 @@ describe('admin console intent planning', () => {
 
     expect(preview.intent).toBe('search_brain');
     expect(preview.slots.query).toBe('项目文档');
+  });
+
+  test('knowledge questions use the existing think synthesis command', () => {
+    const command = commandForPreview({
+      previewId: 'preview-search',
+      intent: 'search_brain',
+      confidence: 1,
+      slots: { query: '项目文档' },
+      proposedAction: '搜索知识库',
+      riskLevel: 'read',
+      requiresConfirmation: false,
+    });
+    expect(command.slice(-3)).toEqual(['think', '项目文档', '--json']);
+  });
+
+  test('Markdown export always creates a new PMBrain snapshot subdirectory', () => {
+    const result = buildMarkdownExportCommand(
+      'D:\\Obsidian\\Vault',
+      new Date('2026-07-11T03:04:05.000Z'),
+      'abc123',
+    );
+    expect(result.outputDir.replace(/\\/g, '/')).toEndWith('/PMBrain-Export-20260711T030405-abc123');
+    expect(result.command.slice(-3)).toEqual(['export', '--dir', result.outputDir]);
+    expect(() => buildMarkdownExportCommand('relative/path')).toThrow('absolute path');
   });
 
   test('import path resolves registered source by local_path prefix', async () => {
