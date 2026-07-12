@@ -378,6 +378,56 @@
       "name": "customer-research",
       "path": "customer-research/SKILL.md",
       "description": "customer-research"
+    },
+    {
+      "name": "context-fundamentals",
+      "path": "context-fundamentals/SKILL.md",
+      "description": "context-fundamentals"
+    },
+    {
+      "name": "context-degradation",
+      "path": "context-degradation/SKILL.md",
+      "description": "context-degradation"
+    },
+    {
+      "name": "context-compression",
+      "path": "context-compression/SKILL.md",
+      "description": "context-compression"
+    },
+    {
+      "name": "context-optimization",
+      "path": "context-optimization/SKILL.md",
+      "description": "context-optimization"
+    },
+    {
+      "name": "memory-systems",
+      "path": "memory-systems/SKILL.md",
+      "description": "memory-systems"
+    },
+    {
+      "name": "evaluation",
+      "path": "evaluation/SKILL.md",
+      "description": "evaluation"
+    },
+    {
+      "name": "advanced-evaluation",
+      "path": "advanced-evaluation/SKILL.md",
+      "description": "advanced-evaluation"
+    },
+    {
+      "name": "harness-engineering",
+      "path": "harness-engineering/SKILL.md",
+      "description": "harness-engineering"
+    },
+    {
+      "name": "multi-agent-patterns",
+      "path": "multi-agent-patterns/SKILL.md",
+      "description": "multi-agent-patterns"
+    },
+    {
+      "name": "long-horizon-prompting",
+      "path": "long-horizon-prompting/SKILL.md",
+      "description": "long-horizon-prompting"
     }
   ],
   "dependencies": {
