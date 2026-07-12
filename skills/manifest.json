@@ -318,6 +318,66 @@
       "name": "crypto-12h-market-report",
       "path": "crypto-12h-market-report/SKILL.md",
       "description": "crypto-12h-market-report"
+    },
+    {
+      "name": "product-marketing",
+      "path": "product-marketing/SKILL.md",
+      "description": "product-marketing"
+    },
+    {
+      "name": "copywriting",
+      "path": "copywriting/SKILL.md",
+      "description": "copywriting"
+    },
+    {
+      "name": "content-strategy",
+      "path": "content-strategy/SKILL.md",
+      "description": "content-strategy"
+    },
+    {
+      "name": "seo-audit",
+      "path": "seo-audit/SKILL.md",
+      "description": "seo-audit"
+    },
+    {
+      "name": "cro",
+      "path": "cro/SKILL.md",
+      "description": "cro"
+    },
+    {
+      "name": "emails",
+      "path": "emails/SKILL.md",
+      "description": "emails"
+    },
+    {
+      "name": "social",
+      "path": "social/SKILL.md",
+      "description": "social"
+    },
+    {
+      "name": "ads",
+      "path": "ads/SKILL.md",
+      "description": "ads"
+    },
+    {
+      "name": "analytics",
+      "path": "analytics/SKILL.md",
+      "description": "analytics"
+    },
+    {
+      "name": "marketing-plan",
+      "path": "marketing-plan/SKILL.md",
+      "description": "marketing-plan"
+    },
+    {
+      "name": "marketing-psychology",
+      "path": "marketing-psychology/SKILL.md",
+      "description": "marketing-psychology"
+    },
+    {
+      "name": "customer-research",
+      "path": "customer-research/SKILL.md",
+      "description": "customer-research"
     }
   ],
   "dependencies": {

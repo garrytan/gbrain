@@ -141,3 +141,5 @@ These apply to ALL brain-writing skills:
 
 | ai-trader / market-intel | HKUDS AI-Trader read-only intel + platform skills |
 | crypto-12h-market-report | 12h crypto MoA report (+ market-intel) |
+
+| marketing/* | HKUDS/Corey marketingskills — product-marketing is root |
