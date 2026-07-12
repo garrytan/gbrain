@@ -428,6 +428,46 @@
       "name": "long-horizon-prompting",
       "path": "long-horizon-prompting/SKILL.md",
       "description": "long-horizon-prompting"
+    },
+    {
+      "name": "tool-design",
+      "path": "tool-design/SKILL.md",
+      "description": "tool-design"
+    },
+    {
+      "name": "self-improvement-loops",
+      "path": "self-improvement-loops/SKILL.md",
+      "description": "self-improvement-loops"
+    },
+    {
+      "name": "project-development",
+      "path": "project-development/SKILL.md",
+      "description": "project-development"
+    },
+    {
+      "name": "hosted-agents",
+      "path": "hosted-agents/SKILL.md",
+      "description": "hosted-agents"
+    },
+    {
+      "name": "latent-briefing",
+      "path": "latent-briefing/SKILL.md",
+      "description": "latent-briefing"
+    },
+    {
+      "name": "filesystem-context",
+      "path": "filesystem-context/SKILL.md",
+      "description": "filesystem-context"
+    },
+    {
+      "name": "bdi-mental-states",
+      "path": "bdi-mental-states/SKILL.md",
+      "description": "bdi-mental-states"
+    },
+    {
+      "name": "context-engineering-collection",
+      "path": "context-engineering-collection/SKILL.md",
+      "description": "context-engineering-collection"
     }
   ],
   "dependencies": {

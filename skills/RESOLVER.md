@@ -145,3 +145,5 @@ These apply to ALL brain-writing skills:
 | marketing/* | HKUDS/Corey marketingskills — product-marketing is root |
 
 | context-engineering/* | muratcankoylan context-engineering collection |
+
+| context-engineering-collection | root index for muratcankoylan ctx collection |
