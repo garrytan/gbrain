@@ -147,3 +147,6 @@ These apply to ALL brain-writing skills:
 | context-engineering/* | muratcankoylan context-engineering collection |
 
 | context-engineering-collection | root index for muratcankoylan ctx collection |
+
+| last30days | mvanhorn last30days-skill (social research) |
+| gstack/* | garrytan gstack engineering slash-commands |

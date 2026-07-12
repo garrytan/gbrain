@@ -468,6 +468,136 @@
       "name": "context-engineering-collection",
       "path": "context-engineering-collection/SKILL.md",
       "description": "context-engineering-collection"
+    },
+    {
+      "name": "last30days",
+      "path": "last30days/SKILL.md",
+      "description": "last30days"
+    },
+    {
+      "name": "review",
+      "path": "review/SKILL.md",
+      "description": "review"
+    },
+    {
+      "name": "ship",
+      "path": "ship/SKILL.md",
+      "description": "ship"
+    },
+    {
+      "name": "spec",
+      "path": "spec/SKILL.md",
+      "description": "spec"
+    },
+    {
+      "name": "investigate",
+      "path": "investigate/SKILL.md",
+      "description": "investigate"
+    },
+    {
+      "name": "qa",
+      "path": "qa/SKILL.md",
+      "description": "qa"
+    },
+    {
+      "name": "qa-only",
+      "path": "qa-only/SKILL.md",
+      "description": "qa-only"
+    },
+    {
+      "name": "retro",
+      "path": "retro/SKILL.md",
+      "description": "retro"
+    },
+    {
+      "name": "learn",
+      "path": "learn/SKILL.md",
+      "description": "learn"
+    },
+    {
+      "name": "health",
+      "path": "health/SKILL.md",
+      "description": "health"
+    },
+    {
+      "name": "guard",
+      "path": "guard/SKILL.md",
+      "description": "guard"
+    },
+    {
+      "name": "scrape",
+      "path": "scrape/SKILL.md",
+      "description": "scrape"
+    },
+    {
+      "name": "sync-gbrain",
+      "path": "sync-gbrain/SKILL.md",
+      "description": "sync-gbrain"
+    },
+    {
+      "name": "setup-gbrain",
+      "path": "setup-gbrain/SKILL.md",
+      "description": "setup-gbrain"
+    },
+    {
+      "name": "plan-eng-review",
+      "path": "plan-eng-review/SKILL.md",
+      "description": "plan-eng-review"
+    },
+    {
+      "name": "plan-design-review",
+      "path": "plan-design-review/SKILL.md",
+      "description": "plan-design-review"
+    },
+    {
+      "name": "plan-ceo-review",
+      "path": "plan-ceo-review/SKILL.md",
+      "description": "plan-ceo-review"
+    },
+    {
+      "name": "plan-devex-review",
+      "path": "plan-devex-review/SKILL.md",
+      "description": "plan-devex-review"
+    },
+    {
+      "name": "plan-tune",
+      "path": "plan-tune/SKILL.md",
+      "description": "plan-tune"
+    },
+    {
+      "name": "freeze",
+      "path": "freeze/SKILL.md",
+      "description": "freeze"
+    },
+    {
+      "name": "unfreeze",
+      "path": "unfreeze/SKILL.md",
+      "description": "unfreeze"
+    },
+    {
+      "name": "make-pdf",
+      "path": "make-pdf/SKILL.md",
+      "description": "make-pdf"
+    },
+    {
+      "name": "document-release",
+      "path": "document-release/SKILL.md",
+      "description": "document-release"
+    },
+    {
+      "name": "office-hours",
+      "path": "office-hours/SKILL.md",
+      "description": "office-hours"
+    },
+    {
+      "name": "landing-report",
+      "path": "landing-report/SKILL.md",
+      "description": "landing-report"
+    },
+    {
+      "name": "land-and-deploy",
+      "path": "land-and-deploy/SKILL.md",
+      "description": "land-and-deploy"
     }
   ],
   "dependencies": {
