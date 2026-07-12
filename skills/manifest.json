@@ -598,6 +598,166 @@
       "name": "land-and-deploy",
       "path": "land-and-deploy/SKILL.md",
       "description": "land-and-deploy"
+    },
+    {
+      "name": "ios-clean",
+      "path": "ios-clean/SKILL.md",
+      "description": "ios-clean"
+    },
+    {
+      "name": "setup-deploy",
+      "path": "setup-deploy/SKILL.md",
+      "description": "setup-deploy"
+    },
+    {
+      "name": "context-save",
+      "path": "context-save/SKILL.md",
+      "description": "context-save"
+    },
+    {
+      "name": "benchmark",
+      "path": "benchmark/SKILL.md",
+      "description": "benchmark"
+    },
+    {
+      "name": "ios-fix",
+      "path": "ios-fix/SKILL.md",
+      "description": "ios-fix"
+    },
+    {
+      "name": "ios-qa",
+      "path": "ios-qa/SKILL.md",
+      "description": "ios-qa"
+    },
+    {
+      "name": "gstack-openclaw-retro-openclaw",
+      "path": "gstack-openclaw-retro-openclaw/SKILL.md",
+      "description": "gstack-openclaw-retro-openclaw"
+    },
+    {
+      "name": "pair-agent",
+      "path": "pair-agent/SKILL.md",
+      "description": "pair-agent"
+    },
+    {
+      "name": "gstack-upgrade",
+      "path": "gstack-upgrade/SKILL.md",
+      "description": "gstack-upgrade"
+    },
+    {
+      "name": "gstack-openclaw-ceo-review-openclaw",
+      "path": "gstack-openclaw-ceo-review-openclaw/SKILL.md",
+      "description": "gstack-openclaw-ceo-review-openclaw"
+    },
+    {
+      "name": "context-restore",
+      "path": "context-restore/SKILL.md",
+      "description": "context-restore"
+    },
+    {
+      "name": "diagram",
+      "path": "diagram/SKILL.md",
+      "description": "diagram"
+    },
+    {
+      "name": "connect-chrome",
+      "path": "connect-chrome/SKILL.md",
+      "description": "Launch GStack Browser \u2014 AI-controlled Chromium"
+    },
+    {
+      "name": "devex-review",
+      "path": "devex-review/SKILL.md",
+      "description": "devex-review"
+    },
+    {
+      "name": "benchmark-models",
+      "path": "benchmark-models/SKILL.md",
+      "description": "benchmark-models"
+    },
+    {
+      "name": "autoplan",
+      "path": "autoplan/SKILL.md",
+      "description": "autoplan"
+    },
+    {
+      "name": "gstack-openclaw-office-hours-openclaw",
+      "path": "gstack-openclaw-office-hours-openclaw/SKILL.md",
+      "description": "gstack-openclaw-office-hours-openclaw"
+    },
+    {
+      "name": "open-gstack-browser",
+      "path": "open-gstack-browser/SKILL.md",
+      "description": "open-gstack-browser"
+    },
+    {
+      "name": "design-html",
+      "path": "design-html/SKILL.md",
+      "description": "design-html"
+    },
+    {
+      "name": "design-consultation",
+      "path": "design-consultation/SKILL.md",
+      "description": "design-consultation"
+    },
+    {
+      "name": "ios-design-review",
+      "path": "ios-design-review/SKILL.md",
+      "description": "ios-design-review"
+    },
+    {
+      "name": "design-review",
+      "path": "design-review/SKILL.md",
+      "description": "design-review"
+    },
+    {
+      "name": "careful",
+      "path": "careful/SKILL.md",
+      "description": "careful"
+    },
+    {
+      "name": "ios-sync",
+      "path": "ios-sync/SKILL.md",
+      "description": "ios-sync"
+    },
+    {
+      "name": "gstack-openclaw-investigate-openclaw",
+      "path": "gstack-openclaw-investigate-openclaw/SKILL.md",
+      "description": "gstack-openclaw-investigate-openclaw"
+    },
+    {
+      "name": "setup-browser-cookies",
+      "path": "setup-browser-cookies/SKILL.md",
+      "description": "setup-browser-cookies"
+    },
+    {
+      "name": "canary",
+      "path": "canary/SKILL.md",
+      "description": "canary"
+    },
+    {
+      "name": "document-generate",
+      "path": "document-generate/SKILL.md",
+      "description": "document-generate"
+    },
+    {
+      "name": "cso",
+      "path": "cso/SKILL.md",
+      "description": "cso"
+    },
+    {
+      "name": "codex",
+      "path": "codex/SKILL.md",
+      "description": "codex"
+    },
+    {
+      "name": "design-shotgun",
+      "path": "design-shotgun/SKILL.md",
+      "description": "design-shotgun"
+    },
+    {
+      "name": "browse",
+      "path": "browse/SKILL.md",
+      "description": "browse"
     }
   ],
   "dependencies": {
