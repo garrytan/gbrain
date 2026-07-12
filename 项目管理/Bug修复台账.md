@@ -648,3 +648,14 @@
 - 解决方案：将 `electron-builder.yml` 的文件白名单收窄为 `out/main/**/*`、`out/preload/**/*` 和 `out/renderer/**/*`，保留预览脚本但不再把预览文件打进安装包；桌面版本递增到 1.0.55。
 - 是否完成：是
 - 最终结果：预览 HTML 不再进入 `app.asar`，构建机路径校验不会再被本地预览样例触发；最终 `bun run build:win` 仍由用户执行。
+
+## 2026-07-12 GitHub Actions 失败项集中修复
+
+- 时间：2026-07-12
+- 版本号：PMBrain 1.1.4
+- 标题：修复跨平台安装、Release 测试、Admin 依赖与多项回归断言失败
+- 描述：Actions 中出现 Windows 安装阶段 POSIX 命令失败、Release Linux 直接执行未分片测试、Admin TSX 编译与依赖缺失、Linux 路径断言、Dream 标签、品牌断言、Federation embedding 维度以及 Heavy Tests 缺少 embedding 配置等问题。
+- 根因：安装脚本依赖 Unix shell 语法；Release 使用了绕过项目测试脚本的命令；Admin 依赖未在 CI 中安装且根类型检查未配置 JSX；部分测试夹带平台、历史品牌和固定向量维度假设；Heavy Tests 未关闭 embedding。
+- 解决方案：改用跨平台 Bun 安装脚本并保留失败时的提示；Release 统一使用 `bun run test` 并安装 Admin 依赖；Test/Release 工作流补齐 Admin 依赖和 JSX 类型检查；修正平台无关路径、当前品牌和 UI 标签断言；Federation fixture 不再硬编码 embedding 维度；Heavy Tests 使用 `--no-embed`。
+- 是否完成：进行中
+- 最终结果：本地定向测试、llms 生成校验和 postinstall 编译检查已通过，等待 GitHub Actions 在 Windows、Linux 和 Postgres 环境复验。

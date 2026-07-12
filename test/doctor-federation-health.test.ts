@@ -70,7 +70,8 @@ describe('checkFederationHealth', () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, config, last_sync_at) VALUES ('uncovered', 'uncovered', '{"federated":true}', NOW())`,
     );
-    // Seed 200 pages with chunks; 10 embedded.
+    // Seed 200 pages with chunks and no embeddings. The schema's vector
+    // dimension is configurable, so this fixture must not hardcode one.
     for (let i = 0; i < 200; i++) {
       await engine.putPage(`p${i}`, { type: 'note', title: `p${i}`, compiled_truth: `body ${i}` }, { sourceId: 'uncovered' });
       await engine.upsertChunks(
@@ -80,7 +81,6 @@ describe('checkFederationHealth', () => {
           chunk_text: `chunk ${i}`,
           chunk_source: 'compiled_truth',
           token_count: 1,
-          embedding: i < 10 ? new Float32Array(1536) : undefined,
         }],
         { sourceId: 'uncovered' },
       );

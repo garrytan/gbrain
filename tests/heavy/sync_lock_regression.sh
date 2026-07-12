@@ -95,7 +95,7 @@ for ((i=1; i<=NUM_PARALLEL; i+=1)); do
   OUT_F=$(mktemp -t sync-lock-out-XXXXXX)
   EXIT_FILES+=("$EXIT_F")
   OUT_FILES+=("$OUT_F")
-  ( bun run src/cli.ts sync --dir "$BRAIN_DIR" >"$OUT_F" 2>&1; echo $? > "$EXIT_F" ) &
+  ( bun run src/cli.ts sync --dir "$BRAIN_DIR" --no-embed >"$OUT_F" 2>&1; echo $? > "$EXIT_F" ) &
   PIDS+=($!)
 done
 

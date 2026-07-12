@@ -95,6 +95,9 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install
+      - name: Install Admin dependencies
+        working-directory: admin
+        run: bun install --frozen-lockfile
       - run: bun run verify
 
   serial-tests:
@@ -200,6 +203,9 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install
+      - name: Install Admin dependencies
+        working-directory: admin
+        run: bun install --frozen-lockfile
       - name: Run test shard ${{ matrix.shard }}/10
         run: scripts/test-shard.sh ${{ matrix.shard }} 10
 
