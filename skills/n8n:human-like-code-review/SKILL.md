@@ -283,3 +283,7 @@ Nothing should come after the link.
 
 ## Anti-Patterns
 - Keep scope tight
+
+## Related Skills
+- gstack-review
+- crypto-trade-verification-gate

@@ -142,3 +142,7 @@ See [reference.md](reference.md) if edge cases matter.
 
 ## Anti-Patterns
 - Avoid over-long SKILL.md; keep frontmatter tight and examples minimal
+
+## Related Skills
+- skill-creator
+- skillify

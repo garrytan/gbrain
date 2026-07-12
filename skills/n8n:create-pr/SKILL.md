@@ -209,3 +209,7 @@ PR body, Linear URL, test name, or code comment hints at the vulnerability.
 
 ## Anti-Patterns
 - Keep scope tight
+
+## Related Skills
+- gstack-ship
+- create-skill
