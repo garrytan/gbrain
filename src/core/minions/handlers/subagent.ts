@@ -479,14 +479,37 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         // Direct path marks cache_control only on static system(485)+last-tool(498) ~5.2K;
         // the growing anthroMessages conversation is re-billed every turn (6/18 v0.42.51
         // regression). Anthropic caches up to the last cache_control block, so mark the last
-        // content block of the last message and strip stale message markers to stay within
-        // the 4-breakpoint API limit (system + last-tool + 1 rolling = 3).
+        // content block of the last message and keep the 4-breakpoint API limit
+        // (system + last-tool + 2 rolling = 4).
+        //
+        // Two rolling markers, not one: Anthropic's automatic cache lookup only walks
+        // back up to 20 content blocks from a breakpoint to find a prior cached prefix
+        // (see prompt-caching docs, "20-block lookback window"). A turn that adds more
+        // than 20 blocks since the last marker (e.g. a large parallel tool_use/tool_result
+        // round) would make a freshly-placed single marker miss the previous cache
+        // entirely. Keeping the immediately-preceding rolling marker in place — and only
+        // evicting anything older than that — guarantees at least that marker's prefix is
+        // still a valid, already-written cache read even when this turn's new marker's
+        // lookback comes up empty.
         if (anthroMessages.length > 0) {
-          for (const m of anthroMessages as any[]) {
+          const markerIndices: number[] = [];
+          for (let i = 0; i < anthroMessages.length; i++) {
+            const m = anthroMessages[i] as any;
             if (Array.isArray(m.content)) {
               for (const b of m.content) {
-                if (b && typeof b === 'object' && 'cache_control' in b) delete b.cache_control;
+                if (b && typeof b === 'object' && 'cache_control' in b) {
+                  markerIndices.push(i);
+                  break;
+                }
               }
+            }
+          }
+          const keepIdx = markerIndices.length > 0 ? markerIndices[markerIndices.length - 1] : -1;
+          for (const i of markerIndices) {
+            if (i === keepIdx) continue;
+            const m = anthroMessages[i] as any;
+            for (const b of m.content) {
+              if (b && typeof b === 'object' && 'cache_control' in b) delete b.cache_control;
             }
           }
           const lastMsg = anthroMessages[anthroMessages.length - 1] as any;
