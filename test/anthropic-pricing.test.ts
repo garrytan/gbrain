@@ -49,6 +49,13 @@ describe('estimateMaxCostUsd', () => {
     expect(cost).toBeCloseTo(1.75, 5);
   });
 
+  test('sonnet 5 priced same as sonnet 4.6 ($3/$15) — gbrain#2689 companion', () => {
+    // 100K in + 50K out = 0.1*3 + 0.05*15 = 0.3 + 0.75 = 1.05. Keeps the
+    // dream-cycle budget gate live for sonnet-5 runs.
+    const cost = estimateMaxCostUsd('anthropic:claude-sonnet-5', 100_000, 50_000);
+    expect(cost).toBeCloseTo(1.05, 5);
+  });
+
   test('unknown model → returns null (caller warn-once + bypass)', () => {
     expect(estimateMaxCostUsd('mistral:medium', 1_000, 1_000)).toBeNull();
     expect(estimateMaxCostUsd('gpt-5', 1_000, 1_000)).toBeNull();

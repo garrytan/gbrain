@@ -35,6 +35,25 @@ describe('Anthropic recipe model IDs', () => {
     expect(anthropic.aliases?.['claude-sonnet-4-6-20250929']).toBe('claude-sonnet-4-6');
   });
 
+  it('Claude 5 family is in the chat allowlist (gbrain#2689)', () => {
+    // Pre-fix, config accepted claude-sonnet-5 but the chat-client build
+    // rejected it against this list, degrading to "no LLM available" with an
+    // empty saved synthesis. Claude 5 IDs are dateless and pinned (no alias).
+    const chatModels = anthropic.touchpoints?.chat?.models ?? [];
+    expect(chatModels).toContain('claude-sonnet-5');
+    expect(chatModels).toContain('claude-opus-4-8');
+  });
+
+  it('claude-sonnet-5 is in the expansion allowlist', () => {
+    const expansionModels = anthropic.touchpoints?.expansion?.models ?? [];
+    expect(expansionModels).toContain('claude-sonnet-5');
+  });
+
+  it('does not forward-alias Claude 5 models (dateless IDs are canonical)', () => {
+    expect(anthropic.aliases?.['claude-sonnet-5']).toBeUndefined();
+    expect(anthropic.aliases?.['claude-opus-4-8']).toBeUndefined();
+  });
+
   it('all listed models follow naming conventions', () => {
     const allModels = [
       ...(anthropic.touchpoints?.chat?.models ?? []),

@@ -32,6 +32,12 @@ describe('getPricing — fail-closed contract', () => {
     expect(p.output_per_1m).toBeCloseTo(25.0, 5);
   });
 
+  test('sonnet 5 is supported and priced $3/$15 — gbrain#2689 companion', () => {
+    const p = getPricing('anthropic:claude-sonnet-5');
+    expect(p.input_per_1m).toBeCloseTo(3.0, 5);
+    expect(p.output_per_1m).toBeCloseTo(15.0, 5);
+  });
+
   test('error message names the model AND points to the file', () => {
     try {
       getPricing('foo:bar');

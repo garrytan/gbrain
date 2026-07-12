@@ -62,7 +62,8 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Sonnet 5 (released 2026-06-29): same $3/$15 sticker as 4.6. The launch
   // intro discount ($2/$10 through 2026-08-31) is deliberately NOT modeled —
   // the table carries standard rates so estimates stay conservative and
-  // don't need a time-bombed edit when the promo lapses.
+  // don't need a time-bombed edit when the promo lapses. Chat-allowlist
+  // companion in recipes/anthropic.ts.
   'anthropic:claude-sonnet-5':            { input:  3.00, output: 15.00 },
   'anthropic:claude-sonnet-4-6':          { input:  3.00, output: 15.00 },
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.

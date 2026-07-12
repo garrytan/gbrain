@@ -39,6 +39,10 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-8']).toEqual({ input: 5.0, output: 25.0 });
   });
 
+  test('Sonnet 5 present at $3/$15 (gbrain#2689 companion)', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5']).toEqual({ input: 3.0, output: 15.0 });
+  });
+
   test('Opus 4.7 at $5/$25 (not the stale $15/$75)', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-7']).toEqual({ input: 5.0, output: 25.0 });
   });
