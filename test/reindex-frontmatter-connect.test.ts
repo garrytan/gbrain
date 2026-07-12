@@ -10,9 +10,9 @@
  * happy path without throwing.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, mock } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runReindexFrontmatter } from '../src/commands/reindex-frontmatter.ts';
+import { reindexFrontmatterCli, runReindexFrontmatter } from '../src/commands/reindex-frontmatter.ts';
 
 let engine: PGLiteEngine;
 
@@ -60,5 +60,37 @@ describe('reindex-frontmatter connect-before-query (#1225)', () => {
     const result = await runReindexFrontmatter(engine, { dryRun: true, json: true });
     expect(result.status).toBe('dry_run');
     expect(result.examined).toBeGreaterThanOrEqual(1);
+  });
+
+  test('reuses the CLI-owned engine instead of constructing a second PGLite connection', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, frontmatter, effective_date)
+       VALUES ($1, 'note', $2, $3, 'markdown', $4::jsonb, NULL)`,
+      [
+        'cli-owned-engine',
+        'CLI owned engine',
+        '# CLI owned engine\n\nbody',
+        JSON.stringify({ effective_date: '2026-01-01' }),
+      ],
+    );
+
+    const disconnect = engine.disconnect.bind(engine);
+    const disconnectSpy = mock(disconnect);
+    engine.disconnect = disconnectSpy;
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => logs.push(String(message));
+
+    try {
+      await reindexFrontmatterCli(['--dry-run', '--json'], engine);
+      const result = JSON.parse(logs.at(-1) ?? '{}') as { examined?: number };
+      // A second engine would see a different/empty database; this asserts that
+      // the CLI command queried the connected engine supplied by its dispatcher.
+      expect(result.examined).toBeGreaterThanOrEqual(1);
+      expect(disconnectSpy).not.toHaveBeenCalled();
+    } finally {
+      console.log = originalLog;
+      engine.disconnect = disconnect;
+    }
   });
 });
