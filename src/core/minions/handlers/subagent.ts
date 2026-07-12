@@ -490,6 +490,15 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             }
           }
           const lastMsg = anthroMessages[anthroMessages.length - 1] as any;
+          // A fresh job's seed message has string content (see the
+          // `[{ role: 'user', content: data.prompt }]` init above), which
+          // the array-only check below would silently skip — leaving the
+          // very first call, and thus the common single-tool round-trip,
+          // with no rolling breakpoint at all. Normalize to a one-block
+          // array first so it gets the marker like every later turn.
+          if (typeof lastMsg.content === 'string') {
+            lastMsg.content = [{ type: 'text', text: lastMsg.content }];
+          }
           if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
             const lastBlock = lastMsg.content[lastMsg.content.length - 1];
             if (lastBlock && typeof lastBlock === 'object') {
