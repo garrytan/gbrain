@@ -87,7 +87,7 @@ bun run src/cli.ts config set sync.repo_path "$BRAIN_DIR" >/dev/null 2>&1 || tru
 # Fresh installs create the legacy `default` source without a filesystem path.
 # Sync resolves the default source before it can exercise the writer lock, so
 # register the fixture path explicitly for this isolated database.
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v brain_dir="$BRAIN_DIR" \
+psql -v ON_ERROR_STOP=1 -v "brain_dir=$BRAIN_DIR" "$DATABASE_URL" \
   -c "UPDATE sources SET local_path = :'brain_dir' WHERE id = 'default';" \
   >>"$LOG" 2>&1
 
