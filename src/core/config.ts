@@ -926,6 +926,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // Life Chronicle (v0.42.56, #2390). Auto-emission of timeline events is OFF
+  // by default; the changelog's "To take advantage" step is `gbrain config set
+  // auto_chronicle true`, so the key must be settable without --force. The
+  // when→date projection timezone rides the `chronicle.` prefix below.
+  'auto_chronicle',
 ];
 
 /**
@@ -944,6 +949,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'chronicle.',         // v0.42.56 Life Chronicle (chronicle.tz projection tz)
 ];
 
 export function saveConfig(config: GBrainConfig): void {
