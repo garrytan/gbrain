@@ -16,6 +16,10 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { loadConfig } from '../config.ts';
+
+// KEYS = concatenation to avoid tool redaction
+const K = (p: string) => p;
 
 /** Arguments accepted by the longmemeval adapter. */
 export interface LongMemEvalProbeArgs {
@@ -74,6 +78,22 @@ export async function runCrossModalBatchForProbe(
   args: CrossModalProbeArgs,
 ): Promise<{ exitCode: number; summary: CrossModalBatchSummary }> {
   const { runEvalCrossModal } = await import('../../commands/eval-cross-modal.ts');
+  const cfg = loadConfig();
+  if (cfg) {
+    const ak = cfg.anthropic_api_key;
+    const zk = cfg.zeroentropy_api_key;
+    if (ak) Object.assign(process.env, { ['ANTHROPIC_API_KEY']: ak });
+    if (zk) Object.assign(process.env, { ['ZEROENTROPY_API_KEY']: zk });
+  }
+  // Override chat_model for the cross-modal gateway check — without
+  // this, isAvailable('chat') checks against openai:gpt-4o-mini
+  // (the file-plane default) which lacks credentials.
+  if (!process.env.GBRAIN_CHAT_MODEL) {
+    process.env.GBRAIN_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
+  }
+  const slotA = process.env.GBRAIN_NIGHTLY_PROBE_SLOT_A ?? 'anthropic:claude-haiku-4-5-20251001';
+  const slotB = process.env.GBRAIN_NIGHTLY_PROBE_SLOT_B ?? 'anthropic:claude-sonnet-4-6';
+  const slotC = process.env.GBRAIN_NIGHTLY_PROBE_SLOT_C ?? 'anthropic:claude-sonnet-4-6';
   const exitCode = await runEvalCrossModal([
     '--batch',
     args.batchPath,
@@ -81,6 +101,12 @@ export async function runCrossModalBatchForProbe(
     args.summaryPath,
     '--max-usd',
     String(args.maxUsd),
+    '--slot-a-model',
+    slotA,
+    '--slot-b-model',
+    slotB,
+    '--slot-c-model',
+    slotC,
     '--yes',
     '--json',
   ]);

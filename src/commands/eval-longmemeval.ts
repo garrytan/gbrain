@@ -35,6 +35,7 @@ import {
 import { extractCandidateEntities } from '../core/think/entity-extract.ts';
 import { resolveEntitySlugWithSource, type ResolutionSource } from '../core/entities/resolve.ts';
 import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
+import { loadConfig } from '../core/config.ts';
 
 /**
  * v0.40.2.0 — methodology disclosure marker. Stamped on the top-level
@@ -351,8 +352,14 @@ async function generateAnswer(
   const userText =
     `Question:\n${question}\n\n${trajectorySection}Retrieved sessions:\n${rendered}`;
 
+  // Strip provider prefix (e.g. "anthropic:claude-sonnet-4-6" → "claude-sonnet-4-6")
+  // because generateAnswer calls the Anthropic SDK directly, not through the
+  // gateway. resolveModel returns prefixed strings; the bare SDK sends the
+  // full string to the API which 404s.
+  const bareModel = model.includes(':') ? model.slice(model.indexOf(':') + 1) : model;
+
   const response = await client.create({
-    model,
+    model: bareModel,
     max_tokens: 512,
     system: systemText,
     messages: [{ role: 'user', content: userText }],
@@ -467,6 +474,15 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     envVar: 'GBRAIN_MODEL',
     fallback: 'sonnet',
   });
+
+  // LongMemEval intentionally uses the Anthropic SDK directly (ThinkLLMClient
+  // shape) rather than the AI gateway. Mirror CLI gateway behavior by lifting
+  // the file-plane key into process.env when the shell doesn't already provide
+  // it; otherwise nightly probes fail despite a valid ~/.gbrain/config.json.
+  const fileConfig = loadConfig();
+  if (!process.env.ANTHROPIC_API_KEY && fileConfig?.anthropic_api_key) {
+    process.env.ANTHROPIC_API_KEY = fileConfig.anthropic_api_key;
+  }
 
   // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
   // Same pattern as src/core/think/index.ts:247-249.

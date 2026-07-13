@@ -267,7 +267,7 @@ describe('computeNightlyQualityProbeHealthCheck — pure doctor branch coverage'
     ];
     const check = computeNightlyQualityProbeHealthCheck(true, events);
     expect(check.status).toBe('warn');
-    expect(check.message).toMatch(/3 non-PASS runs/);
+    expect(check.message).toMatch(/3 real non-PASS runs/);
     expect(check.message).toMatch(/pass=1/);
     expect(check.message).toMatch(/fail=1/);
     expect(check.message).toMatch(/error=1/);
@@ -292,7 +292,7 @@ describe('computeNightlyQualityProbeHealthCheck — pure doctor branch coverage'
     const events = [{ outcome: 'fail', ts: '2026-05-22T03:00:00Z' }];
     const check = computeNightlyQualityProbeHealthCheck(true, events);
     expect(check.status).toBe('warn');
-    expect(check.message).toMatch(/1 non-PASS run /); // "run " not "runs "
+    expect(check.message).toMatch(/1 real non-PASS run /); // "run " not "runs "
   });
 
   test('single PASS event uses singular grammar', async () => {
@@ -318,12 +318,32 @@ describe('codex CDX-5 — doctor health: every non-PASS outcome surfaces', () =>
     expect(check.message).toMatch(/no_embed_key=1/);
   });
 
-  test('rate_limited outcome → warn', async () => {
+  test('unexpected rate_limited outcome → warn', async () => {
     const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
     const events = [{ outcome: 'rate_limited', ts: '2026-05-22T03:00:00Z' }];
     const check = computeNightlyQualityProbeHealthCheck(true, events);
     expect(check.status).toBe('warn');
     expect(check.message).toMatch(/rate_limited=1/);
+  });
+
+  test('expected 24h scheduler rate_limited outcome → ok', async () => {
+    const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const events = [{ outcome: 'rate_limited', ts: '2026-05-22T03:00:00Z', detail: 'already ran within 24h window' }];
+    const check = computeNightlyQualityProbeHealthCheck(true, events);
+    expect(check.status).toBe('ok');
+    expect(check.message).toMatch(/expected scheduler skip/);
+  });
+
+  test('pass after historical error clears current health warning', async () => {
+    const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const events = [
+      { outcome: 'error', ts: '2026-05-21T03:00:00Z', detail: 'missing fixture' },
+      { outcome: 'pass', ts: '2026-05-22T03:00:00Z' },
+      { outcome: 'rate_limited', ts: '2026-05-22T04:00:00Z', detail: 'already ran within 24h window' },
+    ];
+    const check = computeNightlyQualityProbeHealthCheck(true, events);
+    expect(check.status).toBe('ok');
+    expect(check.message).toMatch(/expected scheduler skip/);
   });
 
   test('inconclusive outcome → warn', async () => {
@@ -347,7 +367,7 @@ describe('codex CDX-5 — doctor health: every non-PASS outcome surfaces', () =>
     ];
     const check = computeNightlyQualityProbeHealthCheck(true, events);
     expect(check.status).toBe('warn');
-    expect(check.message).toMatch(/6 non-PASS runs/); // 7 total, 1 pass, 6 bad
+    expect(check.message).toMatch(/6 real non-PASS runs/); // 7 total, 1 pass, 6 bad
     expect(check.message).toMatch(/pass=1/);
     expect(check.message).toMatch(/fail=1/);
     expect(check.message).toMatch(/error=1/);

@@ -265,6 +265,10 @@ function isTTY(): boolean {
  */
 function configureGatewayForCli(): boolean {
   const config = loadConfig();
+  const env = { ...process.env } as Record<string, string | undefined>;
+  if (config?.openai_api_key && !env.OPENAI_API_KEY) env.OPENAI_API_KEY = config.openai_api_key;
+  if (config?.anthropic_api_key && !env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = config.anthropic_api_key;
+  if (config?.zeroentropy_api_key && !env.ZEROENTROPY_API_KEY) env.ZEROENTROPY_API_KEY = config.zeroentropy_api_key;
   if (!config) {
     // No config file is fine for the eval command — env vars alone may serve.
     // We still call configureGateway so gateway recipes can read the env map.
@@ -275,7 +279,7 @@ function configureGatewayForCli(): boolean {
       chat_model: undefined,
       chat_fallback_chain: undefined,
       base_urls: undefined,
-      env: { ...process.env },
+      env: env as Record<string, string>,
     });
     return true;
   }
@@ -286,7 +290,7 @@ function configureGatewayForCli(): boolean {
     chat_model: config.chat_model,
     chat_fallback_chain: config.chat_fallback_chain,
     base_urls: config.provider_base_urls,
-    env: { ...process.env },
+    env: env as Record<string, string>,
   });
   return true;
 }

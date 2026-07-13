@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
+import { loadConfig } from '../config.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -467,7 +468,8 @@ export async function checkTypeProliferation(
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* tolerate pre-config brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const cfg = loadConfig();  // read file-plane config so homeConfig resolution works
+    const active = await loadActivePack({ cfg, remote: false, dbConfig })
       .catch(() => null);
     if (active) declared = active.manifest.page_types.length;
   } catch {

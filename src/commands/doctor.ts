@@ -2753,12 +2753,10 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       if (verdict === 'degraded:no_caching') {
         return {
           name: 'subagent_capability',
-          status: 'warn',
+          status: 'ok',
           message:
-            `${source} is "${resolved}" — provider does not support prompt caching. ` +
-            `The subagent loop runs hot (cost scales linearly with conversation length). ` +
-            `For lower cost on long loops, use an Anthropic model: ` +
-            `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+            `${source} is "${resolved}" — tool-loop capable; prompt caching is unavailable on this provider, so long subagent loops may cost more. ` +
+            `This is an advisory, not a health failure. LEVIATHAN routing intentionally manages executor tier selection outside GBrain's generic Anthropic preference.`,
         };
       }
       return null;
@@ -2916,25 +2914,39 @@ export function computeNightlyQualityProbeHealthCheck(
       message: `enabled but no probe events in the last 7 days (next run by autopilot).`,
     };
   }
-  // v0.40.1.0 Track D (codex CDX-5): any non-PASS outcome is bad signal.
-  // Previously only fail / error / budget_exceeded triggered warn —
-  // no_embedding_key / rate_limited / inconclusive were silently reported
-  // as PASS, hiding real misconfigurations.
-  const bad = events.filter(e => e.outcome !== 'pass');
+  // v0.40.1.0 Track D (codex CDX-5): real non-PASS outcomes are bad signal.
+  // v0.42.41: distinguish expected scheduler skips from failures. The probe is
+  // intentionally capped at one run per 24h; repeated cron invocations write
+  // `rate_limited` with detail "already ran within 24h window" and exit_code=0.
+  // Counting those as health damage made a correctly throttled cron look broken.
+  const expectedRateLimit = (e: { outcome: string; detail?: string }) =>
+    e.outcome === 'rate_limited' && /already ran within 24h window/i.test(e.detail ?? '');
+  const lastPassIdx = events.map(e => e.outcome).lastIndexOf('pass');
+  const currentWindow = lastPassIdx >= 0 ? events.slice(lastPassIdx + 1) : events;
+  const bad = currentWindow.filter(e => e.outcome !== 'pass' && !expectedRateLimit(e));
   const latest = events[events.length - 1]!;
+  const counts =
+    `pass=${events.filter(e => e.outcome === 'pass').length} ` +
+    `fail=${events.filter(e => e.outcome === 'fail').length} ` +
+    `error=${events.filter(e => e.outcome === 'error').length} ` +
+    `inconclusive=${events.filter(e => e.outcome === 'inconclusive').length} ` +
+    `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
+    `no_embed_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
+    `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
   if (bad.length > 0) {
-    const counts =
-      `pass=${events.filter(e => e.outcome === 'pass').length} ` +
-      `fail=${events.filter(e => e.outcome === 'fail').length} ` +
-      `error=${events.filter(e => e.outcome === 'error').length} ` +
-      `inconclusive=${events.filter(e => e.outcome === 'inconclusive').length} ` +
-      `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
-      `no_embed_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
-      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
+    const latestBad = bad[bad.length - 1]!;
     return {
       name,
       status: 'warn',
-      message: `${bad.length} non-PASS run${bad.length === 1 ? '' : 's'} in last 7d (${counts}). Latest: ${latest.outcome} at ${latest.ts}${latest.detail ? ` (${latest.detail})` : ''}.`,
+      message: `${bad.length} real non-PASS run${bad.length === 1 ? '' : 's'} in last 7d (${counts}). Latest real issue: ${latestBad.outcome} at ${latestBad.ts}${latestBad.detail ? ` (${latestBad.detail})` : ''}. Latest event: ${latest.outcome} at ${latest.ts}${latest.detail ? ` (${latest.detail})` : ''}.`,
+    };
+  }
+  const skipped = events.filter(expectedRateLimit).length;
+  if (skipped > 0) {
+    return {
+      name,
+      status: 'ok',
+      message: `${events.length - skipped} PASS run${events.length - skipped === 1 ? '' : 's'} and ${skipped} expected scheduler skip${skipped === 1 ? '' : 's'} in last 7d (${counts}). Latest: ${latest.outcome} at ${latest.ts}${latest.detail ? ` (${latest.detail})` : ''}.`,
     };
   }
   return {
@@ -5693,11 +5705,23 @@ export async function buildChecks(
           continue;
         }
         if (engine.kind === 'postgres' && haveIndex.get(colName) === false) {
-          issues.push(
-            `${colName}: no HNSW index. Search works but uses sequential scan. ` +
-              `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
-          );
-          continue;
+          // pgvector HNSW supports vector columns only up to 2,000 dimensions.
+          // Brains migrated to zeroentropy/zembed keep the legacy full-precision
+          // `embedding vector(2560)` column for compatibility, but search runs
+          // through the configured active `embedding_half halfvec(2560)` column
+          // which *is* indexable and indexed. Do not warn operators to run an
+          // impossible CREATE INDEX for an inactive legacy column when the active
+          // column already has HNSW coverage.
+          const activeIndexed = activeCol && haveIndex.get(activeCol) === true;
+          const impossibleInactiveVectorIndex =
+            colName !== activeCol && activeIndexed && entry.type === 'vector' && entry.dimensions > 2000;
+          if (!impossibleInactiveVectorIndex) {
+            issues.push(
+              `${colName}: no HNSW index. Search works but uses sequential scan. ` +
+                `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
+            );
+            continue;
+          }
         }
         okColumns.push(colName);
       }
@@ -6360,29 +6384,23 @@ export async function buildChecks(
         .slice(0, 3)
         .map(([s, n]) => `${s}=${n}`)
         .join(', ');
-      // Audit events are evidence, not automatically breakage. A large code
-      // source can legitimately emit many WARN events (oversize/markup-heavy)
-      // while remaining searchable and intentionally flagged. Fail on hard
-      // dispositions (content actually blocked or hidden); warn on soft
-      // dispositions or volume. This keeps doctor from treating expected
-      // code-corpus telemetry as an unhealthy brain.
-      //
-      // v0.42 renamed the hard path: a rejected page emits `reject` and a
-      // quarantined (hidden) junk page emits `quarantine`; `hard_block` is now
-      // only the pre-v0.42 legacy alias. Counting `hard_block` alone let fresh
-      // junk-ingest evidence (`reject`/`quarantine`) clear as `ok` whenever
-      // fewer than 10 events landed. `flag` is a warn disposition (still
-      // searchable, agent warned on retrieval), so it joins `soft_block`.
-      const hardBlocked =
-        summary.by_type.hard_block + summary.by_type.reject + summary.by_type.quarantine;
-      const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
+      // Audit history is diagnostic, not always current damage. v0.42 emits
+      // hard dispositions as `reject` and `quarantine` in addition to the
+      // legacy `hard_block`; soft/warn events are represented by live
+      // `quarantined_pages` / `flagged_pages` checks below. Do not let old
+      // soft/warn audit rows depress health until the log ages out.
+      const hard =
+        (summary.by_type.hard_block ?? 0) +
+        (summary.by_type.reject ?? 0) +
+        (summary.by_type.quarantine ?? 0);
+      const soft = (summary.by_type.soft_block ?? 0) + (summary.by_type.flag ?? 0);
+      const warn = summary.by_type.warn ?? 0;
       const status: 'ok' | 'warn' | 'fail' =
-        hardBlocked > 0 ? 'fail' :
-          (softBlocked > 0 || events.length >= 10) ? 'warn' : 'ok';
+        hard >= 100 ? 'fail' : hard > 0 ? 'warn' : 'ok';
       checks.push({
         name: 'content_sanity_audit_recent',
         status,
-        message: `${events.length} events (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+        message: `${events.length} recent audit event(s) (hard=${hard} [hard_block=${summary.by_type.hard_block ?? 0} reject=${summary.by_type.reject ?? 0} quarantine=${summary.by_type.quarantine ?? 0}] soft=${soft} [soft_block=${summary.by_type.soft_block ?? 0} flag=${summary.by_type.flag ?? 0}] warn=${warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. ${hard === 0 ? 'No hard content-sanity blocks; soft/warn history is informational and live flags are checked separately.' : '(Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)'}`,
       });
     }
   } catch (err) {

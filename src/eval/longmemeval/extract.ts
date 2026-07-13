@@ -254,8 +254,9 @@ async function callExtractor(
 ): Promise<ExtractedClaim[] | null> {
   let response;
   try {
+    const bareModel = model.includes(':') ? model.slice(model.indexOf(':') + 1) : model;
     response = await client.create({
-      model,
+      model: bareModel,
       max_tokens: 2000,
       system: EXTRACTOR_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: body }],

@@ -143,9 +143,22 @@ export async function runExtractAtomsDrainForSource(
   const { withRefreshingLock } = await import('../db-lock.ts');
   const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('./extract-atoms.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
+  const { configureGateway, reconfigureGatewayWithEngine } = await import('../ai/gateway.ts');
+  const { loadConfig } = await import('../config.ts');
+  const { buildGatewayConfig } = await import('../ai/build-gateway-config.ts');
 
   const extractionSourceId = opts.sourceId ?? 'default';
   const lockId = cycleLockIdFor(opts.sourceId);
+
+  // Drain can be invoked outside the normal cycle path, and the cycle path is
+  // what usually calls configureGateway/reconfigureGatewayWithEngine. Without
+  // this, every Haiku call inside runPhaseExtractAtoms throws "AI gateway is
+  // not configured", but the drain collapses the batch to opaque no_progress.
+  const cfg = loadConfig();
+  if (cfg) {
+    configureGateway(buildGatewayConfig(cfg));
+    await reconfigureGatewayWithEngine(engine);
+  }
 
   return runExtractAtomsDrain(
     {
