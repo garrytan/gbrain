@@ -355,6 +355,9 @@ describe('claude-cli LanguageModel — context isolation', () => {
       expect(argv).toContain('--output-format');
       expect(argv).toContain('json');
       expect(argv).toContain('--disable-slash-commands');
+      // Agent-isolation hardening: no built-in tools, no inherited MCP servers.
+      expect(argv).toContain('--tools');
+      expect(argv).toContain('--strict-mcp-config');
       expect(argv).toContain('--system-prompt');
       expect(argv).toContain('You are gbrain subagent.');
       expect(cwd).toMatch(/gbrain-claude-cli-cwd-\d+$/);
@@ -366,6 +369,52 @@ describe('claude-cli LanguageModel — context isolation', () => {
       ].join('\n');
       writeFileSync(stubBin, fastStub);
       chmodSync(stubBin, 0o755);
+    });
+  });
+
+  test('scrubs ANTHROPIC_* credentials from the child env (subscription-only auth)', async () => {
+    await withStubEnv(async () => {
+      await withEnv(
+        {
+          ANTHROPIC_API_KEY: 'sk-should-never-leak',
+          ANTHROPIC_AUTH_TOKEN: 'tok-should-never-leak',
+          ANTHROPIC_BASE_URL: 'https://proxy.should.never.leak',
+        },
+        async () => {
+          const envLog = join(stubDir, 'env.log');
+          const envStub = [
+            '#!/bin/sh',
+            `printf "key=%s\\ntoken=%s\\nbase=%s\\n" "\${ANTHROPIC_API_KEY:-UNSET}" "\${ANTHROPIC_AUTH_TOKEN:-UNSET}" "\${ANTHROPIC_BASE_URL:-UNSET}" > "${envLog}"`,
+            'cat > /dev/null',
+            `cat "${stubResponsePath}"`,
+          ].join('\n');
+          writeFileSync(stubBin, envStub);
+          chmodSync(stubBin, 0o755);
+          stageResponse(baseEnvelope('ok'));
+
+          try {
+            const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+            const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+            await model.doGenerate({
+              prompt: [userMessage('hi')],
+            } as LanguageModelV2CallOptions);
+
+            const fs = require('node:fs');
+            const seen = fs.readFileSync(envLog, 'utf8');
+            expect(seen).toContain('key=UNSET');
+            expect(seen).toContain('token=UNSET');
+            expect(seen).toContain('base=UNSET');
+          } finally {
+            const fastStub = [
+              '#!/bin/sh',
+              'cat > /dev/null',
+              `cat "${stubResponsePath}"`,
+            ].join('\n');
+            writeFileSync(stubBin, fastStub);
+            chmodSync(stubBin, 0o755);
+          }
+        },
+      );
     });
   });
 });
@@ -422,6 +471,27 @@ describe('claude-cli LanguageModel — abort + error envelopes', () => {
       await expect(
         model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions),
       ).rejects.toThrow(/claude-cli output not JSON/);
+    });
+  });
+
+  test('accepts a verbose-mode JSON event array and picks the result event', async () => {
+    // With `"verbose": true` in ~/.claude/settings.json the CLI emits an array
+    // of events instead of the bare result object (no CLI flag disables it).
+    await withStubEnv(async () => {
+      writeFileSync(
+        stubResponsePath,
+        JSON.stringify([
+          { type: 'system', subtype: 'init', session_id: 'test-session', tools: [], mcp_servers: [] },
+          baseEnvelope('hello from array'),
+        ]),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('hi')],
+      } as LanguageModelV2CallOptions);
+      expect(result.finishReason).toBe('stop');
+      expect(result.content[0]).toEqual({ type: 'text', text: 'hello from array' });
     });
   });
 

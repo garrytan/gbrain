@@ -203,13 +203,30 @@ function runClaude(
       '--output-format', 'json',
       '--model', model,
       '--disable-slash-commands',
+      // Agent isolation: this subprocess must behave like a raw LLM, not a
+      // full Claude Code agent. `--tools ""` disables every built-in tool
+      // (Bash/Read/WebSearch/...); `--strict-mcp-config` ignores all user-level
+      // MCP servers (without it, each call would boot the user's MCP servers —
+      // including gbrain's own MCP → recursion + PGLite single-writer lock
+      // contention). Verified against claude CLI 2.1.145 --help.
+      '--tools', '',
+      '--strict-mcp-config',
     ];
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
     }
+    // Env scrub: guarantee the CLI authenticates via its own OAuth session
+    // (subscription), never via an inherited API key. Without this, an
+    // ANTHROPIC_API_KEY in gbrain's env (the exact setup this recipe is meant
+    // to replace) silently flips billing to per-token API usage.
+    const env = { ...process.env };
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_BASE_URL;
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
+      env,
     });
 
     let stdout = '';
@@ -241,19 +258,48 @@ function runClaude(
         return;
       }
       try {
-        const parsed = JSON.parse(stdout) as ClaudeJsonResult;
-        if (parsed.is_error) {
-          reject(new Error(`claude-cli reported error: ${parsed.result || parsed.subtype}`));
+        let parsed = JSON.parse(stdout) as unknown;
+        // Compat: when the user has `"verbose": true` in ~/.claude/settings.json,
+        // `--print --output-format json` emits an ARRAY of events
+        // ([{type:"system",subtype:"init",...}, ..., {type:"result",...}])
+        // instead of the bare result object. There is no CLI flag to force it
+        // off (no --no-verbose; --settings '{}' merges, does not replace), so
+        // tolerate both shapes and pick the result event. Verified on CLI 2.1.145.
+        if (Array.isArray(parsed)) {
+          const resultEvent = parsed.find(
+            (ev): ev is ClaudeJsonResult =>
+              !!ev && typeof ev === 'object' && (ev as { type?: unknown }).type === 'result',
+          );
+          if (!resultEvent) {
+            reject(new Error(`claude-cli JSON event array had no "result" event\n--- raw ---\n${stdout.slice(0, 500)}`));
+            return;
+          }
+          parsed = resultEvent;
+        }
+        const envelope = parsed as ClaudeJsonResult;
+        if (envelope.is_error) {
+          reject(new Error(`claude-cli reported error: ${envelope.result || envelope.subtype}`));
           return;
         }
-        resolve(parsed);
+        resolve(envelope);
       } catch (e) {
         reject(new Error(`claude-cli output not JSON: ${e instanceof Error ? e.message : String(e)}\n--- raw ---\n${stdout.slice(0, 500)}`));
       }
     });
 
-    child.stdin.write(userPrompt);
-    child.stdin.end();
+    // stdin error handler: if the binary does not exist (ENOENT) or the child
+    // dies before draining stdin, write/end can emit an unhandled 'error'
+    // (EPIPE) that would crash the worker. The spawn-level 'error' / non-zero
+    // 'close' handlers above already surface the real failure, so the stdin
+    // error itself is safe to swallow.
+    child.stdin.on('error', () => { /* surfaced via child 'error'/'close' */ });
+    try {
+      child.stdin.write(userPrompt);
+      child.stdin.end();
+    } catch (e) {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      reject(new Error(`claude-cli stdin write failed (is the claude binary installed?): ${e instanceof Error ? e.message : String(e)}`));
+    }
   });
 }
 
