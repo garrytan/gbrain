@@ -1,6 +1,6 @@
 import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { join, relative, extname } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -42,6 +42,53 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
+export interface ImportPlanSummary {
+  status: 'import_plan';
+  dir: string;
+  strategy: SyncStrategy;
+  total_files: number;
+  total_bytes: number;
+  by_extension: Array<{ extension: string; files: number; bytes: number }>;
+  workers: number;
+  source_id: string;
+  embedding: 'enabled' | 'disabled';
+}
+
+export function summarizeImportPlan(opts: {
+  dir: string;
+  strategy: SyncStrategy;
+  files: string[];
+  workers: number;
+  sourceId?: string;
+  noEmbed: boolean;
+}): ImportPlanSummary {
+  const byExt = new Map<string, { files: number; bytes: number }>();
+  let totalBytes = 0;
+  for (const file of opts.files) {
+    let size = 0;
+    try { size = lstatSync(file).size; } catch { size = 0; }
+    totalBytes += size;
+    const extension = extname(file).toLowerCase() || '[noext]';
+    const row = byExt.get(extension) ?? { files: 0, bytes: 0 };
+    row.files += 1;
+    row.bytes += size;
+    byExt.set(extension, row);
+  }
+  return {
+    status: 'import_plan',
+    dir: opts.dir,
+    strategy: opts.strategy,
+    total_files: opts.files.length,
+    total_bytes: totalBytes,
+    by_extension: Array.from(byExt.entries())
+      .map(([extension, row]) => ({ extension, ...row }))
+      .sort((a, b) => b.bytes - a.bytes || b.files - a.files || a.extension.localeCompare(b.extension)),
+    workers: opts.workers,
+    source_id: opts.sourceId ?? 'default',
+    embedding: opts.noEmbed ? 'disabled' : 'enabled',
+  };
+}
+
 export async function runImport(
   engine: BrainEngine,
   args: string[],
@@ -50,12 +97,11 @@ export async function runImport(
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  const planOnly = args.includes('--plan') || args.includes('--dry-run');
 
-  // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
-  // unless the user is explicitly skipping embedding via `--no-embed` (in
-  // which case the chunks land without vectors and the user can backfill
-  // later with `gbrain embed --stale` after configuring a provider).
-  if (!noEmbed) {
+  // Planning is intentionally credentials-free: operators use it before spending
+  // embedding calls or wiring API keys to see what a large tree would import.
+  if (!noEmbed && !planOnly) {
     const { assertEmbeddingEnabled } = await import('../core/embedding-dim-check.ts');
     const { loadConfig } = await import('../core/config.ts');
     try {
@@ -164,7 +210,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json] [--plan|--dry-run]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
@@ -182,7 +228,11 @@ export async function runImport(
   );
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
-  console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  if (jsonOutput) {
+    console.error(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  } else {
+    console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  }
 
   // Sort newest-first so date-prefixed brain paths get embedded before older ones.
   // See src/core/sort-newest-first.ts for the policy.
@@ -197,7 +247,9 @@ export async function runImport(
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
       for (const p of cp.completedPaths) completed.add(p);
-      console.log(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
+      const resumeMsg = `Resuming from checkpoint: skipping ${completed.size} already-processed files`;
+      if (jsonOutput) console.error(resumeMsg);
+      else console.log(resumeMsg);
     }
   }
   const files = resumeFilter(allFiles, dir, completed);
@@ -205,7 +257,36 @@ export async function runImport(
   // Determine actual worker count
   const actualWorkers = workerCount > 1 ? workerCount : 1;
   if (actualWorkers > 1) {
-    console.log(`Using ${actualWorkers} parallel workers`);
+    const workersMsg = `Using ${actualWorkers} parallel workers`;
+    if (jsonOutput) console.error(workersMsg);
+    else console.log(workersMsg);
+  }
+
+  if (planOnly) {
+    const plan = summarizeImportPlan({
+      dir,
+      strategy,
+      files: allFiles,
+      workers: actualWorkers,
+      sourceId,
+      noEmbed,
+    });
+    if (jsonOutput) {
+      console.log(JSON.stringify(plan));
+    } else {
+      console.log('\nImport plan:');
+      console.log(`  source: ${plan.source_id}`);
+      console.log(`  strategy: ${plan.strategy}`);
+      console.log(`  embedding: ${plan.embedding}`);
+      console.log(`  workers: ${plan.workers}`);
+      console.log(`  files: ${plan.total_files}`);
+      console.log(`  bytes: ${plan.total_bytes}`);
+      console.log('  top extensions:');
+      for (const row of plan.by_extension.slice(0, 10)) {
+        console.log(`    ${row.extension}: ${row.files} files, ${row.bytes} bytes`);
+      }
+    }
+    return { imported: 0, skipped: 0, errors: 0, chunksCreated: 0, failures: [] };
   }
 
   let imported = 0;
