@@ -2243,6 +2243,7 @@ const get_brain_identity: Operation = {
       version: VERSION,
       engine: ctx.engine.kind,
       page_count: stats.page_count,
+      pages_by_type: stats.pages_by_type,
       chunk_count: stats.chunk_count,
       last_sync_iso: null as string | null,
       update_available,
