@@ -68,7 +68,7 @@ describe.skipIf(skip)('facts-fence escaped-pipe reconciliation on Postgres', () 
     expect(result.warnings.some(w => w.includes('FACTS_TABLE_MALFORMED'))).toBe(false);
     expect(result.factsInserted).toBe(2);
     expect(Array.from(rows)).toEqual([
-      { fact: facts[0].claim, row_num: 1, source: facts[0].source, context: facts[0].context },
+      { fact: facts[0].claim, row_num: 1, source: facts[0].source!, context: facts[0].context! },
       { fact: facts[1].claim, row_num: 2, source: 'fence:reconcile', context: null },
     ]);
   }, 30_000);
