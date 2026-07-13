@@ -2024,12 +2024,15 @@ export async function runCycle(
           remote: false as const,
           sourceId: calibrationSourceId,
         } as never;
+        // claude 2026-06-24 (椿炜授权): takes 三阶段默认走 config.chat_model(deepseek)，
+        // 不再硬编码掉进 'claude-sonnet-4-6'（本机无 ANTHROPIC key）。单模型路径不变。
+        const takesModel = (calibrationConfig as { chat_model?: string }).chat_model || undefined;
 
         if (phases.includes('propose_takes')) {
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, model: takesModel }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2039,8 +2042,20 @@ export async function runCycle(
         if (phases.includes('grade_takes')) {
           checkAborted(opts.signal);
           progress.start('cycle.grade_takes');
-          const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { runPhaseGradeTakes, defaultJudge } = await import('./cycle/grade-takes.ts');
+          const ensembleJudgeModelIds = [
+            takesModel,
+            process.env.MOONSHOT_API_KEY ? 'moonshot:kimi-k2.6' : undefined,
+            process.env.DASHSCOPE_API_KEY ? 'dashscope-chat:qwen3.7-plus' : undefined,
+          ].filter((modelId): modelId is string => Boolean(modelId));
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {
+            model: takesModel,
+            useEnsemble: ensembleJudgeModelIds.length >= 3,
+            ensembleJudges: ensembleJudgeModelIds.map(modelId => ({
+              modelId,
+              fn: input => defaultJudge({ ...input, modelHint: modelId }),
+            })),
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2051,7 +2066,7 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.calibration_profile');
           const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, { model: takesModel }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

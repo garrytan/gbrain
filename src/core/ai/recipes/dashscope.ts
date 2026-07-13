@@ -31,6 +31,10 @@ export const dashscope: Recipe = {
       // path. Conservative declaration so the gateway pre-splits before
       // hitting whatever undocumented server-side limit exists.
       max_batch_tokens: 8192,
+      // DashScope's OpenAI-compat /embeddings endpoint rejects requests with
+      // more than 10 inputs ("batch size is invalid, it should not be larger
+      // than 10"). Cap batch COUNT so chunk-heavy pages embed cleanly.
+      max_batch_inputs: 10,
       // text-embedding-v3 mixes English + CJK heavily; the tokenizer is
       // closer to Voyage density than OpenAI tiktoken for CJK-dominant
       // content. Conservative chars_per_token=2 leaves headroom.
