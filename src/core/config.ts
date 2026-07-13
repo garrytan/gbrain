@@ -603,12 +603,17 @@ export function loadConfig(): GBrainConfig | null {
  * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
  * file is the durable per-machine config; DB is the user-mutable runtime knob.
  *
- * Today only the v0.27.1 multimodal flags participate in DB-merge. Existing
- * fields (embedding_model, etc.) keep their file/env-only loading because they
- * size the schema and must be stable across engine connect.
+ * DB-merge covers embedding/multimodal flags, embedding_columns +
+ * search_embedding_column, content_sanity.*, and dream.synthesize/patterns
+ * keys (see ALL_DB_KEYS below). Existing fields (embedding_model, etc.) keep
+ * their file/env-only loading because they size the schema and must be
+ * stable across engine connect.
  */
 export async function loadConfigWithEngine(
-  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  engine: {
+    getConfig(key: string): Promise<string | null | undefined>;
+    getConfigBatch?(keys: string[]): Promise<Record<string, string>>;
+  },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -624,38 +629,75 @@ export async function loadConfigWithEngine(
     (base !== undefined ? base : loadConfig()) ??
     ({ engine: 'postgres' } as GBrainConfig);
 
-  // DB-plane reads. Quiet failures — if the config table doesn't exist yet
-  // (pre-v36 brain mid-migration), treat as null and let file/env defaults
-  // win. The migration runner reads file/env directly anyway.
-  async function dbBool(key: string): Promise<boolean | undefined> {
-    try {
-      const v = await engine.getConfig(key);
-      if (v === undefined || v === null || v === '') return undefined;
-      return v === 'true';
-    } catch {
-      return undefined;
+  // DB-plane reads. This function reads 20 config keys across three
+  // unrelated feature groups (embeddings, content_sanity, dream). Reading
+  // them one getConfig() call at a time paid one network round trip per key
+  // — 20 serial round trips to a remote pooler on every cold connectEngine()
+  // call, regardless of which CLI command ran (measured ~150-1200ms/call on
+  // a first-connection pool, several seconds total). Prefetch all keys in a
+  // single batched round trip instead; dbBool/dbStr below just read the
+  // resulting map (no further I/O). Falls back to a parallel per-key fetch
+  // for engines that don't implement getConfigBatch (e.g. PGLite, where the
+  // round-trip cost doesn't exist anyway).
+  const ALL_DB_KEYS = [
+    'embedding_multimodal', 'embedding_multimodal_model',
+    'embedding_image_ocr', 'embedding_image_ocr_model',
+    'embedding_columns', 'search_embedding_column',
+    'content_sanity.bytes_warn', 'content_sanity.bytes_block',
+    'content_sanity.junk_patterns_enabled', 'content_sanity.disabled',
+    'content_sanity.junk_disposition', 'content_sanity.max_markup_ratio',
+    'content_sanity.prose_check_enabled',
+    'dream.synthesize.session_corpus_dir', 'dream.synthesize.meeting_transcripts_dir',
+    'dream.synthesize.verdict_model', 'dream.synthesize.max_prompt_tokens',
+    'dream.synthesize.max_chunks_per_transcript',
+    'dream.patterns.lookback_days', 'dream.patterns.min_evidence',
+  ];
+
+  let dbCache: Record<string, string> = {};
+  try {
+    if (typeof engine.getConfigBatch === 'function') {
+      dbCache = await engine.getConfigBatch(ALL_DB_KEYS);
+    } else {
+      const pairs = await Promise.all(ALL_DB_KEYS.map(async (key) => {
+        try {
+          const v = await engine.getConfig(key);
+          return [key, v] as const;
+        } catch {
+          return [key, undefined] as const;
+        }
+      }));
+      for (const [key, v] of pairs) {
+        if (v !== null && v !== undefined) dbCache[key] = v;
+      }
     }
-  }
-  async function dbStr(key: string): Promise<string | undefined> {
-    try {
-      const v = await engine.getConfig(key);
-      if (v === undefined || v === null || v === '') return undefined;
-      return v;
-    } catch {
-      return undefined;
-    }
+  } catch {
+    // Quiet failure — if the config table doesn't exist yet (pre-v36 brain
+    // mid-migration), treat as empty and let file/env defaults win. The
+    // migration runner reads file/env directly anyway.
+    dbCache = {};
   }
 
-  const dbMultimodal = await dbBool('embedding_multimodal');
-  const dbMultimodalModel = await dbStr('embedding_multimodal_model');
-  const dbOcr = await dbBool('embedding_image_ocr');
-  const dbOcrModel = await dbStr('embedding_image_ocr_model');
+  function dbBool(key: string): boolean | undefined {
+    const v = dbCache[key];
+    if (v === undefined || v === '') return undefined;
+    return v === 'true';
+  }
+  function dbStr(key: string): string | undefined {
+    const v = dbCache[key];
+    if (v === undefined || v === '') return undefined;
+    return v;
+  }
+
+  const dbMultimodal = dbBool('embedding_multimodal');
+  const dbMultimodalModel = dbStr('embedding_multimodal_model');
+  const dbOcr = dbBool('embedding_image_ocr');
+  const dbOcrModel = dbStr('embedding_image_ocr_model');
   // v0.36 (D7) — embedding-column registry merge. Stored as JSON string in
   // the config table. Parse + shape-check here; full registry validation
   // (regex on keys, type/dim/provider field shapes) runs in the resolver at
   // first use so a malformed DB row doesn't kill engine connect.
-  const dbEmbeddingColumns = await dbStr('embedding_columns');
-  const dbSearchEmbeddingColumn = await dbStr('search_embedding_column');
+  const dbEmbeddingColumns = dbStr('embedding_columns');
+  const dbSearchEmbeddingColumn = dbStr('search_embedding_column');
 
   // DB applies only when env did NOT win. Env presence is detected by the
   // sync loadConfig() already setting the field. For each flag, prefer the
@@ -694,19 +736,19 @@ export async function loadConfigWithEngine(
   // key; DB fills the gaps. The container object is constructed only if
   // at least one source provides a value, mirroring the env-merge logic
   // in loadConfig().
-  async function dbInt(key: string): Promise<number | undefined> {
-    const v = await dbStr(key);
+  function dbInt(key: string): number | undefined {
+    const v = dbStr(key);
     if (v === undefined) return undefined;
     const n = parseInt(v, 10);
     return Number.isFinite(n) && n > 0 ? n : undefined;
   }
-  const dbWarnBytes = await dbInt('content_sanity.bytes_warn');
-  const dbBlockBytes = await dbInt('content_sanity.bytes_block');
-  const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
-  const dbSanityDisabled = await dbBool('content_sanity.disabled');
-  const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
-  const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
-  const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
+  const dbWarnBytes = dbInt('content_sanity.bytes_warn');
+  const dbBlockBytes = dbInt('content_sanity.bytes_block');
+  const dbJunkEnabled = dbBool('content_sanity.junk_patterns_enabled');
+  const dbSanityDisabled = dbBool('content_sanity.disabled');
+  const dbJunkDisposition = dbStr('content_sanity.junk_disposition');
+  const dbMaxMarkupRatioStr = dbStr('content_sanity.max_markup_ratio');
+  const dbProseCheckEnabled = dbBool('content_sanity.prose_check_enabled');
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -744,13 +786,13 @@ export async function loadConfigWithEngine(
   // `extract-atoms.ts` and any other consumer that reads the merged config
   // (vs calling `engine.getConfig()` directly) silently misses dream.*
   // config set via `gbrain config set`.
-  const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
-  const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
-  const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
-  const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
-  const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
-  const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
-  const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
+  const dbSessionCorpusDir = dbStr('dream.synthesize.session_corpus_dir');
+  const dbMeetingTranscriptsDir = dbStr('dream.synthesize.meeting_transcripts_dir');
+  const dbVerdictModel = dbStr('dream.synthesize.verdict_model');
+  const dbMaxPromptTokens = dbInt('dream.synthesize.max_prompt_tokens');
+  const dbMaxChunksPerTranscript = dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbLookbackDays = dbInt('dream.patterns.lookback_days');
+  const dbMinEvidence = dbInt('dream.patterns.min_evidence');
 
   const existingDream = merged.dream ?? {};
   const existingSynth = existingDream.synthesize ?? {};

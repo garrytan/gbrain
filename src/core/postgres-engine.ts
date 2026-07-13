@@ -5238,6 +5238,34 @@ export class PostgresEngine implements BrainEngine {
     );
   }
 
+  /**
+   * Batched form of getConfig — one round trip for many keys instead of one
+   * round trip per key. Used by loadConfigWithEngine() to prefetch its ~20
+   * DB-plane keys in a single query instead of 20 serial round trips.
+   */
+  async getConfigBatch(keys: string[]): Promise<Record<string, string>> {
+    if (keys.length === 0) return {};
+    const opts = this.getBulkRetryOpts();
+    const rows = await withRetry(
+      async () => {
+        const sql = this.sql;
+        return sql<{ key: string; value: string }[]>`
+          SELECT key, value FROM config WHERE key = ANY(${keys}::text[])
+        `;
+      },
+      {
+        maxRetries: opts.maxRetries,
+        delayMs: opts.delayMs,
+        delayMaxMs: opts.delayMaxMs,
+        jitter: BULK_RETRY_OPTS.jitter,
+        reconnect: (ctx) => this.reconnect(ctx),
+      },
+    );
+    const out: Record<string, string> = {};
+    for (const r of rows) out[r.key] = r.value;
+    return out;
+  }
+
   async setConfig(key: string, value: string): Promise<void> {
     const sql = this.sql;
     await sql`

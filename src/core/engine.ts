@@ -2003,6 +2003,13 @@ export interface BrainEngine {
 
   // Config
   getConfig(key: string): Promise<string | null>;
+  /**
+   * Batched form of getConfig — one round trip for many keys instead of one
+   * round trip per key. Optional: engines that don't implement it fall back
+   * to parallel getConfig() calls at the call site (still one RTT wall-time
+   * on a healthy pool, just N connections instead of 1 query).
+   */
+  getConfigBatch?(keys: string[]): Promise<Record<string, string>>;
   setConfig(key: string, value: string): Promise<void>;
   /**
    * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).
