@@ -720,6 +720,46 @@ More prose here.
     const entries = parseTimelineEntries(content);
     expect(entries.length).toBe(2);
   });
+
+  test('parses plain interaction-log bullets: - YYYY-MM-DD: summary', () => {
+    const entries = parseTimelineEntries('- 2026-05-05: Synced on the telemetry roadmap');
+    expect(entries.length).toBe(1);
+    expect(entries[0]).toEqual({ date: '2026-05-05', summary: 'Synced on the telemetry roadmap', detail: '' });
+  });
+
+  test('normalizes a date range bullet to its start date', () => {
+    const entries = parseTimelineEntries('- 2025-10-15 to 2025-10-18: Built the poster');
+    expect(entries.length).toBe(1);
+    expect(entries[0].date).toBe('2025-10-15');
+  });
+
+  test('normalizes a month-only bullet to the first of the month', () => {
+    const entries = parseTimelineEntries('- 2026-01: Joined the onboarding path');
+    expect(entries.length).toBe(1);
+    expect(entries[0].date).toBe('2026-01-01');
+  });
+
+  test('parses date-only session-log headers with prose body', () => {
+    const content = `## Session Log
+
+### 2026-04-08
+Connected Snowflake. Still blocked on prod access.
+
+### 2026-05-05
+Snowflake prod access granted.`;
+    const entries = parseTimelineEntries(content);
+    expect(entries.length).toBe(2);
+    expect(entries[0]).toEqual({
+      date: '2026-04-08',
+      summary: 'Connected Snowflake. Still blocked on prod access.',
+      detail: 'Connected Snowflake. Still blocked on prod access.',
+    });
+    expect(entries[1].date).toBe('2026-05-05');
+  });
+
+  test('skips invalid plain-bullet dates', () => {
+    expect(parseTimelineEntries('- 2026-13-45: Bad date')).toEqual([]);
+  });
 });
 
 // ─── isAutoLinkEnabled ─────────────────────────────────────────
