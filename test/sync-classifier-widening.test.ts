@@ -66,10 +66,11 @@ describe('Layer 2 — isCodeFilePath widening', () => {
     expect(isCodeFilePath('contracts/Token.sol')).toBe(true);
   });
 
-  test('Web + config extensions (CSS, HTML, Vue, JSON, YAML, TOML)', () => {
+  test('Web + config extensions (CSS, HTML, Vue, Astro, JSON, YAML, TOML)', () => {
     expect(isCodeFilePath('src/app.css')).toBe(true);
     expect(isCodeFilePath('public/index.html')).toBe(true);
     expect(isCodeFilePath('src/App.vue')).toBe(true);
+    expect(isCodeFilePath('src/pages/index.astro')).toBe(true);
     expect(isCodeFilePath('package.json')).toBe(true);
     expect(isCodeFilePath('config.yaml')).toBe(true);
     expect(isCodeFilePath('config.yml')).toBe(true);

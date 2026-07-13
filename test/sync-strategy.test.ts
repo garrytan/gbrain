@@ -12,6 +12,7 @@ describe('isCodeFilePath', () => {
     expect(isCodeFilePath('script.py')).toBe(true);
     expect(isCodeFilePath('class.rb')).toBe(true);
     expect(isCodeFilePath('main.go')).toBe(true);
+    expect(isCodeFilePath('src/pages/index.astro')).toBe(true);
   });
 
   test('rejects non-code extensions', () => {
@@ -20,7 +21,7 @@ describe('isCodeFilePath', () => {
     expect(isCodeFilePath('README')).toBe(false);
     // v0.20.0 Cathedral II Layer 2 widens the classifier to include
     // config formats (.json, .yaml, .toml) and web formats (.css, .html,
-    // .vue) because the chunker supports them — they were dropped by the
+    // .vue, .astro) because the chunker supports them — they were dropped by the
     // 9-extension v0.19.0 allowlist. `.json` is NO LONGER rejected.
     expect(isCodeFilePath('image.svg')).toBe(false);
     expect(isCodeFilePath('archive.zip')).toBe(false);
@@ -43,6 +44,7 @@ describe('isSyncable with strategy', () => {
     expect(isSyncable('src/foo.ts', { strategy: 'code' })).toBe(true);
     expect(isSyncable('src/foo.py', { strategy: 'code' })).toBe(true);
     expect(isSyncable('src/foo.go', { strategy: 'code' })).toBe(true);
+    expect(isSyncable('src/pages/index.astro', { strategy: 'code' })).toBe(true);
     expect(isSyncable('notes.md', { strategy: 'code' })).toBe(false);
   });
 
