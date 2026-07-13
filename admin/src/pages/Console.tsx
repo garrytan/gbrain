@@ -6,6 +6,7 @@ import { ChatGptTunnelPanel } from './ChatGptTunnel';
 import { RunOutput, InfoIcon, formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun, type BrainPageChunk } from '../lib/shared';
 import type { ThemeMode } from '../lib/theme';
 import { getThinkRetrievalWarning, parseThinkOutput } from '../lib/think-output';
+import { CopyButton } from '../lib/clipboard';
 
 interface SourceSummary {
   id: string;
@@ -1530,9 +1531,23 @@ export function ConnectionCenterPage() {
       },
     },
   }, null, 2), [origin]);
-  const copyCodeBuddyConfig = () => navigator.clipboard.writeText(codeBuddyConfig);
   return (
     <div className="pm-page">
+      <AgentsPage
+        title="Agent 凭证管理"
+        titleHelp={(
+          <InfoIcon title="Agent 凭证管理">
+            这里就是原来的 Agent 管理。外部工具访问 PMBrain 必须携带一个 Agent 凭证，最简单方式是新建 API Key，然后把它填入教程里的 Authorization: Bearer。
+          </InfoIcon>
+        )}
+        description="为 CodeBuddy、Cursor、Claude 等外部工具创建专用 API Key 或 OAuth 客户端。每个工具建议使用独立 Agent 凭证，后续可以单独撤销、审计请求日志和控制权限。"
+      />
+      <details className="mcp-connection-details">
+        <summary>
+          <span>MCP 接入设置</span>
+          <small>需要查看服务地址、客户端教程或 ChatGPT 安全隧道时展开</small>
+        </summary>
+        <div className="mcp-connection-details-body">
       <div className="pm-section-head">
         <div>
           <h1 className="title-with-info">
@@ -1594,27 +1609,13 @@ export function ConnectionCenterPage() {
           <article className="mcp-endpoint-card" key={label}>
             <span>{label}</span>
             <code>{value}</code>
-            <button className="pm-ghost" onClick={() => void navigator.clipboard.writeText(value)}>复制</button>
+            <CopyButton className="pm-ghost" value={value} />
           </article>
         ))}
       </div>
       <ChatGptTunnelPanel />
-      <AgentsPage
-        title="Agent 凭证管理"
-        titleHelp={(
-          <InfoIcon title="Agent 凭证管理">
-            这里就是原来的 Agent 管理。外部工具访问 PMBrain 必须携带一个 Agent 凭证，最简单方式是新建 API Key，然后把它填入教程里的 Authorization: Bearer。
-          </InfoIcon>
-        )}
-        description="为 CodeBuddy、Cursor、Claude 等外部工具创建专用 API Key 或 OAuth 客户端。每个工具建议使用独立 Agent 凭证，后续可以单独撤销、审计请求日志和控制权限。"
-      />
-      {overview && (
-        <div className="pm-card">
-          <h2>连接状态</h2>
-          <div className="pm-kv"><span>今日请求</span><b>见请求日志</b></div>
-          <div className="pm-kv"><span>LLM</span><b>{overview.llm_enabled ? '已配置' : '未配置'}</b></div>
         </div>
-      )}
+      </details>
       {showCodeBuddyGuide && (
         <div className="modal-overlay" onClick={() => setShowCodeBuddyGuide(false)}>
           <div className="modal mcp-tutorial-modal" onClick={e => e.stopPropagation()}>
@@ -1634,7 +1635,7 @@ export function ConnectionCenterPage() {
                 <p>把下面内容保存到用户级 <code>~/.codebuddy/.mcp.json</code>，或当前项目根目录的 <code>.mcp.json</code>。</p>
                 <div className="code-block">
                   <pre>{codeBuddyConfig}</pre>
-                  <button className="copy-btn" onClick={copyCodeBuddyConfig}>复制</button>
+                  <CopyButton value={codeBuddyConfig} />
                 </div>
                 <p className="pm-hint">把 <code>PASTE_PMBRAIN_API_KEY_HERE</code> 替换成刚创建的 API Key，只替换这段占位符。</p>
               </section>

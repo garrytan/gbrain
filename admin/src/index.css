@@ -405,6 +405,31 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   min-width: 420px;
   max-width: 520px;
 }
+.credential-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-width: 760px;
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.credential-modal-body {
+  min-height: 0;
+  padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.credential-modal-actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  box-shadow: 0 -10px 24px rgba(15, 23, 42, .08);
+}
 .modal-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
 
 .support-modal {
@@ -878,6 +903,20 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   vertical-align: top;
   overflow-wrap: anywhere;
 }
+
+.agent-handoff-head { display: grid; gap: 10px; margin: 16px 0 10px; }
+.agent-handoff-head > div:first-child { display: grid; gap: 3px; }
+.agent-handoff-head span { color: var(--text-secondary); font-size: 12px; }
+.agent-client-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-client-tabs button.tab { border: 0; background: transparent; cursor: pointer; font: inherit; }
+.agent-handoff-content { min-height: 150px; }
+.agent-handoff-content pre { padding-right: 72px; }
+.credential-details { display: grid; gap: 8px; margin-top: 12px; }
+.credential-details summary { color: var(--text-secondary); cursor: pointer; font-size: 12px; }
+.credential-details .code-block { margin-top: 8px; }
+.credential-details pre { margin: 0; white-space: pre-wrap; }
+.credential-unavailable-note { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
+.credential-unavailable-note span { color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
 
 .main-source-card {
   margin-bottom: 18px;
@@ -3427,6 +3466,13 @@ pre {
 .settings-operations button { display: grid; gap: 4px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-primary); text-align: left; background: var(--bg-secondary); cursor: pointer; }
 .settings-operations span { color: var(--text-muted); font-size: 12px; }
 
+.mcp-connection-details { margin-top: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); overflow: hidden; }
+.mcp-connection-details > summary { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 16px 18px; color: var(--text-primary); cursor: pointer; list-style: none; font-weight: 750; }
+.mcp-connection-details > summary::-webkit-details-marker { display: none; }
+.mcp-connection-details > summary::after { content: '展开'; flex: 0 0 auto; color: var(--accent); font-size: 12px; }
+.mcp-connection-details[open] > summary::after { content: '收起'; }
+.mcp-connection-details > summary small { margin-left: auto; color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.mcp-connection-details-body { padding: 20px 18px 18px; border-top: 1px solid var(--border); }
 .mcp-client-section { margin-bottom: 18px; }
 .compact-head { margin-bottom: 10px; }
 .mcp-client-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 9px; }

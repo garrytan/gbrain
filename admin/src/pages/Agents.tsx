@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
+import { CopyButton } from '../lib/clipboard';
+import { buildApiKeyAgentContent, buildOAuthAgentContent, MCP_CLIENTS, type McpClientId } from '../lib/mcp-config';
 
 function timeAgo(date: Date): string {
   const s = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -266,7 +268,8 @@ export function AgentsPage({
             </tbody>
           </table>
           <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>
-            {agents.filter(a => a.status === 'active').length} 个活跃 / 共 {agents.length} 个
+            {visibleAgents.filter(a => a.status === 'active').length} 个活跃凭证
+            {!hideRevoked && ` / 当前显示 ${visibleAgents.length} 个`}
           </div>
         </>
         );
@@ -349,7 +352,8 @@ function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+      <form className="modal credential-modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+        <div className="credential-modal-body">
         <div className="modal-title">创建 API Key</div>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16 }}>
           API Key 使用简单的 Bearer Token 认证，并授予完整的 read、write、admin 权限。
@@ -368,7 +372,8 @@ function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
           onReadSourcesChange={setReadSources}
         />
         {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+        </div>
+        <div className="credential-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>取消</button>
           <button type="submit" className="btn btn-primary" disabled={loading}>
             {loading ? '正在创建...' : '创建 Key'}
@@ -383,11 +388,13 @@ function ApiKeyTokenModal({ token, onClose }: {
   token: { name: string; token: string };
   onClose: () => void;
 }) {
-  const copy = (text: string) => navigator.clipboard.writeText(text);
+  const [client, setClient] = useState<McpClientId>('universal');
+  const content = buildApiKeyAgentContent(client, window.location.origin, token.token);
 
   return (
     <div className="modal-overlay">
-      <div className="modal" style={{ maxWidth: 560 }}>
+      <div className="modal credential-modal">
+        <div className="credential-modal-body">
         <div style={{ textAlign: 'center', marginBottom: 16 }}>
           <div style={{ fontSize: 36, color: 'var(--success)', marginBottom: 8 }}>&#10003;</div>
           <div style={{ fontSize: 20, fontWeight: 600 }}>API Key 已创建</div>
@@ -396,22 +403,24 @@ function ApiKeyTokenModal({ token, onClose }: {
           <label style={{ fontSize: 12 }}>名称</label>
           <div className="code-block"><span>{token.name}</span></div>
         </div>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Bearer Token</label>
-          <div className="code-block">
-            <span>{token.token}</span>
-            <button className="copy-btn" onClick={() => copy(token.token)}>复制</button>
+        <div className="agent-handoff-head">
+          <div><b>复制给哪个 Agent</b><span>内容已包含真实凭证，复制后直接发给对应 Agent。</span></div>
+          <div className="tabs agent-client-tabs">
+            {MCP_CLIENTS.map(item => <button type="button" key={item.id} className={`tab ${client === item.id ? 'active' : ''}`} onClick={() => setClient(item.id)}>{item.label}</button>)}
           </div>
         </div>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>用法</label>
-          <div className="code-block">
-            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{`Authorization: Bearer ${token.token}`}</pre>
-            <button className="copy-btn" onClick={() => copy(`Authorization: Bearer ${token.token}`)}>复制</button>
-          </div>
+        <div className="code-block agent-handoff-content">
+          <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{content}</pre>
+          <CopyButton value={content} />
         </div>
+        <details className="credential-details">
+          <summary>查看原始凭证</summary>
+          <div className="code-block"><span>{token.token}</span><CopyButton value={token.token} /></div>
+          <div className="code-block"><pre>{`Authorization: Bearer ${token.token}`}</pre><CopyButton value={`Authorization: Bearer ${token.token}`} /></div>
+        </details>
         <div className="warning-bar">请立即保存此令牌，之后不会再次显示。</div>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
+        </div>
+        <div className="credential-modal-actions">
           <button className="btn btn-primary" onClick={onClose}>完成</button>
         </div>
       </div>
@@ -484,7 +493,8 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+      <form className="modal credential-modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+        <div className="credential-modal-body">
         <div className="modal-title">注册 Agent</div>
         <div style={{ marginBottom: 16 }}>
           <label>Agent 名称</label>
@@ -517,7 +527,8 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
           </select>
         </div>
         {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+        </div>
+        <div className="credential-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>取消</button>
           <button type="submit" className="btn btn-primary" disabled={loading}>
             {loading ? '正在注册...' : '注册'}
@@ -532,7 +543,8 @@ function CredentialsModal({ credentials, onClose }: {
   credentials: { clientId: string; clientSecret: string; name: string };
   onClose: () => void;
 }) {
-  const copy = (text: string) => navigator.clipboard.writeText(text);
+  const [client, setClient] = useState<McpClientId>('universal');
+  const content = buildOAuthAgentContent(client, window.location.origin, credentials);
   const downloadJson = () => {
     const blob = new Blob([JSON.stringify(credentials, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -543,33 +555,31 @@ function CredentialsModal({ credentials, onClose }: {
 
   return (
     <div className="modal-overlay">
-      <div className="modal" style={{ maxWidth: 560 }}>
+      <div className="modal credential-modal">
+        <div className="credential-modal-body">
         <div style={{ textAlign: 'center', marginBottom: 16 }}>
           <div style={{ fontSize: 36, color: 'var(--success)', marginBottom: 8 }}>&#10003;</div>
           <div style={{ fontSize: 20, fontWeight: 600 }}>Agent 已注册</div>
         </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Client ID</label>
-          <div className="code-block">
-            <span>{credentials.clientId}</span>
-            <button className="copy-btn" onClick={() => copy(credentials.clientId)}>复制</button>
+        <div className="agent-handoff-head">
+          <div><b>复制给哪个 Agent</b><span>内容已包含 Client ID 和密钥，复制后直接交给对应 Agent。</span></div>
+          <div className="tabs agent-client-tabs">
+            {MCP_CLIENTS.map(item => <button type="button" key={item.id} className={`tab ${client === item.id ? 'active' : ''}`} onClick={() => setClient(item.id)}>{item.label}</button>)}
           </div>
         </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>客户端密钥</label>
-          <div className="code-block">
-            <span>{credentials.clientSecret}</span>
-            <button className="copy-btn" onClick={() => copy(credentials.clientSecret)}>复制</button>
-          </div>
-        </div>
+        <div className="code-block agent-handoff-content"><pre>{content}</pre><CopyButton value={content} /></div>
+        <details className="credential-details">
+          <summary>查看原始凭证</summary>
+          <div className="code-block"><span>{credentials.clientId}</span><CopyButton value={credentials.clientId} /></div>
+          <div className="code-block"><span>{credentials.clientSecret}</span><CopyButton value={credentials.clientSecret} /></div>
+        </details>
 
         <div className="warning-bar">
           请立即保存此密钥，之后不会再次显示。
         </div>
-
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
+        </div>
+        <div className="credential-modal-actions">
           <button className="btn btn-secondary" onClick={downloadJson}>下载 JSON</button>
           <button className="btn btn-primary" onClick={onClose}>完成</button>
         </div>
@@ -593,15 +603,12 @@ function AgentDrawer({
   mainSourceId: string;
   onUpdated: (agent: Agent) => void;
 }) {
-  const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
   const [editingSource, setEditingSource] = useState(false);
   const [sourceId, setSourceId] = useState(agent.source_id || mainSourceId);
   const [readSources, setReadSources] = useState<string[]>(normalizeReadSources(agent.federated_read, agent.source_id || mainSourceId));
   const [sourceSaving, setSourceSaving] = useState(false);
   const [sourceError, setSourceError] = useState('');
-  const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
-
   const cid = agent.id || agent.client_id || '';
   const isOAuth = agent.auth_type === 'oauth';
   const agentName = agent.name || agent.client_name || 'unknown';
@@ -829,59 +836,11 @@ function AgentDrawer({
           )}
         </div>
 
-        {/*
-          Config Export visible for both auth_type=oauth AND auth_type=api_key.
-          Claude Code + Cursor + JSON tabs render real snippets regardless
-          (commit 15's snippets are auth-type-aware for those two clients;
-          JSON is just structured metadata). ChatGPT, Claude.ai, and
-          Perplexity tabs render an "OAuth client required" message on
-          api_key agents — those MCP clients only speak OAuth 2.0
-          client_credentials, not raw bearer tokens.
-
-          Pre-fix (Wintermute commit 16): the entire Config Export
-          section was hidden for api_key agents, dropping the working
-          Claude Code + Cursor snippets along with the broken ones.
-          (D5=C in the eng review.)
-        */}
-        <div className="section-title">配置导出</div>
-        <div className="tabs" style={{ flexWrap: 'wrap' }}>
-          <div className={`tab ${tab === 'claude-code' ? 'active' : ''}`} onClick={() => setTab('claude-code')}>Claude Code</div>
-          <div className={`tab ${tab === 'chatgpt' ? 'active' : ''}`} onClick={() => setTab('chatgpt')}>ChatGPT</div>
-          <div className={`tab ${tab === 'claude-cowork' ? 'active' : ''}`} onClick={() => setTab('claude-cowork')}>Claude.ai</div>
-          <div className={`tab ${tab === 'cursor' ? 'active' : ''}`} onClick={() => setTab('cursor')}>Cursor</div>
-          <div className={`tab ${tab === 'perplexity' ? 'active' : ''}`} onClick={() => setTab('perplexity')}>Perplexity</div>
-          <div className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>JSON</div>
+        <div className="section-title">接入其他 Agent</div>
+        <div className="credential-unavailable-note">
+          <b>已有凭证不能再次显示密钥</b>
+          <span>因此这里不再提供带占位符、复制后仍不能使用的配置。需要接入新 Agent 时，请创建新的 API Key 或 OAuth 客户端，并在创建成功页直接复制完整接入内容。</span>
         </div>
-        {(() => {
-          const oauthOnlyTabs = new Set(['chatgpt', 'claude-cowork', 'perplexity']);
-          if (!isOAuth && oauthOnlyTabs.has(tab)) {
-            const oauthClientNames: Record<string, string> = { chatgpt: 'ChatGPT', 'claude-cowork': 'Claude.ai', perplexity: 'Perplexity' };
-            const clientName = oauthClientNames[tab] || tab;
-            return (
-              <div style={{
-                background: 'rgba(255, 200, 100, 0.08)',
-                border: '1px solid rgba(255, 200, 100, 0.2)',
-                borderRadius: 8,
-                padding: '14px 16px',
-                marginTop: 12,
-                fontSize: 13,
-                lineHeight: 1.6,
-                color: 'var(--text-secondary)',
-              }}>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                  {clientName} 需要 OAuth 客户端
-                </div>
-                {clientName} 仅支持 OAuth 2.0（client_credentials）。API Key 使用原始 Bearer Token，{clientName} 不接受这种方式。请单独注册 OAuth 客户端后再连接。
-              </div>
-            );
-          }
-          return (
-            <div className="code-block">
-              <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{configSnippets[tab]}</pre>
-              <button className="copy-btn" onClick={() => copy(configSnippets[tab])}>复制</button>
-            </div>
-          );
-        })()}
 
         <div style={{ marginTop: 32 }}>
           {agent.status === 'active' && (

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { copyText as writeClipboardText } from './clipboard';
 
 /** Console run status shared across Console, TakeProposals, and SystemDiagnostic pages. */
 export interface ConsoleRun {
@@ -74,8 +75,12 @@ export function RunOutput({ run }: { run: ConsoleRun }) {
 
   const copyOutput = async () => {
     if (!copyText) return;
-    await navigator.clipboard.writeText(copyText);
-    setCopied(true);
+    try {
+      await writeClipboardText(copyText);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
     window.setTimeout(() => setCopied(false), 1600);
   };
 
