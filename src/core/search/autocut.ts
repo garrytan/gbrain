@@ -33,6 +33,19 @@ export interface AutocutConfig {
   jumpRatio: number;
   /** Failsafe: never return fewer than this when candidates exist (≥1). */
   minKeep: number;
+  /**
+   * Weak-top floor: the minimum TOP rerank score for the cliff test to be
+   * trusted. The cliff is measured on scores NORMALIZED by the top, so a weak
+   * top (e.g. 0.317 on a rare-term cross-source query) rescales to 1.0 and a
+   * normal decay below it masquerades as a confident cliff — collapsing a rich
+   * pool to 1. When the top score is below this floor, autocut no-ops (recall
+   * preserved); above it, the cliff is trusted as before. The reranker
+   * (zerank-2) is bimodal — real matches ≈0.95+, weak matches ≈0.3 — so the
+   * default 0.5 sits in the empty middle. 0 disables the floor (pre-fix
+   * behavior). Clamped to [0, 1]. Override: `search.autocut_min_top_score`
+   * config → mode bundle.
+   */
+  minTopScore: number;
 }
 
 /**
@@ -44,6 +57,8 @@ export const DEFAULT_AUTOCUT: AutocutConfig = Object.freeze({
   enabled: true,
   jumpRatio: 0.2,
   minKeep: 1,
+  // Weak-top floor (cross-source collapse fix). See AutocutConfig.minTopScore.
+  minTopScore: 0.5,
 });
 
 export interface AutocutDecision {
@@ -78,6 +93,13 @@ export function autocutFromConfig(
     const n =
       typeof search.autocut_min_keep === 'number' ? Math.floor(search.autocut_min_keep) : Number.NaN;
     if (Number.isFinite(n) && n >= 1) out.minKeep = n;
+  }
+  if (search.autocut_min_top_score !== undefined) {
+    const n =
+      typeof search.autocut_min_top_score === 'number' ? search.autocut_min_top_score : Number.NaN;
+    // [0, 1]: 0 disables the floor, 1 pins it at the ceiling. Out-of-range
+    // values are IGNORED (fall through to bundle / module default).
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out.minTopScore = n;
   }
   return out;
 }
@@ -159,6 +181,16 @@ export function applyAutocut<T>(
 
   const top = Math.max(...scores);
   if (!Number.isFinite(top) || top <= 0) return noOp(results);
+
+  // Weak-top floor: the cliff is measured on scores normalized by `top`, so a
+  // weak top fabricates a confident-looking cliff (rare-term cross-source
+  // queries collapse 32→1). When the top isn't a confident anchor, don't trust
+  // the cliff — no-op and preserve recall. `?? 0.5` mirrors DEFAULT_AUTOCUT and
+  // the knobsHash `acmts` default so a partial-knobs literal caller computes
+  // the same trimmed set the cache key claims it did (omitting the field must
+  // not silently disable the floor). Pass minTopScore:0 to disable explicitly.
+  const minTopScore = cfg.minTopScore ?? 0.5;
+  if (top < minTopScore) return noOp(results);
 
   // Sort a copy descending (A2: don't trust upstream order) and normalize.
   const sorted = [...scores].sort((a, b) => b - a);

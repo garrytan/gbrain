@@ -156,6 +156,53 @@ describe('autocut — ceiling override', () => {
   });
 });
 
+describe('autocut — weak-top floor (cross-source collapse regression)', () => {
+  // The `--source __all__` collapse: on a rare-term cross-source query the top
+  // reranker score is WEAK (~0.317) yet, because autocut normalizes by the top,
+  // the normal decay below it looked like a confident cliff and trimmed a
+  // 32-result pool to 1. The weak-top floor (bundle default 0.5) no-ops autocut
+  // when the top isn't a confident anchor. Pinned end-to-end (the pure-fn tests
+  // can't prove it flows through resolveSearchMode → applyAutocut).
+  test('cliff after rank 1 but WEAK top (0.317) → no trim, recall preserved', async () => {
+    const baseline = await hybridSearch(engine, 'alpha keyword', { limit: 10 });
+    // Exact live-brain shape that collapsed: 0.317 / 0.197 / 0.131 / 0.118.
+    const out = await hybridSearch(engine, 'alpha keyword', {
+      limit: 10,
+      reranker: rerankerOpts([0.317, 0.197, 0.131, 0.118, 0.1]),
+    });
+    expect(out.length).toBe(baseline.length);
+    expect(out.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('same cliff shape but STRONG top (0.95) → trims to the confident answer', async () => {
+    // top 0.95 >= floor; normalized rank1→rank2 gap (1.0→0.62 = 0.38) cuts.
+    const out = await hybridSearch(engine, 'alpha keyword', {
+      limit: 10,
+      reranker: rerankerOpts([0.95, 0.59, 0.39, 0.35, 0.3]),
+    });
+    expect(out.length).toBe(1);
+  });
+
+  test('per-call RAW-LOGIT reranker model → floor disabled, weak-top cliff still trims', async () => {
+    // The floor is gated on the EFFECTIVE reranker model. A per-call
+    // SearchOpts.reranker.model override to a raw-logit local reranker
+    // (llama-server/Qwen3) must disable the [0,1] floor — otherwise the weak
+    // 0.317 top would be wrongly read as "not confident" on an unbounded scale.
+    // With the floor off, the cliff (0.317→0.197) is trusted again → trims.
+    const out = await hybridSearch(engine, 'alpha keyword', {
+      limit: 10,
+      reranker: {
+        enabled: true,
+        topNIn: 30,
+        topNOut: null,
+        model: 'llama-server-reranker:Qwen3-Reranker-4B',
+        rerankerFn: rerankerWithScores([0.317, 0.197, 0.131, 0.118, 0.1]),
+      },
+    });
+    expect(out.length).toBe(1);
+  });
+});
+
 describe('autocut — composes with adaptive-return (never-empty holds)', () => {
   test('adaptive-return + autocut both on → non-empty, bounded', async () => {
     const out = await hybridSearch(engine, 'alpha keyword', {

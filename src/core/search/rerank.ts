@@ -39,6 +39,30 @@ export interface RerankerOpts {
   rerankerFn?: (input: RerankInput) => Promise<RerankResult[]>;
 }
 
+/**
+ * Does this reranker emit relevance scores normalized to roughly [0, 1]?
+ *
+ * `rerank_score` is taken verbatim from the provider response (gateway.ts —
+ * no sigmoid, no normalization). Cloud rerankers (ZeroEntropy zerank-*, Cohere,
+ * Voyage) return calibrated [0, 1] relevance. But the self-hosted
+ * `llama-server-reranker` path (Qwen3-Reranker GGUF via llama.cpp `--reranking`)
+ * returns the RAW cross-encoder logit — unbounded, frequently negative for
+ * non-matches and well above 1 for strong matches.
+ *
+ * This matters for autocut's weak-top floor (autocut.ts minTopScore): the floor
+ * is a [0, 1] threshold and is meaningless on a raw-logit scale, where it would
+ * either suppress legitimate cuts (a confident logit that happens to land in
+ * (0, floor)) or no-op entirely (logits ≫ 1). Callers gate the floor on this.
+ *
+ * Conservative: returns false ONLY for the known raw-logit local rerankers, so
+ * an unrecognized cloud model still gets the (correct) normalized treatment.
+ */
+export function rerankerEmitsNormalizedScores(model?: string): boolean {
+  if (!model) return true; // default reranker is ZE zerank-2 ([0,1])
+  const m = model.toLowerCase();
+  return !(m.includes('llama-server-reranker') || m.includes('qwen3-reranker'));
+}
+
 /** SHA-256 prefix (8 chars) of the query text for privacy-preserving audit. */
 function hashQuery(query: string): string {
   return createHash('sha256').update(query, 'utf8').digest('hex').slice(0, 8);
