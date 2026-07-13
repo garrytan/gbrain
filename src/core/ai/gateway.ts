@@ -2419,7 +2419,7 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
         .filter((b) => b.type !== 'text' || (b as any).text != null)
         .map((b) => {
         if (b.type === 'text') return { type: 'text' as const, text: b.text };
-        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, args: b.input };
+        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, args: b.input, input: b.input };
         return b;
       }),
     };
