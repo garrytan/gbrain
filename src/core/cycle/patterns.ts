@@ -24,7 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import type { MinionJob, MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 
@@ -32,6 +32,11 @@ export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
   yieldDuringPhase?: () => Promise<void>;
+  __testing?: {
+    waitForCompletion?: typeof waitForCompletion;
+    collectChildPutPageSlugs?: typeof collectChildPutPageSlugs;
+    reverseWriteRefs?: typeof reverseWriteRefs;
+  };
 }
 
 export async function runPhasePatterns(
@@ -39,11 +44,30 @@ export async function runPhasePatterns(
   opts: PatternsPhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  let submittedSubagent = false;
+  let cooldownStamped = false;
+  const stampExecutedRunCooldown = async () => {
+    if (!submittedSubagent || cooldownStamped) return;
+    // Failed/timeout/dead/cancelled runs still spent the LLM budget, so they
+    // must re-arm the cooldown to cap runaway spend.
+    await engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
+    cooldownStamped = true;
+  };
   try {
     const config = await loadPatternsConfig(engine);
 
     if (!config.enabled) {
       return skipped('disabled', 'dream.patterns.enabled is false');
+    }
+
+    // Cooldown: mirror dream.synthesize.cooldown_hours. `patterns` rides every
+    // per-source autopilot cycle (~hourly) and re-analyzes the same reflection
+    // corpus from scratch each time — without a spend cap that is ~19 Sonnet
+    // runs/day for a corpus that changes slowly. Default 0 = disabled (opt-in).
+    const cooldown = await checkCooldown(engine, config.cooldownHours);
+    if (cooldown.active) {
+      return skipped('cooldown_active',
+        `patterns cooled down until ${cooldown.expires_at} (${config.cooldownHours}h cooldown)`);
     }
 
     // Gather reflections within lookback window.
@@ -88,10 +112,12 @@ export async function runPhasePatterns(
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
+    submittedSubagent = true;
 
     let outcome: string;
     try {
-      const final = await waitForCompletion(queue, job.id, {
+      const wait = opts.__testing?.waitForCompletion ?? waitForCompletion;
+      const final: MinionJob = await wait(queue, job.id, {
         timeoutMs: 35 * 60 * 1000,
         pollMs: 5 * 1000,
       });
@@ -108,10 +134,14 @@ export async function runPhasePatterns(
     // Collect refs the subagent wrote (codex finding #2 — query tool exec rows).
     // v0.32.8: refs carry source_id so reverseWriteRefs targets the right
     // (source, slug) row instead of the first DB match.
-    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
+    const collectRefs = opts.__testing?.collectChildPutPageSlugs ?? collectChildPutPageSlugs;
+    const writtenRefs = await collectRefs(engine, [job.id]);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    const writeRefs = opts.__testing?.reverseWriteRefs ?? reverseWriteRefs;
+    const reverseWriteCount = await writeRefs(engine, opts.brainDir, writtenRefs);
+
+    await stampExecutedRunCooldown();
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, {
       reflections_considered: reflections.length,
@@ -121,6 +151,7 @@ export async function runPhasePatterns(
       job_id: job.id,
     });
   } catch (e) {
+    try { await stampExecutedRunCooldown(); } catch { /* best-effort after executed LLM run */ }
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
       e instanceof Error ? (e.message || 'patterns phase threw') : String(e)));
   } finally {
@@ -134,6 +165,7 @@ interface PatternsConfig {
   enabled: boolean;
   lookbackDays: number;
   minEvidence: number;
+  cooldownHours: number;
   model: string;
 }
 
@@ -142,6 +174,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const enabled = enabledStr === null ? true : enabledStr === 'true';
   const lookbackStr = await engine.getConfig('dream.patterns.lookback_days');
   const minEvidenceStr = await engine.getConfig('dream.patterns.min_evidence');
+  const cooldownHoursStr = await engine.getConfig('dream.patterns.cooldown_hours');
   // v0.28: unified model resolution
   const { resolveModel } = await import('../model-config.ts');
   const model = await resolveModel(engine, {
@@ -154,8 +187,26 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
     minEvidence: minEvidenceStr ? Math.max(1, parseInt(minEvidenceStr, 10) || 3) : 3,
+    cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 0) : 0,
     model,
   };
+}
+
+// Cooldown gate — mirrors dream.synthesize.cooldown_hours (synthesize.ts).
+// Reads dream.patterns.last_completion_ts; active until last + hours elapses.
+// hours <= 0 disables it (the default), so this is a no-op unless opted in.
+async function checkCooldown(
+  engine: BrainEngine,
+  hours: number,
+): Promise<{ active: boolean; expires_at?: string }> {
+  if (hours <= 0) return { active: false };
+  const last = await engine.getConfig('dream.patterns.last_completion_ts');
+  if (!last) return { active: false };
+  const lastMs = Date.parse(last);
+  if (Number.isNaN(lastMs)) return { active: false };
+  const expiresMs = lastMs + hours * 60 * 60 * 1000;
+  if (Date.now() >= expiresMs) return { active: false };
+  return { active: true, expires_at: new Date(expiresMs).toISOString() };
 }
 
 // ── Reflection gathering ─────────────────────────────────────────────

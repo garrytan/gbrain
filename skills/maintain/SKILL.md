@@ -163,6 +163,11 @@ timestamp is stored in `dream.synthesize.last_completion_ts` and is written
 ONLY on successful runs (not on skipped/failed). Explicit `--input` /
 `--date` / `--from` / `--to` invocations bypass cooldown.
 
+**Patterns cooldown:** `dream.patterns.cooldown_hours` (default 0 = off) mirrors
+the synthesize cooldown for the `patterns` phase, which otherwise runs on every
+autopilot cycle. Set to 12 for ~2 pattern runs/day. Completion timestamp is
+`dream.patterns.last_completion_ts`, written only on a successful run.
+
 **`--dry-run` semantics:** runs the cheap Haiku significance filter (caches
 verdicts) but skips the Sonnet synthesis pass. NOT zero LLM calls.
 

@@ -81,3 +81,31 @@ describe('patterns scope filter', () => {
     expect(patternsSrc).toContain('LIMIT 100');
   });
 });
+
+describe('patterns cooldown (mirrors synthesize)', () => {
+  test('reads dream.patterns.cooldown_hours config', () => {
+    expect(patternsSrc).toContain('dream.patterns.cooldown_hours');
+  });
+
+  test('writes dream.patterns.last_completion_ts on success', () => {
+    expect(patternsSrc).toContain('dream.patterns.last_completion_ts');
+  });
+
+  test('skips with cooldown_active reason when gate fires', () => {
+    expect(patternsSrc).toContain("'cooldown_active'");
+  });
+
+  test('has a checkCooldown helper', () => {
+    expect(patternsSrc).toContain('checkCooldown');
+  });
+
+  test('stamps cooldown for every submitted subagent outcome', () => {
+    expect(patternsSrc).toContain('submittedSubagent');
+    expect(patternsSrc).toContain('stampExecutedRunCooldown');
+    expect(patternsSrc).not.toContain("outcome === 'completed'");
+  });
+
+  test('documents failed-run cooldown rationale', () => {
+    expect(patternsSrc).toContain('Failed/timeout/dead/cancelled runs still spent the LLM budget');
+  });
+});
