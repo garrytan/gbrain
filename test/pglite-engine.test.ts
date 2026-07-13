@@ -88,6 +88,30 @@ describe('PGLiteEngine: Pages', () => {
     expect(matches.length).toBe(1);
   });
 
+  test('putPage restores a soft-deleted page', async () => {
+    const slug = 'notes/restore-on-put';
+    await engine.putPage(slug, testPage);
+    await engine.upsertChunks(slug, [{
+      chunk_index: 0,
+      chunk_text: 'restored visibility marker',
+      chunk_source: 'compiled_truth',
+      token_count: 3,
+    }]);
+    await engine.softDeletePage(slug, { sourceId: 'default' });
+    expect(await engine.getPage(slug)).toBeNull();
+    expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).not.toContain(slug);
+
+    const restored = await engine.putPage(slug, {
+      ...testPage,
+      title: 'Restored Title',
+      compiled_truth: 'restored visibility marker',
+    });
+
+    expect(restored.title).toBe('Restored Title');
+    expect((await engine.getPage(slug))?.title).toBe('Restored Title');
+    expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).toContain(slug);
+  });
+
   test('getPage returns null for missing slug', async () => {
     const result = await engine.getPage('nonexistent/slug');
     expect(result).toBeNull();

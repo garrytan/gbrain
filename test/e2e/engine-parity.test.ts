@@ -311,6 +311,28 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pglitePage!.title).toBe('V2');
   });
 
+  test('putPage restores soft-deleted rows on both engines', async () => {
+    const slug = 'notes/put-page-restore-parity';
+    for (const engine of [pgEngine, pgliteEngine]) {
+      await engine.putPage(slug, {
+        type: 'note',
+        title: 'Before delete',
+        compiled_truth: 'before',
+        timeline: '',
+      });
+      await engine.softDeletePage(slug, { sourceId: 'default' });
+      expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+
+      await engine.putPage(slug, {
+        type: 'note',
+        title: 'After restore',
+        compiled_truth: 'after',
+        timeline: '',
+      });
+      expect((await engine.getPage(slug, { sourceId: 'default' }))?.title).toBe('After restore');
+    }
+  });
+
   test('v0.41.19.0 deletePages parity: both engines return same confirmed-deleted slugs', async () => {
     const realSlugs = ['wiki/dpp-1', 'wiki/dpp-2', 'wiki/dpp-3'];
     for (const slug of realSlugs) {
