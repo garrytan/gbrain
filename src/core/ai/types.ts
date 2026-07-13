@@ -327,6 +327,15 @@ export interface Recipe {
     fetch?: typeof fetch;
   };
   /**
+   * Optional OpenAI-compatible transport shims for recipe-specific wire quirks.
+   * Kept separate from `resolveOpenAICompatConfig()` so a recipe can install a
+   * static fetch wrapper while preserving the normal `base_urls[recipe.id]`
+   * override chain.
+   */
+  compat?: {
+    fetch?: typeof fetch;
+  };
+  /**
    * v0.32 (D13=A): optional runtime readiness check for local-server
    * recipes (ollama, llama-server, future lmstudio-recipe). Returns
    * `ready: false` when the local endpoint isn't reachable, with a `hint`

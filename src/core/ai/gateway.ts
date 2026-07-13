@@ -377,7 +377,11 @@ export function applyOpenAICompatConfig(
   cfg: AIGatewayConfig,
 ): { baseURL: string; fetch?: typeof fetch } {
   if (recipe.resolveOpenAICompatConfig) {
-    return recipe.resolveOpenAICompatConfig(cfg.env);
+    const compat = recipe.resolveOpenAICompatConfig(cfg.env);
+    return {
+      ...compat,
+      fetch: compat.fetch ?? recipe.compat?.fetch,
+    };
   }
   const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseURL) {
@@ -386,7 +390,10 @@ export function applyOpenAICompatConfig(
       recipe.setup_hint,
     );
   }
-  return { baseURL };
+  return {
+    baseURL,
+    fetch: recipe.compat?.fetch,
+  };
 }
 
 /**
