@@ -2405,13 +2405,21 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
           })),
       };
     }
+    // v0.42.x: user text must be bare string for @ai-sdk/openai-compatible
+    // (rejects {type:'text', text:'...'} in userContentPartSchema).
+    if (m.role === 'user') {
+      const textOnly = blocks.filter(b => b.type === 'text');
+      if (textOnly.length > 0 && textOnly.length === blocks.length) {
+        return { role: 'user', content: textOnly.map(b => (b as any).text ?? '').join('\n') };
+      }
+    }
     return {
       role: m.role,
       content: blocks
         .filter((b) => b.type !== 'text' || (b as any).text != null)
         .map((b) => {
         if (b.type === 'text') return { type: 'text' as const, text: b.text };
-        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, args: b.input };
         return b;
       }),
     };
