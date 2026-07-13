@@ -151,6 +151,21 @@ export interface ThinkResult {
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
+// Claude 5 family models (claude-sonnet-5, claude-fable-5, ...) run adaptive thinking
+// by default when the request omits a thinking config, and max_tokens caps thinking +
+// answer text COMBINED. On hard questions 4000 is routinely consumed entirely by
+// thinking, so the text block comes back empty and think degrades to an empty answer
+// with synthesisOk: false even though retrieval succeeded. Give those models headroom
+// (their output ceilings are >= 64K); keep the conservative cap for everything else,
+// since some providers hard-reject max_tokens above the model output ceiling.
+const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
+const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:\/]claude-[a-z0-9]+-5(?:[.-]|$)/;
+
+function maxOutputTokensFor(modelStr: string): number {
+  return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+    ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+}
 
 function inferIntent(question: string, anchor?: string): string {
   if (anchor) return 'entity';
@@ -465,7 +480,7 @@ export async function runThink(
     }
     const result = await client.create({
       model: modelUsed,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: maxOutputTokensFor(modelUsed),
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
