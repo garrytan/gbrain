@@ -15,6 +15,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { loadConfigFileOnly } from '../core/config.ts';
 
 // --- Types ---
 
@@ -58,10 +59,29 @@ const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'ent
 // --- Filter logic ---
 
 /**
+ * Brain-local extra deny-prefixes for the orphan denominator, read from
+ * `~/.gbrain/config.json` `orphan_deny_prefixes`. Keeps brain-specific
+ * auto-generated/record taxonomy (shopping orders, imported issue archives,
+ * email history) OUT of the shared tool defaults. Mirrors the audit skill's
+ * GBRAIN_AUDIT_ARCHIVE_ROOTS override. Best-effort: a missing/invalid config
+ * yields no extra prefixes and never breaks an orphan scan.
+ */
+function configDenyPrefixes(): readonly string[] {
+  try {
+    const cfg = loadConfigFileOnly();
+    const p = cfg?.orphan_deny_prefixes;
+    return Array.isArray(p) ? p.filter(x => typeof x === 'string' && x.length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Returns true if a slug should be excluded from orphan reporting by default.
  * These are pages where having no inbound links is expected / not a content problem.
+ * `extraDenyPrefixes` (from brain config) is applied on top of the built-in lists.
  */
-export function shouldExclude(slug: string): boolean {
+export function shouldExclude(slug: string, extraDenyPrefixes: readonly string[] = []): boolean {
   // Pseudo-pages (exact match)
   if (PSEUDO_SLUGS.has(slug)) return true;
 
@@ -73,9 +93,12 @@ export function shouldExclude(slug: string): boolean {
   // Raw source slugs
   if (slug.includes(RAW_SEGMENT)) return true;
 
-  // Deny-prefix slugs
+  // Deny-prefix slugs (built-in + brain-config `orphan_deny_prefixes`)
   for (const prefix of DENY_PREFIXES) {
     if (slug.startsWith(prefix)) return true;
+  }
+  for (const prefix of extraDenyPrefixes) {
+    if (prefix && slug.startsWith(prefix)) return true;
   }
 
   // First-segment exclusions
@@ -127,9 +150,12 @@ export async function queryOrphanPages(
  */
 export async function findOrphans(
   engine: BrainEngine,
-  opts: { includePseudo?: boolean; sourceId?: string; sourceIds?: string[] } = {},
+  opts: { includePseudo?: boolean; sourceId?: string; sourceIds?: string[]; denyPrefixes?: readonly string[] } = {},
 ): Promise<OrphanResult> {
   const includePseudo = !!opts.includePseudo;
+  // Extra deny-prefixes: explicit opt (tests) wins; else brain config. Applied
+  // to both the numerator (orphan filter) and denominator (excludedAll count).
+  const extraDeny = opts.denyPrefixes ?? configDenyPrefixes();
   // v0.41.29.0: `sourceId` (scalar, from `--source` + single-source MCP
   // clients) or `sourceIds` (federated, from `allowedSources` MCP clients)
   // scopes the candidate set. `sourceIds` wins when both set (mirrors
@@ -176,7 +202,7 @@ export async function findOrphans(
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0
-      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug) ? 1 : 0), 0);
+      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug, extraDeny) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
@@ -184,7 +210,7 @@ export async function findOrphans(
 
   const filtered = includePseudo
     ? allOrphans
-    : allOrphans.filter(row => !shouldExclude(row.slug));
+    : allOrphans.filter(row => !shouldExclude(row.slug, extraDeny));
 
   const orphans: OrphanPage[] = filtered.map(row => ({
     slug: row.slug,
