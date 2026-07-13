@@ -21,7 +21,7 @@ import {
   resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
-import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
+import { extractFactsFromTurn, shouldSkipTurnForFactsExtraction, normalizeExtractedFactKind } from '../src/core/facts/extract.ts';
 
 afterEach(() => {
   __setChatTransportForTests(null);
@@ -141,5 +141,49 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
 
     expect(facts).toHaveLength(3);
     expect(facts.map(f => f.notability)).toEqual(['high', 'medium', 'low']);
+  });
+
+  test('deterministic pre-filter skips transient tasks before calling chat', async () => {
+    let chatCalled = false;
+    __setChatTransportForTests(async (): Promise<ChatResult> => {
+      chatCalled = true;
+      return {
+        text: JSON.stringify({ facts: [{ fact: 'Should not be extracted', kind: 'fact' }] }),
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      };
+    });
+
+    expect(shouldSkipTurnForFactsExtraction('Can you look at GitHub and tell me if this is a good skill?')).toBe(true);
+    const facts = await extractFactsFromTurn({
+      turnText: 'Can you look at GitHub and tell me if this is a good skill?',
+      source: 'test:prefilter',
+    });
+
+    expect(facts).toEqual([]);
+    expect(chatCalled).toBe(false);
+  });
+
+  test('deterministic pre-filter keeps durable style feedback and rules', () => {
+    expect(shouldSkipTurnForFactsExtraction('can you summarize all of this high level for me, too long')).toBe(false);
+    expect(shouldSkipTurnForFactsExtraction('make sure all agents use the 1-3-1 rule for asking me questions')).toBe(false);
+    expect(shouldSkipTurnForFactsExtraction('Smoke test. Reply exactly: OK')).toBe(true);
+    expect(shouldSkipTurnForFactsExtraction('yes')).toBe(true);
+  });
+
+  test('kind normalizer pins high-signal preferences, commitments, beliefs, and metrics', () => {
+    expect(normalizeExtractedFactKind('fact', 'Brad likes tables in code blocks', 'tables are not bad. I like tables in code blocks.', false)).toBe('preference');
+    expect(normalizeExtractedFactKind('belief', 'All agents use the 1-3-1 rule', 'make sure all agents use the 1-3-1 rule for asking me questions', false)).toBe('commitment');
+    expect(normalizeExtractedFactKind('fact', 'The software-development folder is redundant', 'Actually I think the software-development folder is redundant', false)).toBe('belief');
+    expect(normalizeExtractedFactKind('event', 'MRR is $50K', 'MRR is $50K', true)).toBe('fact');
+  });
+
+  test('kind normalizer does not smear a decision marker across preference facts in multi-claim turns', () => {
+    const turn = 'I prefer concise fact extraction candidates. I decided to use private Gemma for GBrain fact extraction.';
+    expect(normalizeExtractedFactKind('commitment', 'prefer concise fact extraction candidates', turn, false)).toBe('preference');
+    expect(normalizeExtractedFactKind('fact', 'decided to use private Gemma for GBrain fact extraction', turn, false)).toBe('commitment');
   });
 });
