@@ -2,6 +2,36 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.59.0] - 2026-07-13
+
+**Five community-reported fixes, each reproduced and verified before/after on both engines (PGLite + real Postgres): an upgrade wedge that locked pre-v121 brains out of migrations, two data-integrity holes in engine migration, silent deletion of facts containing pipe characters, confidently-wrong entity attribution on ambiguous names, and tightened source-scope enforcement in `think`.**
+
+### Fixed
+- **Existing brains below schema v121 can upgrade again.** Brains created before v0.42.56.0 could get stuck in a loop where every command (including `apply-migrations`) failed with `column "event_page_id" does not exist` — the migration that adds the column could never run. The startup bootstrap now adds the forward-referenced column first; migration v121 still owns the FK and indexes. Re-running is idempotent, and already-wedged brains heal on the next command. (#2724, #2735, contributed by @time-attack)
+- **`gbrain migrate --to` no longer fails on multi-source brains.** The source catalog is copied before pages, so the first page no longer dies on a foreign-key violation. Source rows migrate with full fidelity (paths, sync state, config). (#2677, #2736, contributed by @time-attack)
+- **Migration resume checkpoints are target-aware.** An interrupted migration to one target no longer convinces a later migration to a *different* target that most pages are "already done" (which silently shorted the new target). A checkpoint for another destination is discarded and the run starts fresh; no connection strings or credentials are written to manifests or logs. (#2677, #2736, contributed by @time-attack)
+- **Facts containing `|` characters survive reconciliation.** The facts fence rendered literal pipes escaped but re-parsed rows by splitting on every pipe, so any fact whose text contained a `|` was silently deleted from the DB on the next extract-facts cycle. Render→parse is now symmetric (pipes, backslashes, and empty cells verified round-trip). The takes fence shares the parser and gets the same fix. (#2726, #2738, contributed by @time-attack)
+- **Ambiguous entity names quarantine instead of guessing.** A bare first name shared by two people, or a company name sharing a generic token (e.g. "… Capital") with another company, used to resolve confidently to the wrong entity — misattributed facts are invisible and expensive to repair. Bare names now resolve only when exactly one canonical candidate exists; low-specificity fuzzy matches fall through to the guarded holding path (a held fact is recoverable; a misattributed one isn't). Explicit slugs, full names, unique bare names, and close typos still resolve. Trade-off: heavier typos on short names may now hold instead of resolving. (#2723, #2737, contributed by @time-attack)
+
+### Security
+- **`think` now applies the caller's source scope across all of its internal retrieval.** Hybrid page retrieval, takes keyword/vector retrieval, and graph traversal all honor scalar and federated source scope, matching the isolation the rest of the read surface already enforces. Part of the #2200 tracking work. (#2739, contributed by @time-attack)
+
+### To take advantage of v0.42.59.0
+
+`gbrain upgrade` should do this automatically. No new schema migrations ship in this release (v121/v122 shipped with v0.42.56.0).
+
+1. **If your brain was stuck below schema v121** (every command printed a schema-probe warning), just upgrade and run any command — the brain heals and migrates to current on first connect. If `gbrain doctor` still complains:
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+3. **If a previously-resolving shorthand name now files under a holding page**, that's the new ambiguity quarantine working as intended — add an alias or use the full name/slug for entities you want bare shorthand to hit.
+4. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
 ## [0.42.58.0] - 2026-07-06
 
 **gbrain now runs cleanly on the stack you already have — a local Ollama box, a self-hosted LiteLLM proxy, llama.cpp's llama-server, or gbrain running as a Claude Code MCP subprocess — instead of silently degrading or hard-failing when you're not on a raw OpenAI/Anthropic key.** A provider-agnostic plumbing pass across the AI gateway: environment handling, base-URL normalization, and embedding-dimension validation all stop tripping on the non-frontier-vendor setups that used to fail without a clear signal.
