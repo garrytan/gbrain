@@ -42,7 +42,7 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
@@ -4329,7 +4329,9 @@ export class PGLiteEngine implements BrainEngine {
         opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async searchTakesVector(
@@ -4360,7 +4362,9 @@ export class PGLiteEngine implements BrainEngine {
         opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {

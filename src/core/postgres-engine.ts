@@ -56,7 +56,7 @@ import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -4374,7 +4374,10 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY score DESC, t.weight DESC
       LIMIT ${limit}
     `;
-    return rows as unknown as TakeHit[];
+    // #2450-class: int8 columns arrive as native BigInt from the pg driver;
+    // coerce per-row (takeRowToTake precedent) so MCP/CLI JSON.stringify
+    // doesn't crash the moment a search actually matches.
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async searchTakesVector(
@@ -4407,7 +4410,10 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY t.embedding <=> ${vec}::vector
       LIMIT ${limit}
     `;
-    return rows as unknown as TakeHit[];
+    // #2450-class: int8 columns arrive as native BigInt from the pg driver;
+    // coerce per-row (takeRowToTake precedent) so MCP/CLI JSON.stringify
+    // doesn't crash the moment a search actually matches.
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
