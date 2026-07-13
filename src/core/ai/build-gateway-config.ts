@@ -9,7 +9,7 @@
  * import it from `../../src/cli.ts`.
  *
  * The single ownership site for: (a) folding file-plane API keys
- * (openai/anthropic/zeroentropy) into the gateway env, and (b) threading
+ * (openai/anthropic/opencode/zeroentropy) into the gateway env, and (b) threading
  * local-server `*_BASE_URL` env vars into base_urls. Both matter for the
  * init-time embedding-key probe — without (a) it would false-warn on
  * config.json-keyed users, and without (b) a live probe could hit the wrong
@@ -28,6 +28,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   const envFromConfig: Record<string, string> = {};
   if (c.openai_api_key) envFromConfig.OPENAI_API_KEY = c.openai_api_key;
   if (c.anthropic_api_key) envFromConfig.ANTHROPIC_API_KEY = c.anthropic_api_key;
+  if (c.opencode_api_key) envFromConfig.OPENCODE_API_KEY = c.opencode_api_key;
   // v0.37 fix wave (CDX2-5+6): ZE became the default provider in v0.36 but
   // the env-mapping at this seam never picked it up. `gbrain config set
   // zeroentropy_api_key X` wrote DB plane (ignored by gateway). The file-
