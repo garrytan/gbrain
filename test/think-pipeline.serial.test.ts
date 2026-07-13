@@ -217,6 +217,24 @@ describe('runThink (with stub client)', () => {
     expect(result.rounds).toBe(0);
   });
 
+  test('labels an unusable CONFIGURED model honestly (MODEL_NOT_USABLE, not NO_ANTHROPIC_API_KEY)', async () => {
+    // Regression guard: a configured model the recipe rejects (unknown_model)
+    // used to be stamped NO_ANTHROPIC_API_KEY, sending operators to debug
+    // env/keychain when the fix was the model id. Model validity beats the key
+    // check in probeChatModel, so the honest label holds even keyless.
+    await engine.setConfig('models.think', 'anthropic:claude-bogus-9');
+    try {
+      const result = await withoutAnthropicKey(() => runThink(engine, { question: 'bad model test' }));
+      expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_model');
+      expect(result.warnings).not.toContain('NO_ANTHROPIC_API_KEY');
+      expect(result.answer).toContain('not usable');
+      expect(result.rounds).toBe(0);
+      expect(result.synthesisOk).toBe(false);
+    } finally {
+      await engine.unsetConfig('models.think');
+    }
+  });
+
   test('persistSynthesis writes synthesis page + evidence rows', async () => {
     const stubClient: ThinkLLMClient = {
       create: async () => ({
@@ -285,8 +303,11 @@ describe('runThink — #1698 explicit-model hard error', () => {
   test('NON-explicit bad model does NOT throw — graceful degrade (no modelExplicit)', async () => {
     // model present but modelExplicit unset → early gate skipped; builder returns null.
     // Hermetic no-key so the assertion can't be perturbed by a configured key.
+    // Post-honest-labeling: an unknown PROVIDER is a model problem, not a key
+    // problem — the warning names it instead of the old NO_ANTHROPIC_API_KEY
+    // catch-all. The graceful no-throw contract is unchanged.
     const result = await withoutAnthropicKey(() => runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' }));
-    expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+    expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_provider');
     expect(result.synthesisOk).toBe(false);
   });
 });

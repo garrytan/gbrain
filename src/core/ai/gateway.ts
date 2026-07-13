@@ -502,6 +502,20 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
+  // ALSO resolve the four tier models and register them as extended models.
+  // assertTouchpoint's contract (model-resolver.ts) says config-chosen models —
+  // `models.default` and `models.tier.*` included — bypass the native recipe
+  // allowlist, but pre-fix only chat/expansion/embedding/reranker were
+  // registered. A model reachable ONLY through a tier (e.g. `models.tier.deep`
+  // set to an Opus newer than the recipe list) failed `probeChatModel` at call
+  // time and silently degraded think/auto_think to the gather-only stub.
+  // Resolving per-tier also honors `models.default` (it sits above tiers in
+  // the resolveModel chain).
+  const tierModels: string[] = [];
+  for (const tier of ['utility', 'reasoning', 'deep', 'subagent'] as const) {
+    tierModels.push(await resolveModel(engine, { tier, fallback: TIER_DEFAULTS[tier] }));
+  }
+
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
   _modelCache.clear();
   _shrinkState.clear();
@@ -513,6 +527,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
     _config.chat_model,
     _config.reranker_model,
     ...(_config.chat_fallback_chain ?? []),
+    ...tierModels,
   ]) {
     if (m) registerExtendedModel(m);
   }
