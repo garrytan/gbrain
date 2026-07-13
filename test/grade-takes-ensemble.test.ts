@@ -383,6 +383,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
       judge,
       useEnsemble: true,
       ensembleJudges: [],
+      model: 'claude-sonnet-4-6',
     });
     const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
     expect(insert!.params[2]).toBe('claude-sonnet-4-6'); // single-judge model id

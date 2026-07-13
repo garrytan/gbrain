@@ -1,5 +1,22 @@
 # CLAUDE.md
 
+## 🔴 0 · 工作铁律（最顶 · 每次开工先读，一条都不能漏）
+
+### 一 · 搜索铁律（全部都用，一个都不能漏）
+1. 任何搜索/调研，必须**全部**调用、一个都不能漏：**GLM MCP**（`web-search-prime` + `web-reader` + `zread` 三个全用） + **Kimi CLI**（`printf '查询' | kimi --quiet --no-thinking`） + **MMX MiniMax-M3（think）**（`mcp__MiniMax__web_search` + M3 综合）。
+2. **程序 / 代码 / 库 / API / SDK / 报错码类**信息，在上面之外**额外必须全部追加**：**GitHub**（`gh search code|repos|issues|prs`，含 **issues 区**） + **context7**（`resolve-library-id`→`query-docs`）。
+3. 绝不许只用内置 WebSearch 或凭记忆硬答。并行交叉验证 + 必附信源（URL+日期+置信度）。
+
+### 二 · 改前必读（动项目本身的问题/修改/改进前）
+4. 先读三处：① **记忆**（`memsearch search`） ② **gbrain**（`gbrain query` 查脑） ③ **项目内本 CLAUDE.md**。
+5. **中大改动一定先读 CRG / CodeGraph 图谱**（`.codegraph/` — `codegraph_explore` / `codegraph_node`，理解 blast radius 再动手）。
+
+### 三 · 改后必做
+6. 代码改完**及时 commit + push + 更新图谱**（codegraph 重新索引）。
+7. 重要事情（决策/教训/根因/修复）**及时写入记忆 + 每日日志 + 图谱**，别积压。
+
+---
+
 GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable
 engines: PGLite (embedded Postgres via WASM, zero-config default) or Postgres + pgvector
 + hybrid search in a managed Supabase instance. `gbrain init` defaults to PGLite;
@@ -832,3 +849,11 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+## 🧠 gbrain MMX 单key全栈 + 更新即重补必测铁律 (GBRAIN-MMX-PATCH-RELINK-TEST — 2026-06-16 用户令, 最高权重·置顶)
+gbrain 已配置成**全栈跑在 MMX 单一 key 上**(embo-01 嵌入 + MiniMax-M3 chat), 不需 OpenAI/Anthropic。靠 patched bun-linked clone: `G:\claude-project\gbrain` 分支 `fix/minimax-embeddings-shim`(3 commit: ①`src/core/ai/gateway.ts` minimaxCompatFetch 嵌入格式转换 input→texts/vectors→data ②`src/core/ai/dims.ts` 非对称 `type:db|query` ③`src/core/ai/recipes/minimax.ts` chat touchpoint MiniMax-M3)。
+1. **🔴 更新即重补必测**: `gbrain upgrade` / 重装(`bun install -g github:...`)会**冲掉源码 patch**(`~/.gbrain` config 如 embedding_model/models.default 不丢)。每次升级后必须: ①`cd G:\claude-project\gbrain && bun install && bun link` 重新激活 ②**实测两条都正常才算完成**: `gbrain embed --stale` 出非0 chunks(不报 `Invalid JSON response`) + `gbrain think "测试"` 出 `Model: minimax:MiniMax-M3` 且能从 brain page 综合带 `[citation]`。**光重装不测 = 失职; 没实测过不许说"修好了"**。
+2. **配置**: `embedding_model=minimax:embo-01`(1536d) · `models.default=minimax:MiniMax-M3` · `search.mode=balanced`。key 取自 `~/.mmx/config.json`(sk-cp- coding-plan key, 实测能调 embo-01 + M3)。
+3. **🔴 NO-PROXY**: 调 MMX 必剥代理 `unset all_proxy ALL_PROXY http_proxy https_proxy && export NO_PROXY="*"`(小写 `all_proxy=socks5://...` 会拦, 报 `Missing dependencies for SOCKS support`)。
+4. **长久解**: 提 upstream PR 给 garrytan/gbrain, 合并后官方自带, 不再需本地 patch+relink。
+5. **入口 skill** 已配 5 助手(claude/opencode/codex/workbuddy 各 `skills/gbrain/SKILL.md` + zcode `config.json` instructions), 内含上述全部命令与坑。

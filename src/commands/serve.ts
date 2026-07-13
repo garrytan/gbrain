@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { startMcpServer } from '../mcp/server.ts';
+import { isMaintenanceActive } from '../core/maintenance-flag.ts';
 
 // Maximum time the stdio path will wait for engine.disconnect() (PGLite
 // close + advisory lock release) before forcing exit. Keeps a wedged
@@ -17,6 +18,12 @@ const CLEANUP_DEADLINE_MS = 5_000;
 // closing stdin". 5s matches the cadence in the concurrent #591 PR;
 // faster polling has no benefit, slower would extend the lock-leak window.
 const PARENT_WATCHDOG_INTERVAL_MS = 5_000;
+
+// How often a live serve re-checks the maintenance flag. When a dream cycle
+// claims the maintenance window mid-session, the serve steps aside (releases the
+// single-connection PGLite lock) within this interval so the cycle isn't starved.
+// Independent of the parent-watchdog (which is ps-gated and disabled on Windows).
+const MAINTENANCE_POLL_INTERVAL_MS = 3_000;
 
 export interface ServeOptions {
   // Test seam — defaults to the live process. The lifecycle plumbing reads
@@ -70,6 +77,20 @@ export async function runServe(
   args: string[] = [],
   opts: ServeOptions = {},
 ) {
+  // Maintenance deferral: if a dream cycle is running it needs EXCLUSIVE access
+  // to the single-connection PGLite engine. Concurrently serving here would
+  // either starve the cycle (it times out acquiring the lock → degrades to
+  // filesystem-only) or risk a concurrent-access WASM abort. Release the lock
+  // we just acquired (engine was connected by the CLI before runServe) and exit
+  // cleanly; the MCP client respawns us after the cycle clears the flag.
+  if (isMaintenanceActive()) {
+    const log = opts.log ?? ((m: string) => process.stderr.write(m + '\n'));
+    log('[serve] GBrain is running a maintenance cycle (dream); MCP serve is deferring. Retry shortly.');
+    try { await engine.disconnect(); } catch { /* lock release is best-effort */ }
+    (opts.exit ?? ((code?: number) => process.exit(code)))(0);
+    return;
+  }
+
   // v0.26+: --http dispatches to the full OAuth 2.1 server (serve-http.ts)
   // with admin dashboard, scope enforcement, SSE feed, and the requireBearerAuth
   // middleware. Master's simpler startHttpTransport from v0.22.7 is superseded
@@ -170,16 +191,21 @@ function installStdioLifecycle(
 
   let shuttingDown = false;
   let parentWatchdog: unknown = null;
+  let maintenancePoll: unknown = null;
   const beginShutdown = (reason: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
 
-    // Stop the parent-watchdog interval as soon as a shutdown begins so
-    // it cannot fire a redundant 'parent-died' shutdown while the first
-    // one is still draining the cleanup chain.
+    // Stop the watchdog + maintenance-poll intervals as soon as a shutdown
+    // begins so they cannot fire a redundant shutdown while the first one is
+    // still draining the cleanup chain.
     if (parentWatchdog !== null) {
       deps.clearInterval(parentWatchdog);
       parentWatchdog = null;
+    }
+    if (maintenancePoll !== null) {
+      deps.clearInterval(maintenancePoll);
+      maintenancePoll = null;
     }
 
     deps.log(`GBrain MCP server: graceful exit (${reason})`);
@@ -282,6 +308,17 @@ function installStdioLifecycle(
       (parentWatchdog as { unref?: () => void } | null)?.unref?.();
     }
   }
+
+  // Maintenance-window poll: a dream cycle that starts AFTER us claims exclusive
+  // PGLite access. We hold the single-connection lock, so we must step aside or
+  // the cycle is starved ("Timed out waiting for PGLite lock"). Re-check the flag
+  // on an interval and shut down (releasing the lock) when a cycle is active; the
+  // MCP client respawns us once the cycle clears the flag. Runs on every platform
+  // (the parent-watchdog above is ps-gated and disabled on Windows).
+  maintenancePoll = deps.setInterval(() => {
+    if (isMaintenanceActive()) beginShutdown('maintenance-cycle');
+  }, MAINTENANCE_POLL_INTERVAL_MS);
+  (maintenancePoll as { unref?: () => void } | null)?.unref?.();
 
   // Optional idle-timeout safety net. Default OFF; opt-in via
   // `--stdio-idle-timeout <seconds>`. The flag is for the rare case where

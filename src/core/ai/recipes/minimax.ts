@@ -38,6 +38,23 @@ export const minimax: Recipe = {
       // halving in the gateway catches token-limit errors at runtime.
       max_batch_tokens: 4096,
     },
+    // MiniMax also exposes an OpenAI-compatible /v1/chat/completions endpoint
+    // (same MINIMAX_API_KEY). M3 is the 1M-context flagship; it function-calls
+    // and returns OpenAI-shaped responses (no compat shim needed). Reasoning is
+    // interleaved inline as `<think>…</think>` in message.content by default.
+    // Lets gbrain run think/dream/synthesis on MiniMax without an OpenAI or
+    // Anthropic key. Prices: MiniMax-M3 standard ¥4.2 in / ¥16.8 out per 1M
+    // (~$0.58 / $2.33), verified 2026-06-16.
+    chat: {
+      models: ['MiniMax-M3', 'MiniMax-M2.7'],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      max_context_tokens: 800000,
+      cost_per_1m_input_usd: 0.58,
+      cost_per_1m_output_usd: 2.33,
+      price_last_verified: '2026-06-16',
+    },
   },
   setup_hint:
     'Get an API key at https://www.minimaxi.com, then `export MINIMAX_API_KEY=...`',

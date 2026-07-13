@@ -284,6 +284,36 @@ function makeSkillsFixture(files: Record<string, string>): string {
   return dir;
 }
 
+describe("checkResolvable frontmatter parser", () => {
+  test("CRLF SKILL.md frontmatter triggers count for reachability and gap checks", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gbrain-crlf-"));
+    try {
+      mkdirSync(join(dir, "alpha"), { recursive: true });
+      writeFileSync(
+        join(dir, "alpha", "SKILL.md"),
+        [
+          "---",
+          "name: alpha",
+          "description: test",
+          "triggers:",
+          '  - "alpha task"',
+          "---",
+          "",
+          "# Alpha",
+          "",
+        ].join("\r\n")
+      );
+
+      const report = checkResolvable(dir);
+      expect(report.issues.filter(i => i.type === "missing_file")).toEqual([]);
+      expect(report.issues.filter(i => i.type === "unreachable")).toEqual([]);
+      expect(report.issues.filter(i => i.type === "mece_gap")).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("extractDelegationTargets", () => {
   test("parses > **Convention:** callouts", () => {
     const refs = extractDelegationTargets(

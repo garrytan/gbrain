@@ -76,12 +76,30 @@ interface DreamArgs {
   drain: boolean;
   /** Drain wallclock budget in seconds. Default 300 (5 min). */
   windowSeconds: number;
+  /**
+   * Run the core cycle WITHOUT the takes-calibration phases
+   * (propose_takes / grade_takes / calibration_profile). The dream wrapper
+   * then runs those as isolated `--phase` subprocesses so a native crash in
+   * propose_takes can't abort the 10 core phases. See ISOLATED_TAKES_PHASES.
+   */
+  excludeTakes: boolean;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_DRAIN_WINDOW_SECONDS = 300;
 /** Exit code for "drain ran but the backlog isn't empty — run again". */
 const EXIT_DRAIN_INCOMPLETE = 3;
+
+/**
+ * Takes-calibration phases run as ISOLATED subprocesses by the dream wrapper
+ * (gbrain-dream.cmd), not in the main in-process cycle. The propose_takes
+ * extractor can crash the runtime natively (bun, silent exit 127) on an
+ * oversized page body — see garrytan/gbrain#1412. `gbrain dream --exclude-takes`
+ * runs the 10 core phases without them; each takes phase is then re-run via
+ * `gbrain dream --phase <name>` in its own OS process, so a native crash can
+ * abort only that child, never the core cycle or the sibling takes phases.
+ */
+const ISOLATED_TAKES_PHASES: CyclePhase[] = ['propose_takes', 'grade_takes', 'calibration_profile'];
 
 /**
  * Collect every occurrence of `--<flag> <value>` in argv. Used to
@@ -229,6 +247,7 @@ function parseArgs(args: string[]): DreamArgs {
     source,
     drain,
     windowSeconds,
+    excludeTakes: args.includes('--exclude-takes'),
   };
 }
 
@@ -310,6 +329,11 @@ Options:
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
+  --exclude-takes     Run the core cycle WITHOUT propose_takes / grade_takes /
+                      calibration_profile. The dream wrapper re-runs those as
+                      isolated \`--phase\` subprocesses so a native crash in the
+                      takes extractor (oversized page, #1412) can't abort the
+                      core cycle.
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain). On a
                       postgres/remote brain with no local checkout, the
@@ -581,7 +605,14 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     return runDrain(engine, opts, resolvedSourceId, brainDir);
   }
 
-  const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  // Phase selection: a single `--phase X` wins; `--exclude-takes` runs the
+  // core cycle minus the isolated takes phases (the wrapper re-runs those as
+  // separate subprocesses); otherwise the full ALL_PHASES default.
+  const phases: CyclePhase[] | undefined = opts.phase
+    ? [opts.phase]
+    : opts.excludeTakes
+      ? (ALL_PHASES as CyclePhase[]).filter((p) => !ISOLATED_TAKES_PHASES.includes(p))
+      : undefined;
 
   const report = await runCycle(engine, {
     brainDir,
