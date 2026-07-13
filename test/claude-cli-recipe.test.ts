@@ -495,6 +495,38 @@ describe('claude-cli LanguageModel — abort + error envelopes', () => {
     });
   });
 
+  test('rejects a verbose-mode event array that lacks a result event', async () => {
+    // Verbose mode emits an event array; a truncated stream (or one carrying
+    // only init/system events) has no result event to unwrap.
+    await withStubEnv(async () => {
+      writeFileSync(
+        stubResponsePath,
+        JSON.stringify([
+          { type: 'system', subtype: 'init', session_id: 'test-session', tools: [], mcp_servers: [] },
+          { type: 'assistant', message: { role: 'assistant', content: [] } },
+        ]),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      await expect(
+        model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions),
+      ).rejects.toThrow(/had no "result" event/);
+    });
+  });
+
+  test('rejects cleanly when the claude binary is missing (no worker crash)', async () => {
+    // A missing binary must surface as a rejected promise via the spawn 'error'
+    // handler; the child stdin 'error' (EPIPE) handler swallows the pipe failure
+    // so it never escalates to an unhandled rejection that would down the worker.
+    await withEnv({ GBRAIN_CLAUDE_CLI_BIN: join(stubDir, 'nonexistent-claude') }, async () => {
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      await expect(
+        model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions),
+      ).rejects.toThrow(/claude-cli spawn failed/);
+    });
+  });
+
   test('doStream throws not-supported', async () => {
     const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
     const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
