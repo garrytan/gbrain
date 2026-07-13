@@ -870,6 +870,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.chat',
   'models.eval.longmemeval',
   'facts.extraction_model',
+  // Owner opt-in: let the local stdio MCP pipe read this owner's private facts
+  // (find_trajectory / recall). Default off; HTTP transport ignores it. See
+  // src/core/facts/reader-trust.ts.
+  'facts.trust_local_reads',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',

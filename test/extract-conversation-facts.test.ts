@@ -33,7 +33,29 @@ import {
   MAX_PAGE_BODY_BYTES,
   TERMINAL_AUDIT_SOURCE,
   PER_SEGMENT_SOURCE_PREFIX,
+  segmentValidFrom,
 } from '../src/commands/extract-conversation-facts.ts';
+
+// ---------------------------------------------------------------------------
+// segmentValidFrom — fact dating (claim date, not extraction date).
+// ---------------------------------------------------------------------------
+
+describe('segmentValidFrom', () => {
+  test('returns the segment date for a real timestamp', () => {
+    const d = segmentValidFrom('2026-06-15T11:18:00Z');
+    expect(d).toBeInstanceOf(Date);
+    expect(d!.toISOString().slice(0, 10)).toBe('2026-06-15');
+  });
+
+  test('returns undefined for the 1970 epoch fallback (no page date)', () => {
+    expect(segmentValidFrom('1970-01-01T00:00:00Z')).toBeUndefined();
+  });
+
+  test('returns undefined for an unparseable date', () => {
+    expect(segmentValidFrom('not-a-date')).toBeUndefined();
+    expect(segmentValidFrom('')).toBeUndefined();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Fixture helpers.
