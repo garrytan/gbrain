@@ -15,6 +15,8 @@
 import { describe, test, expect } from 'bun:test';
 import { bigintToStringReplacer, CLI_ONLY } from '../src/cli.ts';
 import { takeHitRowToHit } from '../src/core/utils.ts';
+import { runCall } from '../src/commands/call.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 describe('bigintToStringReplacer (#2450)', () => {
   test('serializes a bigint to its string form instead of throwing', () => {
@@ -50,13 +52,13 @@ describe('CLI_ONLY command reachability (#2035)', () => {
 describe('takeHitRowToHit (#2450 — takes_search MCP path)', () => {
   test('coerces BigInt int8 columns to numbers per the TakeHit contract', () => {
     const hit = takeHitRowToHit({
-      take_id: 42n, page_id: 7n, page_slug: 'engine-knock', row_num: 3n,
-      claim: 'rod bearing', kind: 'diagnosis', holder: 'garry',
+      take_id: 42n, page_id: 7n, page_slug: 'people/alice-example', row_num: 3n,
+      claim: 'Strong DX intuition', kind: 'take', holder: 'garry',
       weight: 0.8, score: 0.91,
     });
     expect(hit).toEqual({
-      take_id: 42, page_id: 7, page_slug: 'engine-knock', row_num: 3,
-      claim: 'rod bearing', kind: 'diagnosis', holder: 'garry',
+      take_id: 42, page_id: 7, page_slug: 'people/alice-example', row_num: 3,
+      claim: 'Strong DX intuition', kind: 'take', holder: 'garry',
       weight: 0.8, score: 0.91,
     });
     expect(() => JSON.stringify(hit)).not.toThrow();
@@ -66,5 +68,30 @@ describe('takeHitRowToHit (#2450 — takes_search MCP path)', () => {
     const raw = { take_id: 1n, page_id: 2n, row_num: 0n };
     expect(() => JSON.stringify(raw)).toThrow();
     expect(() => JSON.stringify(takeHitRowToHit(raw))).not.toThrow();
+  });
+});
+
+describe('runCall output exit is bigint-safe (#2450)', () => {
+  test('prints an op result carrying a bigint instead of crashing', async () => {
+    // `gbrain call` bypasses cli.ts's normalizer, so its own stringify must
+    // carry the replacer. Stub just the surface runCall touches: --source
+    // resolution (assertSourceExists) + the get_stats handler pass-through.
+    const stub = {
+      executeRaw: async (sql: string) =>
+        sql.includes('FROM sources') ? [{ id: 'default' }] : [],
+      getStats: async () => ({ pages: 42n, chunks: 7 }),
+    } as unknown as BrainEngine;
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (msg?: unknown) => { lines.push(String(msg)); };
+    try {
+      // --source pins tier 1 of resolveSourceId so the test is hermetic
+      // against GBRAIN_SOURCE / .gbrain-source on the host machine.
+      await runCall(stub, ['--source', 'default', 'get_stats']);
+    } finally {
+      console.log = orig;
+    }
+    expect(JSON.parse(lines.join('\n'))).toEqual({ pages: '42', chunks: 7 });
   });
 });
