@@ -2407,7 +2407,9 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
     }
     return {
       role: m.role,
-      content: blocks.map((b) => {
+      content: blocks
+        .filter((b) => b.type !== 'text' || (b as any).text != null)
+        .map((b) => {
         if (b.type === 'text') return { type: 'text' as const, text: b.text };
         if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
         return b;
@@ -2763,22 +2765,8 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
 
-  // Build messages. Anthropic prompt-cache markers ride on system + last tool
-  // via providerOptions; the AI SDK accepts the system as a string for
-  // generateText, so cache markers go through providerOptions.anthropic.
-  const tools = (opts.tools ?? []).reduce((acc, t) => {
-    acc[t.name] = {
-      description: t.description,
-      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
-      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
-      // thunk and call schema(), throwing "schema is not a function". Wrap the
-      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
-      // through the real toolLoop (skillopt rollouts + subagent jobs).
-      inputSchema: jsonSchema(t.inputSchema as any),
-    };
-    return acc;
-  }, {} as Record<string, any>);
-
+  // Build provider options for Anthropic prompt-cache markers, which ride on
+  // system + last tool via providerOptions.anthropic.
   const providerOptions: Record<string, any> = {};
   if (useCache) {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
@@ -2833,11 +2821,20 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      // Rebuild tools on every retry to bypass stale Zod v4 schema caching
+      // that causes transient AI_InvalidPromptError on some generateText calls.
+      const freshTools = (opts.tools ?? []).reduce((acc, t) => {
+        acc[t.name] = {
+          description: t.description,
+          inputSchema: jsonSchema(t.inputSchema as any),
+        };
+        return acc;
+      }, {} as Record<string, any>);
       const result = await generateText({
         model,
         system: opts.system,
         messages: toModelMessages(opts.messages) as any,
-        tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
+        tools: opts.tools && opts.tools.length > 0 ? freshTools : undefined,
         maxOutputTokens: opts.maxTokens ?? 4096,
         abortSignal: withDefaultTimeout(
           opts.abortSignal,
@@ -3002,6 +2999,15 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+
+  /**
+   * Fires after all tools in a turn complete and their results have been
+   * assembled into toolResultBlocks, BEFORE the results are pushed to
+   * messages. The subagent handler uses this to persist the tool-result
+   * user message to subagent_messages, enabling crash-replay without
+   * MissingToolResultsError.
+   */
+  onTurnComplete?: (turnIdx: number, userMessageIdx: number, toolResultBlocks: ChatBlock[], toolCalls: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3227,7 +3233,9 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     // Feed all tool results back as a single user message.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    // Persist turn via callback BEFORE pushing to messages array so crash-replay
+    // can reconstruct the tool-result blocks from the DB (MissingToolResultsError fix).
+    await opts.onTurnComplete?.(turnIdx, userMessageIdx, toolResultBlocks, toolCalls);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;

@@ -904,6 +904,20 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         [errorMsg, gbrainToolUseId],
       );
     },
+    onTurnComplete: async (turnIdx, userMessageIdx, toolResultBlocks) => {
+      // Persist tool-result user message to DB so crash-replay doesn't
+      // orphan tool-call blocks (MissingToolResultsError fix).
+      await persistMessage(engine, ctx.id, {
+        message_idx: userMessageIdx,
+        role: 'user',
+        content_blocks: toolResultBlocks,
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
+    },
     onHeartbeat: heartbeat,
   });
 
