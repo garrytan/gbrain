@@ -23,4 +23,17 @@ describe('query profiling runtime configuration', () => {
   test('does not enable exporting from unrelated environment values', () => {
     expect(readQueryProfilingConfig({ DATABASE_URL: 'postgres://secret' })).toBeNull();
   });
+
+  test('accepts bounded allowlisted resource attributes for isolated acceptance', () => {
+    expect(readQueryProfilingConfig({
+      GBRAIN_OTEL_RESOURCE_ATTRIBUTES: 'langfuse.environment=e2e,secret=must-ignore,service.name=ignored',
+      GBRAIN_OTEL_TRACES_ENDPOINT: 'https://telemetry.example.test/v1/traces',
+    })).toEqual({
+      endpoint: 'https://telemetry.example.test/v1/traces',
+      resource: {
+        'langfuse.environment': 'e2e',
+        'service.name': 'gbrain',
+      },
+    });
+  });
 });

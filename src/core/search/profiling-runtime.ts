@@ -22,6 +22,7 @@ export function readQueryProfilingConfig(env: Environment = process.env): QueryP
   const resource: Record<string, string> = {
     'service.name': serviceName,
   };
+  Object.assign(resource, readResourceAttributes(env.GBRAIN_OTEL_RESOURCE_ATTRIBUTES));
   const runtimeGeneration = env.GBRAIN_RUNTIME_GENERATION?.trim();
   const runtimeVersion = env.GBRAIN_RUNTIME_VERSION?.trim();
   if (runtimeGeneration) resource['gbrain.runtime_generation'] = runtimeGeneration;
@@ -83,3 +84,17 @@ registerBackgroundWorkDrainer({
     return { unfinished: 0 };
   },
 });
+
+function readResourceAttributes(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  const allowed = new Set(['langfuse.environment', 'gbrain.runtime_generation', 'gbrain.runtime_version']);
+  const attributes: Record<string, string> = {};
+  for (const entry of raw.split(',')) {
+    const separator = entry.indexOf('=');
+    if (separator <= 0) continue;
+    const key = entry.slice(0, separator).trim();
+    const value = entry.slice(separator + 1).trim();
+    if (allowed.has(key) && value.length > 0 && value.length <= 128) attributes[key] = value;
+  }
+  return attributes;
+}
