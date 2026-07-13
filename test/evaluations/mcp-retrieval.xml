@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<evaluation>
+  <!-- Read-only retrieval questions backed only by test/e2e/fixtures. -->
+  <qa_pair>
+    <question>先找出那个在演示中完成了 47 步采购流程的公司，再确认它的 CTO 是哪一年取得斯坦福计算机博士学位？</question>
+    <answer>2022 年</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>哪位投资人在演示日三天后发出了条款清单？他成为投资人前曾在哪家公司担任软件工程师？</question>
+    <answer>Stripe</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>找到已经签下两家企业设计合作伙伴的创业公司，它计划在哪个季度正式发布？</question>
+    <answer>2025 年第三季度（Q3 2025）</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>那笔由 Threshold Ventures 领投、规模为 400 万美元的种子轮，对应的投后估值是多少？</question>
+    <answer>2000 万美元</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在混合检索方案中，用来合并关键词结果和向量结果的排序融合方法叫什么？</question>
+    <answer>Reciprocal Rank Fusion（RRF）</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>上述融合算法在项目记录里采用的典型 k 参数是多少？</question>
+    <answer>60</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在“编译后的真相”模型里，哪一层只允许追加并且记录一旦写入就不可变？</question>
+    <answer>Timeline 层</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>NovaMind 的采购 Agent 在那次 47 步工作流演示中达到的任务完成可靠率是多少？</question>
+    <answer>94%</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>NovaMind 创始人在加入创业公司之前，曾在哪家 AI 公司研究工具使用能力？</question>
+    <answer>Anthropic</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>从 NovaMind 的 YC W25 演示日到 Threshold Ventures 发出种子轮条款清单，间隔了多少天？</question>
+    <answer>3 天</answer>
+  </qa_pair>
+</evaluation>

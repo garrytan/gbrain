@@ -41,10 +41,10 @@ export const api = {
   theme: () => apiFetch('/admin/api/theme'),
   docs: () => apiFetch('/admin/api/docs'),
   brainPages: (qs = '') => apiFetch(`/admin/api/brain/pages${qs}`),
-  brainPage: (sourceId: string, slug: string) =>
-    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}`),
-  brainPageChunks: (sourceId: string, slug: string) =>
-    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}/chunks`),
+  brainPage: (sourceId: string, slug: string, includeDeleted = false) =>
+    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}${includeDeleted ? '?includeDeleted=1' : ''}`),
+  brainPageChunks: (sourceId: string, slug: string, includeDeleted = false) =>
+    apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}/chunks${includeDeleted ? '?includeDeleted=1' : ''}`),
   deleteBrainPage: (sourceId: string, slug: string) =>
     apiFetch(`/admin/api/brain/pages/${encodeURIComponent(sourceId)}/${encodeURIComponent(slug)}/delete`, { method: 'POST' }),
   restoreBrainPage: (sourceId: string, slug: string) =>

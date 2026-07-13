@@ -317,12 +317,32 @@ CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
 -- NL queries ("how do we handle errors") rank doc-comment hits above body text.
 -- BEFORE INSERT OR UPDATE OF specific columns — only refires when those change,
 -- not on every chunk update (e.g., embedding refresh doesn't trigger rebuild).
+CREATE OR REPLACE FUNCTION pmbrain_cjk_search_tokens(input_text TEXT) RETURNS TEXT AS $fn$
+  WITH chars AS (
+    SELECT ch, ord
+    FROM regexp_split_to_table(COALESCE(input_text, ''), '') WITH ORDINALITY AS t(ch, ord)
+    WHERE ch ~ '[一-鿿぀-ゟ゠-ヿ가-힯]'
+  )
+  SELECT COALESCE(string_agg(
+    CASE WHEN next_char.ch IS NOT NULL
+      THEN current_char.ch || ' ' || current_char.ch || next_char.ch
+      ELSE current_char.ch
+    END,
+    ' ' ORDER BY current_char.ord
+  ), '')
+  FROM chars current_char
+  LEFT JOIN chars next_char ON next_char.ord = current_char.ord + 1
+$fn$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
+
 CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS $fn$
 BEGIN
   NEW.search_vector :=
     setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
     setweight(to_tsvector('english', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
-    setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B');
+    setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B') ||
+    setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(NEW.doc_comment, ''))), 'A') ||
+    setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(NEW.symbol_name_qualified, ''))), 'A') ||
+    setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(NEW.chunk_text, ''))), 'B');
   RETURN NEW;
 END;
 $fn$ LANGUAGE plpgsql;

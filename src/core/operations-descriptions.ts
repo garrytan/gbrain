@@ -61,7 +61,11 @@ export const LIST_PAGES_DESCRIPTION =
   "with sort=updated_desc instead of semantic search.";
 
 export const QUERY_DESCRIPTION =
-  "Hybrid search with vector + keyword + multi-query expansion. " +
+  "Hybrid semantic search with vector + keyword + multi-query expansion. " +
+  "Use this FIRST for a natural-language factual question, paraphrase, or relationship lookup " +
+  "such as '我家狗叫什么名字'. Pass the original user wording as query; do not reduce it to " +
+  "guessed keywords. If an excerpt already answers the question, answer from it. If more context " +
+  "is needed, call get_page with the exact slug returned here. " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
   "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
   "get_recent_transcripts. Semantic search returns polished pages and misses " +
@@ -69,7 +73,10 @@ export const QUERY_DESCRIPTION =
   "mean impressive — they often mean difficult or emotionally charged.";
 
 export const SEARCH_DESCRIPTION =
-  "使用全文检索进行关键词搜索。对于个人或情绪相关问题，" +
+  "使用全文检索查找精确关键词、人名、标题、编号或代码字面量。不要用于自然语言事实问答；" +
+  "例如“我家狗叫什么名字”应首先调用 query，并原样传入用户问题。MCP 远程调用不要传 source，" +
+  "知识源范围由 Agent/API Key 权限自动确定。关键词无结果时改用 query，不要继续猜测同义词。" +
+  "对于个人或情绪相关问题，" +
   "优先使用 get_recent_salience 或 find_anomalies，它们无需搜索词即可呈现活动高峰。" +
   "对于代码符号问题（调用方、被调用方、定义、影响范围），请改用 " +
   "code_callers / code_callees / code_def / code_refs；这些操作返回结构化图数据，" +

@@ -94,6 +94,12 @@ describe('v0.29 — redirect hints on existing ops', () => {
     expect(QUERY_DESCRIPTION).toContain("get_recent_transcripts");
   });
 
+  test('query is the default for natural-language factual questions', () => {
+    expect(QUERY_DESCRIPTION).toContain('natural-language factual question');
+    expect(QUERY_DESCRIPTION).toContain('original user wording');
+    expect(QUERY_DESCRIPTION).toContain('我家狗叫什么名字');
+  });
+
   test('query warns the LLM not to assume "crazy" means impressive', () => {
     expect(QUERY_DESCRIPTION).toContain("Do NOT assume");
     expect(QUERY_DESCRIPTION).toContain("difficult or emotionally charged");
@@ -102,6 +108,19 @@ describe('v0.29 — redirect hints on existing ops', () => {
   test('search has the shorter redirect hint', () => {
     expect(operationsByName['search'].description).toBe(SEARCH_DESCRIPTION);
     expect(SEARCH_DESCRIPTION).toContain("get_recent_salience");
+  });
+
+  test('search clearly limits itself to literal keywords and redirects questions', () => {
+    expect(SEARCH_DESCRIPTION).toContain('精确关键词');
+    expect(SEARCH_DESCRIPTION).toContain('不要用于自然语言事实问答');
+    expect(SEARCH_DESCRIPTION).toContain('query');
+    expect(SEARCH_DESCRIPTION).toContain('不要传 source');
+  });
+
+  test('get_page requires a verbatim slug from a previous result', () => {
+    expect(operationsByName['get_page'].description).toContain('Copy the exact `slug`');
+    expect(operationsByName['get_page'].description).toContain('never invent');
+    expect(operationsByName['get_page'].params.slug.description).toContain('verbatim');
   });
 });
 

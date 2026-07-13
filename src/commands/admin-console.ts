@@ -165,7 +165,8 @@ export async function listAdminBrainPages(
   const requestedLimit = Number.parseInt(query.limit ?? '10', 10) || 10;
   const limit = [10, 20, 40].includes(requestedLimit) ? requestedLimit : 10;
   const offset = (page - 1) * limit;
-  const filters: string[] = ['p.deleted_at IS NULL'];
+  const isTrash = query.view === 'trash';
+  const filters: string[] = [isTrash ? 'p.deleted_at IS NOT NULL' : 'p.deleted_at IS NULL'];
   const params: (string | number)[] = [];
 
   if (query.source && query.source !== 'all') {
@@ -219,6 +220,7 @@ export async function listAdminBrainPages(
     source_id: string;
     type: string;
     updated_at: string;
+    deleted_at: string | null;
     chunk_count: number;
     embedded_chunks: number;
     tag_count: number;
@@ -226,13 +228,14 @@ export async function listAdminBrainPages(
     preview: string;
   }>(
     `SELECT p.id, p.slug, p.title, p.source_id, p.type, p.updated_at::text AS updated_at,
+            p.deleted_at::text AS deleted_at,
             COALESCE(cc.chunk_count, 0)::int AS chunk_count,
             COALESCE(cc.embedded_chunks, 0)::int AS embedded_chunks,
             (SELECT COUNT(*)::int FROM tags t WHERE t.page_id = p.id) AS tag_count,
             p.frontmatter,
             LEFT(p.compiled_truth, 8000) AS preview
        ${baseSql}
-      ORDER BY p.updated_at DESC, p.slug
+      ORDER BY ${isTrash ? 'p.deleted_at' : 'p.updated_at'} DESC, p.slug
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset],
   );
@@ -250,7 +253,7 @@ export async function listAdminBrainPages(
   };
 }
 
-export async function getAdminBrainPageDetail(engine: BrainEngine, sourceId: string, slug: string) {
+export async function getAdminBrainPageDetail(engine: BrainEngine, sourceId: string, slug: string, includeDeleted = false) {
   const rows = await engine.executeRaw<{
     id: number;
     slug: string;
@@ -273,7 +276,7 @@ export async function getAdminBrainPageDetail(engine: BrainEngine, sourceId: str
             p.source_kind, p.source_uri, p.created_at::text AS created_at, p.updated_at::text AS updated_at
        FROM pages p
        JOIN sources s ON s.id = p.source_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+      WHERE p.source_id = $1 AND p.slug = $2 ${includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
       LIMIT 1`,
     [sourceId, slug],
   );
@@ -296,7 +299,7 @@ export async function getAdminBrainPageDetail(engine: BrainEngine, sourceId: str
   return { ...page, takes };
 }
 
-export async function getAdminBrainPageChunks(engine: BrainEngine, sourceId: string, slug: string) {
+export async function getAdminBrainPageChunks(engine: BrainEngine, sourceId: string, slug: string, includeDeleted = false) {
   const rows = await engine.executeRaw<{
     id: number;
     chunk_index: number;
@@ -315,7 +318,7 @@ export async function getAdminBrainPageChunks(engine: BrainEngine, sourceId: str
        JOIN content_chunks c ON c.page_id = p.id
       WHERE p.source_id = $1
         AND p.slug = $2
-        AND p.deleted_at IS NULL
+        ${includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
       ORDER BY c.chunk_index ASC`,
     [sourceId, slug],
   );

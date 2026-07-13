@@ -7,6 +7,7 @@ import { RunOutput, InfoIcon, formatDate, pageTypeLabel, pageTypeTitle, type Con
 import type { ThemeMode } from '../lib/theme';
 import { getThinkRetrievalWarning, parseThinkOutput } from '../lib/think-output';
 import { CopyButton } from '../lib/clipboard';
+import { parseMarkdownTable } from '../lib/markdown-table';
 
 interface SourceSummary {
   id: string;
@@ -58,6 +59,7 @@ interface BrainPageRow {
   source_id: string;
   type: string;
   updated_at: string;
+  deleted_at: string | null;
   chunk_count: number;
   embedded_chunks: number;
   tag_count: number;
@@ -1038,8 +1040,7 @@ export function BrainDataPage() {
   const [selectedChunkIndex, setSelectedChunkIndex] = useState(0);
   const [chunksLoading, setChunksLoading] = useState(false);
   const [chunksError, setChunksError] = useState('');
-  const [pageAction, setPageAction] = useState('');
-  const [lastDeleted, setLastDeleted] = useState<{ sourceId: string; slug: string; title: string } | null>(null);
+  const [pageError, setPageError] = useState('');
   const [filters, setFilters] = useState({ view: 'all', source: 'all', type: 'all', embedded: 'all', q: '', page: 1, pageSize: 10 });
   const [gotoPage, setGotoPage] = useState('1');
 
@@ -1076,8 +1077,8 @@ export function BrainDataPage() {
     setChunksError('');
     setChunksLoading(true);
     Promise.all([
-      api.brainPage(selected.source_id, selected.slug),
-      api.brainPageChunks(selected.source_id, selected.slug),
+      api.brainPage(selected.source_id, selected.slug, filters.view === 'trash'),
+      api.brainPageChunks(selected.source_id, selected.slug, filters.view === 'trash'),
     ])
       .then(([page, chunkData]: any[]) => {
         setDetail(page as BrainPageDetail);
@@ -1085,7 +1086,7 @@ export function BrainDataPage() {
       })
       .catch(e => setChunksError(e instanceof Error ? e.message : String(e)))
       .finally(() => setChunksLoading(false));
-  }, [selected]);
+  }, [selected, filters.view]);
 
   const types = useMemo(() => {
     const viewTypes: Record<string, Set<string>> = {
@@ -1171,28 +1172,25 @@ export function BrainDataPage() {
       '本地原始文件不会被删除。',
     ].join('\n'));
     if (!confirmed) return;
-    setPageAction('正在删除…');
+    setPageError('');
     try {
       await api.deleteBrainPage(selected.source_id, selected.slug);
-      setLastDeleted({ sourceId: selected.source_id, slug: selected.slug, title: selected.title || selected.slug });
       setSelected(null);
       await loadRows();
-      setPageAction('已移出知识库，可在本页撤销。');
     } catch (error) {
-      setPageAction(error instanceof Error ? error.message : String(error));
+      setPageError(error instanceof Error ? error.message : String(error));
     }
   };
 
-  const restoreLastDeleted = async () => {
-    if (!lastDeleted) return;
-    setPageAction('正在恢复…');
+  const restoreSelectedPage = async () => {
+    if (!selected) return;
+    setPageError('');
     try {
-      await api.restoreBrainPage(lastDeleted.sourceId, lastDeleted.slug);
+      await api.restoreBrainPage(selected.source_id, selected.slug);
       await loadRows();
-      setPageAction(`已恢复“${lastDeleted.title}”。`);
-      setLastDeleted(null);
+      setSelected(null);
     } catch (error) {
-      setPageAction(error instanceof Error ? error.message : String(error));
+      setPageError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -1205,12 +1203,7 @@ export function BrainDataPage() {
           <p className="pm-page-intro">这里展示数据库中的可检索 Markdown 页面。原始资料、结构化知识和观点总结可以分开查看。</p>
         </div>
       </div>
-      {pageAction && (
-        <div className="page-action-notice">
-          <span>{pageAction}</span>
-          {lastDeleted && <button className="pm-ghost" onClick={() => void restoreLastDeleted()}>撤销删除</button>}
-        </div>
-      )}
+      {pageError && <div className="pm-error-text">{pageError}</div>}
       <div className="pm-card">
         <div className="knowledge-view-tabs" role="tablist" aria-label="知识数据范围">
           {[
@@ -1218,14 +1211,20 @@ export function BrainDataPage() {
             ['materials', '原始与资料'],
             ['structured', '结构化知识'],
             ['insights', '观点与总结'],
+            ['trash', '回收站'],
           ].map(([value, label]) => (
             <button
               key={value}
               className={filters.view === value ? 'active' : ''}
-              onClick={() => setFilters(current => ({ ...current, view: value, type: 'all', page: 1 }))}
+              onClick={() => {
+                setSelected(null);
+                setPageError('');
+                setFilters(current => ({ ...current, view: value, type: 'all', page: 1 }));
+              }}
             >{label}</button>
           ))}
         </div>
+        {filters.view === 'trash' && <p className="trash-retention-note">移出的内容保留 3 天，之后自动清空。打开详情可以撤销删除。</p>}
         <div className="filter-bar">
           <input value={filters.q} onChange={e => setFilters(f => ({ ...f, q: e.target.value, page: 1 }))} placeholder="搜索 slug 或标题" />
           <select value={filters.source} onChange={e => setFilters(f => ({ ...f, source: e.target.value, page: 1 }))}>
@@ -1242,8 +1241,8 @@ export function BrainDataPage() {
             <option value="no">未完成向量化</option>
           </select>
         </div>
-        <table>
-          <thead><tr><th>标题</th><th>Source</th><th>类型</th><th>Chunks</th><th>Embedding</th><th>更新</th></tr></thead>
+        <table className="brain-page-table">
+          <thead><tr><th>标题</th><th>Source</th><th>类型</th><th>Chunks</th><th>Embedding</th><th>{filters.view === 'trash' ? '移除时间' : '更新'}</th></tr></thead>
           <tbody>
             {rows.map(row => (
               <tr
@@ -1263,7 +1262,7 @@ export function BrainDataPage() {
                 <td><span className="pm-pill" title={pageTypeTitle(row.type)}>{pageTypeLabel(row.type)}</span></td>
                 <td>{row.chunk_count}</td>
                 <td>{row.embedded_chunks}/{row.chunk_count}</td>
-                <td>{formatDate(row.updated_at)}</td>
+                <td>{formatDate(filters.view === 'trash' ? row.deleted_at : row.updated_at)}</td>
               </tr>
             ))}
           </tbody>
@@ -1280,7 +1279,9 @@ export function BrainDataPage() {
                 <div className="pm-eyebrow">{selected.source_id} / {selected.slug}</div>
                 <h2>{selected.title || selected.slug}</h2>
               </div>
-              <button className="danger-text-button" onClick={() => void deleteSelectedPage()}>移出知识库</button>
+              {filters.view === 'trash'
+                ? <button className="restore-text-button" onClick={() => void restoreSelectedPage()}>撤销删除</button>
+                : <button className="danger-text-button" onClick={() => void deleteSelectedPage()}>移出知识库</button>}
             </div>
             <div className="page-detail-summary">
               <div><span>Source</span><b>{selected.source_id}</b></div>
@@ -1398,7 +1399,8 @@ function MarkdownArticle({ markdown }: { markdown: string }) {
     code = [];
   };
 
-  lines.forEach((line, index) => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (line.startsWith('```')) {
       if (inCode) {
         flushCode();
@@ -1407,11 +1409,27 @@ function MarkdownArticle({ markdown }: { markdown: string }) {
         flushList();
         inCode = true;
       }
-      return;
+      continue;
     }
     if (inCode) {
       code.push(line);
-      return;
+      continue;
+    }
+    const table = parseMarkdownTable(lines, index);
+    if (table) {
+      flushList();
+      blocks.push(
+        <div className="markdown-table-wrap" key={`table-${index}`}>
+          <table>
+            <thead><tr>{table.headers.map((cell, cellIndex) => <th key={`${cell}-${cellIndex}`}><InlineMarkdown text={cell} /></th>)}</tr></thead>
+            <tbody>{table.rows.map((row, rowIndex) => (
+              <tr key={`row-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}><InlineMarkdown text={cell} /></td>)}</tr>
+            ))}</tbody>
+          </table>
+        </div>,
+      );
+      index = table.endIndex - 1;
+      continue;
     }
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     if (heading) {
@@ -1421,24 +1439,24 @@ function MarkdownArticle({ markdown }: { markdown: string }) {
       if (level === 1) blocks.push(<h1 id={id} key={id}><InlineMarkdown text={heading[2].trim()} /></h1>);
       if (level === 2) blocks.push(<h2 id={id} key={id}><InlineMarkdown text={heading[2].trim()} /></h2>);
       if (level === 3) blocks.push(<h3 id={id} key={id}><InlineMarkdown text={heading[2].trim()} /></h3>);
-      return;
+      continue;
     }
     const bullet = /^[-*]\s+(.+)$/.exec(line);
     if (bullet) {
       list.push(bullet[1]);
-      return;
+      continue;
     }
     flushList();
     if (/^>{1}\s?/.test(line)) {
       blocks.push(<blockquote key={`quote-${index}`}><InlineMarkdown text={line.replace(/^>\s?/, '')} /></blockquote>);
-      return;
+      continue;
     }
     if (/^\s*---+\s*$/.test(line)) {
       blocks.push(<hr key={`rule-${index}`} />);
-      return;
+      continue;
     }
     if (line.trim()) blocks.push(<p key={`p-${index}`}><InlineMarkdown text={line} /></p>);
-  });
+  }
   flushList();
   flushCode();
   return <div className="docs-markdown">{blocks}</div>;
@@ -1533,21 +1551,6 @@ export function ConnectionCenterPage() {
   }, null, 2), [origin]);
   return (
     <div className="pm-page">
-      <AgentsPage
-        title="Agent 凭证管理"
-        titleHelp={(
-          <InfoIcon title="Agent 凭证管理">
-            这里就是原来的 Agent 管理。外部工具访问 PMBrain 必须携带一个 Agent 凭证，最简单方式是新建 API Key，然后把它填入教程里的 Authorization: Bearer。
-          </InfoIcon>
-        )}
-        description="为 CodeBuddy、Cursor、Claude 等外部工具创建专用 API Key 或 OAuth 客户端。每个工具建议使用独立 Agent 凭证，后续可以单独撤销、审计请求日志和控制权限。"
-      />
-      <details className="mcp-connection-details">
-        <summary>
-          <span>MCP 接入设置</span>
-          <small>需要查看服务地址、客户端教程或 ChatGPT 安全隧道时展开</small>
-        </summary>
-        <div className="mcp-connection-details-body">
       <div className="pm-section-head">
         <div>
           <h1 className="title-with-info">
@@ -1613,7 +1616,22 @@ export function ConnectionCenterPage() {
           </article>
         ))}
       </div>
-      <ChatGptTunnelPanel />
+      <AgentsPage
+        title="Agent 凭证管理"
+        titleHelp={(
+          <InfoIcon title="Agent 凭证管理">
+            这里就是原来的 Agent 管理。外部工具访问 PMBrain 必须携带一个 Agent 凭证，最简单方式是新建 API Key，然后把它填入教程里的 Authorization: Bearer。
+          </InfoIcon>
+        )}
+        description="为 CodeBuddy、Cursor、Claude 等外部工具创建专用 API Key 或 OAuth 客户端。每个工具建议使用独立 Agent 凭证，后续可以单独撤销、审计请求日志和控制权限。"
+      />
+      <details className="mcp-tunnel-details">
+        <summary>
+          <span>ChatGPT Secure MCP Tunnel</span>
+          <small>仅在需要让 ChatGPT 远程读取 PMBrain 时展开</small>
+        </summary>
+        <div className="mcp-tunnel-details-body">
+          <ChatGptTunnelPanel />
         </div>
       </details>
       {showCodeBuddyGuide && (

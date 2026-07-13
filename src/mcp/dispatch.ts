@@ -169,6 +169,13 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 
 /** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
 export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+  const allowed = Object.keys(op.params);
+  const unknown = Object.keys(params).filter(key => !Object.prototype.hasOwnProperty.call(op.params, key));
+  if (unknown.length > 0) {
+    const label = unknown.length === 1 ? 'parameter' : 'parameters';
+    return `Unknown ${label}: ${unknown.join(', ')}. Allowed parameters: ${allowed.join(', ')}`;
+  }
+
   for (const [key, def] of Object.entries(op.params)) {
     if (def.required && (params[key] === undefined || params[key] === null)) {
       return `Missing required parameter: ${key}`;
@@ -181,6 +188,31 @@ export function validateParams(op: Operation, params: Record<string, unknown>): 
       if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
       if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
       if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
+    }
+  }
+  return null;
+}
+
+/**
+ * U+FFFD is emitted when a client decodes bytes with the wrong charset before
+ * serializing the MCP JSON request. Once it reaches the server the original
+ * Chinese text is unrecoverable, so fail explicitly instead of running a
+ * plausible-looking search that silently returns no results.
+ */
+function findUnicodeReplacementPath(value: unknown, path = 'arguments'): string | null {
+  if (typeof value === 'string') return value.includes('\uFFFD') ? path : null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const found = findUnicodeReplacementPath(value[i], `${path}[${i}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key.includes('\uFFFD')) return `${path}.${key}`;
+      const found = findUnicodeReplacementPath(nested, `${path}.${key}`);
+      if (found) return found;
     }
   }
   return null;
@@ -239,6 +271,21 @@ export async function dispatchToolCall(
   }
 
   const safeParams = params || {};
+  if (opts.remote !== false) {
+    const invalidEncodingPath = findUnicodeReplacementPath(safeParams);
+    if (invalidEncodingPath) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'invalid_encoding',
+            message: `Invalid UTF-8 text detected at ${invalidEncodingPath} (Unicode replacement character U+FFFD). Configure the MCP client to serialize JSON as UTF-8 and retry with the original text.`,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+  }
   const validationError = validateParams(op, safeParams);
   if (validationError) {
     return {
@@ -252,6 +299,22 @@ export async function dispatchToolCall(
   try {
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    if (
+      opts.remote !== false
+      && name === 'search'
+      && Array.isArray(result)
+      && result.length === 0
+      && typeof safeParams.query === 'string'
+    ) {
+      out._meta = {
+        pmbrain_guidance: {
+          reason: 'keyword_no_match',
+          next_tool: 'query',
+          arguments: { query: safeParams.query },
+          instruction: 'Call query with the original user wording. Do not rewrite it into guessed keywords.',
+        },
+      };
+    }
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no `_meta` rather than flipping the whole
@@ -259,7 +322,7 @@ export async function dispatchToolCall(
     if (opts.metaHook) {
       try {
         const meta = await opts.metaHook(name, ctx);
-        if (meta && Object.keys(meta).length > 0) out._meta = meta;
+        if (meta && Object.keys(meta).length > 0) out._meta = { ...out._meta, ...meta };
       } catch (metaErr) {
         const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
         ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);

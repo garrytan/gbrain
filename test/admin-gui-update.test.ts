@@ -111,4 +111,45 @@ describe('Admin GUI update contract', () => {
     await listAdminBrainPages(engine, { view: 'insights' });
     expect(statements[0]).toContain('p.type IN');
   });
+
+  test('recycle bin lists only deleted pages and can read their detail', async () => {
+    const statements: string[] = [];
+    const engine = {
+      executeRaw: async (sql: string) => {
+        statements.push(sql);
+        if (sql.startsWith('SELECT COUNT')) return [{ total: 0 }];
+        if (sql.includes('FROM pages p') && sql.includes('LIMIT 1')) return [{
+          id: 9, slug: 'notes/deleted', title: 'Deleted', source_id: 'default', source_name: 'default',
+          source_path: 'D:\\notes', type: 'note', page_kind: 'markdown', compiled_truth: '# Deleted',
+          timeline: '', frontmatter: {}, source_kind: 'file', source_uri: null,
+          created_at: '2026-07-11', updated_at: '2026-07-13',
+        }];
+        return [];
+      },
+    } as any;
+    await listAdminBrainPages(engine, { view: 'trash' });
+    expect(statements[0]).toContain('p.deleted_at IS NOT NULL');
+    expect(statements[0]).toContain('ORDER BY p.deleted_at DESC');
+
+    statements.length = 0;
+    const detail = await getAdminBrainPageDetail(engine, 'default', 'notes/deleted', true);
+    expect(detail?.compiled_truth).toBe('# Deleted');
+    expect(statements[0]).not.toContain('p.deleted_at IS NULL');
+  });
+
+  test('knowledge data UI exposes a three-day recycle bin without a top undo notice', () => {
+    expect(consoleSource).toContain("['trash', '回收站']");
+    expect(consoleSource).toContain('移出的内容保留 3 天，之后自动清空');
+    expect(consoleSource).toContain('restoreSelectedPage');
+    expect(consoleSource).not.toContain('已移出知识库，可在本页撤销');
+  });
+
+  test('restoring a page refreshes the recycle bin without switching to all pages', () => {
+    const restoreBlock = consoleSource.slice(
+      consoleSource.indexOf('const restoreSelectedPage'),
+      consoleSource.indexOf('\n  return (', consoleSource.indexOf('const restoreSelectedPage')),
+    );
+    expect(restoreBlock).toContain('await loadRows()');
+    expect(restoreBlock).not.toContain("view: 'all'");
+  });
 });

@@ -460,9 +460,9 @@ export interface Operation {
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a page by slug (supports optional fuzzy matching). Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
+  description: 'Read a page by slug. Copy the exact `slug` verbatim from a search/query/list_pages result; never invent a slug from the user question or page title. Optional fuzzy matching is only for a known partial slug. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
   params: {
-    slug: { type: 'string', required: true, description: 'Page slug' },
+    slug: { type: 'string', required: true, description: 'Page slug copied verbatim from a previous PMBrain tool result; do not construct or guess it' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
   },
@@ -498,7 +498,13 @@ const get_page: Operation = {
     }
 
     if (!page) {
-      throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
+      throw new OperationError(
+        'page_not_found',
+        `Page not found: ${slug}`,
+        includeDeleted
+          ? 'Copy the exact `slug` from a search/query/list_pages result. Do not invent a slug; use fuzzy: true only for a known partial slug.'
+          : 'Copy the exact `slug` from a search/query/list_pages result. Do not invent a slug. The page may also be soft-deleted; pass include_deleted: true to verify.',
+      );
     }
 
     // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale

@@ -4949,6 +4949,61 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 109,
+    name: 'indexed_cjk_search_tokens',
+    // PMBrain Chinese-first search: extend the existing GIN-backed
+    // content_chunks.search_vector with CJK unigram + adjacent-bigram lexemes.
+    // This replaces the previously rolled-back ILIKE branch without restoring
+    // any full-table scan. English lexemes and ranking weights stay unchanged.
+    idempotent: true,
+    sql: `
+      CREATE OR REPLACE FUNCTION pmbrain_cjk_search_tokens(input_text TEXT) RETURNS TEXT AS $fn$
+        WITH chars AS (
+          SELECT ch, ord
+          FROM regexp_split_to_table(COALESCE(input_text, ''), '') WITH ORDINALITY AS t(ch, ord)
+          WHERE ch ~ '[一-鿿぀-ゟ゠-ヿ가-힯]'
+        )
+        SELECT COALESCE(string_agg(
+          CASE WHEN next_char.ch IS NOT NULL
+            THEN current_char.ch || ' ' || current_char.ch || next_char.ch
+            ELSE current_char.ch
+          END,
+          ' ' ORDER BY current_char.ord
+        ), '')
+        FROM chars current_char
+        LEFT JOIN chars next_char ON next_char.ord = current_char.ord + 1
+      $fn$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
+
+      CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS $fn$
+      BEGIN
+        NEW.search_vector :=
+          setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B') ||
+          setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(NEW.doc_comment, ''))), 'A') ||
+          setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(NEW.symbol_name_qualified, ''))), 'A') ||
+          setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(NEW.chunk_text, ''))), 'B');
+        RETURN NEW;
+      END;
+      $fn$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+      CREATE TRIGGER chunk_search_vector_trigger
+        BEFORE INSERT OR UPDATE OF chunk_text, doc_comment, symbol_name_qualified
+        ON content_chunks
+        FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector();
+
+      UPDATE content_chunks
+      SET search_vector =
+        setweight(to_tsvector('english', COALESCE(doc_comment, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(symbol_name_qualified, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(chunk_text, '')), 'B') ||
+        setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(doc_comment, ''))), 'A') ||
+        setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(symbol_name_qualified, ''))), 'A') ||
+        setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(chunk_text, ''))), 'B');
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

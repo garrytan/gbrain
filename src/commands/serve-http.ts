@@ -1567,7 +1567,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const sourceId = Array.isArray(req.params.sourceId) ? req.params.sourceId[0] : req.params.sourceId;
     const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
     try {
-      const page = await getAdminBrainPageDetail(engine, sourceId, slug);
+      const page = await getAdminBrainPageDetail(engine, sourceId, slug, req.query.includeDeleted === '1');
       if (!page) {
         res.status(404).json({ error: 'page_not_found' });
         return;
@@ -1614,7 +1614,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(400).json({ error: 'missing_page_identity' });
         return;
       }
-      res.json(await getAdminBrainPageChunks(engine, sourceId, slug));
+      res.json(await getAdminBrainPageChunks(engine, sourceId, slug, req.query.includeDeleted === '1'));
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'chunks_failed' });
     }

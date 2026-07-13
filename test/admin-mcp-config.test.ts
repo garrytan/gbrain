@@ -44,7 +44,9 @@ describe('Admin MCP handoff content', () => {
     expect(agents.match(/className="credential-modal-actions"/g)?.length).toBe(4);
     expect(styles).toContain('max-height: calc(100dvh - 32px)');
     expect(styles).toContain('.credential-modal-body');
-    expect(consolePage.indexOf('<AgentsPage')).toBeLessThan(consolePage.indexOf('className="mcp-connection-details"'));
+    expect(consolePage.indexOf('<h1 className="title-with-info">')).toBeLessThan(consolePage.indexOf('<AgentsPage'));
+    expect(consolePage.indexOf('<AgentsPage')).toBeLessThan(consolePage.indexOf('className="mcp-tunnel-details"'));
+    expect(consolePage).not.toContain('className="mcp-connection-details"');
     expect(consolePage).not.toContain('<h2>连接状态</h2>');
     expect(agents).toContain("{visibleAgents.filter(a => a.status === 'active').length} 个活跃凭证");
     expect(agents).not.toContain('/ 共 {agents.length} 个');

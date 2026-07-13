@@ -58,6 +58,7 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { hasCJK } from './cjk.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -1538,21 +1539,24 @@ export class PostgresEngine implements BrainEngine {
     // not a temporal preference.
     const visibilityClause = buildVisibilityClause('p', 's');
 
-    // Postgres search_vector already tokenizes CJK characters and is backed by
-    // idx_chunks_search_vector. Keep CJK queries on this indexed path; the
-    // raw ILIKE fallback is reserved for PGLite, where the FTS tokenizer does
-    // not provide equivalent CJK coverage.
+    // CJK stays on the same GIN-indexed search_vector path as English. Migration
+    // v109 appends CJK unigram + bigram lexemes to search_vector; this query
+    // turns the same tokenizer output into a tsquery. Do not restore the old
+    // raw ILIKE branch — it scanned every chunk and timed out on real brains.
+    const queryExpression = hasCJK(query)
+      ? "plainto_tsquery('simple', pmbrain_cjk_search_tokens($1))"
+      : "websearch_to_tsquery('english', $1)";
     const rawQuery = `
       WITH ranked_chunks AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           p.effective_date, p.effective_date_source,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score
+          ts_rank(cc.search_vector, ${queryExpression}) * ${sourceFactorCase} AS score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
-        WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
+        WHERE cc.search_vector @@ ${queryExpression}
           ${typeClause}
           ${typesClause}
           ${excludeSlugsClause}

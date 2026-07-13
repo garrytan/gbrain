@@ -67,9 +67,12 @@ describe('postgres-engine / search path timeout isolation', () => {
 
   test('Postgres CJK keyword search stays on the indexed search_vector path', () => {
     const keyword = extractMethod(SRC, 'searchKeyword');
-    expect(keyword).toMatch(/search_vector\s+@@\s+websearch_to_tsquery\('english',\s*\$1\)/);
-    expect(keyword).not.toContain('hasCJK(query)');
+    const executable = stripComments(keyword);
+    expect(keyword).toContain('hasCJK(query)');
+    expect(keyword).toContain("plainto_tsquery('simple', pmbrain_cjk_search_tokens($1))");
+    expect(keyword).toMatch(/search_vector\s+@@\s+\$\{queryExpression\}/);
     expect(SRC).not.toContain('private async _searchKeywordCJK');
+    expect(executable).not.toContain('ILIKE');
   });
 
   test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {
