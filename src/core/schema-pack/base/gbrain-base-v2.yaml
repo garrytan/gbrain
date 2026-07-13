@@ -31,6 +31,9 @@ description: 14-type DRY/MECE canonical taxonomy + `note` catch-all (15 total). 
 gbrain_min_version: 0.42.0
 extends: null
 borrow_from: []
+phases:
+  - extract_atoms
+  - synthesize_concepts
 takes_kinds:
   - fact
   - take
