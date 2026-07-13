@@ -160,4 +160,26 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
     expect(rows[0]?.typeof).toBe('object');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
   });
+
+  test('bad array config ignores non-object elements before merge', async () => {
+    await seedSource('epsilon');
+    await engine.executeRaw(
+      `UPDATE sources
+          SET config = '[{"keep":"me"},"bad-shape",["also-bad"]]'::jsonb
+        WHERE id = 'epsilon'`,
+    );
+    await engine.updateSourceConfig('epsilon', {
+      last_source_cycle_at: '2026-06-24T10:40:00.000Z',
+    });
+    const rows = await engine.executeRaw<{ keep: string | null; cycle: string | null; typeof: string }>(
+      `SELECT config->>'keep' AS keep,
+              config->>'last_source_cycle_at' AS cycle,
+              jsonb_typeof(config) AS typeof
+         FROM sources
+        WHERE id = 'epsilon'`,
+    );
+    expect(rows[0]?.typeof).toBe('object');
+    expect(rows[0]?.keep).toBe('me');
+    expect(rows[0]?.cycle).toBe('2026-06-24T10:40:00.000Z');
+  });
 });

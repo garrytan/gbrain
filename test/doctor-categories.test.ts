@@ -1,10 +1,10 @@
 /**
  * Drift guard for src/core/doctor-categories.ts.
  *
- * Reads src/commands/doctor.ts source via a literal-string scan, enumerates
- * every `name: '<...>'` Check name, and asserts each appears in exactly ONE
- * category set. The union of the four sets must equal the discovered names
- * exactly — no orphans, no extras.
+ * Reads src/commands/doctor.ts plus the onboard checks doctor imports at
+ * runtime, enumerates every `name: '<...>'` Check name, and asserts each
+ * appears in exactly ONE category set. The union of the four sets must equal
+ * the discovered names exactly — no orphans, no extras.
  *
  * This is the structural failure the v0.41.19.0 plan-eng-review caught:
  * doctor.ts grows new checks regularly; without this guard, the
@@ -25,9 +25,9 @@ import {
 } from '../src/core/doctor-categories.ts';
 
 const DOCTOR_TS_PATH = join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts');
+const ONBOARD_CHECKS_TS_PATH = join(import.meta.dir, '..', 'src', 'core', 'onboard', 'checks.ts');
 
-function enumerateCheckNames(): Set<string> {
-  const source = readFileSync(DOCTOR_TS_PATH, 'utf-8');
+function enumerateCheckNamesInSource(source: string): Set<string> {
   const names = new Set<string>();
   // 1) Inline object-literal form: `{ name: 'foo', ... }`.
   for (const m of source.matchAll(/name:\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
@@ -39,6 +39,16 @@ function enumerateCheckNames(): Set<string> {
   //    name constant.
   for (const m of source.matchAll(/const\s+name\s*=\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
     names.add(m[1]);
+  }
+  return names;
+}
+
+function enumerateCheckNames(): Set<string> {
+  const names = new Set<string>();
+  for (const file of [DOCTOR_TS_PATH, ONBOARD_CHECKS_TS_PATH]) {
+    for (const name of enumerateCheckNamesInSource(readFileSync(file, 'utf-8'))) {
+      names.add(name);
+    }
   }
   return names;
 }

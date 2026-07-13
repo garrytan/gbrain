@@ -3194,6 +3194,15 @@ export async function computeExtractAtomsBacklogCheck(
       };
     }
 
+    const autoDrain = await engine.getConfig('autopilot.auto_drain.enabled').catch(() => null);
+    if (!declared && typeof autoDrain === 'string' && autoDrain.trim().toLowerCase() === 'false') {
+      return {
+        name, status: 'ok',
+        message: `${backlog} page(s) eligible; atom auto-drain disabled by config`,
+        details: { backlog, pack_declares_phase: false, auto_drain_enabled: false, known_approximation: approx },
+      };
+    }
+
     // The incident: pack does NOT run the phase but a real backlog exists →
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
@@ -5188,16 +5197,20 @@ export async function buildChecks(
 
   // 4. pgvector extension
   progress.heartbeat('pgvector');
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+  if (engine.kind === 'pglite') {
+    checks.push({ name: 'pgvector', status: 'ok', message: 'Skipped (PGLite bundles vector support; extension probe is Postgres-only)' });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+      if (ext.length > 0) {
+        checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
+      } else {
+        checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+      }
+    } catch {
+      checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
     }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
   }
 
   // 4b. PgBouncer / prepared-statement compatibility.
@@ -5778,7 +5791,7 @@ export async function buildChecks(
   try {
     const health = await engine.getHealth();
     const entityCount = (await engine.executeRaw<{ count: number }>(
-      "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
+      "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization') AND deleted_at IS NULL",
     ))[0]?.count ?? 0;
 
     // Compute coverage against eligible entities only — exclude test fixtures
@@ -5833,6 +5846,10 @@ export async function buildChecks(
     // Uses distinct *_score field names (not overloading link_coverage /
     // timeline_coverage, which are entity-scoped).
     if (health.brain_score < 100) {
+      const warnBelowRaw = await engine.getConfig('doctor.brain_score_warn_below').catch(() => null);
+      const warnBelow = warnBelowRaw && Number.isFinite(Number(warnBelowRaw))
+        ? Number(warnBelowRaw)
+        : 70;
       const parts = [
         `embed ${health.embed_coverage_score}/35`,
         `links ${health.link_density_score}/25`,
@@ -5842,7 +5859,7 @@ export async function buildChecks(
       ];
       checks.push({
         name: 'brain_score',
-        status: health.brain_score >= 70 ? 'ok' : 'warn',
+        status: health.brain_score >= warnBelow ? 'ok' : 'warn',
         message: `Brain score ${health.brain_score}/100 (${parts.join(', ')})`,
       });
     } else {
@@ -5984,36 +6001,40 @@ export async function buildChecks(
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
   progress.heartbeat('jsonb_integrity');
-  try {
-    const sql = db.getConnection();
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
-    ];
-    let totalBad = 0;
-    const breakdown: string[] = [];
-    for (const { table, col } of targets) {
-      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
-      );
-      const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+  if (engine.kind === 'pglite') {
+    checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'Skipped (Postgres JSONB storage regression check is not applicable to PGLite)' });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+        { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+        { table: 'raw_data',      col: 'data',           expected: 'object' },
+        { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+        { table: 'files',         col: 'metadata',       expected: 'object' },
+        { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+      ];
+      let totalBad = 0;
+      const breakdown: string[] = [];
+      for (const { table, col } of targets) {
+        progress.heartbeat(`jsonb_integrity.${table}.${col}`);
+        const rows = await sql.unsafe(
+          `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+        );
+        const n = Number((rows as any)[0]?.n ?? 0);
+        if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+      }
+      if (totalBad === 0) {
+        checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
+      } else {
+        checks.push({
+          name: 'jsonb_integrity',
+          status: 'warn',
+          message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+        });
+      }
+    } catch {
+      checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
     }
-    if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
-    } else {
-      checks.push({
-        name: 'jsonb_integrity',
-        status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
-      });
-    }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
   }
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).
