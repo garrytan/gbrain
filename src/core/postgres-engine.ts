@@ -1614,16 +1614,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
-    // v0.27.0: date filtering support
+    // v0.29.1 — since/until date filter. Keep parity with PGLite:
+    // callers expect event-time filtering via effective_date, not refresh time.
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation filter. When the
     // caller's auth scope is set, narrow the inner CTE candidate set so
@@ -1763,16 +1764,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
-    // v0.27.0: date filtering support
+    // v0.29.1 — since/until date filter. Keep parity with PGLite:
+    // callers expect event-time filtering via effective_date, not refresh time.
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation. Anchor primitive
     // for two-pass retrieval, so cross-source anchors would let the walk
@@ -1885,16 +1887,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
-    // v0.27.0: date filtering support
+    // v0.29.1 — since/until date filter. Keep parity with PGLite:
+    // callers expect event-time filtering via effective_date, not refresh time.
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
     // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
     // specifically. Pushing the filter inside narrows the HNSW candidate set
