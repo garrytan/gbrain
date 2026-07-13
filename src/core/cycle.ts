@@ -950,11 +950,55 @@ async function runPhaseSync(
   }
 }
 
+/**
+ * Decide the effective slug set for the cycle's extract phase.
+ *
+ * Extract runs in two modes:
+ *  - `changedSlugs === undefined` → full walk (first run / manual).
+ *  - `changedSlugs` defined → incremental: extract only those slugs.
+ *
+ * An *empty defined* array (`[]`) is the degenerate incremental case: sync ran
+ * but reported zero changed pages, so extract walks nothing. On a steady-state
+ * brain whose link graph is already built that is the correct, fast outcome.
+ *
+ * But if an out-of-band process drains git→DB before the cycle's own sync runs,
+ * sync sees HEAD == HEAD and returns `[]` even though links were never
+ * extracted — the incremental path then walks zero slugs and link coverage
+ * stays at zero indefinitely after a brain rebuild. Guard against that: when
+ * handed an empty defined queue, fall back to a full walk if the source has
+ * pages but no links originate from it. Brains that already have links keep the
+ * fast empty-incremental path (no extra work for the common case).
+ */
+export async function resolveExtractSlugs(
+  engine: BrainEngine,
+  changedSlugs: string[] | undefined,
+  sourceId: string | undefined,
+): Promise<string[] | undefined> {
+  if (!changedSlugs || changedSlugs.length !== 0 || !sourceId) return changedSlugs;
+  const pageRow = await engine.executeRaw<{ n: string }>(
+    `SELECT COUNT(*) AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
+    [sourceId],
+  );
+  const linkRow = await engine.executeRaw<{ n: string }>(
+    `SELECT COUNT(*) AS n FROM links l
+       JOIN pages p ON p.id = l.from_page_id
+      WHERE p.source_id = $1`,
+    [sourceId],
+  );
+  const pageCount = parseInt(pageRow[0]?.n ?? '0', 10);
+  const linkCount = parseInt(linkRow[0]?.n ?? '0', 10);
+  // Pages exist but the link graph is empty → a prior sync drained the change
+  // queue without extract ever running. Force a full walk to rebuild links.
+  if (pageCount > 0 && linkCount === 0) return undefined;
+  return changedSlugs;
+}
+
 async function runPhaseExtract(
   engine: BrainEngine,
   brainDir: string,
   dryRun: boolean,
   changedSlugs?: string[],
+  sourceId?: string,
   signal?: AbortSignal,
 ): Promise<PhaseResult> {
   try {
@@ -971,29 +1015,32 @@ async function runPhaseExtract(
         details: { dryRun: true, reason: 'no_dry_run_support' },
       };
     }
+    // Guard against an empty incremental queue silently skipping a needed
+    // full walk when the link graph is empty (see resolveExtractSlugs).
+    const effectiveSlugs = await resolveExtractSlugs(engine, changedSlugs, sourceId);
     // Incremental path: if sync told us which slugs changed, only extract those.
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
     const result = await runExtractCore(engine, {
       mode: 'all',
       dir: brainDir,
-      slugs: changedSlugs,  // undefined = full walk (first run / manual)
+      slugs: effectiveSlugs,  // undefined = full walk (first run / manual)
       signal,
     });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
-    const incremental = changedSlugs !== undefined;
+    const incremental = effectiveSlugs !== undefined;
     return {
       phase: 'extract',
       status: 'ok',
       duration_ms: 0,
       summary: incremental
-        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${changedSlugs.length} slugs)`
+        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${effectiveSlugs.length} slugs)`
         : `${linksCreated} link(s), ${timelineCreated} timeline entries`,
       details: {
         linksCreated, timelineCreated,
         pages_processed: result?.pages_processed ?? 0,
         incremental,
-        ...(incremental ? { slugs_targeted: changedSlugs.length } : {}),
+        ...(incremental ? { slugs_targeted: effectiveSlugs.length } : {}),
       },
     };
   } catch (e) {
@@ -1134,8 +1181,27 @@ async function runPhaseResolveSymbolEdges(
     let totalResolved = 0;
     let totalAmbiguous = 0;
     let totalUnmatched = 0;
+    // Per-batch progress logging so a slow or wedged resolve_symbol_edges phase
+    // leaves a visible last-walked chunk count in the log instead of going dark
+    // for the whole phase. resolveSymbolEdgesIncremental walks chunks in
+    // batches and invokes onProgress after each batch commit.
+    const phaseStart = Date.now();
+    let lastProgressAt = Date.now();
     for (const s of sources) {
-      const stats = await resolveSymbolEdgesIncremental(engine, { sourceId: s.id });
+      const stats = await resolveSymbolEdgesIncremental(engine, {
+        sourceId: s.id,
+        onProgress: (ps) => {
+          const now = Date.now();
+          const batchMs = now - lastProgressAt;
+          lastProgressAt = now;
+          const elapsedS = ((now - phaseStart) / 1000).toFixed(1);
+          console.error(
+            `[resolve_symbol_edges] source=${s.id} chunks_walked=${ps.chunks_walked} batches=${ps.batches}` +
+            ` edges_examined=${ps.edges_examined} resolved=${ps.edges_resolved}` +
+            ` batch_ms=${batchMs} elapsed_s=${elapsedS}`,
+          );
+        },
+      });
       totalChunks += stats.chunks_walked;
       totalResolved += stats.edges_resolved;
       totalAmbiguous += stats.edges_ambiguous;
@@ -1706,7 +1772,10 @@ export async function runCycle(
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal));
+        // Pass the resolved cycleSourceId so runPhaseExtract's empty-queue
+        // guard (resolveExtractSlugs) can count this source's pages/links and
+        // fall back to a full walk when the link graph is empty.
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSourceId, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
