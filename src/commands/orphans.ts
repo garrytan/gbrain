@@ -52,8 +52,15 @@ const DENY_PREFIXES = [
   'openclaw/config/',
 ];
 
-/** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities']);
+/** First slug segments where no inbound links is expected.
+ *
+ * `daily/` is included because daily entries (e.g. `daily/calendar/YYYY-MM-DD.md`
+ * produced by `gbrain-calendar-sync`, `daily/morning-briefing/*.md`, etc.) are
+ * linear journal/log artifacts that by design don't receive inbound wikilinks.
+ * Counting them inflates the orphan rate and depresses brain_score for any
+ * user who runs calendar-sync or has a daily-journal workflow.
+ */
+const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities', 'daily']);
 
 // --- Filter logic ---
 
