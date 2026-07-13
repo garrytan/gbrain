@@ -3532,6 +3532,72 @@ html[data-theme="dark"] .tunnel-ops-card,
 html[data-theme="dark"] .tunnel-connect-note { color: var(--text-primary); border-color: var(--border); background: var(--bg-secondary); }
 html[data-theme="dark"] .tunnel-hero p,
 html[data-theme="dark"] .tunnel-field span { color: var(--text-secondary); }
+html[data-theme="dark"] .tunnel-scope-lock { border-color: #39705f; background: #10251f; }
+html[data-theme="dark"] .tunnel-scope-lock span,
+html[data-theme="dark"] .tunnel-scope-lock p { color: #a8c8bd; }
+html[data-theme="dark"] .tunnel-scope-lock b { color: #70d7b2; }
+html[data-theme="dark"] .tunnel-card-head small,
+html[data-theme="dark"] .tunnel-facts dt,
+html[data-theme="dark"] .tunnel-connect-note p { color: var(--text-secondary); }
+html[data-theme="dark"] .tunnel-facts > div { border-bottom-color: var(--border); }
+html[data-theme="dark"] .tunnel-facts dd { color: var(--text-primary); }
+html[data-theme="dark"] .source-scope-editor { border-color: var(--border); background: var(--bg-secondary); }
+html[data-theme="dark"] .source-read-option,
+html[data-theme="dark"] .agent-source-card { color: var(--text-primary); border-color: var(--border); background: var(--bg-primary); }
+html[data-theme="dark"] .source-read-option:hover { border-color: #596a80; background: var(--bg-tertiary); }
+html[data-theme="dark"] .source-read-option.checked {
+  border-color: #7773ee;
+  background: rgba(119, 115, 238, .14);
+  box-shadow: 0 0 0 1px rgba(142, 139, 255, .18);
+}
+html[data-theme="dark"] .source-checkmark { color: transparent; border-color: #66758a; background: var(--bg-secondary); }
+html[data-theme="dark"] .source-read-option.checked .source-checkmark { color: #fff; border-color: #7773ee; background: #7773ee; }
+html[data-theme="dark"] .source-main-chip { color: #c7c5ff; background: rgba(142, 139, 255, .16); }
+html[data-theme="dark"] pre,
+html[data-theme="dark"] .code-block pre,
+html[data-theme="dark"] .docs-markdown pre {
+  color: #dce6f2;
+  border-color: var(--border);
+  background: #0b1016;
+}
+html[data-theme="dark"] pre::selection,
+html[data-theme="dark"] code::selection { color: #f7f8ff; background: #4f4bb5; }
+html[data-theme="dark"] .dream-recommendation b,
+html[data-theme="dark"] .dream-launcher-head h2,
+html[data-theme="dark"] .dream-section-title h2,
+html[data-theme="dark"] .dream-summary-card h2,
+html[data-theme="dark"] .dream-journey-head h2,
+html[data-theme="dark"] .dream-journey-step b,
+html[data-theme="dark"] .dream-summary-facts span,
+html[data-theme="dark"] .dream-library-metrics b,
+html[data-theme="dark"] .dream-friendly-empty b { color: var(--text-primary); }
+html[data-theme="dark"] .dream-recommendation span,
+html[data-theme="dark"] .dream-recommendation small,
+html[data-theme="dark"] .dream-launcher-head p,
+html[data-theme="dark"] .dream-summary-card p,
+html[data-theme="dark"] .dream-library-card p,
+html[data-theme="dark"] .dream-summary-card small,
+html[data-theme="dark"] .dream-journey-step span,
+html[data-theme="dark"] .dream-library-metrics span,
+html[data-theme="dark"] .dream-friendly-empty { color: var(--text-secondary); }
+html[data-theme="dark"] .dream-recommendation-icon { color: #c7c5ff; background: rgba(142, 139, 255, .16); }
+html[data-theme="dark"] .dream-library-metrics div,
+html[data-theme="dark"] .dream-run-mode,
+html[data-theme="dark"] .dream-journey,
+html[data-theme="dark"] .dream-run-narrative { border-color: var(--border); background: var(--bg-primary); }
+html[data-theme="dark"] .dream-run-mode button { color: var(--text-secondary); }
+html[data-theme="dark"] .dream-run-mode button.active { color: #c7c5ff; background: var(--bg-tertiary); }
+html[data-theme="dark"] .dream-journey-track::before { background: var(--border); }
+html[data-theme="dark"] .dream-journey-step.active b { color: #b8b6ff; }
+html[data-theme="dark"] .dream-live { color: #8de0c7; background: #15372d; }
+html[data-theme="dark"] .pm-muted,
+html[data-theme="dark"] .pm-hint,
+html[data-theme="dark"] .section-title { color: var(--text-secondary); }
+html[data-theme="dark"] .pm-warning { color: #f3cf94; border-color: #76572c; background: #2a2115; }
+html[data-theme="dark"] .pm-error,
+html[data-theme="dark"] .run-output .stderr { color: #ff9b9b; border-color: #743b3b; background: #291719; }
+html[data-theme="dark"] .take-status.pending { color: #f2bd79; background: #332414; }
+html[data-theme="dark"] .pm-ghost.danger { color: #ff8f99; background: #2d171b; }
 
 @media (max-width: 1100px) {
   .metrics-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); }

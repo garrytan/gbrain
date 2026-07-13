@@ -1741,11 +1741,9 @@ function MarkdownExportSettings() {
 
 export function SettingsPage({
   themeMode,
-  onThemeModeChange,
   onNavigate,
 }: {
   themeMode: ThemeMode;
-  onThemeModeChange: (mode: ThemeMode) => void;
   onNavigate?: (page: string) => void;
 }) {
   const { overview, error, reload } = useOverview();
@@ -1761,10 +1759,10 @@ export function SettingsPage({
       </div>
 
       <section className="pm-card appearance-settings">
-        <div><h2>界面外观</h2><p>默认跟随电脑系统，也可以只为当前浏览器固定浅色或深色。</p></div>
+        <div><h2>界面外观</h2><p>由 PMBrain 桌面端统一设置；选择“跟随系统”时，以浏览器和电脑当前主题为准。</p></div>
         <div className="theme-choice" role="radiogroup" aria-label="界面主题">
           {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
-            <button key={value} className={themeMode === value ? 'active' : ''} onClick={() => onThemeModeChange(value)}>{label}</button>
+            <button key={value} className={themeMode === value ? 'active' : ''} disabled title="请在 PMBrain 桌面端修改界面主题">{label}</button>
           ))}
         </div>
       </section>

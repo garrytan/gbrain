@@ -2,20 +2,36 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAdminBrainPageDetail, listAdminBrainPages } from '../src/commands/admin-console.ts';
-import { readThemeMode, resolveTheme } from '../admin/src/lib/theme.ts';
+import { normalizeThemeMode, readThemeMode, resolveTheme } from '../admin/src/lib/theme.ts';
 import { getThinkRetrievalWarning, parseThinkOutput } from '../admin/src/lib/think-output.ts';
 
 const appSource = readFileSync(join(process.cwd(), 'admin/src/App.tsx'), 'utf8');
 const consoleSource = readFileSync(join(process.cwd(), 'admin/src/pages/Console.tsx'), 'utf8');
+const adminStyles = readFileSync(join(process.cwd(), 'admin/src/index.css'), 'utf8');
+const serveHttpSource = readFileSync(join(process.cwd(), 'src/commands/serve-http.ts'), 'utf8');
 
 describe('Admin GUI update contract', () => {
   test('theme defaults to system and supports explicit overrides', () => {
-    expect(readThemeMode({ getItem: () => null })).toBe('system');
-    expect(readThemeMode({ getItem: () => 'dark' })).toBe('dark');
-    expect(readThemeMode({ getItem: () => 'invalid' })).toBe('system');
+    expect(readThemeMode()).toBe('system');
+    expect(normalizeThemeMode('dark')).toBe('dark');
+    expect(normalizeThemeMode('invalid')).toBe('system');
     expect(resolveTheme('system', true)).toBe('dark');
     expect(resolveTheme('system', false)).toBe('light');
     expect(resolveTheme('light', true)).toBe('light');
+  });
+
+  test('admin theme follows the desktop source and browser system fallback', () => {
+    expect(normalizeThemeMode('light')).toBe('light');
+    expect(normalizeThemeMode('system')).toBe('system');
+    expect(resolveTheme(normalizeThemeMode('system'), true)).toBe('dark');
+    expect(appSource).toContain('api.theme()');
+    expect(serveHttpSource).toContain("app.get('/admin/api/theme'");
+  });
+
+  test('dark mode covers code blocks and Dream contrast-sensitive content', () => {
+    expect(adminStyles).toContain('html[data-theme="dark"] .code-block pre');
+    expect(adminStyles).toContain('html[data-theme="dark"] .dream-recommendation b');
+    expect(adminStyles).toContain('html[data-theme="dark"] .dream-library-metrics b');
   });
 
   test('navigation exposes the consolidated beginner surfaces', () => {

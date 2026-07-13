@@ -25,7 +25,7 @@ import {
   SystemDiagnosticPage,
 } from './pages/Console';
 import { api } from './api';
-import { applyThemeMode, readThemeMode, saveThemeMode, type ThemeMode } from './lib/theme';
+import { applyThemeMode, normalizeThemeMode, readThemeMode, type ThemeMode } from './lib/theme';
 
 const PAGES = [
   'login', 'dashboard', 'natural',
@@ -97,9 +97,31 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    saveThemeMode(themeMode);
     return applyThemeMode(themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    if (page === 'login') return;
+    let active = true;
+    const syncDesktopTheme = () => {
+      void api.theme()
+        .then((result) => {
+          if (active) setThemeMode(normalizeThemeMode((result as { source?: unknown }).source));
+        })
+        .catch(() => undefined);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') syncDesktopTheme();
+    };
+    syncDesktopTheme();
+    window.addEventListener('focus', syncDesktopTheme);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', syncDesktopTheme);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [page]);
 
   const navigate = (target: Page) => {
     window.location.hash = target;
@@ -250,7 +272,6 @@ export function App() {
         {page === 'settings' && (
           <SettingsPage
             themeMode={themeMode}
-            onThemeModeChange={setThemeMode}
             onNavigate={(target) => navigate(target as Page)}
           />
         )}

@@ -1,10 +1,11 @@
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-export const THEME_STORAGE_KEY = 'pmbrain.theme';
-
-export function readThemeMode(storage: Pick<Storage, 'getItem'> = window.localStorage): ThemeMode {
-  const value = storage.getItem(THEME_STORAGE_KEY);
+export function normalizeThemeMode(value: unknown): ThemeMode {
   return value === 'light' || value === 'dark' ? value : 'system';
+}
+
+export function readThemeMode(): ThemeMode {
+  return 'system';
 }
 
 export function resolveTheme(mode: ThemeMode, prefersDark: boolean): 'light' | 'dark' {
@@ -22,8 +23,4 @@ export function applyThemeMode(mode: ThemeMode): () => void {
   if (mode !== 'system') return () => undefined;
   media.addEventListener('change', apply);
   return () => media.removeEventListener('change', apply);
-}
-
-export function saveThemeMode(mode: ThemeMode, storage: Pick<Storage, 'setItem'> = window.localStorage): void {
-  storage.setItem(THEME_STORAGE_KEY, mode);
 }

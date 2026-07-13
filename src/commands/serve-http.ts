@@ -1383,6 +1383,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  app.get('/admin/api/theme', requireAdmin, (_req: Request, res: Response) => {
+    const source = loadConfig()?.desktop?.theme;
+    res.json({ source: source === 'light' || source === 'dark' ? source : 'system' });
+  });
+
   app.post('/admin/api/sources/default', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
     const sourceId = typeof req.body?.sourceId === 'string' ? req.body.sourceId.trim() : '';
     if (!sourceId) {
