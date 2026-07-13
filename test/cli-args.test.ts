@@ -20,5 +20,16 @@ describe('parseOpArgs', () => {
       source_id: 'gstack-code-repo-0e4763c9',
     });
   });
-});
 
+  test('--json is a CLI-local formatter flag for shared operations', () => {
+    const params = parseOpArgs(operationsByName.search, [
+      'needle',
+      '--json',
+    ]);
+
+    expect(params).toEqual({
+      query: 'needle',
+      json: true,
+    });
+  });
+});

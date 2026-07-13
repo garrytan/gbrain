@@ -443,7 +443,7 @@ async function main() {
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const result = JSON.parse(JSON.stringify(rawResult));
-    const output = formatResult(op.name, result);
+    const output = formatResult(op.name, result, params);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -526,7 +526,7 @@ async function runThinClientRouted(
       signal: sigintController.signal,
     });
     const result = unpackToolResult(raw);
-    const output = formatResult(op.name, result);
+    const output = formatResult(op.name, result, params);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -756,6 +756,10 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       const paramDef = op.params[key];
       if (paramDef?.type === 'boolean') {
         params[key] = true;
+      } else if (key === 'json') {
+        // Generic operation formatter flag. It is intentionally CLI-local:
+        // do not add it to the operation contract exposed over MCP/tools.
+        params[key] = true;
       } else if (i + 1 < args.length) {
         params[key] = args[++i];
         if (paramDef?.type === 'number') params[key] = Number(params[key]);
@@ -817,7 +821,11 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
 }
 
 // Exported for tests (same import-safety contract as cliAliases/printOpHelp).
-export function formatResult(opName: string, result: unknown): string {
+export function formatResult(
+  opName: string,
+  result: unknown,
+  params: Record<string, unknown> = {},
+): string {
   switch (opName) {
     case 'volunteer_context': {
       const r = result as any;
@@ -856,6 +864,7 @@ export function formatResult(opName: string, result: unknown): string {
     case 'search':
     case 'query': {
       const results = result as any[];
+      if (params.json === true) return JSON.stringify(results, null, 2) + '\n';
       if (results.length === 0) return 'No results.\n';
       // v0.40.4 — --explain switches to per-stage attribution formatter.
       // Reads CliOptions.explain via the module-level singleton.
