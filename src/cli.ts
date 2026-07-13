@@ -198,11 +198,15 @@ function maybeEmitUpdateMarker(command: string): void {
 }
 
 async function main() {
-  // Parse global flags (--quiet / --progress-json / --progress-interval)
+  // Parse global flags (--quiet / --json / --progress-json / --progress-interval)
   // BEFORE command dispatch, so `gbrain --progress-json doctor` works.
   // The stripped argv is what the command sees.
+  //
+  // CLI-only commands that own a per-command --json parser are kept in CLI_ONLY
+  // and excluded from the global --json strip — they continue to handle the
+  // flag themselves (e.g. `check-resolvable --json`, `doctor --json`).
   const rawArgs = process.argv.slice(2);
-  const { cliOpts, rest: args } = parseGlobalFlags(rawArgs);
+  const { cliOpts, rest: args } = parseGlobalFlags(rawArgs, { jsonPassThroughCommands: CLI_ONLY });
   setCliOptions(cliOpts);
 
   let command = args[0];
@@ -443,7 +447,12 @@ async function main() {
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const result = JSON.parse(JSON.stringify(rawResult));
-    const output = formatResult(op.name, result);
+    // v0.42 (PR #507) — global `--json` short-circuits formatResult and emits
+    // the raw result as JSON. Used by agent integrations that need stable
+    // machine-readable output from shared operations.
+    const output = getCliOptions().json
+      ? JSON.stringify(result, null, 2) + '\n'
+      : formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -526,7 +535,11 @@ async function runThinClientRouted(
       signal: sigintController.signal,
     });
     const result = unpackToolResult(raw);
-    const output = formatResult(op.name, result);
+    // v0.42 (PR #507) — global `--json` short-circuits formatResult on the
+    // routed path too, so behavior matches the local-engine path.
+    const output = getCliOptions().json
+      ? JSON.stringify(result, null, 2) + '\n'
+      : formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -2203,7 +2216,13 @@ function printHelp() {
   console.log(`gbrain ${VERSION} -- personal knowledge brain
 
 USAGE
-  gbrain <command> [options]
+  gbrain [global-options] <command> [options]
+
+GLOBAL OPTIONS
+  --json                             Emit raw JSON for shared operation commands
+                                       (search, query, get, list, etc.)
+  --quiet                            Suppress non-essential output
+  --progress-json                    Emit progress events as JSON
 
 SETUP
   init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
