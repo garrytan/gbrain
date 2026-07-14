@@ -88,6 +88,17 @@ export interface EmbeddingTouchpoint {
    */
   user_provided_models?: true;
   /**
+   * #2271: trust a user-supplied `--embedding-dimensions` for this recipe even
+   * when it's not in the known-Matryoshka allowlist. Set ONLY on local /
+   * bring-your-own-backend recipes where the user knows their model's native dim
+   * and we can't enumerate every model (ollama, llama-server, litellm). The
+   * provider's `/embeddings` response-dim validation catches a genuine mismatch
+   * pre-storage. Must NOT be set on fixed-dim hosted providers (openai/voyage/
+   * zeroentropy stay fail-closed) or on recipes that declare recipe-wide
+   * `dims_options` (e.g. openrouter, whose Tier-1 options legitimately govern).
+   */
+  trust_custom_dims?: true;
+  /**
    * v0.32 (#779 reworked): explicit opt-out of the missing-max_batch_tokens
    * startup warning. Set to `true` for recipes whose batch capacity is
    * genuinely dynamic (Ollama: depends on user-loaded model; LiteLLM proxy:

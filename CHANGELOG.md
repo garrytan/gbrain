@@ -2,6 +2,63 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.59.0] - 2026-07-13
+
+**Five community-reported fixes, each reproduced and verified before/after on both engines (PGLite + real Postgres): an upgrade wedge that locked pre-v121 brains out of migrations, two data-integrity holes in engine migration, silent deletion of facts containing pipe characters, confidently-wrong entity attribution on ambiguous names, and tightened source-scope enforcement in `think`.**
+
+### Fixed
+- **Existing brains below schema v121 can upgrade again.** Brains created before v0.42.56.0 could get stuck in a loop where every command (including `apply-migrations`) failed with `column "event_page_id" does not exist` — the migration that adds the column could never run. The startup bootstrap now adds the forward-referenced column first; migration v121 still owns the FK and indexes. Re-running is idempotent, and already-wedged brains heal on the next command. (#2724, #2735, contributed by @time-attack)
+- **`gbrain migrate --to` no longer fails on multi-source brains.** The source catalog is copied before pages, so the first page no longer dies on a foreign-key violation. Source rows migrate with full fidelity (paths, sync state, config). (#2677, #2736, contributed by @time-attack)
+- **Migration resume checkpoints are target-aware.** An interrupted migration to one target no longer convinces a later migration to a *different* target that most pages are "already done" (which silently shorted the new target). A checkpoint for another destination is discarded and the run starts fresh; no connection strings or credentials are written to manifests or logs. (#2677, #2736, contributed by @time-attack)
+- **Facts containing `|` characters survive reconciliation.** The facts fence rendered literal pipes escaped but re-parsed rows by splitting on every pipe, so any fact whose text contained a `|` was silently deleted from the DB on the next extract-facts cycle. Render→parse is now symmetric (pipes, backslashes, and empty cells verified round-trip). The takes fence shares the parser and gets the same fix. (#2726, #2738, contributed by @time-attack)
+- **Ambiguous entity names quarantine instead of guessing.** A bare first name shared by two people, or a company name sharing a generic token (e.g. "… Capital") with another company, used to resolve confidently to the wrong entity — misattributed facts are invisible and expensive to repair. Bare names now resolve only when exactly one canonical candidate exists; low-specificity fuzzy matches fall through to the guarded holding path (a held fact is recoverable; a misattributed one isn't). Explicit slugs, full names, unique bare names, and close typos still resolve. Trade-off: heavier typos on short names may now hold instead of resolving. (#2723, #2737, contributed by @time-attack)
+
+### Security
+- **`think` now applies the caller's source scope across all of its internal retrieval.** Hybrid page retrieval, takes keyword/vector retrieval, and graph traversal all honor scalar and federated source scope, matching the isolation the rest of the read surface already enforces. Part of the #2200 tracking work. (#2739, contributed by @time-attack)
+
+### To take advantage of v0.42.59.0
+
+`gbrain upgrade` should do this automatically. No new schema migrations ship in this release (v121/v122 shipped with v0.42.56.0).
+
+1. **If your brain was stuck below schema v121** (every command printed a schema-probe warning), just upgrade and run any command — the brain heals and migrates to current on first connect. If `gbrain doctor` still complains:
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+3. **If a previously-resolving shorthand name now files under a holding page**, that's the new ambiguity quarantine working as intended — add an alias or use the full name/slug for entities you want bare shorthand to hit.
+4. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+## [0.42.58.0] - 2026-07-06
+
+**gbrain now runs cleanly on the stack you already have — a local Ollama box, a self-hosted LiteLLM proxy, llama.cpp's llama-server, or gbrain running as a Claude Code MCP subprocess — instead of silently degrading or hard-failing when you're not on a raw OpenAI/Anthropic key.** A provider-agnostic plumbing pass across the AI gateway: environment handling, base-URL normalization, and embedding-dimension validation all stop tripping on the non-frontier-vendor setups that used to fail without a clear signal.
+
+### Fixed
+- **Running gbrain as a Claude Code MCP subprocess no longer breaks every AI call.** Some hosts inject an empty `ANTHROPIC_API_KEY` into the subprocess environment; that empty value used to override a real key set in your `~/.gbrain/config.json`, so every gateway call failed with a missing-key error. Empty environment values no longer clobber a configured key. (#1249)
+- **A custom Anthropic or OpenAI base URL without a `/v1` suffix no longer 404s.** When the base URL comes from the environment as a bare host, gbrain normalizes it before the call instead of posting to a path the provider doesn't serve. Unset base URLs are untouched, so the default hosted endpoints are unaffected. (#1250)
+- **Vector search stops silently going dark on a LiteLLM or llama-server embedding model.** A model-availability check was rejecting user-provided embedding recipes even when a model was configured, quietly disabling vector search so results looked empty. The check now validates what actually matters — that a dimension is set — and reports a clear, actionable message when it isn't. (#1292, #2295)
+- **Local embedding models with non-standard dimensions are accepted.** Ollama, llama-server, and LiteLLM models (e.g. modern 1024- or 4096-dimension embedders) no longer get hard-rejected by the dimension validator; you declare the dimension and gbrain trusts it. Hosted fixed-dimension providers stay strictly validated. Modern Ollama embed models are recognized. (#2271)
+
+### Changed
+- **LiteLLM setup guidance now names the `/v1` path convention** so OpenAI-shaped proxies that only serve the `/v1` route don't fail authentication with no hint. (#2209)
+
+### To take advantage of v0.42.58.0
+`gbrain upgrade`. If you run on Ollama, a LiteLLM proxy, llama-server, or as a Claude Code MCP subprocess, the fixes apply automatically — no migration, no config change. If you use a user-provided embedding recipe (LiteLLM / llama-server) and see a "no default embedding dimension" message, set it with `gbrain init --embedding-dimensions <N>`.
+
+## [0.42.57.0] - 2026-07-02
+
+**PGLite incident fix: a busy `gbrain dream` (or `embed`) could have its data-directory lock stolen and get its brain corrupted beyond in-place repair. The lock will no longer be taken from a process that is alive, and an already-corrupted store now tells you exactly how to recover.**
+
+### Fixed
+- **A live PGLite holder is never stolen.** The data-directory lock used to be reaped if the holder's heartbeat went stale past a grace window. But the heartbeat runs on the JS event loop, which is blocked during long synchronous WASM imports/checkpoints, so a genuinely working `gbrain dream`/`embed` could look stale while fully alive. Reaping it let a second process open the same store and corrupt the catalog + pgvector extension (surfacing later as `relation "content_chunks" does not exist` / `type "vector" does not exist`, only recoverable by wipe-and-restore). The lock is now reaped only when the holder process is actually dead; a wedged-but-alive or PID-reused holder makes the acquire time out with a clear message naming the PID, instead of risking corruption.
+- **A corrupted PGLite store now explains how to recover.** When the store's catalog or pgvector extension can no longer load, the error names the cause and points at `gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>` (or restoring a backup), instead of the unrelated "macOS WASM bug" hint. It also notes that deleting the lock dir or `postmaster.pid` does not fix it.
+
+### To take advantage of v0.42.57.0
+`gbrain upgrade`. No migration. New corruption is prevented going forward. A brain already corrupted by a prior concurrent open cannot be repaired in place; the upgraded error message walks you through `gbrain reinit-pglite` or restoring a backup.
+
 ## [0.42.56.0] - 2026-07-02
 
 **Life Chronicle: gbrain gains a temporal spine. Meetings and transcripts project into a queryable timeline, entities carry a bi-temporal ontology (sourced, confidence-weighted properties that supersede over time), and a low-friction diary captures interiority — so an agent can reconstruct "what happened the week of X", answer "when did I last interact with Y", and see how an entity's role or stance changed, instead of re-deriving chronology from scratch every session.** Built entirely on existing primitives (pages, the `facts` table, `timeline_entries`) — no new datastore. Auto-emission is off by default; opt in per below.

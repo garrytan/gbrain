@@ -1,5 +1,46 @@
 # TODOS
 
+## provider-agnostic follow-ups (filed v0.42.58.0)
+
+Deferred from the provider-agnostic plumbing wave (#1249/#1250/#1292/#2271/#2209).
+Plan + review trail at `~/.claude/plans/system-instruction-you-are-working-keen-newell.md`.
+The eng-review + Codex outside-voice narrowed the wave to these deferrals:
+
+- [ ] **P2 — Capability-aware query expansion on OpenAI-compat providers (#2372).**
+  Expansion only runs for recipes that declare an `expansion` touchpoint, and only the
+  native providers (anthropic/openai/google) do. To make expansion work on
+  litellm/openrouter/groq/together/deepseek you must ADD expansion touchpoints to those
+  chat-capable recipes AND add a `generateObject`→`generateText` capability fallback for
+  backends without strict structured outputs. Feature-shaped; overlaps the general
+  OpenAI-compat proxy story (`docs/designs/COMMUNITY_IDEAS.md`). Community PR #2373 is a
+  starting point. Where: `src/core/ai/gateway.ts:expand`, recipe files, `types.ts` (ExpansionTouchpoint).
+- [ ] **P2 — LiteLLM as a chat/expansion backend.** `litellm-proxy` declares ONLY an
+  embedding touchpoint, so `think`/chat on LiteLLM is dead. Add chat (and expansion) so a
+  LiteLLM proxy is a full LLM backend, not embedding-only. The general OpenAI-compat proxy story.
+- [ ] **P3 — Per-model embedding dims metadata on `EmbeddingTouchpoint`.** `default_dims`
+  is recipe-wide, so a recipe (ollama) can't carry different native dims per model. This
+  wave added the modern ollama model NAMES + a `trust_custom_dims` passthrough (user supplies
+  `--embedding-dimensions`); per-model dims would let gbrain pick the right default. Then
+  ollama could fail-closed at preflight like litellm/llama-server instead of at first embed.
+- [ ] **P3 — Google native baseURL normalization (#1250 follow-up).** `resolveNativeBaseUrl`
+  covers anthropic + openai; Google was deferred because Gemini's native suffix is unproven
+  (its OpenAI-compat route is `/v1beta/openai`). Verify the correct `@ai-sdk/google` suffix,
+  then add `google` to the helper. Where: `src/core/ai/gateway.ts:resolveNativeBaseUrl`.
+- [ ] **P3 — Fold Voyage/Google/LiteLLM/OpenRouter API keys into `buildGatewayConfig`.**
+  It folds only OPENAI/ANTHROPIC/ZEROENTROPY file-plane keys today, so `config.json`-set keys
+  for other providers only work if also in `process.env`. Extend the mapping. Where:
+  `src/core/ai/build-gateway-config.ts`.
+- [ ] **P3 — OpenRouter per-model custom-dim handling.** OpenRouter declares recipe-wide
+  `dims_options` and mixes fixed-dim + arbitrary models, so it's excluded from `trust_custom_dims`.
+  A per-model story would let OpenRouter accept custom dims for models that support them.
+- [ ] **P1 — Gateway subagent-loop tool-result persistence + Date normalization (#2273/#2256).**
+  Confirmed crash-block: non-Anthropic subagent jobs dead-letter after any interruption
+  (tool-result user turns aren't persisted; raw Date values fail the AI SDK's strict JSON
+  check). Larger self-contained change with 6 competing community PRs
+  (#2274/#2257/#1934/#2065/#2112/#2336) — pick one canonical impl, preserve authorship.
+  This is the immediate fast-follow to the provider-agnostic wave. Where:
+  `src/core/ai/gateway.ts:toolLoop`/`toModelMessages`, `src/core/minions/handlers/subagent.ts`.
+
 ## Life Chronicle follow-ups (filed v0.42.56.0, #2390)
 
 Deferred from the Life Chronicle wave (CEO Scope-Expansion + eng review CLEARED,
