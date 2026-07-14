@@ -12,6 +12,7 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { profileStage } from '../core/search/profiling.ts';
 
 propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 
@@ -276,22 +277,25 @@ export async function dispatchToolCall(
   const parentContext = extractPrivateTraceContext(privateTraceCarrier(opts.privateTraceMeta));
 
   try {
-    const result = await context.with(parentContext, () => op.handler(ctx, safeParams));
-    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
-    // The hook is wrapped in its own try/catch — any DB blip / cache miss /
-    // helper crash degrades to no `_meta` rather than flipping the whole
-    // tool call to error.
-    if (opts.metaHook) {
-      try {
-        const meta = await opts.metaHook(name, ctx);
-        if (meta && Object.keys(meta).length > 0) out._meta = meta;
-      } catch (metaErr) {
-        const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
-        ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
+    return await context.with(parentContext, async () => {
+      const result = await op.handler(ctx, safeParams);
+      const serialized = await profileStage('serialize', {}, () => JSON.stringify(result, null, 2));
+      const out: ToolResult = { content: [{ type: 'text', text: serialized }] };
+      // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
+      // The hook is wrapped in its own try/catch — any DB blip / cache miss /
+      // helper crash degrades to no `_meta` rather than flipping the whole
+      // tool call to error.
+      if (opts.metaHook) {
+        try {
+          const meta = await profileStage('hot_memory', {}, () => opts.metaHook!(name, ctx));
+          if (meta && Object.keys(meta).length > 0) out._meta = meta;
+        } catch (metaErr) {
+          const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
+          ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
+        }
       }
-    }
-    return out;
+      return out;
+    });
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };

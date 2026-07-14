@@ -3,6 +3,8 @@ import { trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 
 import {
   classifyProfileError,
@@ -108,7 +110,7 @@ describe('query profiling', () => {
       'cache_embedding', 'cache_lookup', 'config_cache', 'config_embedding', 'config_mode',
       'expansion', 'keyword', 'query_embedding',
       'vector', 'relational', 'fusion', 'post_fusion', 'rerank', 'alias_hop',
-      'return_policy', 'serialize',
+      'return_policy', 'serialize', 'config_keyword_only', 'hot_memory',
     ];
 
     for (const stage of stages) {
@@ -121,6 +123,26 @@ describe('query profiling', () => {
     expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(
       stages.map((stage) => `gbrain.search.${stage}`),
     );
+    await resetProfileProviderForTests();
+  });
+
+  test('profiles actual dispatch serialization and the hot-memory hook', async () => {
+    const { exporter } = installMemoryProvider();
+    const engine = {
+      async getStats() {
+        return { pages: 1, chunks: 1 };
+      },
+    } as unknown as BrainEngine;
+
+    const result = await dispatchToolCall(engine, 'get_stats', {}, {
+      metaHook: async () => ({ injected: true }),
+    });
+
+    expect(result.content[0]?.text).toContain('"pages": 1');
+    expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual([
+      'gbrain.search.serialize',
+      'gbrain.search.hot_memory',
+    ]);
     await resetProfileProviderForTests();
   });
 

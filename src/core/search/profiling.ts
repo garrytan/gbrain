@@ -14,6 +14,7 @@ const STAGE_NAMES = new Set([
   'cache_lookup',
   'config_cache',
   'config_embedding',
+  'config_keyword_only',
   'config_mode',
   'expansion',
   'keyword',
@@ -26,6 +27,7 @@ const STAGE_NAMES = new Set([
   'alias_hop',
   'return_policy',
   'serialize',
+  'hot_memory',
 ]);
 
 const SAFE_ATTRIBUTE_KEYS = new Set([

@@ -170,6 +170,37 @@ describe('hybridSearchCached \u2014 cache disabled fallback', () => {
   });
 });
 
+describe('hybridSearchCached \u2014 request-local configuration snapshot', () => {
+  test('does not reload search mode or embedding configuration in the inner search', async () => {
+    const originalGetConfig = engine.getConfig.bind(engine);
+    const originalExecuteRaw = engine.executeRaw.bind(engine);
+    let getConfigCalls = 0;
+    let configBatchReads = 0;
+
+    engine.getConfig = async (...args) => {
+      getConfigCalls += 1;
+      return originalGetConfig(...args);
+    };
+    engine.executeRaw = async (...args) => {
+      if (args[0].toLowerCase().includes('from config')) configBatchReads += 1;
+      return originalExecuteRaw(...args);
+    };
+
+    try {
+      await hybridSearchCached(engine, 'who is alice-foo', {
+        limit: 5,
+        useCache: false,
+      });
+    } finally {
+      engine.getConfig = originalGetConfig;
+      engine.executeRaw = originalExecuteRaw;
+    }
+
+    expect(getConfigCalls).toBe(0);
+    expect(configBatchReads).toBe(2);
+  });
+});
+
 describe('hybridSearchCached \u2014 intent weighting toggle', () => {
   test('intentWeighting=false still emits intent in meta (for visibility)', async () => {
     let meta: HybridSearchMeta | undefined;

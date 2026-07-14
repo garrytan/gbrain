@@ -12,6 +12,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
+import type { ResolvedColumn } from '../types.ts';
+import type { GBrainConfig } from '../config.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
@@ -41,13 +43,70 @@ import {
 } from './intent-weights.ts';
 import {
   SemanticQueryCache,
-  loadCacheConfig,
 } from './query-cache.ts';
+import {
+  knobsHash,
+  loadSearchModeConfig,
+  resolveSearchMode,
+  type ResolveSearchModeInput,
+  type ResolvedSearchKnobs,
+} from './mode.ts';
 import { profileStage, setActiveProfileAttributes } from './profiling.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 const pendingCacheWrites = new Set<Promise<unknown>>();
+const HYBRID_CONFIG_SNAPSHOT = Symbol('gbrain.hybrid.config-snapshot');
+
+interface HybridConfigSnapshot {
+  modeInput: ResolveSearchModeInput;
+  resolvedMode: ResolvedSearchKnobs;
+  mergedCfg: GBrainConfig | null;
+  resolvedCol: ResolvedColumn;
+}
+
+function modePerCallOptions(opts: HybridSearchOpts | undefined, includeCache = false) {
+  return {
+    ...(includeCache ? { cache_enabled: opts?.useCache } : {}),
+    intentWeighting: opts?.intentWeighting,
+    tokenBudget: opts?.tokenBudget,
+    expansion: opts?.expansion,
+    searchLimit: opts?.limit,
+    floor_ratio: opts?.floorRatio,
+    graph_signals: opts?.graph_signals,
+    autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
+    relationalRetrieval: opts?.relationalRetrieval,
+    relational_retrieval_depth: opts?.relationalRetrievalDepth,
+  };
+}
+
+function resolveHybridMode(
+  modeInput: ResolveSearchModeInput,
+  opts: HybridSearchOpts | undefined,
+  includeCache = false,
+): ResolvedSearchKnobs {
+  return resolveSearchMode({
+    mode: opts?.mode ?? modeInput.mode,
+    overrides: modeInput.overrides,
+    perCall: modePerCallOptions(opts, includeCache),
+  });
+}
+
+async function loadHybridConfigSnapshot(
+  engine: BrainEngine,
+  opts: HybridSearchOpts | undefined,
+): Promise<HybridConfigSnapshot> {
+  const modeInput = await profileStage('config_mode', { decision: 'load' }, () =>
+    loadSearchModeConfig(engine));
+  const resolvedMode = resolveHybridMode(modeInput, opts);
+  const mergedCfg = await profileStage('config_embedding', { decision: 'load' }, () =>
+    loadConfigWithEngine(engine)).catch(() => null);
+  const cfg = mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? null;
+  const resolvedCol = cfg
+    ? resolveEmbeddingColumn(opts, cfg)
+    : resolveEmbeddingColumn(opts, { engine: 'pglite' });
+  return { modeInput, resolvedMode, mergedCfg, resolvedCol };
+}
 
 /**
  * v0.42 (issue #1699) agent-warning channel. Stamps `SearchResult.content_flag`
@@ -759,6 +818,8 @@ export interface HybridSearchOpts extends SearchOpts {
    * a fresh per-call deadline. Not part of the public contract.
    */
   _queryEmbedDeadline?: QueryEmbedDeadline;
+  /** Internal immutable config snapshot shared by hybridSearchCached. */
+  [HYBRID_CONFIG_SNAPSHOT]?: HybridConfigSnapshot;
 }
 
 /**
@@ -840,55 +901,9 @@ export async function hybridSearch(
   // because eval-replay and eval-longmemeval call bare hybridSearch — and
   // per-mode evals would not test production search if modes lived only in
   // the wrapper. See `[CDX-5+6]` in the plan.
-  const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
-  const modeInput = await profileStage('config_mode', { decision: 'load' }, () =>
-    loadSearchModeConfig(engine));
-  const resolvedMode = resolveSearchMode({
-    // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
-    // only passes this for trusted/local callers; remote callers leave it
-    // undefined and fall through to the server-configured mode (no cost
-    // escalation). Unknown values fall back to the default in resolveSearchMode.
-    mode: opts?.mode ?? modeInput.mode,
-    overrides: modeInput.overrides,
-    perCall: {
-      intentWeighting: opts?.intentWeighting,
-      tokenBudget: opts?.tokenBudget,
-      expansion: opts?.expansion,
-      searchLimit: opts?.limit,
-      // v0.35.6.0 — floor-ratio gate thread-through. Per-call value wins
-      // over per-key config wins over mode bundle (currently undefined for
-      // all 3 bundles — pending ablation evidence).
-      floor_ratio: opts?.floorRatio,
-      // v0.40.4 — graph_signals thread-through. Per-call wins over config
-      // override wins over mode bundle. Without this thread the eval gate
-      // would be a no-op (both branches resolve to the same mode default).
-      graph_signals: opts?.graph_signals,
-      // v0.42.3.0 — autocut per-call enable (boolean ceiling override).
-      // `false` forces the full top-K; per-call wins over config + bundle.
-      // Non-boolean AutocutInput shapes (Partial) aren't a v1 per-call surface,
-      // so only the boolean toggle threads here.
-      autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
-      // v0.43 — relational recall per-call thread-through. Per-call wins over
-      // config override wins over mode bundle; without this the A/B eval gate
-      // would be a no-op (both branches resolve to the same mode default).
-      relationalRetrieval: opts?.relationalRetrieval,
-      relational_retrieval_depth: opts?.relationalRetrievalDepth,
-    },
-  });
-
-  // v0.36 (D7+D11): resolve embedding column once at entry. Single
-  // round-trip to read DB-plane config (mirrors loadSearchModeConfig).
-  // Resolver throws on unknown name with a paste-ready hint; let it
-  // propagate — a misconfig should be loud, not silently fall back.
-  // Failing cfg load (pre-config brain, mid-migration, no engine.getConfig)
-  // falls through to the file-plane sync loadConfig() — same shape, just
-  // misses DB-plane overrides.
-  const mergedCfg = await profileStage('config_embedding', { decision: 'load' }, () =>
-    loadConfigWithEngine(engine)).catch(() => null);
-  const cfgForColumn = mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? null;
-  const resolvedCol = cfgForColumn
-    ? resolveEmbeddingColumn(opts, cfgForColumn)
-    : resolveEmbeddingColumn(opts, { engine: 'pglite' });
+  const configSnapshot = opts?.[HYBRID_CONFIG_SNAPSHOT] as HybridConfigSnapshot | undefined
+    ?? await loadHybridConfigSnapshot(engine, opts);
+  const { resolvedMode, resolvedCol } = configSnapshot;
 
   const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
@@ -1511,7 +1526,7 @@ export async function hybridSearch(
   // survives the trim.
   const adaptiveCfg = resolveAdaptiveReturn(
     opts?.adaptiveReturn,
-    adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
+    adaptiveReturnFromConfig(configSnapshot.mergedCfg as Record<string, unknown> | null),
   );
   let returnPool = aliasHopped;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
@@ -1603,44 +1618,9 @@ export async function hybridSearchCached(
   // resolved knob set drives cache enable/threshold/TTL AND the knobs_hash
   // that scopes the cache row so a tokenmax write can't be served to a
   // conservative read. See [CDX-4] in the plan.
-  const { loadSearchModeConfig, resolveSearchMode, knobsHash } = await import('./mode.ts');
-  const modeInputForCache = await profileStage('config_mode', { decision: 'load' }, () =>
-    loadSearchModeConfig(engine));
-  const resolvedForCache = resolveSearchMode({
-    // T4/D5 — per-call mode folds into the cache key (resolved_mode is part
-    // of knobsHash) so a per-call `--mode tokenmax` read can't be served a
-    // server-default-mode cache row.
-    mode: opts?.mode ?? modeInputForCache.mode,
-    overrides: modeInputForCache.overrides,
-    perCall: {
-      cache_enabled: opts?.useCache,
-      tokenBudget: opts?.tokenBudget,
-      expansion: opts?.expansion,
-      intentWeighting: opts?.intentWeighting,
-      searchLimit: opts?.limit,
-      // v0.35.6.0 — floor-ratio threaded through cache resolver too so
-      // knobsHash() differentiates floor-on vs floor-off cache rows.
-      // Without this, a no-floor write would be served to a floor-enabled
-      // read (ranking-correctness leak, codex T1).
-      floor_ratio: opts?.floorRatio,
-      // v0.40.4 — graph_signals threaded through cache resolver too so
-      // knobsHash() includes the per-call override (KNOBS_HASH_VERSION=4
-      // folds gs= into the hash). Without this thread, a per-call
-      // override would write to one cache row but read from a different
-      // one on the next call.
-      graph_signals: opts?.graph_signals,
-      // v0.42.3.0 — autocut threaded through the cache resolver so the
-      // knobsHash `ac=` bit reflects the per-call ceiling override. Without
-      // this, an `autocut:false` (full top-K) call could be served a trimmed
-      // autocut-on cache row, or vice versa.
-      autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
-      // v0.43 — relational recall per-call thread-through. Per-call wins over
-      // config override wins over mode bundle; without this the A/B eval gate
-      // would be a no-op (both branches resolve to the same mode default).
-      relationalRetrieval: opts?.relationalRetrieval,
-      relational_retrieval_depth: opts?.relationalRetrievalDepth,
-    },
-  });
+  const configSnapshot = opts?.[HYBRID_CONFIG_SNAPSHOT] as HybridConfigSnapshot | undefined
+    ?? await loadHybridConfigSnapshot(engine, opts);
+  const resolvedForCache = resolveHybridMode(configSnapshot.modeInput, opts, true);
   // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
   // decision. The query_cache.embedding column has one fixed pgvector dim
   // sized at brain init; storing a 1024d Voyage or 2560d ZE cache
@@ -1650,10 +1630,8 @@ export async function hybridSearchCached(
   // provider/dim. isCacheSafe compares the resolved column's full
   // embedding space (name + dim + model) against cfg and returns true
   // only when ALL match. Otherwise skip.
-  const mergedCfgCached = await profileStage('config_embedding', { decision: 'load' }, () =>
-    loadConfigWithEngine(engine)).catch(() => null);
-  const cfgCached = mergedCfgCached ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
-  const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);
+  const cfgCached = configSnapshot.mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
+  const resolvedColCached = configSnapshot.resolvedCol;
   const isNonDefaultColumn = !isCacheSafe(resolvedColCached, cfgCached);
 
   // Cache key carries the column + provider so different embedding spaces
@@ -1666,11 +1644,8 @@ export async function hybridSearchCached(
   // Cache decision: opts.useCache (explicit) wins over global config; global
   // config wins over mode bundle default. Mode bundle is on for all 3 modes
   // today; the resolver already folded everything through.
-  const cacheCfg = await profileStage('config_cache', { decision: 'load' }, () =>
-    loadCacheConfig(engine));
   const cacheEnabled = resolvedForCache.cache_enabled;
   const cache = new SemanticQueryCache(engine, {
-    ...cacheCfg,
     enabled: cacheEnabled,
     similarityThreshold: resolvedForCache.cache_similarity_threshold,
     ttlSeconds: resolvedForCache.cache_ttl_seconds,
@@ -1795,6 +1770,7 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
+    [HYBRID_CONFIG_SNAPSHOT]: configSnapshot,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,

@@ -16,6 +16,7 @@ import {
   loadOverridesFromConfig,
   KNOBS_HASH_VERSION,
   SEARCH_MODE_CONFIG_KEYS,
+  loadSearchModeConfig,
   type SearchMode,
 } from '../src/core/search/mode.ts';
 
@@ -504,6 +505,50 @@ describe('SEARCH_MODE_CONFIG_KEYS is the full reset surface', () => {
     // every knob.
     const knobs = Object.keys(MODE_BUNDLES.balanced);
     expect(SEARCH_MODE_CONFIG_KEYS.length).toBeGreaterThanOrEqual(knobs.length);
+  });
+});
+
+describe('loadSearchModeConfig database reads', () => {
+  test('uses one batched config read when executeRaw is available', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const input = await loadSearchModeConfig({
+      async getConfig() {
+        throw new Error('the batched path should not call getConfig');
+      },
+      async executeRaw<T>(sql: string, params?: unknown[]) {
+        queries.push({ sql, params });
+        return [
+          { key: 'search.mode', value: 'tokenmax' },
+          { key: 'search.expansion', value: 'true' },
+        ] as T[];
+      },
+    });
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.sql).toContain('WHERE key = ANY($1)');
+    expect(queries[0]?.params?.[0]).toContain('search.mode');
+    expect(queries[0]?.params?.[0]).toContain('search.expansion');
+    expect(input.mode).toBe('tokenmax');
+    expect(input.overrides?.expansion).toBe(true);
+  });
+
+  test('falls back to individual reads when the batch read fails', async () => {
+    const calls: string[] = [];
+    const input = await loadSearchModeConfig({
+      async getConfig(key) {
+        calls.push(key);
+        return key === 'search.mode' ? 'conservative' : key === 'search.tokenBudget' ? '1234' : null;
+      },
+      async executeRaw() {
+        throw new Error('config table is unavailable');
+      },
+    });
+
+    expect(calls).toContain('search.mode');
+    expect(calls).toContain('search.tokenBudget');
+    expect(calls.length).toBe(SEARCH_MODE_CONFIG_KEYS.length + 1);
+    expect(input.mode).toBe('conservative');
+    expect(input.overrides?.tokenBudget).toBe(1234);
   });
 });
 

@@ -1441,7 +1441,8 @@ const search: Operation = {
     // T4/D17 — escape hatch: keyword-only when the operator opts out of the
     // hybrid `search` contract (privacy/cost: no query text to an embedding
     // provider). Defaults to cheap-hybrid (D4/D15).
-    const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
+    const keywordOnly = await profileStage('config_keyword_only', { decision: 'load' }, async () =>
+      (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true');
 
     if (keywordOnly) {
       const raw = await profileOperation('search', { operation: 'search', query_length: queryText.length }, () =>
@@ -1455,7 +1456,7 @@ const search: Operation = {
       await stampContentFlags(ctx.engine, results);
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
-      return profileStage('serialize', { result_count: results.length }, () => results);
+      return results;
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -1472,7 +1473,7 @@ const search: Operation = {
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
-    return profileStage('serialize', { result_count: results.length }, () => results);
+    return results;
   },
   scope: 'read',
   cliHints: { name: 'search', positional: ['query'] },
@@ -1616,7 +1617,7 @@ const query: Operation = {
         embeddingColumn: 'embedding_image',
         ...querySourceScope,
       }));
-      return profileStage('serialize', { result_count: results.length }, () => results);
+      return results;
     }
 
     if (!queryText) {
@@ -1708,7 +1709,7 @@ const query: Operation = {
       );
     }
 
-    return profileStage('serialize', { result_count: results.length }, () => results);
+    return results;
   },
   scope: 'read',
   cliHints: { name: 'query', positional: ['query'] },
