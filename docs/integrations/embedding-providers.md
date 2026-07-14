@@ -35,6 +35,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `ollama` | (none — runs locally) | 768 | 0 | yes | no |
 | `llama-server` | (none — runs locally) | user-set | 0 | yes | no |
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | no |
+| `bedrock` | (none — AWS creds on the proxy; `BEDROCK_PROXY_API_KEY` optional) | 1536 (Cohere Embed v4, Matryoshka to 1024/512/256) | varies | yes (proxy) | yes (`us.cohere.embed-v4:0`) |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
@@ -154,6 +155,22 @@ User-driven models: launch llama-server with `--model <gguf-path> --embeddings`,
 Run [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) in front of any provider — Bedrock, Vertex, Cohere, Jina, Fireworks, OctoAI, etc. The proxy normalizes everything to the OpenAI-compatible API; gbrain points at the proxy via `LITELLM_BASE_URL` and proxies the call.
 
 This is the catch-all for "my provider isn't in the list above." Set up LiteLLM, then `gbrain init --embedding-model litellm:<your-model-id> --embedding-dimensions <N>`.
+
+### Amazon Bedrock (via LiteLLM proxy)
+
+A dedicated recipe for [Amazon Bedrock](https://aws.amazon.com/bedrock/). Bedrock's runtime API is SigV4-signed and speaks neither the OpenAI nor the Anthropic wire shape, so gbrain targets a LiteLLM proxy in front of Bedrock (same proxy pattern as `litellm`, but pre-configured so no `--embedding-dimensions` flag is needed). AWS credentials live on the proxy, not in gbrain.
+
+Why a dedicated recipe instead of the generic `litellm` one: the generic recipe is `user_provided_models` with `default_dims: 0`, which forces `--embedding-dimensions N` — but the dim-check then rejects any custom dim for `litellm` (it isn't in the Matryoshka allow-list), so that path can't initialize. The `bedrock` recipe declares Cohere Embed v4 with explicit `default_dims` + `dims_options`, closing that gap.
+
+Model ids are Bedrock **inference-profile** ids (the `us.`/`global.` prefix) — the raw on-demand ids fail with `ValidationException`. Setup:
+
+```bash
+# Run LiteLLM in front of Bedrock, mapping route names to inference-profile ids
+# (e.g. bedrock/us.anthropic.claude-opus-4-8, bedrock/us.cohere.embed-v4:0).
+gbrain init --embedding-model bedrock:us.cohere.embed-v4:0 --chat-model bedrock:us.anthropic.claude-opus-4-8
+```
+
+Set `BEDROCK_PROXY_BASE_URL` if the proxy isn't on `localhost:4000`, and `BEDROCK_PROXY_API_KEY` only if you put a master key on the proxy. Full walkthrough (proxy config, credential wiring) in [`docs/guides/litellm-proxy.md`](../guides/litellm-proxy.md).
 
 ## Choosing dimensions
 

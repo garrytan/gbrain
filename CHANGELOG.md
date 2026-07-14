@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+**Amazon Bedrock is now a first-class embedding + chat provider.** Run gbrain entirely on [Amazon Bedrock](https://aws.amazon.com/bedrock/) — Claude for synthesis, Cohere Embed v4 for embeddings — through a local LiteLLM proxy, with no code changes and no `--embedding-dimensions` flag.
+
+### Added
+- **`bedrock` provider recipe.** A dedicated recipe targeting a LiteLLM proxy in front of Bedrock. Unlike the generic `litellm` recipe (which can't initialize embeddings because it declares no dimensions and the dim-check rejects custom dims for it), `bedrock` declares Cohere Embed v4 with an explicit `default_dims: 1536` + Matryoshka `dims_options`, so `gbrain init --embedding-model bedrock:us.cohere.embed-v4:0 --chat-model bedrock:us.anthropic.claude-opus-4-8` works out of the box. Model ids are Bedrock inference-profile ids (the `us.`/`global.` prefix). AWS credentials live on the proxy — gbrain sends no key. Appears automatically in the `gbrain init` provider picker and `gbrain providers list`.
+- **Setup guide** at `docs/guides/litellm-proxy.md` plus a Bedrock section in the embedding-providers matrix.
+
+### To take advantage of this
+Run LiteLLM in front of Bedrock (mapping route names to inference-profile ids), then `gbrain init --embedding-model bedrock:us.cohere.embed-v4:0 --chat-model bedrock:us.anthropic.claude-opus-4-8`. Set `BEDROCK_PROXY_BASE_URL` if the proxy isn't on `localhost:4000`. Full walkthrough in `docs/guides/litellm-proxy.md`.
+
 ## [0.42.57.0] - 2026-07-02
 
 **PGLite incident fix: a busy `gbrain dream` (or `embed`) could have its data-directory lock stolen and get its brain corrupted beyond in-place repair. The lock will no longer be taken from a process that is alive, and an already-corrupted store now tells you exactly how to recover.**
