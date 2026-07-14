@@ -40,14 +40,18 @@ describe('MinionSupervisor tini detection', () => {
     });
   });
 
-  test('isTiniDetected = true when a tini binary exists on PATH', async () => {
+  test('isTiniDetected = true when a runnable tini binary exists on PATH', async () => {
     const dir = join(
       tmpdir(),
       `gbrain-supervisor-tini-test-${process.pid}-${Date.now()}`,
     );
     mkdirSync(dir, { recursive: true });
     const fakeTini = join(dir, 'tini');
-    writeFileSync(fakeTini, '#!/bin/sh\nexec "$@"\n', 'utf8');
+    writeFileSync(
+      fakeTini,
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "tini version 0.19.0"; exit 0; fi\nexec "$@"\n',
+      'utf8',
+    );
     chmodSync(fakeTini, 0o755);
     try {
       // Prepend our fake-tini directory so `which tini` resolves to it.
@@ -57,6 +61,29 @@ describe('MinionSupervisor tini detection', () => {
           cliPath: '/bin/echo',
         });
         expect(supervisor.isTiniDetected).toBe(true);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('isTiniDetected = false when a PATH entry named tini cannot run as a child', async () => {
+    const dir = join(
+      tmpdir(),
+      `gbrain-supervisor-invalid-tini-test-${process.pid}-${Date.now()}`,
+    );
+    mkdirSync(dir, { recursive: true });
+    const invalidTini = join(dir, 'tini');
+    // Mirrors an s6-overlay /init alias: discoverable on PATH but unusable
+    // outside PID 1. The supervisor must directly spawn its worker instead.
+    writeFileSync(invalidTini, '#!/bin/sh\necho "fatal: can only run as pid 1" >&2\nexit 100\n', 'utf8');
+    chmodSync(invalidTini, 0o755);
+    try {
+      await withEnv({ PATH: `${dir}:/usr/bin:/bin` }, async () => {
+        const supervisor = new MinionSupervisor(mockEngine as BrainEngine, {
+          cliPath: '/bin/echo',
+        });
+        expect(supervisor.isTiniDetected).toBe(false);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
