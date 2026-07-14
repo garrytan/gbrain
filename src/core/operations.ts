@@ -23,6 +23,7 @@ import { stripFactsFence } from './facts-fence.ts';
 import { getContentFlag } from './quarantine.ts';
 import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { isSearchMode } from './search/mode.ts';
+import { isArchivalExportSlug } from './search/source-boost.ts';
 import { stampEvidence } from './search/evidence.ts';
 import type { SearchResult } from './types.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
@@ -643,6 +644,9 @@ const get_page: Operation = {
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+    if (isArchivalExportSlug(slug)) {
+      throw new OperationError('page_not_found', `Page not found: ${slug}`);
+    }
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     // #1393: route BOTH the exact-match read and the fuzzy resolveSlugs through
@@ -1415,7 +1419,7 @@ const list_pages: Operation = {
       sort,
       ...scope,
     });
-    return pages.map(pg => ({
+    return pages.filter(pg => !isArchivalExportSlug(pg.slug)).map(pg => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,

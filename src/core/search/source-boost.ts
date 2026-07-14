@@ -66,7 +66,16 @@ export const DEFAULT_HARD_EXCLUDES: string[] = [
   'test/',
   'attachments/',
   '.raw/',
+  'export/',
+  '_uninstalled/export-',
+  'export/_uninstalled/export-',
 ];
+
+export function isArchivalExportSlug(slug: string): boolean {
+  return slug.startsWith('export/')
+    || slug.startsWith('_uninstalled/export-')
+    || slug.startsWith('export/_uninstalled/export-');
+}
 
 /**
  * Parse GBRAIN_SOURCE_BOOST env var.

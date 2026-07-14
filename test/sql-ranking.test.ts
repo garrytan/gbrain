@@ -3,6 +3,7 @@ import {
   buildSourceFactorCase,
   buildHardExcludeClause,
   buildVisibilityClause,
+  isArchivalExportSlug,
   escapeLikePattern as topLevelEscapeLikePattern,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
@@ -264,6 +265,9 @@ describe('archive demote (issue #1777)', () => {
     expect(DEFAULT_HARD_EXCLUDES).toContain('test/');
     expect(DEFAULT_HARD_EXCLUDES).toContain('attachments/');
     expect(DEFAULT_HARD_EXCLUDES).toContain('.raw/');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('export/');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('_uninstalled/export-');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('export/_uninstalled/export-');
   });
 
   test('resolveHardExcludes() never includes archive/ by default', () => {
@@ -287,6 +291,29 @@ describe('archive demote (issue #1777)', () => {
   test('escapeLikePattern is exported at top level (CV-3a contract)', () => {
     expect(typeof topLevelEscapeLikePattern).toBe('function');
     expect(topLevelEscapeLikePattern('a_b%c\\d')).toBe('a\\_b\\%c\\\\d');
+  });
+});
+
+describe('archival export snapshot exclusion', () => {
+  test('matches root and uninstalled export snapshots only', () => {
+    expect(isArchivalExportSlug('export/report')).toBe(true);
+    expect(isArchivalExportSlug('_uninstalled/export-1783954174436/report')).toBe(true);
+    expect(isArchivalExportSlug('export/_uninstalled/export-1783954174436/report')).toBe(true);
+    expect(isArchivalExportSlug('archive/export-1783954174436/report')).toBe(false);
+  });
+
+  test('resolveHardExcludes includes archival export prefixes by default', () => {
+    const r = resolveHardExcludes();
+    expect(r).toContain('export/');
+    expect(r).toContain('_uninstalled/export-');
+    expect(r).toContain('export/_uninstalled/export-');
+  });
+
+  test('buildHardExcludeClause hides both uninstalled export snapshot forms', () => {
+    const sql = buildHardExcludeClause('p.slug', resolveHardExcludes());
+    expect(sql).toContain("p.slug LIKE 'export/%'");
+    expect(sql).toContain("p.slug LIKE '\\_uninstalled/export-%'");
+    expect(sql).toContain("p.slug LIKE 'export/\\_uninstalled/export-%'");
   });
 });
 

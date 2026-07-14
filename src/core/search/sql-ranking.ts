@@ -18,6 +18,7 @@
  */
 
 import { quarantineFilterFragment } from '../quarantine.ts';
+import { isArchivalExportSlug } from './source-boost.ts';
 
 /**
  * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
@@ -109,6 +110,8 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
   if (!likes) return '';
   return `AND NOT (${likes})`;
 }
+
+export { isArchivalExportSlug };
 
 /**
  * v0.26.5 — Build the soft-delete + archived-source visibility filter.
