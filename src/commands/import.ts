@@ -118,28 +118,20 @@ export async function runImport(
   const flagSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
   let sourceId: string | undefined = flagSourceId ?? opts.sourceId;
 
-  // v0.41.13 (#1434): when no explicit source / env / opts.sourceId is set,
-  // fall through to the resolver so the new sole_non_default tier (5.5) can
-  // auto-route to the only registered non-default source. Pre-fix, import
-  // followed the explicit-only design from PR #707 and silently routed
-  // every import to 'default', mirroring the sync bug class.
+  // Resolve every implicit import source before touching a page. Leaving the
+  // seed-default result undefined makes importFromContent find an existing
+  // page across sources, then snapshot source=default, which fails when that
+  // slug exists only under the resolved source.
   //
   // Resolution chain (full 7 tiers): flag → env → dotfile → local_path →
   // brain_default → sole_non_default → seed_default. The nudge fires only
   // when the resolver returns tier='sole_non_default', so explicit users
   // see no behavior change.
-  if (!sourceId && process.env.GBRAIN_SOURCE) {
-    const { resolveSourceId } = await import('../core/source-resolver.ts');
-    sourceId = await resolveSourceId(engine, null);
-  } else if (!sourceId) {
+  if (!sourceId) {
     const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
     const resolved = await resolveSourceWithTier(engine, null);
-    // Only adopt the resolution when it improves on the seed_default
-    // fallback — that preserves the v0.30.x "default-only when unset"
-    // contract for the common case AND opens the sole_non_default
-    // auto-route for the single-source-brain case.
+    sourceId = resolved.source_id;
     if (resolved.tier === 'sole_non_default') {
-      sourceId = resolved.source_id;
       const nudge = formatSoleNonDefaultNudge(sourceId);
       if (nudge) process.stderr.write(nudge + '\n');
     }

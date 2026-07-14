@@ -19,6 +19,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -37,6 +38,7 @@ async function truncatePages(): Promise<void> {
     await (engine as any).db.exec(`DELETE FROM ${t}`);
   }
   await (engine as any).db.exec(`DELETE FROM sources WHERE id <> 'default'`);
+  await engine.setConfig('sources.default', '');
 }
 
 describe('import --source-id (#1167)', () => {
@@ -78,6 +80,30 @@ describe('import --source-id (#1167)', () => {
     for (const r of rows) {
       expect(r.source_id).toBe('dept-x');
     }
+  });
+
+  test('uses the configured source before snapshotting an existing page', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('capture-cli', 'capture-cli')`,
+    );
+    await engine.setConfig('sources.default', 'capture-cli');
+    await engine.putPage('wiki/alpha', {
+      type: 'note',
+      title: 'Captured alpha',
+      compiled_truth: 'Existing capture-cli page.',
+    }, { sourceId: 'capture-cli' });
+
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-import-home-'));
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const result = await runImport(engine, [scratchDir, '--no-embed', '--json', '--fresh']);
+      expect(result.errors).toBe(0);
+    });
+
+    const rows = await engine.executeRaw<{ source_id: string; title: string }>(
+      `SELECT source_id, title FROM pages WHERE slug = $1 ORDER BY source_id`,
+      ['wiki/alpha'],
+    );
+    expect(rows).toEqual([{ source_id: 'capture-cli', title: 'Alpha' }]);
   });
 
   test('--source-id value is NOT treated as a positional dir arg', async () => {
