@@ -2,6 +2,20 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.60.0] - 2026-07-15
+
+**Bumps the default model routing to the current Anthropic models — Sonnet 5 for the reasoning/subagent tiers, Opus 4.8 for the deep tier — and registers Sonnet 5 pricing. Pure default change: anyone who has pinned models via `models.tier.*` / `models.default` is unaffected; this only moves the built-in fallbacks off the superseded Sonnet 4.6 / Opus 4.7.**
+
+### Changed
+- **Default tier routing now targets Sonnet 5 and Opus 4.8.** `TIER_DEFAULTS`, the `sonnet`/`opus` entries in `DEFAULT_ALIASES`, and the gateway's `DEFAULT_CHAT_MODEL` move from `claude-sonnet-4-6` / `claude-opus-4-7` to `claude-sonnet-5` / `claude-opus-4-8`. Utility stays on Haiku 4.5 (still current). Only the hardcoded fallbacks change — any `models.default` / `models.tier.<tier>` override is untouched. (contributed by @mdcruz88)
+
+### Added
+- **Sonnet 5 pricing.** `model-pricing.ts` gains `anthropic:claude-sonnet-5` at the $3/$15 list rate so cost accounting resolves for the new default. (Opus 4.8 was already priced.) (contributed by @mdcruz88)
+
+### To take advantage of v0.42.60.0
+
+`gbrain upgrade` picks up the new defaults automatically; no schema migration ships. If you previously pinned `claude-sonnet-4-6` / `claude-opus-4-7` and want the newer models, either clear the override to inherit the new default (`gbrain config unset models.tier.reasoning`) or set it explicitly (`gbrain config set models.tier.reasoning anthropic:claude-sonnet-5`). Verify with `gbrain models` and probe live with `gbrain models doctor`.
+
 ## [0.42.59.0] - 2026-07-13
 
 **Five community-reported fixes, each reproduced and verified before/after on both engines (PGLite + real Postgres): an upgrade wedge that locked pre-v121 brains out of migrations, two data-integrity holes in engine migration, silent deletion of facts containing pipe characters, confidently-wrong entity attribution on ambiguous names, and tightened source-scope enforcement in `think`.**
