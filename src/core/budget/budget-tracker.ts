@@ -32,6 +32,7 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
@@ -201,6 +202,11 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'rerank' && providerId && FREE_LOCAL_RERANK_PROVIDERS.has(providerId)) {
     return { input: 0, output: 0 };
   }
+  // Chat/rerank fall back to the all-provider canonical table so non-Anthropic
+  // chat models (e.g. openai:gpt-5.5) that the bare ANTHROPIC_PRICING view omits
+  // still get priced — CANONICAL_PRICING already carries them.
+  const canon = canonicalLookup(modelId);
+  if (canon) return canon;
   return null;
 }
 
