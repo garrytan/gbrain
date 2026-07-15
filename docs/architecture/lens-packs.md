@@ -75,6 +75,15 @@ Meta-pack stacking creator + investor + engineer via the v0.38
 preserved — this IS the active pack; the registry walks extends +
 borrow to materialize the merged view.
 
+**Merge contract (T20 / #1749).** `resolvePack` merges parent → child
+(child-wins) for the six ingest/query-shaping fields: `page_types`,
+`link_types`, `frontmatter_links`, `enrichable_types`, `filing_rules`,
+and `takes_kinds` (unioned — a child cannot narrow it). `phases` and
+`calibration_domains` are **NOT** inherited: they gate cycle execution,
+so each pack must declare its own participation explicitly. That is why
+`gbrain-everything` re-declares all its phases and all 7
+`calibration_domains` — inheritance does not carry them.
+
 Activate via `gbrain config set schema_pack gbrain-everything` and
 calibration_profile produces all 7 domain scorecards in one JSONB.
 
