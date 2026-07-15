@@ -791,3 +791,14 @@
 - 解决方案：在既有 MCP dispatch 中增加参数白名单和 UTF-8 损坏检测；新增 109 号可重复迁移，以中文单字和相邻双字生成 `tsvector` 并继续复用原 GIN 索引；补强 `query`、`search`、`get_page` 契约和空结果元数据，引导 Agent 保留用户原问题并使用精确返回的 slug；保留 PGLite 现有本地中文回退。
 - 是否完成：是
 - 最终结果：真实 Postgres 已验证“狗”“靓靓”和英文 `NovaMind` 均可命中；MCP 参数乱码、非法 `source`、自然语言回退和精确 slug 行为均有回归测试；新增 10 组只读多跳检索评测。未修改用户知识库、Admin Console 或桌面端；最终 `bun run build:win` 仍由用户执行。
+
+## 2026-07-15 GitHub Actions 类型检查修复
+
+- 时间：2026-07-15
+- 版本号：PMBrain 1.1.18
+- 标题：补齐 Admin 主题配置类型，修复新提交的 CI 类型检查失败
+- 描述：新提交的 Admin 主题同步接口已经读取 `desktop.theme`，但 GitHub Actions 的 `bun run verify` 在 TypeScript 检查阶段报 `GBrainConfig.desktop` 缺少 `theme` 属性。
+- 根因：主题功能新增了运行时配置字段，但核心配置类型没有同步扩展。
+- 解决方案：在 `GBrainConfig.desktop` 中补充 `theme?: 'system' | 'light' | 'dark'`，与桌面端现有主题类型保持一致；不改变运行时逻辑和用户数据。
+- 是否完成：进行中
+- 最终结果：已完成本地类型检查与相关测试准备，等待 GitHub Actions 复验。
