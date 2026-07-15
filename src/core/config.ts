@@ -45,6 +45,7 @@ export interface GBrainConfig {
     knowledge_directory?: string;
     knowledge_source_id?: string;
     last_migrated_version?: string;
+    theme?: 'system' | 'light' | 'dark';
   };
   openai_api_key?: string;
   mimo_api_key?: string;
