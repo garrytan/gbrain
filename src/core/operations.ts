@@ -1411,15 +1411,40 @@ const list_pages: Operation = {
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
     const scope = sourceScopeOpts(ctx);
-    const pages = await ctx.engine.listPages({
+    const requested = p.limit as number | undefined;
+    const limit = clampSearchLimit(requested, 50, 100);
+    // Probe one row past the effective limit so truncation is detectable
+    // without a COUNT query. The cap itself is deliberate (pinned in
+    // test/search-limit.test.ts); the bug class sealed here is SILENT
+    // truncation — an exhaustive consumer (audit, scan, backfill) gets a
+    // full-looking list and never learns rows were dropped, and with the
+    // default updated_desc sort the dropped rows are always the OLDEST,
+    // i.e. exactly the pages such consumers exist to find.
+    const rows = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
-      limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      limit: limit + 1,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       ...scope,
     });
+    const truncated = rows.length > limit;
+    const pages = truncated ? rows.slice(0, limit) : rows;
+    // Warn only when the caller's limit was NOT honored (unset → default 50,
+    // or clamped down to the cap): an explicit honored limit that happens to
+    // land on more rows is ordinary pagination, not a trap. Local (CLI) only
+    // — same operator-facing stderr channel as the put_page unknown-type
+    // hint above — but with no isTTY gate: scripted callers are precisely
+    // the consumers that cannot detect truncation any other way, and stderr
+    // keeps stdout parseable for them.
+    if (truncated && ctx.remote === false && (requested === undefined || requested > limit)) {
+      console.error(
+        `[list_pages] output truncated at ${limit} rows (server cap 100, default 50). ` +
+        `Page through with sort=updated_asc + updated_after=<last row's updated_at>, ` +
+        `or narrow with type/tag.`,
+      );
+    }
     return pages.map(pg => ({
       slug: pg.slug,
       type: pg.type,
