@@ -182,6 +182,7 @@ export async function runRemediation(
   // Real submission path
   const submitted: StepResult[] = [];
   const abortedIds = new Set<string>();
+  const attemptedIds = new Set<string>();
   const doctorRunId = crypto.randomUUID();
 
   const { MinionQueue } = await import('../minions/queue.ts');
@@ -231,6 +232,7 @@ export async function runRemediation(
       if (completedFromCheckpoint.has(step.id)) {
         const result: StepResult = { step: stepCount, id: step.id, job_id: null, status: 'completed' };
         submitted.push(result);
+        attemptedIds.add(step.id);
         hooks.onStepEnd?.(result);
         recs.shift();
         continue;
@@ -241,6 +243,7 @@ export async function runRemediation(
         const result: StepResult = { step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' };
         submitted.push(result);
         abortedIds.add(step.id);
+        attemptedIds.add(step.id);
         hooks.onStepEnd?.(result);
         recs.shift();
         continue;
@@ -299,13 +302,17 @@ export async function runRemediation(
         hooks.onStepEnd?.(errResult);
       }
 
+      attemptedIds.add(step.id);
       recs.shift();
       // D7: scoped recheck — re-compute plan from fresh health snapshot.
-      // The next plan may drop completed steps and re-introduce failed
-      // steps with bumped retry suffix (D1).
+      // Queue-level max_attempts handles retries within a submitted attempt.
+      // A stuck health signal regenerates the same stable id, so keep ids this
+      // run already attempted out of the refreshed list to avoid re-enqueueing
+      // them forever.
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs = computeRecommendations(freshHealth, ctx)
+        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id));
     }
   };
 
@@ -322,8 +329,8 @@ export async function runRemediation(
   }
 
   // Clear checkpoint on a clean run (no budget abort). Failed steps in the
-  // submitted set don't disqualify the cleanup — they re-surface on the
-  // next plan with bumped suffixes.
+  // submitted set don't disqualify cleanup; an uncleared health signal can
+  // produce the same stable id again in a later run.
   if (!budgetAbort) {
     clearRemediationCheckpoint(planHash);
   }
