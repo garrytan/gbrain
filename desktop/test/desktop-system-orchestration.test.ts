@@ -50,6 +50,15 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain('handleTrustedIpc');
     expect(main).toContain('assertTrustedIpcSender(event)');
     expect(main).toContain('系统偏好已保存，但局域网共享入口未能启动');
+    expect(main).toContain("url.hostname === '127.0.0.1' || url.hostname === 'localhost'");
+  });
+
+  test('returns to native desktop panels and reconciles the database main source before saving', () => {
+    expect(main).toContain("{ label: '显示 PMBrain', click: openDesktop }");
+    expect(main).toContain("tray.on('double-click', openDesktop)");
+    expect(main).toContain("'/admin/api/brain/overview'");
+    expect(main).toContain('payload.knowledgeSourceChanged === false');
+    expect(main).toContain('applySetupOnce(effectivePayload');
   });
 
   test('serializes gateway transitions and keeps service startup single-flight', () => {

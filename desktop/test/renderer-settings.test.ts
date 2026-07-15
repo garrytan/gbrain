@@ -23,6 +23,13 @@ describe('desktop settings renderer contracts', () => {
     expect(html).toContain('高级：自定义主源 ID');
     expect(html).toContain('id="docker-help"');
     expect(styles).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
+    expect(html).not.toContain('用于问答、扩展、总结等普通 LLM 调用。');
+    expect(html).not.toContain('用于知识库切片向量化和搜索召回。');
+    expect(renderer).not.toContain('个已支持模型，也可以直接输入自定义模型名。');
+    expect(styles).toContain('.model-picker-trigger, .advanced-model-picker-trigger');
+    expect(styles).toContain('place-items: center');
+    expect(renderer).not.toContain('window.scrollTo');
+    expect(renderer).not.toContain("switchPanel('integrations');");
   });
 
   test('moves appearance and native desktop behavior into an accessible system panel', () => {
@@ -43,6 +50,12 @@ describe('desktop settings renderer contracts', () => {
     expect(html).toContain('DHCP 地址保留');
     expect(html).toContain('本机 sidecar');
     expect(html).toContain('员工 Agent');
+    expect(html).toContain('id="shared-connection-spine"');
+    expect(renderer).toContain("$('#shared-connection-spine').hidden = !shared");
+    expect(html).not.toContain('管理桌面端的局域网入口、开机启动、关闭行为和界面外观。');
+    expect(html).not.toContain('默认仅本机使用；共享模式只开放 MCP，不开放管理台。');
+    expect(html).not.toContain('这些设置只影响 Windows 桌面端，不修改知识库或 GBrain 核心配置。');
+    expect(renderer).not.toContain('切换共享模式、网卡或 IPv4 时会弹出二次确认。');
     expect(renderer).toContain('getSystemSettings()');
     expect(renderer).toContain('saveSystemSettings(payload)');
     expect(renderer).toContain('onSystemSettingsState((next) => applySystemSettingsState(next))');

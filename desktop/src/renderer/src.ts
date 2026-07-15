@@ -29,6 +29,8 @@ let latestSystemSettings: DesktopSystemSettingsState | null = null;
 let lastResult = '';
 let advancedModelsLoaded = false;
 let advancedOverrides: Partial<Record<AdvancedModelTier, string>> = {};
+let loadedKnowledgeDirectory = '';
+let loadedKnowledgeSourceId = '';
 const providerModels: Record<'chat' | 'embedding', string[]> = { chat: [], embedding: [] };
 const advancedProviderModels: Record<AdvancedModelTier, string[]> = {
   utility: [],
@@ -41,7 +43,6 @@ function setNotice(kind: 'error' | 'success', message = ''): void {
   const element = $<HTMLElement>(`#global-${kind}`);
   element.textContent = message;
   element.hidden = !message;
-  if (message) window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function setBusy(button: HTMLButtonElement, busy: boolean, text?: string): void {
@@ -198,9 +199,11 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
   if (!provider) {
     providerModels[kind] = [];
     status.textContent = '';
+    status.hidden = true;
     return;
   }
 
+  status.hidden = false;
   status.textContent = provider === 'ollama' ? '正在读取本机 Ollama 模型…' : '正在加载厂商模型…';
   try {
     const result = await window.pmbrainDesktop.getProviderModels(provider, kind);
@@ -211,16 +214,14 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
     if (result.warning) {
       status.textContent = result.warning;
       status.classList.add('warning');
-    } else if (provider === 'ollama') {
-      status.textContent = `已读取 ${result.models.length} 个本机/常用 Ollama 向量模型。`;
     } else {
-      status.textContent = result.models.length > 0
-        ? `可选择 ${result.models.length} 个已支持模型，也可以直接输入自定义模型名。`
-        : '该厂商使用自定义模型名，请直接输入。';
+      status.textContent = '';
+      status.hidden = true;
     }
   } catch (error) {
     status.textContent = `模型列表加载失败：${error instanceof Error ? error.message : String(error)}`;
     status.classList.add('warning');
+    status.hidden = false;
   }
 }
 
@@ -250,9 +251,11 @@ async function refreshAdvancedProviderModels(tier: AdvancedModelTier, chooseDefa
   if (!provider) {
     advancedProviderModels[tier] = [];
     status.textContent = '';
+    status.hidden = true;
     return;
   }
 
+  status.hidden = false;
   status.textContent = '正在加载模型列表…';
   try {
     const result = await window.pmbrainDesktop.getProviderModels(provider, 'chat');
@@ -264,13 +267,13 @@ async function refreshAdvancedProviderModels(tier: AdvancedModelTier, chooseDefa
       status.textContent = result.warning;
       status.classList.add('warning');
     } else {
-      status.textContent = result.models.length > 0
-        ? `可选择 ${result.models.length} 个已支持模型，也可以直接输入自定义模型名。`
-        : '该厂商使用自定义模型名，请直接输入。';
+      status.textContent = '';
+      status.hidden = true;
     }
   } catch (error) {
     status.textContent = `模型列表加载失败：${error instanceof Error ? error.message : String(error)}`;
     status.classList.add('warning');
+    status.hidden = false;
   }
 }
 
@@ -427,6 +430,7 @@ function renderSelectedAddressNote(): void {
 function renderNetworkMode(): void {
   const shared = selectedNetworkMode() === 'shared';
   $('#shared-network-fields').hidden = !shared;
+  $('#shared-connection-spine').hidden = !shared;
   $('#network-mode-local-card').classList.toggle('selected', !shared);
   $('#network-mode-shared-card').classList.toggle('selected', shared);
 }
@@ -472,7 +476,6 @@ function renderSystemSettings(next: DesktopSystemSettingsState): void {
   select.replaceChildren(placeholder, ...options);
   renderNetworkMode();
   renderSelectedAddressNote();
-
   $('#system-local-url').textContent = next.localMcpUrl || '等待本地服务';
   $('#system-shared-url').textContent = next.sharedMcpUrl || '共享模式未开启';
   const status = $('#gateway-status');
@@ -491,7 +494,7 @@ function renderSystemSettings(next: DesktopSystemSettingsState): void {
     statusTitle.textContent = '仅本机连接';
     statusDetail.textContent = '共享网关未启动，本机 Agent 仍可正常调用。';
   }
-  $('#system-save-note').textContent = next.warning || '切换共享模式、网卡或 IPv4 时会弹出二次确认。';
+  $('#system-save-note').textContent = next.warning || '';
   updateSystemSettingsAvailability();
 }
 
@@ -503,7 +506,7 @@ function updateSystemSettingsAvailability(): void {
     return;
   }
   if (!button.classList.contains('busy')) button.disabled = false;
-  $('#system-save-note').textContent = latestSystemSettings?.warning || '切换共享模式、网卡或 IPv4 时会弹出二次确认。';
+  $('#system-save-note').textContent = latestSystemSettings?.warning || '';
 }
 
 function isSharedGatewayReady(next: DesktopSystemSettingsState | null): boolean {
@@ -789,6 +792,8 @@ function populate(next: DesktopSetupState): void {
   ($<HTMLInputElement>('#database-path')).value = setup.current.databasePath || setup.defaults.databasePath;
   ($<HTMLInputElement>('#knowledge-directory')).value = setup.current.knowledgeDirectory || setup.defaults.knowledgeDirectory;
   ($<HTMLInputElement>('#knowledge-source-id')).value = setup.current.knowledgeSourceId || '';
+  loadedKnowledgeDirectory = ($<HTMLInputElement>('#knowledge-directory')).value.trim();
+  loadedKnowledgeSourceId = ($<HTMLInputElement>('#knowledge-source-id')).value.trim();
   $('#knowledge-source-hint').textContent = setup.current.knowledgeSourceId
     ? `当前主源 ID：${setup.current.knowledgeSourceId}。只有 CLI/MCP 路由或多源管理需要识别这个值。`
     : '主源 ID 用于 CLI 和 MCP 路由。普通用户保持自动生成即可。';
@@ -951,13 +956,17 @@ async function save(): Promise<void> {
     }
     (keys as Record<string, string>)[embeddingKey] = embeddingKeyValue;
   }
+  const knowledgeDirectory = ($<HTMLInputElement>('#knowledge-directory')).value;
+  const knowledgeSourceId = ($<HTMLInputElement>('#knowledge-source-id')).value;
   const payload: SetupPayload = {
     engine: selectedEngine(),
     resetAdvancedModelRouting: false,
     databasePath: ($<HTMLInputElement>('#database-path')).value,
     databaseUrl: ($<HTMLInputElement>('#database-url')).value,
-    knowledgeDirectory: ($<HTMLInputElement>('#knowledge-directory')).value,
-    knowledgeSourceId: ($<HTMLInputElement>('#knowledge-source-id')).value,
+    knowledgeDirectory,
+    knowledgeSourceId,
+    knowledgeSourceChanged: knowledgeDirectory.trim() !== loadedKnowledgeDirectory
+      || knowledgeSourceId.trim() !== loadedKnowledgeSourceId,
     modelConfig: {
       chatModel,
       embeddingModel,
@@ -979,7 +988,6 @@ async function save(): Promise<void> {
     advancedModelsLoaded = false;
     populate(next);
     setNotice('success', `配置完成，PMBrain 已在 127.0.0.1:${next.port} 启动。`);
-    switchPanel('integrations');
     void loadSharedAccess();
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));
