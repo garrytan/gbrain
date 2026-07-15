@@ -1,0 +1,132 @@
+# PRJ-2026-032 · governance #85 — upstream drift-watch (estate-owned; not upstream's)
+#
+# Compares upstream garrytan/gbrain VERSION at HEAD against the estate pin
+# (newest estate-base-v* tag on this repo). Past threshold — a minor release
+# bump (third version component, upstream's release number) or any drift once
+# the pin is 90+ days old — it files ONE deduplicated issue on this repo and
+# pings the estate alerts Discord webhook. The issue is the decision surface:
+# upgrade = ready-for-agent issue for Ophelia per RBK-2026-0006
+# (asset-007-hermes-runtime/docs/runbooks); defer = close the issue.
+# Lives on master because scheduled workflows only run from the default branch.
+name: upstream-drift-watch
+
+on:
+  schedule:
+    - cron: '0 20 * * 0' # Sundays 20:00 UTC = Mondays 06:00 AEST
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift-watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      UPSTREAM_REPO: garrytan/gbrain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the estate-base-v* tags and their commit dates
+
+      - name: Measure drift
+        id: drift
+        run: |
+          set -euo pipefail
+          PIN_TAG=$(git tag -l 'estate-base-v*' | sort -V | tail -n1)
+          [ -n "$PIN_TAG" ] || { echo "::error::no estate-base-v* tag on this repo"; exit 1; }
+          PIN_VERSION=${PIN_TAG#estate-base-v}
+          PIN_DATE=$(git log -1 --format=%cI "$PIN_TAG^{commit}")
+          UPSTREAM_VERSION=$(gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$UPSTREAM_REPO/contents/VERSION" | tr -d '[:space:]')
+          [[ "$UPSTREAM_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || {
+            echo "::error::unparseable upstream VERSION: '$UPSTREAM_VERSION'"; exit 1; }
+          AGE_DAYS=$(( ( $(date +%s) - $(date -d "$PIN_DATE" +%s) ) / 86400 ))
+          IFS=. read -r p1 p2 p3 _ <<< "$PIN_VERSION"
+          IFS=. read -r u1 u2 u3 _ <<< "$UPSTREAM_VERSION"
+          # Strictly newer, all four components (guards against a false age
+          # alert if upstream ever ends up behind the pin).
+          AHEAD=0
+          if [ "$UPSTREAM_VERSION" != "$PIN_VERSION" ] &&
+             [ "$(printf '%s\n' "$PIN_VERSION" "$UPSTREAM_VERSION" | sort -V | tail -n1)" = "$UPSTREAM_VERSION" ]; then
+            AHEAD=1
+          fi
+          TRIGGER=none
+          if (( u1 > p1 || (u1 == p1 && u2 > p2) || (u1 == p1 && u2 == p2 && u3 > p3) )); then
+            TRIGGER=minor-version
+          elif (( AHEAD && AGE_DAYS >= 90 )); then
+            TRIGGER=age
+          fi
+          echo "pin=$PIN_VERSION ($PIN_TAG, ${AGE_DAYS}d old) upstream=$UPSTREAM_VERSION trigger=$TRIGGER"
+          {
+            echo "pin_tag=$PIN_TAG"
+            echo "pin=$PIN_VERSION"
+            echo "upstream=$UPSTREAM_VERSION"
+            echo "age_days=$AGE_DAYS"
+            echo "trigger=$TRIGGER"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: File deduplicated issue
+        if: steps.drift.outputs.trigger != 'none'
+        id: issue
+        env:
+          PIN_TAG: ${{ steps.drift.outputs.pin_tag }}
+          PIN: ${{ steps.drift.outputs.pin }}
+          UPSTREAM: ${{ steps.drift.outputs.upstream }}
+          AGE_DAYS: ${{ steps.drift.outputs.age_days }}
+          TRIGGER: ${{ steps.drift.outputs.trigger }}
+        run: |
+          set -euo pipefail
+          TITLE="Upstream drift: v$PIN → v$UPSTREAM"
+          gh label create upstream-drift --force --color D93F0B \
+            --description "gbrain upstream moved past the estate pin threshold"
+          # Dedup by exact title over ALL states via the list API (no search-index
+          # lag): a closed issue for the same version pair means Andre deferred —
+          # stay quiet until upstream moves again and mints a new title.
+          EXISTING=$(gh issue list --state all --label upstream-drift --limit 100 --json title,url \
+            | jq -r --arg t "$TITLE" '[.[] | select(.title == $t)][0].url // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "deduplicated — already filed: $EXISTING"
+            echo "url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BODY_FILE=$(mktemp)
+          cat > "$BODY_FILE" <<EOF
+          | | |
+          |---|---|
+          | Estate pin | \`$PIN_TAG\` — v$PIN, ${AGE_DAYS} days old |
+          | Upstream HEAD | [v$UPSTREAM](https://github.com/$UPSTREAM_REPO) |
+          | Threshold tripped | $TRIGGER |
+
+          **Decide (Andre):**
+          - **Upgrade** → file a \`ready-for-agent\` issue for Ophelia pointing at
+            **RBK-2026-0006** (\`asset-007-hermes-runtime/docs/runbooks/\`) with target v$UPSTREAM.
+          - **Defer** → close this issue. It will not re-file for this version pair;
+            the next upstream release past threshold files a new one.
+
+          [Upstream changelog](https://github.com/$UPSTREAM_REPO/blob/master/CHANGELOG.md)
+
+          _Filed by \`upstream-drift-watch\` (PRJ-2026-032 · governance #85)._
+          EOF
+          URL=$(gh issue create --title "$TITLE" --label upstream-drift --body-file "$BODY_FILE")
+          echo "filed: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Discord ping
+        if: steps.issue.outputs.url != ''
+        env:
+          WEBHOOK: ${{ secrets.ESTATE_ALERTS_DISCORD_WEBHOOK }}
+          PIN: ${{ steps.drift.outputs.pin }}
+          UPSTREAM: ${{ steps.drift.outputs.upstream }}
+          TRIGGER: ${{ steps.drift.outputs.trigger }}
+          ISSUE_URL: ${{ steps.issue.outputs.url }}
+        run: |
+          set -euo pipefail
+          [ -n "$WEBHOOK" ] || {
+            echo "::error::ESTATE_ALERTS_DISCORD_WEBHOOK secret is not set on this repo"; exit 1; }
+          CODE=$(jq -n --arg c "📡 gbrain upstream drift: estate pin v$PIN → upstream v$UPSTREAM ($TRIGGER). Decision issue: $ISSUE_URL" '{content: $c}' \
+            | curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d @- "$WEBHOOK")
+          [ "$CODE" = "204" ] || { echo "::error::Discord webhook returned HTTP $CODE"; exit 1; }
+          echo "Discord ping delivered (HTTP 204)"
