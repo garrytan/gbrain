@@ -66,6 +66,7 @@ import { logMutationFailure, logMutationSuccess, type MutationActor, type Mutati
 import { runFilePlaneLintRules } from './lint-rules.ts';
 import { withPackLock, type PackLockOpts } from './pack-lock.ts';
 import type { BrainEngine } from '../engine.ts';
+import { BUNDLED_PACK_NAMES } from './bundled-packs.ts';
 
 export type PackFileFormat = 'json' | 'yaml';
 
@@ -93,7 +94,9 @@ export class SchemaPackMutationError extends Error {
   }
 }
 
-export const BUNDLED_PACK_NAMES = new Set(['gbrain-base', 'gbrain-recommended', 'gbrain-base-v2']);
+// Re-exported from the single source of truth (bundled-packs.ts) so existing
+// importers keep working while the canonical bundled list lives in one place.
+export { BUNDLED_PACK_NAMES };
 
 export interface MutateResult {
   /** Pack name that was mutated. */
