@@ -16,6 +16,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { safeHexEqual } from '../src/core/timing-safe.ts';
 
 const GITHUB_SECRET = 'super-secret-webhook-key';
@@ -121,5 +122,25 @@ describe('Branch ref construction (D5)', () => {
     const trackedBranch: string = 'main';
     const pushedRef: string = 'refs/heads/feature/new-stuff';
     expect(pushedRef === `refs/heads/${trackedBranch}`).toBe(false);
+  });
+});
+
+describe('Webhook sync job extraction contract', () => {
+  test('opts into extraction before the pushed commit is consumed', () => {
+    const serveSource = readFileSync(
+      new URL('../src/commands/serve-http.ts', import.meta.url),
+      'utf8',
+    );
+    const routeStart = serveSource.indexOf("'/webhooks/github'");
+    const responseStart = serveSource.indexOf('res.status(202)', routeStart);
+    expect(routeStart).toBeGreaterThanOrEqual(0);
+    expect(responseStart).toBeGreaterThan(routeStart);
+
+    const routeSource = serveSource.slice(routeStart, responseStart);
+    const payload = routeSource.match(
+      /queue\.add\(\s*'sync',\s*\{([\s\S]*?)\}\s*,\s*\{/,
+    );
+    expect(payload).not.toBeNull();
+    expect(payload?.[1]).toMatch(/\bnoExtract:\s*false\b/);
   });
 });
