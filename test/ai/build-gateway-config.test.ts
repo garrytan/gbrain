@@ -84,6 +84,19 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       },
     );
   });
+
+  test('provider_chat_options passes through unchanged', async () => {
+    await withEnv(envFor(null), async () => {
+      const options = {
+        anthropic: { thinking: { type: 'disabled' } },
+        'anthropic:claude-sonnet-4-6': { thinking: { budget_tokens: 256 } },
+      };
+      const cfg = buildGatewayConfig({
+        provider_chat_options: options,
+      } as unknown as GBrainConfig);
+      expect(cfg.provider_chat_options).toBe(options);
+    });
+  });
 });
 
 describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {

@@ -167,6 +167,8 @@ function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> |
  */
 type EmbedManyFn = typeof embedMany;
 let _embedTransport: EmbedManyFn = embedMany;
+type GenerateTextFn = typeof generateText;
+let _generateTextTransport: GenerateTextFn = generateText;
 // v0.41.6.0 D1: tests that install a transport stub also pass the
 // embedding-creds preflight, matching the chat-transport fast-path
 // pattern. Set when __setEmbedTransportForTests is called with a
@@ -440,6 +442,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     // wanted it. isAvailable('reranker') returns false when unset.
     reranker_model: config.reranker_model,
     base_urls: config.base_urls,
+    provider_chat_options: config.provider_chat_options,
     env: config.env,
   };
   _modelCache.clear();
@@ -581,6 +584,7 @@ export function resetGateway(): void {
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
+  _generateTextTransport = generateText;
   _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
@@ -599,6 +603,17 @@ export function resetGateway(): void {
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
   _embedTransportInstalled = fn !== null;
+}
+
+/**
+ * Test-only seam for the chat() SDK call. Unlike __setChatTransportForTests,
+ * this keeps provider resolution and providerOptions assembly live, then
+ * replaces only the final generateText call.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function __setGenerateTextTransportForTests(fn: GenerateTextFn | null): void {
+  _generateTextTransport = fn ?? generateText;
 }
 
 /**
@@ -2655,6 +2670,49 @@ function lastUserMessageForGuardrail(
   return null;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergeRecords(
+  ...records: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const record of records) {
+    if (!record) continue;
+    for (const [key, value] of Object.entries(record)) {
+      const existing = out[key];
+      if (isPlainObject(existing) && isPlainObject(value)) {
+        out[key] = deepMergeRecords(existing, value);
+      } else {
+        out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
+function applyConfiguredChatProviderOptions(
+  providerOptions: Record<string, any>,
+  cfg: AIGatewayConfig,
+  recipeId: string,
+  modelId: string,
+): void {
+  const providerRaw = cfg.provider_chat_options?.[recipeId];
+  const modelRaw = cfg.provider_chat_options?.[`${recipeId}:${modelId}`];
+  const providerScoped = isPlainObject(providerRaw) ? providerRaw : undefined;
+  const modelScoped = isPlainObject(modelRaw) ? modelRaw : undefined;
+  if (!providerScoped && !modelScoped) return;
+
+  providerOptions[recipeId] = deepMergeRecords(
+    isPlainObject(providerOptions[recipeId]) ? providerOptions[recipeId] : undefined,
+    providerScoped,
+    modelScoped,
+  );
+}
+
 /**
  * Gateway-side guardrail wrapper. Observe-only, fail-open, never throws into
  * the gateway. No-op when no guardrail is registered. The guardrail boundary
@@ -2759,6 +2817,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
+  const cfg = requireConfig();
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
@@ -2783,6 +2842,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   if (useCache) {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
+  applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
 
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
@@ -2801,7 +2861,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   };
 
   try {
-    const result = await generateText({
+    const result = await _generateTextTransport({
       model,
       system: opts.system,
       messages: toModelMessages(opts.messages) as any,

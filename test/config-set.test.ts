@@ -17,6 +17,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_disabled');  // v0.37 D9
     expect(KNOWN_CONFIG_KEYS).toContain('expansion_model');
     expect(KNOWN_CONFIG_KEYS).toContain('chat_model');
+    expect(KNOWN_CONFIG_KEYS).toContain('provider_chat_options');
   });
 
   test('contains the search-mode keys (v0.32.3)', () => {
@@ -49,6 +50,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('search.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('provider_chat_options.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {
@@ -122,6 +124,10 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 
   test('models.custom.x (under prefix) → "prefix"', () => {
     expect(gate('models.custom.x')).toBe('prefix');
+  });
+
+  test('provider_chat_options.anthropic (under prefix) → "prefix"', () => {
+    expect(gate('provider_chat_options.anthropic')).toBe('prefix');
   });
 
   test('bug-reporter: embedding.provider → "unknown" (no prefix match)', () => {

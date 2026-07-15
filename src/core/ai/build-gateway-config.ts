@@ -61,6 +61,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: { ...envBaseUrls, ...(c.provider_base_urls ?? {}) }, // config wins over env
+    provider_chat_options: c.provider_chat_options,
     // #1249: process.env still wins over the config-plane fallback, BUT only for
     // keys that carry a real value. Claude Code (and some launchers) inject
     // ANTHROPIC_API_KEY='' to neuter subprocess LLM calls; an unconditional
