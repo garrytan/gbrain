@@ -132,11 +132,13 @@ describe('Webhook sync job extraction contract', () => {
       'utf8',
     );
     const routeStart = serveSource.indexOf("'/webhooks/github'");
-    const responseStart = serveSource.indexOf('res.status(202)', routeStart);
+    const queueStart = serveSource.indexOf('const job = await queue.add(', routeStart);
+    const responseStart = serveSource.indexOf('res.status(202)', queueStart);
     expect(routeStart).toBeGreaterThanOrEqual(0);
-    expect(responseStart).toBeGreaterThan(routeStart);
+    expect(queueStart).toBeGreaterThan(routeStart);
+    expect(responseStart).toBeGreaterThan(queueStart);
 
-    const routeSource = serveSource.slice(routeStart, responseStart);
+    const routeSource = serveSource.slice(queueStart, responseStart);
     const payload = routeSource.match(
       /queue\.add\(\s*'sync',\s*\{([\s\S]*?)\}\s*,\s*\{/,
     );
