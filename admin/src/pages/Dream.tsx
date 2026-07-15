@@ -357,6 +357,20 @@ function parseDreamReport(run: ConsoleRun): DreamCycleReport | null {
   }
 }
 
+export function dreamRunDeltas(run: ConsoleRun | null): { pages: number; links: number } {
+  if (!run || !run.kind.startsWith('dream_') || run.command.includes('--dry-run')) {
+    return { pages: 0, links: 0 };
+  }
+  const totals = parseDreamReport(run)?.totals ?? {};
+  const pages = Math.max(0, Number(totals.synth_pages_written ?? 0));
+  const links = Math.max(0,
+    Number(totals.backlinks_added ?? 0)
+    + Number(totals.pages_extracted ?? 0)
+    + Number(totals.edges_resolved ?? 0),
+  );
+  return { pages, links };
+}
+
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -1171,8 +1185,9 @@ export function DreamOverviewPage() {
   const pending = data.embeddings.pending ?? 0;
   const orphanPages = data.health?.orphan_pages ?? 0;
   const deadLinks = data.health?.dead_links ?? 0;
-  const latestRun = data.runs[0] ?? null;
+  const latestRun = data.runs.find(run => run.kind.startsWith('dream_')) ?? null;
   const latestSummary = latestRun ? describeDreamRun(latestRun) : null;
+  const latestDeltas = dreamRunDeltas(latestRun);
   const needsAttention = pending > 0 || orphanPages > 0 || deadLinks > 0;
   const statusTitle = activeLock
     ? 'AI 正在整理你的知识'
@@ -1233,11 +1248,10 @@ export function DreamOverviewPage() {
         <section className="dream-library-card">
           <span className="dream-eyebrow">知识库状态</span>
           <div className="dream-library-metrics">
-            <div><b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span></div>
+            <div><b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span><small>本次 +{latestDeltas.pages}</small></div>
             <div><b>{pct(data.embeddings.coverage)}</b><span>可被 AI 搜索</span></div>
-            <div><b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span></div>
+            <div><b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span><small>本次 +{latestDeltas.links}</small></div>
           </div>
-          <p>这些数字来自当前知识库，不会因为刷新页面而丢失。</p>
         </section>
       </div>
 

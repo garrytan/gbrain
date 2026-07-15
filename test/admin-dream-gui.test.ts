@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describeDreamRun, isKnowledgeJourneyComplete, phaseSummaryZh } from '../admin/src/pages/Dream.tsx';
+import { describeDreamRun, dreamRunDeltas, isKnowledgeJourneyComplete, phaseSummaryZh } from '../admin/src/pages/Dream.tsx';
 import type { ConsoleRun } from '../admin/src/lib/shared.tsx';
 
 const dream = readFileSync(join(process.cwd(), 'admin/src/pages/Dream.tsx'), 'utf8');
+const consolePage = readFileSync(join(process.cwd(), 'admin/src/pages/Console.tsx'), 'utf8');
 const app = readFileSync(join(process.cwd(), 'admin/src/App.tsx'), 'utf8');
 const api = readFileSync(join(process.cwd(), 'src/commands/natural-lang/api.ts'), 'utf8');
 
@@ -112,6 +113,31 @@ describe('Dream GUI product contract', () => {
     });
     expect(describeDreamRun(run).outputs).toContain('检测到 693 个待同步文件，实际写入 3 个页面。');
     expect(dream).toContain('查看实际写入的 {phase.pagesAffected?.length ?? 0} 个页面');
+  });
+
+  test('overview metrics show deltas from the latest Dream report', () => {
+    const run = completedRun({
+      status: 'ok',
+      totals: {
+        synth_pages_written: 21,
+        backlinks_added: 3,
+        pages_extracted: 17,
+        edges_resolved: 4,
+      },
+    });
+    expect(dreamRunDeltas(run)).toEqual({ pages: 21, links: 24 });
+    expect(dreamRunDeltas({ ...run, command: [...run.command, '--dry-run'] })).toEqual({ pages: 0, links: 0 });
+    expect(dream).toContain('<b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span><small>本次 +{latestDeltas.pages}</small>');
+    expect(dream).toContain('<b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span><small>本次 +{latestDeltas.links}</small>');
+    expect(dream).not.toContain('这些数字来自当前知识库，不会因为刷新页面而丢失。');
+  });
+
+  test('Dream settings explain relative paths with a resolved directory preview', () => {
+    expect(consolePage).toContain('默认 Dream 目录');
+    expect(consolePage).toContain('当前实际输出目录');
+    expect(consolePage).toContain('填写 <code>output</code> 不需要盘符');
+    expect(consolePage).toContain('高级设置选择其他 Source 时');
+    expect(consolePage).toContain('目录不存在会自动创建；已经存在则直接复用，不会清空目录');
   });
 
   test('selected run mode survives the data reload after a run completes', () => {

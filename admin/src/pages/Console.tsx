@@ -2010,6 +2010,117 @@ function MarkdownExportSettings() {
   );
 }
 
+interface DreamSettingsValue {
+  outputDir: string;
+  dualWrite: boolean;
+  defaultBrainDir: string | null;
+  resolvedOutputDir: string | null;
+  directoryExists?: boolean;
+}
+
+function DreamSettings() {
+  const [settings, setSettings] = useState<DreamSettingsValue>({
+    outputDir: 'output',
+    dualWrite: true,
+    defaultBrainDir: null,
+    resolvedOutputDir: null,
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void api.dreamSettings()
+      .then(value => setSettings(value as DreamSettingsValue))
+      .catch(nextError => setError(nextError instanceof Error ? nextError.message : String(nextError)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    const outputDir = settings.outputDir.trim();
+    if (!outputDir) {
+      setError('请填写 Dream 输出目录');
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const saved = await api.saveDreamSettings({ ...settings, outputDir }) as DreamSettingsValue;
+      setSettings(current => ({ ...current, ...saved }));
+      setMessage('知识整理设置已保存');
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const outputIsAbsolute = /^[A-Za-z]:[\\/]/.test(settings.outputDir)
+    || /^\\\\/.test(settings.outputDir)
+    || settings.outputDir.startsWith('/');
+  const separator = settings.defaultBrainDir?.includes('\\') ? '\\' : '/';
+  const liveResolvedOutputDir = outputIsAbsolute
+    ? settings.outputDir
+    : settings.defaultBrainDir
+      ? `${settings.defaultBrainDir.replace(/[\\/]+$/, '')}${separator}${settings.outputDir.replace(/^[\\/]+/, '')}`
+      : null;
+
+  return (
+    <section className="pm-card dream-settings-card">
+      <div className="pm-section-head">
+        <div>
+          <h2>知识整理设置</h2>
+          <p className="pm-hint">设置 Dream 生成内容的本地保存位置，以及是否同时保留 Markdown 文件。</p>
+        </div>
+      </div>
+      <div className="dream-settings-grid">
+        <div className="dream-output-setting">
+          <label htmlFor="dream-output-dir">Dream 输出目录（相对目录或完整路径）</label>
+          <input
+            id="dream-output-dir"
+            value={settings.outputDir}
+            onChange={event => setSettings(current => ({ ...current, outputDir: event.target.value }))}
+            placeholder="output"
+            disabled={loading || saving}
+          />
+          <div className="dream-output-preview">
+            <span>默认 Dream 目录</span>
+            <code>{settings.defaultBrainDir ?? '尚未配置本地知识库目录'}</code>
+            <span>当前实际输出目录</span>
+            <code>{liveResolvedOutputDir ?? '请先配置本地知识库目录，或填写带盘符的完整路径'}</code>
+          </div>
+          <p className="pm-hint">
+            填写 <code>output</code> 不需要盘符，它会保存到上面的默认 Dream 目录中。高级设置选择其他 Source 时，会改为该 Source 的本地目录下的同名文件夹。
+            保存设置时，目录不存在会自动创建；已经存在则直接复用，不会清空目录。
+          </p>
+        </div>
+        <label className="dream-dual-write-setting" htmlFor="dream-dual-write">
+          <span>
+            <b>写入本地 Markdown</b>
+            <small>开启后，Dream 会同时写入数据库和本地文件，相当于持续维护一套 LLM Wiki。默认开启，不建议关闭。</small>
+          </span>
+          <input
+            id="dream-dual-write"
+            type="checkbox"
+            checked={settings.dualWrite}
+            onChange={event => setSettings(current => ({ ...current, dualWrite: event.target.checked }))}
+            disabled={loading || saving}
+          />
+        </label>
+      </div>
+      <div className="pm-actions">
+        <button className="pm-primary" onClick={() => void save()} disabled={loading || saving}>
+          {saving ? '正在保存…' : '保存知识整理设置'}
+        </button>
+        {message && <span className="pm-ok">{message}</span>}
+        {error && <span className="pm-error-text">{error}</span>}
+      </div>
+    </section>
+  );
+}
+
 export function SettingsPage({
   themeMode,
   onNavigate,
@@ -2026,7 +2137,7 @@ export function SettingsPage({
   return (
     <div className="pm-page settings-page">
       <div className="settings-heading">
-        <div><div className="pm-eyebrow">APPEARANCE · SOURCES · MODELS · EXPORT</div><h1>设置</h1><p>常用选择放在前面，技术细节按需展开。</p></div>
+        <div><h1>设置</h1></div>
       </div>
 
       <section className="pm-card appearance-settings">
@@ -2039,6 +2150,7 @@ export function SettingsPage({
       </section>
 
       <MainSourceSettings overview={overview} onSaved={reload} />
+      <DreamSettings />
       <SourceManagementSettings />
       <MarkdownExportSettings />
 

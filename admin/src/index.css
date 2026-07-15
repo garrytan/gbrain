@@ -3325,6 +3325,7 @@ pre {
 .dream-library-metrics div { display: grid; gap: 3px; padding: 12px 8px; border-radius: 10px; background: #f5f7fb; text-align: center; }
 .dream-library-metrics b { color: #252e43; font-size: 18px; }
 .dream-library-metrics span { color: #7b8496; font-size: 10px; }
+.dream-library-metrics small { color: var(--accent); font-size: 10px; font-weight: 700; }
 
 .dream-friendly-empty { display: grid; gap: 5px; padding: 24px 4px; color: #7a8498; }
 .dream-friendly-empty b { color: #3d4659; }
@@ -3619,6 +3620,18 @@ pre {
 .appearance-settings { display: flex; justify-content: space-between; gap: 28px; align-items: center; margin-bottom: 18px; }
 .appearance-settings h2 { margin-bottom: 5px; }
 .appearance-settings p { margin: 0; color: var(--text-secondary); }
+.dream-settings-card { margin-bottom: 18px; }
+.dream-settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .9fr); gap: 16px; align-items: stretch; }
+.dream-output-setting { min-width: 0; }
+.dream-output-setting code { color: var(--accent); font-family: var(--font-mono); }
+.dream-output-preview { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 12px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
+.dream-output-preview span { color: var(--text-muted); font-size: 11px; }
+.dream-output-preview code { overflow-wrap: anywhere; }
+.dream-dual-write-setting { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin: 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); cursor: pointer; }
+.dream-dual-write-setting span { display: grid; gap: 5px; }
+.dream-dual-write-setting b { color: var(--text-primary); }
+.dream-dual-write-setting small { color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.dream-dual-write-setting input { width: 38px; height: 20px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
 .theme-choice { flex-shrink: 0; }
 .settings-source-section { margin-bottom: 18px; }
 .markdown-export-card,
@@ -3852,6 +3865,7 @@ html[data-theme="dark"] .pm-ghost.danger { color: #ff8f99; background: #2d171b; 
   .mcp-endpoint-grid { grid-template-columns: 1fr; }
   .import-option-grid { grid-template-columns: 1fr; }
   .appearance-settings { align-items: flex-start; flex-direction: column; }
+  .dream-settings-grid { grid-template-columns: 1fr; }
   .theme-choice { width: 100%; }
   .theme-choice button { flex: 1; }
   .export-path-row { grid-template-columns: 1fr; }
