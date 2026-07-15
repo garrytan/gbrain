@@ -77,6 +77,9 @@ const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_0
 const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
 /** multimodal per request. */
 const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
+/** Per tool execution inside the subagent/gateway tool loop. */
+const AI_TOOL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_SUBAGENT_TOOL_TIMEOUT_MS', 60_000);
+const AI_TOOL_MAX_ATTEMPTS = resolveAiTimeoutMs('GBRAIN_SUBAGENT_TOOL_MAX_ATTEMPTS', 2);
 
 /**
  * Compose a caller signal with a default wall-clock timeout. When the caller
@@ -2927,6 +2930,10 @@ export interface ToolLoopOpts {
   abortSignal?: AbortSignal;
   /** Apply Anthropic cache_control to system + last tool. Silently ignored elsewhere. */
   cacheSystem?: boolean;
+  /** Per-tool wall-clock timeout. Defaults to GBRAIN_SUBAGENT_TOOL_TIMEOUT_MS or 60s. */
+  toolTimeoutMs?: number;
+  /** Max attempts for idempotent transient/timeout tool failures. Defaults to 2. */
+  toolMaxAttempts?: number;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -2993,6 +3000,8 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
   const maxTokens = opts.maxTokens ?? 4096;
   const handlers = opts.toolHandlers;
+  const toolTimeoutMs = opts.toolTimeoutMs ?? AI_TOOL_TIMEOUT_MS;
+  const toolMaxAttempts = Math.max(1, Math.floor(opts.toolMaxAttempts ?? AI_TOOL_MAX_ATTEMPTS));
   const totalUsage: ChatResult['usage'] = {
     input_tokens: 0,
     output_tokens: 0,
@@ -3151,10 +3160,26 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         );
       }
 
-      // Step 3: execute (side effect).
+      // Step 3: execute (side effect). Bound every call: DB/pooler/client
+      // hangs must settle as failed tool results instead of squatting a worker
+      // slot until the whole job timeout expires. Only idempotent tools retry.
       opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
       try {
-        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+        const output = await executeToolWithTimeoutAndRetry({
+          toolName: call.toolName,
+          input: call.input,
+          baseSignal: opts.abortSignal,
+          timeoutMs: toolTimeoutMs,
+          maxAttempts: toolMaxAttempts,
+          idempotent: handler.idempotent === true,
+          execute: signal => handler.execute(call.input, signal),
+          onRetry: (attempt, error) => opts.onHeartbeat?.('tool_retry', {
+            turn_idx: turnIdx,
+            tool_name: call.toolName,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        });
         // Step 4: settle complete.
         await opts.onToolCallComplete?.(gbrainToolUseId, output);
         toolResultBlocks.push({
@@ -3193,6 +3218,94 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   }
 
   return { finalText, totalTurns: turnIdx, totalUsage, stopReason, messages };
+}
+
+export class ToolCallTimeoutError extends Error {
+  constructor(public toolName: string, public timeoutMs: number) {
+    super(`tool "${toolName}" timed out after ${timeoutMs}ms`);
+    this.name = 'ToolCallTimeoutError';
+  }
+}
+
+interface ExecuteToolWithTimeoutAndRetryOpts {
+  toolName: string;
+  input: unknown;
+  baseSignal?: AbortSignal;
+  timeoutMs: number;
+  maxAttempts: number;
+  idempotent: boolean;
+  execute: (signal: AbortSignal) => Promise<unknown>;
+  onRetry?: (attempt: number, error: unknown) => void;
+}
+
+export async function executeToolWithTimeoutAndRetry(
+  opts: ExecuteToolWithTimeoutAndRetryOpts,
+): Promise<unknown> {
+  let attempt = 0;
+  let lastErr: unknown;
+  const maxAttempts = opts.idempotent ? Math.max(1, opts.maxAttempts) : 1;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      return await executeSingleToolAttempt(opts);
+    } catch (err) {
+      lastErr = err;
+      if (opts.baseSignal?.aborted) throw err;
+      if (attempt >= maxAttempts || !isRetryableToolError(err)) throw err;
+      opts.onRetry?.(attempt + 1, err);
+      await sleep(Math.min(1000 * attempt, 3000), opts.baseSignal);
+    }
+  }
+  throw lastErr;
+}
+
+async function executeSingleToolAttempt(opts: ExecuteToolWithTimeoutAndRetryOpts): Promise<unknown> {
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => {
+    timeoutController.abort(new ToolCallTimeoutError(opts.toolName, opts.timeoutMs));
+  }, opts.timeoutMs);
+  const signal = opts.baseSignal
+    ? AbortSignal.any([opts.baseSignal, timeoutController.signal])
+    : timeoutController.signal;
+
+  let abortListener: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    abortListener = () => {
+      const reason = signal.reason;
+      reject(reason instanceof Error ? reason : new Error('tool call aborted'));
+    };
+    if (signal.aborted) abortListener();
+    else signal.addEventListener('abort', abortListener, { once: true });
+  });
+
+  const workPromise = Promise.resolve().then(() => opts.execute(signal));
+  workPromise.catch(() => { /* Promise.race may have timed out first; avoid unhandled rejection. */ });
+  try {
+    return await Promise.race([workPromise, abortPromise]);
+  } finally {
+    clearTimeout(timer);
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
+function isRetryableToolError(err: unknown): boolean {
+  if (err instanceof ToolCallTimeoutError) return true;
+  const name = err && typeof err === 'object' ? String((err as { name?: unknown }).name ?? '') : '';
+  const message = err instanceof Error ? err.message : String(err);
+  if (name === 'TimeoutError') return true;
+  return /CONNECT_TIMEOUT|connect timeout|Cannot connect|ECONNRESET|ECONNREFUSED|ETIMEDOUT|connection terminated|server closed the connection|pooler/i.test(message);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ---- Reranker (v0.35.0.0+) ----
