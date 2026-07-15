@@ -2005,9 +2005,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   //     so GitHub doesn't retry.
   // D15.5: HMAC compare uses the shared safeHexEqual helper.
   // D18: submits 'sync' job with extraction + auto_embed_backfill enabled and
-  //     priority -10 (above autopilot's 0). Webhook sync consumes the source
-  //     commit, so extraction must happen in the same job while pagesAffected
-  //     still identifies the changed pages.
+  //     priority -10 (above autopilot's 0). This opts normal incremental pushes
+  //     into sync's inline extraction while pagesAffected still identifies the
+  //     changed pages. The sync core can still defer large (>100) changes.
   // ---------------------------------------------------------------------------
   const githubWebhookLimiter = rateLimit({
     windowMs: 60_000,
