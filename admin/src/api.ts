@@ -33,6 +33,27 @@ async function apiFetchText(path: string) {
   return res.text();
 }
 
+async function apiUploadFile(path: string, file: File) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-PMBrain-Filename': encodeURIComponent(file.name),
+    },
+    body: file,
+  });
+  if (res.status === 401) {
+    window.location.hash = '#login';
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 export const api = {
   login: (token: string) => apiFetch('/admin/login', { method: 'POST', body: JSON.stringify({ token }) }),
   signOutEverywhere: () => apiFetch('/admin/api/sign-out-everywhere', { method: 'POST' }),
@@ -55,12 +76,22 @@ export const api = {
     apiFetch('/admin/api/intent/execute', { method: 'POST', body: JSON.stringify({ previewId, confirmed }) }),
   startThinkRun: (question: string) =>
     apiFetch('/admin/api/think-runs', { method: 'POST', body: JSON.stringify({ question }) }),
+  startCaptureRun: (content: string, sourceId?: string) =>
+    apiFetch('/admin/api/capture-runs', { method: 'POST', body: JSON.stringify({ content, sourceId }) }),
   runs: () => apiFetch('/admin/api/runs'),
   run: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}`),
   cancelRun: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   startActionRun: (action: string) => apiFetch('/admin/api/runs/action', { method: 'POST', body: JSON.stringify({ action }) }),
   startImportRun: (body: { path: string; sourceId?: string; includeOffice: boolean; includeImages: boolean; autoEmbed: boolean; workers: number }) =>
     apiFetch('/admin/api/import-runs', { method: 'POST', body: JSON.stringify(body) }),
+  startImportUploadRun: (file: File, options: { sourceId?: string; autoEmbed: boolean; workers: number }) => {
+    const query = new URLSearchParams({
+      autoEmbed: options.autoEmbed ? '1' : '0',
+      workers: String(options.workers),
+    });
+    if (options.sourceId) query.set('sourceId', options.sourceId);
+    return apiUploadFile(`/admin/api/import-upload-runs?${query.toString()}`, file);
+  },
   startMarkdownExportRun: (rootPath: string) =>
     apiFetch('/admin/api/export-runs', { method: 'POST', body: JSON.stringify({ rootPath }) }),
   dreamOverview: () => apiFetch('/admin/api/dream/overview'),

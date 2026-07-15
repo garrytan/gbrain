@@ -8,6 +8,7 @@ const HEALTH_INTERVAL_MS = 500;
 const STOP_TIMEOUT_MS = 5_000;
 const RESTART_WINDOW_MS = 30_000;
 const MAX_RESTARTS = 3;
+const MCP_BEARER_VERIFY_TIMEOUT_MS = 3_000;
 
 export type SidecarState =
   | { phase: 'starting'; port: number }
@@ -31,6 +32,7 @@ export class SidecarManager {
   private stopping = false;
   private recovering = false;
   private restartTimes: number[] = [];
+  private lifecycleQueue: Promise<void> = Promise.resolve();
 
   constructor(options: SidecarManagerOptions) {
     this.options = options;
@@ -38,7 +40,18 @@ export class SidecarManager {
     this.bootstrapToken = options.bootstrapToken;
   }
 
+  private queueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.lifecycleQueue.then(operation, operation);
+    this.lifecycleQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+
   async start(): Promise<string> {
+    return this.queueLifecycle(() => this.startNow());
+  }
+
+  private async startNow(): Promise<string> {
+    if (this.child && this.child.exitCode === null) return this.issueMagicLink();
     this.stopping = false;
     this.spawnProcess();
     this.options.onState?.({ phase: 'starting', port: this.port });
@@ -55,8 +68,11 @@ export class SidecarManager {
   }
 
   async restart(): Promise<string> {
-    await this.stop();
-    return this.start();
+    this.stopping = true;
+    return this.queueLifecycle(async () => {
+      await this.stopNow();
+      return this.startNow();
+    });
   }
 
   get mcpUrl(): string {
@@ -65,6 +81,38 @@ export class SidecarManager {
 
   async createAdminLink(): Promise<string> {
     return this.issueMagicLink();
+  }
+
+  async verifyMcpBearer(authorizationHeader: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MCP_BEARER_VERIFY_TIMEOUT_MS);
+    try {
+      const response = await fetch(this.mcpUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: authorizationHeader,
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'pmbrain-lan-auth-check',
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'pmbrain-lan-gateway', version: this.options.clientVersion },
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (response.body) await response.body.cancel().catch(() => undefined);
+      if (response.status === 401 || response.status === 403) return false;
+      if (!response.ok) throw new Error(`本机 MCP 凭证验证返回 HTTP ${response.status}`);
+      return true;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async adminRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -115,6 +163,11 @@ export class SidecarManager {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
+    return this.queueLifecycle(() => this.stopNow());
+  }
+
+  private async stopNow(): Promise<void> {
     this.stopping = true;
     await this.terminateChild();
     this.options.onState?.({ phase: 'stopped', port: this.port });
@@ -171,38 +224,40 @@ export class SidecarManager {
   private handleCrash(message: string): void {
     this.options.logger.write('desktop', message);
     if (this.stopping || this.recovering) return;
-    void this.recoverAfterCrash(message);
+    this.recovering = true;
+    void this.queueLifecycle(async () => {
+      try {
+        await this.recoverAfterCrash(message);
+      } finally {
+        this.recovering = false;
+      }
+    });
   }
 
   private async recoverAfterCrash(lastMessage: string): Promise<void> {
-    this.recovering = true;
     let failure = lastMessage;
-    try {
-      while (!this.stopping) {
-        const now = Date.now();
-        this.restartTimes = this.restartTimes.filter((time) => now - time <= RESTART_WINDOW_MS);
-        if (this.restartTimes.length >= MAX_RESTARTS) {
-          this.options.onState?.({ phase: 'failed', port: this.port, message: failure });
-          return;
-        }
-        this.restartTimes.push(now);
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
-        if (this.stopping) return;
-        this.spawnProcess();
-        this.options.onState?.({ phase: 'starting', port: this.port });
-        try {
-          await this.waitUntilHealthy();
-          const adminUrl = await this.issueMagicLink();
-          this.options.onState?.({ phase: 'ready', port: this.port, adminUrl });
-          return;
-        } catch (error) {
-          failure = error instanceof Error ? error.message : String(error);
-          this.options.logger.write('desktop', `Recovery attempt failed: ${failure}`);
-          await this.terminateChild();
-        }
+    while (!this.stopping) {
+      const now = Date.now();
+      this.restartTimes = this.restartTimes.filter((time) => now - time <= RESTART_WINDOW_MS);
+      if (this.restartTimes.length >= MAX_RESTARTS) {
+        this.options.onState?.({ phase: 'failed', port: this.port, message: failure });
+        return;
       }
-    } finally {
-      this.recovering = false;
+      this.restartTimes.push(now);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+      if (this.stopping) return;
+      this.spawnProcess();
+      this.options.onState?.({ phase: 'starting', port: this.port });
+      try {
+        await this.waitUntilHealthy();
+        const adminUrl = await this.issueMagicLink();
+        this.options.onState?.({ phase: 'ready', port: this.port, adminUrl });
+        return;
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+        this.options.logger.write('desktop', `Recovery attempt failed: ${failure}`);
+        await this.terminateChild();
+      }
     }
   }
 
@@ -210,6 +265,7 @@ export class SidecarManager {
     const deadline = Date.now() + HEALTH_TIMEOUT_MS;
     let lastError = 'PMBrain did not report healthy.';
     while (Date.now() < deadline) {
+      if (this.stopping) throw new Error('PMBrain sidecar startup was stopped.');
       if (!this.child) throw new Error('PMBrain sidecar exited before it became healthy.');
       try {
         const response = await fetch(`http://127.0.0.1:${this.port}/health`, {

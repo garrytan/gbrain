@@ -17,8 +17,10 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
-import { readFile } from 'fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { extname, join as joinPath } from 'node:path';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -42,6 +44,7 @@ import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { resolveMainSourceId } from '../core/source-resolver.ts';
+import { isImageFilePath, isMarkdownFilePath, isOfficeFilePath } from '../core/sync.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import {
   computeContentHash,
@@ -63,6 +66,7 @@ import {
   previewIntent,
   resolveCliEntry,
   startActionRun,
+  startCaptureRun,
   startDreamRun,
   startImportRun,
   startMarkdownExportRun,
@@ -90,6 +94,67 @@ const ADMIN_README_CANDIDATES = [
 ];
 
 const ADMIN_DOCS_EMPTY_MARKDOWN = '暂无';
+
+export const ADMIN_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
+export type AdminUploadFileKind = 'markdown' | 'office' | 'image';
+
+/**
+ * Validate an untrusted browser-supplied basename without rewriting it.
+ * The encoded header carries only a display basename; the server chooses the
+ * parent directory, so a rejected name can never redirect the upload.
+ */
+export function normalizeAdminUploadFilename(value: unknown): string {
+  if (typeof value !== 'string' || !value) throw new Error('Upload filename is required');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value).normalize('NFC');
+  } catch {
+    throw new Error('Upload filename is invalid');
+  }
+  if (!decoded || decoded.length > 180 || decoded.trim() !== decoded) {
+    throw new Error('Upload filename is invalid');
+  }
+  if (decoded === '.' || decoded === '..' || decoded.startsWith('.') || /[<>:"/\\|?*\x00-\x1f\x7f]/.test(decoded)) {
+    throw new Error('Upload filename is invalid');
+  }
+  if (/[. ]$/.test(decoded)) throw new Error('Upload filename is invalid');
+  const stem = decoded.split('.')[0]!.toUpperCase();
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem)) {
+    throw new Error('Upload filename is reserved');
+  }
+  return decoded;
+}
+
+export function classifyAdminUploadFilename(fileName: string): AdminUploadFileKind {
+  const lower = fileName.toLowerCase();
+  if (isMarkdownFilePath(fileName)) return 'markdown';
+  if (isOfficeFilePath(lower)) return 'office';
+  if (isImageFilePath(lower)) return 'image';
+  throw new Error(`Unsupported file type: ${extname(fileName).toLowerCase() || '(none)'}`);
+}
+
+function firstQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+  return undefined;
+}
+
+function queryFlag(value: unknown, fallback: boolean): boolean {
+  const raw = firstQueryValue(value)?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  throw new Error('Upload option must be true or false');
+}
+
+async function removeAdminUploadTempDir(tempDir: string): Promise<void> {
+  try {
+    await rm(tempDir, { recursive: true, force: true });
+  } catch (e) {
+    console.error('[admin-upload] Temporary-file cleanup failed:', e instanceof Error ? e.message : e);
+  }
+}
 
 export async function loadAdminReadmeMarkdown(
   candidates: URL[] = ADMIN_README_CANDIDATES,
@@ -788,6 +853,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         afterComplete: () => engine.connect(toEngineConfig(config as GBrainConfig)),
       }
     : undefined;
+  // Import children need exclusive access to a PGLite brain. This tail also
+  // prevents the next attachment request from observing a terminal run before
+  // the previous run's asynchronous reconnect/cleanup hook has finished.
+  let adminUploadTail: Promise<void> = Promise.resolve();
 
   if (logFullParams) {
     console.error(
@@ -1655,6 +1724,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  app.post('/admin/api/capture-runs', requireAdmin, express.json({ limit: '64kb' }), async (req: Request, res: Response) => {
+    try {
+      const content = typeof req.body?.content === 'string' ? req.body.content : '';
+      const sourceId = typeof req.body?.sourceId === 'string' ? req.body.sourceId : undefined;
+      const run = await startCaptureRun(content, sourceId, process.cwd(), runHooks);
+      res.status(202).json({ runId: run.id, status: run.status });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'capture_run_failed' });
+    }
+  });
+
   app.get('/admin/api/runs', requireAdmin, (_req: Request, res: Response) => {
     res.json({ rows: listRuns() });
   });
@@ -1708,6 +1788,81 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.status(400).json({ error: e instanceof Error ? e.message : 'import_run_failed' });
     }
   });
+
+  app.post(
+    '/admin/api/import-upload-runs',
+    requireAdmin,
+    express.raw({ type: 'application/octet-stream', limit: ADMIN_UPLOAD_MAX_BYTES }),
+    async (req: Request, res: Response) => {
+      let tempDir: string | null = null;
+      let releaseUploadSlot: (() => void) | null = null;
+      let uploadSlotReleased = false;
+      const releaseUpload = () => {
+        if (uploadSlotReleased) return;
+        uploadSlotReleased = true;
+        releaseUploadSlot?.();
+      };
+      try {
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+          res.status(400).json({ error: 'Upload body is required' });
+          return;
+        }
+        const fileName = normalizeAdminUploadFilename(req.get('x-pmbrain-filename'));
+        const fileKind = classifyAdminUploadFilename(fileName);
+        const workersRaw = firstQueryValue(req.query.workers);
+        const workers = workersRaw ? Number(workersRaw) : 1;
+        if (!Number.isInteger(workers) || workers < 1 || workers > 8) {
+          throw new Error('Upload workers must be an integer from 1 to 8');
+        }
+
+        const previousUpload = adminUploadTail;
+        adminUploadTail = new Promise<void>((resolve) => {
+          releaseUploadSlot = resolve;
+        });
+        await previousUpload;
+
+        tempDir = await mkdtemp(joinPath(tmpdir(), 'pmbrain-admin-upload-'));
+        const filePath = joinPath(tempDir, fileName);
+        await writeFile(filePath, req.body, { flag: 'wx', mode: 0o600 });
+
+        const cleanup = async () => {
+          if (tempDir) await removeAdminUploadTempDir(tempDir);
+        };
+        const uploadRunHooks = {
+          beforeSpawn: runHooks?.beforeSpawn,
+          afterComplete: async () => {
+            try {
+              await runHooks?.afterComplete?.();
+            } finally {
+              await cleanup();
+              releaseUpload();
+            }
+          },
+        };
+        const run = await startImportRun(engine, {
+          path: filePath,
+          sourceId: firstQueryValue(req.query.sourceId),
+          includeOffice: fileKind === 'office',
+          includeImages: fileKind === 'image',
+          noEmbed: !queryFlag(req.query.autoEmbed, true),
+          workers,
+        }, process.cwd(), uploadRunHooks);
+
+        // beforeSpawn failures return a terminal run without invoking
+        // afterComplete, so release the staging directory here as well.
+        if (run.status !== 'running' && run.status !== 'queued') {
+          await cleanup();
+          releaseUpload();
+        }
+        res.status(202).json({ runId: run.id, status: run.status, fileName });
+      } catch (e) {
+        if (tempDir) await removeAdminUploadTempDir(tempDir);
+        releaseUpload();
+        const message = e instanceof Error ? e.message : 'import_upload_run_failed';
+        res.status(message.startsWith('Unsupported file type:') ? 415 : 400).json({ error: message });
+      }
+    },
+  );
 
   app.post('/admin/api/export-runs', requireAdmin, express.json({ limit: '8kb' }), async (req: Request, res: Response) => {
     const rootPath = typeof req.body?.rootPath === 'string' ? req.body.rootPath : '';

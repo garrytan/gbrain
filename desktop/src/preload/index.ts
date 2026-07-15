@@ -1,26 +1,59 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { SidecarState } from '../main/sidecar-manager.js';
-import type { DesktopTheme, SetupInfo, SetupPayload } from '../main/config-manager.js';
+import type {
+  DesktopCloseBehavior,
+  DesktopNetworkMode,
+  DesktopPreferences,
+  DesktopTheme,
+  SetupInfo,
+  SetupPayload,
+} from '../main/config-manager.js';
 import type { AdvancedModelConfig, AdvancedModelTier } from '../main/advanced-model-config.js';
-import type { CredentialKind, IntegrationClient, IntegrationInfo, IntegrationResult } from '../main/integration-manager.js';
+import type {
+  CredentialKind,
+  IntegrationClient,
+  IntegrationInfo,
+  IntegrationResult,
+  SharedAccessContext,
+  SharedCredentialInfo,
+  SharedIntegrationPayload,
+  SharedIntegrationResult,
+  SharedSourceInfo,
+} from '../main/integration-manager.js';
 import type { UpdateState } from '../main/update-manager.js';
 import type { DesktopModelTouchpoint, DesktopProviderModels } from '../main/model-catalog.js';
+import type {
+  DesktopSystemSettingsPayload,
+  DesktopSystemSettingsSaveResult,
+  DesktopSystemSettingsState,
+} from '../main/system-settings.js';
 
 export type {
   AdvancedModelConfig,
   AdvancedModelTier,
   CredentialKind,
+  DesktopCloseBehavior,
+  DesktopNetworkMode,
+  DesktopPreferences,
+  DesktopSystemSettingsPayload,
+  DesktopSystemSettingsSaveResult,
+  DesktopSystemSettingsState,
   DesktopTheme,
   IntegrationClient,
   IntegrationInfo,
   IntegrationResult,
+  SharedAccessContext,
+  SharedCredentialInfo,
+  SharedIntegrationPayload,
+  SharedIntegrationResult,
+  SharedSourceInfo,
   SetupInfo,
   SetupPayload,
   SidecarState,
   UpdateState,
 };
 
-export type DesktopSettingsPanel = 'basic' | 'models' | 'integrations' | 'updates';
+export type DesktopSettingsPanel = 'basic' | 'models' | 'integrations' | 'updates' | 'system';
 
 export interface DesktopThemeState {
   source: DesktopTheme;
@@ -30,7 +63,7 @@ export interface DesktopThemeState {
 
 export interface StartupProgress {
   visible: boolean;
-  stage: 'migration' | 'sidecar' | 'health';
+  stage: 'database' | 'migration' | 'sidecar' | 'health';
   title: string;
   message: string;
 }
@@ -55,6 +88,12 @@ export interface PMBrainDesktopApi {
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   onShowUpdates(listener: () => void): () => void;
   onShowPanel(listener: (panel: DesktopSettingsPanel) => void): () => void;
+  getSystemSettings(): Promise<DesktopSystemSettingsState>;
+  saveSystemSettings(payload: DesktopSystemSettingsPayload): Promise<DesktopSystemSettingsSaveResult>;
+  onSystemSettingsState(listener: (state: DesktopSystemSettingsState) => void): () => void;
+  getSharedAccess(): Promise<SharedAccessContext>;
+  createSharedIntegration(payload: SharedIntegrationPayload): Promise<SharedIntegrationResult>;
+  revokeSharedIntegration(credentialName: string): Promise<SharedAccessContext>;
   chooseDirectory(initialPath?: string): Promise<string | null>;
   getProviderModels(provider: string, touchpoint: DesktopModelTouchpoint): Promise<DesktopProviderModels>;
   getAdvancedModelConfig(): Promise<AdvancedModelConfig>;
@@ -108,6 +147,16 @@ const api: PMBrainDesktopApi = {
     ipcRenderer.on('desktop:show-panel', handler);
     return () => ipcRenderer.removeListener('desktop:show-panel', handler);
   },
+  getSystemSettings: () => ipcRenderer.invoke('desktop:get-system-settings'),
+  saveSystemSettings: (payload) => ipcRenderer.invoke('desktop:save-system-settings', payload),
+  onSystemSettingsState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: DesktopSystemSettingsState) => listener(state);
+    ipcRenderer.on('desktop:system-settings-state', handler);
+    return () => ipcRenderer.removeListener('desktop:system-settings-state', handler);
+  },
+  getSharedAccess: () => ipcRenderer.invoke('desktop:get-shared-access'),
+  createSharedIntegration: (payload) => ipcRenderer.invoke('desktop:create-shared-integration', payload),
+  revokeSharedIntegration: (credentialName) => ipcRenderer.invoke('desktop:revoke-shared-integration', credentialName),
   chooseDirectory: (initialPath) => ipcRenderer.invoke('desktop:choose-directory', initialPath),
   getProviderModels: (provider, touchpoint) => ipcRenderer.invoke('desktop:get-provider-models', provider, touchpoint),
   getAdvancedModelConfig: () => ipcRenderer.invoke('desktop:get-advanced-model-config'),

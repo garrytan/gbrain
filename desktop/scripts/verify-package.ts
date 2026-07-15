@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -72,6 +73,73 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+const rootVersionPath = join(desktopRoot, '..', 'VERSION');
+const rootPackagePath = join(desktopRoot, '..', 'package.json');
+const runtimePackagePath = join(runtimeRoot, 'package.json');
+const bunPath = join(runtimeRoot, 'bun.exe');
+const sidecarPath = join(runtimeRoot, 'pmbrain-sidecar.js');
+const versionErrors: string[] = [];
+
+function readPackageVersion(path: string, label: string): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown };
+    if (typeof parsed.version === 'string' && parsed.version.trim().length > 0) {
+      return parsed.version.trim();
+    }
+    versionErrors.push(`${label} does not contain a non-empty string version: ${path}`);
+  } catch (error) {
+    versionErrors.push(`${label} could not be read: ${path} (${error instanceof Error ? error.message : String(error)})`);
+  }
+  return undefined;
+}
+
+let rootVersion: string | undefined;
+try {
+  rootVersion = readFileSync(rootVersionPath, 'utf8').replace(/^\uFEFF/, '').trim();
+  if (!rootVersion) versionErrors.push(`Root VERSION is empty: ${rootVersionPath}`);
+} catch (error) {
+  versionErrors.push(`Root VERSION could not be read: ${rootVersionPath} (${error instanceof Error ? error.message : String(error)})`);
+}
+
+const rootPackageVersion = readPackageVersion(rootPackagePath, 'Root package.json');
+const runtimePackageVersion = readPackageVersion(runtimePackagePath, 'Packaged runtime package.json');
+if (rootVersion && rootPackageVersion && rootPackageVersion !== rootVersion) {
+  versionErrors.push(`Root version mismatch: VERSION=${rootVersion}, package.json=${rootPackageVersion}`);
+}
+if (rootVersion && runtimePackageVersion && runtimePackageVersion !== rootVersion) {
+  versionErrors.push(`Packaged runtime version mismatch: expected ${rootVersion}, package.json=${runtimePackageVersion}`);
+}
+
+const sidecarVersionResult = spawnSync(bunPath, [sidecarPath, '--version'], {
+  cwd: runtimeRoot,
+  encoding: 'utf8',
+  shell: false,
+  timeout: 30_000,
+  windowsHide: true,
+});
+const sidecarVersionOutput = `${sidecarVersionResult.stdout ?? ''}\n${sidecarVersionResult.stderr ?? ''}`.trim();
+const sidecarVersionMatch = sidecarVersionOutput
+  .split(/\r?\n/)
+  .map((line) => line.trim().match(/^pmbrain\s+v?([^\s]+)$/i))
+  .find((match) => match !== null);
+const sidecarReportedVersion = sidecarVersionMatch?.[1];
+
+if (sidecarVersionResult.error) {
+  versionErrors.push(`Packaged sidecar --version failed: ${sidecarVersionResult.error.message}`);
+} else if (sidecarVersionResult.status !== 0) {
+  versionErrors.push(`Packaged sidecar --version exited with code ${sidecarVersionResult.status ?? 'unknown'}`);
+} else if (!sidecarReportedVersion) {
+  versionErrors.push('Packaged sidecar --version did not report "pmbrain <version>".');
+} else if (rootVersion && sidecarReportedVersion !== rootVersion) {
+  versionErrors.push(`Packaged sidecar version mismatch: expected ${rootVersion}, reported ${sidecarReportedVersion}`);
+}
+
+if (versionErrors.length > 0) {
+  console.error('Desktop package verification failed. Version contract mismatch:');
+  for (const error of versionErrors) console.error(`- ${error}`);
+  process.exit(1);
+}
+
 const forbiddenPatterns = [
   'D:\\cursor-claude',
   'D:/cursor-claude',
@@ -118,4 +186,4 @@ if (leaked.length > 0) {
   process.exit(1);
 }
 
-console.log(`Desktop package verified: ${requiredFiles.length} required runtime files are present and no build-machine paths leaked.`);
+console.log(`Desktop package verified: ${requiredFiles.length} required runtime files are present, runtime version ${rootVersion} matches, and no build-machine paths leaked.`);

@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { AgentsPage } from './Agents';
 import { ChatGptTunnelPanel } from './ChatGptTunnel';
 import { RunOutput, InfoIcon, formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun, type BrainPageChunk } from '../lib/shared';
@@ -337,6 +337,48 @@ export const NATURAL_HISTORY_LIMIT = 5;
 // Backend authority: src/commands/natural-lang/types.ts.
 const MAX_NATURAL_TASK_CHARACTERS = 10_000;
 
+const MAX_KNOWLEDGE_ATTACHMENTS = 10;
+const MAX_KNOWLEDGE_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const KNOWLEDGE_ATTACHMENT_EXTENSIONS = new Set([
+  '.md', '.mdx', '.docx', '.doc', '.wps', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif', '.avif',
+]);
+const KNOWLEDGE_ATTACHMENT_ACCEPT = Array.from(KNOWLEDGE_ATTACHMENT_EXTENSIONS).join(',');
+
+interface KnowledgeAttachment {
+  id: string;
+  file: File;
+}
+
+function attachmentExtension(name: string): string {
+  const index = name.lastIndexOf('.');
+  return index > -1 ? name.slice(index).toLowerCase() : '';
+}
+
+function attachmentSizeLabel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function looksLikeLocalImportPath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || /[\r\n]/.test(trimmed)) return false;
+  if (/^(?:[a-zA-Z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/.test(trimmed)) return true;
+  return /^[^<>:"|?*\r\n]+\.(?:md|mdx|docx|doc|wps|pdf|xlsx|xlsm|xls|csv|png|jpe?g|gif|webp|heic|heif|avif)$/i.test(trimmed);
+}
+
+async function waitForConsoleRun(runId: string, onUpdate: (run: ConsoleRun) => void): Promise<ConsoleRun> {
+  let current = await api.run(runId) as ConsoleRun;
+  onUpdate(current);
+  while (current.status === 'queued' || current.status === 'running') {
+    await new Promise(resolve => window.setTimeout(resolve, 800));
+    current = await api.run(runId) as ConsoleRun;
+    onUpdate(current);
+  }
+  return current;
+}
+
 function loadNaturalHistory(): NaturalTaskHistoryItem[] {
   try {
     const raw = localStorage.getItem(NATURAL_HISTORY_KEY);
@@ -522,8 +564,88 @@ function NaturalLanguagePanel({
   const [history, setHistory] = useState<NaturalTaskHistoryItem[]>(() => loadNaturalHistory());
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(initialWorkspace.activeHistoryId);
   const [pendingContext, setPendingContext] = useState(initialWorkspace.pendingContext);
+  const [attachments, setAttachments] = useState<KnowledgeAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [attachmentProgress, setAttachmentProgress] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inputLength = text.length;
   const inputTooLong = inputLength > MAX_NATURAL_TASK_CHARACTERS;
+
+  const addAttachments = (files: File[]) => {
+    if (files.length === 0) return;
+    const existing = new Set(attachments.map(item => item.id));
+    const accepted: KnowledgeAttachment[] = [];
+    const warnings: string[] = [];
+
+    for (const file of files) {
+      const extension = attachmentExtension(file.name);
+      const id = `${file.name}:${file.size}:${file.lastModified}`;
+      const unsupportedMarkdownCase = (extension === '.md' || extension === '.mdx') && !file.name.endsWith(extension);
+      if (!KNOWLEDGE_ATTACHMENT_EXTENSIONS.has(extension) || unsupportedMarkdownCase) {
+        warnings.push(`不支持 ${file.name} 的文件格式`);
+        continue;
+      }
+      if (file.size === 0) {
+        warnings.push(`${file.name} 是空文件`);
+        continue;
+      }
+      if (file.size > MAX_KNOWLEDGE_ATTACHMENT_BYTES) {
+        warnings.push(`${file.name} 超过 ${attachmentSizeLabel(MAX_KNOWLEDGE_ATTACHMENT_BYTES)} 限制`);
+        continue;
+      }
+      if (existing.has(id)) continue;
+      existing.add(id);
+      accepted.push({ id, file });
+    }
+
+    const available = Math.max(0, MAX_KNOWLEDGE_ATTACHMENTS - attachments.length);
+    if (accepted.length > available) warnings.push(`一次最多添加 ${MAX_KNOWLEDGE_ATTACHMENTS} 个文件`);
+    setAttachments(current => [...current, ...accepted.slice(0, available)]);
+    setAttachmentError(warnings.join('；'));
+    setSubmitClicked(false);
+    setExecuteClicked(false);
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments(current => current.filter(item => item.id !== id));
+    setAttachmentError('');
+  };
+
+  const handleAttachmentPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [
+      ...Array.from(event.clipboardData.files),
+      ...Array.from(event.clipboardData.items)
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter((file): file is File => Boolean(file)),
+    ];
+    if (files.length === 0) return;
+    event.preventDefault();
+    addAttachments(files);
+  };
+
+  const uploadAttachmentRuns = async (files: KnowledgeAttachment[]): Promise<ConsoleRun> => {
+    let lastRun: ConsoleRun | null = null;
+    for (let index = 0; index < files.length; index++) {
+      const attachment = files[index];
+      setAttachmentProgress(`正在导入 ${index + 1}/${files.length}：${attachment.file.name}`);
+      const response = await api.startImportUploadRun(attachment.file, {
+        sourceId: importOptions?.sourceId,
+        autoEmbed: importOptions?.autoEmbed ?? true,
+        workers: importOptions?.workers ?? 1,
+      }) as { runId: string };
+      lastRun = await waitForConsoleRun(response.runId, setRun);
+      if (lastRun.status !== 'completed') {
+        const fallback = lastRun.status === 'cancelled'
+          ? `${attachment.file.name} 导入已取消`
+          : `${attachment.file.name} 导入失败`;
+        throw new Error(lastRun.error || lastRun.stderr || fallback);
+      }
+      setAttachments(current => current.filter(item => item.id !== attachment.id));
+    }
+    if (!lastRun) throw new Error('没有可导入的附件');
+    return lastRun;
+  };
 
   const upsertHistory = (item: NaturalTaskHistoryItem) => {
     setHistory(current => {
@@ -553,32 +675,66 @@ function NaturalLanguagePanel({
     }
   };
 
-  const launchPreview = async (nextPreview: IntentPreview, historyItem: NaturalTaskHistoryItem, confirmed: boolean) => {
+  const launchPreview = async (nextPreview: IntentPreview, historyItem: NaturalTaskHistoryItem, confirmed: boolean): Promise<ConsoleRun> => {
     const res = await api.executeIntent(nextPreview.previewId, confirmed) as { runId: string };
     const first = await api.run(res.runId) as ConsoleRun;
     setRun(first);
     upsertHistory({ ...historyItem, preview: nextPreview, run: first });
+    return first;
   };
 
   const submitAuto = async () => {
-    if (!text.trim() || inputTooLong) return;
+    if ((!text.trim() && attachments.length === 0) || inputTooLong) return;
     setSubmitClicked(true);
     setExecuteClicked(false);
     setLoading(true);
     setError('');
+    setAttachmentError('');
     setPreview(null);
     setRun(null);
-    const prompt = pendingContext
-      ? `原始请求：${pendingContext}\n用户补充：${text.trim()}`
-      : text.trim();
+    const attachedFiles = [...attachments];
+    const attachedNames = attachedFiles.map(item => item.file.name);
+    const requestText = text.trim() || '请阅读并整理这些文件。';
+    const basePrompt = pendingContext
+      ? `原始请求：${pendingContext}\n用户补充：${requestText}`
+      : requestText;
+    const prompt = attachedNames.length > 0
+      ? `以下附件已经由系统完成导入：${attachedNames.join('、')}。不要再次请求文件路径或重复执行导入。\n用户对已导入内容的要求：${basePrompt}`
+      : basePrompt;
     const historyItem: NaturalTaskHistoryItem = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      text: prompt,
+      text: basePrompt,
       createdAt: new Date().toISOString(),
     };
     setActiveHistoryId(historyItem.id);
     try {
+      let attachmentRun: ConsoleRun | null = null;
+      if (attachedFiles.length > 0) {
+        attachmentRun = await uploadAttachmentRuns(attachedFiles);
+        setAttachments([]);
+      }
       const nextPreview = await api.previewIntent(prompt) as IntentPreview;
+      const repeatedAttachmentImport = attachmentRun && (
+        nextPreview.intent === 'import_path'
+        || /(?:本地)?(?:文件|文件夹)?路径|文件夹位置/u.test(nextPreview.clarification ?? '')
+      );
+      if (repeatedAttachmentImport && attachmentRun) {
+        const importedPreview: IntentPreview = {
+          previewId: `attachment-import-${Date.now()}`,
+          intent: 'import_path',
+          confidence: 1,
+          slots: { files: attachedNames },
+          proposedAction: `附件已导入知识库：${attachedNames.join('、')}`,
+          riskLevel: 'write',
+          requiresConfirmation: false,
+        };
+        setPreview(importedPreview);
+        setRun(attachmentRun);
+        setPendingContext('');
+        setText('');
+        upsertHistory({ ...historyItem, preview: importedPreview, run: attachmentRun });
+        return;
+      }
       setPreview(nextPreview);
       upsertHistory({ ...historyItem, preview: nextPreview });
       if (nextPreview.clarification) {
@@ -586,38 +742,55 @@ function NaturalLanguagePanel({
         setText('');
       } else {
         setPendingContext('');
-        if (!nextPreview.requiresConfirmation) await launchPreview(nextPreview, historyItem, false);
+        if (!nextPreview.requiresConfirmation) {
+          const first = await launchPreview(nextPreview, historyItem, false);
+          const completed = await waitForConsoleRun(first.id, setRun);
+          upsertHistory({ ...historyItem, preview: nextPreview, run: completed });
+          if (completed.status === 'completed') setText('');
+        }
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
       upsertHistory({ ...historyItem, error: message });
     } finally {
+      setAttachmentProgress('');
       setLoading(false);
     }
   };
 
   const startDirect = async (kind: 'import' | 'search') => {
     const value = text.trim();
-    if (!value || inputTooLong) return;
+    const attachedFiles = kind === 'import' ? [...attachments] : [];
+    if ((kind === 'search' ? !value : !value && attachedFiles.length === 0) || inputTooLong) return;
     setSubmitClicked(true);
     setExecuteClicked(false);
     setLoading(true);
     setError('');
+    setAttachmentError('');
     setRun(null);
     setPendingContext('');
+    const attachedNames = attachedFiles.map(item => item.file.name);
+    const displayValue = attachedNames.length > 0 ? attachedNames.join('、') : value;
+    const captureText = kind === 'import' && attachedFiles.length === 0 && !looksLikeLocalImportPath(value);
     const directPreview: IntentPreview = {
       previewId: `direct-${Date.now()}`,
-      intent: kind === 'search' ? 'search_brain' : 'import_path',
+      intent: kind === 'search' ? 'search_brain' : captureText ? 'capture_memory' : 'import_path',
       confidence: 1,
-      slots: kind === 'search' ? { query: value } : { path: value },
-      proposedAction: kind === 'search' ? `综合回答：${value}` : `导入路径：${value}`,
+      slots: kind === 'search' ? { query: value } : captureText ? { content: value } : attachedNames.length > 0 ? { files: attachedNames } : { path: value },
+      proposedAction: kind === 'search'
+        ? `综合回答：${value}`
+        : captureText
+          ? `保存完整文本到知识库（共 ${value.length.toLocaleString('zh-CN')} 字）`
+          : attachedNames.length > 0
+            ? `导入文件：${displayValue}`
+            : `导入路径：${value}`,
       riskLevel: kind === 'search' ? 'read' : 'write',
       requiresConfirmation: false,
     };
     const historyItem: NaturalTaskHistoryItem = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      text: value,
+      text: displayValue,
       createdAt: new Date().toISOString(),
       preview: directPreview,
     };
@@ -625,17 +798,27 @@ function NaturalLanguagePanel({
     setPreview(directPreview);
     upsertHistory(historyItem);
     try {
-      const response = kind === 'search'
-        ? await api.startThinkRun(value) as { runId: string }
-        : await api.startImportRun({
-          path: value,
-          sourceId: importOptions?.sourceId,
-          includeOffice: importOptions?.includeOffice ?? true,
-          includeImages: importOptions?.includeImages ?? false,
-          autoEmbed: importOptions?.autoEmbed ?? true,
-          workers: importOptions?.workers ?? 1,
-        }) as { runId: string };
-      const first = await api.run(response.runId) as ConsoleRun;
+      let first: ConsoleRun;
+      if (kind === 'import' && attachedFiles.length > 0) {
+        first = await uploadAttachmentRuns(attachedFiles);
+        setAttachments([]);
+      } else if (captureText) {
+        const response = await api.startCaptureRun(value, importOptions?.sourceId) as { runId: string };
+        first = await waitForConsoleRun(response.runId, setRun);
+        if (first.status === 'completed') setText('');
+      } else {
+        const response = kind === 'search'
+          ? await api.startThinkRun(value) as { runId: string }
+          : await api.startImportRun({
+            path: value,
+            sourceId: importOptions?.sourceId,
+            includeOffice: importOptions?.includeOffice ?? true,
+            includeImages: importOptions?.includeImages ?? false,
+            autoEmbed: importOptions?.autoEmbed ?? true,
+            workers: importOptions?.workers ?? 1,
+          }) as { runId: string };
+        first = await api.run(response.runId) as ConsoleRun;
+      }
       setRun(first);
       upsertHistory({ ...historyItem, run: first });
     } catch (e) {
@@ -643,6 +826,7 @@ function NaturalLanguagePanel({
       setError(message);
       upsertHistory({ ...historyItem, error: message });
     } finally {
+      setAttachmentProgress('');
       setLoading(false);
     }
   };
@@ -660,7 +844,13 @@ function NaturalLanguagePanel({
     setLoading(true);
     setError('');
     try {
-      await launchPreview(preview, historyItem, confirmed);
+      const first = await launchPreview(preview, historyItem, confirmed);
+      const completed = await waitForConsoleRun(first.id, setRun);
+      upsertHistory({ ...historyItem, preview, run: completed });
+      if (completed.status === 'completed') {
+        setText('');
+        setPendingContext('');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -712,20 +902,82 @@ function NaturalLanguagePanel({
           {compact && <button className="pm-ghost" onClick={() => onNavigate?.('import')}>完整视图</button>}
         </div>
         {pendingContext && <div className="assistant-followup">请补充上一个问题需要的信息，发送后会继续判断。</div>}
-        <textarea
-          value={text}
-          onChange={e => {
-            setText(e.target.value);
-            setSubmitClicked(false);
-            setExecuteClicked(false);
-          }}
-          placeholder={pendingContext ? '在这里补充路径、Source 或其他缺少的信息…' : '输入本地文件路径、知识库问题，或直接告诉 AI 你想做什么…'}
-          rows={compact ? 4 : 6}
-        />
+        <div className="assistant-composer">
+          {attachments.length > 0 && (
+            <div className="assistant-attachments" role="list" aria-label={`已添加 ${attachments.length} 个文件`}>
+              {attachments.map(attachment => {
+                const extension = attachmentExtension(attachment.file.name).slice(1).toUpperCase();
+                return (
+                  <div className="assistant-attachment-chip" role="listitem" key={attachment.id}>
+                    <span className="assistant-file-type" aria-hidden="true">{extension.slice(0, 4) || 'FILE'}</span>
+                    <span className="assistant-file-copy">
+                      <strong title={attachment.file.name}>{attachment.file.name}</strong>
+                      <small>{attachmentSizeLabel(attachment.file.size)}</small>
+                    </span>
+                    <button
+                      type="button"
+                      className="assistant-remove-file"
+                      aria-label={`移除文件 ${attachment.file.name}`}
+                      title="移除文件"
+                      onClick={() => removeAttachment(attachment.id)}
+                      disabled={loading}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <textarea
+            value={text}
+            onChange={e => {
+              setText(e.target.value);
+              setSubmitClicked(false);
+              setExecuteClicked(false);
+            }}
+            onPaste={handleAttachmentPaste}
+            placeholder={pendingContext ? '在这里补充路径、Source 或其他缺少的信息…' : '输入要保存的正文、本地文件路径或知识库问题；也可点击 + 或直接粘贴文件…'}
+            rows={compact ? 4 : 6}
+          />
+          <div className="assistant-composer-footer">
+            <input
+              ref={fileInputRef}
+              className="assistant-file-input"
+              type="file"
+              multiple
+              accept={KNOWLEDGE_ATTACHMENT_ACCEPT}
+              aria-label="选择本地文件"
+              tabIndex={-1}
+              onChange={event => {
+                addAttachments(Array.from(event.target.files ?? []));
+                event.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              className="assistant-attach-button"
+              aria-label="添加本地文件"
+              title="添加本地文件"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading || attachments.length >= MAX_KNOWLEDGE_ATTACHMENTS}
+            >
+              +
+            </button>
+            <span
+              className="assistant-attachment-help"
+              aria-live="polite"
+              title="支持 Markdown、Office/PDF/表格和图片，单个文件不超过 50 MB"
+            >
+              {attachmentProgress || (attachments.length > 0 ? `已添加 ${attachments.length} 个文件` : '选择文件，也可以从资源管理器复制后粘贴')}
+            </span>
+          </div>
+        </div>
         <div className={`nl-input-meta ${inputTooLong ? 'is-over-limit' : ''}`}>
-          <span>导入和搜索会一步执行；其他任务由 AI 判断，需要信息时再追问。</span>
+          <span>{attachments.length > 0 ? '导入会处理附件；发送会先导入再按文字要求处理；搜索只使用文字。' : '导入可保存正文或导入路径；搜索会一步执行；发送由 AI 判断后处理。'}</span>
           <strong>{inputLength.toLocaleString('zh-CN')} / {MAX_NATURAL_TASK_CHARACTERS.toLocaleString('zh-CN')} 字</strong>
         </div>
+        {attachmentError && <div className="pm-error-text" role="alert">{attachmentError}</div>}
         {inputTooLong && (
           <div className="pm-error-text">已超出 {(inputLength - MAX_NATURAL_TASK_CHARACTERS).toLocaleString('zh-CN')} 字，请缩短后发送；系统不会静默截断内容。</div>
         )}
@@ -734,7 +986,7 @@ function NaturalLanguagePanel({
             type="button"
             className="pm-assistant-action import-action"
             onClick={() => void startDirect('import')}
-            disabled={loading || !text.trim() || inputTooLong}
+            disabled={loading || (!text.trim() && attachments.length === 0) || inputTooLong}
           >
             <span className="assistant-action-icon" aria-hidden="true">↥</span>
             <span className="assistant-action-copy"><strong>导入</strong></span>
@@ -752,7 +1004,7 @@ function NaturalLanguagePanel({
             type="button"
             className={`pm-assistant-action ai-action ${submitClicked ? 'pm-clicked' : ''}`}
             onClick={() => void submitAuto()}
-            disabled={loading || !text.trim() || inputTooLong}
+            disabled={loading || (!text.trim() && attachments.length === 0) || inputTooLong}
           >
             <span className="assistant-action-icon" aria-hidden="true">✦</span>
             <span className="assistant-action-copy"><strong>{loading ? '处理中…' : '发送'}</strong></span>
@@ -848,13 +1100,13 @@ export function ImportDataPage() {
         <div>
           <div className="pm-eyebrow">IMPORT · SEARCH · ASK</div>
           <h1>知识工作台</h1>
-          <p>粘贴路径直接导入；其他需求直接发送给 AI，由它判断下一步。</p>
+          <p>输入正文、路径或添加文件；导入会直接保存，其他需求可搜索或发送给 AI。</p>
         </div>
         <div className="assistant-pulse" aria-hidden="true"><i /><i /><i /></div>
       </section>
       {error && <div className="pm-card pm-error">{error}</div>}
       {overview && !overview.llm_enabled && (
-        <div className="pm-card pm-warning">搜索综合和 AI 意图识别需要普通模型；本地路径导入仍可直接使用。</div>
+        <div className="pm-card pm-warning">搜索综合和 AI 意图识别需要普通模型；正文、路径和附件导入仍可直接使用。</div>
       )}
       <details className="pm-card import-options">
         <summary>导入选项 <span>默认写入 {overview?.main_source_id ?? '主知识库源'}</span></summary>

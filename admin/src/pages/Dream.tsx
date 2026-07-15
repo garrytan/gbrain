@@ -257,7 +257,9 @@ function useDreamData() {
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
-    setLoading(true);
+    // Keep the current Dream page mounted during background refreshes. Replacing
+    // it with the initial loading screen resets the user's scroll anchor.
+    if (!data) setLoading(true);
     try {
       setData(await api.dreamOverview() as DreamData);
       setError('');
@@ -319,12 +321,14 @@ function PhaseRail({ catalog, active }: { catalog: string[]; active?: string }) 
 }
 
 const DREAM_LAST_RUN_KEY = 'pmbrain.dream.lastRunId';
+const DREAM_RUN_MODE_KEY = 'pmbrain.dream.runMode';
 
 interface DreamPhaseReport {
   phase: string;
   status: string;
   summary?: string;
   details?: Record<string, unknown>;
+  pagesAffected?: string[];
   error?: { class?: string; code?: string; message?: string; hint?: string };
 }
 
@@ -398,6 +402,8 @@ export function describeDreamRun(run: ConsoleRun): {
   const pagesWritten = Number(totals.synth_pages_written ?? synthDetails.pages_written ?? 0);
   const patternsWritten = Number(totals.patterns_written ?? 0);
   const pagesSynced = Number(totals.pages_synced ?? 0);
+  const syncPhase = report?.phases?.find(phase => phase.phase === 'sync');
+  const syncedPages = asStringArray(syncPhase?.pagesAffected);
   const pagesEmbedded = Number(totals.pages_embedded ?? 0);
   const takesWritten = Number(totals.consolidate_takes_written ?? 0);
   const transcriptsProcessed = Number(totals.transcripts_processed ?? synthDetails.transcripts_processed ?? 0);
@@ -476,7 +482,11 @@ export function describeDreamRun(run: ConsoleRun): {
 
   if (!isDryRun && patternsWritten > 0) outputs.push(`写入或更新 ${patternsWritten} 个模式知识页。`);
   if (!isDryRun && takesWritten > 0) outputs.push(`形成 ${takesWritten} 条长期知识判断。`);
-  if (!isDryRun && pagesSynced > 0) outputs.push(`同步 ${pagesSynced} 个新增或有变化的页面。`);
+  if (!isDryRun && pagesSynced > 0) {
+    outputs.push(syncedPages.length > 0
+      ? `检测到 ${pagesSynced} 个待同步文件，实际写入 ${syncedPages.length} 个页面。`
+      : `检测到 ${pagesSynced} 个待同步文件；本次运行记录未提供实际写入页面明细。`);
+  }
   if (!isDryRun && pagesEmbedded > 0) outputs.push(`为 ${pagesEmbedded} 个内容块更新搜索索引。`);
 
   const totalKnowledgeUpdates = pagesWritten + patternsWritten + takesWritten;
@@ -622,8 +632,14 @@ export function phaseSummaryZh(phase: DreamPhaseReport): string {
       return number('gaps') > 0
         ? `发现 ${number('gaps')} 条缺失的反向链接；本轮只检查，没有改写原文。`
         : '未发现缺失的反向链接。';
-    case 'sync':
-      return `已同步资料：新增 ${number('added')} 项，更新 ${number('modified')} 项，删除 ${number('deleted')} 项。`;
+    case 'sync': {
+      const candidates = number('added') + number('modified') + number('deleted');
+      const failed = number('failedFiles');
+      const result = Array.isArray(phase.pagesAffected)
+        ? `实际写入 ${phase.pagesAffected.length} 个页面`
+        : '本次运行记录未提供实际写入明细';
+      return `检测到 ${candidates} 个待同步文件，${result}${failed > 0 ? `，${failed} 个文件解析失败` : ''}。`;
+    }
     case 'extract':
       return `已建立 ${number('linksCreated')} 条知识链接和 ${number('timelineCreated')} 条时间线记录。`;
     case 'extract_facts':
@@ -664,7 +680,15 @@ function DreamTechnicalDetails({ run }: { run: ConsoleRun }) {
                   <td><span className={`pm-pill run-${phase.status}`}>{phaseStatusZh(phase.status)}</span></td>
                   <td>{String(details.model_id ?? details.verdict_model_id ?? '—')}</td>
                   <td>{tokens > 0 ? tokens.toLocaleString() : '—'}</td>
-                  <td>{phaseSummaryZh(phase)}</td>
+                  <td>
+                    {phaseSummaryZh(phase)}
+                    {phase.phase === 'sync' && (phase.pagesAffected?.length ?? 0) > 0 && (
+                      <details className="dream-sync-pages">
+                        <summary>查看实际写入的 {phase.pagesAffected?.length ?? 0} 个页面</summary>
+                        <ul>{phase.pagesAffected?.map((slug, index) => <li key={`${slug}:${index}`}><code>{slug}</code></li>)}</ul>
+                      </details>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -835,7 +859,12 @@ function DreamRunPanel({
   const [to, setTo] = useState('');
   const [dryRun, setDryRun] = useState(false);
   const [timeoutMinutes, setTimeoutMinutes] = useState('120');
-  const [runMode, setRunMode] = useState<DreamRunMode>(defaultPhase === 'all' ? 'cycle' : 'advanced');
+  const [runMode, setRunMode] = useState<DreamRunMode>(() => {
+    const saved = window.localStorage.getItem(DREAM_RUN_MODE_KEY);
+    return saved === 'meeting' || saved === 'cycle' || saved === 'advanced'
+      ? saved
+      : defaultPhase === 'all' ? 'cycle' : 'advanced';
+  });
 
   const isAllPhase = phase === 'all';
   const [run, setRun] = useState<ConsoleRun | null>(null);
@@ -859,6 +888,7 @@ function DreamRunPanel({
   const applyRunMode = (mode: DreamRunMode) => {
     setError('');
     setRunMode(mode);
+    window.localStorage.setItem(DREAM_RUN_MODE_KEY, mode);
     if (mode === 'meeting') {
       setPhase('all');
       setSourceId('');

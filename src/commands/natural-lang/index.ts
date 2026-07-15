@@ -24,6 +24,8 @@ export { startRun, getRun, listRuns, cancelRun, sanitizeOutput, type RunHooks } 
 export {
   previewIntent,
   executePreview,
+  startCaptureRun,
+  buildCaptureCommand,
   startImportRun,
   startThinkRun,
   startMarkdownExportRun,

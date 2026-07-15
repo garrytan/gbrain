@@ -144,6 +144,25 @@ export async function startImportRun(engine: BrainEngine, input: {
   return await startRun('import_path', cmd, cwd, hooks);
 }
 
+export function buildCaptureCommand(content: string, sourceId?: string): string[] {
+  if (!content.trim()) throw new Error('Content is required');
+  if (content.length > MAX_NATURAL_TASK_CHARACTERS) {
+    throw new Error(`内容不能超过 ${MAX_NATURAL_TASK_CHARACTERS.toLocaleString('zh-CN')} 字。`);
+  }
+  const cmd = [...resolveCliEntry(), 'capture', content];
+  if (sourceId?.trim()) cmd.push('--source', sourceId.trim());
+  return cmd;
+}
+
+export async function startCaptureRun(
+  content: string,
+  sourceId: string | undefined,
+  cwd: string,
+  hooks?: RunHooks,
+): Promise<ConsoleRun> {
+  return await startRun('capture_memory', buildCaptureCommand(content, sourceId), cwd, hooks);
+}
+
 export async function startThinkRun(question: string, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
   const trimmed = question.trim();
   if (!trimmed) throw new Error('Question is required');

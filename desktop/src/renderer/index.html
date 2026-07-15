@@ -19,7 +19,8 @@
           <button class="rail-item" data-target="models" title="模型配置"><span>02</span>模型配置</button>
           <span class="rail-group separated">连接与维护</span>
           <button class="rail-item" data-target="integrations" title="MCP 接入"><span>03</span>MCP 接入</button>
-          <button class="rail-item" data-target="updates" title="软件更新"><span>04</span>软件更新</button>
+          <button class="rail-item" data-target="system" title="系统设置"><span>04</span>系统设置</button>
+          <button class="rail-item" data-target="updates" title="软件更新"><span>05</span>软件更新</button>
         </nav>
         <div class="service-status">
           <i id="service-dot"></i>
@@ -34,14 +35,13 @@
             <h1 id="page-title">把 PMBrain 安顿在这台电脑上</h1>
           </div>
           <div class="top-actions">
-            <label class="theme-control" for="theme-select"><span>外观</span><select id="theme-select" aria-label="界面主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
             <button class="ghost" id="open-logs">日志</button>
             <button class="solid" id="open-admin" disabled>进入管理台</button>
           </div>
         </header>
 
-        <div class="notice error" id="global-error" hidden></div>
-        <div class="notice success" id="global-success" hidden></div>
+        <div class="notice error" id="global-error" role="alert" aria-live="assertive" hidden></div>
+        <div class="notice success" id="global-success" role="status" aria-live="polite" hidden></div>
 
         <section class="panel active" id="panel-basic">
           <div class="existing-config" id="existing-config" hidden>
@@ -74,7 +74,7 @@
           <div class="field-group" id="postgres-fields" hidden>
             <label for="database-url">Postgres 连接地址</label>
             <input id="database-url" type="password" spellcheck="false" placeholder="postgresql://postgres:postgres@127.0.0.1:5433/pmbrain" />
-            <div class="field-help"><small id="postgres-status">桌面端只连接数据库，不会自动安装或启动 Docker。</small><button type="button" class="text-button" id="docker-help-open">第一次使用 Docker？查看四步教程</button></div>
+            <div class="field-help"><small id="postgres-status">不会安装或新建 Docker；会安全启动已安装的 Docker Desktop 和匹配的现有容器。</small><button type="button" class="text-button" id="docker-help-open">第一次使用 Docker？查看四步教程</button></div>
           </div>
 
           <div class="section-heading separated">
@@ -219,13 +219,36 @@
         <section class="panel" id="panel-integrations">
           <div class="section-heading">
             <div><span class="index">03</span><h2>MCP / API 配置助手</h2></div>
-            <p>为每个客户端创建独立凭证，写入前自动备份并执行 MCP smoke test。</p>
+            <p>本机 Agent 保持本地连接；共享成员使用独立、可撤销的最小权限凭证。</p>
           </div>
-          <div class="credential-switch">
-            <label><input type="radio" name="credential" value="api_key" checked /> API Key + Bearer（自动接入）</label>
-            <label><input type="radio" name="credential" value="oauth" /> OAuth client_credentials（只生成凭证）</label>
-          </div>
-          <div class="integration-grid" id="integration-grid"></div>
+          <section class="integration-section" aria-labelledby="local-integration-title">
+            <div class="subsection-heading"><div><span>03A / LOCAL</span><h3 id="local-integration-title">本机 Agent 接入</h3></div><p>始终连接本机 sidecar；开启共享模式不会让已有本机配置失效。</p></div>
+            <div class="credential-switch">
+              <label><input type="radio" name="credential" value="api_key" checked /> API Key + Bearer（自动接入）</label>
+              <label><input type="radio" name="credential" value="oauth" /> OAuth client_credentials（只生成凭证）</label>
+            </div>
+            <div class="integration-grid" id="integration-grid"></div>
+          </section>
+
+          <section class="integration-section shared-access" aria-labelledby="shared-integration-title">
+            <div class="subsection-heading"><div><span>03B / LAN</span><h3 id="shared-integration-title">共享成员接入</h3></div><p>为另一台电脑的 Agent 创建独立凭证；默认只读，需要时再明确开放写入。</p></div>
+            <div class="lan-security-note" role="note"><b>仅用于可信局域网</b><p>当前共享入口使用 HTTP + Bearer。敏感企业环境请在内网通过 TLS 反向代理保护传输，不要直接暴露到公网。</p></div>
+            <div class="shared-mode-hint" id="shared-mode-hint" role="status">正在读取共享入口…</div>
+            <div class="shared-access-grid" id="shared-access-form" hidden>
+              <div class="shared-form">
+                <label for="shared-member-name"><span>成员名称</span><input id="shared-member-name" autocomplete="off" maxlength="64" placeholder="例如：销售部-小陈" /></label>
+                <label for="shared-client"><span>对方使用的 Agent</span><select id="shared-client"><option value="cursor">Cursor</option><option value="codebuddy">CodeBuddy</option><option value="workbuddy">WorkBuddy</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+                <fieldset class="shared-read-fieldset"><legend>允许读取的知识源</legend><div class="source-check-list" id="shared-read-sources"></div><small>至少选择一个知识源。共享凭证只会搜索这里勾选的范围。</small></fieldset>
+                <label class="permission-toggle" for="shared-can-write"><input id="shared-can-write" type="checkbox" /><span><b>允许写入</b><small>默认关闭。开启后，对方可在下方指定的单一知识源中新增、覆盖、删除、恢复和回滚内容。</small></span></label>
+                <label for="shared-write-source"><span>写入知识源</span><select id="shared-write-source" disabled><option value="">请先开启写入权限</option></select></label>
+                <button class="primary" id="create-shared-integration"><span>创建凭证并生成配置</span><i></i></button>
+              </div>
+              <div class="shared-members">
+                <div class="shared-members-head"><b>已创建成员</b><small id="shared-mcp-url"></small></div>
+                <div id="shared-member-list" class="shared-member-list"><p class="empty-copy">还没有共享成员凭证。</p></div>
+              </div>
+            </div>
+          </section>
           <div class="result-console" id="result-console" hidden>
             <div><b id="result-title">配置结果</b><button class="ghost" id="copy-result">复制</button></div>
             <pre id="result-content"></pre>
@@ -237,9 +260,48 @@
           </div>
         </section>
 
+        <section class="panel" id="panel-system">
+          <div class="section-heading">
+            <div><span class="index">04</span><h2>系统设置</h2></div>
+            <p>管理桌面端的局域网入口、开机启动、关闭行为和界面外观。</p>
+          </div>
+
+          <section class="system-block" aria-labelledby="network-mode-title">
+            <div class="subsection-heading"><div><span>04A / NETWORK</span><h3 id="network-mode-title">连接模式</h3></div><p>默认仅本机使用；共享模式只开放 MCP，不开放管理台。</p></div>
+            <div class="network-mode-grid" role="radiogroup" aria-label="PMBrain 网络模式">
+              <label class="network-mode-card selected" id="network-mode-local-card"><input id="network-mode-local" type="radio" name="network-mode" value="local" checked /><span><b>本地模式</b><small>仅本机 Agent 访问 127.0.0.1，局域网电脑无法连接。</small></span><em>默认</em></label>
+              <label class="network-mode-card" id="network-mode-shared-card"><input id="network-mode-shared" type="radio" name="network-mode" value="shared" /><span><b>共享模式</b><small>在选定网卡的固定 IPv4 上开放 MCP，供同一局域网成员使用。</small></span></label>
+            </div>
+            <div class="shared-network-fields" id="shared-network-fields" hidden>
+              <label for="shared-address"><span>固定局域网入口</span><select id="shared-address" aria-label="选择共享网络适配器和 IPv4 地址"><option value="">请选择网卡与 IPv4</option></select></label>
+              <small id="shared-address-note">PMBrain 会锁定这张网卡和这个 IPv4，不会在网络变化时自动切到其他地址。</small>
+              <div class="fixed-ip-note"><b>避免地址变化</b><p>建议在路由器设置“DHCP 地址保留”，把这个 IPv4 固定给本机。若网卡、Wi-Fi 或 VPN 导致地址消失，PMBrain 会立即停止共享并通知你，不会静默切换。首次出现 Windows 防火墙提示时，请只允许“专用网络”。</p></div>
+            </div>
+
+            <div class="connection-spine" aria-label="MCP 局域网连接路径">
+              <article><span>01</span><b>本机 sidecar</b><small id="system-local-url">等待本地服务</small></article>
+              <i aria-hidden="true"></i>
+              <article><span>02</span><b>固定 LAN 网关</b><small id="system-shared-url">共享模式未开启</small></article>
+              <i aria-hidden="true"></i>
+              <article><span>03</span><b>员工 Agent</b><small>Bearer 凭证 · 独立权限</small></article>
+            </div>
+            <div class="gateway-status" id="gateway-status" role="status"><i></i><div><b>仅本机连接</b><small>共享网关未启动。</small></div></div>
+          </section>
+
+          <section class="system-block" aria-labelledby="desktop-behavior-title">
+            <div class="subsection-heading"><div><span>04B / DESKTOP</span><h3 id="desktop-behavior-title">桌面行为</h3></div><p>这些设置只影响 Windows 桌面端，不修改知识库或 GBrain 核心配置。</p></div>
+            <div class="system-setting-grid">
+              <label class="setting-toggle" for="launch-at-login"><input id="launch-at-login" type="checkbox" /><span><b>开机自动启动 PMBrain</b><small>登录 Windows 后启动桌面端，并按数据库类型准备本地服务。</small></span></label>
+              <label for="close-behavior"><span>点击窗口 × 时</span><select id="close-behavior"><option value="tray">最小化到托盘（默认）</option><option value="quit">退出 PMBrain</option></select></label>
+              <label for="system-theme-select"><span>界面外观</span><select id="system-theme-select" aria-label="界面主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+            </div>
+          </section>
+          <div class="system-save-bar"><p id="system-save-note">请先完成基础配置，再保存系统设置。</p><button class="primary" id="save-system-settings" disabled><span>保存系统设置</span><i></i></button></div>
+        </section>
+
         <section class="panel" id="panel-updates">
           <div class="section-heading">
-            <div><span class="index">04</span><h2>软件更新</h2></div>
+            <div><span class="index">05</span><h2>软件更新</h2></div>
             <p>自动从 GitHub Releases 检查并下载桌面版更新。</p>
           </div>
           <article class="update-card">
@@ -279,7 +341,7 @@
         <li><b>启用向量扩展</b><pre>docker exec -it pmbrain-postgres psql -U postgres -d pmbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"</pre></li>
         <li><b>回到 PMBrain 填写连接地址</b><pre>postgresql://postgres:postgres@127.0.0.1:5433/pmbrain</pre><p>选择 Docker Postgres，填写上面的地址，再保存配置。首次迁移可能需要等待几十秒。</p></li>
       </ol>
-      <div class="help-dialog-foot"><small>本教程摘自 docs/desktop/首次安装使用DockerPostgres.md。PMBrain 不会自动安装、启动或删除 Docker 容器。</small><button type="button" class="solid" id="docker-help-done">我知道了</button></div>
+      <div class="help-dialog-foot"><small>本教程摘自 docs/desktop/首次安装使用DockerPostgres.md。PMBrain 不会安装、创建、删除或重建 Docker 容器；启动时会尝试启动匹配的现有容器。</small><button type="button" class="solid" id="docker-help-done">我知道了</button></div>
     </dialog>
     <div class="wait-overlay" id="setup-wait" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wait-title" aria-describedby="setup-wait-message">
       <div class="wait-dialog" aria-live="polite">

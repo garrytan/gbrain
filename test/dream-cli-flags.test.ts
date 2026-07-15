@@ -8,8 +8,10 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
-import { resolveDreamPresetPhases } from '../src/commands/dream.ts';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
+import { resolveBrainDir, resolveDreamPresetPhases } from '../src/commands/dream.ts';
 
 const dreamSrc = readFileSync(new URL('../src/commands/dream.ts', import.meta.url), 'utf-8');
 const cycleSrc = readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf-8');
@@ -126,6 +128,15 @@ describe('dream CLI flag wiring', () => {
       // The runCycle call must pass sourceId; gate name "sourceId"
       // not "source" because CycleOpts.sourceId is the contract.
       expect(dreamSrc).toMatch(/sourceId:\s*resolvedSourceId/);
+    });
+
+    test('uses the selected source local_path as the Dream brain directory', async () => {
+      const sourcePath = mkdtempSync(join(tmpdir(), 'pmbrain-dream-source-'));
+      try {
+        expect(await resolveBrainDir(null, null, sourcePath)).toBe(resolve(sourcePath));
+      } finally {
+        rmSync(sourcePath, { recursive: true, force: true });
+      }
     });
 
     test('calibration phases prefer explicit sourceId over brainDir inference', () => {

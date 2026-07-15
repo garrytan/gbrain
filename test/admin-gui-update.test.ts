@@ -32,6 +32,9 @@ describe('Admin GUI update contract', () => {
     expect(adminStyles).toContain('html[data-theme="dark"] .code-block pre');
     expect(adminStyles).toContain('html[data-theme="dark"] .dream-recommendation b');
     expect(adminStyles).toContain('html[data-theme="dark"] .dream-library-metrics b');
+    expect(adminStyles).toContain('html[data-theme="dark"] .dream-result-grid section');
+    expect(adminStyles).toContain('html[data-theme="dark"] .dream-ops-diagnostics');
+    expect(adminStyles).toContain('html[data-theme="dark"] .dream-ops-grid section');
   });
 
   test('navigation exposes the consolidated beginner surfaces', () => {

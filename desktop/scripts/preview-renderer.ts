@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const VALID_PANELS = ['basic', 'models', 'integrations', 'updates', 'recovery'] as const;
+const VALID_PANELS = ['basic', 'models', 'integrations', 'system', 'updates', 'recovery'] as const;
 type Panel = (typeof VALID_PANELS)[number];
 
 const root = process.cwd();
@@ -51,6 +51,7 @@ const panelScrollTarget: Record<Panel, string> = {
   basic: '#database-path',
   models: '#chat-provider',
   integrations: '#integration-grid',
+  system: '#shared-address',
   updates: '#update-current',
   recovery: '#recovery-message',
 };
@@ -99,11 +100,54 @@ window.pmbrainDesktop = {
   getTheme: async () => ({ source: 'system', resolved: 'dark' }),
   setTheme: async (source) => ({ source, resolved: source === 'light' ? 'light' : 'dark' }),
   onThemeState: () => () => {},
+  getSystemSettings: async () => ({
+    preferences: {
+      networkMode: 'shared', closeBehavior: 'tray', sharedAdapter: 'Wi-Fi',
+      sharedIp: '192.168.1.20', sharedResumeRequired: false,
+    },
+    theme: { source: 'system', resolved: 'dark' },
+    launchAtLogin: true,
+    networkCandidates: [{
+      adapterName: 'Wi-Fi', address: '192.168.1.20', netmask: '255.255.255.0',
+      cidr: '192.168.1.20/24', mac: '00:11:22:33:44:55', virtual: false, recommended: true,
+    }],
+    selectedAddressAvailable: true,
+    localMcpUrl: 'http://127.0.0.1:3132/mcp',
+    sharedMcpUrl: 'http://192.168.1.20:3131/mcp',
+    gateway: {
+      running: true, bindAddress: '192.168.1.20', port: 3131,
+      mcpUrl: 'http://192.168.1.20:3131/mcp', healthUrl: 'http://192.168.1.20:3131/health',
+      targetMcpUrl: 'http://127.0.0.1:3132/mcp',
+    },
+  }),
+  saveSystemSettings: async (payload) => ({
+    canceled: false,
+    state: { ...(await window.pmbrainDesktop.getSystemSettings()), launchAtLogin: payload.launchAtLogin },
+  }),
+  onSystemSettingsState: () => () => {},
+  getSharedAccess: async () => ({
+    mcpUrl: 'http://192.168.1.20:3131/mcp',
+    mainSourceId: 'default',
+    sources: [
+      { id: 'default', name: '公司知识', federated: true, archived: false },
+      { id: 'projects', name: '项目资料', federated: true, archived: false },
+    ],
+    credentials: [{
+      id: 'key-1', name: '产品部 Alice', credentialName: 'shared:产品部 Alice:preview',
+      status: 'active', scope: 'read', federatedRead: ['default'], totalRequests: 18,
+    }],
+  }),
+  createSharedIntegration: async () => ({
+    id: 'key-preview', name: 'shared:preview', token: 'preview-token', scopes: ['read'],
+    federatedRead: ['default'], mcpUrl: 'http://192.168.1.20:3131/mcp',
+    snippet: '{ "type": "http", "url": "http://192.168.1.20:3131/mcp" }',
+  }),
+  revokeSharedIntegration: async () => window.pmbrainDesktop.getSharedAccess(),
   getUpdateState: async () => ({ phase: 'up-to-date', currentVersion: '1.0.55', previousVersion: '1.0.54', message: '当前已经是最新版本' }),
   onState: () => () => {},
   onUpdateState: () => () => {},
   onShowUpdates: () => () => {},
-  onShowPanel: () => () => {},
+  onShowPanel: (callback) => { setTimeout(() => callback('${panel}'), 0); return () => {}; },
   chooseDirectory: async () => null,
   getProviderModels: async (provider, touchpoint) => ({
     source: provider === 'ollama' ? 'ollama' : 'catalog',
@@ -181,7 +225,8 @@ const panelTitles: Record<Panel, { eyebrow: string; title: string }> = {
   basic:       { eyebrow: 'DESKTOP SETTINGS / 01', title: '配置数据库、原始资料与主源' },
   models:      { eyebrow: 'DESKTOP SETTINGS / 02', title: '配置普通模型与向量模型' },
   integrations:{ eyebrow: 'MCP / 03',               title: '把 PMBrain 接入 AI 客户端' },
-  updates:     { eyebrow: 'UPDATES / 04',           title: '保持桌面端安全更新' },
+  system:      { eyebrow: 'SYSTEM / 04',            title: '管理桌面连接与系统行为' },
+  updates:     { eyebrow: 'UPDATES / 05',           title: '保持桌面端安全更新' },
   recovery:    { eyebrow: 'RECOVERY',               title: '恢复 PMBrain 本地服务' },
 };
 const t = panelTitles[panel];

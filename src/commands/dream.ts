@@ -329,9 +329,10 @@ function parseArgs(args: string[]): DreamArgs {
  *
  * If none is available, we error out instead of guessing.
  */
-async function resolveBrainDir(
+export async function resolveBrainDir(
   engine: BrainEngine | null,
   explicit: string | null,
+  sourcePath: string | null = null,
 ): Promise<string> {
   if (explicit) {
     if (!existsSync(explicit)) {
@@ -341,6 +342,14 @@ async function resolveBrainDir(
     // Resolve to absolute so downstream writeFileSync(join(brainDir, slug))
     // can't silently land at cwd when explicit is `.` / `./brain` / etc.
     return resolve(explicit);
+  }
+
+  if (sourcePath) {
+    if (!existsSync(sourcePath)) {
+      console.error(`source local_path does not exist: ${sourcePath}`);
+      process.exit(1);
+    }
+    return resolve(sourcePath);
   }
 
   if (engine) {
@@ -536,6 +545,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   //      last_full_cycle_at to an archived source would mask data
   //      staleness when the source is later restored)
   let resolvedSourceId: string | undefined;
+  let resolvedSourcePath: string | null = null;
   if (opts.source !== null) {
     if (engine === null) {
       console.error(
@@ -560,6 +570,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     // built-in listAllSources defaults to includeArchived=false AND
     // doesn't project the archived column, so it cannot be used here.
     const src = await fetchSource(engine, resolvedSourceId);
+    resolvedSourcePath = src?.local_path ?? null;
     if (src?.archived === true) {
       console.error(
         `source ${resolvedSourceId} is archived; restore with ` +
@@ -569,7 +580,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     }
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir);
+  const brainDir = await resolveBrainDir(engine, opts.dir, resolvedSourcePath);
   ensureDreamSystemSkillAssets(brainDir);
   validateDreamInputPath(opts.inputFile);
   const phases: CyclePhase[] | undefined = opts.phase

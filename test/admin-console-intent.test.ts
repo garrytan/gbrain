@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { buildDreamCommand, buildMarkdownExportCommand, commandForPreview, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
+import { buildCaptureCommand, buildDreamCommand, buildMarkdownExportCommand, commandForPreview, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
 describe('admin console intent planning', () => {
@@ -122,6 +122,12 @@ describe('admin console intent planning', () => {
       requiresConfirmation: false,
     });
     expect(command.slice(-3)).toEqual(['think', '项目文档', '--json']);
+  });
+
+  test('direct text import reuses capture and respects the selected source', () => {
+    const command = buildCaptureCommand('需要保存的完整正文', 'duwu');
+    expect(command.slice(-4)).toEqual(['capture', '需要保存的完整正文', '--source', 'duwu']);
+    expect(() => buildCaptureCommand('   ')).toThrow('Content is required');
   });
 
   test('Markdown export always creates a new PMBrain snapshot subdirectory', () => {

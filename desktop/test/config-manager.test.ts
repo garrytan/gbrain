@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { getRecipe } from '../../src/core/ai/recipes/index.js';
 import {
   activeConfigDirectory, desktopConfigPath, getSetupInfo, markDesktopMigration, needsDesktopMigration,
-  normalizeDesktopTheme, normalizePgliteDatabasePath, preferredConfigDirectory, restoreConfig,
-  saveDesktopTheme, saveSetup, writeJsonConfig,
+  getDatabaseRuntimeConfig, getDesktopPreferences, normalizeDesktopTheme, normalizePgliteDatabasePath, preferredConfigDirectory, restoreConfig,
+  saveDesktopPreferences, saveDesktopTheme, saveSetup, writeJsonConfig,
 } from '../src/main/config-manager.js';
 
 const originalHome = process.env.PMBRAIN_HOME;
@@ -29,6 +29,65 @@ function isolatedHome(): string {
 }
 
 describe('desktop config manager', () => {
+  test('keeps legacy users local and defaults window close to tray without rewriting config', () => {
+    const root = isolatedHome();
+    writeJsonConfig(desktopConfigPath(), {
+      engine: 'postgres',
+      database_url: 'postgresql://local:secret@127.0.0.1:5433/pmbrain',
+      desktop: { theme: 'dark', knowledge_source_id: 'default' },
+    });
+    const before = readFileSync(desktopConfigPath(), 'utf8');
+
+    expect(getDesktopPreferences()).toEqual({
+      networkMode: 'local',
+      closeBehavior: 'tray',
+      sharedAdapter: undefined,
+      sharedIp: undefined,
+      sharedResumeRequired: false,
+      dockerContainerName: undefined,
+    });
+    expect(getDatabaseRuntimeConfig().databaseUrl).toBe('postgresql://local:secret@127.0.0.1:5433/pmbrain');
+    expect(readFileSync(desktopConfigPath(), 'utf8')).toBe(before);
+  });
+
+  test('persists desktop system preferences with a config backup and preserves existing fields', () => {
+    const root = isolatedHome();
+    saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'brain.pglite'),
+      knowledgeDirectory: join(root, 'knowledge'),
+      theme: 'dark',
+      keys: { zhipu: 'keep-me' },
+    });
+
+    const saved = saveDesktopPreferences({
+      networkMode: 'shared',
+      sharedAdapter: 'Wi-Fi',
+      sharedIp: '192.168.1.20',
+      closeBehavior: 'quit',
+      sharedResumeRequired: true,
+      dockerContainerName: 'gbrain-pg',
+    });
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+
+    expect(saved.backup).not.toBeNull();
+    expect(existsSync(saved.backup!)).toBe(true);
+    expect(saved.preferences.networkMode).toBe('shared');
+    expect(config.desktop.network_mode).toBe('shared');
+    expect(config.desktop.shared_adapter).toBe('Wi-Fi');
+    expect(config.desktop.shared_ip).toBe('192.168.1.20');
+    expect(config.desktop.close_behavior).toBe('quit');
+    expect(saved.preferences.sharedResumeRequired).toBe(true);
+    expect(config.desktop.shared_resume_required).toBe(true);
+    expect(config.desktop.docker_container_name).toBe('gbrain-pg');
+    expect(config.desktop.theme).toBe('dark');
+    expect(config.zhipu_api_key).toBe('keep-me');
+    expect(getDesktopPreferences().sharedResumeRequired).toBe(true);
+    saveDesktopPreferences({ sharedResumeRequired: false });
+    expect(getDesktopPreferences().sharedResumeRequired).toBe(false);
+    expect(JSON.parse(readFileSync(desktopConfigPath(), 'utf8')).desktop.shared_resume_required).toBeUndefined();
+  });
+
   test('defaults, persists, and independently updates the desktop theme', () => {
     const root = isolatedHome();
     expect(normalizeDesktopTheme('unexpected')).toBe('system');

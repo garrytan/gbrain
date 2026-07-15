@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
+import { isIP } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
 import { getRecipe } from '../../../src/core/ai/recipes/index.js';
 
@@ -24,9 +25,34 @@ const DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>>
 };
 
 export type DesktopTheme = 'system' | 'light' | 'dark';
+export type DesktopNetworkMode = 'local' | 'shared';
+export type DesktopCloseBehavior = 'tray' | 'quit';
+
+export interface DesktopPreferences {
+  networkMode: DesktopNetworkMode;
+  closeBehavior: DesktopCloseBehavior;
+  sharedAdapter?: string;
+  sharedIp?: string;
+  sharedResumeRequired: boolean;
+  dockerContainerName?: string;
+}
+
+export interface DesktopDatabaseRuntimeConfig {
+  engine: 'pglite' | 'postgres';
+  databaseUrl?: string;
+  configuredContainerName?: string;
+}
 
 export function normalizeDesktopTheme(value: unknown): DesktopTheme {
   return value === 'light' || value === 'dark' ? value : 'system';
+}
+
+export function normalizeDesktopNetworkMode(value: unknown): DesktopNetworkMode {
+  return value === 'shared' ? 'shared' : 'local';
+}
+
+export function normalizeDesktopCloseBehavior(value: unknown): DesktopCloseBehavior {
+  return value === 'quit' ? 'quit' : 'tray';
 }
 
 function desktopRecommendedEmbeddingDimension(model: string): number {
@@ -97,6 +123,12 @@ type RawConfig = Record<string, unknown> & {
     knowledge_source_id?: string;
     last_migrated_version?: string;
     theme?: DesktopTheme;
+    network_mode?: DesktopNetworkMode;
+    close_behavior?: DesktopCloseBehavior;
+    shared_adapter?: string;
+    shared_ip?: string;
+    shared_resume_required?: boolean;
+    docker_container_name?: string;
   };
 };
 
@@ -152,6 +184,40 @@ function readConfig(path = desktopConfigPath()): RawConfig | null {
   } catch (error) {
     throw new Error(`无法读取 PMBrain 配置：${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function preferencesFromConfig(config: RawConfig | null): DesktopPreferences {
+  const desktop = config?.desktop;
+  const sharedAdapter = typeof desktop?.shared_adapter === 'string' && desktop.shared_adapter.trim()
+    ? desktop.shared_adapter.trim()
+    : undefined;
+  const sharedIp = typeof desktop?.shared_ip === 'string' && isIP(desktop.shared_ip.trim()) === 4
+    ? desktop.shared_ip.trim()
+    : undefined;
+  const dockerContainerName = typeof desktop?.docker_container_name === 'string' && desktop.docker_container_name.trim()
+    ? desktop.docker_container_name.trim()
+    : undefined;
+  return {
+    networkMode: normalizeDesktopNetworkMode(desktop?.network_mode),
+    closeBehavior: normalizeDesktopCloseBehavior(desktop?.close_behavior),
+    sharedAdapter,
+    sharedIp,
+    sharedResumeRequired: desktop?.shared_resume_required === true,
+    dockerContainerName,
+  };
+}
+
+export function getDesktopPreferences(): DesktopPreferences {
+  return preferencesFromConfig(readConfig());
+}
+
+export function getDatabaseRuntimeConfig(): DesktopDatabaseRuntimeConfig {
+  const config = readConfig();
+  return {
+    engine: config?.engine === 'postgres' ? 'postgres' : 'pglite',
+    databaseUrl: typeof config?.database_url === 'string' ? config.database_url : undefined,
+    configuredContainerName: preferencesFromConfig(config).dockerContainerName,
+  };
 }
 
 function backupPath(kind: 'config' | 'mcp', originalPath: string, rootDirectory = activeConfigDirectory()): string {
@@ -467,6 +533,65 @@ export function saveDesktopTheme(theme: DesktopTheme): string | null {
   config.desktop = { ...config.desktop, theme: normalized };
   writeJsonConfig(path, config);
   return backup;
+}
+
+export function saveDesktopPreferences(patch: Partial<DesktopPreferences>): {
+  preferences: DesktopPreferences;
+  backup: string | null;
+} {
+  const path = desktopConfigPath();
+  const config = readConfig(path);
+  if (!config) throw new Error('请先完成基础配置，再保存系统设置。');
+  const current = preferencesFromConfig(config);
+  const preferences: DesktopPreferences = {
+    networkMode: patch.networkMode === undefined
+      ? current.networkMode
+      : normalizeDesktopNetworkMode(patch.networkMode),
+    closeBehavior: patch.closeBehavior === undefined
+      ? current.closeBehavior
+      : normalizeDesktopCloseBehavior(patch.closeBehavior),
+    sharedAdapter: patch.sharedAdapter === undefined ? current.sharedAdapter : patch.sharedAdapter.trim() || undefined,
+    sharedIp: patch.sharedIp === undefined ? current.sharedIp : patch.sharedIp.trim() || undefined,
+    sharedResumeRequired: patch.sharedResumeRequired === undefined
+      ? current.sharedResumeRequired
+      : patch.sharedResumeRequired === true,
+    dockerContainerName: patch.dockerContainerName === undefined
+      ? current.dockerContainerName
+      : patch.dockerContainerName.trim() || undefined,
+  };
+  if (preferences.sharedIp && isIP(preferences.sharedIp) !== 4) {
+    throw new Error('共享模式只能选择有效的 IPv4 地址。');
+  }
+  if (preferences.networkMode === 'shared' && (!preferences.sharedAdapter || !preferences.sharedIp)) {
+    throw new Error('共享模式需要同时选择局域网网卡和固定 IPv4 地址。');
+  }
+  if (preferences.dockerContainerName && /[\r\n]/.test(preferences.dockerContainerName)) {
+    throw new Error('Docker 容器名称无效。');
+  }
+
+  const desktop = { ...config.desktop };
+  desktop.network_mode = preferences.networkMode;
+  desktop.close_behavior = preferences.closeBehavior;
+  if (preferences.sharedAdapter) desktop.shared_adapter = preferences.sharedAdapter;
+  else delete desktop.shared_adapter;
+  if (preferences.sharedIp) desktop.shared_ip = preferences.sharedIp;
+  else delete desktop.shared_ip;
+  if (preferences.sharedResumeRequired) desktop.shared_resume_required = true;
+  else delete desktop.shared_resume_required;
+  if (preferences.dockerContainerName) desktop.docker_container_name = preferences.dockerContainerName;
+  else delete desktop.docker_container_name;
+  const changed = JSON.stringify(config.desktop ?? {}) !== JSON.stringify(desktop);
+  if (!changed) return { preferences, backup: null };
+  const backup = backupFile(path, 'config');
+  config.desktop = desktop;
+  writeJsonConfig(path, config);
+  return { preferences, backup };
+}
+
+export function saveDetectedDockerContainerName(containerName: string): string | null {
+  const normalized = containerName.trim();
+  if (!normalized) return null;
+  return saveDesktopPreferences({ dockerContainerName: normalized }).backup;
 }
 
 export function updateSavedEmbeddingDimension(path: string, dimensions: number): void {

@@ -88,13 +88,36 @@ describe('Dream GUI product contract', () => {
       phase: 'sync',
       status: 'warn',
       summary: '+513 added, ~15 modified, -0 deleted',
-      details: { added: 513, modified: 15, deleted: 0 },
-    })).toBe('已同步资料：新增 513 项，更新 15 项，删除 0 项。');
+      details: { added: 513, modified: 15, deleted: 0, failedFiles: 4 },
+      pagesAffected: ['one', 'two', 'three'],
+    })).toBe('检测到 528 个待同步文件，实际写入 3 个页面，4 个文件解析失败。');
     expect(phaseSummaryZh({
       phase: 'extract_atoms',
       status: 'skipped',
       summary: 'extract_atoms: active pack does not declare this phase',
     })).toContain('当前启用的 Skill 包未开放');
+  });
+
+  test('sync results distinguish detected files from pages actually written', () => {
+    const run = completedRun({
+      status: 'partial',
+      phases: [{
+        phase: 'sync',
+        status: 'warn',
+        summary: '+674 added, ~19 modified, -0 deleted',
+        details: { added: 674, modified: 19, deleted: 0, failedFiles: 4 },
+        pagesAffected: ['page/a', 'page/b', 'page/c'],
+      }],
+      totals: { pages_synced: 693 },
+    });
+    expect(describeDreamRun(run).outputs).toContain('检测到 693 个待同步文件，实际写入 3 个页面。');
+    expect(dream).toContain('查看实际写入的 {phase.pagesAffected?.length ?? 0} 个页面');
+  });
+
+  test('selected run mode survives the data reload after a run completes', () => {
+    expect(dream).toContain("const DREAM_RUN_MODE_KEY = 'pmbrain.dream.runMode'");
+    expect(dream).toContain('window.localStorage.setItem(DREAM_RUN_MODE_KEY, mode)');
+    expect(dream).toContain('if (!data) setLoading(true)');
   });
 
   test('full and meeting runs automatically ensure the existing Worker is available', () => {

@@ -1,4 +1,17 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  shell,
+  Tray,
+  type IpcMainInvokeEvent,
+} from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { join } from 'node:path';
 import { DesktopLogger } from './logs.js';
@@ -13,12 +26,16 @@ import {
 } from './advanced-model-config.js';
 import {
   ensureBootstrapToken,
+  getDatabaseRuntimeConfig,
+  getDesktopPreferences,
   getSetupInfo,
   markDesktopMigration,
   needsDesktopMigration,
   normalizeDesktopTheme,
   restoreConfig,
+  saveDesktopPreferences,
   saveDesktopTheme,
+  saveDetectedDockerContainerName,
   saveSetup,
   updateSavedEmbeddingDimension,
   type DesktopTheme,
@@ -26,25 +43,55 @@ import {
 } from './config-manager.js';
 import {
   configureIntegration,
+  createSharedIntegration,
+  getSharedAccessContext,
   listIntegrations,
+  revokeSharedIntegration,
+  smokeTestSharedIntegration,
   type CredentialKind,
   type IntegrationClient,
+  type SharedIntegrationPayload,
 } from './integration-manager.js';
 import { UpdateManager, type UpdateState } from './update-manager.js';
 import { updateDesktopVersionHistory, type DesktopVersionHistory } from './version-history.js';
+import { DatabaseRuntimeManager } from './database-runtime-manager.js';
+import { LanMcpGateway, type LanMcpGatewayStatus } from './lan-mcp-gateway.js';
+import { listNetworkCandidates } from './network-manager.js';
+import type {
+  DesktopSystemSettingsPayload,
+  DesktopSystemSettingsSaveResult,
+  DesktopSystemSettingsState,
+} from './system-settings.js';
 
 let mainWindow: BrowserWindow | null = null;
 let sidecar: SidecarManager | null = null;
 let logger: DesktopLogger | null = null;
 let currentState: SidecarState | null = null;
 let updateManager: UpdateManager | null = null;
+let tray: Tray | null = null;
+let lanGateway: LanMcpGateway | null = null;
+let networkMonitor: ReturnType<typeof setInterval> | null = null;
+let networkWarning: string | undefined;
+let selectedAddressWasUnavailable = false;
+let networkCheckInFlight = false;
+let gatewayTransitionQueue: Promise<void> = Promise.resolve();
+let gatewayTransitionGeneration = 0;
+let sidecarLifecycleQueue: Promise<void> = Promise.resolve();
+let sidecarStartupPromise: Promise<void> | null = null;
+let serviceReadyPromise: Promise<SidecarManager> | null = null;
+let sidecarRetryPromise: Promise<string> | null = null;
+let setupInProgress = false;
+let trayHintShown = false;
 let desktopVersionHistory: DesktopVersionHistory = { current: '' };
 let quitting = false;
+const databaseRuntimeManager = new DatabaseRuntimeManager();
+const LAN_MONITOR_INTERVAL_MS = 5_000;
 const DESKTOP_MIGRATION_ARGS = ['apply-migrations', '--yes', '--non-interactive', '--no-autopilot-install'];
+const DESKTOP_RENDERER_PATH = join(__dirname, '../renderer/index.html');
 
 interface StartupProgress {
   visible: boolean;
-  stage: 'migration' | 'sidecar' | 'health';
+  stage: 'database' | 'migration' | 'sidecar' | 'health';
   title: string;
   message: string;
 }
@@ -60,6 +107,8 @@ let startupProgress: StartupProgress = {
   title: '',
   message: '',
 };
+
+const TRAY_ICON_PNG = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARzQklUCAgICHwIZIgAAAJpSURBVFiF7ZfdS1NhHMc/62XuxR11m9aWTd2FitpYhmiNQKUoCIqkoJvAILrovqsoFvVHRBAIXQT2cl9ZGGG4iyDUYlMrXc2Zuian4WxZp4vobHNbnubZdtP37vk953e+H56X3/M8mkqLWaKE2lJKc4Bt2YJ6QYvnbDMOlwVbUxXlFl1eP49FVgkHogTHIozc8RMXExnfaNZPQdNBO33eToQafV6muSQuxHno9RF4MZcboNFj49zNHlWN12vg4nAahLwG9IKWU9e7CmoO0OftxFBRlgnQfsKJqVrdYc8moUbP3uMNmQAOl6Xg5tm8UgCsRQRIesnbsNJu/GvS8MBbnt6ayIgbBC1Gs44qu5EGdzWuI3UIG0xlqlfWOvAvWhETrIgJFmdEJl+Gef0oyJkb+7HWmRTl5wXQeMCG1WECCda+/2RpVuT9qwUAPr9b5tntN5y+1oVGUyCA1p5a2o8lV7IkwfiTIPe8owCMDwXpPd/6G3IDqXIWaDSw57CDXc1mOfZ1aVVRrnqHkZTfoaoKgCTB2OMgIf8XOab0LMlrDUwMfSQ8uQzA2rcfLM6IzI4tyf3uo/VYassLBzDlm2fKN5+1r95dzaELbYr/tek6YBC0VOw0YnWYcO6roa13NzrT9sICnLzckbYNN6OSX8n+A8gAsYiyyqWGUr1kgDl/tGgAqV7yLggHojR6bDmTuvtb6O5vUQUgHEgCyCPgG5zOem9XW3ExgW9wOhMgGorx4Kqv4AD3r4wSDcXk9ladQe/901j8IPJpIoKzYwdlRuXVTInEhTh3L43gfx5Ki2e8jCj106zYKnkh+gVjEMHNYhHKxwAAAABJRU5ErkJggg==';
 
 function themeState(source = normalizeDesktopTheme(nativeTheme.themeSource)): DesktopThemeState {
   return { source, resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light' };
@@ -81,6 +130,265 @@ function hideStartupProgress(): void {
   sendStartupProgress({ ...startupProgress, visible: false });
 }
 
+function currentSystemSettingsState(): DesktopSystemSettingsState {
+  const preferences = getDesktopPreferences();
+  const candidates = listNetworkCandidates();
+  const selectedCandidate = candidates.find(candidate => (
+    candidate.adapterName === preferences.sharedAdapter && candidate.address === preferences.sharedIp
+  ));
+  const selectedAddressAvailable = selectedCandidate?.recommended === true;
+  const gateway = lanGateway?.getStatus() ?? null;
+  return {
+    preferences,
+    theme: themeState(getSetupInfo().current.theme),
+    launchAtLogin: app.isReady() ? app.getLoginItemSettings(loginItemSettingsOptions()).openAtLogin : false,
+    networkCandidates: candidates,
+    selectedAddressAvailable,
+    localMcpUrl: sidecar?.mcpUrl,
+    sharedMcpUrl: preferences.networkMode === 'shared' && preferences.sharedIp
+      ? `http://${preferences.sharedIp}:3131/mcp`
+      : undefined,
+    gateway,
+    ...(networkWarning ? { warning: networkWarning } : {}),
+  };
+}
+
+function sendSystemSettingsState(): DesktopSystemSettingsState {
+  const state = currentSystemSettingsState();
+  mainWindow?.webContents.send('desktop:system-settings-state', state);
+  refreshTrayMenu();
+  return state;
+}
+
+function showNotification(title: string, body: string): void {
+  if (!Notification.isSupported()) return;
+  new Notification({ title, body, icon: nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_PNG, 'base64')) }).show();
+}
+
+function markSharedResumeRequired(required: boolean): void {
+  selectedAddressWasUnavailable = required;
+  try {
+    const current = getDesktopPreferences();
+    if (current.sharedResumeRequired !== required) {
+      saveDesktopPreferences({ sharedResumeRequired: required });
+    }
+  } catch (error) {
+    logger?.write(
+      'desktop',
+      `Unable to persist shared resume state: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function queueGatewayTransition<T>(transition: () => Promise<T>): Promise<T> {
+  const pending = gatewayTransitionQueue.then(transition, transition);
+  gatewayTransitionQueue = pending.then(() => undefined, () => undefined);
+  return pending;
+}
+
+async function stopLanGatewayNow(clear = true): Promise<void> {
+  const active = lanGateway;
+  if (clear) lanGateway = null;
+  if (active) await active.stop();
+}
+
+function stopLanGateway(clear = true): Promise<void> {
+  gatewayTransitionGeneration += 1;
+  return queueGatewayTransition(() => stopLanGatewayNow(clear));
+}
+
+function reconcileLanGateway(): Promise<LanMcpGatewayStatus | null> {
+  const generation = ++gatewayTransitionGeneration;
+  return queueGatewayTransition(() => reconcileLanGatewayNow(generation));
+}
+
+async function reconcileLanGatewayNow(generation: number): Promise<LanMcpGatewayStatus | null> {
+  if (generation !== gatewayTransitionGeneration) return null;
+  const preferences = getDesktopPreferences();
+  selectedAddressWasUnavailable ||= preferences.sharedResumeRequired;
+  if (preferences.networkMode !== 'shared' || !sidecar || currentState?.phase !== 'ready') {
+    await stopLanGatewayNow();
+    if (preferences.networkMode !== 'shared') networkWarning = undefined;
+    sendSystemSettingsState();
+    return null;
+  }
+  const activeSidecar = sidecar;
+  if (!preferences.sharedAdapter || !preferences.sharedIp) {
+    await stopLanGatewayNow();
+    networkWarning = '共享模式缺少固定网卡或 IPv4，请在系统设置中重新选择。';
+    sendSystemSettingsState();
+    return null;
+  }
+  const selectedCandidate = listNetworkCandidates().find(candidate => (
+    candidate.adapterName === preferences.sharedAdapter && candidate.address === preferences.sharedIp
+  ));
+  if (!selectedCandidate?.recommended) {
+    const firstLoss = !selectedAddressWasUnavailable;
+    markSharedResumeRequired(true);
+    await stopLanGatewayNow();
+    networkWarning = selectedCandidate
+      ? `固定地址 ${preferences.sharedIp} 不符合局域网共享安全要求：${selectedCandidate.warning || '只允许真实网卡上的私有 IPv4。'}`
+      : `固定地址 ${preferences.sharedIp} 已不在网卡“${preferences.sharedAdapter}”上，局域网共享已停止。`;
+    if (firstLoss) {
+      showNotification('PMBrain 局域网共享已停止', `${preferences.sharedIp} 当前不可用；地址恢复后仍需手动确认共享。`);
+    }
+    sendSystemSettingsState();
+    return null;
+  }
+
+  if (selectedAddressWasUnavailable) {
+    await stopLanGatewayNow();
+    networkWarning = `固定地址 ${preferences.sharedIp} 已重新出现，但为防止切换到其他 WiFi 后误共享，仍保持停用；请在系统设置中确认并重新应用共享模式。`;
+    sendSystemSettingsState();
+    return null;
+  }
+
+  const currentGateway = lanGateway?.getStatus();
+  if (
+    currentGateway?.running
+    && currentGateway.bindAddress === preferences.sharedIp
+    && currentGateway.targetMcpUrl === sidecar.mcpUrl
+  ) {
+    return currentGateway;
+  }
+
+  await stopLanGatewayNow();
+  if (generation !== gatewayTransitionGeneration) return null;
+  const gateway = new LanMcpGateway({
+    bindAddress: preferences.sharedIp,
+    sidecarPort: sidecar.port,
+    verifyBearerToken: authorizationHeader => activeSidecar.verifyMcpBearer(authorizationHeader),
+  });
+  try {
+    const status = await gateway.start();
+    if (generation !== gatewayTransitionGeneration) {
+      await gateway.stop();
+      return null;
+    }
+    lanGateway = gateway;
+    networkWarning = undefined;
+    selectedAddressWasUnavailable = false;
+    logger?.write('desktop', `LAN MCP gateway ready at ${status.mcpUrl}; target ${status.targetMcpUrl}`);
+    sendSystemSettingsState();
+    return status;
+  } catch (error) {
+    await gateway.stop().catch(() => undefined);
+    if (generation !== gatewayTransitionGeneration) return null;
+    const causeCode = (error as Error & { cause?: NodeJS.ErrnoException })?.cause?.code;
+    if (causeCode === 'EADDRNOTAVAIL') markSharedResumeRequired(true);
+    networkWarning = error instanceof Error ? error.message : String(error);
+    logger?.write('desktop', networkWarning);
+    sendSystemSettingsState();
+    return null;
+  }
+}
+
+async function checkSelectedNetworkAddress(): Promise<void> {
+  if (networkCheckInFlight) return;
+  networkCheckInFlight = true;
+  try {
+  const preferences = getDesktopPreferences();
+  if (preferences.networkMode !== 'shared' || !preferences.sharedAdapter || !preferences.sharedIp) return;
+  const selectedCandidate = listNetworkCandidates().find(candidate => (
+    candidate.adapterName === preferences.sharedAdapter && candidate.address === preferences.sharedIp
+  ));
+  const available = selectedCandidate?.recommended === true;
+  if (!available && !selectedAddressWasUnavailable) {
+    markSharedResumeRequired(true);
+    await stopLanGateway();
+    networkWarning = `固定地址 ${preferences.sharedIp} 已消失，局域网 MCP 已立即停止；不会自动切换到其他网卡。`;
+    logger?.write('desktop', networkWarning);
+    showNotification('PMBrain 局域网共享已停止', `${preferences.sharedIp} 已不在所选网卡上，请打开系统设置确认网络。`);
+    sendSystemSettingsState();
+    return;
+  }
+  if (available && selectedAddressWasUnavailable) {
+    const nextWarning = `固定地址 ${preferences.sharedIp} 已重新出现，但共享不会自动恢复；请确认当前仍是可信局域网后，在系统设置中重新应用。`;
+    if (networkWarning !== nextWarning) {
+      networkWarning = nextWarning;
+      showNotification('PMBrain 等待确认恢复共享', '为避免换到其他 WiFi 后误开放，请在系统设置中手动确认。');
+      sendSystemSettingsState();
+    }
+    return;
+  }
+  if (!lanGateway?.getStatus().running) await reconcileLanGateway();
+  } finally {
+    networkCheckInFlight = false;
+  }
+}
+
+async function prepareConfiguredDatabase(): Promise<void> {
+  const setup = getSetupInfo();
+  if (setup.needsSetup || setup.current.engine === 'pglite') return;
+  const database = getDatabaseRuntimeConfig();
+  sendStartupProgress({
+    visible: true,
+    stage: 'database',
+    title: '正在准备本机数据库',
+    message: '正在检查 Postgres；如现有 Docker Desktop 或数据库容器未启动，PMBrain 会安全启动它们，但不会创建、删除或重建容器。',
+  });
+  const result = await databaseRuntimeManager.ensureReady({
+    engine: database.engine,
+    databaseUrl: database.databaseUrl,
+    configuredContainerName: database.configuredContainerName,
+  });
+  if (result.kind === 'docker-postgres') {
+    saveDetectedDockerContainerName(result.containerName);
+    logger?.write('desktop', `Docker Postgres ready: ${result.containerName}; started=${result.containerStarted}`);
+  } else {
+    logger?.write('desktop', `Postgres runtime ready: ${result.kind}`);
+  }
+}
+
+function revealMainWindow(): void {
+  if (!mainWindow) {
+    void createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+function reportUiActionError(title: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  logger?.write('desktop', `${title}: ${message}`);
+  showNotification(title, message);
+  revealMainWindow();
+}
+
+function refreshTrayMenu(): void {
+  if (!tray) return;
+  const preferences = getDesktopPreferences();
+  const status = lanGateway?.getStatus();
+  const shareLabel = preferences.networkMode === 'shared'
+    ? status?.running ? `局域网共享：${status.bindAddress}:${status.port}` : '局域网共享：已停止'
+    : '局域网共享：未启用';
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示 PMBrain', click: revealMainWindow },
+    { label: '打开管理控制台', click: () => void openAdmin().catch(error => reportUiActionError('无法打开管理控制台', error)) },
+    { label: '系统设置', click: () => void openSettingsPanel('system').catch(error => reportUiActionError('无法打开系统设置', error)) },
+    { type: 'separator' },
+    { label: shareLabel, enabled: false },
+    { type: 'separator' },
+    {
+      label: '退出 PMBrain',
+      click: () => {
+        app.quit();
+      },
+    },
+  ]));
+}
+
+function initializeTray(): void {
+  if (tray) return;
+  const icon = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_PNG, 'base64')).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  tray.setToolTip('PMBrain');
+  tray.on('double-click', revealMainWindow);
+  refreshTrayMenu();
+}
+
 function runtime(): CliRuntime {
   return {
     packaged: app.isPackaged,
@@ -99,12 +407,24 @@ async function showShell(): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    await mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    await mainWindow.loadFile(DESKTOP_RENDERER_PATH);
   }
 }
 
-async function startSidecar(openAdmin: boolean): Promise<void> {
+function queueSidecarTransition<T>(transition: () => Promise<T>): Promise<T> {
+  const pending = sidecarLifecycleQueue.then(transition, transition);
+  sidecarLifecycleQueue = pending.then(() => undefined, () => undefined);
+  return pending;
+}
+
+async function startSidecarOnce(openAdmin: boolean): Promise<void> {
   if (!mainWindow || !logger) return;
+  const existing = sidecar;
+  if (existing) {
+    await existing.start();
+    await reconcileLanGateway();
+    return;
+  }
   sendStartupProgress({
     visible: true,
     stage: 'sidecar',
@@ -114,13 +434,15 @@ async function startSidecar(openAdmin: boolean): Promise<void> {
   try {
     const port = await findAvailablePort();
     const bootstrapToken = ensureBootstrapToken();
-    sidecar = new SidecarManager({
+    let manager!: SidecarManager;
+    manager = new SidecarManager({
       ...runtime(),
       port,
       bootstrapToken,
       clientVersion: app.getVersion(),
       logger,
       onState: (state) => {
+        if (sidecar !== manager) return;
         sendState(state);
         if (state.phase === 'starting') {
           sendStartupProgress({
@@ -132,10 +454,19 @@ async function startSidecar(openAdmin: boolean): Promise<void> {
         } else if (state.phase === 'ready' || state.phase === 'failed') {
           hideStartupProgress();
         }
+        if (state.phase === 'failed' || state.phase === 'stopped') {
+          void stopLanGateway().then(() => sendSystemSettingsState());
+        }
         if (openAdmin && state.phase === 'ready') void mainWindow?.loadURL(state.adminUrl);
       },
     });
-    await sidecar.start();
+    sidecar = manager;
+    await manager.start();
+    if (sidecar !== manager) {
+      await manager.stop();
+      return;
+    }
+    await reconcileLanGateway();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.write('desktop', message);
@@ -145,10 +476,60 @@ async function startSidecar(openAdmin: boolean): Promise<void> {
   }
 }
 
-async function stopSidecar(): Promise<void> {
+async function startSidecar(openAdmin: boolean): Promise<void> {
+  if (sidecarStartupPromise) {
+    await sidecarStartupPromise;
+    if (openAdmin && sidecar && currentState?.phase === 'ready') {
+      await mainWindow?.loadURL(await sidecar.createAdminLink());
+    }
+    return;
+  }
+  const pending = queueSidecarTransition(() => startSidecarOnce(openAdmin));
+  sidecarStartupPromise = pending;
+  try {
+    await pending;
+  } finally {
+    if (sidecarStartupPromise === pending) sidecarStartupPromise = null;
+  }
+}
+
+async function stopSidecarNow(): Promise<void> {
+  await stopLanGateway();
   const active = sidecar;
   sidecar = null;
   if (active) await active.stop();
+}
+
+function stopSidecar(): Promise<void> {
+  return queueSidecarTransition(stopSidecarNow);
+}
+
+async function restartSidecarForRetry(): Promise<string> {
+  if (sidecarRetryPromise) return sidecarRetryPromise;
+  const pending = queueSidecarTransition(async () => {
+    if (setupInProgress) throw new Error('PMBrain 正在应用基础配置，请等待完成。');
+    await prepareConfiguredDatabase();
+    const active = sidecar;
+    if (!active) {
+      await startSidecarOnce(false);
+      const started = sidecar as SidecarManager | null;
+      if (!started) throw new Error('PMBrain 本地服务未能启动。');
+      return started.createAdminLink();
+    }
+    const url = await active.restart();
+    if (sidecar !== active) {
+      await active.stop();
+      throw new Error('PMBrain 本地服务在重试过程中已被替换。');
+    }
+    await reconcileLanGateway();
+    return url;
+  });
+  sidecarRetryPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (sidecarRetryPromise === pending) sidecarRetryPromise = null;
+  }
 }
 
 async function withSidecarPausedForModelConfig<T>(operation: () => Promise<T>): Promise<T> {
@@ -207,11 +588,33 @@ async function syncModelDefaultsToDatabase(opts: { resetAdvanced?: boolean } = {
   await runCliChecked(runtime(), ['config', 'set', 'models.default', chatModel]);
 }
 
-async function applySetup(payload: SetupPayload) {
+async function ensureServiceReady(): Promise<SidecarManager> {
+  if (sidecar && currentState?.phase === 'ready') return sidecar;
+  if (getSetupInfo().needsSetup) throw new Error('请先完成 PMBrain 基础配置。');
+  if (setupInProgress) throw new Error('PMBrain 正在应用基础配置，请等待完成后再打开管理台。');
+  if (serviceReadyPromise) return serviceReadyPromise;
+
+  const pending = (async () => {
+    await prepareConfiguredDatabase();
+    await migrateConfiguredInstallation();
+    if (!sidecar || currentState?.phase !== 'ready') await startSidecar(false);
+    if (!sidecar || currentState?.phase !== 'ready') throw new Error('PMBrain 本地服务尚未就绪。');
+    return sidecar;
+  })();
+  serviceReadyPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (serviceReadyPromise === pending) serviceReadyPromise = null;
+  }
+}
+
+async function applySetupOnce(payload: SetupPayload) {
   const hadRunningSidecar = Boolean(sidecar);
   await stopSidecar();
   const saved = saveSetup(payload);
   try {
+    await prepareConfiguredDatabase();
     if (saved.needsEmbeddingDimensionProbe) {
       const probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
       const result = JSON.parse(probe.stdout.trim().split(/\r?\n/).at(-1) || '{}') as { dimensions?: number };
@@ -265,31 +668,48 @@ async function applySetup(payload: SetupPayload) {
   };
 }
 
-type SettingsPanel = 'basic' | 'models' | 'integrations' | 'updates';
+type SettingsPanel = 'basic' | 'models' | 'integrations' | 'updates' | 'system';
 
 function installMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'PMBrain',
       submenu: [
-        { label: '打开管理控制台', click: () => void openAdmin() },
+        { label: '打开管理控制台', click: () => void openAdmin().catch(error => reportUiActionError('无法打开管理控制台', error)) },
         { label: '基础配置', click: () => void openSettingsPanel('basic') },
         { label: '模型配置', click: () => void openSettingsPanel('models') },
         { label: 'MCP 接入', click: () => void openSettingsPanel('integrations') },
+        { label: '系统设置', click: () => void openSettingsPanel('system') },
         { label: '软件更新', click: () => void openUpdates() },
         { type: 'separator' },
         { label: '打开日志目录', click: () => logger && void shell.openPath(logger.directory) },
         { type: 'separator' },
-        { role: 'quit', label: '退出 PMBrain' },
+        {
+          label: '退出 PMBrain',
+          click: () => {
+            app.quit();
+          },
+        },
       ],
     },
     { role: 'viewMenu', label: '视图' },
   ]));
 }
 
+async function applySetup(payload: SetupPayload) {
+  if (setupInProgress) throw new Error('PMBrain 正在应用上一份基础配置，请等待完成。');
+  setupInProgress = true;
+  try {
+    return await applySetupOnce(payload);
+  } finally {
+    setupInProgress = false;
+  }
+}
+
 async function openSettingsPanel(panel: SettingsPanel): Promise<void> {
   await showShell();
   mainWindow?.webContents.send('desktop:show-panel', panel);
+  revealMainWindow();
 }
 
 async function openUpdates(): Promise<void> {
@@ -336,9 +756,211 @@ async function promptInstall(state: UpdateState): Promise<void> {
 
 async function openAdmin(): Promise<void> {
   if (!mainWindow) return;
-  if (!sidecar) await startSidecar(false);
-  const url = await sidecar!.createAdminLink();
+  if (getSetupInfo().needsSetup) {
+    await openSettingsPanel('basic');
+    showNotification('请先完成基础配置', '数据库与模型配置完成后才能打开管理控制台。');
+    return;
+  }
+  if (setupInProgress) {
+    revealMainWindow();
+    showNotification('PMBrain 正在完成配置', '请等待当前配置与数据库迁移完成。');
+    return;
+  }
+  const activeSidecar = await ensureServiceReady();
+  const url = await activeSidecar.createAdminLink();
   await mainWindow.loadURL(url);
+  revealMainWindow();
+}
+
+function loginItemSettingsOptions() {
+  return {
+    path: process.execPath,
+    args: app.isPackaged ? [] : [app.getAppPath()],
+  };
+}
+
+function setLaunchAtLogin(openAtLogin: boolean): void {
+  app.setLoginItemSettings({
+    ...loginItemSettingsOptions(),
+    openAtLogin,
+  });
+}
+
+async function saveSystemSettings(
+  payload: DesktopSystemSettingsPayload,
+): Promise<DesktopSystemSettingsSaveResult> {
+  const current = getDesktopPreferences();
+  const candidates = listNetworkCandidates();
+  const selected = payload.networkMode === 'shared'
+    ? candidates.find(candidate => (
+      candidate.adapterName === payload.sharedAdapter
+      && candidate.address === payload.sharedIp
+    ))
+    : undefined;
+  const modeChanged = current.networkMode !== payload.networkMode;
+  const endpointChanged = payload.networkMode === 'shared' && (
+    current.sharedAdapter !== payload.sharedAdapter || current.sharedIp !== payload.sharedIp
+  );
+  const resumeRequired = payload.networkMode === 'shared'
+    && (selectedAddressWasUnavailable || current.sharedResumeRequired)
+    && Boolean(selected);
+  const networkApplyRequested = modeChanged || endpointChanged || resumeRequired;
+  if (payload.networkMode === 'shared' && networkApplyRequested && !selected) {
+    throw new Error('所选局域网地址当前不可用。PMBrain 不会自动改用其他网卡，请重新选择。');
+  }
+  if (payload.networkMode === 'shared' && networkApplyRequested && selected && !selected.recommended) {
+    throw new Error(selected.warning || '共享模式只允许真实 Wi-Fi 或有线网卡上的私有局域网 IPv4。');
+  }
+  if (networkApplyRequested && mainWindow) {
+    const enteringShared = payload.networkMode === 'shared';
+    const detail = enteringShared
+      ? [
+        `将固定使用 ${payload.sharedAdapter} / ${payload.sharedIp}:3131。`,
+        '本机 Agent 仍继续使用 127.0.0.1，不需要修改原配置。',
+        '其他电脑必须使用新的局域网地址和独立 API Key；IP 变化后旧的远端配置会立即失效。',
+        selected?.warning ? `注意：${selected.warning}` : '建议在路由器中为这台电脑设置 DHCP 地址保留。',
+      ].join('\n')
+      : [
+        '关闭共享后，其他电脑现有的 PMBrain MCP 配置会立即断开。',
+        '本机 127.0.0.1 MCP 与知识库数据不受影响。',
+      ].join('\n');
+    const confirmation = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: resumeRequired && !modeChanged && !endpointChanged
+        ? '确认恢复 PMBrain 局域网共享'
+        : modeChanged ? '确认切换 PMBrain 网络模式' : '确认更换共享固定地址',
+      message: enteringShared ? '即将启用局域网共享模式' : '即将恢复仅本机模式',
+      detail,
+      buttons: ['确认并应用', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (confirmation.response !== 0) {
+      return { canceled: true, state: currentSystemSettingsState() };
+    }
+  }
+
+  const saved = saveDesktopPreferences({
+    networkMode: payload.networkMode,
+    sharedAdapter: payload.sharedAdapter,
+    sharedIp: payload.sharedIp,
+    closeBehavior: payload.closeBehavior,
+    sharedResumeRequired: payload.networkMode === 'local' || networkApplyRequested
+      ? false
+      : current.sharedResumeRequired,
+  });
+  const themeBackup = saveDesktopTheme(payload.theme);
+  applyDesktopTheme(payload.theme);
+  setLaunchAtLogin(payload.launchAtLogin === true);
+  selectedAddressWasUnavailable = saved.preferences.sharedResumeRequired;
+  networkWarning = undefined;
+  const gateway = await reconcileLanGateway();
+  if (payload.networkMode === 'shared' && networkApplyRequested && !gateway) {
+    throw new Error(`系统偏好已保存，但局域网共享入口未能启动：${networkWarning || '请检查固定 IP 与 3131 端口。'}`);
+  }
+  return {
+    canceled: false,
+    state: currentSystemSettingsState(),
+    backup: saved.backup ?? themeBackup,
+  };
+}
+
+
+function requireSharedSidecar(): { sidecar: SidecarManager; mcpUrl: string } {
+  if (!sidecar || currentState?.phase !== 'ready') throw new Error('请先启动 PMBrain 本地服务。');
+  const preferences = getDesktopPreferences();
+  if (!preferences.sharedIp) {
+    throw new Error('尚未保存局域网共享地址，当前没有可管理的共享入口。');
+  }
+  return { sidecar, mcpUrl: `http://${preferences.sharedIp}:3131/mcp` };
+}
+function requireSharedGateway(): { sidecar: SidecarManager; status: LanMcpGatewayStatus } {
+  if (!sidecar || currentState?.phase !== 'ready') throw new Error('请先启动 PMBrain 本地服务。');
+  if (getDesktopPreferences().networkMode !== 'shared') {
+    throw new Error('请先在系统设置中启用局域网共享模式。');
+  }
+  const status = lanGateway?.getStatus();
+  if (!status?.running) {
+    throw new Error(networkWarning || '局域网 MCP 尚未启动，请检查固定 IP 和端口状态。');
+  }
+  return { sidecar, status };
+}
+
+async function readSharedAccess() {
+  const shared = requireSharedSidecar();
+  return getSharedAccessContext(shared.sidecar, shared.mcpUrl);
+}
+
+async function createSharedAccess(payload: SharedIntegrationPayload) {
+  const shared = requireSharedGateway();
+  const result = await createSharedIntegration(shared.sidecar, shared.status.mcpUrl, payload);
+  try {
+    await smokeTestSharedIntegration(shared.status.mcpUrl, result.token, result.scopes, result.name);
+  } catch (error) {
+    try {
+      await revokeSharedIntegration(shared.sidecar, result.name);
+    } catch (rollbackError) {
+      throw new Error(
+        `共享凭证局域网校验失败，且自动撤销也失败：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+        + `。请立即在成员凭证列表中手动撤销 ${result.name}。`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  return result;
+}
+
+function isTrustedDesktopShellUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'file:') {
+      const normalized = decodeURIComponent(url.pathname).replace(/^\/(?:([A-Za-z]:))/, '$1').replace(/\\/g, '/').toLowerCase();
+      const expected = DESKTOP_RENDERER_PATH.replace(/\\/g, '/').toLowerCase();
+      return normalized === expected;
+    }
+    if (process.env.ELECTRON_RENDERER_URL) {
+      const renderer = new URL(process.env.ELECTRON_RENDERER_URL);
+      if (url.origin === renderer.origin) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedWindowNavigationUrl(value: string): boolean {
+  if (isTrustedDesktopShellUrl(value)) return true;
+  try {
+    const url = new URL(value);
+    return Boolean(
+      sidecar
+      && url.protocol === 'http:'
+      && url.hostname === '127.0.0.1'
+      && Number.parseInt(url.port, 10) === sidecar.port
+    );
+  } catch {
+    return false;
+  }
+}
+
+function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
+  const senderUrl = event.senderFrame?.url || event.sender.getURL();
+  if (!isTrustedDesktopShellUrl(senderUrl)) throw new Error('已拒绝来自非 PMBrain 桌面设置页的方法调用。');
+}
+
+
+function handleTrustedIpc(channel: string, listener: (event: IpcMainInvokeEvent, ...args: any[]) => any): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedIpcSender(event);
+    return listener(event, ...args);
+  });
+}
+async function revokeSharedAccess(credentialName: string) {
+  const shared = requireSharedSidecar();
+  await revokeSharedIntegration(shared.sidecar, credentialName);
+  return getSharedAccessContext(shared.sidecar, shared.mcpUrl);
 }
 
 async function createWindow(): Promise<void> {
@@ -362,17 +984,29 @@ async function createWindow(): Promise<void> {
     return { action: 'deny' };
   });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.on('close', (event) => {
+    if (quitting || getDesktopPreferences().closeBehavior === 'quit') return;
+    event.preventDefault();
+    mainWindow?.hide();
+    if (!trayHintShown) {
+      trayHintShown = true;
+      showNotification('PMBrain 仍在运行', '窗口已最小化到系统托盘，本地服务和局域网共享会继续运行。');
+    }
+  });
+  const guardNavigation = (event: Electron.Event, url: string) => {
+    if (isAllowedWindowNavigationUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  };
+  mainWindow.webContents.on('will-navigate', guardNavigation);
+  mainWindow.webContents.on('will-redirect', guardNavigation);
   mainWindow.on('closed', () => { mainWindow = null; });
   await showShell();
   if (mainWindow && !mainWindow.isVisible()) mainWindow.show();
   if (!getSetupInfo().needsSetup) {
     try {
-      await migrateConfiguredInstallation();
-      if (sidecar && currentState?.phase === 'ready') {
-        await mainWindow.loadURL(await sidecar.createAdminLink());
-      } else {
-        await startSidecar(true);
-      }
+      await ensureServiceReady();
+      if (sidecar && currentState?.phase === 'ready') await mainWindow.loadURL(await sidecar.createAdminLink());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger?.write('desktop', message);
@@ -405,8 +1039,10 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    if (process.platform === 'win32') app.setAppUserModelId('com.pmbrain.desktop');
     logger = new DesktopLogger(app.getPath('userData'));
     const initialSetup = getSetupInfo();
+    selectedAddressWasUnavailable = getDesktopPreferences().sharedResumeRequired;
     desktopVersionHistory = updateDesktopVersionHistory(
       join(app.getPath('userData'), 'version-history.json'),
       app.getVersion(),
@@ -415,64 +1051,88 @@ if (!app.requestSingleInstanceLock()) {
     applyDesktopTheme(initialSetup.current.theme);
     nativeTheme.on('updated', () => {
       mainWindow?.webContents.send('desktop:theme-state', themeState());
+      sendSystemSettingsState();
     });
+    initializeTray();
     installMenu();
-    ipcMain.handle('desktop:get-state', () => currentState);
-    ipcMain.handle('desktop:get-startup-progress', () => startupProgress);
-    ipcMain.handle('desktop:get-theme', () => themeState(getSetupInfo().current.theme));
-    ipcMain.handle('desktop:set-theme', (_event, value: DesktopTheme) => {
+    handleTrustedIpc('desktop:get-state', () => currentState);
+    handleTrustedIpc('desktop:get-startup-progress', () => startupProgress);
+    handleTrustedIpc('desktop:get-theme', () => themeState(getSetupInfo().current.theme));
+    handleTrustedIpc('desktop:set-theme', (event, value: DesktopTheme) => {
+      assertTrustedIpcSender(event);
       const source = normalizeDesktopTheme(value);
       const backup = saveDesktopTheme(source);
-      return { ...applyDesktopTheme(source), backup };
+      const result = { ...applyDesktopTheme(source), backup };
+      sendSystemSettingsState();
+      return result;
     });
-    ipcMain.handle('desktop:get-update-state', () => updateManager?.currentState ?? null);
-    ipcMain.handle('desktop:get-setup', () => ({ setup: getSetupInfo(), integrations: listIntegrations(sidecar?.port), port: sidecar?.port, mcpUrl: sidecar?.mcpUrl }));
-    ipcMain.handle('desktop:choose-directory', async (_event, initialPath?: string) => {
+    handleTrustedIpc('desktop:get-system-settings', (event) => {
+      assertTrustedIpcSender(event);
+      return currentSystemSettingsState();
+    });
+    handleTrustedIpc('desktop:save-system-settings', (event, payload: DesktopSystemSettingsPayload) => {
+      assertTrustedIpcSender(event);
+      return saveSystemSettings(payload);
+    });
+    handleTrustedIpc('desktop:get-shared-access', (event) => {
+      assertTrustedIpcSender(event);
+      return readSharedAccess();
+    });
+    handleTrustedIpc('desktop:create-shared-integration', (event, payload: SharedIntegrationPayload) => {
+      assertTrustedIpcSender(event);
+      return createSharedAccess(payload);
+    });
+    handleTrustedIpc('desktop:revoke-shared-integration', (event, credentialName: string) => {
+      assertTrustedIpcSender(event);
+      return revokeSharedAccess(credentialName);
+    });
+    handleTrustedIpc('desktop:get-update-state', () => updateManager?.currentState ?? null);
+    handleTrustedIpc('desktop:get-setup', () => ({ setup: getSetupInfo(), integrations: listIntegrations(sidecar?.port), port: sidecar?.port, mcpUrl: sidecar?.mcpUrl }));
+    handleTrustedIpc('desktop:choose-directory', async (_event, initialPath?: string) => {
       const result = await dialog.showOpenDialog(mainWindow!, {
         defaultPath: initialPath,
         properties: ['openDirectory', 'createDirectory'],
       });
       return result.canceled ? null : result.filePaths[0];
     });
-    ipcMain.handle('desktop:get-provider-models', (_event, provider: string, touchpoint: DesktopModelTouchpoint) => {
+    handleTrustedIpc('desktop:get-provider-models', (_event, provider: string, touchpoint: DesktopModelTouchpoint) => {
       return listDesktopProviderModels(provider, touchpoint);
     });
-    ipcMain.handle(
+    handleTrustedIpc(
       'desktop:get-advanced-model-config',
       () => withSidecarPausedForModelConfig(() => readAdvancedModelConfig(runtime())),
     );
-    ipcMain.handle(
+    handleTrustedIpc(
       'desktop:save-advanced-model-config',
       (_event, values: Partial<Record<AdvancedModelTier, string>>) => withSidecarPausedForModelConfig(
         () => writeAdvancedModelConfig(runtime(), values),
       ),
     );
-    ipcMain.handle('desktop:save-setup', (_event, payload: SetupPayload) => applySetup(payload));
-    ipcMain.handle('desktop:configure-integration', async (_event, client: IntegrationClient, kind: CredentialKind) => {
+    handleTrustedIpc('desktop:save-setup', (_event, payload: SetupPayload) => applySetup(payload));
+    handleTrustedIpc('desktop:configure-integration', async (_event, client: IntegrationClient, kind: CredentialKind) => {
       if (!sidecar) throw new Error('请先完成数据库配置并启动 PMBrain。');
       return configureIntegration(sidecar, client, kind);
     });
-    ipcMain.handle('desktop:copy', (_event, value: string) => clipboard.writeText(value));
-    ipcMain.handle('desktop:open-admin', () => openAdmin());
-    ipcMain.handle('desktop:check-updates', () => updateManager?.check());
-    ipcMain.handle('desktop:install-update', () => updateManager?.install());
-    ipcMain.handle('desktop:open-previous-release', async () => {
+    handleTrustedIpc('desktop:copy', (_event, value: string) => clipboard.writeText(value));
+    handleTrustedIpc('desktop:open-admin', () => openAdmin());
+    handleTrustedIpc('desktop:check-updates', () => updateManager?.check());
+    handleTrustedIpc('desktop:install-update', () => updateManager?.install());
+    handleTrustedIpc('desktop:open-previous-release', async () => {
       const previous = desktopVersionHistory.previous;
       if (!previous) throw new Error('当前没有可用的上一版本记录。');
       await shell.openExternal(`https://github.com/zhengyunhui123-dev/PMBrain/releases/tag/v${previous}`);
     });
-    ipcMain.handle('desktop:retry', async () => {
+    handleTrustedIpc('desktop:retry', async () => {
       await showShell();
-      if (sidecar) {
-        const url = await sidecar.restart();
-        await mainWindow?.loadURL(url);
-      } else if (!getSetupInfo().needsSetup) {
-        await migrateConfiguredInstallation();
-        await startSidecar(true);
-      }
+      if (getSetupInfo().needsSetup) return;
+      const url = await restartSidecarForRetry();
+      await mainWindow?.loadURL(url);
     });
-    ipcMain.handle('desktop:open-logs', () => logger && shell.openPath(logger.directory));
-    ipcMain.handle('desktop:quit', () => app.quit());
+    handleTrustedIpc('desktop:open-logs', () => logger && shell.openPath(logger.directory));
+    handleTrustedIpc('desktop:quit', () => {
+      app.quit();
+    });
+    networkMonitor = setInterval(() => void checkSelectedNetworkAddress(), LAN_MONITOR_INTERVAL_MS);
     await createWindow();
     initializeUpdater();
   });
@@ -480,17 +1140,28 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', (event) => {
     if (quitting) return;
     updateManager?.stop();
+    if (networkMonitor) {
+      clearInterval(networkMonitor);
+      networkMonitor = null;
+    }
     if (!sidecar) {
+      quitting = true;
+      tray?.destroy();
+      tray = null;
       logger?.close();
       return;
     }
     event.preventDefault();
     quitting = true;
     void stopSidecar().finally(() => {
+      tray?.destroy();
+      tray = null;
       logger?.close();
       app.exit(0);
     });
   });
 
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => {
+    if (getDesktopPreferences().closeBehavior === 'quit') app.quit();
+  });
 }
