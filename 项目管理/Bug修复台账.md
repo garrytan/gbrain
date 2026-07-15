@@ -800,5 +800,5 @@
 - 描述：新提交的 Admin 主题同步接口已经读取 `desktop.theme`，但 GitHub Actions 的 `bun run verify` 在 TypeScript 检查阶段报 `GBrainConfig.desktop` 缺少 `theme` 属性。
 - 根因：主题功能新增了运行时配置字段，但核心配置类型没有同步扩展。
 - 解决方案：在 `GBrainConfig.desktop` 中补充 `theme?: 'system' | 'light' | 'dark'`，与桌面端现有主题类型保持一致；不改变运行时逻辑和用户数据。
-- 是否完成：进行中
-- 最终结果：已完成本地类型检查与相关测试准备，等待 GitHub Actions 复验。
+- 是否完成：是
+- 最终结果：`verify`、全部 Test 分片、串行测试、E2E Tier 1/Tier 2 和手动 Heavy Tests 均通过；未修改用户知识库、原始资料或运行时业务逻辑，最终 `bun run build:win` 仍由用户执行。
