@@ -37,8 +37,8 @@
  */
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'fs';
-import { realpathSync } from 'fs';
-import { join, dirname, resolve as resolvePath } from 'path';
+import { join, dirname, basename, resolve as resolvePath } from 'path';
+import { isPathContained } from './path-confine.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import {
@@ -50,6 +50,8 @@ import {
   type RepoState,
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
+import { isValidSourceId } from './source-id.ts';
+import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -64,7 +66,8 @@ export type SourceOpErrorCode =
   | 'not_found'
   | 'protected_id'
   | 'clone_dir_outside_gbrain'
-  | 'symlink_escape';
+  | 'symlink_escape'
+  | 'unmanaged_path';
 
 export class SourceOpError extends Error {
   constructor(
@@ -79,8 +82,6 @@ export class SourceOpError extends Error {
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-
 export interface SourceRow {
   id: string;
   name: string;
@@ -89,6 +90,20 @@ export interface SourceRow {
   last_sync_at: Date | null;
   config: Record<string, unknown>;
   created_at: Date;
+  /**
+   * v0.40.3.0: per-source CR mode override. NULL falls through to global
+   * mode bundle. Written only by `gbrain sources set-cr-mode <id> <mode>`
+   * (CLI-write-only per D15 security gate); MCP / OAuth callers cannot
+   * mutate this field.
+   */
+  contextual_retrieval_mode?: string | null;
+  /**
+   * v0.40.3.0: per-source mount-frontmatter trust gate (D15). FALSE for
+   * mounted sources by default. Flipped via
+   * `gbrain mounts trust-frontmatter <id>`. Host source (id='default') is
+   * always trusted in the resolver regardless of this column value.
+   */
+  trust_frontmatter_overrides?: boolean;
 }
 
 export interface SourceListEntry {
@@ -142,8 +157,14 @@ export interface RemoveSourceOpts {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Validate via the canonical regex from `source-id.ts` but rethrow as the
+ * sources-ops-tagged error so `gbrain sources add` keeps its user-facing
+ * SourceOpError shape. The regex itself is in one place; only the error
+ * envelope differs per caller.
+ */
 function validateSourceId(id: string): void {
-  if (!SOURCE_ID_RE.test(id)) {
+  if (!isValidSourceId(id)) {
     throw new SourceOpError(
       'invalid_id',
       `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens.`,
@@ -210,27 +231,73 @@ function makeTempCloneDir(id: string): string {
   return gbrainPath('clones', '.tmp', `${id}-${rand}`);
 }
 
+// `isPathContained` moved to `src/core/path-confine.ts` (shared with the
+// dotfile-trust + skills-dir confinement helpers). Re-exported here so existing
+// importers (and recloneIfMissing below) keep working unchanged.
+export { isPathContained };
+
 /**
- * Symlink-safe path confinement: realpath both sides, then lstat-walk to
- * confirm `child` is a real subtree of `parent`. Mirrors validateUploadPath
- * shape at src/core/operations.ts:61. String startsWith() would let
- * $GBRAIN_HOME/clones/<id> → /etc bypass the confine.
+ * Did gbrain CREATE this clone (so re-clone/delete is safe)? Ownership, NOT
+ * path-containment — a user-supplied working tree is NEVER owned, even if it
+ * happens to sit under $GBRAIN_HOME. This is the #1881 guard: recloneIfMissing
+ * deletes local_path, so it must only ever fire on a clone gbrain owns.
  *
- * Returns true if `child` exists and is contained under `parent`.
- * Returns false if the resolved path escapes, or either path is unresolvable.
+ * Ownership is proven by either:
+ *   1. config.managed_clone === true — written by addSource's --url path
+ *      (covers both default-location and --clone-dir clones), OR
+ *   2. local_path === defaultCloneDir(id) — back-compat for clones created
+ *      before the marker existed (gbrain's default location), via exact
+ *      normalized-path equality (symlink-free, so none of isPathContained's
+ *      symlinked-parent / lexical-escape edge cases apply).
+ *
+ * Everything else is fail-closed (NOT owned → refuse to touch): the bug's
+ * federated row (remote_url + a user tree), and pre-marker --clone-dir clones
+ * (rare, local-only) which are byte-for-byte indistinguishable from it. Those
+ * must be re-added to regain auto-reclone — the correct trade-off when ownership
+ * is unprovable.
  */
-export function isPathContained(child: string, parent: string): boolean {
-  let resolvedChild: string;
-  let resolvedParent: string;
-  try {
-    resolvedChild = realpathSync(child);
-    resolvedParent = realpathSync(parent);
-  } catch {
-    return false; // missing path → not contained
+export function isOwnedClone(src: {
+  id: string;
+  local_path: string | null;
+  config: unknown;
+}): boolean {
+  if (!src.local_path) return false;
+  const cfg =
+    typeof src.config === 'string'
+      ? (JSON.parse(src.config) as Record<string, unknown>)
+      : ((src.config ?? {}) as Record<string, unknown>);
+  if (cfg.managed_clone === true) return true;
+  return resolvePath(src.local_path) === resolvePath(defaultCloneDir(src.id));
+}
+
+/**
+ * Recovery hint for an unowned source with a remote_url. Splits guidance by
+ * on-disk state: a healthy unowned path syncs read-only (just drop remote_url),
+ * but a degraded one (missing/no-git/not-a-dir) cannot be recovered by dropping
+ * remote_url — that would only defer the failure to the "Not a git repository"
+ * check. Shared by the core SourceOpError and the sync.ts CLI error so they read
+ * identically.
+ */
+export function unownedHint(
+  src: { id: string; local_path: string | null },
+  state: RepoState,
+): string {
+  const path = src.local_path ?? '(none)';
+  if (state === 'healthy') {
+    return (
+      `Source "${src.id}" has config.remote_url set but local_path ${path} is not a ` +
+      `clone gbrain created. gbrain syncs it read-only and will never re-clone or delete ` +
+      `it. To silence this, drop config.remote_url, or re-register with --url so gbrain ` +
+      `owns the clone.`
+    );
   }
-  // Append a separator to parent so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
+  return (
+    `Source "${src.id}" has config.remote_url set but local_path ${path} is not a clone ` +
+    `gbrain created and is not a usable git repo (state: ${state}). gbrain will NOT ` +
+    `re-clone over it (it is your working tree, not a gbrain-managed mirror). Restore the ` +
+    `directory yourself, or remove + re-add the source with --url to let gbrain manage the ` +
+    `clone.`
+  );
 }
 
 // ── addSource ───────────────────────────────────────────────────────────────
@@ -307,7 +374,14 @@ export async function addSource(
       throw e;
     }
 
-    const config: Record<string, unknown> = { remote_url: parsedUrl.url };
+    // managed_clone:true is the ownership marker (#1881). It authorizes
+    // recloneIfMissing to rm+replace this clone — gbrain created it, here or at
+    // a --clone-dir path. A user-tree row (created by an external INSERT, no
+    // --url) never carries this, so it can never be deleted by reclone.
+    const config: Record<string, unknown> = {
+      remote_url: parsedUrl.url,
+      managed_clone: true,
+    };
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
@@ -316,7 +390,7 @@ export async function addSource(
     try {
       await engine.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
-             VALUES ($1, $2, $3, $4::jsonb)`,
+             VALUES ($1, $2, $3, $4::text::jsonb)`,
         [opts.id, displayName, finalPath, JSON.stringify(config)],
       );
     } catch (e) {
@@ -362,7 +436,7 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::jsonb)`,
+           VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
     );
   }
@@ -375,6 +449,97 @@ export async function addSource(
     );
   }
   return created;
+}
+
+// ── resolveDefaultSource ────────────────────────────────────────────────────
+//
+// v0.34 W0b — canonical helper for CLI commands that take an optional
+// --source flag. The contract per the eng review D7:
+//   - exactly 1 registered source → return its id (single-source brains,
+//     the 80% case; --source flag is unnecessary friction)
+//   - 0 sources → throw (no source to scope to)
+//   - 2+ sources → throw with the list, forcing the caller to be explicit
+//
+// Codex finding #7: src/commands/code-callers.ts:54 + code-callees.ts:43
+// historically set `allSources: allSources || !sourceId` — which means
+// the documented "source-scoped by default" behavior INVERTED to global
+// whenever `--source` was omitted. Multi-source brains silently
+// cross-contaminated structural retrieval despite the docstring claim.
+//
+// Helper consolidates the resolution rule so blast/flow/clusters/wiki
+// (v0.34 new commands) and code-callers/callees (v0.20.0 retrofit)
+// behave identically.
+
+export class SourceResolutionError extends Error {
+  constructor(
+    message: string,
+    public readonly code: 'no_sources' | 'multiple_sources_ambiguous',
+    public readonly availableSources: string[],
+  ) {
+    super(message);
+    this.name = 'SourceResolutionError';
+  }
+}
+
+export async function resolveDefaultSource(engine: BrainEngine): Promise<string> {
+  const sources = await listSources(engine);
+  if (sources.length === 0) {
+    throw new SourceResolutionError(
+      'no sources registered; run `gbrain sources add` first',
+      'no_sources',
+      [],
+    );
+  }
+  if (sources.length === 1) {
+    return sources[0]!.id;
+  }
+  const ids = sources.map((s) => s.id);
+  throw new SourceResolutionError(
+    `multi-source brain — specify --source from: ${ids.join(', ')}`,
+    'multiple_sources_ambiguous',
+    ids,
+  );
+}
+
+/** Result of `resolveScopedSourceOrThrow`: the resolved source id plus the
+ * tier that won, so callers can nudge (sole_non_default) or surface the
+ * source in their output envelope. */
+export interface ScopedSourceResolution {
+  source_id: string;
+  tier: SourceTier;
+}
+
+/**
+ * Source scope for the structural-retrieval commands (`code-callers` /
+ * `code-callees`) when neither `--source` nor `--all-sources` is given.
+ *
+ * Runs the FULL 7-tier resolution chain via `resolveSourceWithTier`
+ * (flag → env → dotfile → local_path → brain_default → sole_non_default →
+ * seed_default), so a `.gbrain-source` pin (or any real signal) selects the
+ * source. The multi-source ambiguity guard (`resolveDefaultSource`) is
+ * applied ONLY when the chain matched nothing real (tier `seed_default`):
+ * 1 source → returns it, 0 → `no_sources` throw, 2+ → `multiple_sources_ambiguous`.
+ *
+ * Contrast with `resolveSourceId` (silently returns `'default'` and never
+ * throws on ambiguity) — this helper deliberately preserves the loud
+ * multi-source error when there's genuinely no signal.
+ *
+ * @throws SourceResolutionError  on a no-signal 0/2+-source brain (seed_default tier).
+ * @throws Error ("Source \"…\" not found." / "Invalid …")  on a bad pin / env value
+ *         via `assertSourceExists` inside `resolveSourceWithTier` — callers should
+ *         surface these as clean usage errors, not uncaught stacks.
+ */
+export async function resolveScopedSourceOrThrow(
+  engine: BrainEngine,
+  cwd: string = process.cwd(),
+): Promise<ScopedSourceResolution> {
+  const resolved = await resolveSourceWithTier(engine, null, cwd);
+  if (resolved.tier !== 'seed_default') {
+    return { source_id: resolved.source_id, tier: resolved.tier };
+  }
+  // Nothing in the chain matched → apply the ambiguity guard (may throw).
+  const id = await resolveDefaultSource(engine);
+  return { source_id: id, tier: 'seed_default' };
 }
 
 // ── listSources ─────────────────────────────────────────────────────────────
@@ -587,9 +752,22 @@ export async function recloneIfMissing(
   const state = validateRepoState(src.local_path, remoteUrl);
   if (state === 'healthy') return false;
 
-  // Re-clone via temp + rename, mirroring addSource's atomicity contract.
-  const tempDir = makeTempCloneDir(id);
-  mkdirSync(dirname(tempDir), { recursive: true });
+  // #1881 ownership guard — abort BEFORE any filesystem op. recloneIfMissing
+  // deletes local_path; gbrain may only do that to a clone it created, never a
+  // user working tree. A row with remote_url + an unowned local_path (the
+  // gstack-orchestrator federated shape) is refused here, loudly, untouched.
+  if (!isOwnedClone(src)) {
+    throw new SourceOpError('unmanaged_path', unownedHint(src, state));
+  }
+
+  // EXDEV-safe atomic reclone. Clone into a SIBLING temp of local_path (not the
+  // shared clones/.tmp, which can be on a different mount than a --clone-dir
+  // target → EXDEV → "deleted but not recloned"). Then swap: move old aside →
+  // move new in → drop old, so local_path is never left missing-and-unrecoverable.
+  const parent = dirname(src.local_path);
+  mkdirSync(parent, { recursive: true });
+  const rand = randomBytes(6).toString('hex');
+  const tempDir = join(parent, `.gbrain-reclone-${basename(src.local_path)}-${rand}`);
   try {
     cloneRepo(remoteUrl, tempDir);
   } catch (e) {
@@ -600,19 +778,62 @@ export async function recloneIfMissing(
     throw e;
   }
 
-  // If the local_path partially exists (e.g., empty dir, file-not-dir), nuke
-  // it before the rename so renameSync doesn't fail on a non-empty target.
-  rmSync(src.local_path, { recursive: true, force: true });
-  mkdirSync(dirname(src.local_path), { recursive: true });
-  try {
-    renameSync(tempDir, src.local_path);
-  } catch (e) {
+  // TOCTOU re-check immediately before the destructive move: re-confirm
+  // ownership AND reject a symlink leaf swapped in after the entry check (never
+  // rm-rf / rename through a symlink).
+  if (!isOwnedClone(src)) {
     rmSync(tempDir, { recursive: true, force: true });
+    throw new SourceOpError('unmanaged_path', unownedHint(src, state));
+  }
+  let aside: string | null = null;
+  try {
+    if (existsSync(src.local_path)) {
+      // Symlink leaf guard: never rename/rm *through* a symlinked leaf — that's
+      // the TOCTOU swap-in vector (an attacker plants a symlink at local_path
+      // between the entry ownership check and this rename). An owned clone's leaf
+      // is a real dir gbrain created; a symlink here means tamper, so fail closed.
+      // (Symlinked ANCESTORS are intentionally NOT rejected here: for an owned
+      // clone gbrain created the dir at this path — cloneRepo refuses a non-empty
+      // dest, so a pre-existing user tree can never become an owned clone — and a
+      // realpath-chain check false-positives on ubiquitous system symlinks like
+      // macOS /var -> /private/var. The residual DB-trust risk, a forged
+      // managed_clone marker on an arbitrary path, is tracked as a TODO and is
+      // not closable by a path check.)
+      if (lstatSync(src.local_path).isSymbolicLink()) {
+        rmSync(tempDir, { recursive: true, force: true });
+        throw new SourceOpError(
+          'symlink_escape',
+          `Refusing to re-clone "${id}": local_path ${src.local_path} is a symlink.`,
+        );
+      }
+      aside = `${src.local_path}.old-${rand}`;
+      renameSync(src.local_path, aside); // same fs (sibling) — no EXDEV
+    }
+    renameSync(tempDir, src.local_path); // same fs — no EXDEV
+  } catch (e) {
+    // Best-effort restore of the original if the swap left local_path missing.
+    if (aside && !existsSync(src.local_path)) {
+      try {
+        renameSync(aside, src.local_path);
+      } catch {
+        /* original kept at `aside`; surfaced via the thrown error below */
+      }
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+    if (e instanceof SourceOpError) throw e;
+    // If the original is still parked at `aside` (restore failed), tell the user
+    // exactly where it is — otherwise a "cleanup the failed reclone" reflex would
+    // delete their only copy.
+    const asideNote =
+      aside && existsSync(aside)
+        ? ` Your original clone is preserved at ${aside} — restore it manually; do not delete it.`
+        : '';
     throw new SourceOpError(
       'rename_failed',
-      `Could not move re-cloned repo to ${src.local_path}: ${(e as Error).message}`,
+      `Could not move re-cloned repo to ${src.local_path}: ${(e as Error).message}.${asideNote}`,
       e,
     );
   }
+  if (aside) rmSync(aside, { recursive: true, force: true });
   return true;
 }

@@ -62,6 +62,147 @@ const SNAPSHOT_SQL = `
   ORDER BY table_name, ordinal_position
 `;
 
+// ─── v0.34 D7 — index parity ──────────────────────────────────────────
+// snapshotIndexes captures index name + table + column-list + uniqueness +
+// partial-predicate so the schema-drift E2E test catches missing or
+// shape-mismatched indexes between Postgres and PGLite. Without this,
+// hot-path indexes (e.g. v0.34 W4-5's partial composite + composite) can
+// silently degrade from index-only-scan to Cartesian on 96K-chunk brains
+// while the column-level drift test stays green.
+
+export interface IndexInfo {
+  indexName: string;
+  tableName: string;
+  /** Column list as comma-joined names (case-preserved). */
+  columns: string;
+  isUnique: boolean;
+  isPartial: boolean;
+}
+
+export type IndexSnapshot = Map<string, IndexInfo>; // keyed by indexName
+
+export interface IndexSnapshotRow {
+  index_name: string;
+  table_name: string;
+  columns: string;
+  is_unique: boolean;
+  is_partial: boolean;
+}
+
+export type IndexSnapshotQueryFn = (sql: string) => Promise<IndexSnapshotRow[]>;
+
+// pg_index + pg_class + pg_attribute + pg_namespace — covers both Postgres
+// and PGLite (both expose the standard pg_catalog views).
+const INDEX_SNAPSHOT_SQL = `
+  SELECT
+    i.relname AS index_name,
+    t.relname AS table_name,
+    pg_get_indexdef(idx.indexrelid) AS columns,
+    idx.indisunique AS is_unique,
+    (pg_get_indexdef(idx.indexrelid) ILIKE '%WHERE%') AS is_partial
+  FROM pg_index idx
+  JOIN pg_class i ON i.oid = idx.indexrelid
+  JOIN pg_class t ON t.oid = idx.indrelid
+  JOIN pg_namespace ns ON ns.oid = t.relnamespace
+  WHERE ns.nspname = 'public'
+    AND NOT idx.indisprimary
+  ORDER BY t.relname, i.relname
+`;
+
+/**
+ * v0.34 D7 — Pull an IndexSnapshot from any engine that exposes a SQL
+ * query callback. Caller adapts the native shape to `IndexSnapshotQueryFn`.
+ */
+export async function snapshotIndexes(query: IndexSnapshotQueryFn): Promise<IndexSnapshot> {
+  const rows = await query(INDEX_SNAPSHOT_SQL);
+  const snap: IndexSnapshot = new Map();
+  for (const row of rows) {
+    snap.set(row.index_name, {
+      indexName: row.index_name,
+      tableName: row.table_name,
+      columns: row.columns,
+      isUnique: row.is_unique === true || (row.is_unique as unknown) === 'true' || (row.is_unique as unknown) === 't',
+      isPartial: row.is_partial === true || (row.is_partial as unknown) === 'true' || (row.is_partial as unknown) === 't',
+    });
+  }
+  return snap;
+}
+
+export interface IndexDiff {
+  /** Indexes present in Postgres but missing from PGLite. */
+  pgOnly: IndexInfo[];
+  /** Indexes present in PGLite but missing from Postgres. */
+  pgliteOnly: IndexInfo[];
+  /** Indexes present on both sides with mismatched shape. */
+  mismatched: Array<{ pg: IndexInfo; pglite: IndexInfo; reason: string }>;
+}
+
+export function diffIndexSnapshots(
+  pg: IndexSnapshot,
+  pglite: IndexSnapshot,
+  opts: { allowlist?: string[] } = {},
+): IndexDiff {
+  const allow = new Set(opts.allowlist ?? []);
+  const out: IndexDiff = { pgOnly: [], pgliteOnly: [], mismatched: [] };
+
+  for (const [name, info] of pg) {
+    if (allow.has(name)) continue;
+    const other = pglite.get(name);
+    if (!other) {
+      out.pgOnly.push(info);
+      continue;
+    }
+    // Shape compare. Index definitions render slightly differently across
+    // engines for the WHERE clause; normalize whitespace before comparing.
+    const normPg = info.columns.replace(/\s+/g, ' ').trim().toLowerCase();
+    const normPl = other.columns.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (normPg !== normPl) {
+      out.mismatched.push({ pg: info, pglite: other, reason: 'definition_mismatch' });
+      continue;
+    }
+    if (info.isUnique !== other.isUnique) {
+      out.mismatched.push({ pg: info, pglite: other, reason: 'uniqueness_mismatch' });
+    }
+    if (info.isPartial !== other.isPartial) {
+      out.mismatched.push({ pg: info, pglite: other, reason: 'partial_mismatch' });
+    }
+  }
+  for (const [name, info] of pglite) {
+    if (allow.has(name)) continue;
+    if (!pg.has(name)) out.pgliteOnly.push(info);
+  }
+  return out;
+}
+
+export function isCleanIndexDiff(diff: IndexDiff): boolean {
+  return diff.pgOnly.length === 0 && diff.pgliteOnly.length === 0 && diff.mismatched.length === 0;
+}
+
+export function formatIndexDiffForFailure(diff: IndexDiff): string {
+  const lines: string[] = [];
+  if (diff.pgOnly.length > 0) {
+    lines.push(`Indexes in Postgres but MISSING in PGLite (mirror in src/core/pglite-schema.ts):`);
+    for (const i of diff.pgOnly) {
+      lines.push(`  - ${i.indexName} on ${i.tableName}: ${i.columns}`);
+    }
+  }
+  if (diff.pgliteOnly.length > 0) {
+    lines.push(`Indexes in PGLite but MISSING in Postgres (mirror in src/schema.sql or migrate.ts):`);
+    for (const i of diff.pgliteOnly) {
+      lines.push(`  - ${i.indexName} on ${i.tableName}: ${i.columns}`);
+    }
+  }
+  if (diff.mismatched.length > 0) {
+    lines.push(`Indexes present on both sides but with shape drift:`);
+    for (const m of diff.mismatched) {
+      lines.push(`  - ${m.pg.indexName} (${m.reason}):`);
+      lines.push(`      PG:     ${m.pg.columns}`);
+      lines.push(`      PGLite: ${m.pglite.columns}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 /**
  * Pull a SchemaSnapshot from any engine that exposes a SQL query callback.
  * Caller adapts the engine's native query shape to `SnapshotQueryFn` (PGLite

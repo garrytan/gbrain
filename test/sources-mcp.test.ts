@@ -95,6 +95,7 @@ function ctxRemote(scopes: string[]): OperationContext {
     dryRun: false,
     remote: true,
     auth,
+    sourceId: 'default',
   };
 }
 
@@ -305,6 +306,7 @@ describe('sources_add — remote callers ignore path/clone_dir overrides', () =>
         logger: { info() {}, warn() {}, error() {} },
         dryRun: false,
         remote: false,
+        sourceId: 'default',
       };
       const customDir = join(GBRAIN_HOME, 'custom-clones', 'local-override');
       const row = (await op.handler(ctxLocal, {

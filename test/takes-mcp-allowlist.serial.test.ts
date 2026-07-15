@@ -13,6 +13,7 @@
  * This test exercises step 3-5 directly through dispatchToolCall.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
@@ -205,45 +206,35 @@ describe('per-token takes-holder allow-list — get_versions body channel', () =
 
 describe('think op — read-only on remote callers (Lane D landed)', () => {
   test('remote save/take is forced read-only via remote_persisted_blocked flag', async () => {
-    // Without ANTHROPIC_API_KEY, runThink returns gather-only result with NO_ANTHROPIC_API_KEY warning.
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      const result = await dispatchToolCall(engine, 'think', { question: 'q', save: true, take: true }, {
-        remote: true,
-        takesHoldersAllowList: ['world', 'garry', 'brain'],
-      });
-      const env = parseResult(result) as {
-        remote_persisted_blocked: boolean;
-        saved_slug: string | null;
-        warnings: string[];
-      };
-      // Codex P1 #7: remote save/take is silently disabled.
-      expect(env.remote_persisted_blocked).toBe(true);
-      expect(env.saved_slug).toBeNull();
-      // Without API key, gather succeeds but synthesis is skipped.
-      expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    // Hermetic no-key: neutralize BOTH env var AND ~/.gbrain config key, else a
+    // configured machine fires a real LLM call and the warning flips to
+    // LLM_OUTPUT_NOT_JSON. runThink then returns gather-only + NO_ANTHROPIC_API_KEY.
+    const result = await withoutAnthropicKey(() => dispatchToolCall(engine, 'think', { question: 'q', save: true, take: true }, {
+      remote: true,
+      takesHoldersAllowList: ['world', 'garry', 'brain'],
+    }));
+    const env = parseResult(result) as {
+      remote_persisted_blocked: boolean;
+      saved_slug: string | null;
+      warnings: string[];
+    };
+    // Codex P1 #7: remote save/take is silently disabled.
+    expect(env.remote_persisted_blocked).toBe(true);
+    expect(env.saved_slug).toBeNull();
+    // Without API key, gather succeeds but synthesis is skipped.
+    expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
   });
 
   test('local-CLI think runs full pipeline (gather-only without API key)', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      const result = await dispatchToolCall(engine, 'think', { question: 'q', save: true }, {
-        remote: false,
-      });
-      const env = parseResult(result) as {
-        warnings: string[];
-        remote_persisted_blocked: boolean;
-      };
-      expect(env.remote_persisted_blocked).toBe(false);
-      // Without API key, returns gather-only + warning. With key, would actually synthesize.
-      expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    const result = await withoutAnthropicKey(() => dispatchToolCall(engine, 'think', { question: 'q', save: true }, {
+      remote: false,
+    }));
+    const env = parseResult(result) as {
+      warnings: string[];
+      remote_persisted_blocked: boolean;
+    };
+    expect(env.remote_persisted_blocked).toBe(false);
+    // Without API key, returns gather-only + warning. With key, would actually synthesize.
+    expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
   });
 });

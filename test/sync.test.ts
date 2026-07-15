@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+import { buildSyncManifest, isSyncable, pathToSlug, pruneDir, isCodeFilePath } from '../src/core/sync.ts';
+import { buildAutoEmbedArgs, buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -97,6 +98,81 @@ describe('isSyncable', () => {
   test('rejects ops/ directory', () => {
     expect(isSyncable('ops/deploy-log.md')).toBe(false);
     expect(isSyncable('ops/config.md')).toBe(false);
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // v0.36 walker drift fix (closes #923, #202): node_modules exclusion
+  // ────────────────────────────────────────────────────────────────
+
+  test('CRITICAL latent-bug regression: rejects node_modules paths at any depth', () => {
+    // Pre-v0.36, isSyncable had no node_modules check. Any markdown file
+    // under a non-dot `node_modules` directory slipped through. This is
+    // the canonical latent-bug fix gated by IRON RULE per the wave plan.
+    expect(isSyncable('node_modules/some-pkg/README.md')).toBe(false);
+    expect(isSyncable('node_modules/some-pkg/CHANGELOG.md')).toBe(false);
+    expect(isSyncable('node_modules/some-pkg/docs/api.md')).toBe(false);
+    expect(isSyncable('apps/web/node_modules/dep/notes.md')).toBe(false);
+  });
+});
+
+describe('pruneDir', () => {
+  test('blocks node_modules (no leading dot, the latent-bug case)', () => {
+    expect(pruneDir('node_modules')).toBe(false);
+  });
+
+  test('blocks dot-prefix dirs (.git, .obsidian, .raw, .cache, etc.)', () => {
+    expect(pruneDir('.git')).toBe(false);
+    expect(pruneDir('.obsidian')).toBe(false);
+    expect(pruneDir('.raw')).toBe(false);
+    expect(pruneDir('.cache')).toBe(false);
+    expect(pruneDir('.vscode')).toBe(false);
+  });
+
+  test('blocks ops (gbrain operational dir)', () => {
+    expect(pruneDir('ops')).toBe(false);
+  });
+
+  test('blocks *.raw sidecar dirs (gbrain convention)', () => {
+    expect(pruneDir('.raw')).toBe(false);
+    expect(pruneDir('pedro.raw')).toBe(false);
+    expect(pruneDir('article.raw')).toBe(false);
+  });
+
+  test('allows normal content dirs', () => {
+    expect(pruneDir('wiki')).toBe(true);
+    expect(pruneDir('people')).toBe(true);
+    expect(pruneDir('meetings')).toBe(true);
+    expect(pruneDir('corpus')).toBe(true);
+    expect(pruneDir('2026')).toBe(true);
+  });
+
+  test('empty string returns true (defensive default)', () => {
+    expect(pruneDir('')).toBe(true);
+  });
+});
+
+describe('isCodeFilePath', () => {
+  test('v0.36.x #878 regression: Terraform / HCL extensions are admitted', () => {
+    expect(isCodeFilePath('infra/main.tf')).toBe(true);
+    expect(isCodeFilePath('infra/prod.tfvars')).toBe(true);
+    expect(isCodeFilePath('modules/network/variables.hcl')).toBe(true);
+  });
+
+  test('extensions are case-insensitive', () => {
+    expect(isCodeFilePath('INFRA/MAIN.TF')).toBe(true);
+    expect(isCodeFilePath('Modules/Net/Vars.HCL')).toBe(true);
+  });
+
+  test('does not false-positive on lookalike suffixes', () => {
+    expect(isCodeFilePath('docs/notes.txt')).toBe(false);
+    expect(isCodeFilePath('readme.tflint')).toBe(false);
+    expect(isCodeFilePath('config.hcling')).toBe(false);
+  });
+
+  test('still accepts the v0.20.0 baseline set (regression guard)', () => {
+    expect(isCodeFilePath('src/foo.ts')).toBe(true);
+    expect(isCodeFilePath('src/bar.py')).toBe(true);
+    expect(isCodeFilePath('config.toml')).toBe(true);
   });
 });
 
@@ -269,6 +345,26 @@ describe('performSync dry-run never writes', () => {
     // Bookmark NOT set — this is the regression the guard enforces.
     expect(await engine.getConfig('sync.last_commit')).toBeNull();
     expect(await engine.getConfig('sync.repo_path')).toBeNull();
+  });
+
+  test('first sync without origin skips git pull noise and uses local working tree', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const messages: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => { messages.push(args.map(String).join(' ')); };
+    try {
+      const result = await performSync(engine, {
+        repoPath,
+        noEmbed: true,
+      });
+      expect(result.status).toBe('first_sync');
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(messages.some(m => m.includes('No origin remote') && m.includes('skipping git pull'))).toBe(true);
+    expect(messages.some(m => m.includes('sync.git_pull start'))).toBe(false);
+    expect(messages.some(m => m.includes('git pull failed'))).toBe(false);
   });
 
   test('incremental dry-run does NOT write to DB or advance the bookmark', async () => {
@@ -463,5 +559,355 @@ describe('sync regression — #132 nested transaction deadlock', () => {
       const line = prelude.slice(lineStart, prelude.indexOf('\n', lastTxIdx));
       expect(line.trim().startsWith('//')).toBe(true);
     }
+  });
+});
+
+describe('resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)', () => {
+  let pgEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = new PGLiteEngine();
+    await pgEngine.connect({});
+    await pgEngine.initSchema();
+  });
+
+  afterAll(async () => {
+    await pgEngine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await (pgEngine as any).db.exec('DELETE FROM content_chunks');
+    await (pgEngine as any).db.exec('DELETE FROM pages');
+  });
+
+  test('returns stored slug when source_path matches a row', async () => {
+    const { resolveSlugByPathOrSourcePath } = await import('../src/commands/sync.ts');
+    // Seed a frontmatter-fallback page: slug doesn't derive from path (emoji)
+    await pgEngine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, source_path)
+       VALUES ('projects/launch', 'project', 'Launch', 'body', 'markdown', '🚀.md')`,
+    );
+    const slug = await resolveSlugByPathOrSourcePath(pgEngine, '🚀.md');
+    expect(slug).toBe('projects/launch');
+  });
+
+  test('falls back to resolveSlugForPath when no source_path matches', async () => {
+    const { resolveSlugByPathOrSourcePath } = await import('../src/commands/sync.ts');
+    // No row seeded — fallback returns the path-derived slug.
+    const slug = await resolveSlugByPathOrSourcePath(pgEngine, 'concepts/hello-world.md');
+    expect(slug).toBe('concepts/hello-world');
+  });
+
+  test('scoped by source_id when provided', async () => {
+    const { resolveSlugByPathOrSourcePath } = await import('../src/commands/sync.ts');
+    // Same source_path under TWO sources — without source_id scope we'd
+    // get either at random. With source_id we get the right one.
+    await pgEngine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('source-a', 'A') ON CONFLICT DO NOTHING`,
+    );
+    await pgEngine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('source-b', 'B') ON CONFLICT DO NOTHING`,
+    );
+    await pgEngine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, page_kind, source_path)
+       VALUES ('source-a', 'slug-a/page', 'note', 'A', 'a', 'markdown', '🚀.md')`,
+    );
+    await pgEngine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, page_kind, source_path)
+       VALUES ('source-b', 'slug-b/page', 'note', 'B', 'b', 'markdown', '🚀.md')`,
+    );
+    expect(await resolveSlugByPathOrSourcePath(pgEngine, '🚀.md', 'source-a')).toBe('slug-a/page');
+    expect(await resolveSlugByPathOrSourcePath(pgEngine, '🚀.md', 'source-b')).toBe('slug-b/page');
+  });
+});
+
+describe('git() helper invocation order (CJK wave v0.32.7)', () => {
+  // The git CLI requires `-c key=val` to appear BEFORE the subcommand,
+  // and `-C path` BEFORE the subcommand too. Pin the emit order so a future
+  // refactor can't silently put `-c` after the subcommand and break CJK
+  // path emission.
+
+  test('core.quotepath=false is always emitted first', () => {
+    const argv = buildGitInvocation('/repo', ['diff', '--name-status']);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-C', '/repo',
+      'diff', '--name-status',
+    ]);
+  });
+
+  test('extra configs append AFTER quotepath, BEFORE -C and subcommand', () => {
+    const argv = buildGitInvocation('/repo', ['diff'], ['foo=bar', 'baz=qux']);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-c', 'foo=bar',
+      '-c', 'baz=qux',
+      '-C', '/repo',
+      'diff',
+    ]);
+  });
+
+  test('empty args produces a valid invocation', () => {
+    const argv = buildGitInvocation('/repo', []);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-C', '/repo',
+    ]);
+  });
+});
+
+describe('sync auto-embed arguments', () => {
+  test('scopes incremental source sync embedding to the same source', () => {
+    expect(buildAutoEmbedArgs(['hello-js'], 'source-a')).toEqual([
+      '--source',
+      'source-a',
+      '--slugs',
+      'hello-js',
+    ]);
+  });
+
+  test('keeps default-source sync embed arguments unchanged', () => {
+    expect(buildAutoEmbedArgs(['people/alice'])).toEqual(['--slugs', 'people/alice']);
+  });
+});
+
+// #1970: sync silently full-walks forever when last_commit is unreachable.
+// The bookmark can point at a commit orphaned by a history rewrite (force-push,
+// master→main consolidation, squash). The old guard sent BOTH "object missing"
+// AND "not an ancestor" to a blind full re-walk that never advanced the bookmark.
+// The fix: only a truly-absent object forces a full reconcile; a present-but-
+// non-ancestor bookmark is diffed tree-to-tree directly (`git diff A..B` needs
+// no ancestry). Plus F-A (full-sync delete reconcile), F-B (oversized-diff
+// fallback), F-C (rename-to-unsyncable deletes the old page).
+describe('#1970: unreachable last_commit bookmark recovery', () => {
+  let engine: PGLiteEngine;
+  const repos: string[] = [];
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  afterEach(() => {
+    while (repos.length) {
+      const d = repos.pop();
+      if (d) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  function personMd(title: string, body: string): string {
+    return ['---', 'type: person', `title: ${title}`, '---', '', body].join('\n');
+  }
+
+  /** Create a temp git repo seeded with the given files + an initial commit. */
+  function mkRepo(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-1970-'));
+    repos.push(dir);
+    execSync('git init', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: dir, stdio: 'pipe' });
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(join(dir, rel, '..'), { recursive: true });
+      writeFileSync(join(dir, rel), content);
+    }
+    execSync('git add -A && git commit -m "initial"', { cwd: dir, stdio: 'pipe' });
+    return dir;
+  }
+
+  const SYNC_OPTS = { noPull: true, noEmbed: true, noExtract: true, sourceId: 'default' } as const;
+
+  async function bookmark(): Promise<string | null> {
+    const rows = await engine.executeRaw<{ last_commit: string | null }>(
+      `SELECT last_commit FROM sources WHERE id = 'default'`,
+    );
+    return rows[0]?.last_commit ?? null;
+  }
+
+  async function captureLog<T>(fn: () => Promise<T>): Promise<{ result: T; out: string }> {
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+      const result = await fn();
+      return { result, out: lines.join('\n') };
+    } finally {
+      console.log = origLog;
+    }
+  }
+
+  test('orphan-present (not an ancestor): diffs tree-to-tree, imports only the delta, advances bookmark', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+
+    const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(first.status).toBe('first_sync');
+    const orphan = await bookmark();
+    expect(orphan).not.toBeNull();
+
+    // Rewrite history: amend the only commit (adds delta.md). The previous tip
+    // is now orphaned but still on disk — cat-file succeeds, is-ancestor fails.
+    writeFileSync(join(repo, 'people/carol.md'), personMd('Carol', 'Carol joins.'));
+    execSync('git add -A && git commit --amend -m "amended with carol"', { cwd: repo, stdio: 'pipe' });
+
+    // Sanity: the stored bookmark is present but no longer an ancestor of HEAD.
+    expect(execSync(`git cat-file -t ${orphan}`, { cwd: repo }).toString().trim()).toBe('commit');
+    let isAncestor = true;
+    try { execSync(`git merge-base --is-ancestor ${orphan} HEAD`, { cwd: repo, stdio: 'pipe' }); }
+    catch { isAncestor = false; }
+    expect(isAncestor).toBe(false);
+
+    const { result, out } = await captureLog(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+
+    // Incremental diff path (status 'synced'), NOT a full re-walk ('first_sync').
+    expect(result.status).toBe('synced');
+    expect(result.added).toBe(1);
+    expect(out).toContain('not an ancestor of HEAD');
+    expect(await engine.getPage('people/carol')).not.toBeNull();
+    // Bookmark advanced off the orphan onto the rewritten HEAD.
+    const advanced = await bookmark();
+    expect(advanced).not.toBe(orphan);
+    expect(advanced).toBe(execSync('git rev-parse HEAD', { cwd: repo }).toString().trim());
+  });
+
+  test('orphan-absent (object gc\'d): falls back to a full reconcile', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    // Simulate an orphaned-AND-pruned bookmark: a valid-shaped SHA with no object.
+    await engine.executeRaw(
+      `UPDATE sources SET last_commit = $1 WHERE id = 'default'`,
+      ['deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'],
+    );
+    writeFileSync(join(repo, 'people/bob.md'), personMd('Bob', 'Bob is a person.'));
+    execSync('git add -A && git commit -m "add bob"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    // Object absent → authoritative full reconcile.
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('people/bob')).not.toBeNull();
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('divergence: a file present in the orphan tree but dropped from HEAD is deleted', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('people/bob')).not.toBeNull();
+
+    // Rewrite the tip: drop bob, edit alice. Orphans the prior tip (still on disk).
+    execSync('git rm people/bob.md', { cwd: repo, stdio: 'pipe' });
+    writeFileSync(join(repo, 'people/alice.md'), personMd('Alice', 'Alice was corrected.'));
+    execSync('git add -A && git commit --amend -m "drop bob, edit alice"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+    expect(await engine.getPage('people/bob')).toBeNull();          // deleted
+    const alice = await engine.getPage('people/alice');
+    expect(alice!.compiled_truth).toContain('corrected');           // updated
+  });
+
+  test('F-C: a rename whose destination is unsyncable deletes the old page', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('people/carol')).not.toBeNull();
+
+    // git mv keeps content identical → classified as a 100% rename (R100).
+    // The destination .txt is unsyncable, so without the F-C fix the old page
+    // would linger (the rename drops out of both `renamed` and `deleted`).
+    execSync('git mv people/carol.md people/carol.txt', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename carol to txt"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+    expect(await engine.getPage('people/carol')).toBeNull();
+  });
+
+  test('F-A: full reconcile purges stale file-backed pages but spares manual + metafile pages', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // A manually-curated page (put_page) — source_path stays NULL.
+    await engine.putPage('manual/note', {
+      type: 'note', title: 'Manual Note', compiled_truth: 'Hand-authored, not from a file.',
+    }, { sourceId: 'default' });
+    // A metafile-backed page (e.g. an older import or direct put_page of log.md).
+    // Its source_path is unsyncable, so the reconcile must NOT delete it (#1433).
+    await engine.putPage('people/log', {
+      type: 'note', title: 'Log', compiled_truth: 'metafile page', source_path: 'people/log.md',
+    }, { sourceId: 'default' });
+
+    // Delete bob's backing file, then force a full reconcile.
+    execSync('git rm people/bob.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "remove bob"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+
+    expect(await engine.getPage('people/bob')).toBeNull();          // stale file-backed → purged
+    expect(await engine.getPage('people/alice')).not.toBeNull();    // still present → kept
+    expect(await engine.getPage('manual/note')).not.toBeNull();     // null source_path → spared
+    expect(await engine.getPage('people/log')).not.toBeNull();      // metafile source_path → spared
+  });
+
+  test('F-B: an undiffable-but-present bookmark falls back to a full reconcile instead of throwing', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // A blob SHA: cat-file -t succeeds ("blob", so objectPresent=true), but
+    // `git diff <blob>..HEAD` errors — the same failure shape as an oversized
+    // post-rewrite diff hitting git()'s timeout/buffer limits. Must fall back,
+    // not throw.
+    const blob = execSync('git rev-parse HEAD:people/alice.md', { cwd: repo }).toString().trim();
+    await engine.executeRaw(`UPDATE sources SET last_commit = $1 WHERE id = 'default'`, [blob]);
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');                       // fell back cleanly
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('convergence: after orphan recovery, a later commit syncs incrementally to up_to_date', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // Orphan + recover.
+    writeFileSync(join(repo, 'people/bob.md'), personMd('Bob', 'Bob is a person.'));
+    execSync('git add -A && git commit --amend -m "amended with bob"', { cwd: repo, stdio: 'pipe' });
+    const recovered = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(recovered.status).toBe('synced');
+
+    // A subsequent ordinary commit now syncs incrementally (bookmark is sane).
+    writeFileSync(join(repo, 'people/carol.md'), personMd('Carol', 'Carol joins.'));
+    execSync('git add -A && git commit -m "add carol"', { cwd: repo, stdio: 'pipe' });
+    const next = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(next.status).toBe('synced');
+    expect(next.added).toBe(1);
+
+    // No further changes → up_to_date (converged).
+    const settled = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(settled.status).toBe('up_to_date');
   });
 });

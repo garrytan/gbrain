@@ -316,16 +316,21 @@ export async function scanIntegrity(
     }
   }
 
-  const allSlugs = [...(await engine.getAllSlugs())].sort();
+  // v0.32.8: listAllPageRefs replaces getAllSlugs+getPage N+1 pattern that
+  // silently defaulted to source_id='default' for non-default-source pages.
+  // Now we enumerate (slug, source_id) pairs and thread sourceId to getPage.
+  const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
+    a.slug.localeCompare(b.slug) || a.source_id.localeCompare(b.source_id)
+  );
 
   const bareHits: BareTweetHit[] = [];
   const externalHits: ExternalLinkHit[] = [];
   let pagesScanned = 0;
 
-  for (const slug of allSlugs) {
+  for (const { slug, source_id } of allRefs) {
     if (typeFilter && !slug.startsWith(`${typeFilter}/`)) continue;
     if (pagesScanned >= limit) break;
-    const page = await engine.getPage(slug);
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     // Skip grandfathered pages (opted out of brain-integrity enforcement)
     if ((page.frontmatter as Record<string, unknown> | undefined)?.validate === false) continue;
@@ -359,14 +364,16 @@ async function scanIntegrityBatch(
   // — gbrain lint should reject stringly-typed validate at write time.
   const validateCondition = sql`AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
 
-  // DISTINCT ON (slug) mirrors getAllSlugs()'s Set<string> semantics: multi-source
-  // brains can have the same slug under multiple source_ids (UNIQUE(source_id, slug)
-  // since v0.18.0); we want one scan per slug, not one per row.
+  // v0.32.8: scan ONE row per (source_id, slug) pair, not one per slug.
+  // Pre-fix used DISTINCT ON (slug) which collapsed multi-source rows into
+  // one — that was the bug class. Now batch parity matches the sequential
+  // listAllPageRefs() walk: integrity violations in non-default-source pages
+  // get reported instead of silently shadowed by their default-source twin.
   const rows = await sql`
-    SELECT DISTINCT ON (slug) slug, compiled_truth, frontmatter
+    SELECT slug, compiled_truth, frontmatter
     FROM pages
     WHERE 1=1 ${typeCondition} ${validateCondition}
-    ORDER BY slug
+    ORDER BY source_id, slug
     LIMIT ${limit}
   `;
 
@@ -440,14 +447,19 @@ async function cmdAuto(args: string[]): Promise<void> {
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   try {
-    const allSlugs = [...(await engine.getAllSlugs())].sort();
-    const toScan = allSlugs.filter(s => !seen.has(s));
+    // v0.32.8: listAllPageRefs enumerates (slug, source_id) pairs so we
+    // can thread sourceId to getPage. Pre-fix this defaulted to 'default'
+    // and silently skipped non-default-source pages.
+    const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
+      a.slug.localeCompare(b.slug) || a.source_id.localeCompare(b.source_id)
+    );
+    const toScan = allRefs.filter(r => !seen.has(r.slug));
     progress.start('integrity.auto', toScan.length);
-    for (const slug of allSlugs) {
+    for (const { slug, source_id } of allRefs) {
       if (pagesProcessed >= limit) break;
       if (seen.has(slug)) continue;
 
-      const page = await engine.getPage(slug);
+      const page = await engine.getPage(slug, { sourceId: source_id });
       if (!page) continue;
 
       pagesProcessed++;

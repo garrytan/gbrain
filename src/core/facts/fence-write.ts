@@ -41,6 +41,7 @@ import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
+import { logStubGuardEvent } from './stub-guard-audit.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -76,6 +77,16 @@ export interface FenceWriteResult {
   legacyFallback?: true;
   /** True when fence parse-validate failed; rows were NOT inserted, .tmp quarantined. */
   fenceWriteFailed?: true;
+  /**
+   * True when the stub-creation guard refused to spawn a phantom entity
+   * page for an unprefixed bare slug (e.g. `jared` with no `people/`
+   * directory). Rows were NOT inserted; the caller is expected to route
+   * the facts to the legacy DB-only path so they aren't silently dropped.
+   *
+   * This is the v0.34.5 fix for the entity-resolution bug where `"Jared"`
+   * fell through resolution and produced a top-level `jared.md` stub.
+   */
+  stubGuardBlocked?: true;
 }
 
 const FAILURE_LOG_PATH = (): string => gbrainPath('facts.write_failures.jsonl');
@@ -166,6 +177,35 @@ export async function writeFactsToFence(
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
       } else {
+        // Stub-creation guard. Phantom entity pages at the brain root were
+        // being spawned when resolveEntitySlug fell through to a bare
+        // slugify because pg_trgm scored too low on short bare names. The
+        // resolver now has a prefix-expansion step that catches most of
+        // those, but this guard is the second wall: refuse to stub-create
+        // a page whose slug has no directory prefix (people/, companies/,
+        // deals/, topics/, etc.). The caller routes these facts to the
+        // legacy DB-only path so they aren't silently dropped — the fact
+        // still gets recorded, it just doesn't spawn a phantom entity
+        // page on disk.
+        //
+        // Sunset target: v0.36. Once `stub_guard_24h` (the gbrain doctor
+        // surface backed by the audit log written here) reads <5 hits/week
+        // for 3 consecutive weeks on production brains, the prefix-expansion
+        // in resolveEntitySlug is sufficient and this guard can be removed.
+        // The audit log under `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl`
+        // is the operator visibility surface for that retirement decision.
+        if (!target.slug.includes('/')) {
+          logStubGuardEvent({
+            slug: target.slug,
+            source_id: target.sourceId,
+            fact_count: facts.length,
+          });
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[facts] refusing to stub-create unprefixed entity page slug=${target.slug} — routing to legacy DB-only path. Provide a directory prefix (people/, companies/, etc.) to opt into fence writes.`,
+          );
+          return { inserted: 0, ids: [], stubGuardBlocked: true };
+        }
         // Stub-create the parent directory if it doesn't exist.
         mkdirSync(dirname(filePath), { recursive: true });
         body = stubEntityPage(target.slug);

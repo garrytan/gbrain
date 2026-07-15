@@ -81,6 +81,7 @@ function makeHarness(opts: {
   isTTY?: boolean;
   initialParentPid?: number;
   probeWatchdog?: boolean;
+  mcpStdio?: boolean;
 } = {}): Harness {
   const engine = new StubEngine();
   const stdin = new EventEmitter() as EventEmitter & { isTTY?: boolean };
@@ -120,6 +121,7 @@ function makeHarness(opts: {
     setInterval: timers.setInterval,
     clearInterval: timers.clearInterval,
     probeWatchdog: () => probeWatchdogResult,
+    mcpStdio: opts.mcpStdio,
   };
 
   return {
@@ -438,5 +440,64 @@ describe('runServe stdio lifecycle', () => {
     const code = await h.exited;
     expect(code).toBe(0);
     expect(h.logs.some(l => l.includes('cleanup error: synthetic disconnect failure'))).toBe(true);
+  });
+
+  // v0.34.1 (#870): OpenClaw gateway / bundle-mcp wrappers pipe the
+  // JSON-RPC handshake on stdin then close their stdin half. Without
+  // MCP_STDIO=1 the server treats that as a permanent disconnect and
+  // exits before handling tools/call. The guard skips the stdin 'end' /
+  // 'close' hooks when MCP_STDIO=1; signals and parent watchdog still
+  // cover legitimate shutdown.
+  describe('MCP_STDIO=1 piped-stdin guard (#870)', () => {
+    test('stdin end with mcpStdio=true does NOT trigger shutdown', async () => {
+      const h = makeHarness({ mcpStdio: true });
+      await startInBackground(h.engine, [], h.opts);
+
+      // Without the guard this would shutdown; with the guard it must not.
+      h.stdin.emit('end');
+
+      // Give the event loop a microtask turn to catch any erroneous shutdown
+      // path. We assert NO exit was registered.
+      await new Promise<void>((r) => setTimeout(r, 10));
+      expect(h.engine.disconnectCalls).toBe(0);
+
+      // Then trigger SIGTERM to drive the test to completion; signal handlers
+      // remain active even with mcpStdio=true (codex would catch if they didn't).
+      h.signals.emit('SIGTERM');
+      const code = await h.exited;
+      expect(code).toBe(0);
+      expect(h.engine.disconnectCalls).toBe(1);
+      expect(h.logs.some(l => l.includes('graceful exit (SIGTERM)'))).toBe(true);
+    });
+
+    test('stdin close with mcpStdio=true does NOT trigger shutdown', async () => {
+      const h = makeHarness({ mcpStdio: true });
+      await startInBackground(h.engine, [], h.opts);
+
+      h.stdin.emit('close');
+
+      await new Promise<void>((r) => setTimeout(r, 10));
+      expect(h.engine.disconnectCalls).toBe(0);
+
+      h.signals.emit('SIGINT');
+      const code = await h.exited;
+      expect(code).toBe(0);
+      expect(h.engine.disconnectCalls).toBe(1);
+    });
+
+    test('mcpStdio=false (default) preserves stdin EOF shutdown', async () => {
+      // Regression guard: the guard must not over-trigger. With the env
+      // unset, stdin EOF must still drive shutdown so existing CLI usage
+      // (gbrain serve under launchd, claude-desktop's stdio MCP) is
+      // unchanged.
+      const h = makeHarness({ mcpStdio: false });
+      await startInBackground(h.engine, [], h.opts);
+
+      h.stdin.emit('end');
+      const code = await h.exited;
+      expect(code).toBe(0);
+      expect(h.engine.disconnectCalls).toBe(1);
+      expect(h.logs.some(l => l.includes('graceful exit (stdin-end)'))).toBe(true);
+    });
   });
 });

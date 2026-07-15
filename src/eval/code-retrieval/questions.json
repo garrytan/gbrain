@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "schema": "1",
+  "corpus": "gbrain",
+  "description": "v0.34 code-retrieval baseline. 30 questions about gbrain's own codebase covering callers, callees, definitions, blast radius, and cluster membership. The 'expected' field is a SET of file:line tuples (not page slugs) for code-symbol retrieval. Match semantics: a result counts as relevant when its (file, line) matches any expected tuple OR its (file, symbol_qualified) matches when symbol_qualified is provided.\n\nTo regenerate / extend: bump version, add questions, document the diff. Pre-v0.34 baseline is captured against this exact set so it cannot be retroactively tuned.",
+  "questions": [
+    {
+      "id": "callers-001",
+      "kind": "callers",
+      "query": "what calls performSync",
+      "symbol": "performSync",
+      "expected_files": ["src/commands/sync.ts", "src/core/cycle.ts", "src/commands/jobs.ts"],
+      "expected_min_recall": 0.6
+    },
+    {
+      "id": "callers-002",
+      "kind": "callers",
+      "query": "what calls hybridSearch",
+      "symbol": "hybridSearch",
+      "expected_files": ["src/core/operations.ts", "src/core/eval-capture.ts", "src/core/search/eval.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "callers-003",
+      "kind": "callers",
+      "query": "what calls runCycle",
+      "symbol": "runCycle",
+      "expected_files": ["src/commands/dream.ts", "src/commands/autopilot.ts", "src/commands/jobs.ts"],
+      "expected_min_recall": 0.6
+    },
+    {
+      "id": "callers-004",
+      "kind": "callers",
+      "query": "what calls importFromContent",
+      "symbol": "importFromContent",
+      "expected_files": ["src/commands/import.ts", "src/commands/sync.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "callers-005",
+      "kind": "callers",
+      "query": "what calls embed",
+      "symbol": "embed",
+      "expected_files": ["src/commands/embed.ts", "src/core/import-file.ts", "src/core/search/eval.ts"],
+      "expected_min_recall": 0.4
+    },
+    {
+      "id": "callers-006",
+      "kind": "callers",
+      "query": "what calls put_page operation",
+      "symbol": "putPage",
+      "expected_files": ["src/core/operations.ts", "src/commands/import.ts", "src/core/cycle"],
+      "expected_min_recall": 0.4
+    },
+    {
+      "id": "callees-001",
+      "kind": "callees",
+      "query": "what does performSync call",
+      "symbol": "performSync",
+      "expected_files": ["src/core/import-file.ts", "src/core/sync.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "callees-002",
+      "kind": "callees",
+      "query": "what does runCycle call",
+      "symbol": "runCycle",
+      "expected_files": ["src/core/cycle.ts", "src/commands/sync.ts", "src/commands/embed.ts", "src/commands/extract.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "callees-003",
+      "kind": "callees",
+      "query": "what does code_blast call from request to db",
+      "symbol": "code_blast",
+      "expected_files": ["src/core/operations.ts", "src/core/postgres-engine.ts"],
+      "expected_min_recall": 0.3,
+      "note": "Post-v0.34 expectation; pre-v0.34 baseline returns nothing meaningful — expected behavior"
+    },
+    {
+      "id": "def-001",
+      "kind": "definition",
+      "query": "where is hybridSearch defined",
+      "symbol": "hybridSearch",
+      "expected_files": ["src/core/search/hybrid.ts"],
+      "expected_min_recall": 1.0
+    },
+    {
+      "id": "def-002",
+      "kind": "definition",
+      "query": "where is runCycle defined",
+      "symbol": "runCycle",
+      "expected_files": ["src/core/cycle.ts"],
+      "expected_min_recall": 1.0
+    },
+    {
+      "id": "def-003",
+      "kind": "definition",
+      "query": "where is MinionQueue class defined",
+      "symbol": "MinionQueue",
+      "expected_files": ["src/core/minions/queue.ts"],
+      "expected_min_recall": 1.0
+    },
+    {
+      "id": "def-004",
+      "kind": "definition",
+      "query": "where is PGLiteEngine connect method",
+      "symbol": "PGLiteEngine.connect",
+      "expected_files": ["src/core/pglite-engine.ts"],
+      "expected_min_recall": 1.0
+    },
+    {
+      "id": "def-005",
+      "kind": "definition",
+      "query": "where is the trust boundary check for remote contexts",
+      "symbol": "OperationContext.remote",
+      "expected_files": ["src/core/operations.ts", "src/mcp/dispatch.ts", "src/core/types.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "refs-001",
+      "kind": "references",
+      "query": "where is parseMarkdown used",
+      "symbol": "parseMarkdown",
+      "expected_files": ["src/core/markdown.ts", "src/core/import-file.ts"],
+      "expected_min_recall": 0.4
+    },
+    {
+      "id": "refs-002",
+      "kind": "references",
+      "query": "where is getStats used",
+      "symbol": "getStats",
+      "expected_files": ["src/core/postgres-engine.ts", "src/core/pglite-engine.ts", "src/commands/serve-http.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "blast-001",
+      "kind": "blast_radius",
+      "query": "what breaks if I change the signature of performSync",
+      "symbol": "performSync",
+      "expected_files": ["src/commands/sync.ts", "src/core/cycle.ts", "src/commands/jobs.ts", "src/commands/autopilot.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "blast-002",
+      "kind": "blast_radius",
+      "query": "what breaks if I change OperationContext.sourceId",
+      "symbol": "OperationContext.sourceId",
+      "expected_files": ["src/core/operations.ts", "src/mcp/dispatch.ts", "src/core/search/two-pass.ts"],
+      "expected_min_recall": 0.4
+    },
+    {
+      "id": "blast-003",
+      "kind": "blast_radius",
+      "query": "what breaks if I rename minion_jobs.max_stalled column",
+      "symbol": "max_stalled",
+      "expected_files": ["src/core/minions/queue.ts", "src/core/minions/types.ts", "src/core/migrate.ts", "src/core/pglite-schema.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "flow-001",
+      "kind": "execution_flow",
+      "query": "how does an MCP tool call flow from request to handler",
+      "symbol": "dispatchToolCall",
+      "expected_files": ["src/mcp/server.ts", "src/mcp/dispatch.ts", "src/core/operations.ts"],
+      "expected_min_recall": 0.6
+    },
+    {
+      "id": "flow-002",
+      "kind": "execution_flow",
+      "query": "how does gbrain sync flow from cli to database write",
+      "symbol": "performSync",
+      "expected_files": ["src/commands/sync.ts", "src/core/sync.ts", "src/core/import-file.ts", "src/core/postgres-engine.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "flow-003",
+      "kind": "execution_flow",
+      "query": "how does a code_blast call flow to the database",
+      "symbol": "code_blast",
+      "expected_files": ["src/core/operations.ts", "src/core/postgres-engine.ts"],
+      "expected_min_recall": 0.3,
+      "note": "Post-v0.34 expectation; pre-v0.34 baseline returns nothing — expected"
+    },
+    {
+      "id": "cluster-001",
+      "kind": "cluster_membership",
+      "query": "which functions cluster with hybridSearch",
+      "symbol": "hybridSearch",
+      "expected_files": ["src/core/search/hybrid.ts", "src/core/search/expansion.ts", "src/core/search/intent.ts", "src/core/search/sql-ranking.ts"],
+      "expected_min_recall": 0.5,
+      "note": "Post-v0.34 expectation — clusters are new in v0.34"
+    },
+    {
+      "id": "cluster-002",
+      "kind": "cluster_membership",
+      "query": "which functions cluster with runCycle",
+      "symbol": "runCycle",
+      "expected_files": ["src/core/cycle.ts", "src/core/cycle/synthesize.ts", "src/core/cycle/patterns.ts", "src/core/cycle/emotional-weight.ts"],
+      "expected_min_recall": 0.5,
+      "note": "Post-v0.34 expectation"
+    },
+    {
+      "id": "cross-cutting-001",
+      "kind": "callers",
+      "query": "what calls applyForwardReferenceBootstrap",
+      "symbol": "applyForwardReferenceBootstrap",
+      "expected_files": ["src/core/pglite-engine.ts", "src/core/postgres-engine.ts"],
+      "expected_min_recall": 0.8
+    },
+    {
+      "id": "cross-cutting-002",
+      "kind": "callers",
+      "query": "what calls sqlQueryForEngine",
+      "symbol": "sqlQueryForEngine",
+      "expected_files": ["src/commands/auth.ts", "src/commands/serve-http.ts", "src/core/oauth-provider.ts", "src/commands/files.ts", "src/mcp/http-transport.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "cross-cutting-003",
+      "kind": "callers",
+      "query": "what calls summarizeMcpParams",
+      "symbol": "summarizeMcpParams",
+      "expected_files": ["src/mcp/dispatch.ts", "src/commands/serve-http.ts"],
+      "expected_min_recall": 0.7
+    },
+    {
+      "id": "edge-001",
+      "kind": "callers",
+      "query": "what calls extractEntityRefs",
+      "symbol": "extractEntityRefs",
+      "expected_files": ["src/core/link-extraction.ts", "src/commands/extract.ts", "src/commands/backlinks.ts"],
+      "expected_min_recall": 0.5
+    },
+    {
+      "id": "edge-002",
+      "kind": "callers",
+      "query": "what calls validateUploadPath",
+      "symbol": "validateUploadPath",
+      "expected_files": ["src/core/operations.ts"],
+      "expected_min_recall": 0.6
+    },
+    {
+      "id": "edge-003",
+      "kind": "definition",
+      "query": "where is the gbrain serve http entrypoint",
+      "symbol": "runServeHttp",
+      "expected_files": ["src/commands/serve-http.ts"],
+      "expected_min_recall": 1.0
+    }
+  ]
+}

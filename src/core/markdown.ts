@@ -1,5 +1,6 @@
 import matter from 'gray-matter';
-import type { PageType } from './types.ts';
+import { safeLoad as yamlSafeLoad } from 'js-yaml';
+import type { Page, PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
 
 export type ParseValidationCode =
@@ -9,6 +10,7 @@ export type ParseValidationCode =
   | 'SLUG_MISMATCH'
   | 'NULL_BYTES'
   | 'NESTED_QUOTES'
+  | 'NON_STRING_FIELD'
   | 'EMPTY_FRONTMATTER';
 
 export interface ParseValidationError {
@@ -23,6 +25,17 @@ export interface ParseOpts {
   /** When validate is true and frontmatter has a `slug:` field that doesn't
    *  match expectedSlug, emits SLUG_MISMATCH. */
   expectedSlug?: string;
+  /**
+   * v0.39 T1.5 — active schema pack to drive type inference. When set,
+   * `inferType` uses the pack's `page_types[].path_prefixes` instead of
+   * the hardcoded gbrain-base table. When unset, falls back to the
+   * pre-v0.39 hardcoded behavior (preserves byte-for-byte parity gate
+   * `test/regressions/gbrain-base-equivalence.test.ts`).
+   *
+   * Callers thread this from `loadActivePack(ctx)` once per command —
+   * NEVER per file inside sync, per codex perf finding #7.
+   */
+  activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
 }
 
 export interface ParsedMarkdown {
@@ -35,6 +48,25 @@ export interface ParsedMarkdown {
   tags: string[];
   /** Present iff opts.validate. Empty array means no errors. */
   errors?: ParseValidationError[];
+}
+
+/**
+ * Coerce a raw YAML frontmatter value into a string.
+ *
+ * js-yaml parses unquoted scalars by type: `title: 2024-06-01` becomes a JS
+ * `Date`, `title: 1458` becomes a `number`. The old `(frontmatter.X as string)`
+ * cast was a compile-time lie — at runtime the value stayed a Date/number, so
+ * any downstream `.toLowerCase()` / `.trim()` threw and (via the importer's
+ * failure gate) could wedge sync indefinitely (issue #1939).
+ *
+ * Dates coerce to their UTC ISO date (`2024-06-01`) — deterministic across
+ * machines and matching the on-disk source token, unlike `String(date)` which
+ * renders a timezone-dependent long form. Everything else uses `String()`.
+ */
+export function coerceFrontmatterString(v: unknown): string {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
 }
 
 /**
@@ -93,10 +125,19 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  const type = (frontmatter.type as PageType) || inferType(filePath);
-  const title = (frontmatter.title as string) || inferTitle(filePath);
+  // #1948/#1939: frontmatter values can be non-strings (YAML coerces `title: 123`
+  // → number, a bare date → Date). The `as string` cast used to lie: a truthy
+  // non-string flowed downstream typed as string and crashed the first
+  // `.toLowerCase()` (content-sanity), aborting the whole lint/sync run.
+  // coerceFrontmatterString turns a scalar/date into a usable string (a date slug
+  // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
+  // surfaces the un-quoted field so it can be cleaned up.
+  const type = coerceFrontmatterString(frontmatter.type) || (
+    opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
+  );
+  const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
   const tags = extractTags(frontmatter);
-  const slug = (frontmatter.slug as string) || inferSlug(filePath);
+  const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
@@ -217,8 +258,14 @@ function collectValidationErrors(
   }
 
   // 5. NESTED_QUOTES — common breakage pattern: `title: "Name "Nick" Last"`.
-  //    Detect any frontmatter `key: ...` line whose value contains 3 or more
-  //    unescaped double-quote characters. A clean quoted value has 2.
+  //    The heuristic: a frontmatter `key: value` line with 3+ unescaped
+  //    double-quote characters is suspicious. But raw quote-counting is
+  //    too dumb: a YAML flow sequence like `tags: ["yc", "w2025"]` has
+  //    4 unescaped `"` by design (valid), and a single-quoted scalar
+  //    like `title: 'a: "b" "c"'` has literal inner `"` (also valid).
+  //    Disambiguate by running js-yaml on just the value; only flag
+  //    lines that genuinely fail to parse. The full-frontmatter YAML
+  //    parse error is caught separately by check 6 (YAML_PARSE) below.
   for (let i = firstNonEmpty + 1; i < closeLine; i++) {
     const line = lines[i];
     const m = line.match(/^\s*[A-Za-z_][\w-]*\s*:\s*(.*)$/);
@@ -228,7 +275,20 @@ function collectValidationErrors(
     for (let j = 0; j < value.length; j++) {
       if (value[j] === '"' && (j === 0 || value[j - 1] !== '\\')) count++;
     }
-    if (count >= 3) {
+    if (count < 3) continue;
+
+    // 3+ unescaped quotes — could be valid YAML (flow seq, single-quoted
+    // scalar with inner quotes, bare scalar with embedded quotes) or
+    // genuinely broken. Parse the value to disambiguate.
+    let isValidYaml = false;
+    try {
+      yamlSafeLoad(value);
+      isValidYaml = true;
+    } catch {
+      // YAML parse failed — line is genuinely broken
+    }
+
+    if (!isValidYaml) {
       errors.push({
         code: 'NESTED_QUOTES',
         message: 'Nested double quotes in YAML value (use single quotes for the outer)',
@@ -253,6 +313,21 @@ function collectValidationErrors(
       errors.push({
         code: 'SLUG_MISMATCH',
         message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
+      });
+    }
+  }
+
+  // 8. NON_STRING_FIELD (#1948) — title/type/slug declared as a non-string YAML
+  //    scalar (e.g. `title: 123`, `slug: 2024`). The parser coerces title to a
+  //    string and falls back to inference for type/slug, but lint surfaces the
+  //    malformed frontmatter so it gets fixed rather than silently rewritten.
+  //    Pre-fix the slug validator above `typeof`-skipped these, hiding them.
+  for (const field of ['title', 'type', 'slug'] as const) {
+    const v = ctx.parsedFrontmatter[field];
+    if (v != null && typeof v !== 'string') {
+      errors.push({
+        code: 'NON_STRING_FIELD',
+        message: `Frontmatter "${field}" should be a string but is ${typeof v} (${JSON.stringify(v)}); quote the value (e.g. ${field}: "${String(v)}").`,
       });
     }
   }
@@ -341,36 +416,189 @@ export function serializeMarkdown(
   return yamlContent + '\n\n' + body + '\n';
 }
 
-function inferType(filePath?: string): PageType {
-  if (!filePath) return 'concept';
+// v0.38 T7a (Phase B): inferType is now pack-aware.
+//
+// The original hardcoded behavior is preserved IDENTICALLY when the
+// pack is gbrain-base (or when no pack is provided — back-compat
+// callers). Schema packs can extend the path → type mapping by
+// declaring `page_types[].path_prefixes` in their manifest; users
+// who add `paper: { path_prefixes: [papers/, literature/] }` get
+// papers/foo.md → type 'paper' without forking the engine.
+//
+// inferType (legacy sync wrapper) → calls inferTypeWithPrefixes with
+//   the GBRAIN_BASE_PATH_PREFIXES table below, which reproduces the
+//   pre-v0.38 hardcoded behavior byte-for-byte (parity-pinned by
+//   test/regressions/gbrain-base-equivalence.test.ts).
+// inferTypeFromPack(filePath, manifest) → new primitive that walks
+//   the active pack's page_types[].path_prefixes. Priority: pack
+//   declarations are scanned in order they appear in the manifest;
+//   first match wins. Empty/unset prefixes do NOT match.
+//
+// Callers in async paths (import-file.ts, sync.ts, cycle phases) can
+// adopt inferTypeFromPack(path, pack) to honor user-defined types.
+// The bare inferType(path) call site remains for sync legacy paths
+// and matches gbrain-base by construction.
 
-  // Normalize: add leading / for consistent matching.
-  // Wiki subtypes and /writing/ check FIRST — they're stronger signals than
-  // ancestor directories. e.g. `projects/blog/writing/essay.md` is a piece of
-  // writing, not a project page; `tech/wiki/analysis/foo.md` is analysis,
-  // not a hit on the broader `tech/` ancestor.
+/**
+ * Hardcoded path-prefix table mirroring pre-v0.38 inferType behavior.
+ * MUST stay in lockstep with the gbrain-base.yaml `path_prefixes` field
+ * (parity-pinned by test/regressions/gbrain-base-equivalence.test.ts).
+ * Order matters: wiki subtypes + writing scan first (stronger signal
+ * than ancestor directories).
+ */
+const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageType }> = [
+  { prefixes: ['/writing/'], type: 'writing' },
+  { prefixes: ['/wiki/analysis/'], type: 'analysis' },
+  { prefixes: ['/wiki/guides/', '/wiki/guide/'], type: 'guide' },
+  { prefixes: ['/wiki/hardware/'], type: 'hardware' },
+  { prefixes: ['/wiki/architecture/'], type: 'architecture' },
+  { prefixes: ['/wiki/concepts/', '/wiki/concept/'], type: 'concept' },
+  { prefixes: ['/people/', '/person/'], type: 'person' },
+  { prefixes: ['/companies/', '/company/'], type: 'company' },
+  { prefixes: ['/deals/', '/deal/'], type: 'deal' },
+  { prefixes: ['/yc/'], type: 'yc' },
+  { prefixes: ['/civic/'], type: 'civic' },
+  { prefixes: ['/projects/', '/project/'], type: 'project' },
+  { prefixes: ['/sources/', '/source/'], type: 'source' },
+  { prefixes: ['/media/'], type: 'media' },
+  { prefixes: ['/emails/', '/email/'], type: 'email' },
+  { prefixes: ['/slack/'], type: 'slack' },
+  { prefixes: ['/cal/', '/calendar/'], type: 'calendar-event' },
+  { prefixes: ['/notes/', '/note/'], type: 'note' },
+  { prefixes: ['/meetings/', '/meeting/'], type: 'meeting' },
+  // v0.42.x — Life Chronicle (#2390): timeline events + thought diary.
+  { prefixes: ['/life/events/'], type: 'event' },
+  { prefixes: ['/life/diary/'], type: 'diary' },
+];
+
+function inferType(filePath?: string): PageType {
+  return inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES);
+}
+
+/**
+ * Pack-aware variant. Callers with access to the active pack pass it
+ * here to honor user-declared types. Empty `page_types` array (no
+ * `extends: null` pack) falls back to gbrain-base defaults.
+ *
+ * Algorithm: each pack page_type contributes its `path_prefixes` array
+ * in declaration order. First prefix that matches wins. Default
+ * 'concept' applies when nothing matches.
+ *
+ * Note on prefix shape: gbrain-base stores prefixes WITHOUT the
+ * leading `/` (e.g. `people/`). For matching, we lower-case the path
+ * with a leading `/` prepended (matches the original behavior) and
+ * test against `'/' + prefix` so `people/` matches `/people/` inside
+ * the full path.
+ */
+export function inferTypeFromPack(
+  filePath: string | undefined,
+  pack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> },
+): PageType {
+  if (!filePath) return 'concept';
+  // Empty pack → fall back to gbrain-base hardcoded defaults.
+  if (pack.page_types.length === 0) {
+    return inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES);
+  }
   const lower = ('/' + filePath).toLowerCase();
-  if (lower.includes('/writing/')) return 'writing';
-  if (lower.includes('/wiki/analysis/')) return 'analysis';
-  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
-  if (lower.includes('/wiki/hardware/')) return 'hardware';
-  if (lower.includes('/wiki/architecture/')) return 'architecture';
-  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
-  if (lower.includes('/people/') || lower.includes('/person/')) return 'person';
-  if (lower.includes('/companies/') || lower.includes('/company/')) return 'company';
-  if (lower.includes('/deals/') || lower.includes('/deal/')) return 'deal';
-  if (lower.includes('/yc/')) return 'yc';
-  if (lower.includes('/civic/')) return 'civic';
-  if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
-  if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
-  if (lower.includes('/media/')) return 'media';
-  // BrainBench v1 amara-life-v1 corpus directories. One-slash slug convention
-  // means source paths look like `emails/em-0001.md`, `slack/sl-0037.md`, etc.
-  if (lower.includes('/emails/') || lower.includes('/email/')) return 'email';
-  if (lower.includes('/slack/')) return 'slack';
-  if (lower.includes('/cal/') || lower.includes('/calendar/')) return 'calendar-event';
-  if (lower.includes('/notes/') || lower.includes('/note/')) return 'note';
-  if (lower.includes('/meetings/') || lower.includes('/meeting/')) return 'meeting';
+  for (const pt of pack.page_types) {
+    for (const prefix of pt.path_prefixes) {
+      const needle = prefix.startsWith('/') ? prefix.toLowerCase() : '/' + prefix.toLowerCase();
+      if (lower.includes(needle)) {
+        return pt.name;
+      }
+    }
+  }
+  return 'concept';
+}
+
+/**
+ * v0.42 (T5, plan D5): pack-aware type+subtype inference. Same path-prefix
+ * resolution as `inferTypeFromPack` PLUS subtype detection from
+ * `pack.page_types[i].subtypes[]` (declared per type). Walks subtype rules
+ * AFTER the prefix match wins. ReDoS-guarded compile of `path_pattern`
+ * happens here (test/regex per call; acceptable on the ingest path).
+ *
+ * Subtype-rule resolution order:
+ *   1. frontmatter_field+frontmatter_value (exact match)
+ *   2. path_pattern (regex test against the lower-cased full path)
+ *
+ * Frontmatter rule wins when both match. Returns the FIRST matching
+ * subtype name; subtype declarations earlier in the pack's subtypes
+ * array take precedence.
+ *
+ * Back-compat: legacy `inferTypeFromPack(filePath, pack)` preserved
+ * unchanged for the ~17 call sites that don't yet need subtype info.
+ */
+export function inferTypeAndSubtypeFromPack(
+  filePath: string | undefined,
+  pack: { page_types: ReadonlyArray<{
+    name: string;
+    path_prefixes: ReadonlyArray<string>;
+    subtypes?: ReadonlyArray<{
+      name: string;
+      when: { path_pattern?: string; frontmatter_field?: string; frontmatter_value?: unknown };
+    }>;
+  }> },
+  frontmatter?: Record<string, unknown>,
+): { type: PageType; subtype?: string } {
+  if (!filePath) return { type: 'concept' };
+  // Empty pack → legacy fallback; no subtype info available.
+  if (pack.page_types.length === 0) {
+    return { type: inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES) };
+  }
+  const lower = ('/' + filePath).toLowerCase();
+  // Stage 1: prefix-match wins (same as inferTypeFromPack)
+  let matchedType: { name: string; subtypes?: ReadonlyArray<{ name: string; when: { path_pattern?: string; frontmatter_field?: string; frontmatter_value?: unknown } }> } | undefined;
+  outer: for (const pt of pack.page_types) {
+    for (const prefix of pt.path_prefixes) {
+      const needle = prefix.startsWith('/') ? prefix.toLowerCase() : '/' + prefix.toLowerCase();
+      if (lower.includes(needle)) {
+        matchedType = pt;
+        break outer;
+      }
+    }
+  }
+  if (!matchedType) return { type: 'concept' };
+  const typeName = matchedType.name as PageType;
+  // Stage 2: subtype rule resolution (if any declared)
+  const subtypes = matchedType.subtypes ?? [];
+  if (subtypes.length === 0) return { type: typeName };
+  for (const st of subtypes) {
+    // Frontmatter rule first
+    if (st.when.frontmatter_field !== undefined && frontmatter !== undefined) {
+      const value = frontmatter[st.when.frontmatter_field];
+      if (st.when.frontmatter_value !== undefined && value === st.when.frontmatter_value) {
+        return { type: typeName, subtype: st.name };
+      }
+    }
+    // Path pattern rule
+    if (st.when.path_pattern !== undefined) {
+      try {
+        const re = new RegExp(st.when.path_pattern);
+        if (re.test(filePath) || re.test(lower)) {
+          return { type: typeName, subtype: st.name };
+        }
+      } catch {
+        // Malformed regex — skip silently; pack-load validation should
+        // have caught this at parse time via redos-guard.
+        continue;
+      }
+    }
+  }
+  return { type: typeName };
+}
+
+function inferTypeWithPrefixes(
+  filePath: string | undefined,
+  table: ReadonlyArray<{ prefixes: ReadonlyArray<string>; type: PageType }>,
+): PageType {
+  if (!filePath) return 'concept';
+  const lower = ('/' + filePath).toLowerCase();
+  for (const row of table) {
+    for (const p of row.prefixes) {
+      if (lower.includes(p)) return row.type;
+    }
+  }
   return 'concept';
 }
 
@@ -394,4 +622,84 @@ function extractTags(frontmatter: Record<string, unknown>): string[] {
   if (Array.isArray(tags)) return tags.map(String);
   if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).filter(Boolean);
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// Page -> markdown serialization helpers (v0.38 DRY extract per eng review)
+//
+// Pre-v0.38 the dream cycle's reverse-render at src/core/cycle/synthesize.ts
+// and the planned v0.38 put_page write-through path were going to have
+// near-identical 15-line bodies that differed only in their frontmatter
+// stamps. This extract is the single source of truth.
+// ---------------------------------------------------------------------------
+
+import { join } from 'node:path';
+
+/** Options for serializePageToMarkdown. */
+export interface SerializePageOpts {
+  /** Frontmatter fields merged on top of page.frontmatter at render time.
+   *  Use this to stamp provenance (`ingested_via: 'webhook'`), identity
+   *  markers (`dream_generated: true`), or any caller-specific extra
+   *  fields. Original page.frontmatter keys win unless explicitly
+   *  overridden. */
+  frontmatterOverrides?: Record<string, unknown>;
+}
+
+/**
+ * Render a Page row to its canonical on-disk markdown form. Sibling to
+ * `serializeMarkdown` (which takes the underlying primitives); this version
+ * pulls everything from a `Page` object so callers don't have to destructure
+ * compiled_truth / timeline / tags / frontmatter at every site.
+ *
+ * - Frontmatter: starts from `page.frontmatter`, merged with optional
+ *   `opts.frontmatterOverrides`. Useful for stamping `dream_generated`,
+ *   `ingested_via`, etc.
+ * - Type / title: pulled from the Page columns; falls back to 'note' /
+ *   empty string when absent.
+ * - Tags: passed separately so callers don't need to query engine.getTags
+ *   if they already have them in hand.
+ */
+export function serializePageToMarkdown(
+  page: Page,
+  tags: string[],
+  opts: SerializePageOpts = {},
+): string {
+  const frontmatter: Record<string, unknown> = {
+    ...((page.frontmatter ?? {}) as Record<string, unknown>),
+    ...(opts.frontmatterOverrides ?? {}),
+  };
+  return serializeMarkdown(
+    frontmatter,
+    page.compiled_truth ?? '',
+    page.timeline ?? '',
+    {
+      type: (page.type as PageType) ?? 'note',
+      title: page.title ?? '',
+      tags,
+    },
+  );
+}
+
+/**
+ * Compute the on-disk path for a (brainDir, slug, source_id) tuple per
+ * the v0.32.8 multi-source filing layout:
+ *   - Default source: `<brainDir>/<slug>.md`
+ *   - Non-default source: `<brainDir>/.sources/<source_id>/<slug>.md`
+ *
+ * Shared by the dream-cycle reverse-render (`reverseWriteRefs` in
+ * synthesize.ts) and the v0.38 put_page write-through path so both
+ * sites compute the same path for the same row.
+ *
+ * NOTE: caller is responsible for validating `source_id` against path-
+ * traversal attacks via `validateSourceId` (src/core/utils.ts) BEFORE
+ * passing it here. This helper does the filename math only.
+ */
+export function resolvePageFilePath(
+  brainDir: string,
+  slug: string,
+  sourceId: string,
+): string {
+  return sourceId === 'default'
+    ? join(brainDir, `${slug}.md`)
+    : join(brainDir, '.sources', sourceId, `${slug}.md`);
 }

@@ -104,12 +104,18 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
       'utf8',
     );
 
-    // The autopilot-cycle handler MUST pass signal to runCycle
-    // This is a source-level regression guard
-    const handlerBlock = jobsSource.slice(
-      jobsSource.indexOf("worker.register('autopilot-cycle'"),
-      jobsSource.indexOf("worker.register('autopilot-cycle'") + 2000,
-    );
+    // The autopilot-cycle handler MUST pass signal to runCycle.
+    // Source-level regression guard.
+    //
+    // The slice window was bumped to 6000 in v0.39 — the v0.38 wave added
+    // source_id validation + archive recheck + pull-flag threading at the
+    // top of the handler, which pushed the runCycle({signal:...}) call past
+    // the original 2000-char ceiling. The intent of the guard is unchanged:
+    // "the autopilot-cycle handler passes job.signal to runCycle." The
+    // window just needs to be wide enough to span any reasonable handler.
+    const handlerStart = jobsSource.indexOf("worker.register('autopilot-cycle'");
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerBlock = jobsSource.slice(handlerStart, handlerStart + 6000);
 
     expect(handlerBlock).toContain('signal: job.signal');
   });
@@ -144,5 +150,52 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
 
     // Should have at least 6 (one per phase)
     expect(checkCalls).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe('#1972 — complete cooperative-abort coverage', () => {
+  test('aborted signal makes runCycle report partial + reason "aborted" (terminal guard)', async () => {
+    // phases:[] means no between-phase checkAborted fires, so execution reaches
+    // the TERMINAL guard (Codex #9). With a pre-aborted signal it must NOT
+    // report success — status 'partial', reason 'aborted'.
+    const { runCycle } = await import('../src/core/cycle.ts');
+    const abort = new AbortController();
+    abort.abort(new Error('timeout'));
+    const report = await runCycle(null, {
+      brainDir: '/nonexistent-for-test',
+      phases: [],
+      signal: abort.signal,
+    });
+    expect(report.status).toBe('partial');
+    expect(report.reason).toBe('aborted');
+  });
+
+  test('cycle.ts threads opts.signal into every long phase + guards the success stamp', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf8');
+    const body = src.slice(src.indexOf('export async function runCycle'));
+    // Each long phase receives the signal.
+    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal)');
+    expect(body).toMatch(/runPhaseExtractFacts\([^)]*opts\.signal\)/);
+    expect(body).toContain('signal: opts.signal'); // consolidate opts
+    expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, opts.signal)');
+    // Reaper runs at cycle start.
+    expect(body).toContain('reapDeadHolderLocks(engine)');
+    // Terminal guard: the success stamp is gated on !aborted, and the report
+    // carries reason 'aborted'.
+    expect(body).toContain('!aborted');
+    expect(body).toContain("reason: 'aborted'");
+    // Phase-duration force-evict attribution log (T11).
+    expect(body).toContain('FORCE_EVICT_DEADLINE_MS');
+  });
+
+  test('every long phase core checks isAborted in its batch loop', async () => {
+    const fs = await import('fs');
+    const read = (p: string) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+    expect(read('../src/commands/extract.ts')).toContain('if (isAborted(signal)) return;');
+    expect(read('../src/core/cycle/extract-facts.ts')).toContain('if (isAborted(opts.signal)) break;');
+    expect(read('../src/core/cycle/phases/consolidate.ts')).toContain('if (isAborted(opts.signal)) break;');
+    expect(read('../src/core/cycle/phantom-redirect.ts')).toContain('if (isAborted(signal)) break;');
+    expect(read('../src/commands/lint.ts')).toContain('if (isAborted(opts.signal)) break;');
   });
 });

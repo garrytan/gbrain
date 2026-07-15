@@ -10,7 +10,9 @@
  * one entry per source-with-issues to ~/.gbrain/migrations/pending-host-work.jsonl.
  * It NEVER mutates brain content. The agent reads skills/migrations/v0.22.4.md
  * after upgrade and runs `gbrain frontmatter validate <source-path> --fix` with
- * explicit user consent.
+ * explicit user consent. Missing frontmatter is not queued by default; plain
+ * Markdown imports are valid, and generated frontmatter should add real signal
+ * rather than blanket `type: note`.
  *
  * Phases (all idempotent):
  *   A. Schema   — no-op (no DB changes in v0.22.4).
@@ -212,8 +214,9 @@ export const v0_22_4: Migration = {
       'pre-commit hook helper, and a new frontmatter-guard skill. The migration is audit-only ' +
       '(it never mutates your brain) — it scans every registered source, writes a per-source ' +
       'report to ~/.gbrain/migrations/v0.22.4-audit.json, and queues a TODO with the exact fix ' +
-      'command. Run `gbrain frontmatter validate <source-path> --fix` to repair (creates .bak ' +
-      'backups). Resolves all 7 check-resolvable warnings on master; ships frontmatter-guard.',
+      'command for malformed frontmatter only. Missing frontmatter is treated as optional metadata ' +
+      'coverage for broad document sources. Run `gbrain frontmatter validate <source-path> --fix` ' +
+      'to repair (creates centralized backups under ~/.gbrain/backups/frontmatter). Ships frontmatter-guard.',
   },
   orchestrator,
 };

@@ -1,4 +1,16 @@
 /**
+ * v0.41.13.0 T15 retrofit note: book-mirror is fan-out-to-MinionQueue,
+ * not a batch loop the `src/core/progressive-batch/` primitive naturally
+ * fits. The site already has explicit cost-confirmation (`--yes`),
+ * per-chapter idempotency (`idempotency_key`), and Minion-queue-level
+ * cost telemetry (each subagent child carries its own BudgetTracker).
+ * Wrapping the SUBMISSION loop in the primitive would add ceremony with
+ * no observable operator value (the children run async in a separate
+ * queue, so the primitive's stage-report wouldn't reflect actual work).
+ * The cleaner retrofit is a v0.41.14.0+ design pass that integrates
+ * per-child-job progress into the primitive's audit JSONL — that's
+ * filed in TODOS.md.
+ *
  * `gbrain book-mirror` — flagship of the v0.25.1 skills wave.
  *
  * Takes pre-extracted chapter text + context, fans out N read-only Opus
@@ -505,6 +517,7 @@ export async function runBookMirrorCmd(engine: BrainEngine, args: string[]): Pro
       dryRun: false,
       remote: false,             // local CLI caller — operator trust path
       cliOpts: getCliOptions(),
+      sourceId: 'default',       // v0.34 D4: required field; book-mirror is single-source by design
       // viaSubagent intentionally omitted — operator trust path.
       // allowedSlugPrefixes intentionally omitted — operator can write anywhere.
     },

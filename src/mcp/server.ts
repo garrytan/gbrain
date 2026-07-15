@@ -7,6 +7,13 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { loadConfig } from '../core/config.ts';
+import {
+  resolveSocketPath,
+  startResolveIpcServer,
+  cleanupStaleSocket,
+} from '../core/context/resolve-ipc.ts';
+import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -50,6 +57,41 @@ export async function startMcpServer(engine: BrainEngine) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
+  // Retrieval Reflex (#1981, D9=C): on a PGLite brain, serve owns the single
+  // connection, so the context engine resolves salient entities THROUGH us over
+  // a local unix socket rather than opening a second (impossible) connection.
+  // Best-effort; failure to bind never blocks the MCP server.
+  let resolveServer: import('node:net').Server | null = null;
+  let resolveSocket: string | null = null;
+  try {
+    const cfg = loadConfig();
+    if (cfg?.engine === 'pglite' && cfg.database_path) {
+      resolveSocket = resolveSocketPath(cfg.database_path);
+      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+      resolveServer = await startResolveIpcServer(
+        resolveSocket,
+        (req) =>
+          resolveEntitiesToPointers(
+            engine,
+            req.sourceId || defaultSource,
+            req.candidates ?? [],
+            {
+              priorContextText: req.priorContextText,
+              maxPointers: req.maxPointers,
+              suppression: req.suppression,
+            },
+          ),
+        // The IPC resolve path IS the ambient reflex channel. Logging happens
+        // at DELIVERY (post-write), not inside the resolver — a block the
+        // client's 250ms budget abandoned was never injected, and counting it
+        // would corrupt the volunteered-vs-used precision stats (red-team).
+        (block) => logDeliveredReflexPointers(engine, block.pointers),
+      );
+    }
+  } catch {
+    /* resolve IPC is best-effort; never block serve */
+  }
+
   // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
   // Without this, orphaned serve processes accumulate and contend for the
   // PGLite write lock, causing ingest jobs (email-sync) to time out.
@@ -58,12 +100,21 @@ export async function startMcpServer(engine: BrainEngine) {
     if (shuttingDown) return;
     shuttingDown = true;
     process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
+    try { resolveServer?.close(); } catch { /* noop */ }
+    if (resolveSocket) cleanupStaleSocket(resolveSocket);
     Promise.resolve(engine.disconnect?.())
       .catch(() => {})
       .finally(() => process.exit(code));
   };
-  process.stdin.on('end', () => shutdown('stdin end'));
-  process.stdin.on('close', () => shutdown('stdin close'));
+  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
+  // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
+  // closes its stdin half. Treating that as a permanent disconnect kills
+  // the server before the first tool call arrives. Signal handlers and
+  // transport.onclose still cover the legitimate shutdown paths.
+  if (process.env.MCP_STDIO !== '1') {
+    process.stdin.on('end', () => shutdown('stdin end'));
+    process.stdin.on('close', () => shutdown('stdin close'));
+  }
   // @ts-ignore — SDK exposes onclose on transport
   transport.onclose = () => shutdown('transport close');
   process.on('SIGTERM', () => shutdown('SIGTERM'));

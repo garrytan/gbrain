@@ -36,6 +36,7 @@ function buildCtx(): OperationContext {
     logger: console,
     dryRun: false,
     remote: false,
+    sourceId: 'default',
   };
 }
 
@@ -108,7 +109,9 @@ describe('get_brain_identity op', () => {
       'chunk_count',
       'engine',
       'last_sync_iso',
+      'latest_version',
       'page_count',
+      'update_available',
       'version',
     ]);
   });

@@ -23,10 +23,29 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Tree-sitter chunkers feed code-indexing E2E.
   "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts"],
+  // OpenClaw context-engine plugin: engine + entry feed the plugin-shape E2E
+  // (mocked SDK) AND the real-loader Tier 2 E2E that spawns openclaw and
+  // actually installs the plugin into an isolated --profile.
+  "src/core/context-engine.ts": [
+    "test/e2e/openclaw-context-engine-plugin.test.ts",
+    "test/e2e/openclaw-plugin-load-real.test.ts",
+  ],
+  "src/openclaw-context-engine.ts": [
+    "test/e2e/openclaw-context-engine-plugin.test.ts",
+    "test/e2e/openclaw-plugin-load-real.test.ts",
+  ],
   // dream.ts is a thin alias over runCycle in cycle.ts.
   "src/core/cycle.ts": ["test/e2e/cycle.test.ts", "test/e2e/dream.test.ts"],
   // Multi-source sync writes share the per-source bookmark anchor.
   "src/core/sync.ts": ["test/e2e/sync.test.ts", "test/e2e/multi-source.test.ts"],
+  // v0.32.8 multi-source bug class regression suite — fires on any cycle
+  // phase, extract, integrity, embed, or migrate-engine change.
+  "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/synthesize.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/embed.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/migrate-engine.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
     "test/e2e/minions-concurrency.test.ts",
@@ -57,6 +76,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
+  // gbrain connect — raw-bearer MCP smoke probe exercised end-to-end against
+  // a real serve --http (PGLite), so changes to either feed it.
+  "src/commands/connect.ts": ["test/e2e/connect-bearer.test.ts"],
+  "src/core/connect-probe.ts": ["test/e2e/connect-bearer.test.ts"],
   // Upgrade chains migration ledger; touches both runners.
   "src/commands/upgrade.ts": [
     "test/e2e/upgrade.test.ts",
@@ -66,4 +89,20 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/doctor.ts": ["test/e2e/doctor-progress.test.ts"],
   // Knowledge graph layer feeds graph-quality.
   "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts"],
+  // v0.38 ingestion substrate. POST /ingest lives inside serve-http.ts
+  // (per the plan-eng-review E1 decision); the daemon + built-in sources
+  // + ingest_capture Minion handler all feed the in-process roundtrip
+  // E2E AND the HTTP contract E2E for the webhook route.
+  "src/commands/serve-http.ts": [
+    "test/e2e/serve-http-ingest-webhook.test.ts",
+    "test/e2e/serve-http-oauth.test.ts",
+  ],
+  "src/core/ingestion/**": [
+    "test/e2e/ingestion-roundtrip.test.ts",
+    "test/e2e/serve-http-ingest-webhook.test.ts",
+  ],
+  "src/core/minions/handlers/ingest-capture.ts": [
+    "test/e2e/ingestion-roundtrip.test.ts",
+    "test/e2e/serve-http-ingest-webhook.test.ts",
+  ],
 };

@@ -59,10 +59,12 @@ describe('v0.31.8 — voyage Content-Length pre-check + per-item cap', () => {
 
   test('Layer 1 throws on Content-Length over the cap (not silent return)', async () => {
     const source = await Bun.file(new URL('../src/core/ai/gateway.ts', import.meta.url)).text();
-    // The cap check must use `throw new Error(...)` so the embed flow's
-    // retry/backoff sees a failure, NOT a silent pass-through.
+    // The cap check must throw a VoyageResponseTooLargeError so the inbound
+    // try/catch at the bottom of voyageCompatFetch rethrows it (instead of
+    // the pre-fix bare `catch {}` that swallowed `throw new Error(...)` and
+    // returned the original response — making the cap theatrical).
     expect(source).toMatch(/exceeds[^`]*MAX_VOYAGE_RESPONSE_BYTES[^`]*bytes/);
-    expect(source).toMatch(/throw new Error\([\s\S]{0,200}Voyage response Content-Length/);
+    expect(source).toMatch(/throw new VoyageResponseTooLargeError\([\s\S]{0,200}Voyage response Content-Length/);
   });
 
   test('Layer 2: per-embedding base64 cap fires inside the json.data iteration', async () => {
@@ -70,7 +72,18 @@ describe('v0.31.8 — voyage Content-Length pre-check + per-item cap', () => {
     // Defense-in-depth: even when Content-Length header is missing
     // (chunked encoding), each embedding string is bounded.
     expect(source).toMatch(/item\.embedding\.length\s*\*\s*0\.75/);
-    expect(source).toMatch(/throw new Error\([\s\S]{0,200}Voyage embedding base64/);
+    expect(source).toMatch(/throw new VoyageResponseTooLargeError\([\s\S]{0,200}Voyage embedding base64/);
+  });
+
+  test('inbound try/catch rethrows VoyageResponseTooLargeError (Codex P3 follow-up)', async () => {
+    const source = await Bun.file(new URL('../src/core/ai/gateway.ts', import.meta.url)).text();
+    // Critical structural invariant after the Codex P3 fix: the catch
+    // around the inbound JSON-rewrite block MUST rethrow OOM-cap errors.
+    // Pre-fix, a bare `catch {}` swallowed the throw and returned the
+    // original (oversized) response, making Layer 2 ineffective. The
+    // tagged class + instanceof check restores fail-loud behavior.
+    expect(source).toContain('VoyageResponseTooLargeError');
+    expect(source).toMatch(/if\s*\(\s*err\s+instanceof\s+VoyageResponseTooLargeError\s*\)\s*throw\s+err/);
   });
 
   test('comment thread documents both layers + the cap-sizing decision', async () => {

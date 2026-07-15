@@ -16,6 +16,15 @@ import type {
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
+import { defaultTimeoutMsFor } from './handler-timeouts.ts';
+import {
+  withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay,
+  isRetryableConnError,
+} from '../retry.ts';
+import {
+  logBatchRetry as auditLogBatchRetry,
+  logBatchExhausted as auditLogBatchExhausted,
+} from '../audit/batch-retry-audit.ts';
 
 /** Options for opting into protected-job-name submission. Passed as a separate
  *  4th arg to `MinionQueue.add()` (NOT folded into `opts`) so user-spread
@@ -84,25 +93,34 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // v0.31.12 subagent runtime enforcement (Layer 1 of 3 — Codex F1+F2 in
-    // plan review). The subagent loop in handlers/subagent.ts uses Anthropic's
-    // Messages API with prompt caching on system + tools. Routing it elsewhere
-    // silently breaks. Reject non-Anthropic data.model at the queue boundary
-    // so the job never enters waiting state.
+    // v0.38 (S1.7 + D6) — capability-based gate replaces the v0.31.12 Anthropic
+    // pin. The subagent loop now routes through `gateway.toolLoop()` so any
+    // provider with native tool calling works. Only refuse-at-submit when
+    // the requested model literally cannot run a tool loop. The handler
+    // (`subagent.ts`) does a defense-in-depth check at dispatch time too.
     if (jobName === 'subagent' && data && typeof data === 'object') {
       const submittedModel = (data as { model?: unknown }).model;
       if (typeof submittedModel === 'string' && submittedModel.length > 0) {
-        // Lazy import to avoid pulling model-config (which imports engine types)
-        // into the queue module's eager-load surface.
-        const { isAnthropicProvider } = await import('../model-config.ts');
-        if (!isAnthropicProvider(submittedModel)) {
+        const { classifyCapabilities } = await import('../ai/capabilities.ts');
+        const verdict = classifyCapabilities(submittedModel);
+        if (verdict === 'unusable:no_tools') {
           throw new Error(
-            `subagent job rejected: data.model "${submittedModel}" is non-Anthropic. ` +
-            `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-            `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model ` +
-            `to use the configured default.`,
+            `subagent job rejected: data.model "${submittedModel}" lacks native tool calling. ` +
+            `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run. ` +
+            `Pick a provider that supports tools (anthropic, openai, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai).`,
           );
         }
+        if (verdict === 'unknown') {
+          throw new Error(
+            `subagent job rejected: data.model "${submittedModel}" references an unknown provider. ` +
+            `Use format provider:model where provider matches a recipe in src/core/ai/recipes/. ` +
+            `Known providers: anthropic, openai, google, openrouter, litellm-proxy, ollama, llama-server, ` +
+            `together, azure-openai, deepseek, groq, dashscope, minimax, zhipu, voyage, zeroentropyai.`,
+          );
+        }
+        // 'degraded:no_caching' and 'degraded:no_parallel' pass through — the
+        // gateway prints a once-per-(source, model) cost warning at first
+        // dispatch. 'ok' passes through silently.
       }
     }
     await this.ensureSchema();
@@ -261,7 +279,10 @@ export class MinionQueue {
         opts?.on_child_fail ?? 'fail_parent',
         depth,
         opts?.max_children ?? null,
-        opts?.timeout_ms ?? null,
+        // #1737: long handlers (subagent, embed-backfill, autopilot-cycle) get a
+        // sane long wall-clock default stamped at submit when the caller didn't
+        // pass one, so they aren't killed mid-progress by the short null-default.
+        opts?.timeout_ms ?? defaultTimeoutMsFor(jobName),
         opts?.remove_on_complete ?? false,
         opts?.remove_on_fail ?? false,
         opts?.idempotency_key ?? null,
@@ -481,12 +502,28 @@ export class MinionQueue {
   }
 
   /** Get job statistics. */
-  async getStats(opts?: { since?: Date }): Promise<{
+  async getStats(opts?: { since?: Date; queue?: string }): Promise<{
     by_status: Record<string, number>;
     by_type: Array<{ name: string; total: number; completed: number; failed: number; dead: number; avg_duration_ms: number | null }>;
     queue_health: { waiting: number; active: number; stalled: number };
+    /**
+     * issue #1801 — QUEUE-SCOPED wedge signature for the `jobs stats` WEDGED
+     * line. by_status/by_type/queue_health above stay GLOBAL (dashboard
+     * overview); this block is scoped to one queue (default 'default') because
+     * a wedge is per-queue — a healthy worker on one queue must not mask a
+     * wedged one (Codex #14/#15). `active_healthy` counts only live-lock active
+     * rows so an expired-lock row (worker died mid-job) does NOT mask the wedge.
+     */
+    wedge: {
+      queue: string;
+      active_healthy: number;
+      waiting: number;
+      last_completed_at: string | null;
+      minutes_since_completion: number | null;
+    };
   }> {
     const since = opts?.since ?? new Date(Date.now() - 86400000);
+    const wedgeQueue = opts?.queue ?? 'default';
 
     // Status counts
     const statusRows = await this.engine.executeRaw<{ status: string; count: string }>(
@@ -522,6 +559,23 @@ export class MinionQueue {
     );
     const stalled = parseInt(stalledRows[0]?.count ?? '0', 10);
 
+    // issue #1801 — queue-scoped wedge signature (one query, one queue).
+    const wedgeRows = await this.engine.executeRaw<{
+      active_healthy: string;
+      waiting: string;
+      last_completed: string | null;
+    }>(
+      `SELECT
+         count(*) FILTER (WHERE status = 'active' AND lock_until > now())::text AS active_healthy,
+         count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
+         max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed
+       FROM minion_jobs
+       WHERE queue = $1`,
+      [wedgeQueue],
+    );
+    const wr = wedgeRows[0] ?? { active_healthy: '0', waiting: '0', last_completed: null };
+    const wedgeLastCompleted = wr.last_completed ? new Date(wr.last_completed) : null;
+
     return {
       by_status,
       by_type,
@@ -529,6 +583,15 @@ export class MinionQueue {
         waiting: by_status['waiting'] ?? 0,
         active: by_status['active'] ?? 0,
         stalled,
+      },
+      wedge: {
+        queue: wedgeQueue,
+        active_healthy: parseInt(wr.active_healthy ?? '0', 10),
+        waiting: parseInt(wr.waiting ?? '0', 10),
+        last_completed_at: wr.last_completed,
+        minutes_since_completion: wedgeLastCompleted
+          ? Math.round((Date.now() - wedgeLastCompleted.getTime()) / 60_000)
+          : null,
       },
     };
   }
@@ -542,7 +605,10 @@ export class MinionQueue {
   async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
 
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool: claim opens the lock that renewLock then
+    // heartbeats. Both must live on a connection the transaction-mode pooler
+    // won't recycle mid-hold, or the lock orphans and the worker wedges.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
         lock_token = $1,
@@ -581,9 +647,18 @@ export class MinionQueue {
   async handleTimeouts(): Promise<MinionJob[]> {
     return this.engine.transaction(async (tx) => {
       const rows = await tx.executeRaw<Record<string, unknown>>(
+        // #1737: count the timed-out run as a spent attempt (terminal, no retry),
+        // mirroring handleWallClockTimeouts + handleStalled. handleTimeouts is the
+        // FIRST killer to fire for the long-lane handlers (timeout_ms stamped at
+        // submit), so without this the job reads `attempts: 0/N (started: N)`.
+        // Safe against double-count: the worker sweep runs handleStalled ->
+        // handleTimeouts -> handleWallClockTimeouts sequentially and awaited, and
+        // each guards on `status = 'active'`, so the first to set status='dead'
+        // excludes the row from the later sweeps.
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
@@ -657,6 +732,7 @@ export class MinionQueue {
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'wall-clock timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
@@ -956,6 +1032,51 @@ export class MinionQueue {
     });
   }
 
+  /**
+   * v0.41 Bug 2 — release a job back to `delayed` after a
+   * `RateLeaseUnavailableError` bounce, WITHOUT incrementing `attempts_made`.
+   *
+   * The field-report bug: pre-v0.41, lease-full bounces routed through
+   * `failJob` which bumps `attempts_made`. After 3 bounces the job hit
+   * `max_attempts` (default 3) and dead-lettered with message
+   * `rate lease "anthropic:messages" full (8/8)`. Operators saw a dead
+   * job and assumed a real failure.
+   *
+   * This method is the workhorse fix: status → `delayed`, jittered backoff
+   * via `delay_until`, `attempts_made` UNCHANGED. The handler comment at
+   * `src/core/minions/handlers/subagent.ts:425` ("treat as renewable
+   * error so the worker re-claims") is now actually true.
+   *
+   * Audit row write to `minion_lease_pressure_log` is the caller's
+   * responsibility (the worker has the model/queue context); this method
+   * stays focused on the state-machine flip. Same `lock_token + status='active'`
+   * idempotency guard as `failJob` so a racing stall sweep / cancel still
+   * wins. Returns `null` on lock_token mismatch.
+   *
+   * Returns the updated `MinionJob` row on success so the caller can stamp
+   * the audit row with provenance from the SAME row that just flipped.
+   */
+  async releaseLeaseFullJob(
+    id: number,
+    lockToken: string,
+    errorText: string,
+    backoffMs: number,
+  ): Promise<MinionJob | null> {
+    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+      `UPDATE minion_jobs SET
+        status = 'delayed',
+        error_text = $1,
+        stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($1::text),
+        delay_until = now() + ($2::double precision * interval '1 millisecond'),
+        lock_token = NULL, lock_until = NULL, updated_at = now()
+       WHERE id = $3 AND status = 'active' AND lock_token = $4
+       RETURNING *`,
+      [errorText, backoffMs, id, lockToken],
+    );
+    if (rows.length === 0) return null;
+    return rowToMinionJob(rows[0]);
+  }
+
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
@@ -969,7 +1090,10 @@ export class MinionQueue {
 
   /** Renew lock (token-fenced). Returns false if token mismatch (job was reclaimed). */
   async renewLock(id: number, lockToken: string, lockDurationMs: number): Promise<boolean> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
+    // alive for minutes cannot run on the transaction pooler without periodic
+    // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET lock_until = now() + ($1::double precision * interval '1 millisecond'), updated_at = now()
        WHERE id = $2 AND lock_token = $3 AND status = 'active'
        RETURNING id`,
@@ -978,14 +1102,51 @@ export class MinionQueue {
     return rows.length > 0;
   }
 
+  /**
+   * issue #1678 — self-healing retry for the Minion hot-path lock SQL.
+   * ONLY promoteDelayed routes through this: it's idempotent (re-running the
+   * same UPDATE on already-promoted rows is a no-op), so a retry after a
+   * reaped pooler socket can't cause double-work. `claim` and `renewLock`
+   * deliberately do NOT use this — see their call sites for why (Codex #1/#2):
+   * blind-retrying claim can double-claim a job, and retrying renewLock races
+   * the renewal-tick's own timeout. The reconnect callback rebuilds the
+   * instance pool between attempts when the engine supports it (Postgres);
+   * PGLite has no pooler reaping so reconnect is absent and the retry is a
+   * cheap pass-through.
+   */
+  private async lockRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const reconnect = (this.engine as { reconnect?: () => Promise<void> }).reconnect;
+    const opts = resolveBulkRetryOpts();
+    let prevDelay = 0;
+    try {
+      return await withRetry(fn, {
+        maxRetries: opts.maxRetries,
+        delayMs: opts.delayMs,
+        delayMaxMs: opts.delayMaxMs,
+        jitter: BULK_RETRY_OPTS.jitter,
+        auditSite: 'minion-lock',
+        onRetry: (attempt, err) => {
+          const delay = computeNextDelay(attempt - 1, prevDelay, opts.delayMs, opts.delayMaxMs, BULK_RETRY_OPTS.jitter);
+          prevDelay = delay;
+          auditLogBatchRetry('minion-lock', 1, attempt, delay, err);
+        },
+        reconnect: reconnect ? () => reconnect.call(this.engine) : undefined,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'RetryAbortError') throw err;
+      if (isRetryableConnError(err)) auditLogBatchExhausted('minion-lock', 1, opts.maxRetries + 1, err);
+      throw err;
+    }
+  }
+
   /** Promote delayed jobs whose delay_until has passed. Returns promoted jobs. */
   async promoteDelayed(): Promise<MinionJob[]> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    const rows = await this.lockRetry(() => this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', delay_until = NULL,
         lock_token = NULL, lock_until = NULL, updated_at = now()
        WHERE status = 'delayed' AND delay_until <= now()
        RETURNING *`
-    );
+    ));
     return rows.map(rowToMinionJob);
   }
 
@@ -1008,6 +1169,7 @@ export class MinionQueue {
       dead_lettered AS (
         UPDATE minion_jobs SET
           status = 'dead', stalled_counter = stalled_counter + 1,
+          attempts_made = attempts_made + 1,
           error_text = 'max stalled count exceeded',
           lock_token = NULL, lock_until = NULL, finished_at = now(), updated_at = now()
         WHERE id IN (SELECT id FROM stalled WHERE stalled_counter + 1 >= max_stalled)

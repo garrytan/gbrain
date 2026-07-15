@@ -26,17 +26,23 @@
  *   - Daily token budget cap (cooldown bounds spend at v1 scale).
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
+import { AIConfigError } from '../ai/errors.ts';
+import { normalizeModelId } from '../model-id.ts';
+import { hasAnthropicKey } from '../ai/anthropic-key.ts';
+import { join, dirname, isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
-import { serializeMarkdown } from '../markdown.ts';
+import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { validateSourceId } from '../utils.ts';
+import { safeSplitIndex } from '../text-safe.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -178,7 +184,12 @@ function findBoundary(text: string, maxChars: number, searchStart: number): numb
   const nlIdx = window.lastIndexOf('\n');
   if (nlIdx >= 0) return searchStart + nlIdx;
   // No boundary fits; hard-split at maxChars (deterministic).
-  return maxChars;
+  // v0.42.0.0: route through safeSplitIndex so a hard-split that lands
+  // between a UTF-16 surrogate pair (emoji / non-BMP CJK / mathematical
+  // alphanumerics) doesn't orphan the high surrogate — that would change
+  // chunk byte-content vs the source and break the D9 stable-chunk-identity
+  // invariant on the next retry.
+  return safeSplitIndex(text, maxChars);
 }
 
 /**
@@ -238,6 +249,23 @@ export async function runPhaseSynthesize(
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  // Normalize brainDir to an absolute path BEFORE any reverse-write. Without
+  // this, a relative or empty brainDir flows down to writeReversePages →
+  // `join(brainDir, '${slug}.md')` → relative path → resolves against cwd at
+  // writeFileSync time, spilling synthesize output into whatever directory
+  // the cycle ran from (e.g., `companies/novamind.md` at the repo root).
+  // Surfaced by the warm-narwhal wave when E2E test cleanup found orphan
+  // synthesize pages at repo root from a `runCycle({brainDir: '.'})` call
+  // chain. Throw on empty (silent cwd-resolution is worse than a loud
+  // failure); resolve if relative (`.` / `./brain` / `../sibling` all valid
+  // inputs but must canonicalize before the write).
+  if (!opts.brainDir || opts.brainDir.trim() === '') {
+    return failed(makeError('InternalError', 'BRAINDIR_EMPTY',
+      'opts.brainDir is empty; refusing to run synthesize. Pass an absolute path.'));
+  }
+  if (!isAbsolute(opts.brainDir)) {
+    opts.brainDir = resolve(opts.brainDir);
+  }
   try {
     const config = await loadSynthConfig(engine);
 
@@ -268,6 +296,12 @@ export async function runPhaseSynthesize(
       );
     }
 
+    // v0.32.6 M2: pre-fetch prior contradictions from the most recent probe
+    // run (if any). Surfaced as an informational block to the synthesize
+    // subagent so it knows which slugs it should reconcile if it writes to
+    // them. Best-effort — a probe that's never run is a normal early state.
+    const priorContradictionsBlock = await loadPriorContradictionsBlock(engine);
+
     // Discover.
     const transcripts = opts.inputFile
       ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
@@ -289,7 +323,12 @@ export async function runPhaseSynthesize(
     // Significance verdicts (cached in dream_verdicts; Haiku on miss).
     const worthProcessing: DiscoveredTranscript[] = [];
     const verdicts: Array<{ filePath: string; worth: boolean; reasons: string[]; cached: boolean }> = [];
-    const haiku = makeHaikuClient(); // null if no API key
+    // Provider-aware judge client routes through gateway.chat, so any
+    // configured provider works (Anthropic, DeepSeek, OpenRouter, Voyage,
+    // Ollama, llama-server, etc.). Returns null when the resolved verdict
+    // model has no reachable provider (legacy "no API key" branch preserved
+    // as the cheap pre-flight check).
+    const judge = makeJudgeClient(config.verdictModel);
     for (const t of transcripts) {
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
       if (cached) {
@@ -297,15 +336,38 @@ export async function runPhaseSynthesize(
         if (cached.worth_processing) worthProcessing.push(t);
         continue;
       }
-      if (!haiku) {
-        // No API key — can't judge. Skip with explicit reason; don't crash phase.
-        verdicts.push({ filePath: t.filePath, worth: false, reasons: ['no ANTHROPIC_API_KEY for significance judge'], cached: false });
+      if (!judge) {
+        // No configured provider for the verdict model — can't judge.
+        // Skip with explicit reason; don't crash phase.
+        verdicts.push({
+          filePath: t.filePath,
+          worth: false,
+          reasons: [`no configured provider for verdict model: ${config.verdictModel}`],
+          cached: false,
+        });
         continue;
       }
-      const verdict = await judgeSignificance(haiku, t, config.verdictModel);
-      await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
-      verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
-      if (verdict.worth_processing) worthProcessing.push(t);
+      try {
+        const verdict = await judgeSignificance(judge, t, config.verdictModel);
+        await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
+        verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
+        if (verdict.worth_processing) worthProcessing.push(t);
+      } catch (e) {
+        // AIConfigError at chat time = provider auth/config went bad mid-run
+        // (revoked key, recipe misconfig surfacing at first real call). Skip
+        // this transcript with the gateway error message so the user sees the
+        // shape of the problem in `gbrain dream --phase synthesize --dry-run`.
+        if (e instanceof AIConfigError) {
+          verdicts.push({
+            filePath: t.filePath,
+            worth: false,
+            reasons: [`gateway error: ${e.message}`],
+            cached: false,
+          });
+          continue;
+        }
+        throw e;
+      }
     }
 
     // Dry-run stops here: significance filter ran (Haiku verdicts cached),
@@ -386,10 +448,20 @@ export async function runPhaseSynthesize(
       }
 
       const isChunked = chunks.length > 1;
+      // queue.add subagent validator (classifyCapabilities → resolveRecipe)
+      // requires `provider:model`. resolveModel can return a bare id when
+      // TIER_DEFAULTS / DEFAULT_ALIASES carry a bare value; ensure the
+      // anthropic: prefix is present for known claude-* ids before passing
+      // to the queue. Non-anthropic providers must already declare a colon.
+      const subagentModel = config.model.includes(':')
+        ? config.model
+        : config.model.toLowerCase().startsWith('claude-')
+          ? `anthropic:${config.model}`
+          : config.model;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
-          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length),
-          model: config.model,
+          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
+          model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
         };
@@ -449,15 +521,19 @@ export async function runPhaseSynthesize(
     // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
     // bare-hash slugs to `<hash6>-c<idx>` so chunked siblings can't collide
     // even if Sonnet drops the chunk suffix.
-    const writtenSlugs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
+    // v0.32.8: refs carry source_id so reverseWriteRefs picks the correct
+    // (source, slug) row (currently always 'default' from subagent put_page).
+    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteSlugs(engine, opts.brainDir, writtenSlugs);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
     const summaryDate = opts.date ?? today();
     const summarySlug = `dream-cycle-summaries/${summaryDate}`;
+    // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
+    const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
       await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes);
     }
@@ -622,16 +698,106 @@ async function loadAllowedSlugPrefixes(): Promise<string[]> {
   return [];
 }
 
-// ── Significance judge (Haiku) ───────────────────────────────────────
+// ── Significance judge (gateway-routed; provider-agnostic) ──────────────
+//
+// The JudgeClient interface is unchanged for test-seam stability — existing
+// tests that pass a mock client to judgeSignificance keep working byte-
+// identically. Only the construction path moved from `new Anthropic()` to
+// `gateway.chat()` so any provider with a registered recipe (Anthropic,
+// DeepSeek, OpenRouter, Voyage, Ollama, llama-server, etc.) is reachable
+// via `gbrain config set models.dream.synthesize_verdict <provider>:<model>`.
+//
+// This mirrors v0.35.5.0's `tryBuildGatewayClient` in src/core/think/index.ts
+// (which closed #952 for runThink). Same pattern, same trade-offs:
+// construction-time provider/key probe returns null on a clear miss (cheap
+// pre-flight), and the verdict loop wraps the actual chat call in try/catch
+// for AIConfigError surfacing mid-run.
 
 export interface JudgeClient {
   create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
 }
 
-function makeHaikuClient(): JudgeClient | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  const client = new Anthropic();
-  return { create: client.messages.create.bind(client.messages) };
+/**
+ * Build a gateway-routed JudgeClient for the resolved verdict model.
+ * Returns null when no chat provider is reachable for `verdictModel`:
+ *   - Unknown provider id (resolveRecipe throws AIConfigError).
+ *   - Anthropic provider with no key (env or config) — preserves the legacy
+ *     "no ANTHROPIC_API_KEY" cheap-skip semantics.
+ * On null, the verdict loop short-circuits each transcript with an explicit
+ * "no configured provider" reason and continues the phase.
+ *
+ * For non-Anthropic providers (deepseek, openrouter, voyage, ollama,
+ * llama-server, ...), we delegate auth probing to the gateway's own
+ * recipe `auth_env.required` machinery — AIConfigError at gateway.chat()
+ * time is caught by the verdict loop and surfaced per-transcript.
+ */
+export function makeJudgeClient(verdictModel: string): JudgeClient | null {
+  // Normalize: ensure provider:model shape (and slash→colon — #1698). resolveModel
+  // returns bare anthropic ids (e.g. `claude-haiku-4-5`); gateway.chat needs `anthropic:...`.
+  const modelStr = normalizeModelId(verdictModel);
+
+  // #1698 (C1): id-validity via the shared `validateModelId` core (resolveRecipe +
+  // assertTouchpoint) — catches unknown provider AND typo'd native model. We do NOT
+  // use the full `probeChatModel` here: its `isAvailable` layer would reject
+  // non-Anthropic-no-key providers and an unconfigured gateway, breaking the
+  // deliberate per-transcript-degrade contract (and test A9). validateModelId reads
+  // the recipe registry, not gateway _config, so it works pre-configureGateway().
+  const v = validateModelId(modelStr);
+  if (!v.ok) return null;
+
+  // Anthropic key probe (legacy behavior preserved verbatim). Other providers' key
+  // checks happen lazily at chat call time and surface as AIConfigError, which the
+  // verdict loop catches per-transcript.
+  if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) return null;
+
+  return {
+    create: async (params): Promise<Anthropic.Message> => {
+      // Map Anthropic.MessageCreateParamsNonStreaming → gateway.ChatOpts.
+      // `judgeSignificance` always sends string content + string system,
+      // and the adapter only TEXT-flattens the array-of-blocks shape —
+      // `tool_use`, `tool_result`, image, and other non-text blocks become
+      // empty strings. If a future caller wires tool-use or image content
+      // through this client, extend the mapping instead of relying on the
+      // current silent drop. Same pattern as think/index.ts:607-615.
+      const messages = params.messages.map(m => ({
+        role: m.role,
+        content: typeof m.content === 'string'
+          ? m.content
+          : (Array.isArray(m.content)
+              ? m.content.map(b => ('text' in b ? b.text : '')).join('')
+              : ''),
+      }));
+      const system = typeof params.system === 'string'
+        ? params.system
+        : (Array.isArray(params.system)
+            ? params.system.map(b => ('text' in b ? b.text : '')).join('')
+            : undefined);
+
+      const result: ChatResult = await gatewayChat({
+        model: modelStr,
+        system,
+        messages,
+        maxTokens: params.max_tokens,
+      });
+
+      // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
+      // reads `.content[0].type === 'text'` and `.content[0].text`; other
+      // fields are best-effort for downstream telemetry parity.
+      return {
+        id: '',
+        type: 'message',
+        role: 'assistant',
+        model: modelStr,
+        content: [{ type: 'text', text: result.text }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: {
+          input_tokens: result.usage.input_tokens,
+          output_tokens: result.usage.output_tokens,
+        },
+      } as unknown as Anthropic.Message;
+    },
+  };
 }
 
 interface VerdictResult {
@@ -647,9 +813,26 @@ export async function judgeSignificance(
   // Truncate the transcript at 8K chars for cost control. Haiku's verdict
   // doesn't need the full body; the opening + closing sections are usually
   // representative of significance.
-  const trimmed = t.content.length > 8000
-    ? t.content.slice(0, 4000) + '\n[...truncated...]\n' + t.content.slice(-4000)
-    : t.content;
+  //
+  // v0.41.13 surrogate-safety (supersedes PRs #1559+#1561's safeSliceEnd
+  // helper; see text-safe.ts:18-21 module docstring for why that helper
+  // re-introduces the case-3 bug the canonical safeSplitIndex was written
+  // to fix). Routes head + tail slicing through safeSplitIndex so an emoji
+  // at offset 4000 (or length-4000) never produces a lone surrogate that
+  // Anthropic's JSON parser rejects ("no low surrogate in string", caught
+  // 2026-05-24 on telegram).
+  //
+  // Contract: this branch only runs when content.length > 8000, so
+  // length - 4000 > 4000 > 0 — safeSplitIndex never sees an out-of-range
+  // maxChars here. (Codex C-10 documented contract.)
+  let trimmed: string;
+  if (t.content.length > 8000) {
+    const headEnd = safeSplitIndex(t.content, 4000);
+    const tailStart = safeSplitIndex(t.content, t.content.length - 4000);
+    trimmed = t.content.slice(0, headEnd) + '\n[...truncated...]\n' + t.content.slice(tailStart);
+  } else {
+    trimmed = t.content;
+  }
 
   const sys = `You judge whether a conversation transcript is worth synthesizing into a personal knowledge brain.
 
@@ -704,11 +887,58 @@ Two reasons max, one phrase each.`;
  * collection time). Sonnet still gets the chunked seed via the prompt's
  * `USE THIS in slugs` rule for the happy path.
  */
+/**
+ * v0.32.6 M2 — Load prior probe findings into an informational block.
+ * Returns '' if no probe runs exist or the engine doesn't know how (pre-v33
+ * brain that hasn't applied migrations). Best-effort and silent on failure.
+ */
+async function loadPriorContradictionsBlock(engine: BrainEngine): Promise<string> {
+  try {
+    const rows = await engine.loadContradictionsTrend(30);
+    if (!rows || rows.length === 0) return '';
+    const latest = rows[0];
+    const report = latest.report_json as Record<string, unknown> | null;
+    const perQuery = (report?.per_query as Array<{
+      contradictions: Array<{
+        severity: 'low' | 'medium' | 'high';
+        axis: string;
+        a: { slug: string };
+        b: { slug: string };
+      }>;
+    }> | undefined) ?? [];
+    const findings: Array<{ severity: string; axis: string; a: string; b: string }> = [];
+    for (const q of perQuery) {
+      for (const c of q.contradictions) {
+        findings.push({ severity: c.severity, axis: c.axis, a: c.a.slug, b: c.b.slug });
+      }
+    }
+    if (findings.length === 0) return '';
+    // Sort by severity DESC (high first); take top 5 to keep prompt bounded.
+    const rank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    findings.sort((x, y) => (rank[y.severity] ?? 0) - (rank[x.severity] ?? 0));
+    const top = findings.slice(0, 5);
+    const lines = top.map((f) => `  - [${f.severity}] ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);
+    return [
+      '',
+      'PRIOR DETECTED CONTRADICTIONS (latest probe run, severity DESC, top 5):',
+      ...lines,
+      '',
+      'If your synthesis writes to any of these slugs, reconcile the contradiction',
+      'in the compiled_truth instead of recreating it. Either update to the newer/',
+      'correct value, mark the older claim as historical, or note the conflict',
+      'explicitly. Ignore findings irrelevant to what this transcript covers.',
+    ].join('\n');
+  } catch {
+    return '';
+  }
+}
+
 function buildSynthesisPrompt(
   t: DiscoveredTranscript,
   chunkText: string,
   chunkIdx: number,
   chunkTotal: number,
+  priorContradictionsBlock = '',
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -727,7 +957,7 @@ function buildSynthesisPrompt(
 CONTEXT
 - Today's date: ${dateHint}
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
-- Source file basename: ${baseSlugSegment}${chunkBanner}
+- Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Do not paraphrase memorable phrasings.
@@ -781,12 +1011,19 @@ async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
   chunkInfo: Map<number, { idx: number; hash6: string }>,
-): Promise<string[]> {
+): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
   // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
   // the orchestrator sees what each child wrote. COALESCE handles both
   // properly-stored jsonb objects (input->>'slug') and double-encoded jsonb
   // strings from pre-fix data ((input #>> '{}')::jsonb->>'slug').
+  //
+  // v0.32.8: returns Array<{slug, source_id}> instead of string[]. Subagent
+  // put_page tool schema doesn't expose source_id (subagents are scoped to
+  // a single source); default to 'default' for the current dream-cycle
+  // product behavior. Threading the source_id through reverseWriteRefs
+  // guarantees getPage targets the correct (source, slug) row instead of
+  // the first DB match.
   const rows = await engine.executeRaw<{ job_id: number; slug: string }>(
     `SELECT job_id,
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
@@ -802,7 +1039,7 @@ async function collectChildPutPageSlugs(
     const ci = chunkInfo.get(r.job_id);
     rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
   }
-  return Array.from(rewritten).sort();
+  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: 'default' }));
 }
 
 /**
@@ -833,26 +1070,33 @@ async function hasLegacySingleChunkCompletion(
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
 
-async function reverseWriteSlugs(
+async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
-  slugs: string[],
+  refs: Array<{ slug: string; source_id: string }>,
 ): Promise<number> {
   let count = 0;
-  for (const slug of slugs) {
-    const page = await engine.getPage(slug);
+  for (const { slug, source_id } of refs) {
+    // v0.32.8 F6: validate source_id is filesystem-safe before any join().
+    validateSourceId(source_id);
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
-    const tags = await engine.getTags(slug);
+    const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      const filePath = join(brainDir, `${slug}.md`);
+      // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
+      // so same-slug-different-source pages don't collide. Default-source
+      // pages stay at brainDir/<slug>.md so single-source brains see no change.
+      const filePath = source_id === 'default'
+        ? join(brainDir, `${slug}.md`)
+        : join(brainDir, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, md, 'utf8');
       count++;
     } catch (e) {
       // Per-slug failures are non-fatal — phase continues.
       const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] reverse-write ${slug} failed: ${msg}\n`);
+      process.stderr.write(`[dream] reverse-write ${slug}@${source_id} failed: ${msg}\n`);
     }
   }
   return count;
@@ -867,21 +1111,18 @@ async function reverseWriteSlugs(
  * `serializeMarkdown` does not embed the page slug in the body.
  */
 export function renderPageToMarkdown(page: Page, tags: string[]): string {
-  const frontmatter: Record<string, unknown> = {
-    ...((page.frontmatter ?? {}) as Record<string, unknown>),
-    dream_generated: true,
-    dream_cycle_date: today(),
-  };
-  return serializeMarkdown(
-    frontmatter,
-    page.compiled_truth ?? '',
-    page.timeline ?? '',
-    {
-      type: (page.type as PageType) ?? 'note',
-      title: page.title ?? '',
-      tags,
+  // v0.38 DRY: the dream-output identity stamp (dream_generated +
+  // dream_cycle_date) is the ONLY thing that differs from the v0.38
+  // put_page write-through renderer. Both call the shared
+  // serializePageToMarkdown helper in markdown.ts; this wrapper passes
+  // the dream-specific overrides. Future markdown-shape changes happen
+  // in one place.
+  return serializePageToMarkdown(page, tags, {
+    frontmatterOverrides: {
+      dream_generated: true,
+      dream_cycle_date: today(),
     },
-  );
+  });
 }
 
 // ── Summary index page ───────────────────────────────────────────────
@@ -920,7 +1161,7 @@ async function writeSummaryPage(
     { dream_generated: true, dream_cycle_date: summaryDate } as Record<string, unknown>,
     body,
     '',
-    { type: 'note' as PageType, title: `Dream cycle ${summaryDate}`, tags: ['dream-cycle'] },
+    { type: 'note' as string, title: `Dream cycle ${summaryDate}`, tags: ['dream-cycle'] },
   );
 
   // Direct engine.putPage — orchestrator write, no subagent context, no

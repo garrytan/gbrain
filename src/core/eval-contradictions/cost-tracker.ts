@@ -1,0 +1,128 @@
+/**
+ * eval-contradictions/cost-tracker — A2 + P3 cumulative cost accounting.
+ *
+ * Per the v0.32.6 plan: --budget-usd is a soft ceiling enforced two ways:
+ *   1. Pre-flight estimate. Refuses to start (exit 1) without --yes if the
+ *      conservative upper bound exceeds the cap.
+ *   2. Mid-run cumulative tracker. After every judge call, if the running
+ *      total exceeds the cap, the orchestrator stops with a partial report.
+ *
+ * Codex correctly flagged that "hard ceiling" is overclaimed since token
+ * estimates are approximate until the provider returns actual usage. The
+ * tracker uses actual post-call accounting from the gateway response; the
+ * pre-flight estimate is a function of declared per-call budgets and pair
+ * counts. Both are documented in the output via `cost_usd.estimate_note`.
+ *
+ * Codex finding P3: include embedding cost so the budget cap is honest. The
+ * probe pays a tiny per-query embedding fee on --query and --queries-file
+ * paths (eval_candidates rows from --from-capture are pre-embedded). Tiny
+ * in absolute dollars but the contract matters.
+ */
+
+import type { CostBreakdown } from './types.ts';
+import { splitProviderModelId } from '../model-id.ts';
+import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+
+/**
+ * Chat prices come from the canonical table via the bare-keyed
+ * `ANTHROPIC_PRICING` view (`src/core/anthropic-pricing.ts` → `model-pricing.ts`).
+ * This site used to carry its own duplicate (TODOS.md #3); folding it in closes
+ * that consolidation. `pricingFor` still routes through `splitProviderModelId`
+ * so colon/slash forms hit, and keeps the legacy silent-Haiku fallback for
+ * genuinely-unknown models (pinned by test/eval-contradictions/cost-tracker-slash.test.ts).
+ */
+
+/** OpenAI text-embedding-3-large: ~$0.13/Mtok (current as of 2026-05). */
+const OPENAI_EMBEDDING_PRICE_PER_MTOK = 0.13;
+
+/** Default per-call token budget for the judge. ~500 in, ~80 out. Tunable. */
+const DEFAULT_PER_CALL_INPUT_TOKENS = 500;
+const DEFAULT_PER_CALL_OUTPUT_TOKENS = 80;
+
+const ESTIMATE_NOTE =
+  'approximate; provider accounting is post-call. --budget-usd is a soft ceiling — mid-run stop on cumulative > cap.';
+
+function pricingFor(modelId: string): { input: number; output: number } {
+  // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
+  // (`anthropic/claude-sonnet-4-6`) hit the pricing table. Pre-fix the
+  // exact-key match silently fell back to Haiku on every non-bare lookup
+  // (including colon-form Sonnet/Opus that the table DOES carry — caller
+  // bug class). Legacy silent-Haiku fallback for genuinely-unknown models
+  // is preserved by design — see TODOS.md #3 for the pricing-system
+  // consolidation that would tighten this to warn-once.
+  const direct = ANTHROPIC_PRICING[modelId];
+  if (direct) return direct;
+  const { model: tail } = splitProviderModelId(modelId);
+  if (tail) {
+    const tailHit = ANTHROPIC_PRICING[tail];
+    if (tailHit) return tailHit;
+  }
+  return ANTHROPIC_PRICING['claude-haiku-4-5'];
+}
+
+/**
+ * Conservative upper-bound estimate. Used pre-flight to decide whether to
+ * refuse without --yes. NEVER use this number as "actual cost" — that's
+ * the cumulative tracker's job.
+ */
+export function estimateUpperBoundCost(opts: {
+  pairCount: number;
+  queryCount: number;
+  judgeModel: string;
+  perCallInputTokens?: number;
+  perCallOutputTokens?: number;
+}): number {
+  const judgePricing = pricingFor(opts.judgeModel);
+  const inTok = opts.perCallInputTokens ?? DEFAULT_PER_CALL_INPUT_TOKENS;
+  const outTok = opts.perCallOutputTokens ?? DEFAULT_PER_CALL_OUTPUT_TOKENS;
+  const judgeCost =
+    opts.pairCount * ((inTok / 1_000_000) * judgePricing.input + (outTok / 1_000_000) * judgePricing.output);
+  // Conservative embedding cost: assume ~50 tokens per query.
+  const embedCost = opts.queryCount * (50 / 1_000_000) * OPENAI_EMBEDDING_PRICE_PER_MTOK;
+  return judgeCost + embedCost;
+}
+
+/** Mutable accumulator. Use for mid-run tracking + final breakdown. */
+export class CostTracker {
+  private judgeUsd = 0;
+  private embeddingUsd = 0;
+  private cap: number;
+
+  constructor(opts: { capUsd: number }) {
+    this.cap = Math.max(0, opts.capUsd);
+  }
+
+  recordJudgeCall(modelId: string, usage: { inputTokens: number; outputTokens: number }): void {
+    const p = pricingFor(modelId);
+    this.judgeUsd +=
+      (usage.inputTokens / 1_000_000) * p.input + (usage.outputTokens / 1_000_000) * p.output;
+  }
+
+  recordEmbeddingCall(tokens: number): void {
+    this.embeddingUsd += (tokens / 1_000_000) * OPENAI_EMBEDDING_PRICE_PER_MTOK;
+  }
+
+  judge(): number { return this.judgeUsd; }
+  embedding(): number { return this.embeddingUsd; }
+  total(): number { return this.judgeUsd + this.embeddingUsd; }
+  capUsd(): number { return this.cap; }
+
+  /** Returns true iff cumulative spend exceeds the configured cap. */
+  exceededCap(): boolean {
+    return this.total() > this.cap;
+  }
+
+  /** Final breakdown for the ProbeReport. */
+  finalize(): CostBreakdown {
+    return {
+      judge: round6(this.judgeUsd),
+      embedding: round6(this.embeddingUsd),
+      total: round6(this.total()),
+      estimate_note: ESTIMATE_NOTE,
+    };
+  }
+}
+
+function round6(n: number): number {
+  return Math.round(n * 1_000_000) / 1_000_000;
+}

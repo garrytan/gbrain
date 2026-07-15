@@ -15,17 +15,20 @@ with the brain repo automatically. You never have to remember to run sync.
 
 ## Implementation
 
-### Prerequisite: Session Mode Pooler
+### Prerequisite: a reachable direct connection
 
-Sync uses `engine.transaction()` on every import. If `DATABASE_URL` points to
-Supabase's **Transaction mode** pooler, sync will throw `.begin() is not a
-function` and **silently skip most pages**. This is the number one cause of
-"sync ran but nothing happened."
+GBrain is tuned for the Supabase **Transaction pooler** (port 6543): it
+auto-disables prepared statements there and routes `engine.transaction()`
+(migrations, DDL, sync imports) to a derived **direct** connection
+(`db.<ref>.supabase.co:5432`). That direct host is IPv6-only, so on an
+IPv4-only host, reads work but sync **silently skips most pages**. This is the
+number one cause of "sync ran but nothing happened."
 
-Fix: use the **Session mode** pooler string (port 6543, Session mode) or the
-direct connection (port 5432, IPv6-only). Verify by running `gbrain sync` and
-checking that the page count in `gbrain stats` matches the syncable file count
-in the repo.
+Fix: make the direct connection reachable over IPv4. Either set
+`GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port 5432 on the
+`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on. Verify by
+running `gbrain sync` and checking that the page count in `gbrain stats` matches
+the syncable file count in the repo.
 
 ### The Primitives
 
@@ -58,8 +61,9 @@ gbrain sync --repo /data/brain && gbrain embed --stale
 Name: gbrain-auto-sync
 Schedule: */15 * * * *
 Prompt: "Run: gbrain sync --repo /data/brain && gbrain embed --stale
-  Log the result. If sync fails with .begin() is not a function,
-  the DATABASE_URL is using Transaction mode pooler."
+  Log the result. If sync errors mention an unreachable host or timeout,
+  the direct connection isn't reachable over IPv4 (set
+  GBRAIN_DIRECT_DATABASE_URL to the Session pooler, or enable the IPv4 add-on)."
 ```
 
 **Hermes:**
@@ -116,6 +120,17 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
 
+4. **A single un-parseable file can't wedge all indexing.** When a file fails
+   to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
+   the bookmark and tells you exactly which file broke — a *fresh* failure
+   fails closed so nothing is silently dropped. But a file that fails the same
+   way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0` to
+   disable) is auto-skipped so the rest of the brain keeps indexing past it.
+   Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
+   or delete them, and fixing the file clears it on the next sync. A repository
+   history rewrite still hard-blocks even with `--skip-failed`. Run
+   `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
+
 ## How to Verify
 
 1. **Edit a file and search for the change.** Edit a brain markdown file,
@@ -125,8 +140,8 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
 2. **Compare page count to file count.** Run `gbrain stats` and count the
    syncable markdown files in the brain repo. The page count in the database
-   should match. If they diverge, files are being silently skipped (likely
-   a Transaction mode pooler issue).
+   should match. If they diverge, files are being silently skipped (likely an
+   unreachable direct connection on IPv4 — see the prerequisite above).
 
 3. **Check embedded chunk count.** In `gbrain stats`, the embedded chunk
    count should be close to the total chunk count. A large gap means

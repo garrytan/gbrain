@@ -31,6 +31,30 @@ Compile a daily briefing from brain context.
 
 ## Phases
 
+0. **Hot memory pulse (v0.32).** Before composing anything else, run:
+
+   ```bash
+   gbrain recall --since-last-run --supersessions --pending --rollup --json
+   ```
+
+   Fold the result into the briefing under a "Brain pulse" section at the top:
+   1. **Contradictions resolved overnight** — the `--supersessions` output. Lead
+      with these because they're new corrections to your model of the world.
+   2. **Top mentions** — `top_entities` from `--rollup` (top 5 entity slugs by
+      fact count in the window).
+   3. **New facts since last briefing** — group the `facts` array under each
+      entity from the rollup; include `kind`, `notability`, and `confidence`.
+   4. **Pending consolidation footer** — when `pending_consolidation_count > 0`,
+      note `N facts await dream-cycle consolidation` so the operator can decide
+      whether to run `gbrain dream` before reading further.
+
+   The `--since-last-run` flag advances `~/.gbrain/recall-cursors/<source>.json`
+   so the next briefing picks up exactly where this one left off. If you're
+   running this as a cron job, pass `--source <slug>` or set `GBRAIN_SOURCE`
+   explicitly — cron doesn't start in your repo-root cwd, so dotfile resolution
+   may miss the right source. Thin-client installs (`gbrain init --mcp-only`)
+   route through the remote brain transparently.
+
 1. **Today's meetings.** For each meeting on the calendar:
    - Search gbrain for each participant by name
    - Read their pages from gbrain for compiled_truth context

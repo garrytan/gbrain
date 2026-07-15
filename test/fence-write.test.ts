@@ -223,6 +223,56 @@ describe('writeFactsToFence — atomic recovery', () => {
   });
 });
 
+describe('writeFactsToFence — stub guard (v0.34.5)', () => {
+  test('refuses to stub-create an unprefixed entity page (bare slug)', async () => {
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'alice' },
+      [baseInput()],
+    );
+
+    // Result shape: no facts inserted, guard flag set, no ids.
+    expect(result.inserted).toBe(0);
+    expect(result.ids).toHaveLength(0);
+    expect(result.stubGuardBlocked).toBe(true);
+
+    // No phantom file at brain root.
+    expect(existsSync(join(brainDir, 'alice.md'))).toBe(false);
+    // No phantom .tmp either.
+    expect(existsSync(join(brainDir, 'alice.md.tmp'))).toBe(false);
+  });
+
+  test('prefixed slugs (people/, companies/, etc.) bypass the guard', async () => {
+    // Sanity: re-prove the happy path right next to the guard test so a
+    // future refactor that breaks the guard's slug.includes('/') check
+    // can't silently pass by only running the guard case.
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/zelda' },
+      [baseInput({ fact: 'Founded Hyrule Labs in 2024' })],
+    );
+
+    expect(result.inserted).toBe(1);
+    expect(result.stubGuardBlocked).toBeUndefined();
+    expect(existsSync(join(brainDir, 'people/zelda.md'))).toBe(true);
+  });
+
+  test('empty facts array is a no-op (does NOT trigger the guard)', async () => {
+    // Empty input short-circuits BEFORE the guard runs — confirming the
+    // guard only fires when there's actual work the caller wants to do.
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'alice' },
+      [],
+    );
+
+    expect(result.inserted).toBe(0);
+    expect(result.stubGuardBlocked).toBeUndefined();
+    expect(result.legacyFallback).toBeUndefined();
+    expect(existsSync(join(brainDir, 'alice.md'))).toBe(false);
+  });
+});
+
 describe('lookupSourceLocalPath', () => {
   test('returns the configured local_path for an existing source', async () => {
     const got = await lookupSourceLocalPath(engine, 'default');

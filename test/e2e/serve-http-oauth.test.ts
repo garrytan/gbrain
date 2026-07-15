@@ -254,6 +254,19 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(html).toContain('GBrain Admin');
   });
 
+  // v0.36.1.x #1076: GET /mcp must return 405 (Method Not Allowed) per the
+  // MCP Streamable HTTP spec, not 404. claude.ai + other probing clients
+  // distinguish "endpoint exists, no SSE channel" from "endpoint missing"
+  // on this status code; 404 makes them give up.
+  test('GET /mcp returns 405 with Allow: POST, DELETE (v0.36.1.x #1076)', async () => {
+    const res = await fetch(`${BASE}/mcp`, { method: 'GET' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('Allow')).toBe('POST, DELETE');
+    const body = await res.json() as { jsonrpc?: string; error?: { code?: number } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error?.code).toBe(-32000);
+  });
+
   test('X-Forwarded-For header does not crash server', async () => {
     const res = await fetch(`${BASE}/health`, {
       headers: { 'X-Forwarded-For': '10.0.0.1, 172.16.0.1' },

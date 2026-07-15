@@ -166,10 +166,16 @@ describe('runCycle — dryRun propagates to every phase', () => {
     expect(embedCalls.at(-1)?.dryRun).toBe(true);
   });
 
-  test('dryRun:false writes in every phase', async () => {
+  test('dryRun:false does not let maintenance append generated backlinks to tracked pages', async () => {
     await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: false });
 
     expect(lintCalls.at(-1)?.dryRun).toBe(false);
+    // Maintenance should audit backlink gaps but not run the legacy fixer that
+    // appends "Referenced in" timeline entries into entity pages. The graph
+    // extractor/auto-link path is the canonical link store; filesystem backlink
+    // fixes are still available through `gbrain check-backlinks fix` when a
+    // human explicitly asks for them.
+    expect(backlinksCalls.at(-1)?.action).toBe('check');
     expect(backlinksCalls.at(-1)?.dryRun).toBe(false);
     expect(syncCalls.at(-1)?.dryRun).toBe(false);
     expect(embedCalls.at(-1)?.dryRun).toBe(false);
@@ -380,8 +386,15 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.26.5: 9 phases (added `purge`).
     // v0.29:   10 phases (added `recompute_emotional_weight`).
     // v0.31:   11 phases (added `consolidate` between recompute and embed).
-    // v0.32.2: 12 phases (added `extract_facts` between extract and patterns) → 12 yield calls.
-    expect(hookCalls).toBe(12);
+    // v0.32.2: 12 phases (added `extract_facts` between extract and patterns).
+    // v0.33.3: 13 phases (added `resolve_symbol_edges` between extract_facts and patterns) → 13 yield calls.
+    // v0.36.1.0: 16 phases (added `propose_takes`, `grade_takes`, `calibration_profile` between consolidate and embed).
+    // v0.39.0.0: 17 phases (added `schema-suggest` between orphans and purge — T12 schema cathedral).
+    // v0.41.2.0: 19 phases (added `extract_atoms` after extract_facts + `synthesize_concepts` after patterns).
+    // v0.41.11.0: 20 phases (added `conversation_facts_backfill` between consolidate and propose_takes).
+    // v0.41.39 (#1700) + v0.42.0.0: 22 phases (added `enrich_thin` AND `skillopt`
+    // between conversation_facts_backfill and embed — both landed in this merge).
+    expect(hookCalls).toBe(22);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -391,8 +404,12 @@ describe('runCycle — yieldBetweenPhases hook', () => {
         throw new Error('synthetic hook error');
       },
     });
-    // Cycle still completed all phases (v0.32.2: 12 = v0.31's 11 + extract_facts).
-    expect(report.phases.length).toBe(12);
+    // v0.33.3: 13 phases (v0.32.2's 12 + resolve_symbol_edges).
+    // v0.36.1.0: 16 phases (Hindsight calibration wave adds propose_takes, grade_takes, calibration_profile).
+    // v0.39.0.0: 17 phases (T12 schema-suggest phase between orphans and purge).
+    // v0.41.11.0: 20 phases (+extract_atoms, +synthesize_concepts, +conversation_facts_backfill).
+    // v0.41.39 (#1700) + v0.42.0.0: 22 phases (+enrich_thin, +skillopt).
+    expect(report.phases.length).toBe(22);
   });
 });
 

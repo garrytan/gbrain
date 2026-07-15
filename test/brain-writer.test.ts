@@ -61,6 +61,67 @@ describe('autoFixFrontmatter', () => {
     expect(content).toBe(input);
     expect(fixes).toEqual([]);
   });
+
+  // v0.37.9.0 — Step 3a canonical-style normalization for tags/aliases arrays.
+  // The validator post-v0.37.5.0 no longer flags `tags: ["yc"]` as broken,
+  // but this pass still rewrites it for consistency with serializeFrontmatter.
+  test('step 3a: normalizes JSON-style double-quoted tags to single-quoted', () => {
+    const input = `${fence}\ntype: person\ntags: ["yc", "w2025"]\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(fixes.some(f => f.code === 'NESTED_QUOTES')).toBe(true);
+    expect(content).toContain("tags: ['yc', 'w2025']");
+    expect(content).not.toContain('tags: ["yc", "w2025"]');
+  });
+
+  test('step 3a: apostrophe in item falls back to double quotes', () => {
+    const input = `${fence}\ntype: person\ntags: ["Men's Fashion", "yc"]\n${fence}\n\nbody`;
+    const { content } = autoFixFrontmatter(input);
+    // Apostrophe item keeps double quotes; clean item uses single.
+    expect(content).toContain(`tags: ["Men's Fashion", 'yc']`);
+  });
+
+  test('step 3a: empty item handled as empty single-quoted scalar', () => {
+    const input = `${fence}\ntype: person\ntags: ["", "yc"]\n${fence}\n\nbody`;
+    const { content } = autoFixFrontmatter(input);
+    expect(content).toContain(`tags: ['', 'yc']`);
+  });
+
+  test('step 3a: non-allow-listed keys untouched (metrics, scores, etc.)', () => {
+    const input = `${fence}\ntype: company\nmetrics: ["1", "2", "3"]\nscores: ["a", "b"]\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    // Only `tags` and `aliases` are in the allow-list.
+    expect(content).toContain('metrics: ["1", "2", "3"]');
+    expect(content).toContain('scores: ["a", "b"]');
+    expect(fixes.some(f => f.code === 'NESTED_QUOTES')).toBe(false);
+  });
+
+  test('step 3a applies to aliases: key as well as tags:', () => {
+    const input = `${fence}\ntype: person\naliases: ["Bob", "Robert"]\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(fixes.some(f => f.code === 'NESTED_QUOTES')).toBe(true);
+    expect(content).toContain("aliases: ['Bob', 'Robert']");
+  });
+
+  // codex outside-voice review (D7-2): when step 3a AND step 3 both fire on
+  // the same file, the audit must record ONE NESTED_QUOTES entry, not two.
+  // Otherwise frontmatter_integrity counts double-rewrites as two separate
+  // files needing repair.
+  test('step 3a + step 3 dedup: one NESTED_QUOTES fix record per file', () => {
+    const input = `${fence}\ntype: person\ntitle: "Phil "Nick" Last"\ntags: ["yc", "w2025"]\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    const nestedQuotesFixes = fixes.filter(f => f.code === 'NESTED_QUOTES');
+    expect(nestedQuotesFixes.length).toBe(1);
+    // Both rewrites applied to the content.
+    expect(content).toContain("tags: ['yc', 'w2025']");
+    expect(content).toMatch(/^title: '.*'\s*$/m);
+  });
+
+  test('step 3a: idempotent (running twice on already-normalized leaves content unchanged)', () => {
+    const input = `${fence}\ntype: person\ntags: ['yc', 'w2025']\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(content).toBe(input);
+    expect(fixes).toEqual([]);
+  });
 });
 
 describe('writeBrainPage', () => {
@@ -93,14 +154,33 @@ describe('writeBrainPage', () => {
     }
   });
 
-  test('writes .bak before mutating an existing file', () => {
+  test('writes a centralized .bak before mutating an existing file', () => {
+    // v0.36.x #902: backups land under ~/.gbrain/backups/frontmatter/... not
+    // next to the source file (pre-fix littered the brain tree with .bak
+    // files that broke gitignore expectations). The returned backupPath is
+    // the contract — the test asserts both the path shape and that the
+    // backup faithfully captures the pre-write content.
     const file = join(tmp, 'people', 'jane.md');
     mkdirSync(join(tmp, 'people'), { recursive: true });
     const original = `${fence}\ntype: person\ntitle: Old\n${fence}\n\nold`;
     writeFileSync(file, original);
-    writeBrainPage(file, `${fence}\ntype: person\ntitle: New\n${fence}\n\nnew`, { sourcePath: tmp });
-    expect(existsSync(file + '.bak')).toBe(true);
-    expect(readFileSync(file + '.bak', 'utf8')).toBe(original);
+    const backupRoot = mkdtempSync(join(tmpdir(), 'gbrain-test-backups-'));
+    try {
+      const { backupPath } = writeBrainPage(
+        file,
+        `${fence}\ntype: person\ntitle: New\n${fence}\n\nnew`,
+        { sourcePath: tmp, backupRoot },
+      );
+      expect(backupPath).toBeDefined();
+      // Centralized — under the test-injected backupRoot, NOT a sibling .bak.
+      expect(existsSync(file + '.bak')).toBe(false);
+      expect(backupPath!.startsWith(backupRoot + '/')).toBe(true);
+      expect(backupPath!.endsWith('.bak')).toBe(true);
+      expect(existsSync(backupPath!)).toBe(true);
+      expect(readFileSync(backupPath!, 'utf8')).toBe(original);
+    } finally {
+      rmSync(backupRoot, { recursive: true, force: true });
+    }
   });
 
   test('autoFix: true repairs nested quotes before writing', () => {
@@ -213,7 +293,7 @@ describe('scanBrainSources (PGLite)', () => {
     expect(report.per_source[0]!.total).toBe(0);
   });
 
-  test('AbortSignal mid-scan stops walking', async () => {
+  test('AbortSignal before scan: every source marked skipped (v0.38.2.0 partial-state contract)', async () => {
     const src = join(tmp, 'big');
     mkdirSync(src, { recursive: true });
     for (let i = 0; i < 50; i++) {
@@ -223,7 +303,14 @@ describe('scanBrainSources (PGLite)', () => {
     const ctrl = new AbortController();
     ctrl.abort();
     const report = await scanBrainSources(engine, { signal: ctrl.signal });
-    // Aborted before any source ran; per_source array stays empty (or has zero reports).
-    expect(report.per_source.length).toBe(0);
+    // v0.38.2.0 changed the contract: instead of an empty per_source array
+    // (which hid the fact that sources weren't checked), the report now
+    // includes a 'skipped' entry per source the outer loop never reached.
+    // Doctor renders these as "NOT SCANNED" so the user knows.
+    expect(report.per_source.length).toBe(1);
+    expect(report.per_source[0].status).toBe('skipped');
+    expect(report.per_source[0].files_scanned).toBe(0);
+    expect(report.partial).toBe(true);
+    expect(report.ok).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -479,10 +479,13 @@ describe('v0.32.4 — sync_freshness check', () => {
   test('exact 72h boundary → warn (>72h strict; 72h source NOT yet fail)', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     // Exactly 72h. Strict `>` on fail threshold means 72h-stale is still in
-    // the warn window. (Tested boundary semantics.)
+    // the warn window. The `nowMs` injection pins both clock reads to the
+    // same instant — without it, drift between `agoMs` and `Date.now()` in
+    // the check pushes ageMs above the threshold and flips the boundary.
+    const nowMs = Date.now();
     const result = await checkSyncFreshness(makeStubEngine([
-      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(72 * 60 * 60 * 1000) },
-    ]));
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: new Date(nowMs - 72 * 60 * 60 * 1000) },
+    ]), { nowMs });
     expect(result.status).toBe('warn');
     expect(result.message).toContain('72h ago');
   });
@@ -499,9 +502,12 @@ describe('v0.32.4 — sync_freshness check', () => {
   test('exact 24h boundary → ok (>24h strict)', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     // Exactly 24h. Strict `>` on warn threshold means 24h-stale is still ok.
+    // Same `nowMs` pinning as the 72h boundary test above — both clock reads
+    // must hit the same instant or μs-scale drift flips the boundary.
+    const nowMs = Date.now();
     const result = await checkSyncFreshness(makeStubEngine([
-      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(24 * 60 * 60 * 1000) },
-    ]));
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: new Date(nowMs - 24 * 60 * 60 * 1000) },
+    ]), { nowMs });
     expect(result.status).toBe('ok');
     expect(result.message).toContain('synced recently');
   });
@@ -576,5 +582,862 @@ describe('v0.32.4 — sync_freshness check', () => {
     // User copy-pastes `gbrain sync --source wiki-id` (NOT "My Wiki"). Message
     // must include the id so the CLI command actually works.
     expect(result.message).toContain(`'wiki-id'`);
+  });
+});
+
+// ============================================================================
+// v0.41.27.0 — sync_freshness git short-circuit (D4 + D6 + D7)
+// ============================================================================
+// Doctor learns to skip the staleness warning when a git-backed source has no
+// new commits since the last sync AND working tree is clean AND chunker
+// version matches. Trust boundary preserved via opts.localOnly (D4); count
+// math fixed with three buckets that sum to sources.length (D6); narrowed
+// predicate mirrors sync.ts:1057+1075 (D7).
+// ============================================================================
+
+describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
+  // Reuse the stub-engine pattern from v0.32.4 describe above. Row shape now
+  // includes last_commit + chunker_version (extended SELECT in v0.41.27.0).
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+  function agoMs(ms: number): Date {
+    return new Date(Date.now() - ms);
+  }
+
+  // Probe seams come from src/core/git-head.ts. Reset between each test so
+  // case order can't leak state. CURRENT is imported from chunkers/code.ts —
+  // tests stay correct across CHUNKER_VERSION bumps.
+  let currentChunkerVersion: string;
+
+  beforeEach(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = String(CHUNKER_VERSION);
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  afterAll(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  test('case 1: stale + HEAD match + clean tree + chunker match + localOnly=true → ok', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc123');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      {
+        id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(40 * 60 * 60 * 1000),
+        last_commit: 'abc123',
+        chunker_version: currentChunkerVersion,
+      },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('ok');
+    // Single-source all-unchanged hits the cold-path message; the
+    // "X synced recently, Y unchanged since last sync" mixed-case shape
+    // is covered separately in case 6.
+    expect(result.message).toContain('no new commits since last sync');
+    expect(result.details).toEqual({
+      unchanged_count: 1, synced_recently_count: 0, stale_count: 0,
+    });
+  });
+
+  test('case 2: all stale + all unchanged + localOnly=true → ok cold-path message', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests((path) => path === '/tmp/media' ? 'abc' : 'def');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(40 * 60 * 60 * 1000),
+        last_commit: 'abc', chunker_version: currentChunkerVersion },
+      { id: 'archive', name: '', local_path: '/tmp/archive',
+        last_sync_at: agoMs(50 * 60 * 60 * 1000),
+        last_commit: 'def', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('ok');
+    expect(result.message).toBe(
+      'All 2 federated source(s) up to date (no new commits since last sync)',
+    );
+    expect(result.details).toEqual({
+      unchanged_count: 2, synced_recently_count: 0, stale_count: 0,
+    });
+  });
+
+  test('case 3: stale + HEAD mismatch + localOnly=true → warn (no short-circuit)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'NEW-HEAD-SHA');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'OLD-SHA', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/30h ago/);
+    expect(result.details?.unchanged_count).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 4: stale + matching HEAD + NULL last_commit + localOnly=true → warn (legacy data)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'abc'; });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'legacy', name: '', local_path: '/tmp/legacy',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: null, chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    // Helper short-circuits on NULL guard — head probe should NEVER be called.
+    expect(headCalls).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 5: stale + non-git path (head probe returns null) + localOnly=true → warn (fail-open)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => null);  // non-git dir
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'flat-files', name: '', local_path: '/tmp/flat-files',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'abc', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 6: mixed 3 sources (1 unchanged + 1 synced 5min + 1 truly stale 5d) → fail, three-bucket invariant', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests((path) => {
+      if (path === '/tmp/unchanged') return 'frozen-sha';
+      if (path === '/tmp/recent') return 'new-sha';   // HEAD differs from last_commit → no short-circuit
+      return 'whatever';                                // /tmp/stale: doesn't matter, time path fails
+    });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'unchanged', name: '', local_path: '/tmp/unchanged',
+        last_sync_at: agoMs(40 * 60 * 60 * 1000),
+        last_commit: 'frozen-sha', chunker_version: currentChunkerVersion },
+      { id: 'recent', name: '', local_path: '/tmp/recent',
+        last_sync_at: agoMs(5 * 60 * 1000),
+        last_commit: 'OLD', chunker_version: currentChunkerVersion },
+      { id: 'stale', name: '', local_path: '/tmp/stale',
+        last_sync_at: agoMs(5 * 24 * 60 * 60 * 1000),
+        last_commit: 'OLD2', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('fail');
+    // Stale source named in the issues list; unchanged + recent are NOT named.
+    expect(result.message).toContain(`'stale'`);
+    expect(result.message).not.toContain(`'unchanged'`);
+    expect(result.message).not.toContain(`'recent'`);
+    // Three-bucket invariant: sum === sources.length (the load-bearing assertion).
+    expect(result.details).toEqual({
+      unchanged_count: 1, synced_recently_count: 1, stale_count: 1,
+    });
+    const { unchanged_count, synced_recently_count, stale_count } = result.details as any;
+    expect(unchanged_count + synced_recently_count + stale_count).toBe(3);
+  });
+
+  test('case 7: stale + matching HEAD + clean tree + chunker MISMATCH + localOnly=true → warn (chunker gate fires)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'preupgrade', name: '', local_path: '/tmp/pre',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'abc',
+        chunker_version: '0',  // STALE — bumped via gbrain upgrade since last sync
+      },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.unchanged_count).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 8: stale + matching HEAD + DIRTY tree + chunker match + localOnly=true → warn (dirty gate fires)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc');
+    _setGitCleanProbeForTests(() => false);  // dirty
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wip', name: '', local_path: '/tmp/wip',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'abc', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.unchanged_count).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 9 — D4 regression: localOnly=false (default) — git probes NEVER called', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    // Probes set up to return "everything matches" — IF they were called,
+    // the source would be marked unchanged. Since localOnly defaults false,
+    // they MUST NOT fire and the source MUST be flagged stale by time check.
+    let headCalls = 0;
+    let cleanCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'matching-sha'; });
+    _setGitCleanProbeForTests(() => { cleanCalls++; return true; });
+
+    // Two callers shapes:
+    //   (a) explicit localOnly:false matches doctorReportRemote semantics
+    //   (b) omitted opts matches the default-fallthrough path
+    for (const opts of [{ localOnly: false }, undefined]) {
+      headCalls = 0;
+      cleanCalls = 0;
+      const result = await checkSyncFreshness(makeStubEngine([
+        { id: 'remote-checked', name: '', local_path: '/tmp/x',
+          last_sync_at: agoMs(40 * 60 * 60 * 1000),
+          last_commit: 'matching-sha', chunker_version: currentChunkerVersion },
+      ]), opts);
+
+      // Trust boundary: probes MUST NOT have been called.
+      expect(headCalls).toBe(0);
+      expect(cleanCalls).toBe(0);
+      // And without the short-circuit, time check fires the warn:
+      expect(result.status).toBe('warn');
+      expect(result.details?.unchanged_count).toBe(0);
+      expect(result.details?.stale_count).toBe(1);
+    }
+  });
+});
+
+// ============================================================================
+// v0.41.32.0 — commit-relative staleness (supersedes #1623)
+// ============================================================================
+// Two contracts:
+//   T1 (headline bug): a quiet repo whose only "dirt" is untracked files
+//       (`?? companies/`, `?? media/`) is now caught up on the LOCAL path —
+//       the short-circuit's clean check ignores untracked. Pre-v0.41.30 the
+//       strict clean check counted those as dirty → fell through to wall-clock
+//       → false SEVERE.
+//   T2 (trust boundary): the REMOTE path (no localOnly) computes lag from the
+//       stored newest_content_at column and NEVER shells out to git on a
+//       DB-supplied local_path (preserves the v0.41.27.0 boundary).
+// ============================================================================
+describe('v0.41.32.0 — commit-relative staleness', () => {
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+  function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
+  let currentChunkerVersion: string;
+
+  beforeEach(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = String(CHUNKER_VERSION);
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+  afterAll(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  test('T1: stale + HEAD match + DIRTY-by-untracked-only + localOnly → ok (untracked ignored)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc123');
+    // Clean ONLY when untracked is ignored (the bug scenario: `?? companies/`).
+    let sawIgnoreUntracked = false;
+    _setGitCleanProbeForTests((_path, ignoreUntracked) => {
+      if (ignoreUntracked) { sawIgnoreUntracked = true; return true; }
+      return false; // strict mode would call it dirty
+    });
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(86 * 60 * 60 * 1000), // 86h — would be SEVERE on wall-clock
+        last_commit: 'abc123', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]), { localOnly: true });
+
+    expect(sawIgnoreUntracked).toBe(true); // the short-circuit asked to ignore untracked
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({ unchanged_count: 1, synced_recently_count: 0, stale_count: 0 });
+  });
+
+  test('T2: REMOTE (no localOnly) reads column, quiet repo → ok, NO git subprocess', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0, cleanCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => { cleanCalls++; return true; });
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        // Content committed BEFORE the last sync → caught up.
+        newest_content_at: agoMs(200 * 60 * 60 * 1000) },
+    ])); // NOTE: no { localOnly: true } → remote path
+
+    expect(headCalls).toBe(0);   // trust boundary: no git probe on remote path
+    expect(cleanCalls).toBe(0);
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 1, stale_count: 0 });
+  });
+
+  test('T2b: REMOTE + NULL column → wall-clock fallback → stale (no git subprocess)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]));
+
+    expect(headCalls).toBe(0); // still no git probe even on the fallback path
+    expect(result.status).toBe('fail'); // 100h wall-clock > 72h
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('T2c: REMOTE + content NEWER than last sync → wall-clock (genuinely behind)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        // committed 10h ago, synced 100h ago → behind.
+        newest_content_at: agoMs(10 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.details?.stale_count).toBe(1);
+  });
+});
+
+// Supervisor crash classifier wiring. Pre-fix, doctor.ts:1013 counted every
+// `worker_exited` event as a crash regardless of `likely_cause`, inflating
+// `crashes_24h` to 120+/day from RSS-watchdog drains and SIGTERM stops.
+// These tests pin the read-side wiring so doctor and `gbrain jobs supervisor
+// status` (jobs.ts:805) cannot drift: both go through `summarizeCrashes`.
+describe('supervisor crash classifier wiring (v0.35.x)', () => {
+  test('doctor.ts uses summarizeCrashes — no ad-hoc worker_exited filter', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // Wired to the shared helper.
+    expect(source).toContain('summarizeCrashes');
+    // The pre-fix ad-hoc filter pattern must NOT survive. The exact buggy
+    // expression was `events.filter(e => e.event === 'worker_exited').length`.
+    // Match the structural fingerprint, not whitespace.
+    expect(source).not.toMatch(
+      /events\.filter\([^)]*e\.event\s*===\s*'worker_exited'[^)]*\)\.length/,
+    );
+  });
+
+  test('doctor.ts warn threshold dropped from >3 to >=1', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The pre-fix `crashes24h > 3` threshold made sense only because the
+    // counter was over-counting clean exits. Under accurate counts, any real
+    // crash is signal — threshold lands at `>=1`.
+    expect(source).toMatch(/crashes24h\s*>=\s*1/);
+    // The old `> 3` predicate must not survive on the supervisor check.
+    expect(source).not.toMatch(/crashes24h\s*>\s*3/);
+  });
+
+  test('doctor.ts ok + warn messages include per-cause breakdown and clean_exits_24h', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // Per-cause breakdown surfaces qualitative signal (oom vs runtime vs unknown
+    // vs legacy) so operators can triage without grep'ing JSONL.
+    expect(source).toContain('runtime=');
+    expect(source).toContain('oom=');
+    expect(source).toContain('unknown=');
+    expect(source).toContain('legacy=');
+    // Clean-exit count surfaces alongside crash count for transparency.
+    expect(source).toContain('clean_exits_24h=');
+  });
+
+  test('jobs.ts supervisor status uses summarizeCrashes — same wiring as doctor', async () => {
+    const source = await Bun.file(new URL('../src/commands/jobs.ts', import.meta.url)).text();
+    // Both surfaces MUST go through the shared helper. Without this, the two
+    // CLI commands report drifting crash counts (the bug class codex caught
+    // during the eng review outside-voice pass).
+    expect(source).toContain('summarizeCrashes');
+    expect(source).not.toMatch(
+      /events\.filter\([^)]*e\.event\s*===\s*'worker_exited'[^)]*\)\.length/,
+    );
+    // JSON output exposes the per-cause breakdown so dashboards/monitors can
+    // distinguish memory pressure from code bugs without re-classifying.
+    expect(source).toContain('crashes_by_cause');
+    expect(source).toContain('clean_exits_24h');
+  });
+});
+
+// v0.34.5 stub-guard observability tests (from v0.35.4.0). Doctor surfaces
+// the 24h fire count for the resolver-stub-guard. WARN at >10 hits is the
+// signal that prefix-expansion in resolveEntitySlug is missing a case.
+describe('stub_guard_24h check (v0.34.5)', () => {
+  test('doctor source defines the stub_guard_24h check', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain("name: 'stub_guard_24h'");
+  });
+
+  test('WARN threshold is >10 hits/24h', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The WARN gate must fire above 10, not at or below — that's the threshold
+    // the v0.36 sunset criterion is calibrated against.
+    expect(source).toMatch(/events\.length\s*>\s*10/);
+  });
+
+  test('fix hint points operators at the audit log', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('stub-guard-*.jsonl');
+    expect(source).toContain('prefix-expansion in resolveEntitySlug');
+  });
+
+  test('check reads via the dual-week-aware reader (NOT supervisor-audit pattern)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The point of the divergence from supervisor-audit.ts is this reader
+    // reads both current and previous ISO-week files. If the check ever
+    // gets re-pointed at readSupervisorEvents-style single-week, this test
+    // fails — protecting the cross-week-boundary correctness.
+    expect(source).toContain('readRecentStubGuardEvents');
+    expect(source).not.toMatch(/from .*\/stub-guard-audit\.ts.*readSupervisorEvents/);
+  });
+
+  test('zero hits emits no check (keeps doctor output clean on healthy brains)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The implementation falls through silently when events.length === 0.
+    // Codify this in source-grep form so a future refactor doesn't add an
+    // "ok: 0 hits" line that pollutes every doctor run.
+    expect(source).toMatch(/events\.length === 0|Zero hits is the goal/);
+  });
+});
+
+describe('v0.40.4 — graph_signals_coverage check', () => {
+  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
+  const { checkGraphSignalsCoverage } = require('../src/commands/doctor.ts');
+
+  let engine: any;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    // Wipe pages + links + config between tests for isolation.
+    await engine.executeRaw(`DELETE FROM links`);
+    await engine.executeRaw(`DELETE FROM pages`);
+    await engine.executeRaw(`DELETE FROM config WHERE key IN ('search.graph_signals', 'search.mode')`);
+  });
+
+  test('graph_signals disabled (conservative mode) → silent ok regardless of coverage', async () => {
+    await engine.setConfig('search.mode', 'conservative');
+    // Seed pages without links (would normally warn) but conservative
+    // disables graph_signals so the check stays ok.
+    for (let i = 0; i < 5; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('disabled');
+  });
+
+  test('graph_signals enabled (balanced default) + zero links → warn at <10%', async () => {
+    // No config set → balanced default (graph_signals=true).
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('0.0%');
+    expect(check.message).toContain('gbrain extract all');
+  });
+
+  test('graph_signals enabled + >=30% coverage → ok with metric', async () => {
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    // Add inbound links to 4/10 pages = 40%.
+    await engine.addLinksBatch([
+      { from_slug: 'page/0', to_slug: 'page/1', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/2', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/3', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/4', link_type: 'mentions' },
+    ]);
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('40.0%');
+    expect(check.message).toContain('fire on most queries');
+  });
+
+  test('graph_signals enabled + 10-29% coverage → ok with occasional-fire note', async () => {
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    // Add inbound to 2/10 = 20%.
+    await engine.addLinksBatch([
+      { from_slug: 'page/0', to_slug: 'page/1', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/2', link_type: 'mentions' },
+    ]);
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('20.0%');
+    expect(check.message).toContain('fire occasionally');
+  });
+
+  test('explicit search.graph_signals=false overrides mode default', async () => {
+    // Balanced normally enables; explicit override turns it off.
+    await engine.setConfig('search.graph_signals', 'false');
+    // No links → would normally warn, but override means we don't check.
+    for (let i = 0; i < 5; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('disabled');
+  });
+
+  test('empty brain → ok with explanation', async () => {
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('Empty brain');
+  });
+
+  test('check is wired into runDoctor (source-grep)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // Local engine path.
+    expect(source).toMatch(/await checkGraphSignalsCoverage\(engine\)/);
+    // Remote/JSON path heartbeat.
+    expect(source).toContain("progress.heartbeat('graph_signals_coverage')");
+  });
+});
+
+// ─── issue #972 — link_resolution_opportunity check ───────────────────────
+
+describe('issue #972 — link_resolution_opportunity check', () => {
+  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
+  const { checkLinkResolutionOpportunity } = require('../src/commands/doctor.ts');
+
+  let engine: any;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw(`DELETE FROM links`);
+    await engine.executeRaw(`DELETE FROM pages`);
+    await engine.executeRaw(
+      `DELETE FROM config WHERE key = 'link_resolution.global_basename'`,
+    );
+  });
+
+  test('skipped silently when flag is already enabled', async () => {
+    await engine.setConfig('link_resolution.global_basename', 'true');
+    // Even with bare wikilinks that would resolve, the check returns ok
+    // because the user is already opted in — no hint to surface.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[struktura]] and [[struktura]] and [[struktura]].',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('already enabled');
+  });
+
+  test('empty brain → ok with explanation', async () => {
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('empty');
+  });
+
+  test('no bare wikilinks → ok', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice',
+      compiled_truth: 'Met [Bob](people/bob).', timeline: '',
+    });
+    await engine.putPage('people/bob', {
+      type: 'person', title: 'Bob', compiled_truth: '', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('No bare wikilinks');
+  });
+
+  test('bare wikilinks present but none match → ok', async () => {
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[never-existed]] and [[also-not-here]].',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('none have basename matches');
+  });
+
+  test('≥5 would-resolve AND ≥20% ratio → warn with paste-ready hint', async () => {
+    // 5 distinct bare wikilinks, all resolving = 100% ratio.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/eeva', {
+      type: 'project', title: 'Eeva', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/rosa', {
+      type: 'project', title: 'Rosa', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/dragon', {
+      type: 'project', title: 'Dragon', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/wiki-index', {
+      type: 'concept', title: 'Wiki',
+      compiled_truth: 'See [[struktura]], [[eeva]], [[Fast-Weigh]], [[rosa]], [[dragon]] for context.',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('5 of 5');
+    expect(check.message).toContain('100%');
+    expect(check.message).toContain(
+      'gbrain config set link_resolution.global_basename true',
+    );
+  });
+
+  test('<5 would-resolve → ok without warning (below threshold)', async () => {
+    // Only 2 bare wikilinks resolve → below the 5-link floor.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/eeva', {
+      type: 'project', title: 'Eeva', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[struktura]] and [[eeva]] for context.',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('below the 20% / 5-link threshold');
+  });
+
+  test('counts slugified-only matches (shared matcher, codex #972 DRY)', async () => {
+    // `[[Fast Weigh]]` (space) only resolves to `companies/fast-weigh` via the
+    // slugified key. Pre-consolidation the doctor index keyed raw+lower only
+    // and would have reported "none have basename matches"; the shared matcher
+    // adds the slugified key so the estimate matches what extraction resolves.
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[Fast Weigh]] for context.', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    // 1/1 resolves (below the 5-link warn floor → ok) but it DID resolve.
+    expect(check.message).toContain('1/1');
+    expect(check.message).toContain('would resolve');
+    expect(check.message).not.toContain('none have basename matches');
+  });
+
+  test('check is wired into runDoctor AND doctorReportRemote (source-grep)', async () => {
+    const source = await Bun.file(
+      new URL('../src/commands/doctor.ts', import.meta.url),
+    ).text();
+    // Local buildChecks path.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine, progress\)/);
+    // Thin-client doctorReportRemote path.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine\)/);
+    // Heartbeat label registered.
+    expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
+    // Issue #972 (T3): scan is bounded to a most-recent sample, not a full
+    // per-page getPage walk.
+    expect(source).toMatch(/ORDER BY id DESC LIMIT \$\{?SAMPLE_LIMIT\}?|ORDER BY id DESC LIMIT 1000/);
+    expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
+  });
+});
+
+describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
+  test('both checks are wired into buildChecks (source-grep)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain("progress.heartbeat('quarantined_pages')");
+    expect(source).toContain("progress.heartbeat('flagged_pages')");
+    // quarantine HIDES (JSONB existence scan), content_flag WARNS.
+    expect(source).toContain("p.frontmatter ? 'quarantine'");
+    expect(source).toContain("p.frontmatter ? 'content_flag'");
+    // Each emits a named check.
+    expect(source).toMatch(/name: 'quarantined_pages'/);
+    expect(source).toMatch(/name: 'flagged_pages'/);
+  });
+});
+
+// ============================================================================
+// BUG 4 (v0.42.x) — doctor reports an actively-running sync via the live lock,
+// not stale freshness. Uses a REAL PGLiteEngine so inspectLock/syncLockId run
+// against actual gbrain_cycle_locks rows (the stub engine can't model a lock).
+// ============================================================================
+describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => {
+  let engine: any;
+  let syncLockId: (s: string) => string;
+
+  beforeAll(async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    ({ syncLockId } = await import('../src/core/db-lock.ts'));
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    const { resetPgliteState } = await import('./helpers/reset-pglite.ts');
+    await resetPgliteState(engine);
+    await engine.executeRaw(`DELETE FROM gbrain_cycle_locks`);
+  });
+
+  const staleDate = () => new Date(Date.now() - 5 * 24 * 60 * 60 * 1000); // 5d ago
+
+  async function addSource(id: string, lastSyncAt: Date | null) {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, last_sync_at, config)
+       VALUES ($1, $1, $2, $3, '{"federated":true}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at`,
+      [id, `/tmp/${id}`, lastSyncAt],
+    );
+  }
+
+  // ttlMinutes > 0 → live lock; <= 0 → already-expired (wedged) holder.
+  async function holdLock(sourceId: string, ttlMinutes: number) {
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+       VALUES ($1, 4242, 'testhost', now(), now() + ($2 || ' minutes')::interval, now())`,
+      [syncLockId(sourceId), String(ttlMinutes)],
+    );
+  }
+
+  test('stale source with NO live lock → fail (blocked/wedged is not masked)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain(`'wiki'`);
+  });
+
+  test('stale source WITH a live (non-expired) lock → ok (sync in progress)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    await holdLock('wiki', 30);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('ok');
+    expect(result.details?.synced_recently_count).toBe(1);
+    expect(result.details?.stale_count).toBe(0);
+    // BUG 4: operator sees the in-progress holder, not silence.
+    expect(result.message).toContain('sync in progress');
+    expect(result.message).toContain('pid 4242');
+  });
+
+  test('never-synced source WITH a live lock → ok (initial sync in progress)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', null);
+    await holdLock('wiki', 30);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('ok');
+    expect(result.details?.synced_recently_count).toBe(1);
+    expect(result.message).toContain('sync in progress');
+  });
+
+  test('never-synced source with NO lock → fail (unchanged behavior)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', null);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('never been synced');
+  });
+
+  test('expired-TTL lock does NOT mask staleness (wedged-but-not-refreshing holder)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    await holdLock('wiki', -5); // ttl_expires_at 5 min in the past
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+  });
+
+  test('blocked source with banked checkpoint rows but NO live lock → still fail', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    // A blocked sync banks the good files then exits without an anchor and
+    // without a held lock. Banking must NOT be read as "in progress".
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ('sync', 'fp-blocked', '[]'::jsonb, now())`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoint_paths (op, fingerprint, path) VALUES ('sync', 'fp-blocked', 'banked.md')`,
+    );
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
   });
 });

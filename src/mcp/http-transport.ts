@@ -29,10 +29,13 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { operations } from '../core/operations.ts';
+import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
+export { parseLegacyTokenScope };
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -66,7 +69,25 @@ interface AuthResult {
   tokenName?: string;
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
   takesHoldersAllowList?: string[];
+  /**
+   * v0.34.1 (#861, D13): source-isolation scope for the auth'd request.
+   * Legacy bearer tokens here default to 'default' to match the v0.33
+   * effective behavior (the now-removed serve-http.ts fallback chain).
+   * Operators migrate to the full OAuth transport (gbrain serve --http)
+   * for narrower scoping.
+   */
+  sourceId?: string;
+  /**
+   * #1336: AuthInfo carrying the legacy token's stored federated_read grant
+   * (`permissions.source_id` array). Threaded so `sourceScopeOpts` can scope
+   * read ops to the operator-granted sources instead of just scalar `sourceId`.
+   * Bounded to the stored grant — never widened to "all".
+   */
+  auth?: AuthInfo;
 }
+
+/* Legacy token source-scope parsing lives in core/legacy-token-scope.ts and is
+ * re-exported above so the legacy HTTP transport and OAuth provider cannot drift. */
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
 async function readBodyWithCap(req: Request, cap: number): Promise<string | null> {
@@ -129,23 +150,37 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const corsAllowlist = parseCorsAllowlist();
   const tools = buildToolDefs(operations);
 
-  function corsHeaders(origin: string | null, extra: Record<string, string> = {}): Record<string, string> {
-    const headers: Record<string, string> = { ...extra };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
-      headers['Access-Control-Allow-Origin'] = origin;
-      headers['Vary'] = 'Origin';
-    }
-    return headers;
+  /**
+   * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
+   * two parallel functions (`corsHeaders` for actual requests, `corsPreflightHeaders`
+   * for OPTIONS) — the preflight variant unconditionally emitted
+   * `Access-Control-Allow-Methods` + `Access-Control-Allow-Headers` to EVERY
+   * Origin, leaking the API surface to attackers probing the preflight. The
+   * actual-request path was correctly default-deny.
+   *
+   * One function, one allowlist gate. Methods/Headers only emit when
+   * preflight=true AND origin is allowlisted. Allow-Origin emits only when
+   * origin is allowlisted (unchanged). `Vary: Origin` pairs with Allow-Origin
+   * so caches don't serve allowlisted responses to non-allowlisted requests.
+   *
+   * `extra` is for response-specific headers (Retry-After, etc.) and is
+   * never gated by the allowlist.
+   */
+  interface CorsHeaderOpts {
+    preflight?: boolean;
+    extra?: Record<string, string>;
   }
-
-  function corsPreflightHeaders(origin: string | null): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
-    };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
+  function corsHeaders(origin: string | null, opts: CorsHeaderOpts = {}): Record<string, string> {
+    const { preflight = false, extra = {} } = opts;
+    const headers: Record<string, string> = { ...extra };
+    const allowed = corsAllowlist && origin && corsAllowlist.has(origin);
+    if (allowed) {
       headers['Access-Control-Allow-Origin'] = origin;
       headers['Vary'] = 'Origin';
+      if (preflight) {
+        headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
+        headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept';
+      }
     }
     return headers;
   }
@@ -171,15 +206,29 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.
-      const perms = (row as { permissions?: { takes_holders?: unknown } }).permissions;
+      const perms = (row as { permissions?: { takes_holders?: unknown; source_id?: unknown } }).permissions;
       const allowList = Array.isArray(perms?.takes_holders)
         ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
         : ['world'];
+      // #1336: honor the operator-set source grant stored on the token.
+      const { sourceId, allowedSources } = parseLegacyTokenScope(perms?.source_id);
+      const auth: AuthInfo = {
+        token,
+        clientId: rowId,
+        clientName: rowName,
+        scopes: [],
+        sourceId,
+        ...(allowedSources ? { allowedSources } : {}),
+      };
       return {
         ok: true,
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
+        // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
+        // source unless the token carries an explicit grant (#1336 above).
+        sourceId,
+        auth,
       };
     } catch {
       return { ok: false };
@@ -202,7 +251,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
 
       // CORS preflight
       if (req.method === 'OPTIONS') {
-        return new Response(null, { headers: corsPreflightHeaders(origin) });
+        return new Response(null, { headers: corsHeaders(origin, { preflight: true }) });
       }
 
       // Health check — no auth, no rate limit. Probes the DB so orchestration
@@ -239,7 +288,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           { error: 'rate_limited', message: 'Too many requests' },
           {
             status: 429,
-            headers: corsHeaders(origin, { 'Retry-After': String(ipCheck.retryAfter ?? 60) }),
+            headers: corsHeaders(origin, { extra: { 'Retry-After': String(ipCheck.retryAfter ?? 60) } }),
           },
         );
       }
@@ -272,7 +321,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           { error: 'rate_limited', message: 'Too many requests for this token' },
           {
             status: 429,
-            headers: corsHeaders(origin, { 'Retry-After': String(tokCheck.retryAfter ?? 60) }),
+            headers: corsHeaders(origin, { extra: { 'Retry-After': String(tokCheck.retryAfter ?? 60) } }),
           },
         );
       }
@@ -328,9 +377,15 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const args: Record<string, unknown> = params?.arguments ?? {};
         // v0.28: thread per-token takes-holder allow-list so takes_list /
         // takes_search / query (when it returns takes) can server-side filter.
+        // v0.34.1 (#861): thread source-isolation scope. Legacy access_tokens
+        // path defaults to 'default' per AuthResult.sourceId above.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
           takesHoldersAllowList: auth.takesHoldersAllowList,
+          sourceId: auth.sourceId,
+          // #1336: thread the token's federated_read grant so read ops scope
+          // to the operator-granted sources via sourceScopeOpts.
+          auth: auth.auth,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);

@@ -96,6 +96,11 @@ fi
 # against recipes/ all reference the banned name by necessity.
 ALLOW_LIST=(
   'scripts/check-privacy.sh'
+  # v0.41.16.0: sibling rule-enforcement script for test/fixtures/
+  # conversation-formats/. Same meta-exception as check-privacy.sh
+  # itself — the script's BANNED_TOKENS array literally names the
+  # tokens it forbids.
+  'scripts/check-fixture-privacy.sh'
   'CLAUDE.md'
   'llms-full.txt'
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md'
@@ -128,6 +133,41 @@ ALLOW_LIST=(
   # CHANGELOG.md, and CLAUDE.md (meta-rule enforcement requires
   # mentioning what the rule forbids).
   'test/recency-decay.test.ts'
+  # v0.32.5: the sibling check-test-real-names.sh enforces the same
+  # privacy rule for test fixtures and lists the banned names literally
+  # (Wintermute, Hermes, etc) inside its BANNED_NAMES + ALLOWLIST arrays.
+  # Same meta-rule-enforcement exception as scripts/check-privacy.sh itself.
+  'scripts/check-test-real-names.sh'
+  # v0.34 / Lane CI: scripts/check-proposal-pii.sh and its test list the
+  # banned literal as part of the structural denylist they enforce against
+  # docs/proposals/*.md. Same meta-rule-enforcement exception as the two
+  # entries above — describing what the rule forbids requires naming it.
+  'scripts/check-proposal-pii.sh'
+  'test/scripts/check-proposal-pii.test.ts'
+  # v0.32.3.0: the functional-area-resolver skill's behavior-contract
+  # section describes the privacy guarantees the skill preserves and
+  # references the banned literals while doing so (line 306). Same
+  # meta-rule-enforcement exception as scripts/check-privacy.sh and
+  # CHANGELOG.md — describing what the rule forbids requires naming it.
+  'skills/functional-area-resolver/SKILL.md'
+  # v0.36.0.0: the gbrain skillpack harvest privacy linter's whole job
+  # is to catch the banned literal leaking into gbrain. The regex
+  # pattern in harvest-lint.ts is `\bWintermute\b` by necessity; the
+  # tests verify that pattern fires by feeding it the banned string;
+  # the harvest skill markdown describes the substitution policy
+  # ("Wintermute → your OpenClaw") as part of the genericization
+  # checklist. Same meta-rule-enforcement exception as the privacy
+  # checks themselves.
+  'src/core/skillpack/harvest-lint.ts'
+  'test/skillpack-harvest-lint.test.ts'
+  'test/skillpack-harvest.test.ts'
+  'test/e2e/skillpack-flow.test.ts'
+  'skills/skillpack-harvest/SKILL.md'
+  # v0.40.1.0 Track D / T5: the qrels gate test contains a privacy-grep
+  # regression guard whose block list names the banned literal to assert
+  # it's NOT in the qrels fixture. Same meta-rule-enforcement exception
+  # as the other test entries above.
+  'test/eval-replay-gate.test.ts'
 )
 
 is_allowed() {
