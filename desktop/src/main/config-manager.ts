@@ -75,6 +75,7 @@ export interface SetupPayload {
   databaseUrl?: string;
   knowledgeDirectory?: string;
   knowledgeSourceId?: string;
+  knowledgeSourceChanged?: boolean;
   modelConfig?: {
     chatModel?: string;
     embeddingModel?: string;

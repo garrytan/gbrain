@@ -132,8 +132,7 @@
                   <span class="secret-input"><input id="chat-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="chat-api-key" aria-label="显示普通模型 API Key">&#128065;</button></span>
                 </label>
               </div>
-              <small class="model-load-status" id="chat-model-load-status"></small>
-              <p>用于问答、扩展、总结等普通 LLM 调用。</p>
+              <small class="model-load-status" id="chat-model-load-status" hidden></small>
             </section>
             <section class="model-card">
               <div class="model-card-heading">
@@ -167,8 +166,7 @@
                   <span class="secret-input"><input id="embedding-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="embedding-api-key" aria-label="显示向量化模型 API Key">&#128065;</button></span>
                 </label>
               </div>
-              <small class="model-load-status" id="embedding-model-load-status"></small>
-              <p>用于知识库切片向量化和搜索召回。PMBrain 会自动选择推荐维度，并在保存时对齐数据库；老用户已有维度保持不变。</p>
+              <small class="model-load-status" id="embedding-model-load-status" hidden></small>
             </section>
           </div>
           <details class="advanced-block model-advanced" id="advanced-model-settings">
@@ -263,11 +261,10 @@
         <section class="panel" id="panel-system">
           <div class="section-heading">
             <div><span class="index">04</span><h2>系统设置</h2></div>
-            <p>管理桌面端的局域网入口、开机启动、关闭行为和界面外观。</p>
           </div>
 
           <section class="system-block" aria-labelledby="network-mode-title">
-            <div class="subsection-heading"><div><span>04A / NETWORK</span><h3 id="network-mode-title">连接模式</h3></div><p>默认仅本机使用；共享模式只开放 MCP，不开放管理台。</p></div>
+            <div class="subsection-heading"><div><span>04A / NETWORK</span><h3 id="network-mode-title">连接模式</h3></div></div>
             <div class="network-mode-grid" role="radiogroup" aria-label="PMBrain 网络模式">
               <label class="network-mode-card selected" id="network-mode-local-card"><input id="network-mode-local" type="radio" name="network-mode" value="local" checked /><span><b>本地模式</b><small>仅本机 Agent 访问 127.0.0.1，局域网电脑无法连接。</small></span><em>默认</em></label>
               <label class="network-mode-card" id="network-mode-shared-card"><input id="network-mode-shared" type="radio" name="network-mode" value="shared" /><span><b>共享模式</b><small>在选定网卡的固定 IPv4 上开放 MCP，供同一局域网成员使用。</small></span></label>
@@ -278,7 +275,7 @@
               <div class="fixed-ip-note"><b>避免地址变化</b><p>建议在路由器设置“DHCP 地址保留”，把这个 IPv4 固定给本机。若网卡、Wi-Fi 或 VPN 导致地址消失，PMBrain 会立即停止共享并通知你，不会静默切换。首次出现 Windows 防火墙提示时，请只允许“专用网络”。</p></div>
             </div>
 
-            <div class="connection-spine" aria-label="MCP 局域网连接路径">
+            <div class="connection-spine" id="shared-connection-spine" aria-label="MCP 局域网连接路径" hidden>
               <article><span>01</span><b>本机 sidecar</b><small id="system-local-url">等待本地服务</small></article>
               <i aria-hidden="true"></i>
               <article><span>02</span><b>固定 LAN 网关</b><small id="system-shared-url">共享模式未开启</small></article>
@@ -289,14 +286,14 @@
           </section>
 
           <section class="system-block" aria-labelledby="desktop-behavior-title">
-            <div class="subsection-heading"><div><span>04B / DESKTOP</span><h3 id="desktop-behavior-title">桌面行为</h3></div><p>这些设置只影响 Windows 桌面端，不修改知识库或 GBrain 核心配置。</p></div>
+            <div class="subsection-heading"><div><span>04B / DESKTOP</span><h3 id="desktop-behavior-title">桌面行为</h3></div></div>
             <div class="system-setting-grid">
               <label class="setting-toggle" for="launch-at-login"><input id="launch-at-login" type="checkbox" /><span><b>开机自动启动 PMBrain</b><small>登录 Windows 后启动桌面端，并按数据库类型准备本地服务。</small></span></label>
               <label for="close-behavior"><span>点击窗口 × 时</span><select id="close-behavior"><option value="tray">最小化到托盘（默认）</option><option value="quit">退出 PMBrain</option></select></label>
               <label for="system-theme-select"><span>界面外观</span><select id="system-theme-select" aria-label="界面主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
             </div>
           </section>
-          <div class="system-save-bar"><p id="system-save-note">请先完成基础配置，再保存系统设置。</p><button class="primary" id="save-system-settings" disabled><span>保存系统设置</span><i></i></button></div>
+          <div class="system-save-bar"><p id="system-save-note"></p><button class="primary" id="save-system-settings" disabled><span>保存系统设置</span><i></i></button></div>
         </section>
 
         <section class="panel" id="panel-updates">

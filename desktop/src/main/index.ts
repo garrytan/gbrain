@@ -350,6 +350,10 @@ function revealMainWindow(): void {
   mainWindow.focus();
 }
 
+function openDesktop(): void {
+  void openSettingsPanel('basic').catch(error => reportUiActionError('无法打开桌面设置', error));
+}
+
 function reportUiActionError(title: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   logger?.write('desktop', `${title}: ${message}`);
@@ -365,7 +369,7 @@ function refreshTrayMenu(): void {
     ? status?.running ? `局域网共享：${status.bindAddress}:${status.port}` : '局域网共享：已停止'
     : '局域网共享：未启用';
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示 PMBrain', click: revealMainWindow },
+    { label: '显示 PMBrain', click: openDesktop },
     { label: '打开管理控制台', click: () => void openAdmin().catch(error => reportUiActionError('无法打开管理控制台', error)) },
     { label: '系统设置', click: () => void openSettingsPanel('system').catch(error => reportUiActionError('无法打开系统设置', error)) },
     { type: 'separator' },
@@ -385,7 +389,7 @@ function initializeTray(): void {
   const icon = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_PNG, 'base64')).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
   tray.setToolTip('PMBrain');
-  tray.on('double-click', revealMainWindow);
+  tray.on('double-click', openDesktop);
   refreshTrayMenu();
 }
 
@@ -609,7 +613,41 @@ async function ensureServiceReady(): Promise<SidecarManager> {
   }
 }
 
-async function applySetupOnce(payload: SetupPayload) {
+interface CanonicalMainSource {
+  id: string;
+  localPath?: string;
+}
+
+async function readCanonicalMainSource(activeSidecar = sidecar): Promise<CanonicalMainSource | null> {
+  if (!activeSidecar || currentState?.phase !== 'ready') return null;
+  const overview = await activeSidecar.adminRequest<{
+    main_source_id?: string;
+    sources?: Array<{ id: string; local_path?: string | null; archived?: boolean }>;
+  }>('/admin/api/brain/overview');
+  const id = overview.main_source_id?.trim();
+  if (!id) return null;
+  const source = overview.sources?.find(candidate => candidate.id === id && candidate.archived !== true);
+  return { id, ...(source?.local_path ? { localPath: source.local_path } : {}) };
+}
+
+async function currentDesktopSetupState() {
+  const setup = getSetupInfo();
+  if (!setup.needsSetup) {
+    const canonical = await readCanonicalMainSource().catch(() => null);
+    if (canonical) {
+      setup.current.knowledgeSourceId = canonical.id;
+      if (canonical.localPath) setup.current.knowledgeDirectory = canonical.localPath;
+    }
+  }
+  return {
+    setup,
+    integrations: listIntegrations(sidecar?.port),
+    port: sidecar?.port,
+    mcpUrl: sidecar?.mcpUrl,
+  };
+}
+
+async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   const hadRunningSidecar = Boolean(sidecar);
   await stopSidecar();
   const saved = saveSetup(payload);
@@ -634,7 +672,7 @@ async function applySetupOnce(payload: SetupPayload) {
     await syncModelDefaultsToDatabase({ resetAdvanced: payload.resetAdvancedModelRouting === true });
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const sourceId = saved.config.desktop?.knowledge_source_id;
-    if (knowledgeDirectory && sourceId) {
+    if (setDefaultSource && knowledgeDirectory && sourceId) {
       const add = await runCli(runtime(), [
         'sources', 'add', sourceId, '--path', knowledgeDirectory,
         '--name', '桌面知识库', '--federated',
@@ -700,7 +738,17 @@ async function applySetup(payload: SetupPayload) {
   if (setupInProgress) throw new Error('PMBrain 正在应用上一份基础配置，请等待完成。');
   setupInProgress = true;
   try {
-    return await applySetupOnce(payload);
+    const canonical = payload.knowledgeSourceChanged === false
+      ? await readCanonicalMainSource().catch(() => null)
+      : null;
+    const effectivePayload = canonical
+      ? {
+          ...payload,
+          knowledgeSourceId: canonical.id,
+          knowledgeDirectory: canonical.localPath ?? payload.knowledgeDirectory,
+        }
+      : payload;
+    return await applySetupOnce(effectivePayload, payload.knowledgeSourceChanged !== false || !canonical);
   } finally {
     setupInProgress = false;
   }
@@ -937,7 +985,7 @@ function isAllowedWindowNavigationUrl(value: string): boolean {
     return Boolean(
       sidecar
       && url.protocol === 'http:'
-      && url.hostname === '127.0.0.1'
+      && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
       && Number.parseInt(url.port, 10) === sidecar.port
     );
   } catch {
@@ -1087,7 +1135,7 @@ if (!app.requestSingleInstanceLock()) {
       return revokeSharedAccess(credentialName);
     });
     handleTrustedIpc('desktop:get-update-state', () => updateManager?.currentState ?? null);
-    handleTrustedIpc('desktop:get-setup', () => ({ setup: getSetupInfo(), integrations: listIntegrations(sidecar?.port), port: sidecar?.port, mcpUrl: sidecar?.mcpUrl }));
+    handleTrustedIpc('desktop:get-setup', () => currentDesktopSetupState());
     handleTrustedIpc('desktop:choose-directory', async (_event, initialPath?: string) => {
       const result = await dialog.showOpenDialog(mainWindow!, {
         defaultPath: initialPath,
