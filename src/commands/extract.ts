@@ -1594,6 +1594,8 @@ async function extractStaleFromDB(
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
+  // Read globalBasename once, mirroring extractLinksFromDB line 1315.
+  const globalBasename = await isGlobalBasenameEnabled(engine);
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
@@ -1616,9 +1618,11 @@ async function extractStaleFromDB(
   // Batch mode = pg_trgm + exact only, NO per-name search fallback. The
   // resolution map sees ALL sources so qualified cross-source wikilinks resolve
   // even when --source-id scopes the stale SCAN.
-  const resolver = makeResolver(engine, { mode: 'batch' });
-  const nullResolver = { resolve: async () => null as string | null };
-  const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  // Pass the real resolver (with resolveBasenameMatches) always,
+  // mirroring extractLinksFromDB. Frontmatter suppression is handled by the
+  // skipFrontmatter opt on extractPageLinks, not by swapping in nullResolver.
+  // Also pass sourceId to scope basename resolution (mirror extractLinksFromDB line 1311).
+  const resolver = makeResolver(engine, { mode: 'batch', sourceId: sourceIdFilter });
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1650,7 +1654,8 @@ async function extractStaleFromDB(
     for (const page of rows) {
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
-        page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        page.slug, fullContent, page.frontmatter, page.type, resolver,
+        { skipFrontmatter: !includeFrontmatter, globalBasename },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);

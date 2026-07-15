@@ -195,6 +195,30 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].slug).toBe('real-link');
   });
+
+  // ─── ops/ in DIR_PATTERN ─────────────────────────────────────────
+
+  test('extracts ops/ wikilinks as qualified refs', () => {
+    const refs = extractEntityRefs('See [[ops/runbooks/discord-agent-routing]] for details.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].dir).toBe('ops');
+    expect(refs[0].slug).toBe('ops/runbooks/discord-agent-routing');
+    expect(refs[0].needsResolution).toBeUndefined(); // DIR_PATTERN-gated, not bare
+  });
+
+  test('extracts ops/ markdown links', () => {
+    const refs = extractEntityRefs('See [Routing](ops/runbooks/discord-agent-routing) for details.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].dir).toBe('ops');
+    expect(refs[0].slug).toBe('ops/runbooks/discord-agent-routing');
+  });
+
+  test('extracts ops/ qualified wikilinks', () => {
+    const refs = extractEntityRefs('See [[wiki:ops/changes/foo]] for details.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].dir).toBe('ops');
+    expect(refs[0].slug).toBe('ops/changes/foo');
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────
@@ -1164,6 +1188,36 @@ describe('makeResolver — fallback chain', () => {
     // Both should match because basename of `struktura` is `struktura`.
     const out = await r.resolveBasenameMatches!('struktura');
     expect(out.sort()).toEqual(['notes/struktura', 'struktura']);
+  });
+
+  // ─── Path-style inputs to resolveBasenameMatches ──────────────────
+
+  test('resolveBasenameMatches: path-style input resolves via tail', async () => {
+    const engine = makeFakeEngineWithSlugs([
+      'ops/runbooks/discord-agent-routing',
+      'people/alice',
+    ]);
+    const r = makeResolver(engine);
+    // Path-style input: the full "ops/runbooks/discord-agent-routing" should
+    // resolve to the matching slug via tail extraction.
+    const out = await r.resolveBasenameMatches!('ops/runbooks/discord-agent-routing');
+    expect(out).toEqual(['ops/runbooks/discord-agent-routing']);
+  });
+
+  test('resolveBasenameMatches: path-style input with spaces in tail', async () => {
+    const engine = makeFakeEngineWithSlugs([
+      'ops/changes/2026-05-01-pointer-agent',
+    ]);
+    const r = makeResolver(engine);
+    const out = await r.resolveBasenameMatches!('ops/changes/2026-05-01-pointer-agent');
+    expect(out).toEqual(['ops/changes/2026-05-01-pointer-agent']);
+  });
+
+  test('resolveBasenameMatches: non-path input unaffected by tail extraction', async () => {
+    const engine = makeFakeEngineWithSlugs(['projects/struktura']);
+    const r = makeResolver(engine);
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(out).toEqual(['projects/struktura']);
   });
 });
 

@@ -17,6 +17,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract } from '../src/commands/extract.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { PageInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -288,5 +289,27 @@ describe('gbrain extract --stale', () => {
     }
     expect(exited).toBe(true);
     expect(msg).toContain('DB-source only');
+  });
+
+  test('extract --stale resolves bare wikilinks when globalBasename is on', async () => {
+    // Regression: extractStaleFromDB previously used nullResolver (no
+    // resolveBasenameMatches), so bare [[name]] wikilinks were silently dropped
+    // even when globalBasename was enabled. Fixed: the stale path uses
+    // the real resolver and passes { globalBasename } opts, mirroring extractLinksFromDB.
+    await withEnv({ GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME: '1' }, async () => {
+      await engine.putPage('projects/struktura', { type: 'project', title: 'Struktura', compiled_truth: 'A project.', timeline: '' });
+      await engine.putPage('concepts/knowledge-graph', {
+        type: 'concept', title: 'Knowledge Graph',
+        compiled_truth: 'This relates to [[struktura]].',
+        timeline: '',
+      });
+
+      await runExtract(engine, ['--stale']);
+
+      const links = await engine.getLinks('concepts/knowledge-graph');
+      const basenameLink = links.find(l => l.to_slug === 'projects/struktura');
+      expect(basenameLink).toBeDefined();
+      expect(basenameLink!.link_source).toBe('wikilink-resolved');
+    });
   });
 });
