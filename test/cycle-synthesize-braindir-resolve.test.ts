@@ -23,7 +23,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
+import { ensureDreamOutputDirectory } from '../src/core/cycle/dream-output.ts';
+import { loadDreamWriteSettings, resolveDreamOutputRoot, runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
 
 let engine: PGLiteEngine;
 let tmpDir: string;
@@ -41,6 +42,30 @@ afterAll(async () => {
 });
 
 describe('runPhaseSynthesize brainDir resolution (regression)', () => {
+  test('Dream output defaults to the output folder under the brain directory', () => {
+    expect(resolveDreamOutputRoot(tmpDir, null)).toBe(join(tmpDir, 'output'));
+    expect(resolveDreamOutputRoot(tmpDir, 'custom/dream')).toBe(join(tmpDir, 'custom', 'dream'));
+  });
+
+  test('saving creates a missing output folder and reuses it on subsequent saves', async () => {
+    const outputRoot = join(tmpDir, 'created-on-save');
+    expect(await ensureDreamOutputDirectory(outputRoot)).toEqual({ created: true, path: outputRoot });
+    expect(await ensureDreamOutputDirectory(outputRoot)).toEqual({ created: false, path: outputRoot });
+  });
+
+  test('Dream write settings default to dual-write and honor a custom DB-only configuration', async () => {
+    expect(await loadDreamWriteSettings(engine, tmpDir)).toEqual({
+      outputRoot: join(tmpDir, 'output'),
+      dualWrite: true,
+    });
+    await engine.setConfig('dream.synthesize.output_dir', 'custom-dream');
+    await engine.setConfig('dream.synthesize.dual_write', 'false');
+    expect(await loadDreamWriteSettings(engine, tmpDir)).toEqual({
+      outputRoot: join(tmpDir, 'custom-dream'),
+      dualWrite: false,
+    });
+  });
+
   test('empty brainDir returns failed(BRAINDIR_EMPTY) instead of silently resolving against cwd', async () => {
     const result = await runPhaseSynthesize(engine, {
       brainDir: '',

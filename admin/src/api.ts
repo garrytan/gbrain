@@ -95,6 +95,9 @@ export const api = {
   startMarkdownExportRun: (rootPath: string) =>
     apiFetch('/admin/api/export-runs', { method: 'POST', body: JSON.stringify({ rootPath }) }),
   dreamOverview: () => apiFetch('/admin/api/dream/overview'),
+  dreamSettings: () => apiFetch('/admin/api/dream/settings'),
+  saveDreamSettings: (body: { outputDir: string; dualWrite: boolean }) =>
+    apiFetch('/admin/api/dream/settings', { method: 'POST', body: JSON.stringify(body) }),
   startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
     apiFetch('/admin/api/dream-runs', { method: 'POST', body: JSON.stringify(body) }),
   breakDreamLock: (id: string, holderPid: number) =>

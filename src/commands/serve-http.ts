@@ -37,6 +37,8 @@ import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { brainDirFromConfig } from '../core/system-skill-assets.ts';
+import { ensureDreamOutputDirectory, resolveDreamOutputRoot } from '../core/cycle/dream-output.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { assessDestructiveImpact, softDeleteSource, restoreSource } from '../core/destructive-guard.ts';
 import { deleteLockRow } from '../core/db-lock.ts';
@@ -1489,6 +1491,68 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json(await getAdminDreamOverview(engine, config, VERSION));
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'dream_overview_failed' });
+    }
+  });
+
+  const dreamSettingsView = async (overrides?: { outputDir?: string; dualWrite?: boolean }) => {
+    const [storedOutputDir, storedDualWrite, storedBrainDir] = await Promise.all([
+      engine.getConfig('dream.synthesize.output_dir'),
+      engine.getConfig('dream.synthesize.dual_write'),
+      engine.getConfig('sync.repo_path'),
+    ]);
+    const outputDir = overrides?.outputDir ?? (storedOutputDir?.trim() || 'output');
+    const dualWrite = overrides?.dualWrite ?? (storedDualWrite !== 'false');
+    const defaultBrainDir = storedBrainDir?.trim() || brainDirFromConfig(config);
+    const resolvedOutputDir = defaultBrainDir
+      ? resolveDreamOutputRoot(defaultBrainDir, outputDir)
+      : /^[A-Za-z]:[\\/]/.test(outputDir) || /^\\\\/.test(outputDir) || outputDir.startsWith('/')
+        ? resolveDreamOutputRoot('.', outputDir)
+        : null;
+    return {
+      outputDir,
+      dualWrite,
+      defaultBrainDir: defaultBrainDir || null,
+      resolvedOutputDir,
+      directoryExists: resolvedOutputDir ? existsSync(resolvedOutputDir) : false,
+    };
+  };
+
+  app.get('/admin/api/dream/settings', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await dreamSettingsView());
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'dream_settings_failed' });
+    }
+  });
+
+  app.post('/admin/api/dream/settings', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
+    const rawOutputDir = typeof req.body?.outputDir === 'string' ? req.body.outputDir.trim() : '';
+    const dualWrite = req.body?.dualWrite;
+    if (!rawOutputDir || rawOutputDir.length > 1024 || rawOutputDir.includes('\0')) {
+      res.status(400).json({ error: 'invalid_dream_output_dir' });
+      return;
+    }
+    if (typeof dualWrite !== 'boolean') {
+      res.status(400).json({ error: 'dream_dual_write_must_be_boolean' });
+      return;
+    }
+    const outputDir = rawOutputDir === '/output' || rawOutputDir === '\\output' ? 'output' : rawOutputDir;
+    try {
+      const view = await dreamSettingsView({ outputDir, dualWrite });
+      if (dualWrite && !view.resolvedOutputDir) {
+        res.status(400).json({ error: 'dream_default_directory_unavailable' });
+        return;
+      }
+      if (dualWrite && view.resolvedOutputDir) {
+        await ensureDreamOutputDirectory(view.resolvedOutputDir);
+      }
+      await Promise.all([
+        engine.setConfig('dream.synthesize.output_dir', outputDir),
+        engine.setConfig('dream.synthesize.dual_write', dualWrite ? 'true' : 'false'),
+      ]);
+      res.json(await dreamSettingsView({ outputDir, dualWrite }));
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'save_dream_settings_failed' });
     }
   });
 

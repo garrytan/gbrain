@@ -33,6 +33,8 @@ import { resolveRecipe } from '../ai/model-resolver.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { loadConfig } from '../config.ts';
 import { join, dirname, isAbsolute, resolve } from 'node:path';
+import { resolveDreamOutputRoot } from './dream-output.ts';
+export { resolveDreamOutputRoot } from './dream-output.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -269,6 +271,20 @@ export interface SynthesizePhaseOpts {
   bypassDreamGuard?: boolean;
 }
 
+export async function loadDreamWriteSettings(
+  engine: BrainEngine,
+  brainDir: string,
+): Promise<{ outputRoot: string; dualWrite: boolean }> {
+  const [configuredOutputDir, configuredDualWrite] = await Promise.all([
+    engine.getConfig('dream.synthesize.output_dir'),
+    engine.getConfig('dream.synthesize.dual_write'),
+  ]);
+  return {
+    outputRoot: resolveDreamOutputRoot(brainDir, configuredOutputDir),
+    dualWrite: configuredDualWrite !== 'false',
+  };
+}
+
 export async function runPhaseSynthesize(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
@@ -293,6 +309,7 @@ export async function runPhaseSynthesize(
   }
   try {
     const config = await loadSynthConfig(engine);
+    const { outputRoot, dualWrite } = await loadDreamWriteSettings(engine, opts.brainDir);
     const executionMode = await resolveSubagentExecutionMode(engine, config.resolvedModel.model);
     const synthesisModelDetails = dreamModelDetails(config.resolvedModel, executionMode);
     const verdictModelDetails = dreamModelDetails(config.resolvedVerdictModel, 'verdict_chat');
@@ -603,7 +620,9 @@ export async function runPhaseSynthesize(
     const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    const reverseWriteCount = dualWrite
+      ? await reverseWriteRefs(engine, outputRoot, writtenRefs)
+      : 0;
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
@@ -612,7 +631,7 @@ export async function runPhaseSynthesize(
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes);
+      await writeSummaryPage(engine, outputRoot, summarySlug, summaryDate, writtenSlugs, childOutcomes, dualWrite);
     }
 
     // Write completion timestamp ON SUCCESS only.
@@ -631,6 +650,8 @@ export async function runPhaseSynthesize(
       // synthesize wrote in this cycle.
       written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
+      dual_write_enabled: dualWrite,
+      output_dir: outputRoot,
       child_outcomes: childOutcomes,
       // Children submitted (one per chunk for chunked transcripts; one per
       // transcript for single-chunk). Differs from transcripts_processed
@@ -1180,7 +1201,7 @@ async function hasLegacySingleChunkCompletion(
 
 async function reverseWriteRefs(
   engine: BrainEngine,
-  brainDir: string,
+  outputRoot: string,
   refs: Array<{ slug: string; source_id: string }>,
 ): Promise<number> {
   let count = 0;
@@ -1192,12 +1213,13 @@ async function reverseWriteRefs(
     const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
+      // v0.32.8 F6: non-default sources land at outputRoot/.sources/<id>/<slug>.md
       // so same-slug-different-source pages don't collide. Default-source
-      // pages stay at brainDir/<slug>.md so single-source brains see no change.
+      // pages stay at outputRoot/<slug>.md so each configured Dream output tree
+      // keeps the same source-safe layout.
       const filePath = source_id === 'default'
-        ? join(brainDir, `${slug}.md`)
-        : join(brainDir, '.sources', source_id, `${slug}.md`);
+        ? join(outputRoot, `${slug}.md`)
+        : join(outputRoot, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, md, 'utf8');
       count++;
@@ -1237,11 +1259,12 @@ export function renderPageToMarkdown(page: Page, tags: string[]): string {
 
 async function writeSummaryPage(
   engine: BrainEngine,
-  brainDir: string,
+  outputRoot: string,
   summarySlug: string,
   summaryDate: string,
   writtenSlugs: string[],
   childOutcomes: Array<{ jobId: number; status: string }>,
+  dualWrite: boolean,
 ): Promise<void> {
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
@@ -1287,9 +1310,10 @@ async function writeSummaryPage(
     frontmatter: parsed.frontmatter,
   });
 
-  // Also write to disk (orchestrator dual-write).
+  // Also write to disk when orchestrator dual-write is enabled.
+  if (!dualWrite) return;
   try {
-    const filePath = join(brainDir, `${summarySlug}.md`);
+    const filePath = join(outputRoot, `${summarySlug}.md`);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, fullMarkdown, 'utf8');
   } catch (e) {
