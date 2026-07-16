@@ -220,6 +220,16 @@ async function countPages(engine: BrainEngine, id: string): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
+/** Batched page counts for all sources, one query instead of N. */
+async function countPagesBatch(engine: BrainEngine): Promise<Record<string, number>> {
+  const rows = await engine.executeRaw<{ source_id: string; n: number }>(
+    `SELECT source_id, COUNT(*)::int AS n FROM pages GROUP BY source_id`,
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.source_id] = r.n;
+  return out;
+}
+
 /** Default clone dir for a remote-URL source: $GBRAIN_HOME/clones/<id>/ */
 export function defaultCloneDir(id: string): string {
   return gbrainPath('clones', id);
@@ -566,6 +576,7 @@ export async function listSources(
     `SELECT id, name, local_path, last_sync_at, config
        FROM sources ${archivedFilter} ORDER BY (id = 'default') DESC, id`,
   );
+  const pageCounts = await countPagesBatch(engine);
   const out: SourceListEntry[] = [];
   for (const r of rows) {
     const cfg = parseConfig(r.config);
@@ -575,7 +586,7 @@ export async function listSources(
       local_path: r.local_path,
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
-      page_count: await countPages(engine, r.id),
+      page_count: pageCounts[r.id] ?? 0,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
   }

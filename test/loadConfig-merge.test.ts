@@ -298,4 +298,60 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.engine).toBe('pglite');
     });
   });
+
+  // Perf fix: 20 serial getConfig() round trips per connectEngine() replaced
+  // by one getConfigBatch() call when the engine implements it. Pins that
+  // loadConfigWithEngine() actually prefers the batch path (and still merges
+  // correctly through it) instead of silently falling back to per-key fetch.
+  describe('getConfigBatch() usage', () => {
+    test('uses the batch path when engine implements getConfigBatch, not per-key getConfig', async () => {
+      let batchCalls = 0;
+      let getConfigCalls = 0;
+      const base: GBrainConfig = { engine: 'postgres' };
+      const engine = {
+        async getConfig(_key: string) {
+          getConfigCalls++;
+          throw new Error('per-key getConfig should not be called when batch is available');
+        },
+        async getConfigBatch(keys: string[]) {
+          batchCalls++;
+          return {
+            embedding_multimodal: 'true',
+            search_embedding_column: 'embedding_voyage',
+          };
+        },
+      };
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(batchCalls).toBe(1);
+      expect(getConfigCalls).toBe(0);
+      expect(merged?.embedding_multimodal).toBe(true);
+      expect(merged?.search_embedding_column).toBe('embedding_voyage');
+    });
+
+    test('falls back to per-key getConfig when engine has no getConfigBatch', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        embedding_multimodal: 'true',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_multimodal).toBe(true);
+    });
+
+    test('getConfigBatch throwing is non-fatal — file/env config still returned', async () => {
+      const base: GBrainConfig = {
+        engine: 'postgres',
+        embedding_multimodal: true,
+      };
+      const engine = {
+        async getConfig(_key: string): Promise<string | null | undefined> {
+          return undefined;
+        },
+        async getConfigBatch(_keys: string[]): Promise<Record<string, string>> {
+          throw new Error('config table missing');
+        },
+      };
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_multimodal).toBe(true);
+    });
+  });
 });
