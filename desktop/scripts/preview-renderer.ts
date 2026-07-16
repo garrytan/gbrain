@@ -91,6 +91,7 @@ window.pmbrainDesktop = {
       { id: 'cursor', name: 'Cursor', path: 'C:\\Users\\zhengyunhui\\.cursor\\mcp.json', configured: true, automatic: true },
       { id: 'claude', name: 'Claude', path: null, configured: false, automatic: false },
       { id: 'codex', name: 'Codex', path: 'C:\\Users\\zhengyunhui\\.codex\\config.toml', configured: false, automatic: true },
+      { id: 'qwenpaw', name: 'QwenPaw', path: 'C:\\Users\\zhengyunhui\\.qwenpaw\\workspaces\\default\\drivers\\mcp\\pmbrain.yaml', configured: false, automatic: true },
     ],
     port: 3132
   }),
@@ -173,7 +174,7 @@ window.pmbrainDesktop = {
   openLogs: async () => '',
   quit: async () => {}
 };
-console.log('PMBrain mock injected: panel=${panel}, integrations count=5');
+console.log('PMBrain mock injected: panel=${panel}, integrations count=6');
 // HTML 初始状态已在 Node.js 侧修改，无需 setTimeout 切换面板
 // 等 DOM 渲染后滚动到目标区域
 setTimeout(() => {
@@ -243,12 +244,15 @@ const mockIntegrations: MockIntegration[] = [
   { id: 'cursor', name: 'Cursor', path: 'C:\\Users\\zhengyunhui\\.cursor\\mcp.json', configured: true, automatic: true },
   { id: 'claude', name: 'Claude', path: null, configured: false, automatic: false },
   { id: 'codex', name: 'Codex', path: 'C:\\Users\\zhengyunhui\\.codex\\config.toml', configured: false, automatic: true },
+  { id: 'qwenpaw', name: 'QwenPaw', path: 'C:\\Users\\zhengyunhui\\.qwenpaw\\workspaces\\default\\drivers\\mcp\\pmbrain.yaml', configured: false, automatic: true },
 ];
 const cardsHtml = mockIntegrations.map((item) => {
   const badgeClass = item.configured ? 'configured badge' : 'badge';
   const badgeText = item.configured ? '已配置' : '未配置';
   const pathText = item.path ?? '通过 Claude CLI / GUI 接入';
-  const noteText = item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
+  const noteText = item.id === 'qwenpaw'
+    ? '通过本机 API 写入 Bearer 并验证，不使用 OAuth'
+    : item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
   const btnText = item.automatic ? '创建并写入' : '生成接入命令';
   return `<article class="integration-card"><span class="${badgeClass}">${badgeText}</span><h3>${item.name}</h3><p>${pathText}</p><small>${noteText}</small><button class="solid">${btnText}</button></article>`;
 }).join('\n          ');
@@ -313,4 +317,4 @@ if (result.status !== 0) {
 }
 
 const size = statSync(output).size;
-console.log(`[${new Date().toISOString()}] Preview: panel=${panel}, output=${output}, mock integrations count=5`);
+console.log(`[${new Date().toISOString()}] Preview: panel=${panel}, output=${output}, mock integrations count=6`);

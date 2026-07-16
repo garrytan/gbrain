@@ -32,6 +32,21 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).not.toContain("switchPanel('integrations');");
   });
 
+  test('offers one stable custom OpenAI-compatible provider with a Base URL form', () => {
+    expect(html).toContain('id="open-custom-provider"');
+    expect(html).toContain('id="custom-provider-dialog"');
+    expect(html).toContain('id="custom-provider-base-url"');
+    expect(html).toContain('value="custom-openai"');
+    expect(html).toContain('OpenAI 兼容（Chat Completions + Embeddings）');
+    expect(html).toContain('API Key 可选');
+    expect(renderer).toContain('customProviderDraft');
+    expect(renderer).toContain('customProvider: customProviderDraft ?? undefined');
+    expect(renderer).toContain("provider === 'custom-openai'");
+    expect(main).toContain('自定义向量模型验证失败');
+    expect(styles).toContain('.custom-provider-bar');
+    expect(styles).toContain('.custom-provider-dialog');
+  });
+
   test('moves appearance and native desktop behavior into an accessible system panel', () => {
     for (const id of [
       'network-mode-local',
@@ -88,6 +103,8 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).toContain('createSharedIntegration(payload)');
     expect(renderer).toContain('revokeSharedIntegration(credentialName)');
     expect(renderer).toContain('credential.credentialName');
+    expect(renderer).toContain("client === 'qwenpaw' ? 'api_key' : selectedCredential()");
+    expect(renderer).toContain('通过本机 API 写入 Bearer 并验证，不使用 OAuth');
   });
 
   test('keeps shared credential actions honest across refresh, revoke, and network changes', () => {
@@ -115,6 +132,8 @@ describe('desktop settings renderer contracts', () => {
     expect(preview).toContain('getSharedAccess: async');
     expect(preview).toContain('createSharedIntegration: async');
     expect(preview).toContain('revokeSharedIntegration: async');
+    expect(preview).toContain("id: 'qwenpaw', name: 'QwenPaw'");
+    expect(preview).toContain('drivers\\\\mcp\\\\pmbrain.yaml');
   });
 
   test('disables premature system saves and exposes accessible security notices', () => {

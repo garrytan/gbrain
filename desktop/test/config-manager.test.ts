@@ -288,6 +288,69 @@ describe('desktop config manager', () => {
     expect(saved.needsEmbeddingDimensionProbe).toBe(true);
   });
 
+  test('persists a validated custom OpenAI-compatible provider without losing other URLs', () => {
+    const root = isolatedHome();
+    writeJsonConfig(desktopConfigPath(), {
+      engine: 'pglite',
+      database_path: join(root, 'brain.pglite'),
+      embedding_model: 'zhipu:embedding-3',
+      embedding_dimensions: 1024,
+      provider_base_urls: { openrouter: 'https://openrouter.example/v1' },
+    });
+
+    const saved = saveSetup({
+      engine: 'pglite',
+      customProvider: {
+        id: 'custom-openai',
+        displayName: '本地 Qwen',
+        baseUrl: 'http://127.0.0.1:8000/v1/',
+      },
+      keys: { customOpenai: 'local-key' },
+      modelConfig: {
+        chatModel: 'custom-openai:Qwen3-35B-A3B',
+        embeddingModel: 'custom-openai:Qwen3-Embedding-8B',
+        embeddingDimensions: 4096,
+      },
+    });
+
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.provider_base_urls.openrouter).toBe('https://openrouter.example/v1');
+    expect(config.provider_base_urls['custom-openai']).toBe('http://127.0.0.1:8000/v1');
+    expect(config.desktop.custom_openai_display_name).toBe('本地 Qwen');
+    expect(config.custom_openai_api_key).toBe('local-key');
+    expect(config.chat_model).toBe('custom-openai:Qwen3-35B-A3B');
+    expect(config.embedding_model).toBe('custom-openai:Qwen3-Embedding-8B');
+    expect(saved.needsEmbeddingDimensionProbe).toBe(false);
+
+    const info = getSetupInfo();
+    expect(info.current.customProvider).toEqual({
+      id: 'custom-openai',
+      displayName: '本地 Qwen',
+      baseUrl: 'http://127.0.0.1:8000/v1',
+    });
+    expect(info.current.keyStatus.customOpenai).toBe(true);
+    expect(info.current.keyValues.customOpenai).toBe('local-key');
+  });
+
+  test('rejects unsafe custom provider URLs before writing config', () => {
+    const root = isolatedHome();
+    expect(() => saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'brain.pglite'),
+      customProvider: {
+        id: 'custom-openai',
+        displayName: '本地 Qwen',
+        baseUrl: 'file:///C:/models/qwen',
+      },
+      modelConfig: {
+        chatModel: 'custom-openai:qwen',
+        embeddingModel: 'custom-openai:qwen-embedding',
+        embeddingDimensions: 4096,
+      },
+    })).toThrow('只能使用 http/https');
+    expect(existsSync(desktopConfigPath())).toBe(false);
+  });
+
   test('switching from discovered legacy config to PGLite honors the selected local path', () => {
     const root = mkdtempSync(join(tmpdir(), 'pmbrain-desktop-legacy-switch-'));
     roots.push(root);

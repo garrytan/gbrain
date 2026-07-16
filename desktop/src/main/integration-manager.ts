@@ -9,7 +9,7 @@ import {
 } from './lan-mcp-gateway.js';
 import type { SidecarManager } from './sidecar-manager.js';
 
-export type IntegrationClient = 'codebuddy' | 'workbuddy' | 'cursor' | 'claude' | 'codex';
+export type IntegrationClient = 'codebuddy' | 'workbuddy' | 'cursor' | 'claude' | 'codex' | 'qwenpaw';
 export type CredentialKind = 'api_key' | 'oauth';
 
 export interface IntegrationInfo {
@@ -92,11 +92,88 @@ const CLIENT_META: Record<IntegrationClient, { name: string; path: () => string 
   cursor: { name: 'Cursor', path: () => join(homedir(), '.cursor', 'mcp.json'), automatic: true },
   claude: { name: 'Claude', path: () => null, automatic: false },
   codex: { name: 'Codex', path: () => join(homedir(), '.codex', 'config.toml'), automatic: true },
+  qwenpaw: { name: 'QwenPaw', path: () => qwenPawIntegrationPath(), automatic: true },
 };
+
+interface QwenPawPaths {
+  root: string;
+  legacyConfig: string;
+  desktopPort: string;
+  driverCard: string;
+  credentials: string;
+}
+
+function qwenPawPaths(homeDirectory = homedir()): QwenPawPaths {
+  const root = join(homeDirectory, '.qwenpaw');
+  return {
+    root,
+    legacyConfig: join(root, 'config.json'),
+    desktopPort: join(root, 'desktop_port'),
+    driverCard: join(root, 'workspaces', 'default', 'drivers', 'mcp', 'pmbrain.yaml'),
+    credentials: join(root, 'workspaces', 'default', 'credentials.yaml'),
+  };
+}
+
+export function qwenPawIntegrationPath(homeDirectory = homedir()): string {
+  const paths = qwenPawPaths(homeDirectory);
+  return existsSync(paths.desktopPort) || existsSync(paths.driverCard)
+    ? paths.driverCard
+    : paths.legacyConfig;
+}
+
+export function qwenPawDriverIsConfigured(path: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    const driver = readFileSync(path, 'utf8');
+    if (!/^name:\s*pmbrain\s*$/m.test(driver)
+      || !/^\s*url:\s*https?:\/\/\S+\/mcp\s*$/m.test(driver)
+      || !/^\s*Authorization:\s*$/m.test(driver)) return false;
+    const credentialsPath = join(dirname(path), '..', '..', 'credentials.yaml');
+    if (!existsSync(credentialsPath)) return false;
+    const credentials = readFileSync(credentialsPath, 'utf8');
+    let inPmbrain = false;
+    let inSecrets = false;
+    let authorization = '';
+    for (const line of credentials.split(/\r?\n/)) {
+      const credentialKey = line.match(/^  ([^\s][^:]*):\s*$/)?.[1];
+      if (credentialKey) {
+        inPmbrain = credentialKey === 'mcp/pmbrain';
+        inSecrets = false;
+        continue;
+      }
+      if (!inPmbrain) continue;
+      if (/^    secrets:\s*$/.test(line)) {
+        inSecrets = true;
+        continue;
+      }
+      if (inSecrets) {
+        const match = line.match(/^      authorization:\s*([^\r\n]+)$/);
+        if (match) {
+          authorization = match[1].trim().replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, '$1$2');
+          break;
+        }
+      }
+    }
+    return /^Bearer\s+\S+$/i.test(authorization);
+  } catch {
+    return false;
+  }
+}
 
 function jsonEntry(mcpUrl: string, token: string) {
   return {
     type: 'http',
+    url: mcpUrl,
+    headers: { Authorization: `Bearer ${token}` },
+  };
+}
+
+function qwenPawEntry(mcpUrl: string, token: string) {
+  return {
+    name: 'PMBrain',
+    description: 'PMBrain 本地知识库',
+    enabled: true,
+    transport: 'streamable_http',
     url: mcpUrl,
     headers: { Authorization: `Bearer ${token}` },
   };
@@ -116,6 +193,9 @@ export function formatSharedIntegrationSnippet(
   }
   if (client === 'claude') {
     return `claude mcp add pmbrain -t http ${mcpUrl} -H ${tomlString(`Authorization: Bearer ${token}`)}`;
+  }
+  if (client === 'qwenpaw') {
+    return JSON.stringify({ mcp: { clients: { pmbrain: qwenPawEntry(mcpUrl, token) } } }, null, 2);
   }
   return JSON.stringify({ mcpServers: { pmbrain: jsonEntry(mcpUrl, token) } }, null, 2);
 }
@@ -387,6 +467,111 @@ export function writeJsonIntegration(path: string, mcpUrl: string, token: string
   return backup;
 }
 
+export function writeQwenPawIntegration(path: string, mcpUrl: string, token: string, backupRoot?: string): string | null {
+  let root: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try {
+      root = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    } catch (error) {
+      throw new Error(`${path} 不是有效 JSON，已停止写入：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const backup = backupFile(path, 'mcp', backupRoot);
+  const mcp = root.mcp && typeof root.mcp === 'object' && !Array.isArray(root.mcp)
+    ? { ...(root.mcp as Record<string, unknown>) }
+    : {};
+  const clients = mcp.clients && typeof mcp.clients === 'object' && !Array.isArray(mcp.clients)
+    ? { ...(mcp.clients as Record<string, unknown>) }
+    : {};
+  clients.pmbrain = qwenPawEntry(mcpUrl, token);
+  mcp.clients = clients;
+  root.mcp = mcp;
+  writeTextFile(path, `${JSON.stringify(root, null, 2)}\n`);
+  return backup;
+}
+
+interface QwenPawDesktopIntegrationResult {
+  path: string;
+  backup: string | null;
+  toolCount: number;
+}
+
+function readQwenPawDesktopPort(path: string): number {
+  if (!existsSync(path)) {
+    throw new Error('未检测到运行中的 QwenPaw 2.x。请先启动 QwenPaw，再点击一键接入。');
+  }
+  const value = readFileSync(path, 'utf8').trim();
+  if (!/^\d{1,5}$/.test(value)) throw new Error('QwenPaw 本地服务端口文件无效，请重启 QwenPaw 后重试。');
+  const port = Number.parseInt(value, 10);
+  if (port < 1 || port > 65_535) throw new Error('QwenPaw 本地服务端口超出有效范围，请重启 QwenPaw 后重试。');
+  return port;
+}
+
+async function qwenPawApiRequest(
+  baseUrl: string,
+  path: string,
+  init: RequestInit,
+  request: typeof fetch,
+): Promise<Response> {
+  try {
+    return await request(`${baseUrl}${path}`, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    throw new Error('无法连接 QwenPaw 本地服务。请确认 QwenPaw 已启动，再点击一键接入。');
+  }
+}
+
+export async function configureQwenPawDesktopIntegration(
+  mcpUrl: string,
+  token: string,
+  homeDirectory = homedir(),
+  backupRoot?: string,
+  request: typeof fetch = fetch,
+): Promise<QwenPawDesktopIntegrationResult> {
+  const paths = qwenPawPaths(homeDirectory);
+  const port = readQwenPawDesktopPort(paths.desktopPort);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const client = qwenPawEntry(mcpUrl, token);
+  const existing = await qwenPawApiRequest(baseUrl, '/api/mcp/pmbrain', { method: 'GET' }, request);
+  if (!existing.ok && existing.status !== 404) {
+    throw new Error(`QwenPaw 本地接口检查失败（HTTP ${existing.status}），请重启 QwenPaw 后重试。`);
+  }
+
+  const driverBackup = backupFile(paths.driverCard, 'mcp', backupRoot);
+  const credentialBackup = backupFile(paths.credentials, 'mcp', backupRoot);
+  const updating = existing.ok;
+  const response = await qwenPawApiRequest(
+    baseUrl,
+    updating ? '/api/mcp/pmbrain' : '/api/mcp',
+    {
+      method: updating ? 'PUT' : 'POST',
+      body: JSON.stringify(updating ? client : { client_key: 'pmbrain', client }),
+    },
+    request,
+  );
+  if (!response.ok) {
+    throw new Error(`QwenPaw 保存 PMBrain 配置失败（HTTP ${response.status}），原配置备份已保留。`);
+  }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const tools = await qwenPawApiRequest(baseUrl, '/api/mcp/tools/pmbrain', { method: 'GET' }, request);
+    if (tools.ok) {
+      const payload = await tools.json().catch(() => null);
+      if (!Array.isArray(payload)) throw new Error('QwenPaw 已保存配置，但返回了无法识别的 MCP 工具列表。');
+      return {
+        path: paths.driverCard,
+        backup: driverBackup ?? credentialBackup,
+        toolCount: payload.length,
+      };
+    }
+    if (attempt < 9) await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  throw new Error('QwenPaw 已保存配置，但未能连接 PMBrain。请确认本机代理绕过 localhost/127.0.0.1 后重试；不会启动 OAuth 授权。');
+}
+
 const CODEX_START = '# >>> PMBrain Desktop managed MCP >>>';
 const CODEX_END = '# <<< PMBrain Desktop managed MCP <<<';
 
@@ -439,7 +624,14 @@ function isConfigured(client: IntegrationClient, path: string | null): boolean {
   try {
     const content = readFileSync(path, 'utf8');
     if (client === 'codex') return /\[mcp_servers\.pmbrain\]/.test(content);
-    const parsed = JSON.parse(content) as { mcpServers?: Record<string, unknown> };
+    if (client === 'qwenpaw' && path.toLowerCase().endsWith('.yaml')) {
+      return qwenPawDriverIsConfigured(path);
+    }
+    const parsed = JSON.parse(content) as {
+      mcpServers?: Record<string, unknown>;
+      mcp?: { clients?: Record<string, unknown> };
+    };
+    if (client === 'qwenpaw') return Boolean(parsed.mcp?.clients?.pmbrain);
     return Boolean(parsed.mcpServers?.pmbrain);
   } catch {
     return false;
@@ -467,8 +659,17 @@ function readConfiguredPort(client: IntegrationClient, path: string): number | u
       return urlMatch ? extractPortFromUrl(urlMatch[2]) : undefined;
     }
     const content = readFileSync(path, 'utf8');
-    const parsed = JSON.parse(content) as { mcpServers?: { pmbrain?: { url?: string } } };
-    const url = parsed.mcpServers?.pmbrain?.url;
+    if (client === 'qwenpaw' && path.toLowerCase().endsWith('.yaml')) {
+      const urlMatch = content.match(/^\s*url:\s*(https?:\/\/\S+\/mcp)\s*$/m);
+      return urlMatch ? extractPortFromUrl(urlMatch[1]) : undefined;
+    }
+    const parsed = JSON.parse(content) as {
+      mcpServers?: { pmbrain?: { url?: string } };
+      mcp?: { clients?: { pmbrain?: { url?: string } } };
+    };
+    const url = client === 'qwenpaw'
+      ? parsed.mcp?.clients?.pmbrain?.url
+      : parsed.mcpServers?.pmbrain?.url;
     return url ? extractPortFromUrl(url) : undefined;
   } catch {
     return undefined;
@@ -508,6 +709,9 @@ export async function configureIntegration(
 ): Promise<IntegrationResult> {
   const meta = CLIENT_META[client];
   if (!meta) throw new Error(`不支持的客户端：${client}`);
+  if (client === 'qwenpaw' && credentialKind !== 'api_key') {
+    throw new Error('QwenPaw 一键接入固定使用 API Key + Bearer，不支持 OAuth 授权。');
+  }
   const path = meta.path();
   const credentialName = `desktop-${client}`;
 
@@ -545,6 +749,16 @@ export async function configureIntegration(
 
   if (client === 'codebuddy' || client === 'workbuddy' || client === 'cursor') {
     backup = writeJsonIntegration(path!, sidecar.mcpUrl, token);
+    configured = true;
+  } else if (client === 'qwenpaw') {
+    const qwenPaw = qwenPawPaths();
+    if (existsSync(qwenPaw.desktopPort) || existsSync(qwenPaw.driverCard)) {
+      const result = await configureQwenPawDesktopIntegration(sidecar.mcpUrl, token);
+      backup = result.backup;
+    } else {
+      backup = writeQwenPawIntegration(qwenPaw.legacyConfig, sidecar.mcpUrl, token);
+    }
+    snippet = JSON.stringify({ mcp: { clients: { pmbrain: qwenPawEntry(sidecar.mcpUrl, token) } } }, null, 2);
     configured = true;
   } else if (client === 'codex') {
     backup = writeCodexIntegration(path!, sidecar.mcpUrl, token);

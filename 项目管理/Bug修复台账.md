@@ -1,5 +1,25 @@
 # Bug 修复台账
 
+## 2026-07-16 QwenPaw MCP 误入 OAuth 与连接失败修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain Desktop 1.0.63
+- 标题：修复 QwenPaw Bearer Header 缺失导致 401、OAuth 误判和接入假成功
+- 描述：真实 QwenPaw 日志显示，PMBrain MCP 曾连续返回 502，后续因保存的 `authorization` 缺少 `Bearer ` 前缀而稳定返回 401；QwenPaw 将 401 解释为需要 OAuth，提示用户点击授权，但 PMBrain 本机接入应使用桌面端生成的 Bearer Key。QwenPaw 2.x 已将 MCP 配置迁移到 DriverCard 与独立凭证库，仅写旧 `config.json` 不能可靠更新现有配置。
+- 是否完成：是
+- 最终结果：桌面端改用 QwenPaw 2.x 本机 API 创建或更新 `pmbrain`，写入完整 `Authorization: Bearer <Key>`，备份 DriverCard 与凭证库，并以 QwenPaw `/api/mcp/tools/pmbrain` 的真实工具列表作为成功条件；连接失败只返回本机服务或代理诊断，不再触发 OAuth。旧版 QwenPaw 仍保留 JSON 合并兼容。日志核对同时确认 Clash Verge 进程早于本次 OAuth 误判约八小时启动，PMBrain 未调用或启动 VPN 程序。桌面端 106 项测试、TypeScript 类型检查、生产构建和 browser-use CLI 页面验证全部通过。
+
+## 2026-07-16 Desktop 本地 Qwen 保存启动失败修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain 1.1.20；PMBrain Desktop 1.0.62
+- 标题：修复本地 OpenAI 兼容模型被错误路由到官方 OpenAI 接口
+- 描述：运行时已通过 x64 baseline 校验且 104 项数据库迁移成功，但用户将本地 `Qwen3-Embedding-8B` 选择为 `openai` 后，点击“保存配置并启动”在向量维度探测阶段报 `Cannot connect to API`。
+- 根因：`openai` 是官方 OpenAI Recipe，桌面端原先没有 Base URL 输入；本地模型地址无法进入模型配置与网关，错误与 Windows、Bun、数据库迁移均无关。
+- 解决方案：新增固定 `custom-openai` Recipe 与可选鉴权，打通 `provider_base_urls.custom-openai`、CLI 网关、桌面保存和回显；本地接口不可达时改为展示包含 Base URL、模型 ID、`/v1`、服务状态与 Key 检查项的中文错误。
+- 是否完成：是
+- 最终结果：Ollama 继续选择现有 `ollama`，vLLM、LM Studio、Xinference、LocalAI 等通过新增自定义接口配置；URL 会校验协议并阻止账号、查询参数和锚点，首次向量模型仍通过实际接口探测维度。未修改、删除或迁移用户知识库和原始资料。
+
 ## 2026-07-16 Desktop 老 CPU 运行时与安装兼容修复
 
 - 时间：2026-07-16

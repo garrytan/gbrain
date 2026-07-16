@@ -103,6 +103,14 @@
             <div><span class="index">02</span><h2>模型配置</h2></div>
             <p>普通模型和向量模型各配置一组；厂商、模型名和 API Key 会写入本机配置。</p>
           </div>
+          <div class="custom-provider-bar" id="custom-provider-bar">
+            <div class="custom-provider-mark" aria-hidden="true"><span>LOCAL</span><b>/v1</b></div>
+            <div class="custom-provider-summary">
+              <b id="custom-provider-summary-title">自定义 OpenAI 兼容接口</b>
+              <small id="custom-provider-summary-url">适用于本机或局域网中的 Qwen、vLLM、LM Studio、Xinference、LocalAI。</small>
+            </div>
+            <button type="button" class="ghost" id="open-custom-provider"><span>添加自定义接口</span></button>
+          </div>
           <div class="model-stack">
             <section class="model-card">
               <div class="model-card-heading">
@@ -121,6 +129,7 @@
                     <option value="anthropic">anthropic</option>
                     <option value="google">google</option>
                     <option value="openrouter">openrouter</option>
+                    <option value="custom-openai">自定义 OpenAI 接口</option>
                   </select>
                 </label>
                 <label>
@@ -155,6 +164,7 @@
                     <option value="ollama">ollama</option>
                     <option value="llama-server">llama-server</option>
                     <option value="litellm">litellm</option>
+                    <option value="custom-openai">自定义 OpenAI 接口</option>
                   </select>
                 </label>
                 <label>
@@ -339,6 +349,20 @@
         <li><b>回到 PMBrain 填写连接地址</b><pre>postgresql://postgres:postgres@127.0.0.1:5433/pmbrain</pre><p>选择 Docker Postgres，填写上面的地址，再保存配置。首次迁移可能需要等待几十秒。</p></li>
       </ol>
       <div class="help-dialog-foot"><small>本教程摘自 docs/desktop/首次安装使用DockerPostgres.md。PMBrain 不会安装、创建、删除或重建 Docker 容器；启动时会尝试启动匹配的现有容器。</small><button type="button" class="solid" id="docker-help-done">我知道了</button></div>
+    </dialog>
+    <dialog class="help-dialog custom-provider-dialog" id="custom-provider-dialog" aria-labelledby="custom-provider-title">
+      <form id="custom-provider-form">
+        <div class="help-dialog-head"><div><span>LOCAL MODEL ENDPOINT</span><h2 id="custom-provider-title">添加自定义接口</h2></div><button type="button" class="ghost icon-button" id="custom-provider-close" aria-label="关闭自定义接口表单">×</button></div>
+        <div class="custom-provider-form-body">
+          <div class="custom-provider-endpoint-preview"><i aria-hidden="true"></i><div><b>OpenAI-compatible</b><small>PMBrain 将调用该地址下的模型、对话和向量接口。</small></div></div>
+          <label><span>提供商 ID</span><input id="custom-provider-id" value="custom-openai" readonly /><small>固定 ID，保证 CLI、桌面端和 sidecar 使用同一套路由。</small></label>
+          <label><span>显示名称</span><input id="custom-provider-name" maxlength="80" placeholder="例如：本地 Qwen" autocomplete="off" /></label>
+          <label><span>默认 Base URL</span><input id="custom-provider-base-url" inputmode="url" placeholder="例如：http://127.0.0.1:8000/v1" autocomplete="off" /><small>请填写服务的 API 根地址；模型在另一台电脑时填写它的局域网 IP。</small></label>
+          <label><span>协议</span><select id="custom-provider-protocol" disabled><option selected>OpenAI 兼容（Chat Completions + Embeddings）</option></select></label>
+          <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
+        </div>
+        <div class="help-dialog-foot"><small>API Key 可选：可在普通模型或向量模型卡片中填写；本地无鉴权接口可以留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">确认接口</button></div></div>
+      </form>
     </dialog>
     <div class="wait-overlay" id="setup-wait" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wait-title" aria-describedby="setup-wait-message">
       <div class="wait-dialog" aria-live="polite">

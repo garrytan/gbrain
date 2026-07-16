@@ -689,7 +689,21 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   try {
     await prepareConfiguredDatabase();
     if (saved.needsEmbeddingDimensionProbe) {
-      const probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
+      let probe: Awaited<ReturnType<typeof runCliChecked>>;
+      try {
+        probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
+      } catch (error) {
+        if (saved.config.embedding_model?.startsWith('custom-openai:')) {
+          const baseUrl = saved.config.provider_base_urls?.['custom-openai'] ?? '自定义 Base URL';
+          const model = saved.config.embedding_model.slice('custom-openai:'.length);
+          throw new Error(
+            `自定义向量模型验证失败：无法通过 ${baseUrl} 访问模型 ${model}。` +
+            '请确认本地模型服务已启动、Base URL 包含正确的 /v1 路径、模型 ID 与 API Key 正确。',
+            { cause: error },
+          );
+        }
+        throw error;
+      }
       const result = JSON.parse(probe.stdout.trim().split(/\r?\n/).at(-1) || '{}') as { dimensions?: number };
       if (!Number.isInteger(result.dimensions) || (result.dimensions ?? 0) <= 0) {
         throw new Error('无法从向量模型响应中判断有效维度。');

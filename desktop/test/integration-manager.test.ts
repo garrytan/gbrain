@@ -1,16 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   createSharedIntegration,
+  configureQwenPawDesktopIntegration,
+  configureIntegration,
   formatSharedIntegrationSnippet,
   getSharedAccessContext,
   integrationConfigPath,
+  qwenPawDriverIsConfigured,
+  qwenPawIntegrationPath,
   revokeSharedIntegration,
   smokeTestSharedIntegration,
   writeCodexIntegration,
   writeJsonIntegration,
+  writeQwenPawIntegration,
 } from '../src/main/integration-manager.js';
 
 const roots: string[] = [];
@@ -252,6 +257,53 @@ describe('desktop integration config merging', () => {
     expect(path).not.toEndWith(join('.workbuddy', '.mcp.json'));
   });
 
+  test('uses legacy QwenPaw config before 2.x and the DriverCard path for 2.x', () => {
+    const home = tempFile('home');
+    expect(qwenPawIntegrationPath(home)).toEndWith(join('.qwenpaw', 'config.json'));
+    mkdirSync(join(home, '.qwenpaw'), { recursive: true });
+    writeFileSync(join(home, '.qwenpaw', 'desktop_port'), '60913');
+    expect(qwenPawIntegrationPath(home)).toEndWith(
+      join('.qwenpaw', 'workspaces', 'default', 'drivers', 'mcp', 'pmbrain.yaml'),
+    );
+  });
+
+  test('never routes QwenPaw one-click setup through OAuth', async () => {
+    await expect(configureIntegration({} as never, 'qwenpaw', 'oauth')).rejects.toThrow(
+      '固定使用 API Key + Bearer',
+    );
+  });
+
+  test('only reports a QwenPaw DriverCard configured when its saved credential has a Bearer prefix', () => {
+    const home = tempFile('home');
+    const root = join(home, '.qwenpaw', 'workspaces', 'default');
+    const driver = join(root, 'drivers', 'mcp', 'pmbrain.yaml');
+    const credentials = join(root, 'credentials.yaml');
+    mkdirSync(dirname(driver), { recursive: true });
+    writeFileSync(driver, [
+      'name: pmbrain',
+      'protocol: mcp',
+      'endpoint:',
+      '  transport: streamable_http',
+      '  url: http://127.0.0.1:3131/mcp',
+      '  headers:',
+      '    Authorization:',
+    ].join('\n'));
+    writeFileSync(credentials, [
+      'version: 1',
+      'credentials:',
+      '  mcp/pmbrain:',
+      '    kind: static',
+      '    secrets:',
+      '      authorization: token-without-scheme',
+    ].join('\n'));
+    expect(qwenPawDriverIsConfigured(driver)).toBe(false);
+    writeFileSync(credentials, readFileSync(credentials, 'utf8').replace(
+      'token-without-scheme',
+      'Bearer pmbrain-secret',
+    ));
+    expect(qwenPawDriverIsConfigured(driver)).toBe(true);
+  });
+
   test('preserves unrelated JSON MCP servers', () => {
     const path = tempFile('mcp.json');
     writeFileSync(path, JSON.stringify({ mcpServers: { existing: { command: 'keep-me' } }, theme: 'dark' }));
@@ -277,6 +329,123 @@ describe('desktop integration config merging', () => {
     expect(result.mcpServers['connector-proxy'].command).toBe('workbuddy-connector-proxy');
     expect(result.mcpServers['connector-proxy'].args).toEqual(['--profile', 'default']);
     expect(result.mcpServers.pmbrain.url).toBe('http://127.0.0.1:3131/mcp');
+  });
+
+  test('merges QwenPaw mcp.clients without changing existing clients or settings', () => {
+    const path = tempFile('config.json');
+    writeFileSync(path, JSON.stringify({
+      user_timezone: 'Asia/Shanghai',
+      mcp: {
+        migration_version: 2,
+        clients: {
+          tavily_search: {
+            name: 'Tavily Search',
+            enabled: true,
+            transport: 'streamable_http',
+            url: 'https://example.test/mcp',
+          },
+        },
+      },
+    }));
+
+    const backup = writeQwenPawIntegration(
+      path,
+      'http://127.0.0.1:3131/mcp',
+      'secret',
+      dirname(path),
+    );
+    const result = JSON.parse(readFileSync(path, 'utf8'));
+    expect(result.user_timezone).toBe('Asia/Shanghai');
+    expect(result.mcp.migration_version).toBe(2);
+    expect(result.mcp.clients.tavily_search.url).toBe('https://example.test/mcp');
+    expect(result.mcp.clients.pmbrain).toEqual({
+      name: 'PMBrain',
+      description: 'PMBrain 本地知识库',
+      enabled: true,
+      transport: 'streamable_http',
+      url: 'http://127.0.0.1:3131/mcp',
+      headers: { Authorization: 'Bearer secret' },
+    });
+    expect(backup).not.toBeNull();
+    expect(readFileSync(backup!, 'utf8')).not.toContain('pmbrain');
+  });
+
+  test('does not overwrite malformed QwenPaw config', () => {
+    const path = tempFile('config.json');
+    writeFileSync(path, '{ invalid');
+    expect(() => writeQwenPawIntegration(
+      path,
+      'http://127.0.0.1:3131/mcp',
+      'secret',
+      dirname(path),
+    )).toThrow('不是有效 JSON');
+    expect(readFileSync(path, 'utf8')).toBe('{ invalid');
+  });
+
+  test('updates QwenPaw 2.x through its local API with a complete Bearer header and verifies tools', async () => {
+    const home = tempFile('home');
+    const root = join(home, '.qwenpaw');
+    const driver = join(root, 'workspaces', 'default', 'drivers', 'mcp', 'pmbrain.yaml');
+    const credentials = join(root, 'workspaces', 'default', 'credentials.yaml');
+    mkdirSync(dirname(driver), { recursive: true });
+    writeFileSync(join(root, 'desktop_port'), '60913');
+    writeFileSync(driver, 'name: pmbrain\n');
+    writeFileSync(credentials, 'version: 1\ncredentials: {}\n');
+    const calls: Array<{ url: string; method: string; body?: Record<string, any> }> = [];
+    const request = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      calls.push({ url, method, body });
+      if (url.endsWith('/api/mcp/tools/pmbrain')) {
+        return new Response(JSON.stringify([{ name: 'search' }, { name: 'get_page' }]));
+      }
+      return new Response(JSON.stringify({ key: 'pmbrain' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await configureQwenPawDesktopIntegration(
+      'http://127.0.0.1:3131/mcp',
+      'pmbrain-secret',
+      home,
+      home,
+      request,
+    );
+
+    expect(calls.map(call => call.method)).toEqual(['GET', 'PUT', 'GET']);
+    expect(calls[1].body?.headers.Authorization).toBe('Bearer pmbrain-secret');
+    expect(calls[1].body?.transport).toBe('streamable_http');
+    expect(result.path).toBe(driver);
+    expect(result.toolCount).toBe(2);
+    expect(result.backup).not.toBeNull();
+    expect(readFileSync(result.backup!, 'utf8')).toBe('name: pmbrain\n');
+  });
+
+  test('creates QwenPaw 2.x through its local API when PMBrain is absent', async () => {
+    const home = tempFile('home');
+    const root = join(home, '.qwenpaw');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'desktop_port'), '60913');
+    const calls: Array<{ url: string; method: string; body?: Record<string, any> }> = [];
+    const request = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      calls.push({ url, method, body });
+      if (url.endsWith('/api/mcp/pmbrain') && method === 'GET') return new Response('', { status: 404 });
+      if (url.endsWith('/api/mcp/tools/pmbrain')) return new Response('[]');
+      return new Response(JSON.stringify({ key: 'pmbrain' }), { status: 201 });
+    }) as typeof fetch;
+
+    await configureQwenPawDesktopIntegration(
+      'http://127.0.0.1:3131/mcp',
+      'secret',
+      home,
+      home,
+      request,
+    );
+    expect(calls.map(call => call.method)).toEqual(['GET', 'POST', 'GET']);
+    expect(calls[1].body?.client_key).toBe('pmbrain');
+    expect(calls[1].body?.client.headers.Authorization).toBe('Bearer secret');
   });
 
   test('replaces only the managed Codex block', () => {

@@ -1756,6 +1756,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // launchd-spawned subprocesses that don't propagate ~/.zshrc-sourced keys.
   const envFromConfig: Record<string, string> = {};
   if (c.openai_api_key) envFromConfig.OPENAI_API_KEY = c.openai_api_key;
+  if (c.custom_openai_api_key) envFromConfig.CUSTOM_OPENAI_API_KEY = c.custom_openai_api_key;
   if (c.mimo_api_key) envFromConfig.MIMO_API_KEY = c.mimo_api_key;
   if (c.zhipu_api_key) envFromConfig.ZHIPUAI_API_KEY = c.zhipu_api_key;
   if (c.deepseek_api_key) envFromConfig.DEEPSEEK_API_KEY = c.deepseek_api_key;
@@ -1774,6 +1775,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // recipe's base_url_default (localhost:8080). Same fix applies to
   // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
+  if (process.env.CUSTOM_OPENAI_BASE_URL) envBaseUrls['custom-openai'] = process.env.CUSTOM_OPENAI_BASE_URL;
   if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
   // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
   // env var because --reranking and --embeddings are mutually exclusive at

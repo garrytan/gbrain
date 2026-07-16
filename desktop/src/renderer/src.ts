@@ -3,6 +3,7 @@ import type {
   AdvancedModelConfig,
   AdvancedModelTier,
   CredentialKind,
+  DesktopCustomProvider,
   DesktopSystemSettingsPayload,
   DesktopSystemSettingsState,
   DesktopSetupState,
@@ -31,7 +32,10 @@ let advancedModelsLoaded = false;
 let advancedOverrides: Partial<Record<AdvancedModelTier, string>> = {};
 let loadedKnowledgeDirectory = '';
 let loadedKnowledgeSourceId = '';
+let customProviderDraft: DesktopCustomProvider | null = null;
+let customProviderTarget: ModelKind | null = null;
 const providerModels: Record<'chat' | 'embedding', string[]> = { chat: [], embedding: [] };
+const previousProviderSelection: Record<'chat' | 'embedding', string> = { chat: '', embedding: '' };
 const advancedProviderModels: Record<AdvancedModelTier, string[]> = {
   utility: [],
   reasoning: [],
@@ -138,6 +142,7 @@ function providerKeyId(provider: string): string | null {
     return '__none__';
   }
   if (normalized === 'zeroentropyai') return 'zeroentropy';
+  if (normalized === 'custom-openai') return 'customOpenai';
   if (['mimo', 'zhipu', 'deepseek', 'openai', 'anthropic',
     'google', 'voyage', 'groq', 'together', 'openrouter',
     'minimax', 'dashscope',
@@ -168,9 +173,80 @@ function syncProviderKeyField(kind: ModelKind): void {
   const input = $<HTMLInputElement>(`#${kind}-api-key`);
   const keyId = providerKeyId(provider);
   const local = keyId === '__none__';
+  const optional = normalizeProviderForModel(provider) === 'custom-openai';
   input.disabled = local;
-  input.placeholder = local ? '本地模型无需 API Key' : '';
+  input.placeholder = local ? '本地模型无需 API Key' : optional ? '可选；本地接口通常无需 API Key' : '';
   input.value = keyId && keyId !== '__none__' ? state?.setup.current.keyValues[keyId] || '' : '';
+}
+
+function setCustomProviderError(message = ''): void {
+  const error = $('#custom-provider-error');
+  error.textContent = message;
+  error.hidden = !message;
+}
+
+function renderCustomProvider(): void {
+  const configured = Boolean(customProviderDraft);
+  $('#custom-provider-bar').classList.toggle('configured', configured);
+  $('#custom-provider-summary-title').textContent = customProviderDraft?.displayName || '自定义 OpenAI 兼容接口';
+  $('#custom-provider-summary-url').textContent = customProviderDraft?.baseUrl
+    || '适用于本机或局域网中的 Qwen、vLLM、LM Studio、Xinference、LocalAI。';
+  $('#open-custom-provider').querySelector('span')!.textContent = configured ? '编辑自定义接口' : '添加自定义接口';
+  document.querySelectorAll<HTMLOptionElement>('option[value="custom-openai"]').forEach(option => {
+    option.textContent = customProviderDraft?.displayName || '自定义 OpenAI 接口';
+  });
+}
+
+function openCustomProvider(target: ModelKind | null = null): void {
+  customProviderTarget = target;
+  ($<HTMLInputElement>('#custom-provider-name')).value = customProviderDraft?.displayName || '';
+  ($<HTMLInputElement>('#custom-provider-base-url')).value = customProviderDraft?.baseUrl || '';
+  $('#custom-provider-title').textContent = customProviderDraft ? '编辑自定义接口' : '添加自定义接口';
+  setCustomProviderError();
+  const dialog = $<HTMLDialogElement>('#custom-provider-dialog');
+  dialog.showModal();
+  setTimeout(() => $<HTMLInputElement>(customProviderDraft ? '#custom-provider-base-url' : '#custom-provider-name').focus(), 0);
+}
+
+function closeCustomProvider(): void {
+  customProviderTarget = null;
+  $<HTMLDialogElement>('#custom-provider-dialog').close();
+}
+
+function confirmCustomProvider(): void {
+  const displayName = ($<HTMLInputElement>('#custom-provider-name')).value.trim();
+  const rawBaseUrl = ($<HTMLInputElement>('#custom-provider-base-url')).value.trim();
+  if (!displayName) {
+    setCustomProviderError('请填写显示名称，例如“本地 Qwen”。');
+    return;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawBaseUrl);
+  } catch {
+    setCustomProviderError('Base URL 格式无效，请填写完整的 http:// 或 https:// 地址。');
+    return;
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    setCustomProviderError('Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。');
+    return;
+  }
+  customProviderDraft = {
+    id: 'custom-openai',
+    displayName,
+    baseUrl: rawBaseUrl.replace(/\/+$/, ''),
+  };
+  const target = customProviderTarget;
+  customProviderTarget = null;
+  renderCustomProvider();
+  $<HTMLDialogElement>('#custom-provider-dialog').close();
+  if (target) {
+    const select = $<HTMLSelectElement>(`#${target}-provider`);
+    select.value = 'custom-openai';
+    previousProviderSelection[target] = 'custom-openai';
+    syncProviderKeyField(target);
+    void refreshProviderModels(target, true);
+  }
 }
 
 function renderModelDropdown(kind: 'chat' | 'embedding'): void {
@@ -200,6 +276,16 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
     providerModels[kind] = [];
     status.textContent = '';
     status.hidden = true;
+    return;
+  }
+
+  if (provider === 'custom-openai') {
+    providerModels[kind] = [];
+    if (chooseDefault) input.value = '';
+    status.textContent = customProviderDraft
+      ? `接口：${customProviderDraft.baseUrl}。请输入该接口实际提供的模型 ID。`
+      : '请先添加自定义接口并填写 Base URL。';
+    status.hidden = false;
     return;
   }
 
@@ -388,7 +474,9 @@ function renderIntegrations(integrations: IntegrationInfo[]): void {
     const title = document.createElement('h3'); title.textContent = item.name;
     const path = document.createElement('p'); path.textContent = item.path ?? '通过 Claude CLI / GUI 接入';
     const note = document.createElement('small');
-    note.textContent = item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
+    note.textContent = item.id === 'qwenpaw'
+      ? '通过本机 API 写入 Bearer 并验证，不使用 OAuth'
+      : item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
     const button = document.createElement('button');
     button.className = 'solid';
     if (item.automatic) {
@@ -814,6 +902,8 @@ async function saveSystemSettings(): Promise<void> {
 function populate(next: DesktopSetupState): void {
   state = next;
   const { setup } = next;
+  customProviderDraft = setup.current.customProvider ? { ...setup.current.customProvider } : null;
+  renderCustomProvider();
   const activePanel = (document.querySelector<HTMLElement>('.panel.active')?.id.replace('panel-', '') || 'basic') as Panel;
   switchPanel(activePanel);
   $('#existing-config').hidden = setup.needsSetup;
@@ -836,6 +926,8 @@ function populate(next: DesktopSetupState): void {
   ($<HTMLSelectElement>('#chat-provider')).value = chat.provider;
   ($<HTMLInputElement>('#chat-model-name')).value = chat.model;
   ($<HTMLSelectElement>('#embedding-provider')).value = embedding.provider === 'zeroentropyai' ? 'zeroentropy' : embedding.provider;
+  previousProviderSelection.chat = ($<HTMLSelectElement>('#chat-provider')).value;
+  previousProviderSelection.embedding = ($<HTMLSelectElement>('#embedding-provider')).value;
   ($<HTMLInputElement>('#embedding-model-name')).value = embedding.model;
   const chatKey = providerKeyId(chat.provider);
   const embeddingKey = providerKeyId(embedding.provider);
@@ -936,6 +1028,11 @@ async function save(): Promise<void> {
     setNotice('error', '请选择向量化模型厂商');
     return;
   }
+  if ((chatProvider === 'custom-openai' || embeddingProvider === 'custom-openai') && !customProviderDraft) {
+    setNotice('error', '请先添加自定义接口并填写 Base URL。');
+    openCustomProvider(chatProvider === 'custom-openai' ? 'chat' : 'embedding');
+    return;
+  }
 
   // 校验：模型名不能为空
   const chatModelName = ($<HTMLInputElement>('#chat-model-name')).value.trim();
@@ -973,19 +1070,19 @@ async function save(): Promise<void> {
   // 需要 Key 的厂商才保存 Key
   if (chatKey && chatKey !== '__none__') {
     const chatKeyValue = ($<HTMLInputElement>('#chat-api-key')).value.trim();
-    if (!chatKeyValue) {
+    if (!chatKeyValue && chatProvider !== 'custom-openai') {
       setNotice('error', `厂商 ${chatProvider} 需要填写 API Key`);
       return;
     }
-    (keys as Record<string, string>)[chatKey] = chatKeyValue;
+    if (chatKeyValue) (keys as Record<string, string>)[chatKey] = chatKeyValue;
   }
   if (embeddingKey && embeddingKey !== '__none__') {
     const embeddingKeyValue = ($<HTMLInputElement>('#embedding-api-key')).value.trim();
-    if (!embeddingKeyValue) {
+    if (!embeddingKeyValue && embeddingProvider !== 'custom-openai') {
       setNotice('error', `厂商 ${embeddingProvider} 需要填写 API Key`);
       return;
     }
-    (keys as Record<string, string>)[embeddingKey] = embeddingKeyValue;
+    if (embeddingKeyValue) (keys as Record<string, string>)[embeddingKey] = embeddingKeyValue;
   }
   const knowledgeDirectory = ($<HTMLInputElement>('#knowledge-directory')).value;
   const knowledgeSourceId = ($<HTMLInputElement>('#knowledge-source-id')).value;
@@ -1002,6 +1099,7 @@ async function save(): Promise<void> {
       chatModel,
       embeddingModel,
     },
+    customProvider: customProviderDraft ?? undefined,
     keys,
   };
   const firstSetup = state?.setup.needsSetup ?? true;
@@ -1036,7 +1134,10 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
   setNotice('error'); setNotice('success');
   button.disabled = true; button.textContent = '正在验证…';
   try {
-    const result = await window.pmbrainDesktop.configureIntegration(client, selectedCredential());
+    const result = await window.pmbrainDesktop.configureIntegration(
+      client,
+      client === 'qwenpaw' ? 'api_key' : selectedCredential(),
+    );
     lastResult = result.snippet;
     $('#result-title').textContent = `${client} 配置结果`;
     $('#result-content').textContent = result.snippet;
@@ -1050,7 +1151,14 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
     $('#result-console').hidden = false;
     state = await window.pmbrainDesktop.getSetup();
     renderIntegrations(state.integrations);
-    setNotice('success', result.configured ? `${client} 已接入 PMBrain。重启客户端后生效。` : `${client} 凭证已生成。`);
+    setNotice(
+      'success',
+      result.configured
+        ? client === 'qwenpaw'
+          ? 'QwenPaw 已接入 PMBrain，配置会由 QwenPaw 自动热加载。'
+          : `${client} 已接入 PMBrain。重启客户端后生效。`
+        : `${client} 凭证已生成。`,
+    );
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));
   } finally {
@@ -1071,10 +1179,25 @@ $<HTMLInputElement>('#shared-can-write').addEventListener('change', () => {
 });
 (['chat', 'embedding'] as const).forEach(kind => {
   $<HTMLSelectElement>(`#${kind}-provider`).addEventListener('change', () => {
+    const select = $<HTMLSelectElement>(`#${kind}-provider`);
+    if (select.value === 'custom-openai' && !customProviderDraft) {
+      select.value = previousProviderSelection[kind];
+      openCustomProvider(kind);
+      return;
+    }
+    previousProviderSelection[kind] = select.value;
     syncProviderKeyField(kind);
     void refreshProviderModels(kind, true);
   });
 });
+$<HTMLButtonElement>('#open-custom-provider').addEventListener('click', () => openCustomProvider());
+$<HTMLButtonElement>('#custom-provider-close').addEventListener('click', closeCustomProvider);
+$<HTMLButtonElement>('#custom-provider-cancel').addEventListener('click', closeCustomProvider);
+$<HTMLFormElement>('#custom-provider-form').addEventListener('submit', event => {
+  event.preventDefault();
+  confirmCustomProvider();
+});
+$<HTMLDialogElement>('#custom-provider-dialog').addEventListener('close', () => { customProviderTarget = null; });
 ADVANCED_TIERS.forEach(tier => {
   $<HTMLSelectElement>(`#advanced-${tier}-provider`).addEventListener('change', () => {
     void refreshAdvancedProviderModels(tier, true);

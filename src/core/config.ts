@@ -48,6 +48,7 @@ export interface GBrainConfig {
     theme?: 'system' | 'light' | 'dark';
   };
   openai_api_key?: string;
+  custom_openai_api_key?: string;
   mimo_api_key?: string;
   zhipu_api_key?: string;
   deepseek_api_key?: string;
@@ -353,6 +354,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.CUSTOM_OPENAI_API_KEY ? { custom_openai_api_key: process.env.CUSTOM_OPENAI_API_KEY } : {}),
     ...(process.env.MIMO_API_KEY ? { mimo_api_key: process.env.MIMO_API_KEY } : {}),
     ...(process.env.ZHIPUAI_API_KEY ? { zhipu_api_key: process.env.ZHIPUAI_API_KEY } : {}),
     ...(process.env.DEEPSEEK_API_KEY ? { deepseek_api_key: process.env.DEEPSEEK_API_KEY } : {}),
@@ -623,6 +625,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'admin_bootstrap_token',
   'database_path',
   'openai_api_key',
+  'custom_openai_api_key',
   'mimo_api_key',
   'zhipu_api_key',
   'deepseek_api_key',
