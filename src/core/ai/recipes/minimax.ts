@@ -38,6 +38,84 @@ export const minimax: Recipe = {
       // halving in the gateway catches token-limit errors at runtime.
       max_batch_tokens: 4096,
     },
+    chat: {
+      models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
+      supports_tools: false,
+      supports_prompt_cache: false,
+      max_context_tokens: 1_000_000,
+    },
+  },
+  resolveOpenAICompatConfig(env: Record<string, string | undefined>) {
+    // MiniMax uses the same Authorization header shape as the standard
+    // openai-compatible path; auth is handled by the gateway via
+    // applyResolveAuth so we return baseURL only.
+    const baseURL = env.MINIMAX_BASE_URL ?? this.base_url_default!;
+    // Custom fetch wrapper:
+    //  - Request:  rename `input` → `texts`, inject `type: 'db'`
+    //  - Response: rewrite `{vectors: [[...]]}` → `{data: [{embedding}]}`
+    //    so the AI SDK's openai-compatible Zod schema parses it correctly.
+    const wrappedFetch = (async (input: any, init: any) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      let baseInit = init ?? {};
+      if (baseInit.body && typeof baseInit.body === 'string') {
+        try {
+          const parsed = JSON.parse(baseInit.body);
+          if (parsed && typeof parsed === 'object') {
+            let mutated = false;
+            // Rewrite: AI SDK sends `input: [...]`, MiniMax wants `texts: [...]`.
+            if (parsed.input !== undefined && parsed.texts === undefined) {
+              parsed.texts = parsed.input;
+              delete parsed.input;
+              mutated = true;
+            }
+            // Always inject type:'db' for the document (indexing) side.
+            if (parsed.type === undefined) {
+              parsed.type = 'db';
+              mutated = true;
+            }
+            if (mutated) {
+              const headers = new Headers(baseInit.headers ?? {});
+              headers.delete('content-length');
+              baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+            }
+          }
+        } catch {
+          // Body wasn't JSON — pass through untouched.
+        }
+      }
+      const resp = await fetch(url, baseInit);
+      // Rewrite response: MiniMax → `{vectors: [[...]]}`, AI SDK wants `{data: [{embedding}]}`.
+      const contentType = resp.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json')) {
+        const json = await resp.json();
+        if (json && typeof json === 'object' && Array.isArray(json.vectors)) {
+          const rewritten = {
+            object: 'list',
+            data: json.vectors.map((vec: number[], i: number) => ({
+              object: 'embedding',
+              embedding: vec,
+              index: i,
+            })),
+            model: json.model ?? 'embo-01',
+            usage: {
+              prompt_tokens: json.total_tokens ?? 0,
+              total_tokens: json.total_tokens ?? 0,
+            },
+          };
+          return new Response(JSON.stringify(rewritten), {
+            status: resp.status,
+            statusText: resp.statusText,
+            headers: resp.headers,
+          });
+        }
+      }
+      return resp;
+    }) as typeof fetch;
+    return { baseURL, fetch: wrappedFetch };
   },
   setup_hint:
     'Get an API key at https://www.minimaxi.com, then `export MINIMAX_API_KEY=...`',
