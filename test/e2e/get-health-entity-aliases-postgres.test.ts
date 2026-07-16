@@ -1,8 +1,8 @@
 /**
- * v0.42 E2E (real Postgres): verify legacy entity health metrics versus
- * explicit entity aliases.
- *
- * Run: DATABASE_URL=... bun test test/e2e/get-health-entity-aliases-postgres.test.ts
+ * [test] 2026-07-16
+ * Context: Validate Postgres health reporting where entity health coverage is exposed through explicit aliases without breaking legacy behavior.
+ * Invariant: Health is still zero/null when no entities exist, and coverage aliases remain equal to legacy link/timeline coverage when entities are present.
+ * Rejected alternative: Added no widened PGLite/unit path because that would not execute the real Postgres SQL path where this regression is observable.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
