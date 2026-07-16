@@ -27,7 +27,16 @@ function res(slug: string, score: number, title = slug): SearchResult {
 
 describe('applyAliasHop', () => {
   test('injects an absent canonical when the query matches its alias', async () => {
-    await engine.putPage('projects/mingtang', { type: 'note', title: 'The Mingtang', compiled_truth: 'Indoor Greek amphitheater.' });
+    await engine.putPage('projects/mingtang', {
+      type: 'note',
+      title: 'The Mingtang',
+      compiled_truth: 'Indoor Greek amphitheater.',
+      frontmatter: {
+        message_id: '<mingtang@example.com>',
+        thread_id: 'thread-mingtang',
+        subject: 'Mingtang project update',
+      },
+    });
     await engine.setPageAliases('projects/mingtang', 'default', ['hall of light', '明堂']);
 
     const organic = [res('notes/unrelated', 0.5)];
@@ -38,6 +47,9 @@ describe('applyAliasHop', () => {
     expect(hit!.alias_hit).toBe(true);
     expect(out[0].slug).toBe('projects/mingtang'); // injected at top-of-organic + ε
     expect(hit!.score).toBeGreaterThan(0.5);
+    expect(hit!.message_id).toBe('<mingtang@example.com>');
+    expect(hit!.thread_id).toBe('thread-mingtang');
+    expect(hit!.source_subject).toBe('Mingtang project update');
   });
 
   test('romanization/CJK alias also resolves', async () => {

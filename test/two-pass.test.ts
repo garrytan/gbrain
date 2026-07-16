@@ -45,6 +45,11 @@ describe('Layer 7 (A2) — expandAnchors', () => {
       title: 'src/b.ts (typescript)',
       compiled_truth: 'export function b() { return c(); }',
       timeline: '',
+      frontmatter: {
+        message_id: '<code-review@example.com>',
+        thread_id: 'thread-code-review',
+        subject: 'Code review notes',
+      },
     });
     await engine.upsertChunks('src-b-ts', [{
       chunk_index: 0,
@@ -161,6 +166,10 @@ describe('Layer 7 (A2) — expandAnchors', () => {
     const slugs = rows.map(r => r.slug);
     expect(slugs).toContain('src-b-ts');
     expect(slugs).toContain('src-c-ts');
+    const b = rows.find(r => r.slug === 'src-b-ts');
+    expect(b?.message_id).toBe('<code-review@example.com>');
+    expect(b?.thread_id).toBe('thread-code-review');
+    expect(b?.source_subject).toBe('Code review notes');
   });
 
   test('hydrateChunks with empty array returns []', async () => {

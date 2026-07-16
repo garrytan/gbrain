@@ -14,6 +14,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+import { projectEmailCitationMetadata } from '../utils.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import {
   resolveAdaptiveReturn,
@@ -694,6 +695,7 @@ export async function applyAliasHop(
       score: injectScore,
       base_score: injectScore,
       alias_hit: true,
+      ...projectEmailCitationMetadata(page.frontmatter),
     } as SearchResult);
   }
   out.sort((a, b) => b.score - a.score);

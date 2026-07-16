@@ -332,6 +332,24 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
+export function projectEmailCitationMetadata(
+  record: Record<string, unknown> | null | undefined,
+): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
+  if (!record) return {};
+  const metadata: Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> = {};
+  if (typeof record.message_id === 'string' && record.message_id.trim().length > 0) {
+    metadata.message_id = record.message_id;
+  }
+  if (typeof record.thread_id === 'string' && record.thread_id.length > 0) {
+    metadata.thread_id = record.thread_id;
+  }
+  const subject = record.source_subject ?? record.subject;
+  if (metadata.message_id && typeof subject === 'string' && subject.length > 0) {
+    metadata.source_subject = subject;
+  }
+  return metadata;
+}
+
 export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
   const result: SearchResult = {
     slug: row.slug as string,
@@ -380,19 +398,7 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
       result.effective_date_source = raw;
     }
   }
-  if (typeof row.message_id === 'string' && row.message_id.trim().length > 0) {
-    result.message_id = row.message_id;
-  }
-  if (typeof row.thread_id === 'string' && row.thread_id.length > 0) {
-    result.thread_id = row.thread_id;
-  }
-  if (
-    result.message_id &&
-    typeof row.source_subject === 'string' &&
-    row.source_subject.length > 0
-  ) {
-    result.source_subject = row.source_subject;
-  }
+  Object.assign(result, projectEmailCitationMetadata(row));
   return result;
 }
 

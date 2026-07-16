@@ -23,7 +23,17 @@ beforeAll(async () => {
 
   await eng.putPage('companies/widget-co', { type: 'company', title: 'Widget Co', compiled_truth: 'A payments company.', timeline: '' });
   // The investor's body deliberately NEVER mentions Widget Co — only the edge connects them.
-  await eng.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice is a seed-stage investor based in Lisbon.', timeline: '' });
+  await eng.putPage('people/alice-example', {
+    type: 'person',
+    title: 'Alice Example',
+    compiled_truth: 'Alice is a seed-stage investor based in Lisbon.',
+    timeline: '',
+    frontmatter: {
+      message_id: '<alice-investor@example.com>',
+      thread_id: 'thread-alice-investor',
+      subject: 'Investor profile update',
+    },
+  });
   await eng.upsertChunks('people/alice-example', [{
     chunk_index: 0, chunk_text: 'Alice is a seed-stage investor based in Lisbon.',
     chunk_source: 'compiled_truth', embedding: new Float32Array(dim), token_count: 8,
@@ -43,6 +53,9 @@ describe('buildRelationalArm', () => {
     expect(alice!.relational_seed).toBe('companies/widget-co');
     // chunk-backed page → reinforces a REAL chunk id (not synthetic 0).
     expect(alice!.chunk_id).toBeGreaterThan(0);
+    expect(alice!.message_id).toBe('<alice-investor@example.com>');
+    expect(alice!.thread_id).toBe('thread-alice-investor');
+    expect(alice!.source_subject).toBe('Investor profile update');
   });
 
   test('non-relational query is a pure no-op', async () => {

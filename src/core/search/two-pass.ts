@@ -23,6 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
+import { projectEmailCitationMetadata } from '../utils.ts';
 
 const MAX_WALK_DEPTH = 2;
 const NEIGHBOR_CAP_PER_HOP = 50;
@@ -193,9 +194,13 @@ export async function hydrateChunks(
   const rows = await engine.executeRaw<{
     slug: string; page_id: number; title: string; type: string; source_id: string;
     chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
+    message_id: string | null; thread_id: string | null; source_subject: string | null;
   }>(
     `SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
-            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            p.frontmatter->>'message_id' AS message_id,
+            p.frontmatter->>'thread_id' AS thread_id,
+            p.frontmatter->>'subject' AS source_subject
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        WHERE cc.id = ANY($1::int[])`,
@@ -213,5 +218,6 @@ export async function hydrateChunks(
     score: 0, // two-pass caller assigns scores.
     stale: false,
     source_id: r.source_id,
+    ...projectEmailCitationMetadata(r),
   } as SearchResult));
 }

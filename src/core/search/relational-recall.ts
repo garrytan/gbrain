@@ -29,6 +29,7 @@ import type { SearchResult, PageType, RelationalFanoutRow } from '../types.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
+import { projectEmailCitationMetadata } from '../utils.ts';
 
 export interface RelationalArmOpts {
   sourceId?: string;
@@ -108,9 +109,13 @@ async function hydrate(
   const slugs = Array.from(new Set(rows.map(r => r.slug)));
   const pageRows = await engine.executeRaw<{
     page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null;
+    message_id: string | null; thread_id: string | null; source_subject: string | null;
   }>(
     `SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type,
-            LEFT(p.compiled_truth, 240) AS synopsis
+            LEFT(p.compiled_truth, 240) AS synopsis,
+            p.frontmatter->>'message_id' AS message_id,
+            p.frontmatter->>'thread_id' AS thread_id,
+            p.frontmatter->>'subject' AS source_subject
      FROM pages p
      WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL`,
     [slugs],
@@ -141,6 +146,7 @@ async function hydrate(
       relational_seed: seedSlug,
       relational_hop: r.hop,
       relational_path: r.path,
+      ...projectEmailCitationMetadata(pr),
     });
   }
   return out;

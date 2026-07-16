@@ -73,10 +73,8 @@ beforeAll(async () => {
   // early-returns BEFORE applyReranker, so a setup that lacks embedding
   // would never exercise the reranker integration.
   //
-  // searchVector returns empty lists because chunks have NULL embeddings;
-  // that's fine — vectorLists is `[[]]` (length 1, not 0), so the
-  // keyword-only branch is skipped and the main path runs RRF + dedup +
-  // reranker + budget.
+  // Most chunks have NULL embeddings; the email fixture below carries one so
+  // the main path runs vector fusion + RRF + dedup + reranker + budget.
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: DIMS,
@@ -129,22 +127,39 @@ describe('hybridSearch — reranker disabled (pass-through)', () => {
 describe('hybridSearchCached — email metadata through vector-first fusion', () => {
   test('fresh cache miss preserves metadata through vector-first RRF duplicate handling', async () => {
     await engine.executeRaw(`DELETE FROM query_cache`);
-    let cacheStatus: string | undefined;
+    const cacheStatuses: string[] = [];
     const out = await hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
       limit: 10,
       useCache: true,
       autocut: false,
       graph_signals: false,
-      onMeta: (meta) => { cacheStatus = meta.cache?.status; },
+      onMeta: (meta) => {
+        if (meta.cache?.status) cacheStatuses.push(meta.cache.status);
+      },
     });
 
-    expect(cacheStatus).toBe('miss');
+    expect(cacheStatuses.at(-1)).toBe('miss');
     const matches = out.filter(r => r.slug === 'mail/vector-first');
     expect(matches).toHaveLength(1);
     expect(matches[0].message_id).toBe('<vector-first@example.com>');
     expect(matches[0].thread_id).toBe('thread-vector-first');
     expect(matches[0].source_subject).toBe('Vector-first exact subject');
     await awaitPendingSearchCacheWrites();
+
+    const cached = await hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
+      limit: 10,
+      useCache: true,
+      autocut: false,
+      graph_signals: false,
+      onMeta: (meta) => {
+        if (meta.cache?.status) cacheStatuses.push(meta.cache.status);
+      },
+    });
+    expect(cacheStatuses.at(-1)).toBe('hit');
+    const cachedMatch = cached.find(r => r.slug === 'mail/vector-first');
+    expect(cachedMatch?.message_id).toBe('<vector-first@example.com>');
+    expect(cachedMatch?.thread_id).toBe('thread-vector-first');
+    expect(cachedMatch?.source_subject).toBe('Vector-first exact subject');
   });
 });
 
