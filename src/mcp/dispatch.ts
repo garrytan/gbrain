@@ -7,9 +7,33 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { context, propagation, trace } from '@opentelemetry/api';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { profileStage } from '../core/search/profiling.ts';
+
+propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+
+export interface PrivateTraceCarrier {
+  traceparent?: string;
+  tracestate?: string;
+}
+
+/** Keep the private carrier limited to standard W3C trace fields. */
+export function privateTraceCarrier(meta: Record<string, unknown> | undefined): PrivateTraceCarrier {
+  if (!meta) return {};
+  return {
+    ...(typeof meta.traceparent === 'string' ? { traceparent: meta.traceparent } : {}),
+    ...(typeof meta.tracestate === 'string' ? { tracestate: meta.tracestate } : {}),
+  };
+}
+
+export function extractPrivateTraceContext(carrier: PrivateTraceCarrier | undefined) {
+  if (!carrier || (!carrier.traceparent && !carrier.tracestate)) return context.active();
+  return propagation.extract(context.active(), carrier);
+}
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -70,6 +94,8 @@ export interface DispatchOpts {
    * was replaced by dispatchToolCall.
    */
   auth?: AuthInfo;
+  /** Internal MCP `_meta` carrier; never part of operation params or results. */
+  privateTraceMeta?: Record<string, unknown>;
 }
 
 /**
@@ -248,24 +274,28 @@ export async function dispatchToolCall(
   }
 
   const ctx = buildOperationContext(engine, safeParams, opts);
+  const parentContext = extractPrivateTraceContext(privateTraceCarrier(opts.privateTraceMeta));
 
   try {
-    const result = await op.handler(ctx, safeParams);
-    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
-    // The hook is wrapped in its own try/catch — any DB blip / cache miss /
-    // helper crash degrades to no `_meta` rather than flipping the whole
-    // tool call to error.
-    if (opts.metaHook) {
-      try {
-        const meta = await opts.metaHook(name, ctx);
-        if (meta && Object.keys(meta).length > 0) out._meta = meta;
-      } catch (metaErr) {
-        const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
-        ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
+    return await context.with(parentContext, async () => {
+      const result = await op.handler(ctx, safeParams);
+      const serialized = await profileStage('serialize', {}, () => JSON.stringify(result, null, 2));
+      const out: ToolResult = { content: [{ type: 'text', text: serialized }] };
+      // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
+      // The hook is wrapped in its own try/catch — any DB blip / cache miss /
+      // helper crash degrades to no `_meta` rather than flipping the whole
+      // tool call to error.
+      if (opts.metaHook) {
+        try {
+          const meta = await profileStage('hot_memory', {}, () => opts.metaHook!(name, ctx));
+          if (meta && Object.keys(meta).length > 0) out._meta = meta;
+        } catch (metaErr) {
+          const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
+          ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
+        }
       }
-    }
-    return out;
+      return out;
+    });
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };

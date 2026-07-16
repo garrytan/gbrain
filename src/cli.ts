@@ -33,6 +33,7 @@ import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { VERSION } from './version.ts';
+import { initializeQueryProfiling } from './core/search/profiling-runtime.ts';
 
 // Build CLI name -> operation lookup
 const cliOps = new Map<string, Operation>();
@@ -227,6 +228,7 @@ async function main() {
   // only, fail-open, never blocks. Skips the update path's own commands + sets
   // GBRAIN_SKIP_STARTUP_HOOKS for their children. Runs for every real command.
   maybeEmitUpdateMarker(command);
+  initializeQueryProfiling();
 
   const subArgs = args.slice(1);
 

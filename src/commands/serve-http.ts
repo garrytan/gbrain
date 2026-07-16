@@ -34,6 +34,7 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
+import { initializeQueryProfiling } from '../core/search/profiling-runtime.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
@@ -429,6 +430,7 @@ export function skillPublishStatus(publishSkills: boolean): { bannerValue: strin
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
+  initializeQueryProfiling();
   const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
@@ -1547,7 +1549,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: params } = request.params;
+      const { name, arguments: params, _meta: privateTraceMeta } = request.params;
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
         // v0.28.10: persist unknown-op attempts. Operators investigating
@@ -1668,6 +1670,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           // but forgot to pass authInfo; whoami fell through to the
           // unknown_transport throw because ctx.auth was undefined.
           auth: authInfo,
+          privateTraceMeta,
           logger: {
             info: (msg: string) => console.error(`[INFO] ${msg}`),
             warn: (msg: string) => console.error(`[WARN] ${msg}`),

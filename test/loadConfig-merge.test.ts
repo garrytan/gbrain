@@ -9,6 +9,7 @@ import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
 
 interface FakeEngine {
   getConfig(key: string): Promise<string | null | undefined>;
+  executeRaw?: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
 }
 
 function makeEngine(map: Record<string, string | null | undefined>): FakeEngine {
@@ -45,6 +46,32 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     const merged = await loadConfigWithEngine(engine, null);
     expect(merged?.search_embedding_column).toBe('embedding_voyage');
     expect(merged?.embedding_columns?.embedding_voyage?.dimensions).toBe(1024);
+  });
+
+  test('uses one batched DB read when the engine exposes executeRaw', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const engine: FakeEngine = {
+      async getConfig() {
+        throw new Error('the batch path should not call getConfig');
+      },
+      async executeRaw<T>(sql: string, params?: unknown[]) {
+        queries.push({ sql, params });
+        return [
+          { key: 'embedding_multimodal', value: 'true' },
+          { key: 'search_embedding_column', value: 'embedding_voyage' },
+          { key: 'content_sanity.bytes_warn', value: '500000' },
+        ] as T[];
+      },
+    };
+
+    const merged = await loadConfigWithEngine(engine, { engine: 'postgres' });
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.sql).toContain('WHERE key = ANY($1)');
+    expect((queries[0]?.params?.[0] as string[]).length).toBeGreaterThan(10);
+    expect(merged?.embedding_multimodal).toBe(true);
+    expect(merged?.search_embedding_column).toBe('embedding_voyage');
+    expect(merged?.content_sanity?.bytes_warn).toBe(500000);
   });
 
   test('DB flag fills in when file/env did not set it', async () => {

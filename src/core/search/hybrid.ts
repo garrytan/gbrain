@@ -12,6 +12,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
+import type { ResolvedColumn } from '../types.ts';
+import type { GBrainConfig } from '../config.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
@@ -41,12 +43,70 @@ import {
 } from './intent-weights.ts';
 import {
   SemanticQueryCache,
-  loadCacheConfig,
 } from './query-cache.ts';
+import {
+  knobsHash,
+  loadSearchModeConfig,
+  resolveSearchMode,
+  type ResolveSearchModeInput,
+  type ResolvedSearchKnobs,
+} from './mode.ts';
+import { profileStage, setActiveProfileAttributes } from './profiling.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 const pendingCacheWrites = new Set<Promise<unknown>>();
+const HYBRID_CONFIG_SNAPSHOT = Symbol('gbrain.hybrid.config-snapshot');
+
+interface HybridConfigSnapshot {
+  modeInput: ResolveSearchModeInput;
+  resolvedMode: ResolvedSearchKnobs;
+  mergedCfg: GBrainConfig | null;
+  resolvedCol: ResolvedColumn;
+}
+
+function modePerCallOptions(opts: HybridSearchOpts | undefined, includeCache = false) {
+  return {
+    ...(includeCache ? { cache_enabled: opts?.useCache } : {}),
+    intentWeighting: opts?.intentWeighting,
+    tokenBudget: opts?.tokenBudget,
+    expansion: opts?.expansion,
+    searchLimit: opts?.limit,
+    floor_ratio: opts?.floorRatio,
+    graph_signals: opts?.graph_signals,
+    autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
+    relationalRetrieval: opts?.relationalRetrieval,
+    relational_retrieval_depth: opts?.relationalRetrievalDepth,
+  };
+}
+
+function resolveHybridMode(
+  modeInput: ResolveSearchModeInput,
+  opts: HybridSearchOpts | undefined,
+  includeCache = false,
+): ResolvedSearchKnobs {
+  return resolveSearchMode({
+    mode: opts?.mode ?? modeInput.mode,
+    overrides: modeInput.overrides,
+    perCall: modePerCallOptions(opts, includeCache),
+  });
+}
+
+async function loadHybridConfigSnapshot(
+  engine: BrainEngine,
+  opts: HybridSearchOpts | undefined,
+): Promise<HybridConfigSnapshot> {
+  const modeInput = await profileStage('config_mode', { decision: 'load' }, () =>
+    loadSearchModeConfig(engine));
+  const resolvedMode = resolveHybridMode(modeInput, opts);
+  const mergedCfg = await profileStage('config_embedding', { decision: 'load' }, () =>
+    loadConfigWithEngine(engine)).catch(() => null);
+  const cfg = mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? null;
+  const resolvedCol = cfg
+    ? resolveEmbeddingColumn(opts, cfg)
+    : resolveEmbeddingColumn(opts, { engine: 'pglite' });
+  return { modeInput, resolvedMode, mergedCfg, resolvedCol };
+}
 
 /**
  * v0.42 (issue #1699) agent-warning channel. Stamps `SearchResult.content_flag`
@@ -434,6 +494,15 @@ export async function runPostFusionStages(
   results: SearchResult[],
   opts: PostFusionOpts,
 ): Promise<void> {
+  return profileStage('post_fusion', { result_count: results.length }, () =>
+    runPostFusionStagesUnprofiled(engine, results, opts));
+}
+
+async function runPostFusionStagesUnprofiled(
+  engine: import('../engine.ts').BrainEngine,
+  results: SearchResult[],
+  opts: PostFusionOpts,
+): Promise<void> {
   if (results.length === 0) return;
 
   // v0.40.4 attribution stamp (D12=A) — capture base_score ONCE at entry,
@@ -633,7 +702,7 @@ const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision
  * Fail-open: pre-v110 brains (no page_aliases table) and any lookup error
  * degrade to the input unchanged (D9). Returns a NEW array; caller re-slices.
  */
-export async function applyAliasHop(
+async function applyAliasHopUnprofiled(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
@@ -700,6 +769,16 @@ export async function applyAliasHop(
   return out;
 }
 
+export async function applyAliasHop(
+  engine: import('../engine.ts').BrainEngine,
+  results: SearchResult[],
+  query: string,
+  opts: { sourceId?: string; sourceIds?: string[] } = {},
+): Promise<SearchResult[]> {
+  return profileStage('alias_hop', { result_count: results.length }, () =>
+    applyAliasHopUnprofiled(engine, results, query, opts));
+}
+
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
   /** v0.43 — observability sink for the relational recall arm (fired/no-op,
@@ -739,6 +818,8 @@ export interface HybridSearchOpts extends SearchOpts {
    * a fresh per-call deadline. Not part of the public contract.
    */
   _queryEmbedDeadline?: QueryEmbedDeadline;
+  /** Internal immutable config snapshot shared by hybridSearchCached. */
+  [HYBRID_CONFIG_SNAPSHOT]?: HybridConfigSnapshot;
 }
 
 /**
@@ -820,53 +901,9 @@ export async function hybridSearch(
   // because eval-replay and eval-longmemeval call bare hybridSearch — and
   // per-mode evals would not test production search if modes lived only in
   // the wrapper. See `[CDX-5+6]` in the plan.
-  const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
-  const modeInput = await loadSearchModeConfig(engine);
-  const resolvedMode = resolveSearchMode({
-    // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
-    // only passes this for trusted/local callers; remote callers leave it
-    // undefined and fall through to the server-configured mode (no cost
-    // escalation). Unknown values fall back to the default in resolveSearchMode.
-    mode: opts?.mode ?? modeInput.mode,
-    overrides: modeInput.overrides,
-    perCall: {
-      intentWeighting: opts?.intentWeighting,
-      tokenBudget: opts?.tokenBudget,
-      expansion: opts?.expansion,
-      searchLimit: opts?.limit,
-      // v0.35.6.0 — floor-ratio gate thread-through. Per-call value wins
-      // over per-key config wins over mode bundle (currently undefined for
-      // all 3 bundles — pending ablation evidence).
-      floor_ratio: opts?.floorRatio,
-      // v0.40.4 — graph_signals thread-through. Per-call wins over config
-      // override wins over mode bundle. Without this thread the eval gate
-      // would be a no-op (both branches resolve to the same mode default).
-      graph_signals: opts?.graph_signals,
-      // v0.42.3.0 — autocut per-call enable (boolean ceiling override).
-      // `false` forces the full top-K; per-call wins over config + bundle.
-      // Non-boolean AutocutInput shapes (Partial) aren't a v1 per-call surface,
-      // so only the boolean toggle threads here.
-      autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
-      // v0.43 — relational recall per-call thread-through. Per-call wins over
-      // config override wins over mode bundle; without this the A/B eval gate
-      // would be a no-op (both branches resolve to the same mode default).
-      relationalRetrieval: opts?.relationalRetrieval,
-      relational_retrieval_depth: opts?.relationalRetrievalDepth,
-    },
-  });
-
-  // v0.36 (D7+D11): resolve embedding column once at entry. Single
-  // round-trip to read DB-plane config (mirrors loadSearchModeConfig).
-  // Resolver throws on unknown name with a paste-ready hint; let it
-  // propagate — a misconfig should be loud, not silently fall back.
-  // Failing cfg load (pre-config brain, mid-migration, no engine.getConfig)
-  // falls through to the file-plane sync loadConfig() — same shape, just
-  // misses DB-plane overrides.
-  const mergedCfg = await loadConfigWithEngine(engine).catch(() => null);
-  const cfgForColumn = mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? null;
-  const resolvedCol = cfgForColumn
-    ? resolveEmbeddingColumn(opts, cfgForColumn)
-    : resolveEmbeddingColumn(opts, { engine: 'pglite' });
+  const configSnapshot = opts?.[HYBRID_CONFIG_SNAPSHOT] as HybridConfigSnapshot | undefined
+    ?? await loadHybridConfigSnapshot(engine, opts);
+  const { resolvedMode, resolvedCol } = configSnapshot;
 
   const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
@@ -967,7 +1004,7 @@ export async function hybridSearch(
     ? opts.crossModal
     : (suggestions.suggestedModality ?? 'text');
   const keywordResults: SearchResult[] =
-    earlyModality === 'image' ? [] : await engine.searchKeyword(query, searchOpts);
+    earlyModality === 'image' ? [] : await profileStage('keyword', {}, () => engine.searchKeyword(query, searchOpts));
 
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
@@ -1026,13 +1063,13 @@ export async function hybridSearch(
   // path; the parser only matches text-shaped relational queries anyway.)
   let relationalList: SearchResult[] = [];
   if (resolvedMode.relationalRetrieval) {
-    relationalList = await buildRelationalArm(engine, query, {
+    relationalList = await profileStage('relational', {}, () => buildRelationalArm(engine, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       depth: resolvedMode.relational_retrieval_depth,
       limit: opts?.limit ?? resolvedMode.searchLimit,
       onMeta: opts?.onRelationalMeta,
-    });
+    }));
   }
 
   // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
@@ -1043,6 +1080,7 @@ export async function hybridSearch(
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
   if (!isAvailable('embedding', providerProbe)) {
+    setActiveProfileAttributes({ decision: 'vector_skipped', fallback: 'keyword' });
     // v0.43 — fuse the relational arm with keyword so typed-edge answers
     // survive on the no-embedding-provider path (the relational win is most
     // valuable exactly when vector is unavailable).
@@ -1142,7 +1180,7 @@ export async function hybridSearch(
   const expansionAllowed = resolvedMode.expansion && effectiveModality !== 'image';
   if (expansionAllowed && opts?.expandFn) {
     try {
-      queries = await opts.expandFn(query);
+      queries = await profileStage('expansion', {}, () => opts.expandFn!(query));
       if (queries.length === 0) queries = [query];
       // "Applied" = produced variants beyond the original, not just called.
       expansionApplied = queries.length > 1;
@@ -1253,11 +1291,11 @@ export async function hybridSearch(
       // share one ~6s budget); direct callers get a fresh deadline. On timeout
       // the embed throws → the catch below falls back to keyword-only.
       const embedDl = opts?._queryEmbedDeadline ?? makeQueryEmbedDeadline();
-      const embeddings = await Promise.all(queries.map(q => embedQueryBounded(q, embedOpts, embedDl)));
+      const embeddings = await profileStage('query_embedding', {}, () =>
+        Promise.all(queries.map(q => embedQueryBounded(q, embedOpts, embedDl))));
       queryEmbedding = embeddings[0];
-      const textLists = await Promise.all(
-        embeddings.map(emb => engine.searchVector(emb, searchOpts)),
-      );
+      const textLists = await profileStage('vector', { candidate_count: embeddings.length }, () =>
+        Promise.all(embeddings.map(emb => engine.searchVector(emb, searchOpts))));
       for (const list of textLists) {
         for (const r of list) {
           r.modality = r.modality ?? 'text';
@@ -1270,6 +1308,7 @@ export async function hybridSearch(
       }
     } catch {
       // Embedding failure is non-fatal, fall back to keyword-only
+      setActiveProfileAttributes({ fallback: 'keyword', decision: 'vector_failed' });
     }
   }
 
@@ -1360,14 +1399,16 @@ export async function hybridSearch(
     allLists.push({ list: relationalList, k: baseRrfK });
   }
 
-  let fused = rrfFusionWeighted(allLists, detail !== 'high');
+  let fused = await profileStage('fusion', { candidate_count: allLists.reduce((n, arm) => n + arm.list.length, 0) }, () =>
+    rrfFusionWeighted(allLists, detail !== 'high'));
 
   // Cosine re-scoring before dedup so semantically better chunks survive.
   // v0.36 (D9): hydrate from the active embedding column so rescore happens
   // in the same vector space the HNSW just ranked in. Pre-v0.36 this
   // always pulled from `embedding` and silently corrupted alt-column ranks.
   if (queryEmbedding) {
-    fused = await cosineReScore(engine, fused, queryEmbedding, resolvedCol.name);
+    fused = await profileStage('fusion', { decision: 'cosine_rescore', candidate_count: fused.length }, () =>
+      cosineReScore(engine, fused, queryEmbedding!, resolvedCol.name));
   }
 
   // v0.29.1: post-fusion stages (backlink + salience + recency) run via
@@ -1400,11 +1441,11 @@ export async function hybridSearch(
   if (needsExpansion) {
     const anchorSet = fused.slice(0, Math.max(10, limit));
     try {
-      const expanded = await expandAnchors(engine, anchorSet, {
+      const expanded = await profileStage('expansion', { decision: 'structural' }, () => expandAnchors(engine, anchorSet, {
         walkDepth,
         nearSymbol: opts?.nearSymbol,
         sourceId: opts?.sourceId,
-      });
+      }));
       // Resolve new chunk IDs (not already in fused) into full rows.
       const existingIds = new Set(fused.map(r => r.chunk_id));
       const newIds = expanded
@@ -1459,8 +1500,9 @@ export async function hybridSearch(
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
   const reranked = rerankerOpts.enabled
-    ? await applyReranker(query, deduped, rerankerOpts as any)
-    : deduped;
+    ? await profileStage('rerank', { model: rerankerOpts.model, timeout_ms: rerankerOpts.timeoutMs, candidate_count: deduped.length }, () =>
+      applyReranker(query, deduped, rerankerOpts as any))
+    : (setActiveProfileAttributes({ decision: 'rerank_skipped' }), deduped);
 
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
@@ -1484,12 +1526,13 @@ export async function hybridSearch(
   // survives the trim.
   const adaptiveCfg = resolveAdaptiveReturn(
     opts?.adaptiveReturn,
-    adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
+    adaptiveReturnFromConfig(configSnapshot.mergedCfg as Record<string, unknown> | null),
   );
   let returnPool = aliasHopped;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
   if (adaptiveCfg.enabled && offset === 0) {
-    const r = applyAdaptiveReturn(aliasHopped, suggestions.intent, adaptiveCfg);
+    const r = await profileStage('return_policy', { decision: 'adaptive_return' }, () =>
+      applyAdaptiveReturn(aliasHopped, suggestions.intent, adaptiveCfg));
     returnPool = r.kept;
     adaptiveDecision = r.decision;
   }
@@ -1507,7 +1550,7 @@ export async function hybridSearch(
   // never-empty failsafe (1); jumpRatio comes from the resolved mode.
   let autocutDecision: AutocutDecision | undefined;
   if (resolvedMode.autocut && offset === 0) {
-    const r = applyAutocut(
+    const r = await profileStage('return_policy', { decision: 'autocut' }, () => applyAutocut(
       returnPool,
       (x) => x.rerank_score,
       { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1 },
@@ -1515,7 +1558,7 @@ export async function hybridSearch(
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
       (x) => x.alias_hit === true,
-    );
+    ));
     returnPool = r.kept;
     autocutDecision = r.decision;
   }
@@ -1575,43 +1618,9 @@ export async function hybridSearchCached(
   // resolved knob set drives cache enable/threshold/TTL AND the knobs_hash
   // that scopes the cache row so a tokenmax write can't be served to a
   // conservative read. See [CDX-4] in the plan.
-  const { loadSearchModeConfig, resolveSearchMode, knobsHash } = await import('./mode.ts');
-  const modeInputForCache = await loadSearchModeConfig(engine);
-  const resolvedForCache = resolveSearchMode({
-    // T4/D5 — per-call mode folds into the cache key (resolved_mode is part
-    // of knobsHash) so a per-call `--mode tokenmax` read can't be served a
-    // server-default-mode cache row.
-    mode: opts?.mode ?? modeInputForCache.mode,
-    overrides: modeInputForCache.overrides,
-    perCall: {
-      cache_enabled: opts?.useCache,
-      tokenBudget: opts?.tokenBudget,
-      expansion: opts?.expansion,
-      intentWeighting: opts?.intentWeighting,
-      searchLimit: opts?.limit,
-      // v0.35.6.0 — floor-ratio threaded through cache resolver too so
-      // knobsHash() differentiates floor-on vs floor-off cache rows.
-      // Without this, a no-floor write would be served to a floor-enabled
-      // read (ranking-correctness leak, codex T1).
-      floor_ratio: opts?.floorRatio,
-      // v0.40.4 — graph_signals threaded through cache resolver too so
-      // knobsHash() includes the per-call override (KNOBS_HASH_VERSION=4
-      // folds gs= into the hash). Without this thread, a per-call
-      // override would write to one cache row but read from a different
-      // one on the next call.
-      graph_signals: opts?.graph_signals,
-      // v0.42.3.0 — autocut threaded through the cache resolver so the
-      // knobsHash `ac=` bit reflects the per-call ceiling override. Without
-      // this, an `autocut:false` (full top-K) call could be served a trimmed
-      // autocut-on cache row, or vice versa.
-      autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
-      // v0.43 — relational recall per-call thread-through. Per-call wins over
-      // config override wins over mode bundle; without this the A/B eval gate
-      // would be a no-op (both branches resolve to the same mode default).
-      relationalRetrieval: opts?.relationalRetrieval,
-      relational_retrieval_depth: opts?.relationalRetrievalDepth,
-    },
-  });
+  const configSnapshot = opts?.[HYBRID_CONFIG_SNAPSHOT] as HybridConfigSnapshot | undefined
+    ?? await loadHybridConfigSnapshot(engine, opts);
+  const resolvedForCache = resolveHybridMode(configSnapshot.modeInput, opts, true);
   // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
   // decision. The query_cache.embedding column has one fixed pgvector dim
   // sized at brain init; storing a 1024d Voyage or 2560d ZE cache
@@ -1621,9 +1630,8 @@ export async function hybridSearchCached(
   // provider/dim. isCacheSafe compares the resolved column's full
   // embedding space (name + dim + model) against cfg and returns true
   // only when ALL match. Otherwise skip.
-  const mergedCfgCached = await loadConfigWithEngine(engine).catch(() => null);
-  const cfgCached = mergedCfgCached ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
-  const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);
+  const cfgCached = configSnapshot.mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
+  const resolvedColCached = configSnapshot.resolvedCol;
   const isNonDefaultColumn = !isCacheSafe(resolvedColCached, cfgCached);
 
   // Cache key carries the column + provider so different embedding spaces
@@ -1636,10 +1644,8 @@ export async function hybridSearchCached(
   // Cache decision: opts.useCache (explicit) wins over global config; global
   // config wins over mode bundle default. Mode bundle is on for all 3 modes
   // today; the resolver already folded everything through.
-  const cacheCfg = await loadCacheConfig(engine);
   const cacheEnabled = resolvedForCache.cache_enabled;
   const cache = new SemanticQueryCache(engine, {
-    ...cacheCfg,
     enabled: cacheEnabled,
     similarityThreshold: resolvedForCache.cache_similarity_threshold,
     ttlSeconds: resolvedForCache.cache_ttl_seconds,
@@ -1665,6 +1671,7 @@ export async function hybridSearchCached(
     adaptiveReturnOn;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
+  setActiveProfileAttributes({ cache_status: cacheStatus, decision: skipCache ? 'skip' : 'lookup' });
   let cacheSimilarity: number | undefined;
   let cacheAge: number | undefined;
 
@@ -1695,20 +1702,25 @@ export async function hybridSearchCached(
         // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
         // throws → caught below → cacheStatus 'disabled' → falls through to the
         // inner hybridSearch (which reuses the same elapsed deadline).
-        queryEmbedding = await embedQueryBounded(query, undefined, queryEmbedDl);
+        queryEmbedding = await profileStage('cache_embedding', {}, () =>
+          embedQueryBounded(query, undefined, queryEmbedDl));
       } else {
         cacheStatus = 'disabled';
+        setActiveProfileAttributes({ cache_status: cacheStatus, fallback: 'uncached' });
       }
     } catch {
       cacheStatus = 'disabled';
       queryEmbedding = null;
+      setActiveProfileAttributes({ cache_status: cacheStatus, fallback: 'uncached' });
     }
   }
 
   if (!skipCache && queryEmbedding && cacheStatus !== 'disabled') {
-    const hit = await cache.lookup(queryEmbedding, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash });
+    const hit = await profileStage('cache_lookup', {}, () =>
+      cache.lookup(queryEmbedding, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash }));
     if (hit.hit && hit.results) {
       cacheStatus = 'hit';
+      setActiveProfileAttributes({ cache_status: cacheStatus });
       cacheSimilarity = hit.similarity;
       cacheAge = hit.ageSeconds;
 
@@ -1758,6 +1770,7 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
+    [HYBRID_CONFIG_SNAPSHOT]: configSnapshot,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,

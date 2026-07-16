@@ -607,8 +607,36 @@ export function loadConfig(): GBrainConfig | null {
  * fields (embedding_model, etc.) keep their file/env-only loading because they
  * size the schema and must be stable across engine connect.
  */
+type ConfigEngine = {
+  getConfig(key: string): Promise<string | null | undefined>;
+  executeRaw?: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
+};
+
+const DB_PLANE_CONFIG_KEYS = [
+  'embedding_multimodal',
+  'embedding_multimodal_model',
+  'embedding_image_ocr',
+  'embedding_image_ocr_model',
+  'embedding_columns',
+  'search_embedding_column',
+  'content_sanity.bytes_warn',
+  'content_sanity.bytes_block',
+  'content_sanity.junk_patterns_enabled',
+  'content_sanity.disabled',
+  'content_sanity.junk_disposition',
+  'content_sanity.max_markup_ratio',
+  'content_sanity.prose_check_enabled',
+  'dream.synthesize.session_corpus_dir',
+  'dream.synthesize.meeting_transcripts_dir',
+  'dream.synthesize.verdict_model',
+  'dream.synthesize.max_prompt_tokens',
+  'dream.synthesize.max_chunks_per_transcript',
+  'dream.patterns.lookback_days',
+  'dream.patterns.min_evidence',
+] as const;
+
 export async function loadConfigWithEngine(
-  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  engine: ConfigEngine,
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -624,26 +652,46 @@ export async function loadConfigWithEngine(
     (base !== undefined ? base : loadConfig()) ??
     ({ engine: 'postgres' } as GBrainConfig);
 
-  // DB-plane reads. Quiet failures — if the config table doesn't exist yet
-  // (pre-v36 brain mid-migration), treat as null and let file/env defaults
-  // win. The migration runner reads file/env directly anyway.
-  async function dbBool(key: string): Promise<boolean | undefined> {
+  // DB-plane reads. Use one round-trip when the engine exposes executeRaw;
+  // keep the per-key fallback for small test doubles and older integrations.
+  // Quiet failures — if the config table doesn't exist yet (pre-v36 brain
+  // mid-migration), treat as null and let file/env defaults win. The migration
+  // runner reads file/env directly anyway.
+  const dbValues = new Map<string, string | undefined>();
+  let batchReadSucceeded = false;
+  if (engine.executeRaw) {
     try {
-      const v = await engine.getConfig(key);
-      if (v === undefined || v === null || v === '') return undefined;
-      return v === 'true';
+      const rows = await engine.executeRaw<{ key: string; value: string | null }>(
+        'SELECT key, value FROM config WHERE key = ANY($1)',
+        [DB_PLANE_CONFIG_KEYS],
+      );
+      for (const row of rows) {
+        if (typeof row.key === 'string' && typeof row.value === 'string' && row.value !== '') {
+          dbValues.set(row.key, row.value);
+        }
+      }
+      batchReadSucceeded = true;
+    } catch {
+      // Fall through to the legacy per-key reads below.
+    }
+  }
+
+  async function readDbValue(key: string): Promise<string | undefined> {
+    if (batchReadSucceeded) return dbValues.get(key);
+    try {
+      const value = await engine.getConfig(key);
+      return value === undefined || value === null || value === '' ? undefined : value;
     } catch {
       return undefined;
     }
   }
+
+  async function dbBool(key: string): Promise<boolean | undefined> {
+    const v = await readDbValue(key);
+    return v === undefined ? undefined : v === 'true';
+  }
   async function dbStr(key: string): Promise<string | undefined> {
-    try {
-      const v = await engine.getConfig(key);
-      if (v === undefined || v === null || v === '') return undefined;
-      return v;
-    } catch {
-      return undefined;
-    }
+    return readDbValue(key);
   }
 
   const dbMultimodal = await dbBool('embedding_multimodal');

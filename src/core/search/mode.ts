@@ -1103,7 +1103,10 @@ export const SEARCH_MODE_KEY = 'search.mode';
  * silent fallback is the right shape.
  */
 export async function loadSearchModeConfig(
-  engine: { getConfig(key: string): Promise<string | null> },
+  engine: {
+    getConfig(key: string): Promise<string | null | undefined>;
+    executeRaw?: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
+  },
 ): Promise<ResolveSearchModeInput> {
   const safeGet = async (k: string): Promise<string | undefined> => {
     try {
@@ -1119,19 +1122,43 @@ export async function loadSearchModeConfig(
     }
   };
 
-  const [mode, ...overrideValues] = await Promise.all([
-    safeGet(SEARCH_MODE_KEY),
-    ...SEARCH_MODE_CONFIG_KEYS.map(safeGet),
-  ]);
-
   const configMap: Record<string, string | undefined> = {};
-  SEARCH_MODE_CONFIG_KEYS.forEach((key, i) => {
-    if (overrideValues[i] !== undefined) configMap[key] = overrideValues[i];
-  });
+  const configKeys = [SEARCH_MODE_KEY, ...SEARCH_MODE_CONFIG_KEYS];
+  let batchReadSucceeded = false;
+
+  if (engine.executeRaw) {
+    try {
+      const rows = await engine.executeRaw<{ key: string; value: string | null }>(
+        'SELECT key, value FROM config WHERE key = ANY($1)',
+        [configKeys],
+      );
+      for (const row of rows) {
+        if (
+          typeof row.key === 'string' &&
+          configKeys.includes(row.key) &&
+          typeof row.value === 'string'
+        ) {
+          configMap[row.key] = row.value;
+        }
+      }
+      batchReadSucceeded = true;
+    } catch {
+      // Fall back to the per-key path for old engines and transient config
+      // table failures. Missing/invalid values retain the existing defaults.
+    }
+  }
+
+  if (!batchReadSucceeded) {
+    const [mode, ...overrideValues] = await Promise.all(configKeys.map(safeGet));
+    if (mode !== undefined) configMap[SEARCH_MODE_KEY] = mode;
+    SEARCH_MODE_CONFIG_KEYS.forEach((key, i) => {
+      const value = overrideValues[i];
+      if (value !== undefined) configMap[key] = value;
+    });
+  }
 
   return {
-    mode,
+    mode: configMap[SEARCH_MODE_KEY],
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-

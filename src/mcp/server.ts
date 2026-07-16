@@ -14,8 +14,10 @@ import {
   cleanupStaleSocket,
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
+import { initializeQueryProfiling } from '../core/search/profiling-runtime.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
+  initializeQueryProfiling();
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
@@ -34,7 +36,7 @@ export async function startMcpServer(engine: BrainEngine) {
   // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
-    const { name, arguments: params } = request.params;
+    const { name, arguments: params, _meta: privateTraceMeta } = request.params;
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
@@ -51,6 +53,7 @@ export async function startMcpServer(engine: BrainEngine) {
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
       metaHook: getBrainHotMemoryMeta,
+      privateTraceMeta,
     });
   });
 

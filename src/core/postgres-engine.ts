@@ -198,9 +198,16 @@ export class PostgresEngine implements BrainEngine {
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
+      const connectionStartedAt = performance.now();
       this._sql = postgres(url, opts);
       await this._sql`SELECT 1`;
       await db.setSessionDefaults(this._sql);
+      logConnectionEvent({
+        pool: 'read',
+        op: 'init',
+        caller: 'PostgresEngine.connect',
+        duration_ms: Math.max(0, Math.round(performance.now() - connectionStartedAt)),
+      });
       this._connectionStyle = 'instance';
 
       // v0.30.1: instance-owned ConnectionManager wraps the read pool we just

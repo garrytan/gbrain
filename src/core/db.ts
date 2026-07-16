@@ -3,6 +3,7 @@ import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
+import { logConnectionEvent } from './connection-audit.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -233,6 +234,7 @@ export async function connect(config: EngineConfig): Promise<boolean> {
   }
 
   try {
+    const connectionStartedAt = performance.now();
     const prepare = resolvePrepare(url);
     const timeouts = resolveSessionTimeouts();
     const opts: Record<string, unknown> = {
@@ -265,6 +267,12 @@ export async function connect(config: EngineConfig): Promise<boolean> {
     // Test connection
     await sql`SELECT 1`;
     connectedUrl = url;
+    logConnectionEvent({
+      pool: 'single',
+      op: 'init',
+      caller: 'db.connect',
+      duration_ms: Math.max(0, Math.round(performance.now() - connectionStartedAt)),
+    });
 
     await setSessionDefaults(sql);
     return true; // we created the singleton — caller is the owner

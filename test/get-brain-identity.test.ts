@@ -68,6 +68,7 @@ describe('get_brain_identity op', () => {
       engine: 'postgres' | 'pglite';
       page_count: number;
       chunk_count: number;
+      pages_by_type: Record<string, number>;
       last_sync_iso: string | null;
     };
 
@@ -94,9 +95,11 @@ describe('get_brain_identity op', () => {
     const result = (await op.handler(buildCtx(), {})) as {
       page_count: number;
       chunk_count: number;
+      pages_by_type: Record<string, number>;
     };
 
     expect(result.page_count).toBe(2);
+    expect(result.pages_by_type).toEqual({ note: 2 });
     // chunk_count depends on chunker; just assert it advanced past zero
     expect(result.chunk_count).toBeGreaterThanOrEqual(0);
   });
@@ -111,6 +114,7 @@ describe('get_brain_identity op', () => {
       'last_sync_iso',
       'latest_version',
       'page_count',
+      'pages_by_type',
       'update_available',
       'version',
     ]);

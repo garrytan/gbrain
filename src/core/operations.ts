@@ -24,6 +24,7 @@ import { getContentFlag } from './quarantine.ts';
 import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { isSearchMode } from './search/mode.ts';
 import { stampEvidence } from './search/evidence.ts';
+import { profileOperation, profileStage } from './search/profiling.ts';
 import type { SearchResult } from './types.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import * as db from './db.ts';
@@ -1453,10 +1454,13 @@ const search: Operation = {
     // T4/D17 — escape hatch: keyword-only when the operator opts out of the
     // hybrid `search` contract (privacy/cost: no query text to an embedding
     // provider). Defaults to cheap-hybrid (D4/D15).
-    const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
+    const keywordOnly = await profileStage('config_keyword_only', { decision: 'load' }, async () =>
+      (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true');
 
     if (keywordOnly) {
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, ...scope });
+      const raw = await profileOperation('search', { operation: 'search', query_length: queryText.length }, () =>
+        profileStage('keyword', { decision: 'keyword_only' }, () =>
+          ctx.engine.searchKeyword(queryText, { limit, offset, ...scope })));
       const results = dedupResults(raw);
       stampEvidenceSafe(results);
       // #1699: the keyword-only opt-out must STILL surface the content_flag
@@ -1471,14 +1475,14 @@ const search: Operation = {
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
     // expansion OFF (no per-call LLM cost). `query` op is the full-control variant.
     let capturedMeta: HybridSearchMeta | null = null;
-    const results = await hybridSearchCached(ctx.engine, queryText, {
+    const results = await profileOperation('search', { operation: 'search', query_length: queryText.length }, () => hybridSearchCached(ctx.engine, queryText, {
       limit,
       offset,
       expansion: false,
       ...scope,
       ...(perCallMode ? { mode: perCallMode } : {}),
       onMeta: (m) => { capturedMeta = m; },
-    });
+    }));
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
@@ -1612,19 +1616,20 @@ const query: Operation = {
     // vector search against the embedding_image column.
     if (imageData) {
       const { embedMultimodal } = await import('./ai/gateway.ts');
-      const [vec] = await embedMultimodal([
-        { kind: 'image_base64', data: imageData, mime: imageMime },
-      ]);
+      const [vec] = await profileOperation('query', { operation: 'query' }, () =>
+        profileStage('query_embedding', { decision: 'image' }, () => embedMultimodal([
+          { kind: 'image_base64', data: imageData, mime: imageMime },
+        ])));
       // v0.34.1 (#861 F2 — 6th leak surface): the image path bypasses
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked
       // image pages across sources independent of the text path's fix.
-      const results = await ctx.engine.searchVector(vec, {
+      const results = await profileStage('vector', { decision: 'image' }, () => ctx.engine.searchVector(vec, {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         ...querySourceScope,
-      });
+      }));
       return results;
     }
 
@@ -1645,7 +1650,7 @@ const query: Operation = {
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // semantic cache + token budget + intent weighting fire automatically.
     // Plain hybridSearch remains the bare API for callers that opt out.
-    const results = await hybridSearchCached(ctx.engine, queryText, {
+    const results = await profileOperation('query', { operation: 'query', query_length: queryText.length }, () => hybridSearchCached(ctx.engine, queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       expansion: expand,
@@ -1684,7 +1689,7 @@ const query: Operation = {
       autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : undefined,
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
-    });
+    }));
     const latency_ms = Date.now() - startedAt;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
@@ -2251,6 +2256,7 @@ const get_brain_identity: Operation = {
       version: VERSION,
       engine: ctx.engine.kind,
       page_count: stats.page_count,
+      pages_by_type: stats.pages_by_type,
       chunk_count: stats.chunk_count,
       last_sync_iso: null as string | null,
       update_available,
