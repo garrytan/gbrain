@@ -247,6 +247,21 @@ export async function dispatchToolCall(
     };
   }
 
+  // Remote callers must arrive with a resolved source scope. Every shipped
+  // transport passes sourceId explicitly (serve-http from the OAuth client
+  // row, http-transport from the legacy token grant, stdio from
+  // GBRAIN_SOURCE); a remote call reaching the 'default' fallback means a
+  // programmatic caller skipped scope resolution, and silently landing in
+  // the shared 'default' source is the cross-source leak class behind
+  // #1924 / #1371. Trusted local callers (remote === false) keep the
+  // historical fallback via buildOperationContext.
+  if ((opts.remote ?? true) && !opts.sourceId) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'missing_source_scope', message: `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.` }, null, 2) }],
+      isError: true,
+    };
+  }
+
   const ctx = buildOperationContext(engine, safeParams, opts);
 
   try {

@@ -73,7 +73,7 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
     const result = await dispatchToolCall(engine, 'get_recent_salience', {
       days: 7,
       limit: 10,
-    }, { remote: true });
+    }, { remote: true, sourceId: 'default' });
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].type).toBe('text');
@@ -89,7 +89,7 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
     const result = await dispatchToolCall(engine, 'find_anomalies', {
       lookback_days: 30,
       sigma: 1.5, // lower threshold so the small fixture tips the cohort
-    }, { remote: true });
+    }, { remote: true, sourceId: 'default' });
 
     expect(result.isError).toBeFalsy();
     const rows = JSON.parse(result.content[0].text);
@@ -115,7 +115,7 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
     // every MCP transport sets, so the reject must fire here.
     const result = await dispatchToolCall(engine, 'get_recent_transcripts', {
       days: 7,
-    }, { remote: true });
+    }, { remote: true, sourceId: 'default' });
 
     expect(result.isError).toBe(true);
     const err = JSON.parse(result.content[0].text);
@@ -142,8 +142,81 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
   test('unknown tool returns Unknown tool error envelope (regression guard)', async () => {
     // Generic dispatch shape contract — protects against typos in op
     // names accidentally short-circuiting elsewhere in the dispatcher.
-    const result = await dispatchToolCall(engine, 'get_recent_definitely_not_a_real_op', {}, { remote: true });
+    const result = await dispatchToolCall(engine, 'get_recent_definitely_not_a_real_op', {}, { remote: true, sourceId: 'default' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/Unknown tool/);
+  });
+});
+
+describe('dispatch source-scope guard — remote callers must carry a resolved sourceId', () => {
+  test('remote call without sourceId is refused (missing_source_scope), never lands in default', async () => {
+    const result = await dispatchToolCall(engine, 'get_recent_salience', { days: 7 }, { remote: true });
+    expect(result.isError).toBe(true);
+    const body = JSON.parse(result.content[0].text);
+    expect(body.error).toBe('missing_source_scope');
+  });
+
+  test('remote default (opts.remote omitted) is treated as remote and refused too', async () => {
+    const result = await dispatchToolCall(engine, 'get_recent_salience', { days: 7 }, {});
+    expect(result.isError).toBe(true);
+    const body = JSON.parse(result.content[0].text);
+    expect(body.error).toBe('missing_source_scope');
+  });
+
+  test('trusted local callers (remote === false) keep the historical default fallback', async () => {
+    const result = await dispatchToolCall(engine, 'get_recent_salience', { days: 7 }, { remote: false });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test('the guard runs after op lookup: unknown tool still reports Unknown tool, not scope', async () => {
+    const result = await dispatchToolCall(engine, 'not_a_real_op_scope_guard', {}, { remote: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Unknown tool/);
+  });
+});
+
+describe('ingest log source scoping — log_ingest threads ctx.sourceId, get_ingest_log honors the grant', () => {
+  beforeAll(async () => {
+    await dispatchToolCall(engine, 'log_ingest', {
+      source_type: 'chat', source_ref: 'alice-conv-1', pages_updated: ['people/carol'], summary: 'alice private context',
+    }, { remote: true, sourceId: 'u-alice' });
+    await dispatchToolCall(engine, 'log_ingest', {
+      source_type: 'chat', source_ref: 'bob-conv-1', pages_updated: ['people/dave'], summary: 'bob private context',
+    }, { remote: true, sourceId: 'u-bob' });
+  });
+
+  test('log_ingest attributes the entry to the caller source, not default', async () => {
+    const result = await dispatchToolCall(engine, 'get_ingest_log', {}, { remote: false });
+    const rows = JSON.parse(result.content[0].text) as Array<{ source_id: string; source_ref: string }>;
+    expect(rows.find(r => r.source_ref === 'alice-conv-1')?.source_id).toBe('u-alice');
+    expect(rows.find(r => r.source_ref === 'bob-conv-1')?.source_id).toBe('u-bob');
+  });
+
+  test('remote scalar-scoped caller only sees its own source rows', async () => {
+    const result = await dispatchToolCall(engine, 'get_ingest_log', {}, { remote: true, sourceId: 'u-alice' });
+    const rows = JSON.parse(result.content[0].text) as Array<{ source_id: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(r => r.source_id === 'u-alice')).toBe(true);
+  });
+
+  test('federated grant sees exactly the granted sources', async () => {
+    const result = await dispatchToolCall(engine, 'get_ingest_log', {}, {
+      remote: true,
+      sourceId: 'u-alice',
+      auth: { token: 't', clientId: 'c', scopes: ['read'], allowedSources: ['u-alice', 'u-bob'] },
+    });
+    const rows = JSON.parse(result.content[0].text) as Array<{ source_id: string }>;
+    const seen = new Set(rows.map(r => r.source_id));
+    expect(seen.has('u-alice')).toBe(true);
+    expect(seen.has('u-bob')).toBe(true);
+    expect(seen.has('default')).toBe(false);
+  });
+
+  test('trusted local caller keeps the whole-brain view', async () => {
+    const result = await dispatchToolCall(engine, 'get_ingest_log', {}, { remote: false });
+    const rows = JSON.parse(result.content[0].text) as Array<{ source_id: string }>;
+    const seen = new Set(rows.map(r => r.source_id));
+    expect(seen.has('u-alice')).toBe(true);
+    expect(seen.has('u-bob')).toBe(true);
   });
 });

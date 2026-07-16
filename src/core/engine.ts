@@ -1863,7 +1863,11 @@ export interface BrainEngine {
 
   // Ingest log
   logIngest(entry: IngestLogInput): Promise<void>;
-  getIngestLog(opts?: { limit?: number }): Promise<IngestLogEntry[]>;
+  /**
+   * `opts.sourceIds` scopes the log to those sources (federated read grant /
+   * remote caller scope). Omitted → whole brain (trusted local callers).
+   */
+  getIngestLog(opts?: { limit?: number; sourceIds?: string[] }): Promise<IngestLogEntry[]>;
 
   // Sync
   /**

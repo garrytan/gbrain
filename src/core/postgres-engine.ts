@@ -5074,11 +5074,16 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async getIngestLog(opts?: { limit?: number }): Promise<IngestLogEntry[]> {
+  async getIngestLog(opts?: { limit?: number; sourceIds?: string[] }): Promise<IngestLogEntry[]> {
     const sql = this.sql;
     const limit = opts?.limit || 50;
+    // Source-scope for remote / federated callers; unscoped only for trusted
+    // local callers (same posture as searchKeyword's sourceIds filter).
+    const scope = opts?.sourceIds && opts.sourceIds.length > 0
+      ? sql`WHERE source_id = ANY(${opts.sourceIds}::text[])`
+      : sql``;
     const rows = await sql`
-      SELECT * FROM ingest_log ORDER BY created_at DESC LIMIT ${limit}
+      SELECT * FROM ingest_log ${scope} ORDER BY created_at DESC LIMIT ${limit}
     `;
     // Belt-and-suspenders source_id fallback for any pre-v50 row.
     return (rows as unknown as IngestLogEntry[]).map(r => ({

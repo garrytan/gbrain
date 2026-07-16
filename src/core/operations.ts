@@ -2635,6 +2635,11 @@ const log_ingest: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'log_ingest' };
     await ctx.engine.logIngest({
+      // Thread ctx.sourceId (same pattern as get_chunks/get_page above): on a
+      // multi-source brain the ingest event must be attributed to the caller's
+      // source, not the shared 'default' bucket. Absent sourceId still falls to
+      // the engine's 'default' (single-source brains unchanged).
+      ...(ctx.sourceId ? { source_id: ctx.sourceId } : {}),
       source_type: p.source_type as string,
       source_ref: p.source_ref as string,
       pages_updated: p.pages_updated as string[],
@@ -2651,7 +2656,17 @@ const get_ingest_log: Operation = {
     limit: { type: 'number', description: 'Max entries (default 20)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getIngestLog({ limit: clampSearchLimit(p.limit as number | undefined, 20, 50) });
+    // Source-scope the log for remote callers (scalar grant → single-element
+    // array; federated grant → the granted array — linkReadScopeOpts collapse
+    // rule). Trusted local callers (remote === false) keep the whole-brain
+    // view, matching every other read op's local posture. Ingest summaries
+    // can carry another source's private context, so an unscoped remote read
+    // is a cross-source leak.
+    const scope = ctx.remote !== false ? linkReadScopeOpts(ctx) : {};
+    return ctx.engine.getIngestLog({
+      limit: clampSearchLimit(p.limit as number | undefined, 20, 50),
+      ...(scope.sourceIds ? { sourceIds: scope.sourceIds } : scope.sourceId ? { sourceIds: [scope.sourceId] } : {}),
+    });
   },
   scope: 'read',
 };
