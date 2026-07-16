@@ -19,7 +19,11 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { hybridSearch } from '../../src/core/search/hybrid.ts';
+import {
+  awaitPendingSearchCacheWrites,
+  hybridSearch,
+  hybridSearchCached,
+} from '../../src/core/search/hybrid.ts';
 import {
   configureGateway,
   resetGateway,
@@ -79,6 +83,23 @@ beforeAll(async () => {
     env: { OPENAI_API_KEY: 'sk-test' },
   });
   stubEmbeddings();
+
+  await engine.putPage('mail/vector-first', {
+    type: 'note',
+    title: 'Vector-first email',
+    compiled_truth: 'vector first duplicate metadata evidence',
+    frontmatter: {
+      message_id: '<vector-first@example.com>',
+      thread_id: 'thread-vector-first',
+      subject: 'Vector-first exact subject',
+    },
+  });
+  await engine.upsertChunks('mail/vector-first', [{
+    chunk_index: 0,
+    chunk_text: 'vector first duplicate metadata evidence',
+    chunk_source: 'compiled_truth',
+    embedding: Float32Array.from(FAKE_EMB),
+  }]);
 });
 
 afterAll(async () => {
@@ -102,6 +123,28 @@ describe('hybridSearch — reranker disabled (pass-through)', () => {
     const out = await hybridSearch(engine, 'alpha', opts);
     expect(out.length).toBeGreaterThan(0);
     expect(called).toBe(0);
+  });
+});
+
+describe('hybridSearchCached — email metadata through vector-first fusion', () => {
+  test('fresh cache miss preserves metadata through vector-first RRF duplicate handling', async () => {
+    await engine.executeRaw(`DELETE FROM query_cache`);
+    let cacheStatus: string | undefined;
+    const out = await hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
+      limit: 10,
+      useCache: true,
+      autocut: false,
+      graph_signals: false,
+      onMeta: (meta) => { cacheStatus = meta.cache?.status; },
+    });
+
+    expect(cacheStatus).toBe('miss');
+    const matches = out.filter(r => r.slug === 'mail/vector-first');
+    expect(matches).toHaveLength(1);
+    expect(matches[0].message_id).toBe('<vector-first@example.com>');
+    expect(matches[0].thread_id).toBe('thread-vector-first');
+    expect(matches[0].source_subject).toBe('Vector-first exact subject');
+    await awaitPendingSearchCacheWrites();
   });
 });
 

@@ -716,6 +716,12 @@ export interface SearchResult {
    */
   effective_date?: string | null;
   effective_date_source?: string | null;
+  /** RFC 5322 Message-ID projected from allowlisted email frontmatter. */
+  message_id?: string;
+  /** Gmail thread id projected from allowlisted email frontmatter. */
+  thread_id?: string;
+  /** Exact email subject, projected only when the page has a Message-ID. */
+  source_subject?: string;
   /**
    * v0.40.4 graph signals — populated by applyGraphSignals when the
    * graph_signals mode-bundle knob is on. Surfaced in JSON envelope

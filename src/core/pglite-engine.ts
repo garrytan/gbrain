@@ -1615,6 +1615,10 @@ export class PGLiteEngine implements BrainEngine {
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
+           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
@@ -1729,6 +1733,10 @@ export class PGLiteEngine implements BrainEngine {
            SELECT
              p.slug, p.id as page_id, p.title, p.type, p.source_id,
              p.effective_date, p.effective_date_source,
+             CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+               THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+             CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+               THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              ${scoreExpr} AS score,
              CASE WHEN p.updated_at < (
@@ -1754,6 +1762,10 @@ export class PGLiteEngine implements BrainEngine {
         `SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
+           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ${scoreExpr} AS score,
            CASE WHEN p.updated_at < (
@@ -1847,6 +1859,10 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
          p.effective_date, p.effective_date_source,
+         CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+         CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
          ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
@@ -1959,6 +1975,10 @@ export class PGLiteEngine implements BrainEngine {
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
            p.effective_date, p.effective_date_source,
+           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            1 - (cc.${col} <=> ${castSql}) AS raw_score
          FROM content_chunks cc
@@ -1981,6 +2001,7 @@ export class PGLiteEngine implements BrainEngine {
        SELECT
          bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
          bpp.effective_date, bpp.effective_date_source,
+         bpp.message_id, bpp.thread_id, bpp.source_subject,
          bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
          bpp.score,
          CASE WHEN bpp.updated_at < (
