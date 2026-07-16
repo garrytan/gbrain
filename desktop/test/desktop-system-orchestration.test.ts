@@ -16,8 +16,9 @@ describe('desktop system orchestration contracts', () => {
   });
 
   test('prepares Postgres before migrations and sidecar startup paths', () => {
+    expect(main).toMatch(/async function applySetupOnce[\s\S]*?await ensureRuntimeReady\(\);\s+const hadRunningSidecar[\s\S]*?saved = saveSetup\(payload\);/);
     expect(main).toMatch(/await prepareConfiguredDatabase\(\);\s+await migrateConfiguredInstallation\(\);/);
-    expect(main).toMatch(/const saved = saveSetup\(payload\);\s+try \{\s+await prepareConfiguredDatabase\(\);/);
+    expect(main).toMatch(/saved = saveSetup\(payload\);\s+\} catch \(error\) \{\s+if \(hadRunningSidecar\) await startSidecar\(false\)[\s\S]*?throw error;\s+\}\s+try \{\s+await prepareConfiguredDatabase\(\);/);
     expect(main).toContain('saveDetectedDockerContainerName');
   });
 

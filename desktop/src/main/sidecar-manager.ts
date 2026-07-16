@@ -1,7 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import type { DesktopLogger } from './logs.js';
-import { cleanDatabaseEnvironment, packagedRuntimeRoot, projectRoot, type CliRuntime } from './cli-runner.js';
+import {
+  cleanDatabaseEnvironment,
+  formatProcessExit,
+  packagedRuntimeRoot,
+  projectRoot,
+  type CliRuntime,
+} from './cli-runner.js';
 
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_INTERVAL_MS = 500;
@@ -217,7 +223,7 @@ export class SidecarManager {
     child.once('error', (error) => this.handleCrash(`Sidecar failed to start: ${error.message}`));
     child.once('exit', (code, signal) => {
       if (this.child === child) this.child = null;
-      if (!this.stopping) this.handleCrash(`Sidecar exited (code ${code ?? 'none'}, signal ${signal ?? 'none'}).`);
+      if (!this.stopping) this.handleCrash(`Sidecar exited (${formatProcessExit(code, signal)}).`);
     });
   }
 

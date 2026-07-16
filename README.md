@@ -145,11 +145,11 @@ Windows 桌面端目前仍属于内测版本，安装或使用过程中可能会
 
 完整的新用户前置条件、首次配置、老用户升级和故障处理请阅读：[PMBrain 桌面版安装与首次使用](docs/desktop/安装与首次使用.md)。
 
-运行 `PMBrain-Windows-x64-Setup-1.0.45.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、填写所需模型 API Key，并选择知识库目录；桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
+运行最新的 `PMBrain-Windows-x64-Setup-*.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、填写所需模型 API Key，并选择知识库目录；桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
 
-安装包已内置 Bun 运行时、PGLite 数据库及其 WASM 资源，选择 PGLite 时不需要另装 Bun、Docker 或 Postgres。首次安装会使用安装包内置的 PMBrain sidecar 自动创建数据库并执行迁移，不依赖系统 PATH、`gbrain.exe` 或用户手动命令。配置完成后可在桌面端生成 CodeBuddy、Workbuddy、Cursor、Claude Code、Codex 的 MCP 接入配置，并在写入前备份原配置、合并 `pmbrain` 节点和执行 MCP smoke test。数据库模式可在配置页中切换；切换失败时会恢复原配置。
+安装包已内置固定版本、校验过的 Bun x64 baseline 运行时、PGLite 数据库及其 WASM 资源，可兼容不支持 AVX2 的较老 x64 CPU；选择 PGLite 时不需要另装 Bun、Docker 或 Postgres。首次安装会使用安装包内置的 PMBrain sidecar 自动创建数据库并执行迁移，不依赖系统 PATH、`gbrain.exe` 或用户手动命令。配置完成后可在桌面端生成 CodeBuddy、Workbuddy、Cursor、Claude Code、Codex 的 MCP 接入配置，并在写入前备份原配置、合并 `pmbrain` 节点和执行 MCP smoke test。数据库模式可在配置页中切换；切换失败时会恢复原配置。
 
-如果新用户选择 PGLite 后遇到 `PMBrain command exited with code 3221225501`、`Aborted()` 或其他 WASM 初始化异常，建议改用 Docker Postgres。新用户可直接按 [首次安装使用 Docker Postgres 教程](docs/desktop/首次安装使用DockerPostgres.md) 准备数据库并填写连接地址。
+`3221225501` 对应 Windows `0xC000001D`（非法 CPU 指令），属于内置运行时启动失败，切换 Docker Postgres 不能解决。Desktop 1.0.61 起安装包改用 Bun x64 baseline 并在写配置前执行运行时自检。只有运行时自检通过、随后仍出现明确的 PGLite/WASM 初始化错误时，才建议按 [首次安装使用 Docker Postgres 教程](docs/desktop/首次安装使用DockerPostgres.md) 准备数据库并填写连接地址。
 
 桌面端会自动从 GitHub Releases 检查和下载更新。安装更新前会安全停止本地 sidecar；更新后首次启动会先执行幂等数据库迁移，再启动服务并完成健康检查。升级不会覆盖已有数据库地址、模型 Key、知识库目录或 MCP 配置。
 

@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { DesktopLogger } from './logs.js';
 import { findAvailablePort } from './port-manager.js';
 import { SidecarManager, type SidecarState } from './sidecar-manager.js';
-import { runCli, runCliChecked, type CliRuntime } from './cli-runner.js';
+import { preflightCliRuntime, runCli, runCliChecked, type CliRuntime } from './cli-runner.js';
 import { listDesktopProviderModels, type DesktopModelTouchpoint } from './model-catalog.js';
 import {
   readAdvancedModelConfig,
@@ -80,6 +80,7 @@ let sidecarLifecycleQueue: Promise<void> = Promise.resolve();
 let sidecarStartupPromise: Promise<void> | null = null;
 let serviceReadyPromise: Promise<SidecarManager> | null = null;
 let sidecarRetryPromise: Promise<string> | null = null;
+let runtimePreflightPromise: Promise<void> | null = null;
 let setupInProgress = false;
 let trayHintShown = false;
 let desktopVersionHistory: DesktopVersionHistory = { current: '' };
@@ -401,6 +402,29 @@ function runtime(): CliRuntime {
   };
 }
 
+async function ensureRuntimeReady(): Promise<void> {
+  if (!app.isPackaged) return;
+  if (runtimePreflightPromise) return runtimePreflightPromise;
+  const pending = preflightCliRuntime(runtime()).then((result) => {
+    if (!result) return;
+    logger?.write(
+      'runtime',
+      `Verified ${result.arch}-${result.flavor} Bun ${result.bunRevision} on Windows ${result.windowsRelease}`,
+    );
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    logger?.write('runtime', `Runtime preflight failed: ${message}`);
+    throw error;
+  });
+  runtimePreflightPromise = pending;
+  try {
+    await pending;
+  } catch (error) {
+    if (runtimePreflightPromise === pending) runtimePreflightPromise = null;
+    throw error;
+  }
+}
+
 function sendState(state: SidecarState): void {
   currentState = state;
   mainWindow?.webContents.send('desktop:state', state);
@@ -423,6 +447,7 @@ function queueSidecarTransition<T>(transition: () => Promise<T>): Promise<T> {
 
 async function startSidecarOnce(openAdmin: boolean): Promise<void> {
   if (!mainWindow || !logger) return;
+  await ensureRuntimeReady();
   const existing = sidecar;
   if (existing) {
     await existing.start();
@@ -512,6 +537,7 @@ async function restartSidecarForRetry(): Promise<string> {
   if (sidecarRetryPromise) return sidecarRetryPromise;
   const pending = queueSidecarTransition(async () => {
     if (setupInProgress) throw new Error('PMBrain 正在应用基础配置，请等待完成。');
+    await ensureRuntimeReady();
     await prepareConfiguredDatabase();
     const active = sidecar;
     if (!active) {
@@ -599,6 +625,7 @@ async function ensureServiceReady(): Promise<SidecarManager> {
   if (serviceReadyPromise) return serviceReadyPromise;
 
   const pending = (async () => {
+    await ensureRuntimeReady();
     await prepareConfiguredDatabase();
     await migrateConfiguredInstallation();
     if (!sidecar || currentState?.phase !== 'ready') await startSidecar(false);
@@ -648,9 +675,17 @@ async function currentDesktopSetupState() {
 }
 
 async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
+  await ensureRuntimeReady();
   const hadRunningSidecar = Boolean(sidecar);
   await stopSidecar();
-  const saved = saveSetup(payload);
+  let saved: ReturnType<typeof saveSetup>;
+  try {
+    saved = saveSetup(payload);
+  } catch (error) {
+    if (hadRunningSidecar) await startSidecar(false).catch(() => undefined);
+    else hideStartupProgress();
+    throw error;
+  }
   try {
     await prepareConfiguredDatabase();
     if (saved.needsEmbeddingDimensionProbe) {

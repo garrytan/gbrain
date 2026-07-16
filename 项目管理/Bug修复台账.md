@@ -1,5 +1,16 @@
 # Bug 修复台账
 
+## 2026-07-16 Desktop 老 CPU 运行时与安装兼容修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain Desktop 1.0.61
+- 标题：修复首次配置时内置 Bun 在老款 x64 CPU 上非法指令崩溃
+- 描述：部分 Windows 电脑安装后可打开桌面界面，但点击“保存配置并启动”时出现 `PMBrain command exited with code 3221225501`，配置被回滚并保持未配置状态。
+- 根因：`3221225501` 实际为 `0xC000001D STATUS_ILLEGAL_INSTRUCTION`；原打包脚本直接复制构建机的标准 Bun，目标电脑 CPU 缺少 AVX2 时会在执行 sidecar 前崩溃，现有包校验只在支持 AVX2 的构建机运行，无法发现该问题。
+- 解决方案：固定下载并双重校验 Bun 1.3.14 Windows x64 baseline，不再复制构建机运行时，并为首次下载加入有限重试和超时；安装和发布显式限定 x64/Windows 10 1809+；保存配置、迁移和启动服务前校验运行时清单、SHA-256、Bun revision 与 sidecar 版本；补充 Windows NTSTATUS 中文诊断、PE 架构检查、Canvas/PGLite 实际加载测试，以及配置写入失败和预检超时的服务/进程恢复逻辑。
+- 是否完成：是
+- 最终结果：Desktop 类型检查、96 项完整测试、生产构建、Electron Builder 配置校验、NSIS 安装约束编译、baseline runtime SHA-256/版本自检、Canvas 原生模块与内存 PGLite SQL smoke test 均通过；未修改 PMBrain CLI/核心数据逻辑、用户知识库或原始资料。Windows 10 32 位因 Bun 与 Canvas 无 x86 运行时仍不支持，安装器会在安装前阻止；最终 `bun run build:win` 仍由用户执行。
+
 ## 2026-07-16 Desktop 局域网共享恢复入口优化
 
 - 时间：2026-07-16
