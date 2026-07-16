@@ -83,6 +83,14 @@ export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15';
  * fixtures before bumping PROPOSE_TAKES_PROMPT_VERSION; the train-holdout
  * gap should stay < 0.10 (overfitting threshold).
  */
+/**
+ * Default output-token ceiling for the extraction LLM call. Preserves prior
+ * behavior. Override per-brain via config `propose_takes_max_output_tokens`
+ * (env `GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS`) to give local models that do
+ * heavy reasoning enough room to emit JSON before the response is truncated.
+ */
+export const DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS = 2048;
+
 export const EXTRACT_TAKES_PROMPT = `Extract gradeable claims from the prose below.
 
 A "gradeable claim" is a prediction, recommendation, or interpretive judgment
@@ -130,6 +138,7 @@ export type ProposeTakesExtractor = (input: {
   pageBody: string;
   existingTakes: Array<{ claim: string; kind: string; holder: string; weight: number }>;
   modelHint?: string;
+  maxOutputTokens?: number;
 }) => Promise<ProposedTake[]>;
 
 export interface ProposeTakesOpts extends BasePhaseOpts {
@@ -230,7 +239,7 @@ export async function defaultExtractor(
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens: 2048,
+    maxTokens: input.maxOutputTokens ?? DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS,
   });
 
   // ChatResult.text is already the concatenated text content.
@@ -300,13 +309,20 @@ class ProposeTakesPhase extends BaseCyclePhase {
   protected async process(
     engine: BrainEngine,
     scope: ScopedReadOpts,
-    _ctx: OperationContext,
+    ctx: OperationContext,
     opts: ProposeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const extractor = opts.extractor ?? defaultExtractor;
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    // Output-token ceiling for the extraction call. Configurable (default 2048)
+    // so heavy-reasoning local models get enough headroom to emit JSON.
+    const cfgMaxTokens = ctx.config?.propose_takes_max_output_tokens;
+    const maxOutputTokens =
+      typeof cfgMaxTokens === 'number' && Number.isFinite(cfgMaxTokens) && cfgMaxTokens > 0
+        ? cfgMaxTokens
+        : DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -379,6 +395,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pageBody: body,
           existingTakes,
           modelHint: opts.model,
+          maxOutputTokens,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

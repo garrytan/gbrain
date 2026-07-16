@@ -177,6 +177,14 @@ export interface GBrainConfig {
    * reflex knobs.
    */
   retrieval_reflex_window_turns?: number;
+  /**
+   * Max output tokens for the propose_takes extraction call (default 2048).
+   * Raise it for local models that do a lot of reasoning before answering (e.g.
+   * qwen3 in thinking mode): they can spend the whole default budget reasoning
+   * and get truncated before emitting any JSON, producing an empty extraction.
+   * File-plane / env (GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS).
+   */
+  propose_takes_max_output_tokens?: number;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
 
@@ -552,6 +560,10 @@ export function loadConfig(): GBrainConfig | null {
       Number.isFinite(Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS))
       ? { retrieval_reflex_window_turns: Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS) }
       : {}),
+    ...(process.env.GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS &&
+      Number.isFinite(Number(process.env.GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS))
+      ? { propose_takes_max_output_tokens: Number(process.env.GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS) }
+      : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
       : {}),
@@ -821,6 +833,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',
+  'propose_takes_max_output_tokens',
   'provider_base_urls',
   'storage',
   'eval',

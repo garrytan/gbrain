@@ -129,3 +129,43 @@ describe('loadConfig env database URL precedence', () => {
     }
   });
 });
+
+describe('loadConfig GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS', () => {
+  test('env sets propose_takes_max_output_tokens; unset leaves it undefined', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-config-env-'));
+    try {
+      await withEnv(
+        { GBRAIN_HOME: home, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: undefined },
+        () => {
+          saveConfig({ engine: 'pglite', database_path: '/tmp/local-brain.pglite' });
+        },
+      );
+      // Unset → field absent (the read site falls back to the 2048 default).
+      await withEnv(
+        {
+          GBRAIN_HOME: home,
+          GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS: undefined,
+          GBRAIN_DATABASE_URL: undefined,
+          DATABASE_URL: undefined,
+        },
+        () => {
+          expect(loadConfig()?.propose_takes_max_output_tokens).toBeUndefined();
+        },
+      );
+      // Set → parsed onto the config field.
+      await withEnv(
+        {
+          GBRAIN_HOME: home,
+          GBRAIN_PROPOSE_TAKES_MAX_OUTPUT_TOKENS: '8192',
+          GBRAIN_DATABASE_URL: undefined,
+          DATABASE_URL: undefined,
+        },
+        () => {
+          expect(loadConfig()?.propose_takes_max_output_tokens).toBe(8192);
+        },
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

@@ -14,20 +14,26 @@
  *  - parseExtractorOutput unit tests for the raw JSON parser
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import {
   runPhaseProposeTakes,
+  defaultExtractor,
   parseExtractorOutput,
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
   PROPOSE_TAKES_PROMPT_VERSION,
+  DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS,
   type ProposeTakesExtractor,
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
+import {
+  __setChatTransportForTests,
+  type ChatResult,
+} from '../src/core/ai/gateway.ts';
 
 // ─── Mock engine ────────────────────────────────────────────────────
 
@@ -80,10 +86,10 @@ function buildPage(opts: { slug: string; body: string; sourceId?: string }): Pag
   } as Page;
 }
 
-function buildCtx(engine: BrainEngine): OperationContext {
+function buildCtx(engine: BrainEngine, config: Record<string, unknown> = {}): OperationContext {
   return {
     engine,
-    config: {} as never,
+    config: config as never,
     logger: { info() {}, warn() {}, error() {} } as never,
     dryRun: false,
     remote: false,
@@ -383,5 +389,58 @@ New prose appended here.`;
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);
+  });
+});
+
+// ─── configurable extraction output-token budget ─────────────────────
+
+describe('propose_takes — configurable output-token budget', () => {
+  afterEach(() => {
+    __setChatTransportForTests(null);
+  });
+
+  function stubChat(capture: { maxTokens?: number }) {
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      capture.maxTokens = opts.maxTokens;
+      return {
+        text: '[{"claim_text":"X will ship late","kind":"prediction","holder":"brain","weight":0.6,"domain":"test"}]',
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      };
+    });
+  }
+
+  test('defaultExtractor defaults to DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS (behavior unchanged)', async () => {
+    const cap: { maxTokens?: number } = {};
+    stubChat(cap);
+    const takes = await defaultExtractor({ pagePath: 'notes/x', pageBody: 'I bet X ships late.', existingTakes: [] });
+    expect(cap.maxTokens).toBe(DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS);
+    expect(takes).toHaveLength(1);
+  });
+
+  test('defaultExtractor honors an explicit maxOutputTokens override', async () => {
+    const cap: { maxTokens?: number } = {};
+    stubChat(cap);
+    await defaultExtractor({ pagePath: 'notes/x', pageBody: 'I bet X ships late.', existingTakes: [], maxOutputTokens: 8192 });
+    expect(cap.maxTokens).toBe(8192);
+  });
+
+  test('phase passes config propose_takes_max_output_tokens through to the extractor', async () => {
+    let seen: number | undefined;
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seen = input.maxOutputTokens;
+      return [];
+    };
+    // Unset → default.
+    const a = buildMockEngine({ pages: [buildPage({ slug: 'notes/x', body: 'I bet X ships late.' })] });
+    await runPhaseProposeTakes(buildCtx(a.engine), { extractor });
+    expect(seen).toBe(DEFAULT_PROPOSE_TAKES_MAX_OUTPUT_TOKENS);
+    // Configured → override reaches the extractor.
+    const b = buildMockEngine({ pages: [buildPage({ slug: 'notes/y', body: 'I bet Y ships late.' })] });
+    await runPhaseProposeTakes(buildCtx(b.engine, { propose_takes_max_output_tokens: 8192 }), { extractor });
+    expect(seen).toBe(8192);
   });
 });
