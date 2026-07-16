@@ -41,6 +41,7 @@ describe('desktop settings renderer contracts', () => {
       'close-behavior',
       'system-theme-select',
       'save-system-settings',
+      'restart-shared-gateway',
     ]) {
       expect(html).toContain(`id="${id}"`);
     }
@@ -58,6 +59,10 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).not.toContain('切换共享模式、网卡或 IPv4 时会弹出二次确认。');
     expect(renderer).toContain('getSystemSettings()');
     expect(renderer).toContain('saveSystemSettings(payload)');
+    expect(renderer).toContain('restartSharedGateway()');
+    expect(renderer).toContain("setBusy(button, true, '正在重启…')");
+    expect(styles).toContain('.gateway-status.warning > i { background: #ff6655;');
+    expect(styles).toContain('grid-template-columns: 8px minmax(0, 1fr) auto');
     expect(renderer).toContain('onSystemSettingsState((next) => applySystemSettingsState(next))');
     expect(styles).toContain('.connection-spine');
   });

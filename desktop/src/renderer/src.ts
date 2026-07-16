@@ -481,6 +481,7 @@ function renderSystemSettings(next: DesktopSystemSettingsState): void {
   const status = $('#gateway-status');
   const statusTitle = status.querySelector('b')!;
   const statusDetail = status.querySelector('small')!;
+  const restartButton = $<HTMLButtonElement>('#restart-shared-gateway');
   const gatewayReady = next.preferences.networkMode === 'shared' && next.gateway?.running === true && next.selectedAddressAvailable;
   status.classList.toggle('ready', gatewayReady);
   status.classList.toggle('warning', Boolean(next.warning) || next.preferences.networkMode === 'shared' && !gatewayReady);
@@ -494,6 +495,7 @@ function renderSystemSettings(next: DesktopSystemSettingsState): void {
     statusTitle.textContent = '仅本机连接';
     statusDetail.textContent = '共享网关未启动，本机 Agent 仍可正常调用。';
   }
+  restartButton.hidden = next.preferences.networkMode !== 'shared' || gatewayReady || !next.selectedAddressAvailable;
   $('#system-save-note').textContent = next.warning || '';
   updateSystemSettingsAvailability();
 }
@@ -742,16 +744,10 @@ async function revokeSharedMember(credentialName: string, displayName: string, b
   }
 }
 
-async function saveSystemSettings(): Promise<void> {
-  clearNotices();
-  const button = $<HTMLButtonElement>('#save-system-settings');
+function currentSystemSettingsPayload(): DesktopSystemSettingsPayload {
   const mode = selectedNetworkMode();
   const address = selectedNetworkAddress();
-  if (mode === 'shared' && (!address.adapterName || !address.address)) {
-    setNotice('error', '共享模式需要选择固定的网卡和 IPv4 地址。');
-    return;
-  }
-  const payload: DesktopSystemSettingsPayload = {
+  return {
     theme: $<HTMLSelectElement>('#system-theme-select').value as DesktopTheme,
     networkMode: mode,
     sharedAdapter: address.adapterName,
@@ -759,6 +755,41 @@ async function saveSystemSettings(): Promise<void> {
     launchAtLogin: $<HTMLInputElement>('#launch-at-login').checked,
     closeBehavior: $<HTMLSelectElement>('#close-behavior').value as 'tray' | 'quit',
   };
+}
+
+async function restartSharedGateway(): Promise<void> {
+  clearNotices();
+  const button = $<HTMLButtonElement>('#restart-shared-gateway');
+  const payload = currentSystemSettingsPayload();
+  if (payload.networkMode !== 'shared' || !payload.sharedAdapter || !payload.sharedIp) {
+    setNotice('error', '请先选择可用的固定局域网地址。');
+    return;
+  }
+  setBusy(button, true, '正在重启…');
+  try {
+    const result = await window.pmbrainDesktop.saveSystemSettings(payload);
+    applySystemSettingsState(result.state, false);
+    if (result.canceled) return;
+    if (!result.state.gateway?.running) throw new Error('共享入口仍未启动，请检查固定 IP 与 3131 端口。');
+    setNotice('success', `局域网共享已恢复：${result.state.sharedMcpUrl || payload.sharedIp}`);
+    await loadSharedAccess();
+  } catch (error) {
+    setNotice('error', error instanceof Error ? error.message : String(error));
+  } finally {
+    setBusy(button, false, '重启共享');
+  }
+}
+
+async function saveSystemSettings(): Promise<void> {
+  clearNotices();
+  const button = $<HTMLButtonElement>('#save-system-settings');
+  const payload = currentSystemSettingsPayload();
+  const mode = payload.networkMode;
+  const address = { adapterName: payload.sharedAdapter, address: payload.sharedIp };
+  if (mode === 'shared' && (!address.adapterName || !address.address)) {
+    setNotice('error', '共享模式需要选择固定的网卡和 IPv4 地址。');
+    return;
+  }
   setBusy(button, true, '正在保存…');
   try {
     const result = await window.pmbrainDesktop.saveSystemSettings(payload);
@@ -1117,6 +1148,7 @@ document.querySelectorAll<HTMLButtonElement>('.secret-toggle').forEach((button) 
 }));
 $('#save-setup').addEventListener('click', () => void save());
 $('#save-system-settings').addEventListener('click', () => void saveSystemSettings());
+$('#restart-shared-gateway').addEventListener('click', () => void restartSharedGateway());
 $('#create-shared-integration').addEventListener('click', () => void createSharedMember());
 $('#open-logs').addEventListener('click', () => void window.pmbrainDesktop.openLogs());
 $('#open-admin').addEventListener('click', () => void window.pmbrainDesktop.openAdmin());
