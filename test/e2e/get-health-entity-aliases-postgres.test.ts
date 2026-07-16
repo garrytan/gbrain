@@ -39,6 +39,8 @@ describeIf('Postgres get_health entity coverage aliases', () => {
     expect(health.timeline_coverage).toBe(0);
     expect(health.entity_link_coverage).toBeNull();
     expect(health.entity_timeline_coverage).toBeNull();
+    expect(health.most_connected).toEqual([]);
+    expect(health.most_connected_entities).toEqual([]);
   });
 
   test('entity-present health aliases match legacy values', async () => {
@@ -60,6 +62,12 @@ describeIf('Postgres get_health entity coverage aliases', () => {
     });
 
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    await engine.putPage('notes/brief', {
+      type: 'note',
+      title: 'Brief',
+      compiled_truth: 'A plain note for a non-entity target.',
+    });
+    await engine.addLink('companies/acme', 'notes/brief', '', 'mentions');
 
     const health = await engine.getHealth();
 
@@ -70,5 +78,8 @@ describeIf('Postgres get_health entity coverage aliases', () => {
     expect(health.entity_timeline_coverage).toBe(0);
     expect(health.entity_link_coverage).toBe(health.link_coverage);
     expect(health.entity_timeline_coverage).toBe(health.timeline_coverage);
+    expect(health.most_connected_entities).toEqual(health.most_connected);
+    expect(health.most_connected_entities[0]?.slug).toBe('companies/acme');
+    expect(health.most_connected_entities[0]?.link_count).toBe(2);
   });
 });
