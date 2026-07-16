@@ -13,6 +13,7 @@ import { ollama } from './ollama.ts';
 import { openrouter } from './openrouter.ts';
 import { voyage } from './voyage.ts';
 import { litellmProxy } from './litellm-proxy.ts';
+import { bedrock } from './bedrock.ts';
 import { deepseek } from './deepseek.ts';
 import { groq } from './groq.ts';
 import { together } from './together.ts';
@@ -32,6 +33,7 @@ const ALL: Recipe[] = [
   openrouter,
   voyage,
   litellmProxy,
+  bedrock,
   deepseek,
   groq,
   together,

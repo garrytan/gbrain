@@ -41,6 +41,24 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    chat: {
+      // #2600: LiteLLM proxies chat/completions for whatever backend the user
+      // configured (Bedrock Claude, Vertex Gemini, Fireworks, etc.). Like the
+      // embedding touchpoint, the model list is user-provided — the openai-compat
+      // tier does NOT enforce it at runtime, so users pass any model id their
+      // proxy routes via `--chat-model litellm:<model>`. Empty list here is the
+      // same "bring your own backend" contract as embedding above.
+      models: [],
+      // Tool-calling depends entirely on the proxied backend. Declared true so
+      // the model is treated as chat-capable; a backend without tool support
+      // surfaces the upstream rejection rather than being pre-filtered out.
+      supports_tools: true,
+      // Informational. The real subagent-loop gate is isAnthropicProvider()
+      // upstream, relaxed only via `gbrain config set agent.use_gateway_loop true`.
+      // A LiteLLM-proxied model is never native-Anthropic, so subagents require
+      // the gateway-native loop regardless of this flag.
+      supports_subagent_loop: false,
+    },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL (include the /v1 suffix if your proxy serves the OpenAI route there, e.g. http://localhost:4000/v1) + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL (include the /v1 suffix if your proxy serves the OpenAI route there, e.g. http://localhost:4000/v1), then pass --embedding-model litellm:<model> --embedding-dimensions <N> and/or --chat-model litellm:<model>.',
 };
