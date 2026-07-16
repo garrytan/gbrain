@@ -888,6 +888,25 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
 }
 
 /**
+ * Resolve sync's effective no-embed mode from CLI args + config.
+ *
+ * The deferred-setup sentinel (`embedding_disabled: true`, written by
+ * `gbrain init --no-embedding`) is an implicit `--no-embed`: without this,
+ * the embed credential preflight demands provider credentials the user
+ * deliberately deferred at init, and every `gbrain sync` on a keyless
+ * brain exits 1. See embed-preflight.ts's skip protocol — the sentinel is
+ * meant to be honored before the credential check ever runs.
+ *
+ * Exported for `test/sync-no-embed-sentinel.test.ts`.
+ */
+export function resolveNoEmbed(
+  args: string[],
+  cfg: { embedding_disabled?: boolean } | null,
+): boolean {
+  return args.includes('--no-embed') || cfg?.embedding_disabled === true;
+}
+
+/**
  * Shell out to git with a generous maxBuffer.
  *
  * Node's default maxBuffer is 1 MiB.  `git diff --name-status -M` on a
@@ -3355,7 +3374,7 @@ See also:
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
-  const noEmbed = args.includes('--no-embed');
+  const noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
