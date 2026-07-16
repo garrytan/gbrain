@@ -262,8 +262,11 @@ Populate them periodically or after major imports:
   `advises`, `mentions`, `source`). Idempotent. Use `--source fs --dir <brain>`
   if you have a markdown checkout to walk instead.
 - `gbrain extract timeline --source db` — backfill structured timeline entries.
-  Parses `- **YYYY-MM-DD** | summary` lines from page content. Idempotent (DB
-  UNIQUE constraint).
+  Parses `- **YYYY-MM-DD** | summary` lines from page content. When a DB page
+  has no explicit timeline row but does have `pages.effective_date`, extraction
+  creates one provenance-tagged fallback entry from that date and the page
+  title. Idempotent (DB UNIQUE constraint). `gbrain extract --stale` applies the
+  same fallback for later page edits.
 - `gbrain extract all --source db` — both in one run.
 - `gbrain graph-query <slug> --depth 2` — verify connectivity (use any well-known
   entity slug as a probe).

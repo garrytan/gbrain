@@ -163,6 +163,22 @@ describe('gbrain extract timeline --source db', () => {
     expect(entries.map(e => e.summary).sort()).toEqual(['Closed Series A', 'Joined as CEO']);
   });
 
+  test('creates a fallback entry from page effective_date when content has no timeline row', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'Alice is the CEO.', timeline: '',
+      effective_date: new Date('2026-07-16T21:08:00Z'),
+      effective_date_source: 'date',
+    });
+
+    await runExtract(engine, ['timeline', '--source', 'db']);
+
+    const entries = await engine.getTimeline('people/alice');
+    expect(entries).toHaveLength(1);
+    expect(new Date(entries[0].date).toISOString().slice(0, 10)).toBe('2026-07-16');
+    expect(entries[0].summary).toBe('Alice');
+    expect(entries[0].source).toBe('page.effective_date:date');
+  });
+
   test('idempotent via DB constraint', async () => {
     await engine.putPage('people/alice', {
       type: 'person', title: 'Alice', compiled_truth: '',
