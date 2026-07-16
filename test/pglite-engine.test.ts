@@ -1270,12 +1270,16 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h = await engine.getHealth();
     expect(h.link_coverage).toBeCloseTo(1 / 3, 2);
+    expect(h.entity_page_count).toBe(3);
+    expect(h.entity_link_coverage).toBeCloseTo(1 / 3, 2);
   });
 
   test('timeline_coverage = % with >= 1 timeline entry', async () => {
     await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
     const h = await engine.getHealth();
     expect(h.timeline_coverage).toBeCloseTo(1 / 3, 2);
+    expect(h.entity_page_count).toBe(3);
+    expect(h.entity_timeline_coverage).toBeCloseTo(1 / 3, 2);
   });
 
   test('most_connected lists top entities by link count', async () => {
@@ -1283,8 +1287,23 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');
     const h = await engine.getHealth();
     expect(h.most_connected.length).toBeGreaterThan(0);
+    expect(h.most_connected_entities.length).toBeGreaterThan(0);
+    expect(h.most_connected_entities).toEqual(h.most_connected);
     expect(h.most_connected[0].slug).toBe('companies/acme');
     expect(h.most_connected[0].link_count).toBe(2);
+  });
+
+  test('legacy zero values stay when no entity pages exist', async () => {
+    await truncateAll();
+    await engine.putPage('concepts/note', { ...testPage, type: 'note', title: 'Note' });
+    const h = await engine.getHealth();
+
+    expect(h.entity_page_count).toBe(0);
+    expect(h.link_coverage).toBe(0);
+    expect(h.timeline_coverage).toBe(0);
+    expect(h.entity_link_coverage).toBeNull();
+    expect(h.entity_timeline_coverage).toBeNull();
+    expect(h.most_connected_entities).toEqual([]);
   });
 
   test('orphan_pages: pages with neither inbound nor outbound links', async () => {

@@ -1432,6 +1432,16 @@ export interface BrainHealth {
   timeline_coverage: number;
   /** Top 5 entities by total link count (in + out). */
   most_connected: Array<{ slug: string; link_count: number }>;
+  /** Additive contract fields with explicit naming for entity-scoped metrics.
+   *
+   * `entity_page_count` is the denominator used for all entity-scoped metrics.
+   * `entity_link_coverage` / `entity_timeline_coverage` are explicit aliases
+   * that are null when no entities are present.
+   */
+  entity_page_count?: number;
+  entity_link_coverage?: number | null;
+  entity_timeline_coverage?: number | null;
+  most_connected_entities?: Array<{ slug: string; link_count: number }>;
   /**
    * Per-component contribution to brain_score. Sum equals brain_score by
    * construction. Displayed by `gbrain doctor` when brain_score < 100.

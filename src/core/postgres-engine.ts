@@ -5011,6 +5011,7 @@ export class PostgresEngine implements BrainEngine {
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM entity_pages) as entity_page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
@@ -5031,7 +5032,13 @@ export class PostgresEngine implements BrainEngine {
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
+          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage,
+        (SELECT count(*) FROM entity_pages e
+         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
+          NULLIF((SELECT count(*) FROM entity_pages), 0)::float as entity_link_coverage,
+        (SELECT count(*) FROM entity_pages e
+         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
+          NULLIF((SELECT count(*) FROM entity_pages), 0)::float as entity_timeline_coverage
     `;
 
     const connected = await sql`
@@ -5049,6 +5056,13 @@ export class PostgresEngine implements BrainEngine {
     const deadLinks = Number(h.dead_links);
     const linkCount = Number(h.link_count);
     const pagesWithTimeline = Number(h.pages_with_timeline);
+    const entityPageCount = Number(h.entity_page_count);
+    const entityLinkCoverage = h.entity_link_coverage == null ? null : Number(h.entity_link_coverage);
+    const entityTimelineCoverage = h.entity_timeline_coverage == null ? null : Number(h.entity_timeline_coverage);
+    const mostConnected = (connected as unknown as { slug: string; link_count: number }[]).map(c => ({
+      slug: c.slug,
+      link_count: Number(c.link_count),
+    }));
 
     // brain_score: 0-100 weighted average
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
@@ -5080,10 +5094,11 @@ export class PostgresEngine implements BrainEngine {
       dead_links: deadLinks,
       link_coverage: Number(h.link_coverage),
       timeline_coverage: Number(h.timeline_coverage),
-      most_connected: (connected as unknown as { slug: string; link_count: number }[]).map(c => ({
-        slug: c.slug,
-        link_count: Number(c.link_count),
-      })),
+      most_connected: mostConnected,
+      entity_page_count: entityPageCount,
+      entity_link_coverage: entityLinkCoverage,
+      entity_timeline_coverage: entityTimelineCoverage,
+      most_connected_entities: mostConnected,
       embed_coverage_score: embedCoverageScore,
       link_density_score: linkDensityScore,
       timeline_coverage_score: timelineCoverageScore,
