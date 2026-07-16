@@ -20,6 +20,7 @@ export interface IntegrationInfo {
   automatic: boolean;
   configuredPort?: number;
   portMismatch?: boolean;
+  connectionState?: 'connected' | 'saved';
 }
 
 export interface IntegrationResult {
@@ -33,6 +34,7 @@ export interface IntegrationResult {
   clientId?: string;
   clientSecret?: string;
   smoke?: { toolCount: number; statsOk: boolean };
+  connectionState?: 'connected' | 'saved';
 }
 
 export interface SharedIntegrationPayload {
@@ -154,7 +156,10 @@ export function qwenPawDriverIsConfigured(path: string): boolean {
         }
       }
     }
-    return /^Bearer\s+\S+$/i.test(authorization);
+    // QwenPaw 2.x may encrypt or otherwise encode persisted secrets. A
+    // non-empty authorization entry means the configuration was saved; the
+    // local tools API is the source of truth for whether it is connected.
+    return authorization.length > 0;
   } catch {
     return false;
   }
@@ -494,6 +499,7 @@ interface QwenPawDesktopIntegrationResult {
   path: string;
   backup: string | null;
   toolCount: number;
+  connected: boolean;
 }
 
 function readQwenPawDesktopPort(path: string): number {
@@ -530,6 +536,7 @@ export async function configureQwenPawDesktopIntegration(
   homeDirectory = homedir(),
   backupRoot?: string,
   request: typeof fetch = fetch,
+  pause: (milliseconds: number) => Promise<unknown> = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
 ): Promise<QwenPawDesktopIntegrationResult> {
   const paths = qwenPawPaths(homeDirectory);
   const port = readQwenPawDesktopPort(paths.desktopPort);
@@ -557,19 +564,53 @@ export async function configureQwenPawDesktopIntegration(
   }
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const tools = await qwenPawApiRequest(baseUrl, '/api/mcp/tools/pmbrain', { method: 'GET' }, request);
-    if (tools.ok) {
+    let tools: Response | null = null;
+    try {
+      tools = await qwenPawApiRequest(baseUrl, '/api/mcp/tools/pmbrain', { method: 'GET' }, request);
+    } catch {
+      // The configuration was already accepted by QwenPaw. Preserve that
+      // state and let the UI distinguish it from a verified connection.
+    }
+    if (tools?.ok) {
       const payload = await tools.json().catch(() => null);
       if (!Array.isArray(payload)) throw new Error('QwenPaw 已保存配置，但返回了无法识别的 MCP 工具列表。');
       return {
         path: paths.driverCard,
         backup: driverBackup ?? credentialBackup,
         toolCount: payload.length,
+        connected: true,
       };
     }
-    if (attempt < 9) await new Promise(resolve => setTimeout(resolve, 300));
+    if (attempt < 9) await pause(300);
   }
-  throw new Error('QwenPaw 已保存配置，但未能连接 PMBrain。请确认本机代理绕过 localhost/127.0.0.1 后重试；不会启动 OAuth 授权。');
+  return {
+    path: paths.driverCard,
+    backup: driverBackup ?? credentialBackup,
+    toolCount: 0,
+    connected: false,
+  };
+}
+
+export async function probeQwenPawConnectionState(
+  homeDirectory = homedir(),
+  request: typeof fetch = fetch,
+): Promise<'connected' | 'saved' | undefined> {
+  const paths = qwenPawPaths(homeDirectory);
+  const path = qwenPawIntegrationPath(homeDirectory);
+  if (!isConfigured('qwenpaw', path)) return undefined;
+  if (!existsSync(paths.desktopPort)) return 'saved';
+  try {
+    const port = readQwenPawDesktopPort(paths.desktopPort);
+    const response = await request(`http://127.0.0.1:${port}/api/mcp/tools/pmbrain`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(2_500),
+    });
+    if (!response.ok) return 'saved';
+    const payload = await response.json().catch(() => null);
+    return Array.isArray(payload) ? 'connected' : 'saved';
+  } catch {
+    return 'saved';
+  }
 }
 
 const CODEX_START = '# >>> PMBrain Desktop managed MCP >>>';
@@ -687,6 +728,13 @@ export function listIntegrations(currentPort?: number): IntegrationInfo[] {
   });
 }
 
+export async function listIntegrationsWithConnectionState(currentPort?: number): Promise<IntegrationInfo[]> {
+  const integrations = listIntegrations(currentPort);
+  const qwenPaw = integrations.find(item => item.id === 'qwenpaw');
+  if (qwenPaw?.configured) qwenPaw.connectionState = await probeQwenPawConnectionState();
+  return integrations;
+}
+
 export function integrationConfigPath(client: IntegrationClient): string | null {
   return CLIENT_META[client].path();
 }
@@ -746,6 +794,7 @@ export async function configureIntegration(
   let snippet = JSON.stringify(entry, null, 2);
   let backup: string | null = null;
   let configured = false;
+  let connectionState: IntegrationResult['connectionState'];
 
   if (client === 'codebuddy' || client === 'workbuddy' || client === 'cursor') {
     backup = writeJsonIntegration(path!, sidecar.mcpUrl, token);
@@ -755,8 +804,10 @@ export async function configureIntegration(
     if (existsSync(qwenPaw.desktopPort) || existsSync(qwenPaw.driverCard)) {
       const result = await configureQwenPawDesktopIntegration(sidecar.mcpUrl, token);
       backup = result.backup;
+      connectionState = result.connected ? 'connected' : 'saved';
     } else {
       backup = writeQwenPawIntegration(qwenPaw.legacyConfig, sidecar.mcpUrl, token);
+      connectionState = 'saved';
     }
     snippet = JSON.stringify({ mcp: { clients: { pmbrain: qwenPawEntry(sidecar.mcpUrl, token) } } }, null, 2);
     configured = true;
@@ -772,5 +823,5 @@ export async function configureIntegration(
     snippet = `claude mcp add pmbrain -t http ${sidecar.mcpUrl} -H ${tomlString(`Authorization: Bearer ${token}`)}`;
   }
 
-  return { client, credentialKind, configured, path, backup, snippet, token, smoke };
+  return { client, credentialKind, configured, path, backup, snippet, token, smoke, connectionState };
 }

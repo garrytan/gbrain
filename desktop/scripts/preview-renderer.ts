@@ -86,12 +86,12 @@ window.pmbrainDesktop = {
       }
     },
     integrations: [
-      { id: 'codebuddy', name: 'CodeBuddy', path: 'C:\\Users\\zhengyunhui\\.codebuddy\\mcp.json', configured: true, automatic: true },
-      { id: 'workbuddy', name: 'Workbuddy', path: 'C:\\Users\\zhengyunhui\\.workbuddy\\mcp.json', configured: false, automatic: true },
-      { id: 'cursor', name: 'Cursor', path: 'C:\\Users\\zhengyunhui\\.cursor\\mcp.json', configured: true, automatic: true },
+      { id: 'codebuddy', name: 'CodeBuddy', path: 'C:\\\\Users\\\\zhengyunhui\\\\.codebuddy\\\\mcp.json', configured: true, automatic: true },
+      { id: 'workbuddy', name: 'Workbuddy', path: 'C:\\\\Users\\\\zhengyunhui\\\\.workbuddy\\\\mcp.json', configured: false, automatic: true },
+      { id: 'cursor', name: 'Cursor', path: 'C:\\\\Users\\\\zhengyunhui\\\\.cursor\\\\mcp.json', configured: true, automatic: true },
       { id: 'claude', name: 'Claude', path: null, configured: false, automatic: false },
-      { id: 'codex', name: 'Codex', path: 'C:\\Users\\zhengyunhui\\.codex\\config.toml', configured: false, automatic: true },
-      { id: 'qwenpaw', name: 'QwenPaw', path: 'C:\\Users\\zhengyunhui\\.qwenpaw\\workspaces\\default\\drivers\\mcp\\pmbrain.yaml', configured: false, automatic: true },
+      { id: 'codex', name: 'Codex', path: 'C:\\\\Users\\\\zhengyunhui\\\\.codex\\\\config.toml', configured: false, automatic: true },
+      { id: 'qwenpaw', name: 'QwenPaw', path: 'C:\\\\Users\\\\zhengyunhui\\\\.qwenpaw\\\\workspaces\\\\default\\\\drivers\\\\mcp\\\\pmbrain.yaml', configured: true, automatic: true, connectionState: 'connected' },
     ],
     port: 3132
   }),
@@ -237,6 +237,7 @@ html = html.replace(/(id="page-title">)[^<]+(<\/h1>)/, `$1${t.title}$2`);
 // 4. 集成面板：预生成卡片 HTML 注入到 integration-grid
 interface MockIntegration {
   id: string; name: string; path: string | null; configured: boolean; automatic: boolean;
+  connectionState?: 'connected' | 'saved';
 }
 const mockIntegrations: MockIntegration[] = [
   { id: 'codebuddy', name: 'CodeBuddy', path: 'C:\\Users\\zhengyunhui\\.codebuddy\\mcp.json', configured: true, automatic: true },
@@ -244,16 +245,18 @@ const mockIntegrations: MockIntegration[] = [
   { id: 'cursor', name: 'Cursor', path: 'C:\\Users\\zhengyunhui\\.cursor\\mcp.json', configured: true, automatic: true },
   { id: 'claude', name: 'Claude', path: null, configured: false, automatic: false },
   { id: 'codex', name: 'Codex', path: 'C:\\Users\\zhengyunhui\\.codex\\config.toml', configured: false, automatic: true },
-  { id: 'qwenpaw', name: 'QwenPaw', path: 'C:\\Users\\zhengyunhui\\.qwenpaw\\workspaces\\default\\drivers\\mcp\\pmbrain.yaml', configured: false, automatic: true },
+  { id: 'qwenpaw', name: 'QwenPaw', path: 'C:\\Users\\zhengyunhui\\.qwenpaw\\workspaces\\default\\drivers\\mcp\\pmbrain.yaml', configured: true, automatic: true, connectionState: 'connected' },
 ];
 const cardsHtml = mockIntegrations.map((item) => {
   const badgeClass = item.configured ? 'configured badge' : 'badge';
-  const badgeText = item.configured ? '已配置' : '未配置';
+  const badgeText = item.id === 'qwenpaw' && item.connectionState === 'connected'
+    ? '已连接'
+    : item.configured ? '已配置' : '未配置';
   const pathText = item.path ?? '通过 Claude CLI / GUI 接入';
   const noteText = item.id === 'qwenpaw'
     ? '通过本机 API 写入 Bearer 并验证，不使用 OAuth'
     : item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
-  const btnText = item.automatic ? '创建并写入' : '生成接入命令';
+  const btnText = item.automatic ? item.configured ? '更新' : '创建并写入' : '生成接入命令';
   return `<article class="integration-card"><span class="${badgeClass}">${badgeText}</span><h3>${item.name}</h3><p>${pathText}</p><small>${noteText}</small><button class="solid">${btnText}</button></article>`;
 }).join('\n          ');
 html = html.replace(

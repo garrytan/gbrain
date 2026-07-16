@@ -32,18 +32,26 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).not.toContain("switchPanel('integrations');");
   });
 
-  test('offers one stable custom OpenAI-compatible provider with a Base URL form', () => {
-    expect(html).toContain('id="open-custom-provider"');
+  test('adds custom OpenAI-compatible models from both model cards without fake editable controls', () => {
+    expect(html).toContain('id="add-custom-chat-model"');
+    expect(html).toContain('id="add-custom-embedding-model"');
     expect(html).toContain('id="custom-provider-dialog"');
     expect(html).toContain('id="custom-provider-base-url"');
+    expect(html).toContain('id="custom-provider-model-id"');
     expect(html).toContain('value="custom-openai"');
-    expect(html).toContain('OpenAI 兼容（Chat Completions + Embeddings）');
+    expect(html).toContain('供应商路由');
+    expect(html).toContain('OpenAI 兼容');
+    expect(html).not.toContain('id="custom-provider-id"');
+    expect(html).not.toContain('id="custom-provider-protocol"');
     expect(html).toContain('API Key 可选');
+    expect(html).not.toContain('厂商');
     expect(renderer).toContain('customProviderDraft');
     expect(renderer).toContain('customProvider: customProviderDraft ?? undefined');
     expect(renderer).toContain("provider === 'custom-openai'");
+    expect(renderer).toContain("openCustomProvider('chat')");
+    expect(renderer).toContain("openCustomProvider('embedding')");
     expect(main).toContain('自定义向量模型验证失败');
-    expect(styles).toContain('.custom-provider-bar');
+    expect(styles).toContain('.model-add-button');
     expect(styles).toContain('.custom-provider-dialog');
   });
 
@@ -105,6 +113,8 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).toContain('credential.credentialName');
     expect(renderer).toContain("client === 'qwenpaw' ? 'api_key' : selectedCredential()");
     expect(renderer).toContain('通过本机 API 写入 Bearer 并验证，不使用 OAuth');
+    expect(renderer).toContain('已写入，等待连接');
+    expect(renderer).toContain('重试连接');
   });
 
   test('keeps shared credential actions honest across refresh, revoke, and network changes', () => {

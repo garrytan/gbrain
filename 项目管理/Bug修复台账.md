@@ -1,5 +1,14 @@
 # Bug 修复台账
 
+## 2026-07-16 QwenPaw 已接入仍显示未配置修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain 1.1.21；PMBrain Desktop 1.0.64
+- 标题：修复 QwenPaw 配置状态误判并区分已写入与已连接
+- 描述：QwenPaw 2.x 已保存 PMBrain DriverCard 且工具接口可返回 77 个工具，但桌面端仍要求凭据 YAML 中出现明文 `Bearer`，因此把新版 QwenPaw 编码保存的有效凭据误判为“未配置”。首次接入日志同时显示 QwenPaw 请求 `127.0.0.1:3131/mcp` 被本机 `127.0.0.1:7897` 代理返回 502，代理状态变化后立即连接并热加载成功。
+- 是否完成：是
+- 最终结果：配置存在性改为检查 DriverCard 与非空凭据项，实际连接状态以 QwenPaw 本机工具接口为准；卡片分别显示“已连接”或“已写入，等待连接”，未连通时按钮显示“重试连接”并明确提示代理绕过 localhost/127.0.0.1，不再出现写入成功却仍显示未配置。QwenPaw 接入流程不读取、修改或启动 VPN 程序；现有隧道模块只在用户主动配置 ChatGPT Tunnel 时读取系统代理。真实本机复核返回 `configured=true`、`connection=connected`，PMBrain 健康检查和 QwenPaw 工具接口均为 HTTP 200。相关回归测试、Desktop 108 项完整测试、类型检查、生产构建和 browser-use CLI 验证通过。
+
 ## 2026-07-16 QwenPaw MCP 误入 OAuth 与连接失败修复
 
 - 时间：2026-07-16

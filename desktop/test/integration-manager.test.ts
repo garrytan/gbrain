@@ -9,6 +9,7 @@ import {
   formatSharedIntegrationSnippet,
   getSharedAccessContext,
   integrationConfigPath,
+  probeQwenPawConnectionState,
   qwenPawDriverIsConfigured,
   qwenPawIntegrationPath,
   revokeSharedIntegration,
@@ -273,7 +274,7 @@ describe('desktop integration config merging', () => {
     );
   });
 
-  test('only reports a QwenPaw DriverCard configured when its saved credential has a Bearer prefix', () => {
+  test('reports a saved QwenPaw DriverCard without assuming credentials remain plaintext', () => {
     const home = tempFile('home');
     const root = join(home, '.qwenpaw', 'workspaces', 'default');
     const driver = join(root, 'drivers', 'mcp', 'pmbrain.yaml');
@@ -294,14 +295,41 @@ describe('desktop integration config merging', () => {
       '  mcp/pmbrain:',
       '    kind: static',
       '    secrets:',
-      '      authorization: token-without-scheme',
+      '      authorization:',
     ].join('\n'));
     expect(qwenPawDriverIsConfigured(driver)).toBe(false);
     writeFileSync(credentials, readFileSync(credentials, 'utf8').replace(
-      'token-without-scheme',
-      'Bearer pmbrain-secret',
+      '      authorization:',
+      '      authorization: encrypted-qwenpaw-secret',
     ));
     expect(qwenPawDriverIsConfigured(driver)).toBe(true);
+  });
+
+  test('uses the QwenPaw tools API as the source of truth for connected versus saved', async () => {
+    const home = tempFile('home');
+    const root = join(home, '.qwenpaw', 'workspaces', 'default');
+    const driver = join(root, 'drivers', 'mcp', 'pmbrain.yaml');
+    const credentials = join(root, 'credentials.yaml');
+    mkdirSync(dirname(driver), { recursive: true });
+    mkdirSync(join(home, '.qwenpaw'), { recursive: true });
+    writeFileSync(join(home, '.qwenpaw', 'desktop_port'), '60913');
+    writeFileSync(driver, [
+      'name: pmbrain',
+      'endpoint:',
+      '  url: http://127.0.0.1:3131/mcp',
+      '  headers:',
+      '    Authorization:',
+    ].join('\n'));
+    writeFileSync(credentials, [
+      'credentials:',
+      '  mcp/pmbrain:',
+      '    secrets:',
+      '      authorization: encrypted-qwenpaw-secret',
+    ].join('\n'));
+    const connected = (async () => new Response(JSON.stringify([{ name: 'search' }]))) as typeof fetch;
+    const inactive = (async () => new Response('', { status: 503 })) as typeof fetch;
+    expect(await probeQwenPawConnectionState(home, connected)).toBe('connected');
+    expect(await probeQwenPawConnectionState(home, inactive)).toBe('saved');
   });
 
   test('preserves unrelated JSON MCP servers', () => {
@@ -416,6 +444,7 @@ describe('desktop integration config merging', () => {
     expect(calls[1].body?.transport).toBe('streamable_http');
     expect(result.path).toBe(driver);
     expect(result.toolCount).toBe(2);
+    expect(result.connected).toBe(true);
     expect(result.backup).not.toBeNull();
     expect(readFileSync(result.backup!, 'utf8')).toBe('name: pmbrain\n');
   });
@@ -446,6 +475,33 @@ describe('desktop integration config merging', () => {
     expect(calls.map(call => call.method)).toEqual(['GET', 'POST', 'GET']);
     expect(calls[1].body?.client_key).toBe('pmbrain');
     expect(calls[1].body?.client.headers.Authorization).toBe('Bearer secret');
+  });
+
+  test('returns a saved state instead of pretending an inactive QwenPaw client was not written', async () => {
+    const home = tempFile('home');
+    const root = join(home, '.qwenpaw');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'desktop_port'), '60913');
+    const request = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/mcp/pmbrain') && (init?.method ?? 'GET') === 'GET') {
+        return new Response('', { status: 404 });
+      }
+      if (url.endsWith('/api/mcp/tools/pmbrain')) return new Response('', { status: 503 });
+      return new Response(JSON.stringify({ key: 'pmbrain' }), { status: 201 });
+    }) as typeof fetch;
+
+    const result = await configureQwenPawDesktopIntegration(
+      'http://127.0.0.1:3131/mcp',
+      'secret',
+      home,
+      home,
+      request,
+      async () => undefined,
+    );
+    expect(result.connected).toBe(false);
+    expect(result.toolCount).toBe(0);
+    expect(result.path).toEndWith(join('drivers', 'mcp', 'pmbrain.yaml'));
   });
 
   test('replaces only the managed Codex block', () => {

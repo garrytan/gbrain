@@ -65,15 +65,6 @@ button.busy i { display: inline-block; width: 12px; height: 12px; margin-left: 1
 .index { color: #738078; font: 11px Consolas, monospace; }
 h2 { margin: 0; font-size: 18px; font-weight: 650; }
 .section-heading p { margin: 0; max-width: 560px; color: #849089; font-size: 13px; text-align: right; }
-.custom-provider-bar { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 14px; padding: 13px 14px; border: 1px solid #354039; background: #121614; }
-.custom-provider-bar.configured { border-color: #4f684b; background: #151c16; }
-.custom-provider-mark { width: 54px; height: 48px; display: grid; align-content: center; justify-items: center; border: 1px solid #46564c; background: #0d100f; font-family: Consolas, monospace; }
-.custom-provider-mark span { color: #718078; font-size: 8px; letter-spacing: .14em; }
-.custom-provider-mark b { margin-top: 2px; color: #97e66c; font-size: 15px; }
-.custom-provider-summary { min-width: 0; }
-.custom-provider-summary b, .custom-provider-summary small { display: block; }
-.custom-provider-summary b { color: #e7eee9; font-size: 13px; }
-.custom-provider-summary small { margin-top: 5px; overflow: hidden; color: #78857d; font: 10px/1.45 Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .mode-card { position: relative; display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 14px; min-height: 104px; padding: 18px; border: 1px solid #354039; background: #151a17; cursor: pointer; }
 .mode-card.selected { border-color: #86bd6e; background: #182019; box-shadow: inset 0 0 0 1px rgba(151,230,108,.18); }
@@ -108,8 +99,12 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .model-stack { display: grid; gap: 14px; }
 .model-card { padding: 18px; border: 1px solid #354039; background: #151a17; }
 .model-card-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 14px; }
+.model-card-heading > div { display: flex; align-items: center; gap: 10px; }
 .model-card-heading b { color: #eef4ef; font-size: 17px; }
 .model-card-heading small { color: #8d9992; font-size: 12px; overflow-wrap: anywhere; text-align: right; }
+.model-add-button { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 3px 8px; color: #bcefa7; border: 1px solid #426338; background: #172019; font-size: 10px; }
+.model-add-button:hover, .model-add-button:focus-visible { color: #10160f; border-color: #97e66c; background: #97e66c; }
+.model-add-button i { font: normal 15px/1 Consolas, monospace; }
 .model-fields { display: grid; gap: 12px; }
 .model-fields.chat-fields { grid-template-columns: 180px minmax(220px, 1fr) minmax(280px, 1.1fr); }
 .model-fields.embedding-fields { grid-template-columns: 180px minmax(220px, 1fr) minmax(280px, 1.1fr); }
@@ -294,14 +289,20 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .custom-provider-form-body { display: grid; gap: 15px; padding: 20px; overflow-y: auto; }
 .custom-provider-form-body label > span { display: block; margin-bottom: 7px; color: #c5cfc8; font-size: 12px; font-weight: 650; }
 .custom-provider-form-body label > small { display: block; margin-top: 6px; color: #6f7d75; font-size: 10px; line-height: 1.5; }
-.custom-provider-form-body input[readonly], .custom-provider-form-body select:disabled { color: #849089; background: #101311; cursor: not-allowed; }
 .custom-provider-endpoint-preview { display: grid; grid-template-columns: 12px 1fr; align-items: center; gap: 12px; padding: 12px 13px; border-left: 2px solid #97e66c; background: #172019; }
 .custom-provider-endpoint-preview i { width: 8px; height: 8px; border-radius: 50%; background: #97e66c; box-shadow: 0 0 0 5px rgba(151,230,108,.08); }
 .custom-provider-endpoint-preview b, .custom-provider-endpoint-preview small { display: block; }
 .custom-provider-endpoint-preview b { color: #dce7df; font: 11px Consolas, monospace; }
 .custom-provider-endpoint-preview small { margin-top: 4px; color: #7f8c84; font-size: 10px; }
+.custom-provider-capabilities { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #303934; background: #101311; }
+.custom-provider-capabilities > span { min-width: 0; padding: 10px 12px; }
+.custom-provider-capabilities > span + span { border-left: 1px solid #303934; }
+.custom-provider-capabilities small, .custom-provider-capabilities code, .custom-provider-capabilities b { display: block; }
+.custom-provider-capabilities small { margin-bottom: 4px; color: #6f7d75; font-size: 9px; }
+.custom-provider-capabilities code, .custom-provider-capabilities b { overflow: hidden; color: #cbd6ce; font: 11px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .custom-provider-error { margin: 0; padding: 10px 12px; color: #ffc2b8; border-left: 2px solid #ff735c; background: #2a1b18; font-size: 11px; line-height: 1.5; }
-.custom-provider-actions { display: flex; gap: 8px; margin-left: auto; }
+.custom-provider-actions { display: flex; flex: 0 0 auto; gap: 8px; margin-left: auto; }
+.custom-provider-actions button { white-space: nowrap; }
 
 :root[data-theme="light"] { color: #202822; background: #f5f7f4; color-scheme: light; }
 :root[data-theme="light"] body { background: #f5f7f4; }
@@ -359,18 +360,16 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 :root[data-theme="light"] .update-card,
 :root[data-theme="light"] .previous-version-card,
 :root[data-theme="light"] .recovery-note { color: #202822; border-color: #c7d1c9; background: #ffffff; }
-:root[data-theme="light"] .custom-provider-bar { color: #202822; border-color: #c7d1c9; background: #ffffff; }
-:root[data-theme="light"] .custom-provider-bar.configured { border-color: #90ad87; background: #f2f8ef; }
-:root[data-theme="light"] .custom-provider-mark { border-color: #aab6ad; background: #f4f7f4; }
-:root[data-theme="light"] .custom-provider-summary b { color: #202822; }
-:root[data-theme="light"] .custom-provider-summary small,
 :root[data-theme="light"] .custom-provider-form-body label > small,
 :root[data-theme="light"] .custom-provider-endpoint-preview small { color: #65736a; }
 :root[data-theme="light"] .custom-provider-form-body label > span,
 :root[data-theme="light"] .custom-provider-endpoint-preview b { color: #344039; }
-:root[data-theme="light"] .custom-provider-form-body input[readonly],
-:root[data-theme="light"] .custom-provider-form-body select:disabled { color: #65736a; background: #eef2ee; }
 :root[data-theme="light"] .custom-provider-endpoint-preview { background: #edf6e9; }
+:root[data-theme="light"] .custom-provider-capabilities { border-color: #c7d1c9; background: #f4f7f4; }
+:root[data-theme="light"] .custom-provider-capabilities > span + span { border-color: #c7d1c9; }
+:root[data-theme="light"] .custom-provider-capabilities code,
+:root[data-theme="light"] .custom-provider-capabilities b { color: #344039; }
+:root[data-theme="light"] .model-add-button { color: #315b28; border-color: #90ad87; background: #f2f8ef; }
 :root[data-theme="light"] .custom-provider-error { color: #812c20; border-color: #c9503e; background: #fceae6; }
 :root[data-theme="light"] .wait-dialog b,
 :root[data-theme="light"] .model-card-heading b,
@@ -492,9 +491,10 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
   .credential-switch { align-items: flex-start; flex-direction: column; gap: 10px; }
   .form-footer p { max-width: 100%; }
   .field-help { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .custom-provider-bar { grid-template-columns: 46px minmax(0, 1fr); }
-  .custom-provider-mark { width: 46px; }
-  .custom-provider-bar > button { grid-column: 1 / -1; width: 100%; }
+  .model-card-heading { align-items: flex-start; flex-direction: column; }
+  .model-card-heading small { text-align: left; }
+  .custom-provider-capabilities { grid-template-columns: 1fr; }
+  .custom-provider-capabilities > span + span { border-top: 1px solid #303934; border-left: 0; }
   .custom-provider-actions { width: 100%; margin-left: 0; }
   .custom-provider-actions button { flex: 1; }
 }

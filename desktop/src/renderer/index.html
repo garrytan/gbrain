@@ -101,27 +101,19 @@
         <section class="panel" id="panel-models">
           <div class="section-heading">
             <div><span class="index">02</span><h2>模型配置</h2></div>
-            <p>普通模型和向量模型各配置一组；厂商、模型名和 API Key 会写入本机配置。</p>
-          </div>
-          <div class="custom-provider-bar" id="custom-provider-bar">
-            <div class="custom-provider-mark" aria-hidden="true"><span>LOCAL</span><b>/v1</b></div>
-            <div class="custom-provider-summary">
-              <b id="custom-provider-summary-title">自定义 OpenAI 兼容接口</b>
-              <small id="custom-provider-summary-url">适用于本机或局域网中的 Qwen、vLLM、LM Studio、Xinference、LocalAI。</small>
-            </div>
-            <button type="button" class="ghost" id="open-custom-provider"><span>添加自定义接口</span></button>
+            <p>普通模型和向量模型各配置一组；供应商、模型名和 API Key 会写入本机配置。</p>
           </div>
           <div class="model-stack">
             <section class="model-card">
               <div class="model-card-heading">
-                <b>普通模型</b>
+                <div><b>普通模型</b><button type="button" class="model-add-button" id="add-custom-chat-model" aria-label="添加自定义普通模型"><i aria-hidden="true">＋</i><span>自定义模型</span></button></div>
                 <small id="chat-model-effective">当前未配置</small>
               </div>
               <div class="model-fields chat-fields">
                 <label>
-                  <span>厂商</span>
+                  <span>供应商</span>
                   <select id="chat-provider">
-                    <option value="">请选择厂商</option>
+                    <option value="">请选择供应商</option>
                     <option value="mimo">mimo</option>
                     <option value="zhipu">zhipu</option>
                     <option value="deepseek">deepseek</option>
@@ -145,14 +137,14 @@
             </section>
             <section class="model-card">
               <div class="model-card-heading">
-                <b>向量化模型</b>
+                <div><b>向量化模型</b><button type="button" class="model-add-button" id="add-custom-embedding-model" aria-label="添加自定义向量模型"><i aria-hidden="true">＋</i><span>自定义模型</span></button></div>
                 <small id="embedding-model-effective">当前未配置</small>
               </div>
               <div class="model-fields embedding-fields">
                 <label>
-                  <span>厂商</span>
+                  <span>供应商</span>
                   <select id="embedding-provider">
-                    <option value="">请选择厂商</option>
+                    <option value="">请选择供应商</option>
                     <option value="zhipu">zhipu</option>
                     <option value="zeroentropy">zeroentropy</option>
                     <option value="openai">openai</option>
@@ -181,37 +173,37 @@
           </div>
           <details class="advanced-block model-advanced" id="advanced-model-settings">
             <summary>高级：按任务层级指定模型</summary>
-            <div class="advanced-copy">按任务选择厂商和模型即可，不需要手动拼写 <code>provider:model</code>。API Key 会复用上方模型配置；未指定时沿用当前解析结果，保存基础配置不会清空这里的覆盖。</div>
+            <div class="advanced-copy">按任务选择供应商和模型即可，不需要手动拼写 <code>provider:model</code>。API Key 会复用上方模型配置；未指定时沿用当前解析结果，保存基础配置不会清空这里的覆盖。</div>
             <div class="advanced-model-grid">
               <article class="advanced-task-card">
                 <div class="advanced-task-heading"><div><b>轻量任务</b><small>规则判断、意图识别、短文本处理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="utility">跟随普通模型</button></div>
                 <div class="advanced-task-fields">
-                  <label><span>厂商</span><select id="advanced-utility-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
-                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-utility-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="utility" aria-label="展开轻量任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-utility-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-utility-model-status"></small></label>
+                  <label><span>供应商</span><select id="advanced-utility-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-utility-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="utility" aria-label="展开轻量任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-utility-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-utility-model-status"></small></label>
                 </div>
                 <small class="advanced-task-effective" id="advanced-utility-effective">尚未读取</small>
               </article>
               <article class="advanced-task-card">
                 <div class="advanced-task-heading"><div><b>推理任务</b><small>需要分析、归纳和检索的普通任务</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="reasoning">跟随普通模型</button></div>
                 <div class="advanced-task-fields">
-                  <label><span>厂商</span><select id="advanced-reasoning-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
-                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-reasoning-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="reasoning" aria-label="展开推理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-reasoning-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-reasoning-model-status"></small></label>
+                  <label><span>供应商</span><select id="advanced-reasoning-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-reasoning-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="reasoning" aria-label="展开推理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-reasoning-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-reasoning-model-status"></small></label>
                 </div>
                 <small class="advanced-task-effective" id="advanced-reasoning-effective">尚未读取</small>
               </article>
               <article class="advanced-task-card">
                 <div class="advanced-task-heading"><div><b>深度任务</b><small>复杂问题、多步规划和长文本推理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="deep">跟随普通模型</button></div>
                 <div class="advanced-task-fields">
-                  <label><span>厂商</span><select id="advanced-deep-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
-                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-deep-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="deep" aria-label="展开深度任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-deep-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-deep-model-status"></small></label>
+                  <label><span>供应商</span><select id="advanced-deep-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-deep-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="deep" aria-label="展开深度任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-deep-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-deep-model-status"></small></label>
                 </div>
                 <small class="advanced-task-effective" id="advanced-deep-effective">尚未读取</small>
               </article>
               <article class="advanced-task-card">
                 <div class="advanced-task-heading"><div><b>子代理任务</b><small>Dream 和后台子代理的长流程执行</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="subagent">跟随普通模型</button></div>
                 <div class="advanced-task-fields">
-                  <label><span>厂商</span><select id="advanced-subagent-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
-                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-subagent-model-name" spellcheck="false" placeholder="先选择厂商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="subagent" aria-label="展开子代理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-subagent-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-subagent-model-status"></small></label>
+                  <label><span>供应商</span><select id="advanced-subagent-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-subagent-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="subagent" aria-label="展开子代理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-subagent-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-subagent-model-status"></small></label>
                 </div>
                 <small class="advanced-task-effective" id="advanced-subagent-effective">尚未读取</small>
               </article>
@@ -352,16 +344,16 @@
     </dialog>
     <dialog class="help-dialog custom-provider-dialog" id="custom-provider-dialog" aria-labelledby="custom-provider-title">
       <form id="custom-provider-form">
-        <div class="help-dialog-head"><div><span>LOCAL MODEL ENDPOINT</span><h2 id="custom-provider-title">添加自定义接口</h2></div><button type="button" class="ghost icon-button" id="custom-provider-close" aria-label="关闭自定义接口表单">×</button></div>
-        <div class="custom-provider-form-body">
-          <div class="custom-provider-endpoint-preview"><i aria-hidden="true"></i><div><b>OpenAI-compatible</b><small>PMBrain 将调用该地址下的模型、对话和向量接口。</small></div></div>
-          <label><span>提供商 ID</span><input id="custom-provider-id" value="custom-openai" readonly /><small>固定 ID，保证 CLI、桌面端和 sidecar 使用同一套路由。</small></label>
-          <label><span>显示名称</span><input id="custom-provider-name" maxlength="80" placeholder="例如：本地 Qwen" autocomplete="off" /></label>
-          <label><span>默认 Base URL</span><input id="custom-provider-base-url" inputmode="url" placeholder="例如：http://127.0.0.1:8000/v1" autocomplete="off" /><small>请填写服务的 API 根地址；模型在另一台电脑时填写它的局域网 IP。</small></label>
-          <label><span>协议</span><select id="custom-provider-protocol" disabled><option selected>OpenAI 兼容（Chat Completions + Embeddings）</option></select></label>
-          <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
-        </div>
-        <div class="help-dialog-foot"><small>API Key 可选：可在普通模型或向量模型卡片中填写；本地无鉴权接口可以留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">确认接口</button></div></div>
+          <div class="help-dialog-head"><div><span>LOCAL MODEL ENDPOINT</span><h2 id="custom-provider-title">添加自定义模型</h2></div><button type="button" class="ghost icon-button" id="custom-provider-close" aria-label="关闭自定义模型表单">×</button></div>
+          <div class="custom-provider-form-body">
+            <div class="custom-provider-endpoint-preview"><i aria-hidden="true"></i><div><b>OpenAI-compatible</b><small id="custom-provider-target-copy">PMBrain 将调用该地址下的模型接口。</small></div></div>
+            <div class="custom-provider-capabilities" aria-label="自定义模型固定能力"><span><small>供应商路由</small><code>custom-openai</code></span><span><small>协议</small><b>OpenAI 兼容</b></span></div>
+            <label><span>供应商名称</span><input id="custom-provider-name" maxlength="80" placeholder="例如：本地 Qwen" autocomplete="off" /></label>
+            <label><span>Base URL</span><input id="custom-provider-base-url" inputmode="url" placeholder="例如：http://127.0.0.1:8000/v1" autocomplete="off" /><small>请填写服务的 API 根地址；模型在另一台电脑时填写它的局域网 IP。</small></label>
+            <label><span>模型 ID</span><input id="custom-provider-model-id" maxlength="160" placeholder="例如：Qwen3-6B 或 Qwen3-Embedding-8B" autocomplete="off" /><small>填写模型服务实际暴露的模型 ID，添加后会自动选入对应模型卡片。</small></label>
+            <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
+          </div>
+          <div class="help-dialog-foot"><small>普通模型和向量模型共用这一个 OpenAI 兼容 Base URL；模型 ID 分别保存。API Key 可选：可在对应模型卡片中填写，本地无鉴权接口可留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">添加模型</button></div></div>
       </form>
     </dialog>
     <div class="wait-overlay" id="setup-wait" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wait-title" aria-describedby="setup-wait-message">

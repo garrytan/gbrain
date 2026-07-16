@@ -45,7 +45,7 @@ import {
   configureIntegration,
   createSharedIntegration,
   getSharedAccessContext,
-  listIntegrations,
+  listIntegrationsWithConnectionState,
   revokeSharedIntegration,
   smokeTestSharedIntegration,
   type CredentialKind,
@@ -668,7 +668,7 @@ async function currentDesktopSetupState() {
   }
   return {
     setup,
-    integrations: listIntegrations(sidecar?.port),
+    integrations: await listIntegrationsWithConnectionState(sidecar?.port),
     port: sidecar?.port,
     mcpUrl: sidecar?.mcpUrl,
   };
@@ -748,7 +748,7 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   applyDesktopTheme(getSetupInfo().current.theme);
   return {
     setup: getSetupInfo(),
-    integrations: listIntegrations(sidecar?.port),
+    integrations: await listIntegrationsWithConnectionState(sidecar?.port),
     port: sidecar?.port,
     mcpUrl: sidecar?.mcpUrl,
     backup: saved.backup,

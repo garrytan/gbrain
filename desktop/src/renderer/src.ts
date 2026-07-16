@@ -186,26 +186,28 @@ function setCustomProviderError(message = ''): void {
 }
 
 function renderCustomProvider(): void {
-  const configured = Boolean(customProviderDraft);
-  $('#custom-provider-bar').classList.toggle('configured', configured);
-  $('#custom-provider-summary-title').textContent = customProviderDraft?.displayName || '自定义 OpenAI 兼容接口';
-  $('#custom-provider-summary-url').textContent = customProviderDraft?.baseUrl
-    || '适用于本机或局域网中的 Qwen、vLLM、LM Studio、Xinference、LocalAI。';
-  $('#open-custom-provider').querySelector('span')!.textContent = configured ? '编辑自定义接口' : '添加自定义接口';
   document.querySelectorAll<HTMLOptionElement>('option[value="custom-openai"]').forEach(option => {
     option.textContent = customProviderDraft?.displayName || '自定义 OpenAI 接口';
   });
 }
 
-function openCustomProvider(target: ModelKind | null = null): void {
+function openCustomProvider(target: ModelKind): void {
   customProviderTarget = target;
+  const provider = $<HTMLSelectElement>(`#${target}-provider`).value;
+  const currentModel = $<HTMLInputElement>(`#${target}-model-name`).value.trim();
+  const editingModel = provider === 'custom-openai' && Boolean(currentModel);
   ($<HTMLInputElement>('#custom-provider-name')).value = customProviderDraft?.displayName || '';
   ($<HTMLInputElement>('#custom-provider-base-url')).value = customProviderDraft?.baseUrl || '';
-  $('#custom-provider-title').textContent = customProviderDraft ? '编辑自定义接口' : '添加自定义接口';
+  ($<HTMLInputElement>('#custom-provider-model-id')).value = editingModel ? currentModel : '';
+  const targetLabel = target === 'chat' ? '普通模型' : '向量模型';
+  $('#custom-provider-title').textContent = `${editingModel ? '编辑' : '添加'}自定义${targetLabel}`;
+  $('#custom-provider-target-copy').textContent = target === 'chat'
+    ? 'PMBrain 将通过该地址调用 OpenAI 兼容的对话接口。'
+    : 'PMBrain 将通过该地址调用 OpenAI 兼容的向量接口。';
   setCustomProviderError();
   const dialog = $<HTMLDialogElement>('#custom-provider-dialog');
   dialog.showModal();
-  setTimeout(() => $<HTMLInputElement>(customProviderDraft ? '#custom-provider-base-url' : '#custom-provider-name').focus(), 0);
+  setTimeout(() => $<HTMLInputElement>(customProviderDraft ? '#custom-provider-model-id' : '#custom-provider-name').focus(), 0);
 }
 
 function closeCustomProvider(): void {
@@ -216,6 +218,7 @@ function closeCustomProvider(): void {
 function confirmCustomProvider(): void {
   const displayName = ($<HTMLInputElement>('#custom-provider-name')).value.trim();
   const rawBaseUrl = ($<HTMLInputElement>('#custom-provider-base-url')).value.trim();
+  const modelId = ($<HTMLInputElement>('#custom-provider-model-id')).value.trim();
   if (!displayName) {
     setCustomProviderError('请填写显示名称，例如“本地 Qwen”。');
     return;
@@ -231,6 +234,14 @@ function confirmCustomProvider(): void {
     setCustomProviderError('Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。');
     return;
   }
+  if (!modelId) {
+    setCustomProviderError('请填写模型服务实际提供的模型 ID。');
+    return;
+  }
+  if (!customProviderTarget) {
+    setCustomProviderError('未识别要添加到哪一个模型卡片，请关闭后从“＋ 自定义模型”重新进入。');
+    return;
+  }
   customProviderDraft = {
     id: 'custom-openai',
     displayName,
@@ -240,13 +251,14 @@ function confirmCustomProvider(): void {
   customProviderTarget = null;
   renderCustomProvider();
   $<HTMLDialogElement>('#custom-provider-dialog').close();
-  if (target) {
-    const select = $<HTMLSelectElement>(`#${target}-provider`);
-    select.value = 'custom-openai';
-    previousProviderSelection[target] = 'custom-openai';
-    syncProviderKeyField(target);
-    void refreshProviderModels(target, true);
-  }
+  const select = $<HTMLSelectElement>(`#${target}-provider`);
+  select.value = 'custom-openai';
+  previousProviderSelection[target] = 'custom-openai';
+  $<HTMLInputElement>(`#${target}-model-name`).value = modelId;
+  providerModels[target] = [modelId];
+  renderModelDropdown(target);
+  syncProviderKeyField(target);
+  void refreshProviderModels(target, false);
 }
 
 function renderModelDropdown(kind: 'chat' | 'embedding'): void {
@@ -280,8 +292,8 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
   }
 
   if (provider === 'custom-openai') {
-    providerModels[kind] = [];
     if (chooseDefault) input.value = '';
+    providerModels[kind] = input.value.trim() ? [input.value.trim()] : [];
     status.textContent = customProviderDraft
       ? `接口：${customProviderDraft.baseUrl}。请输入该接口实际提供的模型 ID。`
       : '请先添加自定义接口并填写 Base URL。';
@@ -290,7 +302,7 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
   }
 
   status.hidden = false;
-  status.textContent = provider === 'ollama' ? '正在读取本机 Ollama 模型…' : '正在加载厂商模型…';
+  status.textContent = provider === 'ollama' ? '正在读取本机 Ollama 模型…' : '正在加载供应商模型…';
   try {
     const result = await window.pmbrainDesktop.getProviderModels(provider, kind);
     if (providerSelect.value !== provider) return;
@@ -409,7 +421,7 @@ async function saveAdvancedModels(): Promise<void> {
     const provider = ($<HTMLSelectElement>(`#advanced-${tier}-provider`)).value;
     const model = ($<HTMLInputElement>(`#advanced-${tier}-model-name`)).value.trim();
     if ((provider && !model) || (!provider && model)) {
-      status.textContent = `${ADVANCED_TIER_LABELS[tier]}需要同时选择厂商和填写模型名称，或点击“跟随普通模型”。`;
+      status.textContent = `${ADVANCED_TIER_LABELS[tier]}需要同时选择供应商和填写模型名称，或点击“跟随普通模型”。`;
       return;
     }
     const next = composeModelId(provider, model);
@@ -466,6 +478,10 @@ function renderIntegrations(integrations: IntegrationInfo[]): void {
     badge.className = item.configured ? 'configured badge' : 'badge';
     if (!item.configured) {
       badge.textContent = '未配置';
+    } else if (item.id === 'qwenpaw' && item.connectionState === 'connected') {
+      badge.textContent = '已连接';
+    } else if (item.id === 'qwenpaw' && item.connectionState === 'saved') {
+      badge.textContent = '已写入，等待连接';
     } else if (item.portMismatch) {
       badge.textContent = '已配置，端口号不一致';
     } else {
@@ -475,12 +491,16 @@ function renderIntegrations(integrations: IntegrationInfo[]): void {
     const path = document.createElement('p'); path.textContent = item.path ?? '通过 Claude CLI / GUI 接入';
     const note = document.createElement('small');
     note.textContent = item.id === 'qwenpaw'
-      ? '通过本机 API 写入 Bearer 并验证，不使用 OAuth'
+      ? item.connectionState === 'saved'
+        ? '配置已写入；尚未连通，请让代理绕过 localhost/127.0.0.1 后重试'
+        : '通过本机 API 写入 Bearer 并验证，不使用 OAuth'
       : item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
     const button = document.createElement('button');
     button.className = 'solid';
     if (item.automatic) {
-      button.textContent = item.configured ? '更新' : '创建并写入';
+      button.textContent = item.id === 'qwenpaw' && item.connectionState === 'saved'
+        ? '重试连接'
+        : item.configured ? '更新' : '创建并写入';
     } else {
       button.textContent = '生成接入命令';
     }
@@ -1016,16 +1036,16 @@ async function save(): Promise<void> {
   const button = $<HTMLButtonElement>('#save-setup');
   setNotice('error'); setNotice('success');
 
-  // 校验：Chat 厂商不能为空
+  // 校验：Chat 供应商不能为空
   const chatProvider = ($<HTMLSelectElement>('#chat-provider')).value;
   if (!chatProvider) {
-    setNotice('error', '请选择普通模型厂商');
+    setNotice('error', '请选择普通模型供应商');
     return;
   }
-  // 校验：Embedding 厂商不能为空
+  // 校验：Embedding 供应商不能为空
   const embeddingProvider = ($<HTMLSelectElement>('#embedding-provider')).value;
   if (!embeddingProvider) {
-    setNotice('error', '请选择向量化模型厂商');
+    setNotice('error', '请选择向量化模型供应商');
     return;
   }
   if ((chatProvider === 'custom-openai' || embeddingProvider === 'custom-openai') && !customProviderDraft) {
@@ -1067,11 +1087,11 @@ async function save(): Promise<void> {
   const embeddingModel = composeModelId(embeddingProvider, embeddingModelName);
   const chatKey = providerKeyId(chatProvider);
   const embeddingKey = providerKeyId(embeddingProvider);
-  // 需要 Key 的厂商才保存 Key
+  // 需要 Key 的供应商才保存 Key
   if (chatKey && chatKey !== '__none__') {
     const chatKeyValue = ($<HTMLInputElement>('#chat-api-key')).value.trim();
     if (!chatKeyValue && chatProvider !== 'custom-openai') {
-      setNotice('error', `厂商 ${chatProvider} 需要填写 API Key`);
+      setNotice('error', `供应商 ${chatProvider} 需要填写 API Key`);
       return;
     }
     if (chatKeyValue) (keys as Record<string, string>)[chatKey] = chatKeyValue;
@@ -1079,7 +1099,7 @@ async function save(): Promise<void> {
   if (embeddingKey && embeddingKey !== '__none__') {
     const embeddingKeyValue = ($<HTMLInputElement>('#embedding-api-key')).value.trim();
     if (!embeddingKeyValue && embeddingProvider !== 'custom-openai') {
-      setNotice('error', `厂商 ${embeddingProvider} 需要填写 API Key`);
+      setNotice('error', `供应商 ${embeddingProvider} 需要填写 API Key`);
       return;
     }
     if (embeddingKeyValue) (keys as Record<string, string>)[embeddingKey] = embeddingKeyValue;
@@ -1132,6 +1152,7 @@ function selectedCredential(): CredentialKind {
 
 async function configure(client: IntegrationClient, button: HTMLButtonElement): Promise<void> {
   setNotice('error'); setNotice('success');
+  const originalText = button.textContent || '';
   button.disabled = true; button.textContent = '正在验证…';
   try {
     const result = await window.pmbrainDesktop.configureIntegration(
@@ -1142,32 +1163,34 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
     $('#result-title').textContent = `${client} 配置结果`;
     $('#result-content').textContent = result.snippet;
     $<HTMLButtonElement>('#copy-result').hidden = false;
+    state = await window.pmbrainDesktop.getSetup();
+    renderIntegrations(state.integrations);
+    const refreshedConnection = state.integrations.find(item => item.id === client)?.connectionState
+      ?? result.connectionState;
     const smoke = result.smoke ? `MCP smoke：${result.smoke.toolCount} 个工具，get_stats ${result.smoke.statsOk ? '正常' : '失败'}` : 'OAuth 凭证已创建';
     $('#result-meta').textContent = [
       result.configured && result.path ? `已写入 ${result.path}` : '未自动写入，请复制上方内容',
       result.backup ? `备份：${result.backup}` : '',
-      smoke,
+      client === 'qwenpaw' ? `QwenPaw 连接：${refreshedConnection === 'connected' ? '已验证' : '等待重试'}` : smoke,
     ].filter(Boolean).join(' · ');
     $('#result-console').hidden = false;
-    state = await window.pmbrainDesktop.getSetup();
-    renderIntegrations(state.integrations);
-    setNotice(
-      'success',
-      result.configured
-        ? client === 'qwenpaw'
-          ? 'QwenPaw 已接入 PMBrain，配置会由 QwenPaw 自动热加载。'
-          : `${client} 已接入 PMBrain。重启客户端后生效。`
-        : `${client} 凭证已生成。`,
-    );
+    if (client === 'qwenpaw' && refreshedConnection === 'saved') {
+      setNotice('error', 'QwenPaw 配置已经写入，但当前尚未连通 PMBrain。请让代理绕过 localhost/127.0.0.1 后点击“重试连接”；不会启动 OAuth。');
+    } else {
+      setNotice(
+        'success',
+        result.configured
+          ? client === 'qwenpaw'
+            ? 'QwenPaw 已接入 PMBrain，并已验证工具列表。'
+            : `${client} 已接入 PMBrain。重启客户端后生效。`
+          : `${client} 凭证已生成。`,
+      );
+    }
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));
   } finally {
     button.disabled = false;
-    if (client === 'claude') {
-      button.textContent = '生成接入命令';
-    } else {
-      button.textContent = '更新';
-    }
+    button.textContent = originalText;
   }
 }
 
@@ -1190,7 +1213,8 @@ $<HTMLInputElement>('#shared-can-write').addEventListener('change', () => {
     void refreshProviderModels(kind, true);
   });
 });
-$<HTMLButtonElement>('#open-custom-provider').addEventListener('click', () => openCustomProvider());
+$<HTMLButtonElement>('#add-custom-chat-model').addEventListener('click', () => openCustomProvider('chat'));
+$<HTMLButtonElement>('#add-custom-embedding-model').addEventListener('click', () => openCustomProvider('embedding'));
 $<HTMLButtonElement>('#custom-provider-close').addEventListener('click', closeCustomProvider);
 $<HTMLButtonElement>('#custom-provider-cancel').addEventListener('click', closeCustomProvider);
 $<HTMLFormElement>('#custom-provider-form').addEventListener('submit', event => {
