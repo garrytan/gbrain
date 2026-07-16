@@ -67,11 +67,26 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
-    const repoPath = await engine.getConfig('sync.repo_path');
+    // GBRAIN_REPO_PATH env var overrides the `sync.repo_path` config global.
+    // When two machines share one Postgres brain, `sync.repo_path` is a single
+    // row that cannot be a valid filesystem path on both hosts — and
+    // `gbrain import` rewrites it as a side effect, so whichever machine
+    // imported last silently breaks write-through on the other (every capture
+    // returns written:false / repo_not_found with no signal). A host-local env
+    // override pins the hub repo per machine. Skips below also warn through
+    // the logger instead of staying silent, so path drift is loud.
+    const repoPath =
+      process.env.GBRAIN_REPO_PATH || (await engine.getConfig('sync.repo_path'));
     if (!repoPath) {
+      opts.logger?.warn(
+        `[write-through] skipped for ${slug}: no repo configured (GBRAIN_REPO_PATH unset and sync.repo_path unset) — DB-only write`,
+      );
       return { written: false, skipped: 'no_repo_configured' };
     }
     if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+      opts.logger?.warn(
+        `[write-through] skipped for ${slug}: repo path '${repoPath}' missing or not a directory on this host — DB-only write`,
+      );
       return { written: false, skipped: 'repo_not_found' };
     }
 
