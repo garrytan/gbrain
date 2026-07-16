@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildApiKeyAgentContent, buildOAuthAgentContent, MCP_CLIENTS } from '../admin/src/lib/mcp-config.ts';
+import {
+  buildApiKeyAgentContent,
+  buildApiKeyJsonConfig,
+  buildOAuthAgentContent,
+  buildOAuthJsonConfig,
+  MCP_CLIENTS,
+} from '../admin/src/lib/mcp-config.ts';
 
 describe('Admin MCP handoff content', () => {
   test('matches the desktop-supported client list and names the generic option clearly', () => {
@@ -24,6 +30,26 @@ describe('Admin MCP handoff content', () => {
     expect(content).toContain('Client ID：client-id');
     expect(content).toContain('Client Secret：client-secret');
     expect(content).toContain('client_credentials');
+  });
+
+  test('downloads directly usable JSON only while the real credential is available', () => {
+    const apiKeyConfig = JSON.parse(buildApiKeyJsonConfig('http://localhost:3132', 'pmbrain_secret'));
+    expect(apiKeyConfig.mcpServers.pmbrain.headers.Authorization).toBe('Bearer pmbrain_secret');
+    const oauthConfig = JSON.parse(buildOAuthJsonConfig('http://localhost:3132', {
+      clientId: 'client-id', clientSecret: 'client-secret',
+    }));
+    expect(oauthConfig.pmbrain.server_url).toBe('http://localhost:3132/mcp');
+    expect(oauthConfig.pmbrain.auth).toMatchObject({
+      grant_type: 'client_credentials', client_id: 'client-id', client_secret: 'client-secret',
+    });
+  });
+
+  test('restores the original client tabs and labels existing downloads as templates', () => {
+    const agents = readFileSync(join(process.cwd(), 'admin/src/pages/Agents.tsx'), 'utf8');
+    expect(agents).toContain("{ id: 'json', label: 'JSON' }");
+    expect(agents).toContain('下载 JSON 模板');
+    expect(agents).toContain('下载可用 JSON');
+    expect(agents).toContain('已有凭证的密钥不会再次显示');
   });
 
   test('all Admin copy buttons use the shared feedback component', () => {

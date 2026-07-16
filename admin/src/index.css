@@ -917,6 +917,11 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
 .credential-details pre { margin: 0; white-space: pre-wrap; }
 .credential-unavailable-note { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
 .credential-unavailable-note span { color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
+.agent-config-tabs { margin-bottom: 10px; }
+.agent-config-content { min-height: 150px; }
+.agent-config-content pre { margin: 0; padding-right: 72px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-config-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.agent-template-note { margin-top: 10px; }
 
 .main-source-card {
   margin-bottom: 18px;
