@@ -1203,6 +1203,75 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
     errSpy.mockRestore();
   });
 });
+describe('migration verify persistence regression', () => {
+  function fakeEngine(version: number, setVersions: string[], runs: number[]): BrainEngine {
+    return {
+      kind: 'pglite',
+      async getConfig() { return String(version); },
+      async setConfig(_key: string, value: string) { setVersions.push(value); },
+      async executeRaw() { return []; },
+      async runMigration() { runs[0]++; },
+      async transaction<T>(fn: (engine: BrainEngine) => Promise<T>) { return fn(this as unknown as BrainEngine); },
+    } as unknown as BrainEngine;
+  }
+
+  async function withProbe(probe: (calls: number) => Promise<boolean>) {
+    const index = MIGRATIONS.findIndex((migration) => migration.version === LATEST_VERSION);
+    const original = MIGRATIONS[index];
+    const setVersions: string[] = [];
+    const runs = [0];
+    MIGRATIONS[index] = {
+      ...original,
+      verify: () => probe(runs[0]),
+      sql: 'SELECT 1',
+      sqlFor: undefined,
+      handler: undefined,
+      idempotent: true,
+    };
+    let error: unknown;
+    try {
+      await runMigrations(fakeEngine(LATEST_VERSION - 1, setVersions, runs));
+    } catch (caught) {
+      error = caught;
+    } finally {
+      MIGRATIONS[index] = original;
+    }
+    return { error, runs: runs[0], setVersions };
+  }
+
+  test('persistent verify failure does not stamp the migration version', async () => {
+    const result = await withProbe(async () => false);
+    expect(result.error).toBeDefined();
+    expect(result.setVersions).toEqual([]);
+  });
+
+  test('false then true verification reruns once and stamps exactly once', async () => {
+    let verifies = 0;
+    const index = MIGRATIONS.findIndex((migration) => migration.version === LATEST_VERSION);
+    const original = MIGRATIONS[index];
+    const setVersions: string[] = [];
+    const runs = [0];
+    MIGRATIONS[index] = {
+      ...original,
+      sql: 'SELECT 1',
+      sqlFor: undefined,
+      handler: undefined,
+      idempotent: true,
+      verify: async () => {
+        verifies++;
+        return verifies > 1;
+      },
+    };
+    try {
+      await runMigrations(fakeEngine(LATEST_VERSION - 1, setVersions, runs));
+    } finally {
+      MIGRATIONS[index] = original;
+    }
+    expect(verifies).toBe(2);
+    expect(runs[0]).toBe(2);
+    expect(setVersions).toEqual([String(LATEST_VERSION)]);
+  });
+});
 
 describe('PR #356 — apply-migrations pre-flight schema-version warning', () => {
   test('source contains the pre-flight check branch before plan execution', () => {
