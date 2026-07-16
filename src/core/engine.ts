@@ -647,6 +647,8 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
 }
 
 export interface BrainEngine {
+  /** True when AbortSignal cancels the underlying DB query, not only its waiter. */
+  readonly supportsQueryCancellation?: boolean;
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
 
@@ -687,7 +689,11 @@ export interface BrainEngine {
    * DO UPDATE actually targets the intended row instead of fabricating a
    * duplicate at (default, slug). Multi-source brains MUST pass sourceId.
    */
-  putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page>;
+  putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; signal?: AbortSignal },
+  ): Promise<Page>;
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
    *

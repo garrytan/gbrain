@@ -18,11 +18,14 @@
  *
  * Pure over injected deps: no DB, no LLM, no lock primitive imported here, so
  * the loop logic is unit-testable. The wiring helper `runExtractAtomsDrainForSource`
- * (below) builds the real deps; it uses DYNAMIC imports so this module's static
- * graph stays empty and the pure-loop unit tests don't drag in db-lock / cycle.
+ * (below) builds the real deps; it uses DYNAMIC imports so the pure-loop unit
+ * tests don't drag in db-lock / cycle.
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { anySignal } from '../abort-check.ts';
+
+const LOCK_RELEASE_GRACE_MS = 5_000;
 
 export interface ExtractAtomsDrainDeps {
   /**
@@ -32,11 +35,11 @@ export interface ExtractAtomsDrainDeps {
    * the caller can report `cycle_already_running` and exit, matching the
    * routine cycle's skip contract.
    */
-  withLock: <T>(work: () => Promise<T>) => Promise<T>;
-  /** Process one bounded batch (rediscovers eligibility). Returns counts. */
-  runBatch: () => Promise<{ extracted: number; skipped: number }>;
+  withLock: <T>(work: () => Promise<T>, signal: AbortSignal) => Promise<T>;
+  /** Process one batch. The signal aborts at the drain wallclock deadline. */
+  runBatch: (signal: AbortSignal) => Promise<{ extracted: number; skipped: number }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
-  countRemaining: () => Promise<number | null>;
+  countRemaining: (signal: AbortSignal) => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
   now: () => number;
   /** Optional progress sink (one line per batch). */
@@ -48,6 +51,8 @@ export interface ExtractAtomsDrainOpts {
   windowMs: number;
   /** Hard cap on batches (belt-and-suspenders against a 0-progress loop). Default 1000. */
   maxBatches?: number;
+  /** Test seam / caller cancellation. Production uses a window timeout. */
+  abortSignal?: AbortSignal;
 }
 
 export interface ExtractAtomsDrainResult {
@@ -68,24 +73,51 @@ export async function runExtractAtomsDrain(
   opts: ExtractAtomsDrainOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const maxBatches = opts.maxBatches ?? 1000;
-  return deps.withLock(async () => {
-    const deadline = deps.now() + opts.windowMs;
+  const deadline = deps.now() + opts.windowMs;
+  const signal = anySignal(
+    AbortSignal.timeout(Math.max(1, opts.windowMs)),
+    opts.abortSignal,
+  );
+  const result: ExtractAtomsDrainResult = await deps.withLock(async () => {
     let extracted = 0;
     let skipped = 0;
     let batches = 0;
+    let lastRemaining: number | null = null;
     let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
 
-    while (deps.now() < deadline) {
+    while (true) {
+      if (deps.now() >= deadline) break;
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
 
-      const before = await deps.countRemaining();
+      let before: number | null;
+      try {
+        before = await deps.countRemaining(signal);
+      } catch (err) {
+        if (signal.aborted) break;
+        throw err;
+      }
+      lastRemaining = before;
       if (before === 0) { stopped = 'drained'; break; }
 
-      const r = await deps.runBatch();
+      // The backlog query consumes the same wallclock budget. Recompute after
+      // it returns so a slow count cannot hand the batch a stale larger window.
+      if (deadline - deps.now() <= 0 || signal.aborted) break;
+
+      let r: { extracted: number; skipped: number };
+      try {
+        r = await deps.runBatch(signal);
+      } catch (err) {
+        if (signal.aborted) break;
+        throw err;
+      }
       extracted += r.extracted;
       skipped += r.skipped;
       batches++;
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
+
+      // A batch may return because its deadline signal aborted a hung gateway
+      // call. Window exhaustion wins over the generic zero-progress label.
+      if (deps.now() >= deadline || signal.aborted) { stopped = 'window'; break; }
 
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
@@ -93,10 +125,23 @@ export async function runExtractAtomsDrain(
       if (r.extracted === 0 && r.skipped === 0) { stopped = 'no_progress'; break; }
     }
 
-    const remaining = await deps.countRemaining();
+    const windowElapsed = signal.aborted || deps.now() >= deadline;
+    let remaining: number | null = windowElapsed ? null : lastRemaining;
+    if (!windowElapsed) {
+      try {
+        remaining = await deps.countRemaining(signal);
+      } catch (err) {
+        if (!signal.aborted) throw err;
+        remaining = null;
+      }
+    }
     if (remaining === 0) stopped = 'drained';
     return { phase: 'extract_atoms', status: 'ok', extracted, skipped, remaining, batches, stopped };
-  });
+  }, signal);
+  // Internal window expiry is a normal partial result. External worker
+  // cancel/timeout/lock-loss must reject so Minion records an aborted job.
+  if (opts.abortSignal?.aborted) throw opts.abortSignal.reason;
+  return result;
 }
 
 // ─── Shared wiring helper (v0.42.x #1685 DECISION 5A) ──────────────────────
@@ -128,18 +173,23 @@ export interface DrainForSourceOpts {
   sourceId: string | undefined;
   /** Wallclock budget in seconds. */
   windowSeconds: number;
-  /** Brain checkout dir, threaded to `runPhaseExtractAtoms` (optional — DB-only ok). */
-  brainDir?: string;
   /** Hard batch cap (belt-and-suspenders). */
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
   onBatch?: ExtractAtomsDrainDeps['onBatch'];
+  /** Worker cancellation / lock-loss / shutdown signal. */
+  abortSignal?: AbortSignal;
 }
 
 export async function runExtractAtomsDrainForSource(
   engine: BrainEngine,
   opts: DrainForSourceOpts,
 ): Promise<ExtractAtomsDrainResult> {
+  if (engine.supportsQueryCancellation === false) {
+    throw new Error(
+      'extract_atoms drain requires an engine with real query cancellation; PGLite cannot safely guarantee the deadline',
+    );
+  }
   const { withRefreshingLock } = await import('../db-lock.ts');
   const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('./extract-atoms.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
@@ -149,12 +199,19 @@ export async function runExtractAtomsDrainForSource(
 
   return runExtractAtomsDrain(
     {
-      withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
-      runBatch: async () => {
+      withLock: (work, signal) => withRefreshingLock(engine, lockId, work, {
+        ttlMinutes: 5,
+        signal,
+        releaseTimeoutMs: LOCK_RELEASE_GRACE_MS,
+      }),
+      runBatch: async (signal) => {
         const r = await runPhaseExtractAtoms(engine, {
           sourceId: extractionSourceId,
           dryRun: false,
-          brainDir: opts.brainDir,
+          abortSignal: signal,
+          // Drain backlog/count is DB-page-only. Suppress synchronous corpus
+          // discovery inside the lock; routine cycles still process transcripts.
+          _transcripts: [],
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         return {
@@ -162,10 +219,14 @@ export async function runExtractAtomsDrainForSource(
           skipped: Number(d.duplicates_skipped ?? 0),
         };
       },
-      countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
+      countRemaining: (signal) => countExtractAtomsBacklog(engine, extractionSourceId, signal),
       now: Date.now,
       onBatch: opts.onBatch,
     },
-    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },
+    {
+      windowMs: opts.windowSeconds * 1000,
+      maxBatches: opts.maxBatches,
+      abortSignal: opts.abortSignal,
+    },
   );
 }

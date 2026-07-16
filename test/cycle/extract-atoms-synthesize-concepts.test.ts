@@ -17,6 +17,7 @@ import { runPhaseExtractAtoms, parseAtomsResponse } from '../../src/core/cycle/e
 import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-concepts.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 
 let engine: PGLiteEngine;
 
@@ -175,6 +176,296 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     expect(result.status).toBe('warn');
     expect(result.details?.atoms_extracted).toBe(1);
     expect((result.details?.failures as unknown[]).length).toBe(1);
+  });
+
+  test('caller deadline aborts a hung chat before processing the next item', async () => {
+    let calls = 0;
+    const chat = async (opts: ChatOpts) => {
+      calls++;
+      return await new Promise<never>((_resolve, reject) => {
+        const signal = opts.abortSignal;
+        if (!signal) return reject(new Error('missing abort signal'));
+        if (signal.aborted) return reject(signal.reason);
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    const started = Date.now();
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [
+        { filePath: '/hung.txt', content: 'a', contentHash: 'hung-a' },
+        { filePath: '/never.txt', content: 'b', contentHash: 'hung-b' },
+      ],
+      _pages: [],
+      _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
+      abortSignal: AbortSignal.timeout(25),
+    });
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(calls).toBe(1);
+    expect(result.status).toBe('ok');
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.failures).toEqual([]);
+  });
+
+  test('billable chat usage is counted when deadline fires as the response resolves', async () => {
+    const controller = new AbortController();
+    const chat = async (opts: ChatOpts): Promise<ChatResult> => {
+      controller.abort(new DOMException('deadline', 'TimeoutError'));
+      return stubChat(`[{"title":"late","atom_type":"insight","body":"b"}]`, {
+        input_tokens: 1_000,
+        output_tokens: 500,
+      })(opts);
+    };
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/late.txt', content: 'a', contentHash: 'late' }],
+      _pages: [],
+      _chat: chat,
+      abortSignal: controller.signal,
+    });
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(Number(result.details?.estimated_spend_usd)).toBeGreaterThan(0);
+    expect(result.details?.atoms_extracted).toBe(0);
+  });
+
+  test('caller deadline cancels a hung atom write and stops the phase', async () => {
+    const controller = new AbortController();
+    let notifyWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { notifyWriteStarted = resolve; });
+    let writeCalls = 0;
+    const signalAwareEngine = {
+      executeRaw: async (sql: string, _params?: unknown[], opts?: { signal?: AbortSignal }) => {
+        if (!sql.includes('INSERT INTO pages')) return [];
+        writeCalls++;
+        notifyWriteStarted();
+        return await new Promise<never>((_resolve, reject) => {
+          const signal = opts?.signal;
+          if (!signal) return reject(new Error('missing abort signal'));
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    } as unknown as BrainEngine;
+
+    const pending = runPhaseExtractAtoms(signalAwareEngine, {
+      _transcripts: [{ filePath: '/hung-write.txt', content: 'a', contentHash: 'hung-write' }],
+      _pages: [],
+      _chat: stubChat(`[{
+        "title":"hung write","atom_type":"insight","body":"b"
+      }]`),
+      abortSignal: controller.signal,
+    });
+    await writeStarted;
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    const result = await pending;
+
+    expect(writeCalls).toBe(1);
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(result.details?.atoms_extracted).toBe(0);
+  });
+
+  test('deadline after partial progress still writes receipt and incomplete rollup', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    let notifySecondChat!: () => void;
+    const secondChatStarted = new Promise<void>((resolve) => { notifySecondChat = resolve; });
+    const chat = async (opts: ChatOpts): Promise<ChatResult> => {
+      calls++;
+      if (calls === 1) {
+        return stubChat(`[{"title":"committed","atom_type":"insight","body":"b"}]`)(opts);
+      }
+      notifySecondChat();
+      return await new Promise<never>((_resolve, reject) => {
+        const signal = opts.abortSignal;
+        if (!signal) return reject(new Error('missing abort signal'));
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+
+    const pending = runPhaseExtractAtoms(engine, {
+      _transcripts: [
+        { filePath: '/committed.txt', content: 'a', contentHash: 'committed-a' },
+        { filePath: '/hung.txt', content: 'b', contentHash: 'hung-b' },
+      ],
+      _pages: [],
+      _chat: chat,
+      abortSignal: controller.signal,
+    });
+    await secondChatStarted;
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    const result = await pending;
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE type = 'atom'`,
+    );
+    const receipts = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE type = 'extract_receipt'`,
+    );
+    const rollups = await engine.executeRaw<{
+      cost_usd: string | number;
+      round_completed_count: string | number;
+    }>(
+      `SELECT cost_usd, round_completed_count
+         FROM extract_rollup_7d
+        WHERE kind = 'atoms' AND source_id = 'default'`,
+    );
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(atoms[0].n).toBe(1);
+    expect(receipts[0].n).toBe(1);
+    expect(Number(rollups[0].cost_usd)).toBeGreaterThan(0);
+    expect(Number(rollups[0].round_completed_count)).toBe(0);
+  });
+
+  test('work deadline firing during receipt does not cancel bookkeeping grace', async () => {
+    const controller = new AbortController();
+    let putCalls = 0;
+    let receiptSignal: AbortSignal | undefined;
+    let rollupSignal: AbortSignal | undefined;
+    const signalAwareEngine = {
+      executeRaw: async (sql: string, _params?: unknown[], opts?: { signal?: AbortSignal }) => {
+        if (sql.includes('INSERT INTO extract_rollup_7d')) rollupSignal = opts?.signal;
+        return [];
+      },
+      putPage: async (_slug: string, _page: unknown, opts?: { signal?: AbortSignal }) => {
+        putCalls++;
+        if (putCalls === 1) {
+          receiptSignal = opts?.signal;
+          controller.abort(new DOMException('work deadline', 'TimeoutError'));
+        }
+        return {};
+      },
+    } as unknown as BrainEngine;
+
+    const result = await runPhaseExtractAtoms(signalAwareEngine, {
+      _transcripts: [{ filePath: '/one.txt', content: 'a', contentHash: 'one' }],
+      _pages: [],
+      _chat: stubChat(`[{"title":"one","atom_type":"insight","body":"b"}]`),
+      abortSignal: controller.signal,
+    });
+
+    expect(result.details?.atoms_extracted).toBe(1);
+    expect(putCalls).toBe(1);
+    expect(receiptSignal).toBeDefined();
+    expect(receiptSignal).not.toBe(controller.signal);
+    expect(receiptSignal?.aborted).toBe(false);
+    expect(rollupSignal).toBe(receiptSignal);
+  });
+
+  test('deadline cancels the one atomic statement without partial atom commits', async () => {
+    const controller = new AbortController();
+    let atomicCalls = 0;
+    let batchRows = 0;
+    const atomicEngine = {
+      executeRaw: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('INSERT INTO pages')) {
+          atomicCalls++;
+          batchRows = JSON.parse(String(params?.[0])).length;
+          controller.abort(new DOMException('deadline', 'TimeoutError'));
+          throw controller.signal.reason;
+        }
+        return [];
+      },
+    } as unknown as BrainEngine;
+
+    const result = await runPhaseExtractAtoms(atomicEngine, {
+      _transcripts: [{ filePath: '/two-atoms.txt', content: 'a', contentHash: 'two-atoms' }],
+      _pages: [],
+      _chat: stubChat(`[
+        {"title":"one","atom_type":"insight","body":"b"},
+        {"title":"two","atom_type":"insight","body":"b"}
+      ]`),
+      abortSignal: controller.signal,
+    });
+
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(atomicCalls).toBe(1);
+    expect(batchRows).toBe(2);
+  });
+
+  test('slug-colliding atom titles commit as distinct stable rows', async () => {
+    const chat = stubChat(`[
+      {"title":"Same!","atom_type":"insight","body":"first body"},
+      {"title":"same","atom_type":"insight","body":"second body"}
+    ]`);
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/collide.txt', content: 'a', contentHash: 'collide' }],
+      _pages: [],
+      _chat: chat,
+    });
+    const firstRows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE type = 'atom' ORDER BY slug`,
+    );
+    expect(result.details?.atoms_extracted).toBe(2);
+    expect(firstRows.length).toBe(2);
+    expect(new Set(firstRows.map((r) => r.slug)).size).toBe(2);
+
+    await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/collide.txt', content: 'changed', contentHash: 'collide-v2' }],
+      _pages: [],
+      _chat: chat,
+    });
+    const secondRows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE type = 'atom' ORDER BY slug`,
+    );
+    expect(secondRows.map((r) => r.slug)).toEqual(firstRows.map((r) => r.slug));
+  });
+
+  test('same atom title from two origins stays distinct and both become idempotent', async () => {
+    let chatCalls = 0;
+    const chat = async (opts: ChatOpts) => {
+      chatCalls++;
+      return stubChat(`[{"title":"Shared title","atom_type":"insight","body":"same body"}]`)(opts);
+    };
+    const transcripts = [
+      { filePath: '/origin-a.txt', content: 'a', contentHash: 'origin-a-hash' },
+      { filePath: '/origin-b.txt', content: 'b', contentHash: 'origin-b-hash' },
+    ];
+    const first = await runPhaseExtractAtoms(engine, {
+      _transcripts: transcripts,
+      _pages: [],
+      _chat: chat,
+    });
+    const firstRows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE type = 'atom' ORDER BY slug`,
+    );
+    expect(first.details?.atoms_extracted).toBe(2);
+    expect(firstRows.length).toBe(2);
+    expect(new Set(firstRows.map((r) => r.slug)).size).toBe(2);
+
+    chatCalls = 0;
+    const second = await runPhaseExtractAtoms(engine, {
+      _transcripts: transcripts,
+      _pages: [],
+      _chat: chat,
+    });
+    expect(second.details?.atoms_extracted).toBe(0);
+    expect(second.details?.duplicates_skipped).toBe(2);
+    expect(chatCalls).toBe(0);
+  });
+
+  test('bulk JSONB path sanitizes NUL and lone surrogates in LLM prose', async () => {
+    const raw = JSON.stringify([{
+      title: 'bad\0\ud800 title',
+      atom_type: 'insight',
+      body: 'body\0\ud800 text',
+      source_quote: 'quote\0\ud800',
+      lesson: 'lesson\0\ud800',
+    }]);
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/poison.txt', content: 'a', contentHash: 'poison' }],
+      _pages: [],
+      _chat: stubChat(raw),
+    });
+    const rows = await engine.executeRaw<{
+      title: string;
+      compiled_truth: string;
+      frontmatter: Record<string, unknown>;
+    }>(`SELECT title, compiled_truth, frontmatter FROM pages WHERE type = 'atom'`);
+    const serialized = JSON.stringify(rows);
+    expect(result.details?.atoms_extracted).toBe(1);
+    expect(serialized.includes('\0')).toBe(false);
+    expect(serialized.includes('\ud800')).toBe(false);
+    expect(serialized.includes('�')).toBe(true);
   });
 
   // v0.41.2.1 regression case (D9 #14 wording): with _pages:[] and same
