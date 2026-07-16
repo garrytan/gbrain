@@ -1,38 +1,14 @@
 /**
- * Multi-source drift detection (v0.31.8 — D8 + D17 + OV12 + OV13).
+ * Multi-source drift detection.
  *
- * Pre-v0.30.3 putPage misrouted multi-source writes from intended source X
- * to (default, slug). The fixwave fixed forward-going writes but explicitly
- * deferred backfilling the misrouted rows. This module surfaces evidence of
- * misroute to operators via `gbrain doctor`.
- *
- * Heuristic (codex OV12 — softened from "is misrouted" to "appears misrouted"):
- * a non-default source X is configured with `local_path`, AND the filesystem
- * at `local_path` contains a markdown file whose slug exists at (default,
- * slug) in the DB but is missing from (X, slug). Two possible causes:
- *   1. Pre-v0.30.3 putPage misroute (the case this check was designed for).
- *   2. Source X never completed initial sync, and the default page is
- *      unrelated content that happens to share the slug.
- * The doctor warning surfaces evidence; the operator decides which cause
- * applies and runs `gbrain sync --source X --full` or `gbrain delete <slug>`
- * accordingly.
- *
- * Implementation notes:
- *  - FS walk handles `.md` AND `.mdx` (codex OV13: matches `src/core/sync.ts`
- *    which treats both as markdown).
- *  - Batched single-query DB lookup (D17): collect all candidate slugs from
- *    the FS walk into one array, then run ONE SELECT against pages with a
- *    VALUES clause. NOT a per-file loop (which would be 20K round trips on
- *    a 10K-file source).
- *  - Time + size bounds: cap the walk at 10K files OR 5s. Bail with a "check
- *    skipped, walk too large" status instead of letting doctor hang.
- *  - Wrapper try/catch around the walk per OV13: ENOENT/EACCES on local_path
- *    yields zero files, NOT a thrown crash that takes down the whole doctor
- *    run.
+ * Surfaces pages that appear to have been written to the default source
+ * instead of their configured source. Repository scans prefer git's tracked
+ * file index and fall back to a bounded, loop-safe filesystem walk.
  */
 
-import { readdirSync, lstatSync, statSync } from 'fs';
-import { join, relative } from 'path';
+import { readdirSync, lstatSync, realpathSync, statSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { join, relative, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { pathToSlug } from './sync.ts';
 
@@ -48,9 +24,7 @@ export interface MisroutedSample {
 }
 
 export interface MisroutedResult {
-  /** True when the FS walk hit the limit/timeout and the result is partial. */
   walk_truncated: boolean;
-  /** Per-source breakdown: slugs that appear at (default, slug) but NOT at (X, slug). */
   count: number;
   sample: MisroutedSample[];
 }
@@ -58,89 +32,124 @@ export interface MisroutedResult {
 const DEFAULT_FILE_LIMIT = 10_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const SAMPLE_LIMIT = 5;
+const IGNORED_DIRS = new Set([
+  '.git', '.next', '.cache', '.turbo', '.vercel',
+  'node_modules', 'dist', 'build', 'coverage', 'generated',
+]);
 
-/**
- * Walk a directory tree for `.md` + `.mdx` files. Skips dotfiles (`.git`),
- * `_*.md` files (the existing extract.ts convention), and silently swallows
- * read errors on individual entries. Returns relative paths from `root`.
- *
- * Bounded by `limit` (max files) and `deadlineMs` (epoch ms). Returns early
- * with `truncated=true` if either bound is hit. The root-not-readable case
- * surfaces as `truncated=false, files=[]` (caller treats as "no candidates").
- */
+function positiveEnvInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function gitMarkdownFiles(
+  root: string,
+  limit: number,
+  deadlineMs: number,
+): { files: { relPath: string }[]; truncated: boolean } | null {
+  if (Date.now() >= deadlineMs) return { files: [], truncated: true };
+  try {
+    const stdout = execFileSync(
+      'git',
+      ['-C', root, 'ls-files', '-z', '--', '*.md', '*.mdx'],
+      {
+        encoding: 'utf8',
+        timeout: Math.max(1, deadlineMs - Date.now()),
+        windowsHide: true,
+        maxBuffer: 32 * 1024 * 1024,
+      },
+    );
+    const relPaths = stdout.split('\0').filter(Boolean).filter((relPath) => {
+      const parts = relPath.replace(/\\/g, '/').split('/');
+      return !parts.some(part => IGNORED_DIRS.has(part)) && !parts.at(-1)?.startsWith('_');
+    });
+    return {
+      files: relPaths.slice(0, limit).map(relPath => ({ relPath })),
+      truncated: relPaths.length > limit || Date.now() >= deadlineMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function walkMarkdownAndMdxFiles(
   root: string,
   limit: number,
   deadlineMs: number,
 ): { files: { relPath: string }[]; truncated: boolean } {
   const files: { relPath: string }[] = [];
+  const visited = new Set<string>();
   let truncated = false;
-  function walk(d: string): void {
+
+  function walk(dir: string): void {
     if (truncated) return;
-    let entries: string[];
-    try {
-      entries = readdirSync(d);
-    } catch {
-      // Unreadable directory; skip without crashing the whole walk.
+    if (Date.now() >= deadlineMs) {
+      truncated = true;
       return;
     }
+    let canonical: string;
+    try {
+      canonical = realpathSync(dir).toLowerCase();
+    } catch {
+      return;
+    }
+    if (visited.has(canonical)) return;
+    visited.add(canonical);
+
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+
     for (const entry of entries) {
       if (truncated) return;
-      if (entry.startsWith('.')) continue;
-      const full = join(d, entry);
-      let isDir = false;
+      if (Date.now() >= deadlineMs) {
+        truncated = true;
+        return;
+      }
+      if (entry.startsWith('.') || IGNORED_DIRS.has(entry)) continue;
+      const full = join(dir, entry);
+      let stat;
       try {
-        isDir = lstatSync(full).isDirectory();
+        stat = lstatSync(full);
       } catch {
         continue;
       }
-      if (isDir) {
+      // Windows junctions report as symbolic links. Never traverse either.
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) {
         walk(full);
         continue;
       }
-      const isMd = entry.endsWith('.md') || entry.endsWith('.mdx');
-      if (!isMd) continue;
-      if (entry.startsWith('_')) continue; // matches extract.ts convention
+      if (!(entry.endsWith('.md') || entry.endsWith('.mdx'))) continue;
+      if (entry.startsWith('_')) continue;
       files.push({ relPath: relative(root, full) });
       if (files.length >= limit) {
         truncated = true;
         return;
       }
-      // Time check is cheap; do it on every push so a slow filesystem can't
-      // run unbounded.
-      if (Date.now() >= deadlineMs) {
-        truncated = true;
-        return;
-      }
     }
   }
-  // Wrap the top-level walk in try/catch so a missing/unreadable root
-  // doesn't bubble up to doctor (codex OV13 — pre-fix the readdirSync at
-  // the root would throw and crash the whole doctor run).
+
   try {
-    statSync(root); // probe readable; throws ENOENT/EACCES if not
+    statSync(root);
     walk(root);
   } catch {
-    // local_path is unreadable; return zero files, NOT truncated. Caller
-    // surfaces this as "ok with note" rather than an error.
+    // Missing and unreadable roots are non-fatal doctor evidence.
   }
   return { files, truncated };
 }
 
-/**
- * For a list of slugs, query DB for existence at (default, slug) AND at
- * (sourceId, slug) in ONE batched query. Returns a Map<slug, Set<source_id>>.
- *
- * Engine-agnostic: uses executeRaw with a VALUES clause. PGLite + Postgres
- * both support the shape.
- */
 async function batchProbeExistence(
   engine: BrainEngine,
   slugs: string[],
   sourceId: string,
 ): Promise<Map<string, Set<string>>> {
   if (slugs.length === 0) return new Map();
-  // Build a positional VALUES clause: ($1::text), ($2), ($3), ...
   const valuePlaceholders = slugs.map((_, i) => `($${i + 1}::text)`).join(', ');
   const sourceParamIdx = slugs.length + 1;
   const sql = `
@@ -157,59 +166,47 @@ async function batchProbeExistence(
     [...slugs, sourceId],
   );
   const map = new Map<string, Set<string>>();
-  for (const r of rows) {
-    if (!map.has(r.slug)) map.set(r.slug, new Set());
-    if (r.source_id != null) map.get(r.slug)!.add(r.source_id);
+  for (const row of rows) {
+    if (!map.has(row.slug)) map.set(row.slug, new Set());
+    if (row.source_id != null) map.get(row.slug)!.add(row.source_id);
   }
   return map;
 }
 
-/**
- * Find pages that appear misrouted from intended source X to source 'default'.
- * For each non-default source with a configured local_path, walk the
- * filesystem and cross-check against the DB.
- *
- * @returns aggregated MisroutedResult across all checked sources. The sample
- *          array is bounded at 5 entries so the doctor message stays scannable.
- */
 export async function findMisroutedPages(
   engine: BrainEngine,
   sources: SourceWithPath[],
   opts: { limit?: number; timeoutMs?: number } = {},
 ): Promise<MisroutedResult> {
-  const limit = opts.limit ?? DEFAULT_FILE_LIMIT;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const limit = opts.limit ?? positiveEnvInt('GBRAIN_DRIFT_LIMIT') ?? DEFAULT_FILE_LIMIT;
+  const timeoutMs = opts.timeoutMs ?? positiveEnvInt('GBRAIN_DRIFT_TIMEOUT_MS') ?? DEFAULT_TIMEOUT_MS;
   const deadlineMs = Date.now() + timeoutMs;
 
   let totalCount = 0;
   let walkTruncated = false;
   const sample: MisroutedSample[] = [];
 
-  for (const src of sources) {
-    if (src.id === 'default') continue;
-    if (!src.local_path) continue;
+  for (const source of sources) {
+    if (source.id === 'default' || !source.local_path) continue;
     if (Date.now() >= deadlineMs) {
       walkTruncated = true;
       break;
     }
-    const { files, truncated } = walkMarkdownAndMdxFiles(src.local_path, limit, deadlineMs);
+    const root = resolve(source.local_path);
+    const gitResult = gitMarkdownFiles(root, limit, deadlineMs);
+    const { files, truncated } = gitResult ?? walkMarkdownAndMdxFiles(root, limit, deadlineMs);
     if (truncated) walkTruncated = true;
     if (files.length === 0) continue;
 
-    // Convert FS paths to canonical slugs (lowercased, extension stripped).
-    const slugs = Array.from(new Set(files.map(f => pathToSlug(f.relPath))));
-    const existenceMap = await batchProbeExistence(engine, slugs, src.id);
-
+    const slugs = Array.from(new Set(files.map(file => pathToSlug(file.relPath))));
+    const existenceMap = await batchProbeExistence(engine, slugs, source.id);
     for (const slug of slugs) {
       const present = existenceMap.get(slug);
-      if (!present) continue; // missing both — uningested, not misroute
-      const hasDefault = present.has('default');
-      const hasSource = present.has(src.id);
-      // The misroute heuristic: present at default, missing from intended source.
-      if (hasDefault && !hasSource) {
+      if (!present) continue;
+      if (present.has('default') && !present.has(source.id)) {
         totalCount++;
         if (sample.length < SAMPLE_LIMIT) {
-          sample.push({ slug, intended_source: src.id, local_path: src.local_path });
+          sample.push({ slug, intended_source: source.id, local_path: source.local_path });
         }
       }
     }

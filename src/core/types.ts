@@ -1442,6 +1442,12 @@ export interface BrainHealth {
   embed_coverage_score: number;     // 0-35
   link_density_score: number;        // 0-25
   timeline_coverage_score: number;   // 0-15
+  /** Number of live pages whose type/frontmatter requires semantic timeline history. */
+  timeline_eligible_pages?: number;
+  /** Eligible live pages with at least one structured timeline event. */
+  timeline_covered_pages?: number;
+  /** Fraction of live pages with at least one inbound structural or semantic edge. */
+  graph_signal_coverage?: number;
   no_orphans_score: number;          // 0-15
   no_dead_links_score: number;       // 0-10
   /**

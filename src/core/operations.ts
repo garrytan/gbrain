@@ -985,6 +985,7 @@ const put_page: Operation = {
             const batch = entries.map(e => ({
               slug,
               date: e.date,
+              source: e.source || '',
               summary: e.summary,
               detail: e.detail || '',
             }));
@@ -3212,6 +3213,32 @@ const send_job_message: Operation = {
   },
 };
 
+const reconcile_structure: Operation = {
+  name: 'reconcile_structure',
+  description: 'Reconcile deterministic source-path containment pages and edges. Dry-run by default for remote callers.',
+  params: {
+    source_id: { type: 'string', description: 'Optional single source id; omitted means all visible sources.' },
+    dry_run: { type: 'boolean', description: 'Preview only. Defaults true for remote callers.' },
+  },
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const { reconcileStructure } = await import('./structure-reconcile.ts');
+    const requested = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = sourceScopeOpts(ctx);
+    if (requested && scope.sourceIds && !scope.sourceIds.includes(requested)) {
+      throw new OperationError('permission_denied', `Source not allowed: ${requested}`);
+    }
+    if (requested && scope.sourceId && scope.sourceId !== requested) {
+      throw new OperationError('permission_denied', `Source not allowed: ${requested}`);
+    }
+    return reconcileStructure(ctx.engine, {
+      sourceId: requested ?? scope.sourceId,
+      sourceIds: requested ? undefined : scope.sourceIds,
+      dryRun: p.dry_run === undefined ? ctx.remote !== false : p.dry_run === true,
+    });
+  },
+};
+
 // --- Orphans ---
 
 const find_orphans: Operation = {
@@ -3221,6 +3248,11 @@ const find_orphans: Operation = {
     include_pseudo: {
       type: 'boolean',
       description: 'Include auto-generated and pseudo pages (default: false)',
+    },
+    mode: {
+      type: 'string',
+      enum: ['islanded', 'no-inbound'],
+      description: 'Orphan definition. Default islanded (no inbound and no outbound).',
     },
   },
   scope: 'read',
@@ -3234,6 +3266,7 @@ const find_orphans: Operation = {
     // orphans --source` instead (ctx.remote === false → empty scope here).
     return findOrphans(ctx.engine, {
       includePseudo: (p.include_pseudo as boolean) || false,
+      mode: p.mode === 'islanded' ? 'islanded' : 'no-inbound',
       ...sourceScopeOpts(ctx),
     });
   },
@@ -5364,7 +5397,7 @@ export const operations: Operation[] = [
   // v0.38 Slice 3: remote-callable agent dispatch with OAuth-bound trust boundary
   submit_agent,
   // Orphans
-  find_orphans,
+  reconcile_structure, find_orphans,
   // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
   get_calibration_profile,
   // v0.28: Takes + think

@@ -1332,6 +1332,7 @@ export interface BrainEngine {
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
+    mode?: 'islanded' | 'no-inbound';
   }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags

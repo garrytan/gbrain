@@ -1551,7 +1551,7 @@ async function extractTimelineFromDB(
       } else {
         // v0.32.8 F4: thread source_id so the JOIN matches the right page
         // when two sources share the same slug.
-        batch.push({ slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id });
+        batch.push({ slug, date: entry.date, source: entry.source || '', summary: entry.summary, detail: entry.detail || '', source_id });
         if (batch.length >= BATCH_SIZE) await flush();
       }
     }
@@ -1663,7 +1663,7 @@ async function extractStaleFromDB(
         });
       }
       for (const entry of parseTimelineEntries(fullContent)) {
-        timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+        timelineRows.push({ slug: page.slug, date: entry.date, source: entry.source || '', summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
       // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
       // stamp with the row's READ updated_at, NOT now() — a concurrent edit
