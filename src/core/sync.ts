@@ -37,6 +37,15 @@ interface SyncableOptions {
   strategy?: SyncStrategy;
   include?: string[];
   exclude?: string[];
+  /**
+   * Directory segment names exempted from the `pruneDir` dot-dir/vendor
+   * exclusion (e.g. `['.agents']` to sync a repo's `.agents/*.md` policy
+   * docs). Sourced from the per-source `config.keep_dirs` array; matched
+   * at single-segment granularity, same as `pruneDir` itself. Files under
+   * a kept dir still pass every OTHER gate (strategy, metafile,
+   * include/exclude globs) — this only lifts the descent/segment prune.
+   */
+  keepDirs?: string[];
 }
 
 // v0.19.0 shipped a 9-extension allowlist (ts/tsx/js/jsx/mjs/cjs/py/rb/go). The
@@ -346,8 +355,15 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
   // Skip every path segment that pruneDir would block walkers from descending
   // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
   // `node_modules/` (latent bug fix), and `ops/` at any depth.
+  // Per-source `keep_dirs` (opts.keepDirs) exempts named segments from the
+  // prune — the FILE segment is never exempted (a keep_dirs entry names a
+  // directory, not a file), so `.agents` in keepDirs admits `.agents/x.md`
+  // without also admitting a file literally named `.agents`.
   const segments = path.split('/');
-  if (segments.some(p => !pruneDir(p))) return 'pruned-dir';
+  const keep = opts.keepDirs;
+  const kept = (p: string, i: number) =>
+    !!keep && i < segments.length - 1 && keep.includes(p);
+  if (segments.some((p, i) => !pruneDir(p) && !kept(p, i))) return 'pruned-dir';
 
   // Skip meta files that aren't pages
   const basename = segments[segments.length - 1] || '';

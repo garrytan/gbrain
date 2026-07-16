@@ -16,6 +16,8 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources keep-dirs <id> [dir ...] [--clear] — sources.config.keep_dirs
+ *       (dot-dir prune exemptions for sync, e.g. `.agents`)
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -729,6 +731,68 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   }
 }
 
+/**
+ * gbrain sources keep-dirs <id> [dir ...] — per-source sync.keep_dirs.
+ *
+ * Sync's walker/classifier prunes dot-directories (`.agents`, `.claude`, …)
+ * and vendor dirs unconditionally; `config.keep_dirs` exempts the named
+ * directory SEGMENTS for this source so e.g. a repo's `.agents/*.md` policy
+ * docs sync as pages. Files under a kept dir still pass every other gate
+ * (strategy, metafile, include/exclude globs).
+ *
+ *   keep-dirs <id>              show current list
+ *   keep-dirs <id> <dir ...>    replace the list
+ *   keep-dirs <id> --clear      remove the setting
+ */
+async function runKeepDirs(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources keep-dirs <id> [dir ...] [--clear]');
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(4);
+  }
+  const config = parseConfig(src.config);
+  const clear = args.includes('--clear');
+  const dirs = args.slice(1).filter((a) => !a.startsWith('--'));
+
+  if (!clear && dirs.length === 0) {
+    const current = Array.isArray(config.keep_dirs) ? (config.keep_dirs as string[]) : [];
+    console.log(current.length ? current.join(' ') : '(none)');
+    return;
+  }
+
+  if (clear) {
+    delete config.keep_dirs;
+  } else {
+    // Segment names only — keep_dirs matches single path segments, same
+    // granularity as pruneDir. A slash means the caller expected glob/path
+    // semantics this knob doesn't have; refuse loudly instead of silently
+    // never matching.
+    const bad = dirs.filter((d) => d.includes('/'));
+    if (bad.length) {
+      console.error(
+        `keep-dirs entries are directory NAMES, not paths/globs (got: ${bad.join(', ')}). ` +
+          `Use the segment name, e.g. ".agents".`,
+      );
+      process.exit(2);
+    }
+    config.keep_dirs = dirs;
+  }
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
+    [JSON.stringify(config), id],
+  );
+  console.log(
+    clear
+      ? `Source "${id}" keep_dirs cleared.`
+      : `Source "${id}" keep_dirs = [${dirs.join(', ')}]. Takes effect on the next sync; run 'gbrain sync --source ${id}' to pick the dirs up.`,
+  );
+}
+
 // ── v0.40 sources status (D12) ──────────────────────────────
 async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
@@ -1317,6 +1381,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'detach':     runDetach(); return;
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
+    case 'keep-dirs':  return runKeepDirs(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);

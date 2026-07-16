@@ -743,6 +743,14 @@ export interface SyncOpts {
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
   /**
+   * Directory segment names exempted from the dot-dir/vendor prune
+   * (e.g. `['.agents']`). Normally NOT passed by callers — performSyncInner
+   * hoists it from the source row's `config.keep_dirs` so every entry path
+   * (single-source CLI, --all fan-out, jobs handler, watch) honors it.
+   * Set with `gbrain sources keep-dirs <id> <dir ...>`.
+   */
+  keepDirs?: string[];
+  /**
    * Number of parallel workers for the import phase. When > 1, each worker
    * gets its own small Postgres connection pool and files are dispatched via
    * an atomic queue index (same pattern as `import --workers N`).
@@ -1522,6 +1530,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       typeof cfgRows[0]?.config === 'string'
         ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
         : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+    // Hoist per-source keep_dirs (set via `gbrain sources keep-dirs`) into
+    // opts at this single choke point so every entry path — single-source
+    // CLI, --all fan-out, jobs handler, watch — honors it without each one
+    // re-reading the source row. An explicit opts.keepDirs (tests) wins.
+    if (!opts.keepDirs && Array.isArray(cfg.keep_dirs)) {
+      opts.keepDirs = (cfg.keep_dirs as unknown[]).filter(
+        (s): s is string => typeof s === 'string' && s.length > 0,
+      );
+    }
     const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
     if (remoteUrl) {
       const ownSrc = {
@@ -1835,8 +1852,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
   const manifest = delta.manifest;
 
-  // Filter to syncable files (strategy-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  // Filter to syncable files (strategy-aware; keep_dirs-aware)
+  const syncOpts = (opts.strategy || opts.keepDirs)
+    ? { strategy: opts.strategy, keepDirs: opts.keepDirs }
+    : undefined;
   // #1970 (F-C): a rename whose DESTINATION is unsyncable drops out of BOTH
   // `renamed` (only `r.to` is kept below) AND `deleted` (git emits it as `R`,
   // not `D`), leaving the OLD page stale. Fold the source side into the delete
@@ -2965,7 +2984,7 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
+    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown', keepDirs: opts.keepDirs });
     slog(
       `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
       `${allFiles.length} file(s) would be imported ` +
@@ -3006,6 +3025,7 @@ async function performFullSync(
   const result = await runImport(engine, importArgs, {
     commit: headCommit,
     strategy: opts.strategy,
+    keepDirs: opts.keepDirs,
     sourceId: opts.sourceId,
     // issue #1939: performFullSync owns the failure ledger + bookmark via the
     // shared gate below; don't let runImport double-record or write its own.
@@ -3104,13 +3124,15 @@ async function performFullSync(
   let reconciledDeletes = 0;
   if (opts.sourceId) {
     const sid = opts.sourceId;
-    const reconcileSyncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+    const reconcileSyncOpts = (opts.strategy || opts.keepDirs)
+      ? { strategy: opts.strategy, keepDirs: opts.keepDirs }
+      : undefined;
     // collectSyncableFiles returns ABSOLUTE paths; source_path is stored
     // repo-relative (importFile uses `relative(dir, filePath)`), so relativize
     // to the same form before membership-testing — otherwise every page looks
     // stale and the reconcile would wrongly delete live pages.
     const current = new Set(
-      collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' })
+      collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown', keepDirs: opts.keepDirs })
         .map(abs => relative(repoPath, abs)),
     );
     const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(

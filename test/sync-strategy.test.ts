@@ -62,6 +62,23 @@ describe('isSyncable with strategy', () => {
     expect(isSyncable('dir/.raw/code.ts', { strategy: 'code' })).toBe(false);
   });
 
+  test('keepDirs exempts named dot-dirs from the prune, nothing else', () => {
+    // The motivating case: a repo's .agents/*.md policy docs.
+    expect(isSyncable('.agents/AGENTS.md')).toBe(false);
+    expect(isSyncable('.agents/AGENTS.md', { keepDirs: ['.agents'] })).toBe(true);
+    expect(isSyncable('.agents/nested/notes.md', { keepDirs: ['.agents'] })).toBe(true);
+    // Only the LISTED segment is exempted — other pruned dirs stay pruned.
+    expect(isSyncable('.claude/skills/x.md', { keepDirs: ['.agents'] })).toBe(false);
+    expect(isSyncable('node_modules/pkg/readme-notes.md', { keepDirs: ['.agents'] })).toBe(false);
+    // A pruned segment BELOW a kept dir still prunes.
+    expect(isSyncable('.agents/.git/config.md', { keepDirs: ['.agents'] })).toBe(false);
+    // Every other gate still applies under a kept dir.
+    expect(isSyncable('.agents/README.md', { keepDirs: ['.agents'] })).toBe(false); // metafile
+    expect(isSyncable('.agents/tool.ts', { keepDirs: ['.agents'] })).toBe(false); // strategy
+    // A FILE named like the kept dir is not admitted (keep_dirs names dirs).
+    expect(isSyncable('.agents', { keepDirs: ['.agents'] })).toBe(false);
+  });
+
   test('include globs whitelist specific patterns', () => {
     expect(isSyncable('src/foo.ts', { strategy: 'code', include: ['src/**/*.ts'] })).toBe(true);
     expect(isSyncable('lib/bar.ts', { strategy: 'code', include: ['src/**/*.ts'] })).toBe(false);

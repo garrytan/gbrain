@@ -45,7 +45,7 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string; managedBookmark?: boolean } = {},
+  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string; managedBookmark?: boolean; keepDirs?: string[] } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
@@ -176,7 +176,7 @@ export async function runImport(
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const allFiles = collectSyncableFiles(dir, { strategy, keepDirs: opts.keepDirs });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -485,6 +485,14 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  /**
+   * Directory segment names exempted from the `pruneDir` descent prune
+   * (per-source `config.keep_dirs`, e.g. `['.agents']`). Only affects the
+   * recursive FS-walk fallback — the `git ls-files` fast path already
+   * enumerates tracked dot-dir files and is filtered downstream by
+   * `isSyncable({keepDirs})` in the sync classifier.
+   */
+  keepDirs?: string[];
 }
 
 /**
@@ -611,7 +619,8 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       // in core/sync.ts) instead of a hand-maintained inline list that drifted
       // from it. Skips hidden dirs (`.git`, `.raw`, etc.), `node_modules`,
       // `vendor`, `dist`, `build`, `venv` (#2020), `ops`, and git submodules.
-      if (!pruneDir(entry, d)) continue;
+      // Per-source `keep_dirs` exempts named segments (e.g. `.agents`).
+      if (!pruneDir(entry, d) && !opts.keepDirs?.includes(entry)) continue;
 
       const full = join(d, entry);
       let stat;
