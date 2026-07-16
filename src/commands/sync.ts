@@ -1885,7 +1885,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
     // v0.41.13 #1433: never delete on metafile classification.
-    if (unsyncableReason(path, syncOpts) === 'metafile') continue;
+    // Same for pruned-dir. A path under a pruned segment (`ops/`,
+    // `node_modules/`, dot-dirs) was NEVER sync-eligible, so any page at
+    // that slug necessarily came from put_page — deleting it when the file
+    // is edited orphans the page and sync can never bring it back.
+    // Tripped in production when a merge-write edited an ops/** page file.
+    const reason = unsyncableReason(path, syncOpts);
+    if (reason === 'metafile' || reason === 'pruned-dir') continue;
     const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
     try {
       const existing = await engine.getPage(slug, pageOpts);

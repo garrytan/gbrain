@@ -133,10 +133,64 @@ describe('#1433 — re-sync preserves previously-indexed metafile pages', () => 
     expect(survivor).not.toBeNull();
   }, 60_000);
 
+  test('ops/** page indexed via direct putPage survives re-sync after file edit (pruned-dir guard)', async () => {
+    // Bug class: `ops` is in PRUNE_DIR_NAMES, so
+    // ops/** files are never sync-eligible and ops pages exist only via
+    // put_page (whose write-through still lands a file in the repo). The
+    // capture pipeline's merge-write edits that file; pre-fix, the next
+    // incremental sync classified it "modified but unsyncable" and deleted
+    // the page — reason 'pruned-dir' wasn't covered by the #1433 guard.
+    writeFileSync(join(repoPath, 'ops.md'), 'placeholder so ops/ dir exists in git\n');
+    mkdirSync(join(repoPath, 'ops/design-history'), { recursive: true });
+    writeFileSync(join(repoPath, 'ops/design-history/strategy.md'), [
+      '---',
+      'type: note',
+      'title: Strategy',
+      '---',
+      '',
+      'Historical design doc.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "add ops page file"', { cwd: repoPath, stdio: 'pipe' });
+
+    const { performSync } = await import('../src/commands/sync.ts');
+    await performSync(engine, { repoPath, full: true, noPull: true, noEmbed: true });
+
+    // Seed the page directly — the only way ops/** pages come to exist.
+    await engine.putPage('ops/design-history/strategy', {
+      type: 'note',
+      title: 'Strategy',
+      compiled_truth: 'Pre-existing ops page that should survive re-sync.',
+      timeline: '',
+      frontmatter: { type: 'note' },
+    });
+    expect(await engine.getPage('ops/design-history/strategy')).not.toBeNull();
+
+    // Simulate the capture merge-write: append a source note to the file.
+    writeFileSync(join(repoPath, 'ops/design-history/strategy.md'), [
+      '---',
+      'type: note',
+      'title: Strategy',
+      '---',
+      '',
+      'Historical design doc.',
+      '',
+      '## Source notes',
+      '- 2026-07-16: "a captured fact" [via: capture 2026-07-16]',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "capture merge-write"', { cwd: repoPath, stdio: 'pipe' });
+
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+
+    // IRON RULE: the page survives the edit.
+    const survivor = await engine.getPage('ops/design-history/strategy');
+    expect(survivor).not.toBeNull();
+    expect(survivor?.compiled_truth).toContain('Pre-existing ops page');
+  }, 60_000);
+
   test('non-metafile that becomes un-syncable (renamed .md → .txt) IS still cleaned up', async () => {
-    // Negative case: prove the guard is narrow — it only protects
-    // metafile classification, not the broader "this page used to be
-    // sync-eligible but isn't anymore" case.
+    // Negative case: prove the guard is narrow — it only protects the
+    // metafile and pruned-dir classifications, not the broader "this page
+    // used to be sync-eligible but isn't anymore" case.
     const { performSync } = await import('../src/commands/sync.ts');
     await performSync(engine, { repoPath, full: true, noPull: true, noEmbed: true });
 
