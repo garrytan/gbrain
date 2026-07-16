@@ -212,12 +212,12 @@ export function dimsProviderOptions(
         }
         return { openaiCompatible: { dimensions: dims } };
       }
-      // DashScope text-embedding-v3 (Matryoshka 64-1024) and Zhipu
-      // embedding-3 (Matryoshka 256-2048) both accept `dimensions` on the
-      // OpenAI-compat path. Without this, user-selected non-default dims are
-      // silently ignored and the provider returns its default size.
+      // DashScope text-embedding-v3/v4 and Zhipu embedding-3 accept
+      // `dimensions` on the OpenAI-compat path. Without this, user-selected
+      // non-default dims are silently ignored and the provider returns its
+      // default size.
       // Symmetric retrieval — inputType ignored.
-      if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
+      if (modelId === 'text-embedding-v3' || modelId === 'text-embedding-v4' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric

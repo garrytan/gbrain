@@ -131,7 +131,22 @@ MiniMax's API takes a `type: 'db' | 'query'` field for asymmetric retrieval. v0.
 
 ### DashScope (Alibaba)
 
-Set `DASHSCOPE_API_KEY`. International endpoint at `dashscope-intl.aliyuncs.com` by default; override `provider_base_urls.dashscope` for the China endpoint. Models: `text-embedding-v3` (current; Matryoshka 64-1024 dims), `text-embedding-v2`.
+Set `DASHSCOPE_API_KEY`. International endpoint at `dashscope-intl.aliyuncs.com` by default; override `provider_base_urls.dashscope` for a China-region Model Studio workspace endpoint, for example `https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`.
+
+Models: `text-embedding-v4` (current; Matryoshka 64-2048 dims), `text-embedding-v3`, `text-embedding-v2`.
+
+For stdio MCP launches that do not inherit shell env vars, store the key in the file-plane config:
+
+```json
+{
+  "embedding_model": "dashscope:text-embedding-v4",
+  "embedding_dimensions": 1024,
+  "provider_base_urls": {
+    "dashscope": "https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+  },
+  "dashscope_api_key": "<key in ~/.gbrain/config.json mode 0600>"
+}
+```
 
 CJK-dominant content tokenizes denser than OpenAI tiktoken; gbrain declares `chars_per_token: 2` so the batch pre-split leaves headroom.
 

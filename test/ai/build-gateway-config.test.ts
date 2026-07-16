@@ -84,6 +84,24 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       },
     );
   });
+
+  test('file-plane dashscope_api_key flows through to gateway env', async () => {
+    await withEnv({ DASHSCOPE_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        dashscope_api_key: 'sk-dashscope-file-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env?.DASHSCOPE_API_KEY).toBe('sk-dashscope-file-plane');
+    });
+  });
+
+  test('process env still wins over file-plane dashscope_api_key', async () => {
+    await withEnv({ DASHSCOPE_API_KEY: 'sk-dashscope-env' }, async () => {
+      const cfg = buildGatewayConfig({
+        dashscope_api_key: 'sk-dashscope-file-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env?.DASHSCOPE_API_KEY).toBe('sk-dashscope-env');
+    });
+  });
 });
 
 describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
