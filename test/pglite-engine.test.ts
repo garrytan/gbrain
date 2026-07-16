@@ -1286,6 +1286,9 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');
     const h = await engine.getHealth();
+    if (h.most_connected_entities == null) {
+      throw new Error('Expected most_connected_entities alias to be populated');
+    }
     expect(h.most_connected.length).toBeGreaterThan(0);
     expect(h.most_connected_entities.length).toBeGreaterThan(0);
     expect(h.most_connected_entities).toEqual(h.most_connected);
