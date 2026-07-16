@@ -63,6 +63,14 @@ export interface GBrainConfig {
    * config.json file-plane route is wired through today.
    */
   voyage_api_key?: string;
+  /**
+   * llama-server (llama.cpp) API key. Needed once the embed endpoint is
+   * fronted by an auth-gated reverse proxy (e.g. a bearer-gated cloudflared
+   * URL) rather than a local no-auth port. Folds into the gateway env as
+   * LLAMA_SERVER_API_KEY (see buildGatewayConfig), which the llama-server
+   * recipe reads. File-plane only — kept in ~/.gbrain/config.json (600).
+   */
+  llama_server_api_key?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -575,6 +583,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
     ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
+    ...(process.env.LLAMA_SERVER_API_KEY ? { llama_server_api_key: process.env.LLAMA_SERVER_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),

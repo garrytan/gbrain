@@ -139,6 +139,27 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
       expect(cfg.env.VOYAGE_API_KEY).toBe('pa-env-plane');
     });
   });
+
+  // llama_server_api_key: same file-plane fold so a config.json-only key reaches
+  // the llama-server recipe's LLAMA_SERVER_API_KEY in env-less (daemon/launchd/MCP)
+  // contexts. Same fold pattern as voyage/zeroentropy above.
+  test('llama_server_api_key folds into gateway env as LLAMA_SERVER_API_KEY', async () => {
+    await withEnv({ LLAMA_SERVER_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        llama_server_api_key: 'la-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.LLAMA_SERVER_API_KEY).toBe('la-config-plane');
+    });
+  });
+
+  test('a real LLAMA_SERVER_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ LLAMA_SERVER_API_KEY: 'la-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        llama_server_api_key: 'la-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.LLAMA_SERVER_API_KEY).toBe('la-env-plane');
+    });
+  });
 });
 
 describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
