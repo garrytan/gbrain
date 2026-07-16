@@ -619,6 +619,10 @@ export interface StalePageRow {
   compiled_truth: string;
   timeline: string;
   frontmatter: Record<string, unknown>;
+  /** Page-level content date used as the fallback structured timeline anchor. */
+  effective_date: Date | null;
+  /** Provenance for effective_date (event_date/date/published/filename/fallback). */
+  effective_date_source: EffectiveDateSource | null;
   updated_at: Date;
   /**
    * Full-precision (microsecond) UTC ISO string of `updated_at`, projected

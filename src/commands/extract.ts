@@ -39,7 +39,7 @@ import {
   extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
-  type UnresolvedFrontmatterRef, type LinkCandidate,
+  type UnresolvedFrontmatterRef, type LinkCandidate, type TimelineCandidate,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -495,6 +495,43 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   }
 
   return entries;
+}
+
+interface EffectiveDateTimelinePage {
+  slug: string;
+  title: string;
+  effective_date?: Date | string | null;
+  effective_date_source?: string | null;
+}
+
+/**
+ * Return explicit markdown timeline rows, or one deterministic page-level
+ * fallback when the page has an effective_date but no explicit row.
+ *
+ * The fallback is intentionally only used for otherwise-empty pages. This
+ * gives every dated page a structured timeline anchor without duplicating a
+ * richer event already present in markdown. The source key makes the row
+ * provenance visible and keeps repeated extraction idempotent.
+ */
+export function extractTimelineEntriesForPage(
+  content: string,
+  page: EffectiveDateTimelinePage,
+): Array<TimelineCandidate & { source?: string }> {
+  const explicit = parseTimelineEntries(content);
+  if (explicit.length > 0) return explicit;
+  if (!page.effective_date) return [];
+
+  const effectiveDate = page.effective_date instanceof Date
+    ? page.effective_date
+    : new Date(page.effective_date);
+  if (!Number.isFinite(effectiveDate.getTime())) return [];
+
+  return [{
+    date: effectiveDate.toISOString().slice(0, 10),
+    source: `page.effective_date:${page.effective_date_source ?? 'unknown'}`,
+    summary: page.title.trim() || page.slug,
+    detail: '',
+  }];
 }
 
 // --- Main command ---
@@ -1532,7 +1569,7 @@ async function extractTimelineFromDB(
     }
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
-    const entries = parseTimelineEntries(fullContent);
+    const entries = extractTimelineEntriesForPage(fullContent, page);
 
     for (const entry of entries) {
       if (dryRunSeen) {
@@ -1542,7 +1579,8 @@ async function extractTimelineFromDB(
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
             action: 'add_timeline', slug, source_id, date: entry.date,
-            summary: entry.summary, ...(entry.detail ? { detail: entry.detail } : {}),
+            summary: entry.summary, ...(entry.source ? { source: entry.source } : {}),
+            ...(entry.detail ? { detail: entry.detail } : {}),
           }) + '\n');
         } else {
           console.log(`  ${slug}: ${entry.date} — ${entry.summary}`);
@@ -1551,7 +1589,7 @@ async function extractTimelineFromDB(
       } else {
         // v0.32.8 F4: thread source_id so the JOIN matches the right page
         // when two sources share the same slug.
-        batch.push({ slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id });
+        batch.push({ slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id });
         if (batch.length >= BATCH_SIZE) await flush();
       }
     }
@@ -1662,8 +1700,8 @@ async function extractStaleFromDB(
           to_source_id: r.toSourceId, origin_source_id: page.source_id,
         });
       }
-      for (const entry of parseTimelineEntries(fullContent)) {
-        timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+      for (const entry of extractTimelineEntriesForPage(fullContent, page)) {
+        timelineRows.push({ slug: page.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
       // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
       // stamp with the row's READ updated_at, NOT now() — a concurrent edit

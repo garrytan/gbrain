@@ -3,6 +3,7 @@ import {
   extractMarkdownLinks,
   extractLinksFromFile,
   extractTimelineFromContent,
+  extractTimelineEntriesForPage,
   walkMarkdownFiles,
 } from '../src/commands/extract.ts';
 
@@ -134,6 +135,36 @@ describe('extractTimelineFromContent', () => {
     const content = `- **2025-03-18** | Meeting – Discussed partnership`;
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
+  });
+});
+
+describe('extractTimelineEntriesForPage', () => {
+  it('falls back to effective_date when markdown has no explicit timeline row', () => {
+    const entries = extractTimelineEntriesForPage('No timeline here.', {
+      slug: 'people/test',
+      title: 'Test Person',
+      effective_date: new Date('2026-07-16T21:08:00Z'),
+      effective_date_source: 'date',
+    });
+    expect(entries).toEqual([{
+      date: '2026-07-16',
+      source: 'page.effective_date:date',
+      summary: 'Test Person',
+      detail: '',
+    }]);
+  });
+
+  it('prefers explicit timeline rows over the effective_date fallback', () => {
+    const entries = extractTimelineEntriesForPage('- **2026-07-15** | Explicit event', {
+      slug: 'people/test',
+      title: 'Test Person',
+      effective_date: new Date('2026-07-16T00:00:00Z'),
+      effective_date_source: 'date',
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-07-15');
+    expect(entries[0].summary).toBe('Explicit event');
+    expect(entries[0].source).toBeUndefined();
   });
 });
 
