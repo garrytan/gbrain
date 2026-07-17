@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 11 (10→11 asymmetric input_type fix invalidates document-side query-vector rows, #1400)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(11);
+  it('is 12 (11→12 hard-exclude fold invalidates rows written under a different exclude policy, #2825)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(12);
   });
 });

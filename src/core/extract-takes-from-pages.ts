@@ -46,6 +46,13 @@ export interface ExtractTakesFromPagesOpts {
   sourceIdFilter?: string;
   /** Max pages to classify per run (caps cost). Default 50. */
   maxPages?: number;
+  /**
+   * Also rescan pages that already hold takes (refresh semantics).
+   * Default false: bootstrap runs skip covered pages, so repeated runs
+   * PROGRESS through a corpus larger than one run's cap instead of
+   * rescanning the same most-recently-updated slice forever.
+   */
+  includeCovered?: boolean;
   /** Owner identifier for the inserted takes. Default 'system'. */
   holder?: string;
   /** Model override; defaults to facts.extraction_model. */
@@ -132,12 +139,21 @@ export async function extractTakesFromPages(
   // Fetch eligible pages. Order by updated_at DESC so recently-edited
   // pages get bootstrapped first.
   const typesList = ALLOWED_PAGE_TYPES.map((t) => `'${t}'`).join(', ');
+  // Bootstrap progression: skip pages that already hold takes (opt out via
+  // includeCovered). Without this, the updated_at-DESC + LIMIT selection made
+  // every re-run rescan the same most-recent slice — a corpus larger than one
+  // run's cap could never be fully bootstrapped (and each rescan re-spent LLM
+  // budget on covered pages for upsert-identical rows).
+  const coveredFilter = opts.includeCovered
+    ? ''
+    : `AND NOT EXISTS (SELECT 1 FROM takes t WHERE t.page_id = pages.id)`;
   const pages = await engine.executeRaw<PageRow>(
     `SELECT id, slug, source_id, type, compiled_truth, updated_at
        FROM pages
       WHERE type IN (${typesList})
         AND deleted_at IS NULL
         AND length(COALESCE(compiled_truth, '')) > 200
+        ${coveredFilter}
         ${sourceFilter}
       ORDER BY updated_at DESC
       LIMIT ${maxPages}`,

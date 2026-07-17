@@ -2,6 +2,42 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.60.0] - 2026-07-16
+
+**Eleven verified community fixes: Windows brains no longer risk losing subdirectory pages on a full sync, agent tool loops on non-Anthropic providers survive interruption instead of dead-lettering, multi-source brains get two source-isolation gaps closed, and the search cache stops leaking results across exclude policies. Every fix was reproduced and reviewed against master before landing.**
+
+### Fixed
+- **Windows: `sync --full` no longer deletes subdirectory pages.** A path-separator mismatch made every subdirectory page look stale during full-sync reconcile, so a routine full sync could delete them. Paths are now normalized before comparison, and a mass-delete safety valve blocks any reconcile that would remove most of a source's pages. (#2828, #2836, contributed by @1alessio)
+- **Gateway tool loops on non-Anthropic providers are reliable across resume.** Tool-result turns are persisted as they happen, interrupted jobs reconcile dangling tool calls on resume instead of dead-lettering with unbalanced-transcript errors, `Date` values in tool outputs no longer crash serialization, DeepSeek reasoning-only replies are read correctly instead of as empty, and `openrouter_api_key` in config reaches the gateway. (#2820, consolidating community fixes #2062, #2065, #2257, #2274, #2336, #2487, #2491, #2572, #2614, #2617, #2806; contributed by @time-attack and the original PR authors)
+- **Claude 5 models get output-token headroom.** Thinking-default models no longer have long answers silently truncated by the old 4096-token default output cap; Claude 5 chat calls now default to 32000 output tokens (16000 for `think`). Other providers keep their existing caps, so smaller-limit providers are unaffected. (#2820)
+- **Bulk import survives huge fence-less files.** The markdown lexer is skipped when a page contains no code fences, removing an out-of-memory crash on large tables and notes during bulk import. (#2437, #2440, contributed by @irresi)
+- **`file_list` no longer crashes on Postgres brains over MCP.** BIGINT file sizes are normalized before JSON serialization; the CLI files listing gets the same fix. (#472, contributed by @vinsew)
+- **`gbrain config set auto_chronicle true` works as documented.** The Life Chronicle config keys (and `takes.bootstrap_enabled`) are registered, so the documented enable commands stop being rejected as unknown keys. (#2632, contributed by @p3ob7o)
+- **Orphan reports skip generated corpus roots.** `raw/`, `atoms/`, and `skills/` no longer inflate the orphan ratio by default; `--include-pseudo` still shows everything. (#2068, contributed by @mgunnin)
+
+### Security
+- **The search cache honors your hard-exclude policy.** Cached search results are now keyed on the effective hard-exclude/include slug-prefix policy, so a process with `GBRAIN_SEARCH_EXCLUDE` set can never be served cached rows written under a different policy — and vice versa. (#2825, #2885)
+- **Take-writes are source-scoped.** When a source resolves (via `--source`, `GBRAIN_SOURCE`, or the dotfile chain), CLI take commands look pages up within that source instead of first-match-by-slug, closing a cross-source write path on brains where the same slug exists in multiple sources. Brains without a resolvable source keep the previous lookup. (#2684, #2698, contributed by @RerankerGuo)
+- **Image pages land in the right source.** Imported images are stamped with the syncing source (and their auto-links stay within it) instead of always landing in `default`. (#2706, #2718, contributed by @RerankerGuo)
+- **The admin bootstrap token no longer prints to a non-terminal stream.** The one-time token is withheld when its output stream is a pipe, log, or CI capture instead of an interactive terminal. (#2625, contributed by @irresi)
+
+### Internal
+- Pinned embedding dimensions in a doctor test to eliminate a shard-order flake in CI. (#2801, contributed by @p3ob7o)
+
+### To take advantage of v0.42.60.0
+
+`gbrain upgrade`. No new schema migrations.
+
+1. **Windows users with git-synced sources:** re-run `gbrain sync --full` once after upgrading — if a pre-upgrade sync deleted subdirectory pages, they re-import from the repo.
+2. **Your first search after upgrading may be a cache miss** (the cache key now includes the exclude policy). Speeds return to normal as the cache refills within its TTL.
+3. **If agent jobs previously dead-lettered** with unbalanced tool-call transcript errors on OpenAI-compatible providers, retry them with `gbrain jobs retry <id>` — resume now reconciles the transcript.
+4. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+5. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
 ## [0.42.59.0] - 2026-07-13
 
 **Five community-reported fixes, each reproduced and verified before/after on both engines (PGLite + real Postgres): an upgrade wedge that locked pre-v121 brains out of migrations, two data-integrity holes in engine migration, silent deletion of facts containing pipe characters, confidently-wrong entity attribution on ambiguous names, and tightened source-scope enforcement in `think`.**

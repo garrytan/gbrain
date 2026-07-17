@@ -1,5 +1,19 @@
 # TODOS
 
+## community fix-wave follow-ups (filed v0.42.60.0)
+
+- [ ] **P1 — take-writes source scoping fails open when source resolution errors (#2684 residual).**
+  `resolveTakesSourceId` (src/commands/takes.ts) swallows resolution errors and returns
+  `undefined`, which falls back to the unscoped slug-only page lookup — so an invalid
+  `GBRAIN_SOURCE` (or a broken dotfile chain) silently restores the pre-#2698 cross-source
+  write behavior on multi-source brains. Decide fail-closed semantics: error out when a
+  source was explicitly requested but doesn't resolve; keep the unscoped fallback only for
+  brains with no source configuration at all. Add a regression test for the invalid-source
+  path. Found by cross-model adversarial review during the v0.42.60.0 release ship.
+- [ ] **P2 — cherry-pick #2112's uncovered doctor.ts hunk.** Fix-wave A (#2820) superseded
+  most of #2112 but not its `checkSubagentCapability` fix (check explicit `models.subagent`
+  before `models.tier.subagent`). Refile or cherry-pick; the rest of that PR is covered.
+
 ## v0.42.59.0 follow-ups (five-fix rollup #2735–#2739)
 
 Filed as follow-ups from v0.42.59.0 (bootstrap probe for
@@ -219,10 +233,7 @@ job) and sync. See CLAUDE.md "Pace Mode".
   `sourceScopeOpts`) and `code_def` (`operations.ts:4155` — brain-wide raw SQL over
   `content_chunks`; confirm whether brain-wide is intentional before scoping). A remote
   federated client (grant set, dispatch-default `ctx.sourceId='default'`) reads these against
-  `default` or unscoped, not its grant. *(Partially done by v0.42.59.0: the engine methods
-  `searchTakes`/`searchTakesVector` now accept the source-scope predicates and the `think`
-  gather path threads them; the standalone `takes_search` op handler still doesn't route
-  through `sourceScopeOpts(ctx)`.)*
+  `default` or unscoped, not its grant.
   - **Why:** same cross-source correctness/isolation class #2200 targets; a federated client
     can't read chunks/raw-data/versions for an authorized non-default source, `resolve_slugs`
     can fuzzy-resolve across all sources, and `takes_search`/`code_def` query without the grant.
@@ -964,7 +975,7 @@ default-off; these are the gates and extensions before any default flip.
 
 - [ ] **v0.42+: cross-surface ablation before flipping `search.adaptive_return` default.** The gate ships default-off. Before turning it on in any `MODE_BUNDLES` tier, run the recall ablation (adaptive off vs on, recall-preserving caps) across `gbrain eval longmemeval`, `gbrain eval whoknows`, `gbrain eval suspected-contradictions`, and the BrainBench-Real replay (sibling gbrain-evals repo). Confirm recall@k / answer quality does not regress; pick the safe caps; probably flip `tokenmax` first (broadest searchLimit, most noise). On-surface evidence (the PrecisionMemBench precision/recall frontier: off 0.076/0.99, e1/o2 0.40/0.91, e1/o1 0.58/0.82) is recorded in `gbrain-evals/docs/benchmarks/2026-05-29-precisionmembench.md`. Priority: P2.
 - [ ] **v0.42+: fold adaptive-return params into KNOBS_HASH so adaptive-on calls can cache.** v0.41.33.0 skips `hybridSearchCached` entirely when the gate is on (cache-safe but cache-cold). Fold `adaptive_return` enabled + caps + `minKeep` into `knobsHash()` (append-only, bump `KNOBS_HASH_VERSION`) so a gate-on write segregates from a gate-off row and adaptive calls cache correctly. Required before any default flip (else default-on means cache-cold everywhere). See `src/core/search/mode.ts` KNOBS_HASH parts + `return-policy.ts`. Priority: P2 (paired with the default-flip ablation above).
-- [ ] **v0.42+: gentle adaptive gate on `think`'s gather stage (A3).** The plan's A3 decision was a gentler return-gate on `runThink`'s gather candidates (cleaner context, fewer tokens per reasoning call). Deferred because the benefit is unvalidated without a longmemeval answer-quality run, and trimming the answer path (even default-off) carries regression risk. gather fuses 4 streams (page / takes-keyword / takes-vector / graph); the gate must operate on the fused output with a higher min-keep than search, validated on `gbrain eval longmemeval` answer quality (not retrieval precision). *(The scope plumbing this was gated on landed in v0.42.59.0: `RunThinkOpts` carries `sourceId`/`allowedSources` and `runGather` threads the scope through every stream, so the gate work no longer blocks on it.)* Priority: P2.
+- [ ] **v0.42+: gentle adaptive gate on `think`'s gather stage (A3).** The plan's A3 decision was a gentler return-gate on `runThink`'s gather candidates (cleaner context, fewer tokens per reasoning call). Deferred because the benefit is unvalidated without a longmemeval answer-quality run, and trimming the answer path (even default-off) carries regression risk. gather fuses 4 streams (page / takes-keyword / takes-vector / graph); the gate must operate on the fused output with a higher min-keep than search, validated on `gbrain eval longmemeval` answer quality (not retrieval precision). Also: `RunThinkOpts` has no `sourceId` today, so think's gather runs unscoped (codex finding) — scope-isolated think needs that plumbing first. Priority: P2.
 - [ ] **v0.42+: `--explain` human header for adaptive_return.** The decision is in `HybridSearchMeta.adaptive_return` and surfaces in `--json` today. The per-result `explain-formatter.ts` is result-scoped and can't render a per-query meta line; the human `gbrain search --explain` header needs the meta threaded through `cli.ts:formatResult` (it currently only receives `results`). Add a one-line gate-decision header (intent / cap / kept of total). Priority: P3.
 - [ ] **v0.42+: structured-alias / facts-mode fidelity for the PrecisionMemBench eval.** The gbrain-evals benchmark seeds beliefs as pages with aliases in the body (real FTS). A second fidelity that exercises gbrain's structured alias/entity-resolution layer (facts with `valid_until` + entity resolution) would measure gbrain's structured-belief path on the 23 alias cases. Lives in gbrain-evals (`eval/precisionmembench/seed.ts` throws on `fidelity:'structured'` today). Priority: P3.
 

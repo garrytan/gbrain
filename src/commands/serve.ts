@@ -118,8 +118,13 @@ export async function runServe(
     // restart.
     const suppressBootstrapToken = args.includes('--suppress-bootstrap-token');
 
+    // #2624: by default the generated token only prints on an interactive
+    // TTY (never into container log storage). --print-admin-token forces the
+    // raw value even on a non-TTY start.
+    const printAdminToken = args.includes('--print-admin-token');
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken });
     return;
   }
 

@@ -15,6 +15,7 @@ import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
+import { resolveHardExcludes } from './source-boost.ts';
 import {
   resolveAdaptiveReturn,
   applyAdaptiveReturn,
@@ -1631,6 +1632,12 @@ export async function hybridSearchCached(
   const cacheKnobsHash = knobsHash(resolvedForCache, {
     embeddingColumn: resolvedColCached.name,
     embeddingModel: resolvedColCached.embeddingModel,
+    // #2825 — fold the resolved hard-exclude prefix list (defaults ∪
+    // GBRAIN_SEARCH_EXCLUDE ∪ per-call exclude_slug_prefixes, minus
+    // include_slug_prefixes — exactly what the engines' query-build path
+    // resolves) into the cache key so a row written under one exclude
+    // policy can't be served to a lookup under another.
+    hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
