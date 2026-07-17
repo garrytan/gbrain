@@ -25,7 +25,7 @@ describe('computeDurabilityPushCheck', () => {
   test('all pushed → ok naming the count', () => {
     const c = computeDurabilityPushCheck([probe(), probe({ sourceId: 'wiki' })], noFailures);
     expect(c.status).toBe('ok');
-    expect(c.message).toContain('2 hardened source(s)');
+    expect(c.message).toContain('2 hardened source(s): 2 pushed');
   });
 
   test('unpushed commits → warn naming the source and recovery', () => {
@@ -51,9 +51,12 @@ describe('computeDurabilityPushCheck', () => {
     expect(c.message).toContain('LOCAL-ONLY');
   });
 
-  test('probe failure (all null) stays ok — fail-open, never a false warn', () => {
+  test('probe failure (all null) stays ok but is named unverified, never counted as pushed', () => {
     const c = computeDurabilityPushCheck([probe({ ahead: null, dirty: null })], noFailures);
     expect(c.status).toBe('ok');
+    expect(c.message).toContain('unverified');
+    expect(c.message).toContain('default');
+    expect(c.message).not.toContain('1 pushed');
   });
 
   test('dirty files are informational on ok, appended on warn', () => {
@@ -79,6 +82,19 @@ describe('parsePushLogFailures', () => {
     const r = parsePushLogFailures(log, now);
     expect(r.failures).toBe(2);
     expect(r.lastFailure).toContain('def456');
+  });
+
+  test('a later successful push clears earlier failures (latest terminal state wins)', () => {
+    const log = [
+      '2026-07-18T01:00:00Z [push] LOCAL-ONLY, NEEDS ATTENTION: main @ abc could not reach origin.',
+      '2026-07-18T02:00:00Z [push] ok main abc',
+    ].join('\n');
+    expect(parsePushLogFailures(log, now).failures).toBe(0);
+    const stillFailing = [
+      '2026-07-18T01:00:00Z [push] ok main abc',
+      '2026-07-18T02:00:00Z [push] LOCAL-ONLY, NEEDS ATTENTION: main @ def could not reach origin.',
+    ].join('\n');
+    expect(parsePushLogFailures(stillFailing, now).failures).toBe(1);
   });
 
   test('failures outside the window are ignored', () => {

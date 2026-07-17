@@ -31,7 +31,7 @@ import { resolveSocketPath } from '../core/context/resolve-ipc.ts';
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, openSync, readSync, closeSync } from 'fs';
 import {
   extractEntityRefs,
   isGlobalBasenameEnabled,
@@ -2686,20 +2686,30 @@ export function computeDurabilityPushCheck(
     .filter(p => p.dirty !== null && p.dirty > 0)
     .map(p => `${p.sourceId}=${p.dirty}`)
     .join(', ');
+  // A repo whose probe failed entirely (ahead unknown AND upstream not
+  // established as missing) is UNVERIFIED — never fold it into "all
+  // pushed" (that would read as a green light for a repo we couldn't
+  // see), but don't warn either: transient git timeouts would flap.
+  const unverified = probes.filter(p => p.ahead === null && !p.upstreamMissing);
+  const verifiedOkCount = probes.length - unverified.length -
+    probes.filter(p => p.upstreamMissing || (p.ahead !== null && p.ahead > 0)).length;
+  const unverifiedNote = unverified.length > 0
+    ? ` ${unverified.length} unverified (git probe failed): ${unverified.map(p => p.sourceId).join(', ')}.`
+    : '';
   if (problems.length > 0) {
     return {
       name: 'durability_push_health',
       status: 'warn',
       message: `Hardened-source git tier degraded: ${problems.join('; ')}.` +
-        (dirtyNote ? ` Dirty files: ${dirtyNote}.` : '') +
+        (dirtyNote ? ` Dirty files: ${dirtyNote}.` : '') + unverifiedNote +
         ' Recover: scripts/brain-commit-push.sh --push-only (in the repo), or gbrain sources pull <id> then git push; see ~/.gbrain/brain-push.log',
     };
   }
   return {
     name: 'durability_push_health',
     status: 'ok',
-    message: `${probes.length} hardened source(s), all pushed (ahead=0)` +
-      (dirtyNote ? `. Dirty (uncommitted, non-write-through) files present: ${dirtyNote}` : ''),
+    message: `${probes.length} hardened source(s): ${verifiedOkCount} pushed (ahead=0).` + unverifiedNote +
+      (dirtyNote ? ` Dirty (uncommitted, non-write-through) files present: ${dirtyNote}` : ''),
   };
 }
 
@@ -2713,12 +2723,23 @@ export function parsePushLogFailures(
   windowDays = 7,
 ): { failures: number; lastFailure: string | null } {
   const cutoff = now.getTime() - windowDays * 24 * 3600 * 1000;
+  // A later successful push clears earlier failures: the log has no repo
+  // key (single-brain-repo is the overwhelming shape), so the honest
+  // reduction is "latest terminal state wins" — count only failures with
+  // no subsequent `[push] ok` / `ok-after-rebase` line. Without this, a
+  // recovered repo would keep warning for the full window (review P2).
+  let lastOkTs = -Infinity;
+  for (const line of content.split('\n')) {
+    if (!/\[push\] ok(-after-rebase)? /.test(line)) continue;
+    const ts = Date.parse(line.slice(0, 20));
+    if (!Number.isNaN(ts)) lastOkTs = Math.max(lastOkTs, ts);
+  }
   let failures = 0;
   let lastFailure: string | null = null;
   for (const line of content.split('\n')) {
     if (!line.includes('LOCAL-ONLY') && !line.includes('lock-timeout')) continue;
     const ts = Date.parse(line.slice(0, 20));
-    if (Number.isNaN(ts) || ts < cutoff) continue;
+    if (Number.isNaN(ts) || ts < cutoff || ts <= lastOkTs) continue;
     failures++;
     lastFailure = line.length > 160 ? line.slice(0, 160) + '…' : line;
   }
@@ -2741,7 +2762,8 @@ export async function checkDurabilityPushHealth(engine: BrainEngine): Promise<Ch
     );
     const hardened = rows.filter(r =>
       typeof r.local_path === 'string' && r.local_path.length > 0 &&
-      existsSync(r.local_path) && isDurabilityHardened(r.local_path));
+      existsSync(r.local_path) && isDurabilityHardened(r.local_path))
+      .sort((a, b) => a.id.localeCompare(b.id)); // deterministic probe set across runs
     const capped = hardened.slice(0, DURABILITY_PROBE_CAP);
     const probes: DurabilityRepoProbe[] = capped.map(r => {
       const repo = r.local_path as string;
@@ -2772,12 +2794,25 @@ export async function checkDurabilityPushHealth(engine: BrainEngine): Promise<Ch
     try {
       const logPath = pushLogPath();
       if (existsSync(logPath)) {
-        pushLog = parsePushLogFailures(readFileSync(logPath, 'utf8'), new Date());
+        // The log is append-only and includes raw git output — read only a
+        // bounded tail (the reduction only needs recent lines anyway).
+        const TAIL_BYTES = 64 * 1024;
+        const size = statSync(logPath).size;
+        const fd = openSync(logPath, 'r');
+        try {
+          const start = Math.max(0, size - TAIL_BYTES);
+          const buf = Buffer.alloc(size - start);
+          readSync(fd, buf, 0, buf.length, start);
+          pushLog = parsePushLogFailures(buf.toString('utf8'), new Date());
+        } finally {
+          closeSync(fd);
+        }
       }
     } catch { /* fail-open */ }
     const check = computeDurabilityPushCheck(probes, pushLog);
     if (hardened.length > capped.length) {
-      check.message += ` (probed ${capped.length}/${hardened.length} hardened sources — cap ${DURABILITY_PROBE_CAP})`;
+      const skipped = hardened.slice(DURABILITY_PROBE_CAP).map(r => r.id).join(', ');
+      check.message += ` (probed ${capped.length}/${hardened.length} hardened sources — cap ${DURABILITY_PROBE_CAP}; unprobed: ${skipped})`;
     }
     return check;
   } catch (e) {
