@@ -122,7 +122,8 @@ describe('importCodeFile — #1950 cooperative cancellation', () => {
     // The embed try/catch swallows embed errors so code files land without
     // vectors on provider hiccups — an abort must escape that swallow, or a
     // cancelled sync would half-land the file. The pre-embed throwIfAborted
-    // sits INSIDE the try, so this exercises the name-based re-throw guard.
+    // sits INSIDE the try, so this exercises the catch's signal-authority
+    // re-raise (throwIfAborted, not exception-name matching).
     const controller = new AbortController();
     const engine = mockEngine({
       getPage: async () => {

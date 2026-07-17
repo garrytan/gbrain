@@ -2695,14 +2695,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           await markCompleted(path);
         }
       } catch (e: unknown) {
-        // #1950: an abort escaping importFile is a cancelled drain, not a
-        // broken file — do NOT record it in the failure ledger (that would
-        // auto-skip an innocent file on the resumed run). The worker loop
-        // sees signal.aborted next tick; the checkpoint has NOT marked this
-        // path completed, so the next sync retries it. Name-match covers
-        // both the local AbortError class and a DOMException from an
-        // aborted gateway fetch.
-        if (e instanceof Error && e.name === 'AbortError') return;
+        // #1950: an error escaping importFile while OUR signal has fired is
+        // a cancelled drain, not a broken file — do NOT record it in the
+        // failure ledger (that would auto-skip an innocent file on the
+        // resumed run). The worker loop sees signal.aborted next tick; the
+        // checkpoint has NOT marked this path completed, so the next sync
+        // retries it. The signal itself is the authority (Codex P1): a
+        // provider-generated AbortError with our signal still live is a
+        // real failure and must be recorded, or the file silently vanishes
+        // from this sync with no ledger row.
+        if (opts.signal?.aborted) return;
         const msg = e instanceof Error ? e.message : String(e);
         serr(`  Warning: skipped ${path}: ${msg}`);
         failedFiles.push({ path, error: msg });

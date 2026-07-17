@@ -1202,10 +1202,13 @@ export async function importCodeFile(
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
-      // A cancelled import must NOT fall through to the vectorless-landing
-      // path below — re-throw aborts (both the local AbortError class and a
-      // DOMException surfaced by an aborted gateway fetch share the name).
-      if (e instanceof Error && e.name === 'AbortError') throw e;
+      // A CANCELLED import must not fall through to the vectorless-landing
+      // path below — but the cancellation authority is our signal, not the
+      // exception's name: a provider-generated AbortError (SDK-internal
+      // timeout) with our signal still live keeps the vectorless-landing
+      // policy (Codex P2). throwIfAborted re-raises exactly when we were
+      // told to stop.
+      throwIfAborted(opts.signal);
       console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
