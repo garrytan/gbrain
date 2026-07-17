@@ -254,6 +254,12 @@ const PRUNE_DIR_NAMES = new Set<string>([
   // exclusion misses it; explicit entry keeps incremental sync consistent
   // with the first-sync walker in commands/import.ts.
   'venv',
+  // iOS/macOS dependency and build-output trees. CocoaPods and Carthage
+  // contain vendored/generated files, while DerivedData is Xcode's rebuildable
+  // cache; none should be indexed as user-authored source.
+  'Pods',
+  'Carthage',
+  'DerivedData',
   '.raw',
   'ops',
 ]);

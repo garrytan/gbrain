@@ -141,6 +141,38 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
     });
   });
 
+  test('iOS vendor dirs (Pods, Carthage, DerivedData) skipped on code strategy', async () => {
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, () => {
+      // Real app code that must be indexed.
+      mkdirSync(join(tmp, 'src'));
+      writeFileSync(join(tmp, 'src/App.tsx'), 'export {}\n');
+
+      // Pods: CocoaPods (iOS). One .h per RN/Expo native module — 8000+
+      // files in a real RN/Expo app. Drove DailyBase brain_score 76 → 49.
+      mkdirSync(join(tmp, 'mobile/ios/Pods/React-Core/Headers'), { recursive: true });
+      writeFileSync(
+        join(tmp, 'mobile/ios/Pods/React-Core/Headers/RCTBridge.h'),
+        '@interface RCTBridge\n@end\n',
+      );
+
+      // Carthage: vendored framework binaries (iOS/macOS).
+      mkdirSync(join(tmp, 'Carthage/Build/iOS'), { recursive: true });
+      writeFileSync(join(tmp, 'Carthage/Build/iOS/Alamofire.swift'), '// vendored\n');
+
+      // DerivedData: Xcode build cache — regenerated on every build.
+      mkdirSync(join(tmp, 'DerivedData/Build/Products'), { recursive: true });
+      writeFileSync(join(tmp, 'DerivedData/Build/Products/foo.swift'), '// gen\n');
+
+      const files = collectSyncableFiles(tmp, { strategy: 'code' });
+      const names = files.map(f => f.replace(tmp, ''));
+
+      expect(names).toContain('/src/App.tsx');
+      expect(names.every(n => !n.includes('/Pods/'))).toBe(true);
+      expect(names.every(n => !n.startsWith('/Carthage'))).toBe(true);
+      expect(names.every(n => !n.startsWith('/DerivedData'))).toBe(true);
+    });
+  });
+
   test('7. deterministic ordering — two walks return identical arrays (codex C8)', async () => {
     await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, () => {
       // runImport's checkpoint resume at import.ts:68-74 is index-based

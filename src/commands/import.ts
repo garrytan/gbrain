@@ -610,7 +610,8 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       // Descent-time prune through the canonical gate (single source of truth
       // in core/sync.ts) instead of a hand-maintained inline list that drifted
       // from it. Skips hidden dirs (`.git`, `.raw`, etc.), `node_modules`,
-      // `vendor`, `dist`, `build`, `venv` (#2020), `ops`, and git submodules.
+      // `vendor`, `dist`, `build`, `venv`, iOS vendor/build directories,
+      // `ops`, and git submodules.
       if (!pruneDir(entry, d)) continue;
 
       const full = join(d, entry);
