@@ -73,4 +73,5 @@ check-lock.mjs
 
 # Generated PMBrain desktop runtime and installers
 desktop/build/extraResources/
+desktop/build/runtime-cache/
 desktop/dist/

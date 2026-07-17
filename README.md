@@ -14,7 +14,7 @@ PMBrain 集成了 GBrain 的核心能力，安装后相当于给你的 AI 工具
 
 - **混合搜索引擎**：向量搜索 + 关键词 + 知识图谱三重融合，搜索质量远高于单纯的关键词匹配
 - **知识图谱**：自动从文档中提取人物、公司、项目之间的关联关系
-- **MCP 接口**：CodeBuddy、Workbuddy、Codex、Cursor、Claude Code 等 AI 工具在对话中直接调用知识库
+- **MCP 接口**：CodeBuddy、Workbuddy、Codex、Cursor、Claude Code、QwenPaw 等 AI 工具在对话中直接调用知识库
 - **GUI 管理控制台**：通过浏览器导入资料、浏览知识库、审批观点、运行自然语言任务、配置 MCP 接入、查看任务监控和系统诊断
 - **数据本地化**：知识库存储在你自己的电脑或服务器上，不会上传到第三方云端
 - **双引擎架构**：支持本地 PGLite 和 Docker Postgres / Supabase 两种部署方式
@@ -102,7 +102,7 @@ dry-run 模式下 `propose_takes` 只统计哪些页面需要调用 LLM，不调
 
 ### 多模型支持（国内可用）
 
-内置 18 家 AI 提供商，国内可直接使用：
+内置 19 类 AI 提供商（含自定义 OpenAI 兼容接口），国内可直接使用：
 
 | 提供商 | 用途 |
 |--------|------|
@@ -110,6 +110,7 @@ dry-run 模式下 `propose_takes` 只统计哪些页面需要调用 LLM，不调
 | MIMO 小米 | 搜索扩展、对话 |
 | DeepSeek | 对话 |
 | OpenAI / Anthropic / Ollama | 嵌入/对话/重排序 |
+| 自定义 OpenAI 兼容接口 | 本地或局域网 Qwen、vLLM、LM Studio、Xinference、LocalAI 的嵌入/对话 |
 
 ---
 
@@ -145,11 +146,11 @@ Windows 桌面端目前仍属于内测版本，安装或使用过程中可能会
 
 完整的新用户前置条件、首次配置、老用户升级和故障处理请阅读：[PMBrain 桌面版安装与首次使用](docs/desktop/安装与首次使用.md)。
 
-运行 `PMBrain-Windows-x64-Setup-1.0.45.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、填写所需模型 API Key，并选择知识库目录；桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
+运行最新的 `PMBrain-Windows-x64-Setup-*.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、配置所需模型并选择知识库目录；本地 Qwen 等 OpenAI 兼容服务可直接填写 Base URL、模型 ID 和可选 API Key。桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
 
-安装包已内置 Bun 运行时、PGLite 数据库及其 WASM 资源，选择 PGLite 时不需要另装 Bun、Docker 或 Postgres。首次安装会使用安装包内置的 PMBrain sidecar 自动创建数据库并执行迁移，不依赖系统 PATH、`gbrain.exe` 或用户手动命令。配置完成后可在桌面端生成 CodeBuddy、Workbuddy、Cursor、Claude Code、Codex 的 MCP 接入配置，并在写入前备份原配置、合并 `pmbrain` 节点和执行 MCP smoke test。数据库模式可在配置页中切换；切换失败时会恢复原配置。
+安装包已内置固定版本、校验过的 Bun x64 baseline 运行时、PGLite 数据库及其 WASM 资源，可兼容不支持 AVX2 的较老 x64 CPU；选择 PGLite 时不需要另装 Bun、Docker 或 Postgres。首次安装会使用安装包内置的 PMBrain sidecar 自动创建数据库并执行迁移，不依赖系统 PATH、`gbrain.exe` 或用户手动命令。配置完成后可在桌面端生成 CodeBuddy、Workbuddy、Cursor、Claude Code、Codex、QwenPaw 的 MCP 接入配置，并在写入前备份原配置、合并 `pmbrain` 节点和执行 MCP smoke test。QwenPaw 2.x 通过其本机 API 安全更新 DriverCard 和凭证库，完整写入 Bearer Header，并以 QwenPaw 实际工具列表再次确认连接；旧版继续兼容 `%USERPROFILE%\.qwenpaw\config.json`，不会覆盖已有客户端。数据库模式可在配置页中切换；切换失败时会恢复原配置。
 
-如果新用户选择 PGLite 后遇到 `PMBrain command exited with code 3221225501`、`Aborted()` 或其他 WASM 初始化异常，建议改用 Docker Postgres。新用户可直接按 [首次安装使用 Docker Postgres 教程](docs/desktop/首次安装使用DockerPostgres.md) 准备数据库并填写连接地址。
+`3221225501` 对应 Windows `0xC000001D`（非法 CPU 指令），属于内置运行时启动失败，切换 Docker Postgres 不能解决。Desktop 1.0.61 起安装包改用 Bun x64 baseline 并在写配置前执行运行时自检。只有运行时自检通过、随后仍出现明确的 PGLite/WASM 初始化错误时，才建议按 [首次安装使用 Docker Postgres 教程](docs/desktop/首次安装使用DockerPostgres.md) 准备数据库并填写连接地址。
 
 桌面端会自动从 GitHub Releases 检查和下载更新。安装更新前会安全停止本地 sidecar；更新后首次启动会先执行幂等数据库迁移，再启动服务并完成健康检查。升级不会覆盖已有数据库地址、模型 Key、知识库目录或 MCP 配置。
 

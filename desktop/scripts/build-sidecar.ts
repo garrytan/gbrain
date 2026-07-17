@@ -1,9 +1,120 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { cp, mkdir, readFile, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
+import JSZip from 'jszip';
+import { DESKTOP_RUNTIME_CONTRACT } from '../src/main/runtime-contract.ts';
 
 const desktopRoot = resolve(import.meta.dir, '..');
 const projectRoot = resolve(desktopRoot, '..');
 const outputDirectory = join(desktopRoot, 'build', 'extraResources', 'pmbrain-runtime');
+const runtimeContract = DESKTOP_RUNTIME_CONTRACT;
+const runtimeCacheDirectory = join(desktopRoot, 'build', 'runtime-cache');
+const runtimeArchivePath = join(runtimeCacheDirectory, basename(new URL(runtimeContract.archiveUrl).pathname));
+const runtimeExecutablePath = join(outputDirectory, 'bun.exe');
+const RUNTIME_DOWNLOAD_ATTEMPTS = 3;
+const RUNTIME_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+function sha256(value: Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+async function readSha256(path: string): Promise<string | null> {
+  try {
+    return sha256(await readFile(path));
+  } catch {
+    return null;
+  }
+}
+
+function assertRuntimeContract(): void {
+  if (process.platform !== runtimeContract.platform || process.arch !== runtimeContract.arch) {
+    throw new Error(
+      `Windows Desktop runtime must be assembled on win32-x64; current builder is ${process.platform}-${process.arch}.`,
+    );
+  }
+  if (runtimeContract.schemaVersion !== 1 || runtimeContract.flavor !== 'baseline') {
+    throw new Error('Unsupported PMBrain Desktop runtime contract.');
+  }
+  for (const [label, value] of [
+    ['archiveSha256', runtimeContract.archiveSha256],
+    ['executableSha256', runtimeContract.executableSha256],
+  ] as const) {
+    if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid ${label} in the Desktop runtime contract.`);
+  }
+}
+
+async function ensureRuntimeArchive(): Promise<string> {
+  await mkdir(runtimeCacheDirectory, { recursive: true });
+  if (await readSha256(runtimeArchivePath) === runtimeContract.archiveSha256) return runtimeArchivePath;
+
+  await rm(runtimeArchivePath, { force: true });
+  const temporaryPath = `${runtimeArchivePath}.download`;
+  let lastError = 'unknown download error';
+  for (let attempt = 1; attempt <= RUNTIME_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    await rm(temporaryPath, { force: true });
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), RUNTIME_DOWNLOAD_TIMEOUT_MS);
+    try {
+      console.log(
+        `Downloading pinned Bun ${runtimeContract.bunVersion} ${runtimeContract.arch}-${runtimeContract.flavor} runtime `
+        + `(attempt ${attempt}/${RUNTIME_DOWNLOAD_ATTEMPTS})...`,
+      );
+      const response = await fetch(runtimeContract.archiveUrl, {
+        headers: { 'User-Agent': 'PMBrain-Desktop-Runtime-Builder' },
+        redirect: 'follow',
+        signal: abortController.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await Bun.write(temporaryPath, Buffer.from(await response.arrayBuffer()));
+      const downloadedSha256 = await readSha256(temporaryPath);
+      if (downloadedSha256 !== runtimeContract.archiveSha256) {
+        throw new Error(
+          `checksum mismatch: expected ${runtimeContract.archiveSha256}, got ${downloadedSha256 ?? 'unreadable'}`,
+        );
+      }
+      await rename(temporaryPath, runtimeArchivePath);
+      return runtimeArchivePath;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await rm(temporaryPath, { force: true });
+      if (attempt < RUNTIME_DOWNLOAD_ATTEMPTS) {
+        console.warn(`Pinned Bun runtime download failed (${lastError}); retrying.`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error(
+    `Could not download verified Bun runtime after ${RUNTIME_DOWNLOAD_ATTEMPTS} attempts: ${lastError}`,
+  );
+}
+
+async function extractRuntimeExecutable(archivePath: string): Promise<void> {
+  const archive = await JSZip.loadAsync(await readFile(archivePath));
+  const entry = archive.file(runtimeContract.archiveEntry);
+  if (!entry) throw new Error(`Pinned Bun archive is missing ${runtimeContract.archiveEntry}.`);
+  const executable = await entry.async('nodebuffer');
+  const executableSha256 = sha256(executable);
+  if (executableSha256 !== runtimeContract.executableSha256) {
+    throw new Error(
+      `Pinned Bun executable checksum mismatch: expected ${runtimeContract.executableSha256}, got ${executableSha256}.`,
+    );
+  }
+  await Bun.write(runtimeExecutablePath, executable);
+
+  const identity = Bun.spawnSync([runtimeExecutablePath, '--revision'], {
+    cwd: outputDirectory,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    windowsHide: true,
+  });
+  const revision = identity.stdout.toString().trim();
+  if (identity.exitCode !== 0 || revision !== runtimeContract.bunRevision) {
+    throw new Error(
+      `Pinned Bun identity mismatch: expected ${runtimeContract.bunRevision}, got ${revision || identity.stderr.toString().trim() || `exit ${identity.exitCode}`}.`,
+    );
+  }
+}
 
 const runtimePackages = [
   ['@electric-sql', 'pglite'],
@@ -32,11 +143,15 @@ function shouldCopyRecipeEntry(source: string): boolean {
   return !/[._-](test|spec)\.[cm]?[jt]s$/.test(name);
 }
 
+assertRuntimeContract();
+const runtimeArchive = await ensureRuntimeArchive();
+
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
+await extractRuntimeExecutable(runtimeArchive);
 
 const build = Bun.spawn([
-  process.execPath,
+  runtimeExecutablePath,
   'build',
   join(projectRoot, 'src', 'cli.ts'),
   '--target=bun',
@@ -62,7 +177,10 @@ if (await build.exited !== 0) {
   throw new Error('PMBrain sidecar bundle failed.');
 }
 
-await cp(process.execPath, join(outputDirectory, 'bun.exe'));
+await Bun.write(
+  join(outputDirectory, 'runtime-manifest.json'),
+  `${JSON.stringify(runtimeContract, null, 2)}\n`,
+);
 await mkdir(join(outputDirectory, 'skills'), { recursive: true });
 await cp(join(projectRoot, 'package.json'), join(outputDirectory, 'package.json'));
 await cp(join(projectRoot, 'recipes'), join(outputDirectory, 'recipes'), {

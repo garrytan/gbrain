@@ -2,11 +2,13 @@
 
 本文面向第一次安装 PMBrain 桌面端的 Windows 用户。适用场景：
 
-- 点击“PGLite 零配置”后出现 `PMBrain command exited with code 3221225501`、`Aborted()` 或类似启动失败。
+- 内置运行时自检已经通过，但 PGLite 明确报告 `Aborted()`、WASM 初始化失败或数据库文件初始化失败。
 - 用户电脑的 PGLite / WASM 运行环境不稳定。
 - 知识库文件较多，希望使用更稳定的 Postgres 数据库。
 
 Docker Postgres 模式的核心思路是：先在本机启动一个带 `pgvector` 扩展的 Postgres 容器，再让 PMBrain 桌面端连接它。
+
+> `PMBrain command exited with code 3221225501` 对应 Windows `0xC000001D`（非法 CPU 指令），发生在数据库逻辑之前，切换 Docker Postgres 不能解决。请先安装 Desktop 1.0.61 或更高版本；新版使用 Bun x64 baseline 并会在写配置前完成运行时自检。
 
 ## 准备条件
 

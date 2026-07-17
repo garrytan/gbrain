@@ -43,6 +43,12 @@ export interface DesktopDatabaseRuntimeConfig {
   configuredContainerName?: string;
 }
 
+export interface DesktopCustomProvider {
+  id: 'custom-openai';
+  displayName: string;
+  baseUrl: string;
+}
+
 export function normalizeDesktopTheme(value: unknown): DesktopTheme {
   return value === 'light' || value === 'dark' ? value : 'system';
 }
@@ -81,9 +87,11 @@ export interface SetupPayload {
     embeddingModel?: string;
     embeddingDimensions?: number;
   };
+  customProvider?: DesktopCustomProvider;
   keys?: Partial<Record<
     'mimo' | 'zhipu' | 'deepseek' | 'openai' | 'anthropic' | 'zeroentropy' |
-    'google' | 'voyage' | 'groq' | 'together' | 'openrouter' | 'minimax' | 'dashscope',
+    'google' | 'voyage' | 'groq' | 'together' | 'openrouter' | 'minimax' | 'dashscope' |
+    'customOpenai',
     string
   >>;
 }
@@ -101,6 +109,7 @@ export interface SetupInfo {
     chatModel?: string;
     embeddingModel?: string;
     embeddingDimensions?: number;
+    customProvider?: DesktopCustomProvider;
     theme: DesktopTheme;
     keyStatus: Record<string, boolean>;
     keyValues: Record<string, string | undefined>;
@@ -118,6 +127,10 @@ type RawConfig = Record<string, unknown> & {
   engine?: 'pglite' | 'postgres';
   database_path?: string;
   database_url?: string;
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  provider_base_urls?: Record<string, string>;
+  custom_openai_api_key?: string;
   admin_bootstrap_token?: string;
   desktop?: {
     knowledge_directory?: string;
@@ -130,8 +143,34 @@ type RawConfig = Record<string, unknown> & {
     shared_ip?: string;
     shared_resume_required?: boolean;
     docker_container_name?: string;
+    custom_openai_display_name?: string;
   };
 };
+
+function normalizeCustomProvider(value: DesktopCustomProvider): DesktopCustomProvider {
+  if (value.id !== 'custom-openai') throw new Error('自定义接口 ID 必须为 custom-openai。');
+  const displayName = value.displayName.trim();
+  if (!displayName) throw new Error('请填写自定义接口显示名称。');
+  if (displayName.length > 80 || /[\r\n]/.test(displayName)) {
+    throw new Error('自定义接口显示名称不能超过 80 个字符或包含换行。');
+  }
+  const rawBaseUrl = value.baseUrl.trim();
+  if (!rawBaseUrl || rawBaseUrl.length > 2048) throw new Error('请填写有效的自定义接口 Base URL。');
+  let parsed: URL;
+  try {
+    parsed = new URL(rawBaseUrl);
+  } catch {
+    throw new Error('自定义接口 Base URL 格式无效，请填写完整的 http:// 或 https:// 地址。');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('自定义接口 Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。');
+  }
+  return {
+    id: 'custom-openai',
+    displayName,
+    baseUrl: rawBaseUrl.replace(/\/+$/, ''),
+  };
+}
 
 function preferredHome(): string {
   const override = process.env.PMBRAIN_HOME?.trim();
@@ -256,6 +295,9 @@ export function getSetupInfo(): SetupInfo {
     ? dir
     : preferredConfigDirectory();
   const desktop = config?.desktop;
+  const customBaseUrl = typeof config?.provider_base_urls?.['custom-openai'] === 'string'
+    ? config.provider_base_urls['custom-openai'].trim()
+    : '';
   return {
     needsSetup: !config,
     configPath: path,
@@ -272,6 +314,11 @@ export function getSetupInfo(): SetupInfo {
       chatModel: typeof config?.chat_model === 'string' ? config.chat_model : undefined,
       embeddingModel: typeof config?.embedding_model === 'string' ? config.embedding_model : undefined,
       embeddingDimensions: typeof config?.embedding_dimensions === 'number' ? config.embedding_dimensions : undefined,
+      customProvider: customBaseUrl ? {
+        id: 'custom-openai',
+        displayName: desktop?.custom_openai_display_name?.trim() || '自定义 OpenAI 接口',
+        baseUrl: customBaseUrl,
+      } : undefined,
       theme: normalizeDesktopTheme(desktop?.theme),
       keyStatus: {
         mimo: Boolean(config?.mimo_api_key),
@@ -287,6 +334,7 @@ export function getSetupInfo(): SetupInfo {
         openrouter: Boolean(config?.openrouter_api_key),
         minimax: Boolean(config?.minimax_api_key),
         dashscope: Boolean(config?.dashscope_api_key),
+        customOpenai: Boolean(config?.custom_openai_api_key),
       },
       keyValues: {
         mimo: typeof config?.mimo_api_key === 'string' ? config.mimo_api_key : undefined,
@@ -302,6 +350,7 @@ export function getSetupInfo(): SetupInfo {
         openrouter: typeof config?.openrouter_api_key === 'string' ? config.openrouter_api_key : undefined,
         minimax: typeof config?.minimax_api_key === 'string' ? config.minimax_api_key : undefined,
         dashscope: typeof config?.dashscope_api_key === 'string' ? config.dashscope_api_key : undefined,
+        customOpenai: typeof config?.custom_openai_api_key === 'string' ? config.custom_openai_api_key : undefined,
       },
       lastMigratedVersion: desktop?.last_migrated_version,
     },
@@ -467,6 +516,7 @@ export function saveSetup(payload: SetupPayload): {
     google: 'google_api_key', voyage: 'voyage_api_key', groq: 'groq_api_key',
     together: 'together_api_key', openrouter: 'openrouter_api_key',
     minimax: 'minimax_api_key', dashscope: 'dashscope_api_key',
+    customOpenai: 'custom_openai_api_key',
   };
   for (const [provider, value] of Object.entries(payload.keys ?? {})) {
     if (value?.trim()) config[keyMap[provider]] = value.trim();
@@ -518,6 +568,14 @@ export function saveSetup(payload: SetupPayload): {
     theme: normalizeDesktopTheme(payload.theme ?? existing.desktop?.theme),
     ...(knowledgeDirectory ? { knowledge_directory: knowledgeDirectory, knowledge_source_id: sourceId } : {}),
   };
+  if (payload.customProvider) {
+    const customProvider = normalizeCustomProvider(payload.customProvider);
+    config.provider_base_urls = {
+      ...(existing.provider_base_urls ?? {}),
+      'custom-openai': customProvider.baseUrl,
+    };
+    config.desktop.custom_openai_display_name = customProvider.displayName;
+  }
 
   const backup = backupFile(path, 'config');
   writeJsonConfig(path, config);

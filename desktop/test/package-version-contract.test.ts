@@ -20,4 +20,10 @@ describe('desktop package version contract', () => {
     expect(verifierSource).toContain('windowsHide: true');
     expect(verifierSource).toContain('sidecarReportedVersion');
   });
+
+  test('requires the packaged runtime manifest and pinned Bun revision', () => {
+    expect(verifierSource).toContain("join(runtimeRoot, 'runtime-manifest.json')");
+    expect(verifierSource).toContain('DESKTOP_RUNTIME_CONTRACT.bunRevision');
+    expect(verifierSource).toContain('Packaged Bun checksum mismatch');
+  });
 });

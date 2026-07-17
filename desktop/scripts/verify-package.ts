@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { DESKTOP_RUNTIME_CONTRACT, type DesktopRuntimeContract } from '../src/main/runtime-contract.ts';
 
 const desktopRoot = resolve(import.meta.dir, '..');
 const unpackedRoot = join(desktopRoot, 'dist', 'win-unpacked');
@@ -18,6 +20,7 @@ const requiredFiles = [
   join(distRoot, 'latest.yml'),
   join(runtimeRoot, 'bun.exe'),
   join(runtimeRoot, 'pmbrain-sidecar.js'),
+  join(runtimeRoot, 'runtime-manifest.json'),
   join(runtimeRoot, 'pdf.worker.mjs'),
   join(runtimeRoot, 'package.json'),
   join(runtimeRoot, 'recipes', 'agent-voice.md'),
@@ -73,6 +76,65 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+const compatibilityErrors: string[] = [];
+const runtimeManifestPath = join(runtimeRoot, 'runtime-manifest.json');
+try {
+  const manifest = JSON.parse(readFileSync(runtimeManifestPath, 'utf8')) as Partial<DesktopRuntimeContract>;
+  for (const [key, expected] of Object.entries(DESKTOP_RUNTIME_CONTRACT)) {
+    if (manifest[key as keyof DesktopRuntimeContract] !== expected) {
+      compatibilityErrors.push(`Runtime manifest mismatch for ${key}: expected ${String(expected)}, got ${String(manifest[key as keyof DesktopRuntimeContract])}`);
+    }
+  }
+} catch (error) {
+  compatibilityErrors.push(`Runtime manifest could not be read: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+const packagedBunSha256 = createHash('sha256').update(readFileSync(join(runtimeRoot, 'bun.exe'))).digest('hex');
+if (packagedBunSha256 !== DESKTOP_RUNTIME_CONTRACT.executableSha256) {
+  compatibilityErrors.push(
+    `Packaged Bun checksum mismatch: expected ${DESKTOP_RUNTIME_CONTRACT.executableSha256}, got ${packagedBunSha256}`,
+  );
+}
+
+function peArchitecture(path: string): string {
+  const file = openSync(path, 'r');
+  try {
+    const dosHeader = Buffer.alloc(64);
+    if (readSync(file, dosHeader, 0, dosHeader.length, 0) !== dosHeader.length || dosHeader.toString('ascii', 0, 2) !== 'MZ') {
+      return 'not-pe';
+    }
+    const peOffset = dosHeader.readUInt32LE(0x3c);
+    const peHeader = Buffer.alloc(6);
+    if (readSync(file, peHeader, 0, peHeader.length, peOffset) !== peHeader.length || peHeader.toString('ascii', 0, 4) !== 'PE\0\0') {
+      return 'not-pe';
+    }
+    const machine = peHeader.readUInt16LE(4);
+    if (machine === 0x8664) return 'x64';
+    if (machine === 0x014c) return 'ia32';
+    if (machine === 0xaa64) return 'arm64';
+    return `unknown-0x${machine.toString(16)}`;
+  } finally {
+    closeSync(file);
+  }
+}
+
+for (const path of [
+  join(unpackedRoot, 'PMBrain.exe'),
+  join(runtimeRoot, 'bun.exe'),
+  join(runtimeRoot, 'node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'skia.win32-x64-msvc.node'),
+]) {
+  const actual = peArchitecture(path);
+  if (actual !== DESKTOP_RUNTIME_CONTRACT.arch) {
+    compatibilityErrors.push(`PE architecture mismatch: expected ${DESKTOP_RUNTIME_CONTRACT.arch}, got ${actual}: ${path}`);
+  }
+}
+
+if (compatibilityErrors.length > 0) {
+  console.error('Desktop package verification failed. Runtime compatibility contract mismatch:');
+  for (const error of compatibilityErrors) console.error(`- ${error}`);
+  process.exit(1);
+}
+
 const rootVersionPath = join(desktopRoot, '..', 'VERSION');
 const rootPackagePath = join(desktopRoot, '..', 'package.json');
 const runtimePackagePath = join(runtimeRoot, 'package.json');
@@ -117,6 +179,22 @@ const sidecarVersionResult = spawnSync(bunPath, [sidecarPath, '--version'], {
   timeout: 30_000,
   windowsHide: true,
 });
+const bunRevisionResult = spawnSync(bunPath, ['--revision'], {
+  cwd: runtimeRoot,
+  encoding: 'utf8',
+  shell: false,
+  timeout: 30_000,
+  windowsHide: true,
+});
+const bunRevision = `${bunRevisionResult.stdout ?? ''}`.trim();
+if (bunRevisionResult.error) {
+  versionErrors.push(`Packaged Bun --revision failed: ${bunRevisionResult.error.message}`);
+} else if (bunRevisionResult.status !== 0) {
+  versionErrors.push(`Packaged Bun --revision exited with code ${bunRevisionResult.status ?? 'unknown'}`);
+} else if (bunRevision !== DESKTOP_RUNTIME_CONTRACT.bunRevision) {
+  versionErrors.push(`Packaged Bun revision mismatch: expected ${DESKTOP_RUNTIME_CONTRACT.bunRevision}, got ${bunRevision || 'empty output'}`);
+}
+
 const sidecarVersionOutput = `${sidecarVersionResult.stdout ?? ''}\n${sidecarVersionResult.stderr ?? ''}`.trim();
 const sidecarVersionMatch = sidecarVersionOutput
   .split(/\r?\n/)
@@ -137,6 +215,30 @@ if (sidecarVersionResult.error) {
 if (versionErrors.length > 0) {
   console.error('Desktop package verification failed. Version contract mismatch:');
   for (const error of versionErrors) console.error(`- ${error}`);
+  process.exit(1);
+}
+
+const runtimeSmokeScript = [
+  "const { createCanvas } = await import('@napi-rs/canvas');",
+  "const canvas = createCanvas(1, 1);",
+  "if (canvas.width !== 1 || canvas.height !== 1) throw new Error('canvas smoke failed');",
+  "const { PGlite } = await import('@electric-sql/pglite');",
+  'const db = new PGlite();',
+  "await db.query('select 1 as ok');",
+  'await db.close();',
+  "console.log('runtime-smoke-ok');",
+].join(' ');
+const runtimeSmokeResult = spawnSync(bunPath, ['--eval', runtimeSmokeScript], {
+  cwd: runtimeRoot,
+  encoding: 'utf8',
+  shell: false,
+  timeout: 60_000,
+  windowsHide: true,
+});
+const runtimeSmokeOutput = `${runtimeSmokeResult.stdout ?? ''}\n${runtimeSmokeResult.stderr ?? ''}`.trim();
+if (runtimeSmokeResult.error || runtimeSmokeResult.status !== 0 || !runtimeSmokeOutput.includes('runtime-smoke-ok')) {
+  console.error('Desktop package verification failed. Native Canvas/PGLite runtime smoke test failed:');
+  console.error(runtimeSmokeResult.error?.message || runtimeSmokeOutput || `exit ${runtimeSmokeResult.status ?? 'unknown'}`);
   process.exit(1);
 }
 
@@ -186,4 +288,6 @@ if (leaked.length > 0) {
   process.exit(1);
 }
 
-console.log(`Desktop package verified: ${requiredFiles.length} required runtime files are present, runtime version ${rootVersion} matches, and no build-machine paths leaked.`);
+console.log(
+  `Desktop package verified: ${requiredFiles.length} required runtime files are present, ${DESKTOP_RUNTIME_CONTRACT.arch}-${DESKTOP_RUNTIME_CONTRACT.flavor} Bun ${DESKTOP_RUNTIME_CONTRACT.bunRevision} and native runtime smoke checks pass, runtime version ${rootVersion} matches, and no build-machine paths leaked.`,
+);

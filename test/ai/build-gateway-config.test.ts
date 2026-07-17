@@ -2,7 +2,8 @@
  * buildGatewayConfig env-baseURL passthrough sweep (v0.37.2.0).
  *
  * Mops up pre-existing untested drift: every `_BASE_URL` env var the CLI
- * reads (LLAMA_SERVER, OLLAMA, LMSTUDIO, LITELLM, OPENROUTER) was previously
+ * reads (LLAMA_SERVER, OLLAMA, LMSTUDIO, LITELLM, OPENROUTER, CUSTOM_OPENAI)
+ * was previously
  * uncovered by unit tests. The helper was file-local so the test surface
  * didn't exist; v0.37.2.0 exports it for the OR passthrough plus the four
  * legacy passthroughs by parameterized sweep.
@@ -29,6 +30,7 @@ const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
   { envVar: 'LMSTUDIO_BASE_URL', recipeId: 'lmstudio' },
   { envVar: 'LITELLM_BASE_URL', recipeId: 'litellm' },
   { envVar: 'OPENROUTER_BASE_URL', recipeId: 'openrouter' },
+  { envVar: 'CUSTOM_OPENAI_BASE_URL', recipeId: 'custom-openai' },
 ];
 
 const TEST_VALUE = 'http://proxy.example.test/v1';
@@ -83,5 +85,16 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
         expect(cfg.base_urls?.openrouter).toBe('http://config.example/v1');
       },
     );
+  });
+
+  test('custom provider config forwards its optional key and Base URL', async () => {
+    await withEnv(envFor(null), async () => {
+      const cfg = buildGatewayConfig({
+        custom_openai_api_key: 'local-key',
+        provider_base_urls: { 'custom-openai': 'http://127.0.0.1:8000/v1' },
+      } as unknown as GBrainConfig);
+      expect(cfg.env.CUSTOM_OPENAI_API_KEY).toBe('local-key');
+      expect(cfg.base_urls?.['custom-openai']).toBe('http://127.0.0.1:8000/v1');
+    });
   });
 });

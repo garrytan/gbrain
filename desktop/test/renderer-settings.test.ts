@@ -32,6 +32,52 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).not.toContain("switchPanel('integrations');");
   });
 
+  test('adds custom OpenAI-compatible models from both model cards without fake editable controls', () => {
+    expect(html).toContain('id="add-custom-chat-model"');
+    expect(html).toContain('id="add-custom-embedding-model"');
+    expect(html).toContain('id="custom-provider-dialog"');
+    expect(html).toContain('id="custom-provider-base-url"');
+    expect(html).toContain('id="custom-provider-model-id"');
+    expect(html).toContain('value="custom-openai"');
+    expect(html).toContain('供应商路由');
+    expect(html).toContain('OpenAI 兼容');
+    expect(html).not.toContain('id="custom-provider-id"');
+    expect(html).not.toContain('id="custom-provider-protocol"');
+    expect(html).toContain('API Key 可选');
+    expect(html).not.toContain('厂商');
+    expect(renderer).toContain('customProviderDraft');
+    expect(renderer).toContain('customProvider: customProviderDraft ?? undefined');
+    expect(renderer).toContain("provider === 'custom-openai'");
+    expect(renderer).toContain("openCustomProvider('chat')");
+    expect(renderer).toContain("openCustomProvider('embedding')");
+    expect(main).toContain('自定义向量模型验证失败');
+    expect(styles).toContain('.model-add-button');
+    expect(styles).toContain('.custom-provider-dialog');
+  });
+
+  test('marks and validates every required custom model field before accepting it', () => {
+    expect(html).toContain('id="custom-provider-form" novalidate');
+    for (const id of ['custom-provider-name', 'custom-provider-base-url', 'custom-provider-model-id']) {
+      expect(html).toMatch(new RegExp(`id="${id}"[^>]*required[^>]*aria-required="true"`));
+    }
+    expect(html.match(/class="required-marker"/g)).toHaveLength(3);
+    expect(html).toContain('模型名称（模型 ID）');
+    expect(styles).toContain('.required-marker');
+    expect(renderer).toContain("setCustomProviderError('请填写 Base URL。', baseUrlInput)");
+    expect(renderer).toContain("setCustomProviderError('请填写模型名称（模型 ID）。', modelIdInput)");
+    expect(renderer).toContain("field.setAttribute('aria-invalid', 'true')");
+  });
+
+  test('offers local Ollama models for both ordinary and embedding model cards', () => {
+    const chatProvider = html.match(/<select id="chat-provider">([\s\S]*?)<\/select>/)?.[1] ?? '';
+    const embeddingProvider = html.match(/<select id="embedding-provider">([\s\S]*?)<\/select>/)?.[1] ?? '';
+    expect(chatProvider).toContain('<option value="ollama">ollama</option>');
+    expect(embeddingProvider).toContain('<option value="ollama">ollama</option>');
+    expect(renderer).toContain("if (['ollama', 'llama-server', 'litellm', 'llama-server-reranker'].includes(normalized))");
+    expect(renderer).toContain("provider === 'ollama' ? '正在读取本机 Ollama 模型…'");
+    expect(preview).toContain("touchpoint === 'embedding' ? ['nomic-embed-text'] : ['qwen3:latest', 'qwen2.5:latest']");
+  });
+
   test('moves appearance and native desktop behavior into an accessible system panel', () => {
     for (const id of [
       'network-mode-local',
@@ -41,6 +87,7 @@ describe('desktop settings renderer contracts', () => {
       'close-behavior',
       'system-theme-select',
       'save-system-settings',
+      'restart-shared-gateway',
     ]) {
       expect(html).toContain(`id="${id}"`);
     }
@@ -58,6 +105,10 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).not.toContain('切换共享模式、网卡或 IPv4 时会弹出二次确认。');
     expect(renderer).toContain('getSystemSettings()');
     expect(renderer).toContain('saveSystemSettings(payload)');
+    expect(renderer).toContain('restartSharedGateway()');
+    expect(renderer).toContain("setBusy(button, true, '正在重启…')");
+    expect(styles).toContain('.gateway-status.warning > i { background: #ff6655;');
+    expect(styles).toContain('grid-template-columns: 8px minmax(0, 1fr) auto');
     expect(renderer).toContain('onSystemSettingsState((next) => applySystemSettingsState(next))');
     expect(styles).toContain('.connection-spine');
   });
@@ -83,6 +134,10 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).toContain('createSharedIntegration(payload)');
     expect(renderer).toContain('revokeSharedIntegration(credentialName)');
     expect(renderer).toContain('credential.credentialName');
+    expect(renderer).toContain("client === 'qwenpaw' ? 'api_key' : selectedCredential()");
+    expect(renderer).toContain('通过本机 API 写入 Bearer 并验证，不使用 OAuth');
+    expect(renderer).toContain('已写入，等待连接');
+    expect(renderer).toContain('重试连接');
   });
 
   test('keeps shared credential actions honest across refresh, revoke, and network changes', () => {
@@ -110,6 +165,8 @@ describe('desktop settings renderer contracts', () => {
     expect(preview).toContain('getSharedAccess: async');
     expect(preview).toContain('createSharedIntegration: async');
     expect(preview).toContain('revokeSharedIntegration: async');
+    expect(preview).toContain("id: 'qwenpaw', name: 'QwenPaw'");
+    expect(preview).toContain('drivers\\\\mcp\\\\pmbrain.yaml');
   });
 
   test('disables premature system saves and exposes accessible security notices', () => {

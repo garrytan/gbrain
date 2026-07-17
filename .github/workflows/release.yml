@@ -55,12 +55,17 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: bun install --frozen-lockfile --trust
+      - name: Verify desktop runtime compatibility code
+        working-directory: desktop
+        run: |
+          bun run typecheck
+          bun test test/runtime-compatibility.test.ts test/package-version-contract.test.ts
       - name: Build Windows installer and updater metadata
         working-directory: desktop
         run: |
           bun run build
           bun run build:sidecar
-          bunx electron-builder --win nsis --publish never
+          bunx electron-builder --win nsis --x64 --publish never
           bun run verify:package
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:

@@ -16,15 +16,17 @@ describe('desktop provider model catalog', () => {
     }
   });
 
-  test('loads installed Ollama models from the local tags endpoint', async () => {
+  test('loads installed Ollama models for chat and embedding from the local tags endpoint', async () => {
     const fakeFetch = (async (url: string) => {
       expect(url).toEndWith('/api/tags');
       return new Response(JSON.stringify({ models: [{ name: 'bge-m3:latest' }, { model: 'nomic-embed-text:latest' }] }));
     }) as typeof fetch;
-    const result = await listDesktopProviderModels('ollama', 'embedding', fakeFetch);
-    expect(result.source).toBe('ollama');
-    expect(result.models).toContain('bge-m3:latest');
-    expect(result.models).toContain('nomic-embed-text:latest');
+    for (const touchpoint of ['chat', 'embedding'] as const) {
+      const result = await listDesktopProviderModels('ollama', touchpoint, fakeFetch);
+      expect(result.source).toBe('ollama');
+      expect(result.models).toContain('bge-m3:latest');
+      expect(result.models).toContain('nomic-embed-text:latest');
+    }
   });
 
   test('falls back to common Ollama embedding models when the service is offline', async () => {
@@ -32,5 +34,19 @@ describe('desktop provider model catalog', () => {
     const result = await listDesktopProviderModels('ollama', 'embedding', fakeFetch);
     expect(result.models).toContain('nomic-embed-text');
     expect(result.warning).toContain('未连接到本机 Ollama');
+  });
+
+  test('keeps Ollama chat editable when the local service is offline', async () => {
+    const fakeFetch = (async () => { throw new Error('offline'); }) as typeof fetch;
+    const result = await listDesktopProviderModels('ollama', 'chat', fakeFetch);
+    expect(result.models).toEqual([]);
+    expect(result.warning).toContain('手动输入已安装的模型名称');
+  });
+
+  test('explains an empty local Ollama chat catalog', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ models: [] }))) as typeof fetch;
+    const result = await listDesktopProviderModels('ollama', 'chat', fakeFetch);
+    expect(result.models).toEqual([]);
+    expect(result.warning).toContain('没有已安装的普通模型');
   });
 });

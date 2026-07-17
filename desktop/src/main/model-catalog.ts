@@ -19,7 +19,7 @@ export async function listDesktopProviderModels(
 ): Promise<DesktopProviderModels> {
   const normalized = provider.trim().toLowerCase() === 'zeroentropy' ? 'zeroentropyai' : provider.trim().toLowerCase();
   const catalog = [...(getRecipe(normalized)?.touchpoints[touchpoint]?.models ?? [])];
-  if (normalized !== 'ollama' || touchpoint !== 'embedding') {
+  if (normalized !== 'ollama') {
     return { models: catalog, source: 'catalog' };
   }
 
@@ -30,12 +30,20 @@ export async function listDesktopProviderModels(
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = await response.json() as { models?: Array<{ name?: string; model?: string }> };
     const local = (body.models ?? []).map(item => item.name || item.model || '');
-    return { models: unique([...local, ...catalog]), source: 'ollama' };
+    return {
+      models: unique([...local, ...catalog]),
+      source: 'ollama',
+      warning: touchpoint === 'chat' && unique(local).length === 0
+        ? '本机 Ollama 已启动，但没有已安装的普通模型。请先执行 ollama pull <模型名称>，或手动输入准备安装的模型名称。'
+        : undefined,
+    };
   } catch (error) {
     return {
       models: catalog,
       source: 'catalog',
-      warning: `未连接到本机 Ollama（${error instanceof Error ? error.message : String(error)}），已显示常用向量模型。`,
+      warning: touchpoint === 'embedding'
+        ? `未连接到本机 Ollama（${error instanceof Error ? error.message : String(error)}），已显示常用向量模型。`
+        : `未连接到本机 Ollama（${error instanceof Error ? error.message : String(error)}），请启动 Ollama 后重试，或手动输入已安装的模型名称。`,
     };
   }
 }

@@ -12,6 +12,25 @@ export const ollama: Recipe = {
     setup_url: 'https://ollama.ai',
   },
   touchpoints: {
+    expansion: {
+      // Desktop ordinary-model saves intentionally route query expansion to
+      // the same model as chat. Ollama model ids are installation-specific.
+      models: [],
+      cost_per_1m_tokens_usd: 0,
+      price_last_verified: '2026-07-17',
+    },
+    chat: {
+      // Ollama exposes OpenAI-compatible chat completions. The concrete model
+      // list is installation-specific and is discovered from /api/tags by the
+      // desktop app, so the recipe intentionally does not hard-code models.
+      models: [],
+      supports_tools: true,
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      cost_per_1m_input_usd: 0,
+      cost_per_1m_output_usd: 0,
+      price_last_verified: '2026-07-17',
+    },
     embedding: {
       models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
       default_dims: 768, // nomic-embed-text native dim
@@ -22,5 +41,5 @@ export const ollama: Recipe = {
       no_batch_cap: true,
     },
   },
-  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',
+  setup_hint: 'Install Ollama from https://ollama.ai, pull a chat or embedding model, then run `ollama serve`.',
 };

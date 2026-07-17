@@ -1,5 +1,68 @@
 # Bug 修复台账
 
+## 2026-07-17 自定义向量模型导入预检误判修复
+
+- 时间：2026-07-17
+- 版本号：PMBrain 1.1.23；PMBrain Desktop 1.0.66
+- 标题：修复完整的 custom-openai 向量模型被误判为未填写模型名
+- 描述：用户已经配置 `custom-openai:<模型ID>` 和 Base URL，但在知识助手导入附件时仍收到“requires a specific model name”错误，导入在请求自定义接口前被中止。
+- 根因：嵌入预检把 Recipe 的空内置模型清单错误解释为用户没有配置具体模型；实际上自定义模型、LiteLLM 和 llama-server 的模型名来自完整的 `provider:model` 配置，解析阶段已经保证模型名非空。
+- 解决方案：移除基于空内置清单的错误拒绝，继续由统一模型解析器校验空供应商或空模型名；新增自定义 OpenAI 向量模型预检回归测试。
+- 界面保护：自定义模型表单将供应商名称、Base URL、模型名称（模型 ID）统一标为 `*` 必填；提交时逐项给出中文提示并自动聚焦错误字段，API Key 继续明确为可选。
+- 是否完成：是
+- 最终结果：有效的 `custom-openai:Qwen3-Embedding-8B` 等用户自定义模型可以通过导入预检并进入真实 `/embeddings` 调用；缺失模型名称时会在桌面表单提交前被明确拦截，底层解析器仍保留二次保护；未知供应商、缺少凭证和不支持向量能力的配置仍按原有规则失败。未修改知识库或原始资料。
+
+## 2026-07-16 QwenPaw 已接入仍显示未配置修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain 1.1.21；PMBrain Desktop 1.0.64
+- 标题：修复 QwenPaw 配置状态误判并区分已写入与已连接
+- 描述：QwenPaw 2.x 已保存 PMBrain DriverCard 且工具接口可返回 77 个工具，但桌面端仍要求凭据 YAML 中出现明文 `Bearer`，因此把新版 QwenPaw 编码保存的有效凭据误判为“未配置”。首次接入日志同时显示 QwenPaw 请求 `127.0.0.1:3131/mcp` 被本机 `127.0.0.1:7897` 代理返回 502，代理状态变化后立即连接并热加载成功。
+- 是否完成：是
+- 最终结果：配置存在性改为检查 DriverCard 与非空凭据项，实际连接状态以 QwenPaw 本机工具接口为准；卡片分别显示“已连接”或“已写入，等待连接”，未连通时按钮显示“重试连接”并明确提示代理绕过 localhost/127.0.0.1，不再出现写入成功却仍显示未配置。QwenPaw 接入流程不读取、修改或启动 VPN 程序；现有隧道模块只在用户主动配置 ChatGPT Tunnel 时读取系统代理。真实本机复核返回 `configured=true`、`connection=connected`，PMBrain 健康检查和 QwenPaw 工具接口均为 HTTP 200。相关回归测试、Desktop 108 项完整测试、类型检查、生产构建和 browser-use CLI 验证通过。
+
+## 2026-07-16 QwenPaw MCP 误入 OAuth 与连接失败修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain Desktop 1.0.63
+- 标题：修复 QwenPaw Bearer Header 缺失导致 401、OAuth 误判和接入假成功
+- 描述：真实 QwenPaw 日志显示，PMBrain MCP 曾连续返回 502，后续因保存的 `authorization` 缺少 `Bearer ` 前缀而稳定返回 401；QwenPaw 将 401 解释为需要 OAuth，提示用户点击授权，但 PMBrain 本机接入应使用桌面端生成的 Bearer Key。QwenPaw 2.x 已将 MCP 配置迁移到 DriverCard 与独立凭证库，仅写旧 `config.json` 不能可靠更新现有配置。
+- 是否完成：是
+- 最终结果：桌面端改用 QwenPaw 2.x 本机 API 创建或更新 `pmbrain`，写入完整 `Authorization: Bearer <Key>`，备份 DriverCard 与凭证库，并以 QwenPaw `/api/mcp/tools/pmbrain` 的真实工具列表作为成功条件；连接失败只返回本机服务或代理诊断，不再触发 OAuth。旧版 QwenPaw 仍保留 JSON 合并兼容。日志核对同时确认 Clash Verge 进程早于本次 OAuth 误判约八小时启动，PMBrain 未调用或启动 VPN 程序。桌面端 106 项测试、TypeScript 类型检查、生产构建和 browser-use CLI 页面验证全部通过。
+
+## 2026-07-16 Desktop 本地 Qwen 保存启动失败修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain 1.1.20；PMBrain Desktop 1.0.62
+- 标题：修复本地 OpenAI 兼容模型被错误路由到官方 OpenAI 接口
+- 描述：运行时已通过 x64 baseline 校验且 104 项数据库迁移成功，但用户将本地 `Qwen3-Embedding-8B` 选择为 `openai` 后，点击“保存配置并启动”在向量维度探测阶段报 `Cannot connect to API`。
+- 根因：`openai` 是官方 OpenAI Recipe，桌面端原先没有 Base URL 输入；本地模型地址无法进入模型配置与网关，错误与 Windows、Bun、数据库迁移均无关。
+- 解决方案：新增固定 `custom-openai` Recipe 与可选鉴权，打通 `provider_base_urls.custom-openai`、CLI 网关、桌面保存和回显；本地接口不可达时改为展示包含 Base URL、模型 ID、`/v1`、服务状态与 Key 检查项的中文错误。
+- 是否完成：是
+- 最终结果：Ollama 继续选择现有 `ollama`，vLLM、LM Studio、Xinference、LocalAI 等通过新增自定义接口配置；URL 会校验协议并阻止账号、查询参数和锚点，首次向量模型仍通过实际接口探测维度。未修改、删除或迁移用户知识库和原始资料。
+
+## 2026-07-16 Desktop 老 CPU 运行时与安装兼容修复
+
+- 时间：2026-07-16
+- 版本号：PMBrain Desktop 1.0.61
+- 标题：修复首次配置时内置 Bun 在老款 x64 CPU 上非法指令崩溃
+- 描述：部分 Windows 电脑安装后可打开桌面界面，但点击“保存配置并启动”时出现 `PMBrain command exited with code 3221225501`，配置被回滚并保持未配置状态。
+- 根因：`3221225501` 实际为 `0xC000001D STATUS_ILLEGAL_INSTRUCTION`；原打包脚本直接复制构建机的标准 Bun，目标电脑 CPU 缺少 AVX2 时会在执行 sidecar 前崩溃，现有包校验只在支持 AVX2 的构建机运行，无法发现该问题。
+- 解决方案：固定下载并双重校验 Bun 1.3.14 Windows x64 baseline，不再复制构建机运行时，并为首次下载加入有限重试和超时；安装和发布显式限定 x64/Windows 10 1809+；保存配置、迁移和启动服务前校验运行时清单、SHA-256、Bun revision 与 sidecar 版本；补充 Windows NTSTATUS 中文诊断、PE 架构检查、Canvas/PGLite 实际加载测试，以及配置写入失败和预检超时的服务/进程恢复逻辑。
+- 是否完成：是
+- 最终结果：Desktop 类型检查、96 项完整测试、生产构建、Electron Builder 配置校验、NSIS 安装约束编译、baseline runtime SHA-256/版本自检、Canvas 原生模块与内存 PGLite SQL smoke test 均通过；未修改 PMBrain CLI/核心数据逻辑、用户知识库或原始资料。Windows 10 32 位因 Bun 与 Canvas 无 x86 运行时仍不支持，安装器会在安装前阻止；最终 `bun run build:win` 仍由用户执行。
+
+## 2026-07-16 Desktop 局域网共享恢复入口优化
+
+- 时间：2026-07-16
+- 版本号：PMBrain Desktop 1.0.60
+- 标题：增强 IP 恢复后的停用提示并增加单独重启共享入口
+- 描述：固定局域网 IP 短暂消失后重新出现时，PMBrain 为避免误开放不会自动恢复共享，但界面只显示不醒目的黄色状态点，用户容易误以为 IP 出现后已经可用，并且必须滚动到底部重新保存整页设置才能恢复。
+- 根因：故障后保持停用是既有的 fail-closed 安全策略；系统设置页没有为“地址已恢复、等待人工确认”提供就地恢复操作，警告状态的视觉等级也不足。
+- 解决方案：保留故障后不自动恢复的安全策略，将共享异常状态改为红色状态点、红色边框和高对比提示；当固定 IP 已恢复但网关未运行时，在状态栏右侧显示“重启共享”按钮，复用现有二次确认与共享启动流程。
+- 是否完成：是
+- 最终结果：IP 恢复后仍停用的原因更加醒目；用户可在异常提示右侧直接确认并重启局域网共享，无需修改其他系统设置。IP 当前仍不可用时不会显示无效的重启按钮。未修改 MCP 权限、GBrain 核心、知识库或原始资料。
+
 ## 2026-07-15 Desktop 模型配置精简与操作锚点修复
 
 - 时间：2026-07-15

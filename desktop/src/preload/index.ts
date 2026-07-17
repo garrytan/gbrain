@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { SidecarState } from '../main/sidecar-manager.js';
 import type {
   DesktopCloseBehavior,
+  DesktopCustomProvider,
   DesktopNetworkMode,
   DesktopPreferences,
   DesktopTheme,
@@ -33,6 +34,7 @@ export type {
   AdvancedModelTier,
   CredentialKind,
   DesktopCloseBehavior,
+  DesktopCustomProvider,
   DesktopNetworkMode,
   DesktopPreferences,
   DesktopSystemSettingsPayload,
