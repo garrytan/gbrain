@@ -9,13 +9,32 @@ export const MCP_CLIENTS: ReadonlyArray<{ id: McpClientId; label: string }> = [
   { id: 'universal', label: '通用 Agent' },
 ];
 
-function jsonConfig(origin: string, token: string): string {
+export function buildApiKeyJsonConfig(origin: string, token: string): string {
   return JSON.stringify({
     mcpServers: {
       pmbrain: {
         type: 'http',
         url: `${origin}/mcp`,
         headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  }, null, 2);
+}
+
+export function buildOAuthJsonConfig(
+  origin: string,
+  credentials: { clientId: string; clientSecret: string },
+): string {
+  return JSON.stringify({
+    pmbrain: {
+      server_url: `${origin}/mcp`,
+      token_url: `${origin}/token`,
+      discovery_url: `${origin}/.well-known/oauth-authorization-server`,
+      auth: {
+        type: 'oauth2',
+        grant_type: 'client_credentials',
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
       },
     },
   }, null, 2);
@@ -50,7 +69,7 @@ export function buildApiKeyAgentContent(client: McpClientId, origin: string, tok
   return [
     `请把下面配置合并到 ${label} 的 MCP 配置文件，并验证 PMBrain 可以连接：`,
     '',
-    jsonConfig(origin, token),
+    buildApiKeyJsonConfig(origin, token),
   ].join('\n');
 }
 

@@ -2,7 +2,35 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
 import { CopyButton } from '../lib/clipboard';
-import { buildApiKeyAgentContent, buildOAuthAgentContent, MCP_CLIENTS, type McpClientId } from '../lib/mcp-config';
+import {
+  buildApiKeyAgentContent,
+  buildApiKeyJsonConfig,
+  buildOAuthAgentContent,
+  buildOAuthJsonConfig,
+  MCP_CLIENTS,
+  type McpClientId,
+} from '../lib/mcp-config';
+
+type ConfigTab = 'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json';
+
+const CONFIG_TABS: ReadonlyArray<{ id: ConfigTab; label: string }> = [
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'chatgpt', label: 'ChatGPT' },
+  { id: 'claude-cowork', label: 'Claude.ai' },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'perplexity', label: 'Perplexity' },
+  { id: 'json', label: 'JSON' },
+];
+
+function downloadJsonFile(content: string, fileName: string) {
+  const blob = new Blob([content], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 function timeAgo(date: Date): string {
   const s = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -390,6 +418,7 @@ function ApiKeyTokenModal({ token, onClose }: {
 }) {
   const [client, setClient] = useState<McpClientId>('universal');
   const content = buildApiKeyAgentContent(client, window.location.origin, token.token);
+  const jsonConfig = buildApiKeyJsonConfig(window.location.origin, token.token);
 
   return (
     <div className="modal-overlay">
@@ -421,6 +450,7 @@ function ApiKeyTokenModal({ token, onClose }: {
         <div className="warning-bar">请立即保存此令牌，之后不会再次显示。</div>
         </div>
         <div className="credential-modal-actions">
+          <button className="btn btn-secondary" onClick={() => downloadJsonFile(jsonConfig, `${token.name}-pmbrain.json`)}>下载可用 JSON</button>
           <button className="btn btn-primary" onClick={onClose}>完成</button>
         </div>
       </div>
@@ -545,12 +575,9 @@ function CredentialsModal({ credentials, onClose }: {
 }) {
   const [client, setClient] = useState<McpClientId>('universal');
   const content = buildOAuthAgentContent(client, window.location.origin, credentials);
+  const jsonConfig = buildOAuthJsonConfig(window.location.origin, credentials);
   const downloadJson = () => {
-    const blob = new Blob([JSON.stringify(credentials, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${credentials.name}-credentials.json`; a.click();
-    URL.revokeObjectURL(url);
+    downloadJsonFile(jsonConfig, `${credentials.name}-pmbrain.json`);
   };
 
   return (
@@ -580,7 +607,7 @@ function CredentialsModal({ credentials, onClose }: {
         </div>
         </div>
         <div className="credential-modal-actions">
-          <button className="btn btn-secondary" onClick={downloadJson}>下载 JSON</button>
+          <button className="btn btn-secondary" onClick={downloadJson}>下载可用 JSON</button>
           <button className="btn btn-primary" onClick={onClose}>完成</button>
         </div>
       </div>
@@ -603,6 +630,7 @@ function AgentDrawer({
   mainSourceId: string;
   onUpdated: (agent: Agent) => void;
 }) {
+  const [configTab, setConfigTab] = useState<ConfigTab>('json');
   const [editingSource, setEditingSource] = useState(false);
   const [sourceId, setSourceId] = useState(agent.source_id || mainSourceId);
   const [readSources, setReadSources] = useState<string[]>(normalizeReadSources(agent.federated_read, agent.source_id || mainSourceId));
@@ -768,15 +796,12 @@ function AgentDrawer({
       `4. 客户端密钥：（注册 Agent 时获得的密钥）`,
     ].join('\n'),
 
-    json: JSON.stringify({
-      server_url: serverUrl + '/mcp',
-      token_url: serverUrl + '/token',
-      discovery_url: serverUrl + '/.well-known/oauth-authorization-server',
-      client_id: cid,
-      client_name: agentName,
-      auth_type: agent.auth_type,
-      scope: agent.scope,
-    }, null, 2),
+    json: isOAuth
+      ? buildOAuthJsonConfig(serverUrl, {
+        clientId: cid,
+        clientSecret: 'PASTE_YOUR_CLIENT_SECRET_HERE',
+      })
+      : buildApiKeyJsonConfig(serverUrl, 'PASTE_YOUR_API_KEY_HERE'),
   };
 
   return (
@@ -837,10 +862,45 @@ function AgentDrawer({
         </div>
 
         <div className="section-title">接入其他 Agent</div>
-        <div className="credential-unavailable-note">
-          <b>已有凭证不能再次显示密钥</b>
-          <span>因此这里不再提供带占位符、复制后仍不能使用的配置。需要接入新 Agent 时，请创建新的 API Key 或 OAuth 客户端，并在创建成功页直接复制完整接入内容。</span>
+        <div className="tabs agent-client-tabs agent-config-tabs">
+          {CONFIG_TABS.map(item => (
+            <button type="button" key={item.id} className={`tab ${configTab === item.id ? 'active' : ''}`} onClick={() => setConfigTab(item.id)}>
+              {item.label}
+            </button>
+          ))}
         </div>
+        {(() => {
+          const oauthOnlyTabs = new Set<ConfigTab>(['chatgpt', 'claude-cowork', 'perplexity']);
+          if (!isOAuth && oauthOnlyTabs.has(configTab)) {
+            const clientName = CONFIG_TABS.find(item => item.id === configTab)?.label ?? configTab;
+            return (
+              <div className="credential-unavailable-note">
+                <b>{clientName} 需要 OAuth 客户端</b>
+                <span>当前 Agent 使用 API Key，不能直接用于该客户端。请新建 OAuth 客户端后，在创建成功页下载包含真实密钥的 JSON。</span>
+              </div>
+            );
+          }
+          const selectedConfig = configSnippets[configTab];
+          return (
+            <>
+              <div className="code-block agent-config-content">
+                <pre>{selectedConfig}</pre>
+                <CopyButton value={selectedConfig} />
+              </div>
+              <div className="agent-config-actions">
+                {configTab === 'json' && (
+                  <button type="button" className="btn btn-secondary" onClick={() => downloadJsonFile(selectedConfig, `${agentName}-pmbrain-template.json`)}>
+                    下载 JSON 模板
+                  </button>
+                )}
+              </div>
+              <div className="credential-unavailable-note agent-template-note">
+                <b>已有凭证的密钥不会再次显示</b>
+                <span>这里的配置包含密钥占位符。请替换为创建时保存的密钥；如果密钥已丢失，请新建 Agent，并在创建成功页下载可直接使用的 JSON。</span>
+              </div>
+            </>
+          );
+        })()}
 
         <div style={{ marginTop: 32 }}>
           {agent.status === 'active' && (
