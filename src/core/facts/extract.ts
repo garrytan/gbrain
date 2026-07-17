@@ -146,6 +146,14 @@ const EXTRACTOR_SYSTEM = [
 
 const MAX_TURN_TEXT_CHARS = 8000;
 
+/** Normalize extractor placeholders without inventing or rewriting slugs. */
+export function normalizeExtractorEntitySlug(entity: string | null | undefined): string | null {
+  if (entity == null) return null;
+  const trimmed = entity.trim();
+  if (!trimmed || /^(null|none|n\/a)$/i.test(trimmed)) return null;
+  return entity;
+}
+
 export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
   if (input.isDreamGenerated) return [];
   if (!input.turnText) return [];
@@ -237,7 +245,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     facts.push({
       fact: factText,
       kind,
-      entity_slug: candidate.entity ?? null,
+      entity_slug: normalizeExtractorEntitySlug(candidate.entity),
       source: input.source,
       source_session: input.sessionId ?? null,
       confidence,

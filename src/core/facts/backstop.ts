@@ -324,9 +324,35 @@ async function runPipelineWithBody(
     // D4: notability filter applied post-extraction, pre-insert.
     if (filter === 'high-only' && f.notability !== 'high') continue;
 
-    const resolvedSlug = f.entity_slug
+    let resolvedSlug = f.entity_slug
       ? await resolveEntitySlug(ctx.engine, ctx.sourceId, f.entity_slug)
       : null;
+
+    // Recover dash-flattened references to real pages. Extractors sometimes
+    // emit a page slug with '/' flattened to '-' (e.g. companies-acme for
+    // companies/acme); the resolver's slugify floor then persists that
+    // near-miss as-is. When the resolved slug has no live page in this
+    // source but exactly one live page's slug flattens to it, use that
+    // page. Zero or multiple matches leave the slug unchanged. Gated on
+    // slash-less slugs so properly resolved entities skip the lookups.
+    if (resolvedSlug && !resolvedSlug.includes('/')) {
+      const live = await ctx.engine.executeRaw<{ slug: string }>(
+        `SELECT slug FROM pages
+          WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL
+          LIMIT 1`,
+        [ctx.sourceId, resolvedSlug],
+      );
+      if (live.length === 0) {
+        const flattened = await ctx.engine.executeRaw<{ slug: string }>(
+          `SELECT slug FROM pages
+            WHERE source_id = $1 AND deleted_at IS NULL
+              AND replace(slug, '/', '-') = $2
+            LIMIT 2`,
+          [ctx.sourceId, resolvedSlug],
+        );
+        if (flattened.length === 1) resolvedSlug = flattened[0].slug;
+      }
+    }
 
     // Dedup against DB candidates (correct per Codex Q7: fence rows
     // have no embeddings; FS lock + sync invariant means DB == fence

@@ -146,4 +146,34 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
     });
     expect(chatCalled).toBe(true);  // ← THE bug-class assertion
   });
+
+  test('normalizes null-like entity strings to null', async () => {
+    configureGateway({
+      chat_model: 'openai:gpt-4o-mini',
+      env: { OPENAI_API_KEY: 'sk-test' },
+    });
+    __setChatTransportForTests(async () => ({
+      text: JSON.stringify({
+        facts: [' null ', 'NONE', ' n/a ', '   '].map((entity, index) => ({
+          fact: `Null-like entity ${index} stays unparented.`,
+          kind: 'fact',
+          entity,
+          confidence: 0.7,
+          notability: 'medium',
+          metric: null,
+          value: null,
+          unit: null,
+          period: null,
+        })),
+      }),
+      blocks: [],
+      stopReason: 'end' as const,
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'openai:gpt-4o-mini',
+      providerId: 'openai',
+    }));
+
+    const facts = await extractFactsFromTurn({ turnText: 'Extract this.', source: 'test:slug-normalize' });
+    expect(facts.map(f => f.entity_slug)).toEqual([null, null, null, null]);
+  });
 });
