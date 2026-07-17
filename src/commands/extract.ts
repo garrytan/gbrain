@@ -476,11 +476,26 @@ export async function extractLinksFromFile(
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
   const entries: ExtractedTimelineEntry[] = [];
 
-  // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
+  // Format 1: Bullet — - **YYYY-MM-DD** | [Source —] Summary
+  //
+  // The Source/Summary separator is a SPACED em- or en-dash (` — ` / ` – `). A
+  // bare or in-word hyphen is NOT a separator: it occurs inside words
+  // ("scale-incumbent", "follow-up") and phrases ("Reperks - Status"), and the
+  // previous `\s*[—–-]\s*` pattern matched the first hyphen anywhere, mis-filing
+  // the summary prefix as the source. That both corrupted the entry and, because
+  // the mangled (source, summary) tuple diverged from any cleanly-written row,
+  // defeated the (page_id, date, summary, source) dedup so re-syncs accumulated
+  // duplicate rows. A bullet with no spaced dash carries no source label — the
+  // whole text after `|` is the summary.
+  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+)$/gm;
+  const sourceSep = /\s+[—–]\s+/;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
-    entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
+    const rest = match[2].trim();
+    const sep = rest.match(sourceSep);
+    const source = sep ? rest.slice(0, sep.index).trim() : '';
+    const summary = sep ? rest.slice((sep.index ?? 0) + sep[0].length).trim() : rest;
+    entries.push({ slug, date: match[1], source, summary });
   }
 
   // Format 2: Header — ### YYYY-MM-DD — Title

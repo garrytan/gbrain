@@ -199,6 +199,37 @@ describe('extractTimelineFromContent', () => {
   });
 });
 
+describe('extractTimelineFromContent — in-word hyphen mis-split regression', () => {
+  // A bullet with no spaced dash has no `Source —` label: the whole text is the
+  // summary. The old `\s*[—–-]\s*` separator matched the first bare hyphen
+  // anywhere (inside "scale-incumbent"), mis-filing the summary prefix as the
+  // source, corrupting the entry and defeating the (page_id,date,summary,source)
+  // dedup so every re-sync accumulated a divergent duplicate.
+  it('does not split an unlabeled bullet at an in-word hyphen', () => {
+    const content = `- **2026-07-17** | Positioned as the scale-incumbent competitor [Source: User DM 2026-07-17 + web research]`;
+    const entries = extractTimelineFromContent(content, 'companies/regina-maria');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].summary).toBe('Positioned as the scale-incumbent competitor [Source: User DM 2026-07-17 + web research]');
+  });
+
+  it('does not split a hyphenated name into (source, summary)', () => {
+    const content = `- **2021-06-11** | [Viorica-Ioana Prunescu] confirmed the visit [Source: Gmail, 2021-06-11]`;
+    const entries = extractTimelineFromContent(content, 'companies/regina-maria');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].summary).toBe('[Viorica-Ioana Prunescu] confirmed the visit [Source: Gmail, 2021-06-11]');
+  });
+
+  it('splits a canonical bullet at the spaced em-dash, not an earlier single hyphen', () => {
+    const content = '- **2026-03-18** | Email re `Reperks - Status thread` — Week 11 status logged';
+    const entries = extractTimelineFromContent(content, 'companies/reperks');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Email re `Reperks - Status thread`');
+    expect(entries[0].summary).toBe('Week 11 status logged');
+  });
+});
+
 describe('walkMarkdownFiles', () => {
   it('is a function', () => {
     expect(typeof walkMarkdownFiles).toBe('function');
