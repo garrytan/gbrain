@@ -3334,7 +3334,7 @@ async function performFullSync(
       // Keep those pages and re-export their markdown to the working tree so
       // they're file-backed again; only pages whose file once existed in git
       // history (i.e. was genuinely deleted) are reconcile-deleted.
-      const everCommitted = listEverCommittedPaths(repoPath);
+      const everCommitted = listEverCommittedPaths(gitContextRoot);
       const pathBySlug = new Map(rows.map(r => [r.slug, r.source_path]));
       let deletableSlugs = plan.staleSlugs;
       const dbOnlySlugs: string[] = [];
