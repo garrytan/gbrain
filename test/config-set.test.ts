@@ -38,6 +38,15 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
   });
 
+  test('includes the gateway-loop toggle and provider API keys the wave wires', () => {
+    // The subagent handler's error message tells users to run
+    // `gbrain config set agent.use_gateway_loop true`; it must be a known key
+    // or `config set` rejects the wave's own enable command without --force.
+    expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
+    expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
+    expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

@@ -152,6 +152,19 @@ export interface ThinkResult {
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 
+// Thinking-by-default Claude 5 models (`anthropic:claude-*-5`) spend a large
+// share of the output budget on internal reasoning before emitting any answer,
+// so the 4000 default leaves `think` with empty or truncated text. Give those
+// models headroom; providers bill actual tokens, not the cap. Everything else
+// keeps 4000.
+const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
+const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+export function maxOutputTokensFor(modelStr: string): number {
+  return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+    ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 function inferIntent(question: string, anchor?: string): string {
   if (anchor) return 'entity';
   const q = question.toLowerCase();
@@ -465,7 +478,7 @@ export async function runThink(
     }
     const result = await client.create({
       model: modelUsed,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)),
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });

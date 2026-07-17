@@ -327,6 +327,18 @@ export interface Recipe {
     fetch?: typeof fetch;
   };
   /**
+   * Optional inbound-response rewriter for openai-compatible recipes whose wire
+   * shape needs normalizing before the AI SDK adapter parses it. `fetch` wraps
+   * the transport and MUST be fail-open (return the original response on any
+   * error). Used by DeepSeek to promote `reasoning_content` into `content` when
+   * the reasoner returns an empty `content` (the adapter reads only `content`).
+   * Applied by `applyOpenAICompatConfig`; a `resolveOpenAICompatConfig`-provided
+   * fetch takes precedence when both are present.
+   */
+  compat?: {
+    fetch?: typeof fetch;
+  };
+  /**
    * v0.32 (D13=A): optional runtime readiness check for local-server
    * recipes (ollama, llama-server, future lmstudio-recipe). Returns
    * `ready: false` when the local endpoint isn't reachable, with a `hint`
