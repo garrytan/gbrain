@@ -16,6 +16,8 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources trust-frontmatter-slug <id>   — sources.config.trust_frontmatter_slug = true
+ *   gbrain sources untrust-frontmatter-slug <id> — sources.config.trust_frontmatter_slug = false
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -729,6 +731,38 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   }
 }
 
+// ── Subcommand: trust-frontmatter-slug / untrust-frontmatter-slug ──
+
+async function runTrustFrontmatterSlug(engine: BrainEngine, args: string[], value: boolean): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error(`Usage: gbrain sources ${value ? 'trust-frontmatter-slug' : 'untrust-frontmatter-slug'} <id>`);
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(4);
+  }
+  const config = parseConfig(src.config);
+  config.trust_frontmatter_slug = value;
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
+    [JSON.stringify(config), id],
+  );
+  if (value) {
+    console.log(
+      `Source "${id}" now trusts frontmatter-declared slugs: a page whose path-derived slug ` +
+        `differs from its frontmatter "slug:" is imported under the frontmatter slug instead of ` +
+        `being rejected as SLUG_MISMATCH. Use only for sources where "slug:" is a real external ` +
+        `identity (e.g. a Docusaurus docs site's custom routes) — never for user-writable/PR-mergeable ` +
+        `sources where a mismatched slug could be a page-hijack attempt.`,
+    );
+  } else {
+    console.log(`Source "${id}" no longer trusts frontmatter-declared slugs (anti-spoof restored).`);
+  }
+}
+
 // ── v0.40 sources status (D12) ──────────────────────────────
 async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
@@ -1317,6 +1351,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'detach':     runDetach(); return;
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
+    case 'trust-frontmatter-slug':   return runTrustFrontmatterSlug(engine, rest, true);
+    case 'untrust-frontmatter-slug': return runTrustFrontmatterSlug(engine, rest, false);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -1384,6 +1420,10 @@ Subcommands:
                                     targeting the brain you think you are.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
+  trust-frontmatter-slug <id>       Import accepts frontmatter "slug:" even when it
+                                    differs from the path-derived slug (e.g. Docusaurus
+                                    custom routes). Only for sources you trust.
+  untrust-frontmatter-slug <id>     Restore path-vs-frontmatter slug anti-spoof (default).
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or

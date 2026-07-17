@@ -29,14 +29,22 @@ import { createAuditWriter, computeIsoWeekFilename } from './audit/audit-writer.
 
 export interface SlugFallbackAuditEvent {
   ts: string;
-  /** Resolved slug (the frontmatter slug that overrode the empty path slug). */
+  /** Resolved slug (the frontmatter slug that overrode the path-derived one). */
   slug: string;
-  /** Repo-relative path that produced an empty slugifyPath(). */
+  /** Repo-relative path whose path-derived slug was overridden. */
   source_path: string;
   /** Always 'info' — keeps the schema explicit for future severity tiers. */
   severity: 'info';
   /** Stable code consumed by `gbrain doctor`'s slug_fallback_audit check. */
   code: 'SLUG_FALLBACK_FRONTMATTER';
+  /**
+   * Why the frontmatter slug won. 'empty_path_slug' (default, back-compat):
+   * slugifyPath() on the file's path returned empty (emoji/CJK filenames).
+   * 'trusted_source': the source opted in via `sources trust-frontmatter-slug`
+   * and the path DID derive a slug, but the frontmatter slug (a real external
+   * route, e.g. Docusaurus) was honored instead.
+   */
+  reason?: 'empty_path_slug' | 'trusted_source';
 }
 
 /** ISO-week-rotated filename: `slug-fallback-YYYY-Www.jsonl`. */
@@ -58,16 +66,24 @@ const writer = createAuditWriter<SlugFallbackAuditEvent>({
  * logging). Write failure to the JSONL is logged but does NOT throw — the
  * import succeeds either way.
  */
-export function logSlugFallback(slug: string, sourcePath: string): void {
+export function logSlugFallback(
+  slug: string,
+  sourcePath: string,
+  reason: 'empty_path_slug' | 'trusted_source' = 'empty_path_slug',
+): void {
   // D7 dual logging — every fallback gets an operator-visible stderr line
   // regardless of audit write success. Lives in this caller, not in the
   // shared writer, because only this audit module wants per-call stderr.
-  process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; path slugified empty)\n`);
+  const why = reason === 'trusted_source'
+    ? 'frontmatter slug; source trusts frontmatter-declared slugs'
+    : 'frontmatter slug; path slugified empty';
+  process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (${why})\n`);
   writer.log({
     slug,
     source_path: sourcePath,
     severity: 'info',
     code: 'SLUG_FALLBACK_FRONTMATTER',
+    reason,
   });
 }
 

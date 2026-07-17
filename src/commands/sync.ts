@@ -1483,6 +1483,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
   // failure falls through to legacy inferType (parity preserved).
   let syncActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
+  // Per-source SLUG_MISMATCH escape hatch (`gbrain sources trust-frontmatter-slug`).
+  // Set below once opts.sourceId's config is read; false (anti-spoof intact) by default.
+  let syncTrustFrontmatterSlug = false;
   try {
     // v0.41.37.0 #1569: --no-schema-pack escape hatch. Skip pack load entirely so
     // no user-supplied pack regex (markdown.ts subtype path_pattern) runs during
@@ -1522,6 +1525,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       typeof cfgRows[0]?.config === 'string'
         ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
         : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+    // Per-source opt-in read once per sync, threaded to every importFile call
+    // below (same load-once-per-command shape as syncActivePack above).
+    syncTrustFrontmatterSlug = cfg.trust_frontmatter_slug === true;
     const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
     if (remoteUrl) {
       const ownSrc = {
@@ -2309,7 +2315,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // Reimport at new path (picks up content changes)
       const filePath = join(repoPath, to);
       if (existsSync(filePath)) {
-        const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
+        const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack, trustFrontmatterSlug: syncTrustFrontmatterSlug });
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
@@ -2499,7 +2505,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // 'default' was applied even for non-default sources, fabricating
         // duplicate rows that crashed bare-slug subqueries with Postgres 21000.
         const result = await observed(pacer, () =>
-          importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack }));
+          importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack, trustFrontmatterSlug: syncTrustFrontmatterSlug }));
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);

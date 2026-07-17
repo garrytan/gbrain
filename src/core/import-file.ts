@@ -902,6 +902,15 @@ export async function importFromContent(
  * could declare `slug: people/elon` in frontmatter and overwrite the legitimate
  * `people/elon` page on the next `gbrain sync` or `gbrain import`. In shared
  * brains where PRs are mergeable, this is a silent page-hijack primitive.
+ *
+ * Escape hatch: `opts.trustFrontmatterSlug` (set per-source via
+ * `gbrain sources trust-frontmatter-slug <id>`) lifts the rejection for that
+ * source only. Some federated sources (e.g. a Docusaurus docs site) declare
+ * `slug:` as the page's real published URL rather than a hijack attempt —
+ * blog posts and custom-route pages routinely live at a filesystem path that
+ * has nothing to do with their public route. The opt-in is per-source and
+ * explicit, so the hijack risk stays scoped to sources whose owner declared
+ * the frontmatter authoritative (same trust model as `--federated`).
  */
 export async function importFromFile(
   engine: BrainEngine,
@@ -912,6 +921,8 @@ export async function importFromFile(
     inferFrontmatter?: boolean;
     sourceId?: string;
     forceRechunk?: boolean;
+    /** Per-source opt-in — see function doc. Default false (anti-spoof intact). */
+    trustFrontmatterSlug?: boolean;
     /**
      * v0.39 T1.5: active schema pack threaded through to importFromContent so
      * `parseMarkdown` uses pack-driven type inference. Load ONCE per command;
@@ -967,6 +978,7 @@ export async function importFromFile(
   const expectedSlug = slugifyPath(relativePath);
   let resolvedSlug = expectedSlug;
   let usedFrontmatterFallback = false;
+  let slugFallbackReason: 'empty_path_slug' | 'trusted_source' = 'empty_path_slug';
 
   if (expectedSlug === '') {
     if (parsed.slug && parsed.slug.length > 0) {
@@ -989,22 +1001,41 @@ export async function importFromFile(
       };
     }
   } else if (parsed.slug !== expectedSlug) {
-    // Anti-spoof preserved: path DOES derive a slug, but the frontmatter slug
-    // claims a different one. Reject.
-    return {
-      slug: expectedSlug,
-      status: 'skipped',
-      chunks: 0,
-      error:
-        `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
-        `(from ${relativePath}). Remove the frontmatter "slug:" line or move the file.`,
-    };
+    if (opts.trustFrontmatterSlug) {
+      // Source opted in (`gbrain sources trust-frontmatter-slug <id>`): the
+      // frontmatter slug is this page's real identity (e.g. a Docusaurus
+      // custom route), not a hijack attempt. Honor it — same fallback
+      // mechanism as the empty-path-slug case above, just a different trigger.
+      //
+      // Docusaurus (and most static-site generators) write `slug:` as a
+      // root-relative URL path (`/testing/web`), but gbrain's validateSlug
+      // (src/core/utils.ts) rejects any leading `/` as a security guard
+      // against path-derived spoofing at the storage chokepoint. That guard
+      // stays strict — normalize here instead, since a leading `/` on an
+      // explicitly-trusted slug is a URL-path convention, not an attack.
+      resolvedSlug = parsed.slug.replace(/^\/+/, '');
+      usedFrontmatterFallback = true;
+      slugFallbackReason = 'trusted_source';
+    } else {
+      // Anti-spoof preserved: path DOES derive a slug, but the frontmatter slug
+      // claims a different one. Reject.
+      return {
+        slug: expectedSlug,
+        status: 'skipped',
+        chunks: 0,
+        error:
+          `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
+          `(from ${relativePath}). Remove the frontmatter "slug:" line, move the file, or if this ` +
+          `source's frontmatter slugs are authoritative (e.g. a Docusaurus docs site), run ` +
+          `\`gbrain sources trust-frontmatter-slug ${opts.sourceId ?? '<source-id>'}\`.`,
+      };
+    }
   }
 
   // Emit the dual-channel audit entry AFTER we know we're not going to
   // short-circuit, so we don't log noise for failed imports.
   if (usedFrontmatterFallback) {
-    logSlugFallback(resolvedSlug, relativePath);
+    logSlugFallback(resolvedSlug, relativePath, slugFallbackReason);
   }
 
   // Pass the resolved slug explicitly so that any future change to
