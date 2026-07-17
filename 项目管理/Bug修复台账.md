@@ -896,8 +896,8 @@
 - 描述：PR #10 合并到 `master` 后，GitHub Actions 的 `test (3)` 报 `build-llms generator` 失败；随后 `Release` 的桌面 job 又因依赖安装参数冲突失败，其余 1187 个测试通过。
 - 根因：最新代码更新了 QwenPaw、自定义 OpenAI 兼容模型和桌面端安装说明，但未重新生成 `llms-full.txt`；Release 工作流同时传入 Bun 不兼容的 `--frozen-lockfile` 和 `--trust` 参数。
 - 解决方案：运行现有 `bun run build:llms` 同步生成器产出的 `llms-full.txt`；将 Release 桌面依赖安装改为 `bun install --trust`，保留需要执行原生依赖安装脚本的行为。
-- 是否完成：进行中
-- 最终结果：已在本地重建文档、通过生成器回归测试，并在本地验证 `bun install --trust`；等待 GitHub Actions 复验。
+- 是否完成：是
+- 最终结果：`build-llms` 生成器回归测试通过；PR #11 的 Test 运行 29559170345、E2E 运行 29559170311 和 Heavy Tests 运行 29559382135 均通过。Release 原运行 29557514925 属于修复前的历史失败记录，新的 `bun install --trust` 已在本地验证，后续 `v*` 标签发布将使用修复后的流程。
 
 ## 2026-07-17 GitHub Actions 测试隔离修复
 
@@ -907,5 +907,5 @@
 - 描述：PR #11 的 `test (9)` 在 `capture` 集成测试中尝试访问 `custom-openai:qwen-embedding`，导致该分片失败。
 - 根因：`test/ai/recipe-custom-openai.test.ts` 通过 `configureGateway()` 修改了进程级 Gateway 配置，但文件结束时没有调用 `resetGateway()`。
 - 解决方案：增加文件级 `afterAll(() => resetGateway())`，测试结束后恢复 Gateway 初始状态；不改变生产代码和用户数据。
-- 是否完成：进行中
-- 最终结果：已完成本地定向修复，等待 GitHub Actions 复验。
+- 是否完成：是
+- 最终结果：本地 `recipe-custom-openai` 与 `capture` 定向测试通过；PR #11 的 Test 运行 29559170345 的全部分片通过，未再出现 Gateway 配置污染。
