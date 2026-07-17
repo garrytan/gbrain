@@ -28,7 +28,12 @@ bun install -g github:garrytan/gbrain
 gbrain init --pglite
 ```
 
-> **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+**Package installation is non-stateful.** `bun install` and `bun install -g` install
+code and dependencies only. They do not initialize a brain, run migrations or an
+upgrade, discover another `gbrain` on PATH, or write GBrain home/audit state. Run
+the state-changing step explicitly: `gbrain init` for a new brain,
+`gbrain apply-migrations --yes` after updating a source checkout, or
+`gbrain upgrade` for a managed/global installation.
 
 The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. To switch later:
 

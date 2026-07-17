@@ -2,6 +2,59 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.63.0] - 2026-07-17
+
+**You can now prove what a brain contains before trusting a rebuilt database.** `gbrain recovery snapshot` emits one strict, deterministic record for an explicitly named brain and source. It captures source-backed page, fact, take, link, timeline, tag, and retrieval identities without printing page text, credentials, or connection strings. If the source is missing, the schema is stale, or any required section cannot be read, the command emits no success snapshot.
+
+### How to use it
+
+```bash
+gbrain recovery snapshot --brain host --source default --json > before.json
+```
+
+Run the same command against an isolated disposable target after rebuilding from clean markdown, then compare the source-backed identities and digests. The command is read-only. It does not migrate, repair, restore, switch readers, or delete a target.
+
+### What the snapshot answers
+
+| Question | Evidence in the snapshot |
+|---|---|
+| Did every source-backed page return? | Active, soft-deleted, and total page counts plus per-page source anchors and normalized digests |
+| Are facts, takes, links, and timeline state reproducible? | Separate deterministic counts and digests for each filesystem-canonical category |
+| Is retrieval ready? | Chunk counts, missing-embedding counts, model, dimensions, modality, chunker version, and embedding signature |
+| Is this the intended database? | Credential-free engine, target, schema, GBrain version, schema-pack, brain, and source identities |
+
+### Things to watch
+
+This is evidence for a recovery drill, not a destructive rebuild command. GBrain intentionally has no `gbrain rebuild --confirm-destructive` command at this release. Rebuild into a disposable target, complete every reconciliation phase, prove reader behavior there, and treat any unexplained parity difference as a veto. Database-only job, audit, and raw runtime categories are reported separately instead of being misrepresented as source-backed knowledge.
+
+### Itemized changes
+
+#### Added
+- **Strict recovery snapshots for PGLite and Postgres.** `gbrain recovery snapshot --brain <id> --source <id> --json` runs in a repeatable-read, read-only transaction and emits only after every required section validates.
+- **A phased markdown recovery guide.** The runbook covers isolated initialization, source registration, page sync, links and timeline, facts and takes, embedding convergence, strict snapshot comparison, disposable reader checks, and fail-closed cleanup boundaries.
+
+#### Corrected
+- **The system-of-record guide no longer advertises a nonexistent destructive one-liner.** Recovery is documented as a disposable-target reconciliation with exact parity gates, not `sync && extract all` plus count comparison.
+
+#### Tests
+- Real PGLite coverage proves deterministic, credential-free, read-only behavior and missing or stale schema refusal. A required CI step runs the same contract against disposable Postgres with pgvector and checks exact cross-engine source identity.
+
+### To take advantage of v0.42.63.0
+
+`gbrain upgrade`. No schema migration or configuration change is required.
+
+1. **Capture a baseline before a recovery drill:**
+   ```bash
+   gbrain recovery snapshot --brain host --source default --json > before.json
+   ```
+2. **Follow the disposable-target sequence** in `docs/guides/rebuild-from-markdown.md`. Do not point production readers at the target until every parity and reader check passes.
+3. **Verify the existing brain:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If the snapshot refuses or parity differs,** keep the target isolated and file an issue at https://github.com/garrytan/gbrain/issues with the credential-free error and `gbrain doctor` output.
+
 ## [0.42.62.0] - 2026-07-17
 
 **If your brain holds more than one source, everything now lands in the right one. Link extraction, timeline extraction, background cycles, and webhook captures used to quietly file some of their output under the default source; all of those paths now carry the correct source identity. Background agent jobs got tougher too: a failed database reconnect can no longer wedge the engine, and workers recover from dropped connections instead of crash-looping. If you run the admin dashboard behind a reverse proxy, the live activity panel finally connects. Long agent conversations cost less because repeated context is reused between turns on Anthropic calls. Local LiteLLM proxies work out of the box. Nested sources scan correctly again instead of reporting zero files. And the project's automated checks now include dependency vulnerability scanning, static code-security analysis, and signed provenance for release builds. Thirty merged changes in all, the largest batch to date, each one reviewed and verified against the live codebase before landing.**

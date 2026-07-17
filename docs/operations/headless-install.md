@@ -1,6 +1,18 @@
 # Headless install: Docker, CI, postinstall
 
-As of v0.37, `gbrain init --pglite` in a non-TTY context (Docker `RUN`, CI step, postinstall hook) exits 1 when no embedding-provider API key is present in the environment. This is a deliberate fail-loud — the alternative was the v0.36 silent-broken-state class where init succeeded with a default that didn't match any real key.
+**Package installation is non-stateful.** In every headless environment,
+`bun install` and `bun install -g` install code and dependencies only. They never
+run `gbrain init`, `gbrain apply-migrations --yes`, or `gbrain upgrade`, discover a
+different `gbrain` from PATH, or write GBrain home/audit state. Put the appropriate
+state transition in its own visible Docker layer, CI step, or entrypoint: use
+`gbrain init` for a new brain, `gbrain apply-migrations --yes` after updating a
+source checkout, and `gbrain upgrade` for a managed installation.
+
+As of v0.37, an explicit `gbrain init --pglite` in a non-TTY context
+(Docker `RUN`, CI step, or entrypoint) exits 1 when no embedding-provider API
+key is present in the environment. This is a deliberate fail-loud — the
+alternative was the v0.36 silent-broken-state class where init succeeded with
+a default that didn't match any real key.
 
 Two patterns work for headless installs. Pick whichever fits your image lifecycle.
 

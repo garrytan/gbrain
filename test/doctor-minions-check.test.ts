@@ -9,8 +9,8 @@
  *   - DB-path (check #6a): schema is v7+ but `preferences.json` is missing.
  *     Catches installs that never ran the stopgap at all.
  *
- * Invokes the CLI via subprocess against a temp $HOME so the checks see
- * clean fixture state per test.
+ * Invokes the CLI via subprocess against an explicit temporary GBRAIN_HOME
+ * and child audit directory so the checks see clean fixture state per test.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -22,12 +22,15 @@ import { execFileSync } from 'child_process';
 const CLI = join(__dirname, '..', 'src', 'cli.ts');
 
 let tmp: string;
-let origHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   // Strip DATABASE_URL so doctor runs filesystem-only for these tests.
   // Half-migrated checks run in the filesystem section; no DB needed.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = {
+    ...process.env,
+    GBRAIN_HOME: join(tmp, '.gbrain'),
+    GBRAIN_AUDIT_DIR: join(tmp, '.gbrain', 'audit'),
+  } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -47,13 +50,10 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
 }
 
 beforeEach(() => {
-  origHome = process.env.HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-doctor-minions-test-'));
 });
 
 afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME;
-  else process.env.HOME = origHome;
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 

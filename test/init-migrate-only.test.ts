@@ -19,14 +19,17 @@ import { execFileSync } from 'child_process';
 const CLI = join(__dirname, '..', 'src', 'cli.ts');
 
 let tmp: string;
-let origHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   // Strip DATABASE_URL / GBRAIN_DATABASE_URL from the subprocess env. The
   // "no config" error-path tests need loadConfig() to return null, which it
   // won't if any env var fallback is set (src/core/config.ts:30). Tests
   // that seed their own config use freshHomeWithConfig() below.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = {
+    ...process.env,
+    GBRAIN_HOME: tmp,
+    GBRAIN_AUDIT_DIR: join(tmp, '.gbrain', 'audit'),
+  } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -46,13 +49,10 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
 }
 
 beforeEach(() => {
-  origHome = process.env.HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-init-migrate-only-test-'));
 });
 
 afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME;
-  else process.env.HOME = origHome;
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
