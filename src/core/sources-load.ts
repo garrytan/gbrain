@@ -61,6 +61,20 @@ export function isSourceFederated(config: unknown): boolean {
 }
 
 /**
+ * True iff the source's config.trust_frontmatter_slug field is the literal
+ * boolean true. Set via `gbrain sources trust-frontmatter-slug <id>`.
+ *
+ * Opt-in escape hatch for federated sources whose frontmatter `slug:` field
+ * defines a real, external identity (e.g. Docusaurus custom routes / blog
+ * post URLs) rather than being a spoof attempt. See import-file.ts's
+ * SLUG_MISMATCH branch for how this is consumed.
+ */
+export function isFrontmatterSlugTrusted(config: unknown): boolean {
+  const parsed = parseSourceConfig(config);
+  return parsed.trust_frontmatter_slug === true;
+}
+
+/**
  * Enumerate every source. Order: 'default' first, then alphabetical by id.
  *
  * Caller filters in-process when the predicate is cheap (federatedOnly,

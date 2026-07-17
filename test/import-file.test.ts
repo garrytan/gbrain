@@ -512,6 +512,138 @@ Content.
   });
 });
 
+// gbrain#3618-shaped fix — federated sources (e.g. Docusaurus docs sites)
+// declare frontmatter `slug:` as the page's real published URL, not a
+// hijack attempt. `trustFrontmatterSlug` is an opt-in per-source escape
+// hatch (set via `gbrain sources trust-frontmatter-slug <id>`) from the
+// path-vs-frontmatter anti-spoof rejection.
+describe('importFile — trustFrontmatterSlug opt-in (SLUG_MISMATCH escape hatch)', () => {
+  test('default (unset): mismatched frontmatter slug is still rejected', async () => {
+    const filePath = join(TMP, 'trust-default-off.md');
+    writeFileSync(filePath, `---
+title: Custom Route Post
+slug: blog/2026/07/16/custom-route-post
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'blog-posts/trust-default-off.md', { noEmbed: true });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('does not match path-derived slug');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('rejection hint names the opt-in command', async () => {
+    const filePath = join(TMP, 'trust-hint.md');
+    writeFileSync(filePath, `---
+title: Custom Route Post
+slug: blog/2026/07/16/custom-route-post
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'blog-posts/trust-hint.md', { noEmbed: true, sourceId: 'shaft-userguide' });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('gbrain sources trust-frontmatter-slug shaft-userguide');
+  });
+
+  test('trustFrontmatterSlug: true — mismatched slug is honored, not rejected', async () => {
+    const filePath = join(TMP, 'trust-on.md');
+    writeFileSync(filePath, `---
+title: Custom Route Post
+slug: blog/2026/07/16/custom-route-post
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'blog-posts/trust-on.md', {
+      noEmbed: true,
+      sourceId: 'shaft-userguide',
+      trustFrontmatterSlug: true,
+    });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('blog/2026/07/16/custom-route-post');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('blog/2026/07/16/custom-route-post');
+    expect(putCall.args[1].source_path).toBe('blog-posts/trust-on.md');
+  });
+
+  test('trustFrontmatterSlug: true — leading "/" (Docusaurus root-relative slug) is stripped', async () => {
+    // Docusaurus/most static-site generators write slug: as a root-relative
+    // URL path. gbrain's validateSlug (src/core/utils.ts) rejects any leading
+    // "/" as a security guard, so the trusted-fallback path must normalize it
+    // away rather than pass it straight to putPage.
+    const filePath = join(TMP, 'trust-leading-slash.md');
+    writeFileSync(filePath, `---
+title: Root Relative Route
+slug: /testing/web
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'docs/testing/web.md', {
+      noEmbed: true,
+      sourceId: 'shaft-userguide',
+      trustFrontmatterSlug: true,
+    });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('testing/web');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('testing/web');
+  });
+
+  test('trustFrontmatterSlug: true — mixed-case frontmatter slug is lowercased', async () => {
+    // putPage's validateSlug() silently lowercases before storing, but
+    // sibling calls in the same import (addTag) use resolvedSlug as-is.
+    // A frontmatter slug with mixed case (unlike a path-derived slug, which
+    // slugifyPath() already lowercases) must be normalized here or addTag
+    // looks up a slug putPage never actually stored. Found live against a
+    // real docs source (`slug: bingAI`).
+    const filePath = join(TMP, 'trust-mixed-case.md');
+    writeFileSync(filePath, `---
+title: Bing AI Comparison
+slug: bingAI
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'blog/trust-mixed-case.md', {
+      noEmbed: true,
+      sourceId: 'shaft-userguide',
+      trustFrontmatterSlug: true,
+    });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('bingai');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('bingai');
+  });
+
+  test('trustFrontmatterSlug: true — path-derived slug still used when frontmatter has no slug', async () => {
+    // The opt-in only changes behavior on an actual MISMATCH; a file with no
+    // frontmatter slug at all must still resolve to its path-derived slug.
+    const filePath = join(TMP, 'trust-on-no-mismatch.md');
+    writeFileSync(filePath, `---
+title: Plain Doc
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'docs/trust-on-no-mismatch.md', {
+      noEmbed: true,
+      sourceId: 'shaft-userguide',
+      trustFrontmatterSlug: true,
+    });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('docs/trust-on-no-mismatch');
+  });
+});
+
 // v0.39.3.0 CV8 Phase 3d — DB content_hash excludes timestamp-bearing
 // frontmatter keys (captured_at, ingested_at) so identical body content
 // from capture-cli produces a stable hash across multiple captures.

@@ -250,3 +250,41 @@ describe('sources federate / unfederate', () => {
     expect(parsed.federated).toBe(false);
   });
 });
+
+// ── trust-frontmatter-slug / untrust-frontmatter-slug ──────
+
+describe('sources trust-frontmatter-slug / untrust-frontmatter-slug', () => {
+  test('trust-frontmatter-slug sets config.trust_frontmatter_slug = true', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        { id: 'shaft-userguide', name: 'shaft-userguide', local_path: '/tmp/ug', last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() },
+      ],
+    });
+    await runSources(engine, ['trust-frontmatter-slug', 'shaft-userguide']);
+    const upd = calls.find(c => c.sql.includes('UPDATE sources SET config'));
+    expect(upd).toBeDefined();
+    expect(JSON.parse(upd!.params[0] as string)).toEqual({ trust_frontmatter_slug: true });
+  });
+
+  test('untrust-frontmatter-slug preserves other config keys', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        { id: 'shaft-userguide', name: 'shaft-userguide', local_path: '/tmp/ug', last_commit: null, last_sync_at: null, config: '{"federated":true,"trust_frontmatter_slug":true}', created_at: new Date() },
+      ],
+    });
+    await runSources(engine, ['untrust-frontmatter-slug', 'shaft-userguide']);
+    const upd = calls.find(c => c.sql.includes('UPDATE sources SET config'));
+    const parsed = JSON.parse(upd!.params[0] as string);
+    expect(parsed.federated).toBe(true);
+    expect(parsed.trust_frontmatter_slug).toBe(false);
+  });
+
+  test('trust-frontmatter-slug on unknown source id exits without an UPDATE', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [],
+    });
+    const code = await withExitCapture(() => runSources(engine, ['trust-frontmatter-slug', 'does-not-exist']));
+    expect(code).toBe(4);
+    expect(calls.find(c => c.sql.includes('UPDATE sources SET config'))).toBeUndefined();
+  });
+});

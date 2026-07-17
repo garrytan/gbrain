@@ -12,6 +12,7 @@ import {
   fetchSource,
   parseSourceConfig,
   isSourceFederated,
+  isFrontmatterSlugTrusted,
 } from '../src/core/sources-load.ts';
 
 let engine: PGLiteEngine;
@@ -130,5 +131,22 @@ describe('isSourceFederated', () => {
     expect(isSourceFederated({ federated: 1 })).toBe(false);
     expect(isSourceFederated({})).toBe(false);
     expect(isSourceFederated(null)).toBe(false);
+  });
+});
+
+describe('isFrontmatterSlugTrusted', () => {
+  test('strict-true requirement', () => {
+    expect(isFrontmatterSlugTrusted({ trust_frontmatter_slug: true })).toBe(true);
+    expect(isFrontmatterSlugTrusted({ trust_frontmatter_slug: false })).toBe(false);
+    expect(isFrontmatterSlugTrusted({ trust_frontmatter_slug: 'true' })).toBe(false); // strict boolean
+    expect(isFrontmatterSlugTrusted({})).toBe(false);
+    expect(isFrontmatterSlugTrusted(null)).toBe(false);
+  });
+
+  test('independent of the federated flag', async () => {
+    await insertSource('trusted-not-federated', { federated: false, config: { trust_frontmatter_slug: true } });
+    const row = await fetchSource(engine, 'trusted-not-federated');
+    expect(isSourceFederated(row!.config)).toBe(false);
+    expect(isFrontmatterSlugTrusted(row!.config)).toBe(true);
   });
 });

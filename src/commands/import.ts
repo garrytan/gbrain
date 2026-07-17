@@ -144,6 +144,19 @@ export async function runImport(
       if (nudge) process.stderr.write(nudge + '\n');
     }
   }
+
+  // Per-source SLUG_MISMATCH escape hatch (`gbrain sources trust-frontmatter-slug`).
+  // Load once, thread to every per-file importFile call below — same
+  // load-once-per-command shape as importActivePack above. This is the path
+  // `performFullSync` (sync.ts `--full`) actually runs per-file through, so
+  // it must see the flag too, not just the incremental sync.ts call sites.
+  let trustFrontmatterSlug = false;
+  if (sourceId) {
+    const { fetchSource, isFrontmatterSlugTrusted } = await import('../core/sources-load.ts');
+    const src = await fetchSource(engine, sourceId);
+    if (src) trustFrontmatterSlug = isFrontmatterSlugTrusted(src.config);
+  }
+
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -239,7 +252,7 @@ export async function runImport(
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId, activePack: importActivePack });
+        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId, activePack: importActivePack, trustFrontmatterSlug });
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
