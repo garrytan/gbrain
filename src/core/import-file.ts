@@ -1032,6 +1032,21 @@ export async function importFromFile(
     }
   }
 
+  // validateSlug() (src/core/utils.ts, called inside putPage) silently
+  // lowercases before storing, but sibling calls made later in this same
+  // import (addTag, etc. — see importFromContent) use whatever case
+  // resolvedSlug already has. Path-derived slugs are never affected
+  // (slugifyPath() already lowercases every segment), but a
+  // frontmatter-authored slug commonly isn't (e.g. `slug: bingAI`) —
+  // found live via a real docs sync: putPage stored "bingai", then
+  // addTag("bingAI", …) failed with "page not found". Normalize once,
+  // here, so every downstream call in this import agrees with what
+  // putPage will actually persist. No-op on CJK/RTL scripts (toLowerCase
+  // only affects cased Latin/Greek/Cyrillic etc.).
+  if (usedFrontmatterFallback) {
+    resolvedSlug = resolvedSlug.toLowerCase();
+  }
+
   // Emit the dual-channel audit entry AFTER we know we're not going to
   // short-circuit, so we don't log noise for failed imports.
   if (usedFrontmatterFallback) {

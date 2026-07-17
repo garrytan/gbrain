@@ -596,6 +596,33 @@ Body.
     expect(putCall.args[0]).toBe('testing/web');
   });
 
+  test('trustFrontmatterSlug: true — mixed-case frontmatter slug is lowercased', async () => {
+    // putPage's validateSlug() silently lowercases before storing, but
+    // sibling calls in the same import (addTag) use resolvedSlug as-is.
+    // A frontmatter slug with mixed case (unlike a path-derived slug, which
+    // slugifyPath() already lowercases) must be normalized here or addTag
+    // looks up a slug putPage never actually stored. Found live against a
+    // real docs source (`slug: bingAI`).
+    const filePath = join(TMP, 'trust-mixed-case.md');
+    writeFileSync(filePath, `---
+title: Bing AI Comparison
+slug: bingAI
+---
+
+Body.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'blog/trust-mixed-case.md', {
+      noEmbed: true,
+      sourceId: 'shaft-userguide',
+      trustFrontmatterSlug: true,
+    });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('bingai');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('bingai');
+  });
+
   test('trustFrontmatterSlug: true — path-derived slug still used when frontmatter has no slug', async () => {
     // The opt-in only changes behavior on an actual MISMATCH; a file with no
     // frontmatter slug at all must still resolve to its path-derived slug.
