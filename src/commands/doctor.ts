@@ -25,6 +25,7 @@ import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.t
 import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
+import type { ContentSanitySummary } from '../core/audit/content-sanity-audit.ts';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { reflexEnabled } from '../core/context/reflex.ts';
 import { resolveSocketPath } from '../core/context/resolve-ipc.ts';
@@ -3782,6 +3783,59 @@ export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check
  * other gbrain process competes for the same cap — the operator should lower
  * `GBRAIN_POOL_SIZE`. Pure so it's unit-testable without env/engine.
  */
+/** Distinct new-offender warn pages in the window before the check goes
+ *  warn. Same numeric threshold as the pre-#1893 raw-event rule, with the
+ *  unit corrected from events to pages so one page re-imported 10 times in
+ *  a day no longer trips it alone. */
+export const CONTENT_SANITY_NEW_PAGES_WARN_THRESHOLD = 10;
+
+/**
+ * Score the content-sanity audit stream (pure; exported for tests).
+ *
+ * Audit events are evidence, not automatically breakage. A large code
+ * source can legitimately emit many WARN events (oversize/markup-heavy)
+ * while remaining searchable and intentionally flagged. Fail on hard
+ * dispositions (content actually blocked or hidden — never routine, even
+ * when chronic); warn on NEW soft dispositions or new-offender volume.
+ *
+ * Chronic signatures — the same (page, disposition, reason) recurring
+ * across >= CHRONIC_MIN_DISTINCT_DAYS distinct days in the window — do
+ * not drive warn/fail (#1893): the ingest gate intentionally re-logs
+ * every re-import, so a corpus with standing oversized pages re-emits the
+ * same events nightly and a raw-event threshold pins the check at warn
+ * forever. Standing state is already owned, deduplicated, by the
+ * DB-backed checks (oversized_pages / flagged_pages / quarantined_pages);
+ * this check scores fresh INFLOW.
+ *
+ * v0.42 renamed the hard path: a rejected page emits `reject` and a
+ * quarantined (hidden) junk page emits `quarantine`; `hard_block` is now
+ * only the pre-v0.42 legacy alias. `flag` is a soft disposition (still
+ * searchable, agent warned on retrieval), so it joins `soft_block`.
+ */
+export function computeContentSanityAuditCheck(summary: ContentSanitySummary): Check {
+  const hardBlocked =
+    summary.by_type.hard_block + summary.by_type.reject + summary.by_type.quarantine;
+  const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
+  const status: 'ok' | 'warn' | 'fail' =
+    hardBlocked > 0 ? 'fail' :
+      (summary.new_soft_pages > 0 ||
+        summary.new_warn_pages >= CONTENT_SANITY_NEW_PAGES_WARN_THRESHOLD) ? 'warn' : 'ok';
+  const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
+  const topSources = Object.entries(summary.by_source)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([s, n]) => `${s}=${n}`)
+    .join(', ');
+  const topChronic = summary.top_chronic
+    .map(c => `${c.source_id}/${c.slug} (${c.events} events/${c.days}d)`)
+    .join('; ');
+  return {
+    name: 'content_sanity_audit_recent',
+    status,
+    message: `${summary.total_events} events / ${summary.distinct_pages} page(s) (chronic=${summary.chronic_pages} new=${summary.new_pages}) (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${summary.bypass_events > 0 ? ` bypass=${summary.bypass_events}` : ''}${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}.${topChronic ? ` Top chronic: ${topChronic} — standing offenders are scored by oversized_pages/flagged_pages/quarantined_pages; this check scores new inflow.` : ''} (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+  };
+}
+
 export function computePoolBudgetCheck(
   maxConnections: number | undefined,
   parentPool: number,
@@ -6246,10 +6300,11 @@ export async function buildChecks(
   //   opt-in for full scan (D10 mirrors --index-audit precedent). Applies
   //   the assessor per-page on title + 2KB head-slice + frontmatter.
   // - content_sanity_audit_recent: reads ~/.gbrain/audit/content-sanity-*.jsonl
-  //   over the last 7 days, aggregates by event type + source. Caveat
-  //   (Codex r1 #14): JSONL is local-only — multi-host operators should
-  //   share GBRAIN_AUDIT_DIR. Message names this so the limitation is
-  //   visible at the doctor surface.
+  //   over the last 7 days, aggregates by event type + source and splits
+  //   chronic vs new offender signatures — only new inflow drives the
+  //   warn score (#1893). Caveat (Codex r1 #14): JSONL is local-only —
+  //   multi-host operators should share GBRAIN_AUDIT_DIR. Message names
+  //   this so the limitation is visible at the doctor surface.
   const fullContentAudit = args.includes('--content-audit');
   progress.heartbeat('oversized_pages');
   try {
@@ -6379,36 +6434,7 @@ export async function buildChecks(
       });
     } else {
       const summary = summarizeContentSanityEvents(events);
-      const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
-      const topSources = Object.entries(summary.by_source)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([s, n]) => `${s}=${n}`)
-        .join(', ');
-      // Audit events are evidence, not automatically breakage. A large code
-      // source can legitimately emit many WARN events (oversize/markup-heavy)
-      // while remaining searchable and intentionally flagged. Fail on hard
-      // dispositions (content actually blocked or hidden); warn on soft
-      // dispositions or volume. This keeps doctor from treating expected
-      // code-corpus telemetry as an unhealthy brain.
-      //
-      // v0.42 renamed the hard path: a rejected page emits `reject` and a
-      // quarantined (hidden) junk page emits `quarantine`; `hard_block` is now
-      // only the pre-v0.42 legacy alias. Counting `hard_block` alone let fresh
-      // junk-ingest evidence (`reject`/`quarantine`) clear as `ok` whenever
-      // fewer than 10 events landed. `flag` is a warn disposition (still
-      // searchable, agent warned on retrieval), so it joins `soft_block`.
-      const hardBlocked =
-        summary.by_type.hard_block + summary.by_type.reject + summary.by_type.quarantine;
-      const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
-      const status: 'ok' | 'warn' | 'fail' =
-        hardBlocked > 0 ? 'fail' :
-          (softBlocked > 0 || events.length >= 10) ? 'warn' : 'ok';
-      checks.push({
-        name: 'content_sanity_audit_recent',
-        status,
-        message: `${events.length} events (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
-      });
+      checks.push(computeContentSanityAuditCheck(summary));
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
