@@ -35,6 +35,8 @@ export interface TwoPassOpts {
   nearSymbol?: string;
   /** Filter expansion to one source. When unset, crosses sources. */
   sourceId?: string;
+  /** Federated source grant. Non-empty arrays take precedence over sourceId. */
+  sourceIds?: string[];
 }
 
 interface ChunkWithScore {
@@ -55,6 +57,9 @@ export async function expandAnchors(
   opts: TwoPassOpts = {},
 ): Promise<ChunkWithScore[]> {
   const depth = Math.min(Math.max(opts.walkDepth ?? 0, 0), MAX_WALK_DEPTH);
+  const federatedSourceIds = opts.sourceIds && opts.sourceIds.length > 0
+    ? opts.sourceIds
+    : undefined;
   if (depth === 0 && !opts.nearSymbol) {
     return anchors.map(a => ({
       chunk_id: a.chunk_id,
@@ -84,15 +89,23 @@ export async function expandAnchors(
   // filter; undefined → cross-source (matches the documented contract).
   if (opts.nearSymbol) {
     try {
-      const rows = opts.sourceId
+      const rows = federatedSourceIds
         ? await engine.executeRaw<{ id: number }>(
+            `SELECT cc.id FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+             WHERE cc.symbol_name_qualified = $1 AND p.source_id = ANY($2::text[])
+             LIMIT 50`,
+            [opts.nearSymbol, federatedSourceIds],
+          )
+        : opts.sourceId
+          ? await engine.executeRaw<{ id: number }>(
             `SELECT cc.id FROM content_chunks cc
              JOIN pages p ON p.id = cc.page_id
              WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2
              LIMIT 50`,
             [opts.nearSymbol, opts.sourceId],
           )
-        : await engine.executeRaw<{ id: number }>(
+          : await engine.executeRaw<{ id: number }>(
             `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
             [opts.nearSymbol],
           );
@@ -147,8 +160,17 @@ export async function expandAnchors(
       // boundaries silently in multi-source brains.
       if (unresolvedTargets.length > 0) {
         try {
-          const resolved = opts.sourceId
+          const resolved = federatedSourceIds
             ? await engine.executeRaw<{ id: number }>(
+                `SELECT cc.id FROM content_chunks cc
+                 JOIN pages p ON p.id = cc.page_id
+                 WHERE cc.symbol_name_qualified = ANY($1::text[])
+                   AND p.source_id = ANY($2::text[])
+                 LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
+                [unresolvedTargets, federatedSourceIds],
+              )
+            : opts.sourceId
+              ? await engine.executeRaw<{ id: number }>(
                 `SELECT cc.id FROM content_chunks cc
                  JOIN pages p ON p.id = cc.page_id
                  WHERE cc.symbol_name_qualified = ANY($1::text[])
@@ -156,7 +178,7 @@ export async function expandAnchors(
                  LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
                 [unresolvedTargets, opts.sourceId],
               )
-            : await engine.executeRaw<{ id: number }>(
+              : await engine.executeRaw<{ id: number }>(
                 `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
                 [unresolvedTargets],
               );
@@ -166,7 +188,32 @@ export async function expandAnchors(
         }
       }
 
-      for (const tid of directChunkIds) {
+      // Resolved chunk edges can cross sources even when the originating edge
+      // carries an allowed source. Filter the destination page itself. A scope
+      // query failure must fail closed rather than exposing an unverified row.
+      let scopedChunkIds = directChunkIds;
+      if (directChunkIds.length > 0 && (federatedSourceIds || opts.sourceId)) {
+        try {
+          const scoped = federatedSourceIds
+            ? await engine.executeRaw<{ id: number }>(
+                `SELECT cc.id FROM content_chunks cc
+                 JOIN pages p ON p.id = cc.page_id
+                 WHERE cc.id = ANY($1::int[]) AND p.source_id = ANY($2::text[])`,
+                [directChunkIds, federatedSourceIds],
+              )
+            : await engine.executeRaw<{ id: number }>(
+                `SELECT cc.id FROM content_chunks cc
+                 JOIN pages p ON p.id = cc.page_id
+                 WHERE cc.id = ANY($1::int[]) AND p.source_id = $2`,
+                [directChunkIds, opts.sourceId],
+              );
+          scopedChunkIds = scoped.map((row) => row.id);
+        } catch {
+          scopedChunkIds = [];
+        }
+      }
+
+      for (const tid of scopedChunkIds) {
         if (seen.has(tid)) continue;
         const nbScore = current.score * decay;
         seen.set(tid, { chunk_id: tid, score: nbScore, hop, source: 'neighbor' });
@@ -189,8 +236,20 @@ export async function expandAnchors(
 export async function hydrateChunks(
   engine: BrainEngine,
   chunkIds: number[],
+  opts: Pick<TwoPassOpts, 'sourceId' | 'sourceIds'> = {},
 ): Promise<SearchResult[]> {
   if (chunkIds.length === 0) return [];
+  const federatedSourceIds = opts.sourceIds && opts.sourceIds.length > 0
+    ? opts.sourceIds
+    : undefined;
+  const scopeSql = federatedSourceIds
+    ? ' AND p.source_id = ANY($2::text[])'
+    : opts.sourceId
+      ? ' AND p.source_id = $2'
+      : '';
+  const params: unknown[] = [chunkIds];
+  if (federatedSourceIds) params.push(federatedSourceIds);
+  else if (opts.sourceId) params.push(opts.sourceId);
   const rows = await engine.executeRaw<{
     slug: string; page_id: number; title: string; type: string; source_id: string;
     chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
@@ -198,13 +257,19 @@ export async function hydrateChunks(
   }>(
     `SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-            p.frontmatter->>'message_id' AS message_id,
-            p.frontmatter->>'thread_id' AS thread_id,
-            p.frontmatter->>'subject' AS source_subject
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              THEN p.frontmatter->>'message_id' END AS message_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string'
+              THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              AND jsonb_typeof(p.frontmatter->'subject') = 'string'
+              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[])`,
-    [chunkIds],
+       WHERE cc.id = ANY($1::int[])${scopeSql}`,
+    params,
   );
   return rows.map((r) => ({
     slug: r.slug,

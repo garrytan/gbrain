@@ -15,7 +15,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { expandAnchors } from '../../src/core/search/two-pass.ts';
+import { expandAnchors, hydrateChunks } from '../../src/core/search/two-pass.ts';
+import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -82,6 +83,43 @@ describe('v0.34 W0a — multi-source isolation in two-pass retrieval', () => {
     for (const r of rows) {
       expect(r.source_id).toBe('source-b');
     }
+  });
+
+  test('expandAnchors honors federated sourceIds grants', async () => {
+    const result = await expandAnchors(engine, [], {
+      walkDepth: 0,
+      nearSymbol: 'parseMarkdown',
+      sourceIds: ['source-a'],
+    });
+    const chunkIds = result.map((r) => r.chunk_id);
+    const rows = await engine.executeRaw<{ chunk_id: number; source_id: string }>(
+      `SELECT cc.id AS chunk_id, p.source_id
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE cc.id = ANY($1::int[])`,
+      [chunkIds],
+    );
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.source_id).toBe('source-a');
+  });
+
+  test('hydrateChunks honors federated sourceIds grants', async () => {
+    const chunkRows = await engine.executeRaw<{ id: number }>(
+      `SELECT cc.id FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE cc.symbol_name_qualified = 'parseMarkdown'
+         ORDER BY p.source_id`,
+      [],
+    );
+    const rows = await hydrateChunks(
+      engine,
+      chunkRows.map((row) => row.id),
+      { sourceIds: ['source-a'] },
+    );
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.source_id).toBe('source-a');
   });
 
   test('expandAnchors with nearSymbol and NO sourceId returns chunks from both sources (legacy cross-source mode preserved)', async () => {
@@ -155,6 +193,28 @@ describe('v0.34 W0a — multi-source isolation in two-pass retrieval', () => {
       expect(r.source_id).toBe('source-a');
     }
   });
+
+  test('hybrid two-pass expansion honors federated sourceIds for direct chunk edges', async () => {
+    const results = await hybridSearch(engine, 'callerInA', {
+      walkDepth: 1,
+      nearSymbol: 'callerInA',
+      sourceIds: ['source-a'],
+      expansion: false,
+      useCache: false,
+      mode: 'conservative',
+      autocut: false,
+      adaptiveReturn: false,
+      limit: 50,
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    for (const result of results) {
+      expect(result.source_id).toBe('source-a');
+      expect(result.message_id).not.toBe('<denied@example.com>');
+      expect(result.thread_id).not.toBe('denied-thread');
+      expect(result.source_subject).not.toBe('Denied exact subject');
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -197,7 +257,9 @@ async function seedTwoSourcesWithSharedSymbol(engine: PGLiteEngine): Promise<voi
   // Page B: contains parseMarkdown in source-b
   const pageB = await engine.executeRaw<{ id: number }>(
     `INSERT INTO pages (slug, source_id, title, type, compiled_truth, frontmatter, updated_at, created_at)
-     VALUES ('code/src/markdown-b.ts', 'source-b', 'markdown-b.ts', 'code', 'export function parseMarkdown(s: string) { return s; }', '{}'::jsonb, NOW(), NOW())
+     VALUES ('code/src/markdown-b.ts', 'source-b', 'markdown-b.ts', 'code', 'export function parseMarkdown(s: string) { return s; }',
+       '{"message_id":"<denied@example.com>","thread_id":"denied-thread","subject":"Denied exact subject"}'::jsonb,
+       NOW(), NOW())
      RETURNING id`,
     [],
   );
@@ -231,4 +293,20 @@ async function seedTwoSourcesWithSharedSymbol(engine: PGLiteEngine): Promise<voi
      VALUES ($1, 'callerInA', 'parseMarkdown', 'calls', 'source-a', '{}'::jsonb)`,
     [callerChunk[0]!.id],
   );
+
+  // A resolved direct edge crossing into source-b. The two-pass walk must
+  // discard this neighbor for both scalar sourceId and federated sourceIds.
+  const deniedChunk = await engine.executeRaw<{ id: number }>(
+    `SELECT cc.id FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE p.source_id = 'source-b' AND cc.symbol_name_qualified = 'parseMarkdown' LIMIT 1`,
+    [],
+  );
+  await engine.addCodeEdges([{
+    from_chunk_id: callerChunk[0]!.id,
+    to_chunk_id: deniedChunk[0]!.id,
+    from_symbol_qualified: 'callerInA',
+    to_symbol_qualified: 'parseMarkdown',
+    edge_type: 'calls',
+  }]);
 }

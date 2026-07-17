@@ -1407,6 +1407,7 @@ export async function hybridSearch(
         walkDepth,
         nearSymbol: opts?.nearSymbol,
         sourceId: opts?.sourceId,
+        sourceIds: opts?.sourceIds,
       });
       // Resolve new chunk IDs (not already in fused) into full rows.
       const existingIds = new Set(fused.map(r => r.chunk_id));
@@ -1414,7 +1415,10 @@ export async function hybridSearch(
         .filter(e => !existingIds.has(e.chunk_id))
         .map(e => e.chunk_id);
       if (newIds.length > 0) {
-        const hydrated = await hydrateChunks(engine, newIds);
+        const hydrated = await hydrateChunks(engine, newIds, {
+          sourceId: opts?.sourceId,
+          sourceIds: opts?.sourceIds,
+        });
         const scoreById = new Map(expanded.map(e => [e.chunk_id, e.score]));
         for (const r of hydrated) {
           r.score = scoreById.get(r.chunk_id) ?? 0.01;

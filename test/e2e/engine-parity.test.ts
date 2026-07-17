@@ -254,6 +254,42 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       expect(result?.thread_id).toBe('thread-whitespace');
       expect(result?.source_subject).toBeUndefined();
     }
+
+    const malformedSlug = 'notes/numeric-email-frontmatter';
+    const malformedPage = {
+      type: 'note' as const,
+      title: 'Numeric email frontmatter',
+      compiled_truth: 'unique numeric email frontmatter evidence',
+      timeline: '',
+      frontmatter: {
+        message_id: 12345,
+        thread_id: 67890,
+        subject: 98765,
+      },
+    };
+    const malformedChunks = [{
+      chunk_index: 0,
+      chunk_text: malformedPage.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+      embedding: basisEmbedding(79),
+    }];
+    await pgEngine.putPage(malformedSlug, malformedPage);
+    await pgEngine.upsertChunks(malformedSlug, malformedChunks);
+    await pgliteEngine.putPage(malformedSlug, malformedPage);
+    await pgliteEngine.upsertChunks(malformedSlug, malformedChunks);
+
+    for (const result of [
+      (await pgEngine.searchKeyword('unique numeric email frontmatter evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique numeric email frontmatter evidence'))[0],
+      (await pgEngine.searchKeywordChunks('unique numeric email frontmatter evidence'))[0],
+      (await pgliteEngine.searchKeywordChunks('unique numeric email frontmatter evidence'))[0],
+      (await pgEngine.searchVector(basisEmbedding(79)))[0],
+      (await pgliteEngine.searchVector(basisEmbedding(79)))[0],
+    ]) {
+      expect(result?.message_id).toBeUndefined();
+      expect(result?.thread_id).toBeUndefined();
+      expect(result?.source_subject).toBeUndefined();
+    }
   });
 
   test('hard-exclude is consistent across engines', async () => {

@@ -238,6 +238,18 @@ describe('PGLiteEngine: Search', () => {
     await engine.upsertChunks('mail/whitespace-message-id', [
       { chunk_index: 0, chunk_text: 'Whitespace-only email identity evidence', chunk_source: 'compiled_truth' },
     ]);
+    await engine.putPage('notes/numeric-email-frontmatter', {
+      type: 'note', title: 'Numeric email frontmatter',
+      compiled_truth: 'Numeric email identity evidence.',
+      frontmatter: {
+        message_id: 12345,
+        thread_id: 67890,
+        subject: 98765,
+      },
+    });
+    await engine.upsertChunks('notes/numeric-email-frontmatter', [
+      { chunk_index: 0, chunk_text: 'Numeric email identity evidence', chunk_source: 'compiled_truth' },
+    ]);
   });
 
   test('searchKeyword returns results for matching term', async () => {
@@ -264,6 +276,13 @@ describe('PGLiteEngine: Search', () => {
     const results = await engine.searchKeyword('Whitespace-only email identity');
     expect(results[0].message_id).toBeUndefined();
     expect(results[0].thread_id).toBe('thread-whitespace');
+    expect(results[0].source_subject).toBeUndefined();
+  });
+
+  test('searchKeyword rejects non-string email citation frontmatter', async () => {
+    const results = await engine.searchKeyword('Numeric email identity');
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBeUndefined();
     expect(results[0].source_subject).toBeUndefined();
   });
 
