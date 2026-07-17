@@ -898,3 +898,14 @@
 - 解决方案：运行现有 `bun run build:llms` 同步生成器产出的 `llms-full.txt`；将 Release 桌面依赖安装改为 `bun install --trust`，保留需要执行原生依赖安装脚本的行为。
 - 是否完成：进行中
 - 最终结果：已在本地重建文档、通过生成器回归测试，并在本地验证 `bun install --trust`；等待 GitHub Actions 复验。
+
+## 2026-07-17 GitHub Actions 测试隔离修复
+
+- 时间：2026-07-17
+- 版本号：PMBrain 1.1.26
+- 标题：清理自定义 OpenAI 测试的全局 Gateway 配置，修复 Test 分片污染
+- 描述：PR #11 的 `test (9)` 在 `capture` 集成测试中尝试访问 `custom-openai:qwen-embedding`，导致该分片失败。
+- 根因：`test/ai/recipe-custom-openai.test.ts` 通过 `configureGateway()` 修改了进程级 Gateway 配置，但文件结束时没有调用 `resetGateway()`。
+- 解决方案：增加文件级 `afterAll(() => resetGateway())`，测试结束后恢复 Gateway 初始状态；不改变生产代码和用户数据。
+- 是否完成：进行中
+- 最终结果：已完成本地定向修复，等待 GitHub Actions 复验。
