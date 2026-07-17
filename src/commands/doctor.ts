@@ -848,6 +848,11 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
 
+  // 9b. serve_process_accumulation: leaked stdio serves hold DB
+  // connections — the remote/MCP surface is where accumulation-prone
+  // (MCP-heavy) operators actually look. ps scan, engine-free.
+  checks.push(await checkServeProcessAccumulation());
+
   // 9a. v0.40.4 graph_signals_coverage: when graph_signals is enabled
   // (via mode bundle default or explicit config override), surface
   // whether link density is high enough for the signal to fire
@@ -1484,6 +1489,126 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
       name: 'voice_gate_health',
       status: 'warn',
       message: `Could not check voice gate health: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * serve_process_accumulation doctor check (#1163 visibility).
+ *
+ * Counts live `gbrain serve` STDIO processes on this host. MCP clients that
+ * die without closing stdin — SSH half-open sessions, slept laptops, crashed
+ * hosts — leak servers that sit on ~100MB RSS and a held DB connection each,
+ * and over days exhaust the session pool (#1163). The `--stdio-idle-timeout`
+ * escape hatch exists (#446) but ships default-OFF, so operators only learn
+ * about it after the pool is already wedged. This check is the signpost.
+ *
+ * Detection is a `ps` scan (POSIX only; Windows returns ok/not-applicable).
+ * `serve --http` daemons are excluded — a long-lived HTTP server is the
+ * intended topology, not a leak. Fail-open: any ps/parse error returns ok
+ * (informational check; must never fail doctor on an exotic ps).
+ *
+ * Threshold: warn at >=3 concurrent stdio serves. 1-2 is normal multi-window
+ * use; 3+ concurrent editors on one brain is rare enough that the more likely
+ * explanation is accumulation. Live observation that motivated the check:
+ * 5 concurrent serves, oldest 1d9h, every client long gone.
+ */
+export interface ServeProcessRow {
+  pid: number;
+  /** ps ELAPSED format: [[dd-]hh:]mm:ss */
+  etime: string;
+  command: string;
+}
+
+/** Parse `ps -axo pid=,etime=,command=` output into serve rows (pure). */
+export function parseServeProcesses(psOutput: string): ServeProcessRow[] {
+  const rows: ServeProcessRow[] = [];
+  for (const line of psOutput.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/);
+    if (!m) continue;
+    const command = m[3]!;
+    // Token-boundary match: "…/gbrain serve" or "gbrain serve" — but not
+    // `serve --http` (legit daemon) and not unrelated argv mentioning the
+    // words (e.g. an editor open on serve.ts).
+    if (!/(^|[/\s])gbrain\s+serve(\s|$)/.test(command)) continue;
+    if (/--http(\s|$)/.test(command)) continue;
+    rows.push({ pid: parseInt(m[1]!, 10), etime: m[2]!, command });
+  }
+  return rows;
+}
+
+/** ps ELAPSED ([[dd-]hh:]mm:ss) → seconds; -1 when unparseable (pure). */
+export function parseEtimeSeconds(etime: string): number {
+  const m = etime.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+  if (!m) return -1;
+  const [, dd, hh, mm, ss] = m;
+  return (
+    (dd ? parseInt(dd, 10) * 86400 : 0) +
+    (hh ? parseInt(hh, 10) * 3600 : 0) +
+    parseInt(mm!, 10) * 60 +
+    parseInt(ss!, 10)
+  );
+}
+
+const SERVE_ACCUMULATION_WARN_THRESHOLD = 3;
+
+/** Threshold + message logic, split from the ps scan for direct testing (pure). */
+export function computeServeAccumulationCheck(rows: ServeProcessRow[]): Check {
+  if (rows.length < SERVE_ACCUMULATION_WARN_THRESHOLD) {
+    return {
+      name: 'serve_process_accumulation',
+      status: 'ok',
+      message: `${rows.length} gbrain serve stdio process(es) running`,
+    };
+  }
+  const oldest = rows.reduce((a, b) =>
+    parseEtimeSeconds(b.etime) > parseEtimeSeconds(a.etime) ? b : a,
+  );
+  return {
+    name: 'serve_process_accumulation',
+    status: 'warn',
+    message:
+      `${rows.length} concurrent gbrain serve stdio processes (oldest up ${oldest.etime}). ` +
+      `Clients that die without closing stdin (SSH half-open, slept laptop) leak servers ` +
+      `that each hold a DB connection. Fix: launch with \`gbrain serve --stdio-idle-timeout ` +
+      `<seconds>\` so abandoned servers exit on their own, and reap the current strays.`,
+  };
+}
+
+/**
+ * Test seam — inject a fake ps runner. Production uses execFile('ps', …).
+ */
+export type PsRunner = () => Promise<string>;
+
+export async function checkServeProcessAccumulation(psRunner?: PsRunner): Promise<Check> {
+  if (process.platform === 'win32' && !psRunner) {
+    return {
+      name: 'serve_process_accumulation',
+      status: 'ok',
+      message: 'Not applicable on Windows (ps scan is POSIX-only)',
+    };
+  }
+  try {
+    const runPs: PsRunner =
+      psRunner ??
+      (async () => {
+        const { execFile } = await import('node:child_process');
+        return await new Promise<string>((resolve, reject) => {
+          execFile(
+            'ps',
+            ['-axo', 'pid=,etime=,command='],
+            { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
+            (err, stdout) => (err ? reject(err) : resolve(stdout)),
+          );
+        });
+      });
+    return computeServeAccumulationCheck(parseServeProcesses(await runPs()));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'serve_process_accumulation',
+      status: 'ok',
+      message: `Skipped (ps scan unavailable: ${msg})`,
     };
   }
 }
@@ -5206,6 +5331,11 @@ export async function buildChecks(
   } catch {
     // Filesystem read failure is non-fatal.
   }
+
+  // serve_process_accumulation — ps scan, no DB. Runs in every mode
+  // including --fast/DB-down: pool exhaustion from leaked serves is
+  // exactly the state where doctor gets run degraded.
+  checks.push(await checkServeProcessAccumulation());
 
   // --- DB checks (skip if --fast or no engine) ---
 
