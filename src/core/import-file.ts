@@ -9,6 +9,7 @@ import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION }
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
+import { throwIfAborted } from './abort-check.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -293,6 +294,16 @@ export async function importFromContent(
      * leave it unset → markers preserved (the gate + CLI own them).
      */
     remote?: boolean;
+    /**
+     * #1950 cooperative cancellation. Observed at the async phase
+     * boundaries (post-parse, pre-embed, pre-DB-write) via
+     * `throwIfAborted`, and threaded into `embedBatch` so an in-flight
+     * embedding request is reaped too — a stuck embed network call was
+     * exactly the wedge the sync stall watchdog could detect but not
+     * interrupt. Never checked inside the DB transaction: a file either
+     * lands atomically or not at all. Unset → pre-existing behavior.
+     */
+    signal?: AbortSignal;
   } = {},
 ): Promise<ImportResult> {
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
@@ -349,6 +360,10 @@ export async function importFromContent(
       content_type: 'markdown',
     },
   });
+
+  // #1950: post-parse abort boundary — bail before content-sanity, hash,
+  // chunking, embedding, and the DB write.
+  throwIfAborted(opts.signal);
 
   // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
   // sees the parsed body (compiled_truth + timeline), title, and
@@ -715,7 +730,11 @@ export async function importFromContent(
     const wrappedTexts = prefix
       ? chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source))
       : chunks.map((c) => c.chunk_text);
-    const embeddings = await embedBatch(wrappedTexts);
+    // #1950: pre-embed abort boundary, and the signal rides into the
+    // gateway call so an in-flight embed request aborts instead of
+    // wedging the whole sync until the network gives up.
+    throwIfAborted(opts.signal);
+    const embeddings = await embedBatch(wrappedTexts, { abortSignal: opts.signal });
     for (let i = 0; i < chunks.length; i++) {
       chunks[i].embedding = embeddings[i];
       // token_count tracks the wrapped string length so cost reporting
@@ -734,6 +753,10 @@ export async function importFromContent(
           crMode: effectiveCRMode,
           haikuModel: 'anthropic:claude-haiku-4-5-20251001',
         });
+
+  // #1950: pre-DB-write abort boundary. The LAST check — never inside the
+  // transaction, so a file either lands atomically or not at all.
+  throwIfAborted(opts.signal);
 
   // Transaction wraps all DB writes. Every per-page tx call carries the
   // caller's sourceId so writes target (sourceId, slug) rather than the
@@ -929,8 +952,14 @@ export async function importFromFile(
      * never per file (codex perf finding #7).
      */
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+    /** #1950 cooperative cancellation; threaded to importFromContent /
+     *  importCodeFile — see importFromContent's docstring. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<ImportResult> {
+  // #1950: entry abort boundary — a drain that has already been aborted
+  // must not start reading the next file.
+  throwIfAborted(opts.signal);
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -949,6 +978,7 @@ export async function importFromFile(
     return importCodeFile(engine, relativePath, content, {
       noEmbed: opts.noEmbed,
       sourceId: opts.sourceId,
+      signal: opts.signal,
     });
   }
 
@@ -1057,7 +1087,13 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string } = {},
+  opts: {
+    noEmbed?: boolean;
+    force?: boolean;
+    sourceId?: string;
+    /** #1950 cooperative cancellation — see importFromContent's docstring. */
+    signal?: AbortSignal;
+  } = {},
 ): Promise<ImportResult> {
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
@@ -1085,6 +1121,10 @@ export async function importCodeFile(
       language: lang,
     },
   });
+
+  // #1950: post-guard abort boundary — bail before hash, chunking,
+  // embedding, and the DB write.
+  throwIfAborted(opts.signal);
 
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.
@@ -1152,16 +1192,26 @@ export async function importCodeFile(
   if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
-      const embeddings = await embedBatch(textsToEmbed);
+      // #1950: pre-embed abort boundary + in-flight cancellation of the
+      // gateway request itself (a stuck embed call is the documented wedge).
+      throwIfAborted(opts.signal);
+      const embeddings = await embedBatch(textsToEmbed, { abortSignal: opts.signal });
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
+      // A cancelled import must NOT fall through to the vectorless-landing
+      // path below — re-throw aborts (both the local AbortError class and a
+      // DOMException surfaced by an aborted gateway fetch share the name).
+      if (e instanceof Error && e.name === 'AbortError') throw e;
       console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+
+  // #1950: pre-DB-write abort boundary — never inside the transaction.
+  throwIfAborted(opts.signal);
 
   // Store. Every per-page tx call carries `txOpts.sourceId` so multi-source
   // brains write to the correct (source_id, slug) row instead of duplicating
