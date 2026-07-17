@@ -1,11 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import {
   applyOpenAICompatConfig,
   configureGateway,
   defaultResolveAuth,
   detectEmbeddingDimensions,
+  resetGateway,
 } from '../../src/core/ai/gateway.ts';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
+
+afterAll(() => resetGateway());
 
 describe('custom-openai recipe', () => {
   test('registers one stable OpenAI-compatible provider for user-supplied models', () => {
