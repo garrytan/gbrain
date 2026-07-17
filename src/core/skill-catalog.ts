@@ -295,7 +295,13 @@ export function confineManifestPath(skillsDir: string, entry: ManifestEntry): st
 function opCallableByCaller(op: Operation, ctx: OperationContext): boolean {
   if (ctx.remote === false) return true; // local CLI — OS is the trust boundary
   if (op.localOnly) return false; // not reachable over a remote transport
-  return hasScope(ctx.auth?.scopes ?? [], op.scope ?? 'read');
+  // Stdio MCP (`gbrain serve` with no AuthInfo): dispatch does NOT scope-gate
+  // (see src/mcp/server.ts). Claiming usable_tools=[] makes list_skills /
+  // get_skill dishonest and breaks skill-following agents (Hermes, Claude
+  // Desktop, etc.). HTTP always attaches AuthInfo and enforces hasScope in
+  // serve-http.ts — that path is unaffected.
+  if (!ctx.auth) return true;
+  return hasScope(ctx.auth.scopes ?? [], op.scope ?? 'read');
 }
 
 /**
