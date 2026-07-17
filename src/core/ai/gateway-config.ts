@@ -30,6 +30,7 @@ export function buildGatewayConfig(config: GBrainConfig): AIGatewayConfig {
     chat_fallback_chain: config.chat_fallback_chain,
     base_urls: { ...envBaseUrls, ...(config.provider_base_urls ?? {}) },
     touchpoint_base_urls: config.provider_touchpoint_base_urls,
+    touchpoint_api_keys: config.provider_touchpoint_api_keys,
     env: { ...envFromConfig, ...process.env },
   };
 }

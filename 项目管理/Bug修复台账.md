@@ -1,5 +1,16 @@
 # Bug 修复台账
 
+## 2026-07-17 自定义普通模型与向量模型 API Key 覆盖修复
+
+- 时间：2026-07-17
+- 版本号：PMBrain 1.1.28；PMBrain Desktop 1.0.69
+- 标题：修复 custom-openai 普通模型与向量模型只能使用同一个 API Key
+- 描述：企业内网把对话服务和向量服务部署在不同端口并使用不同凭证时，桌面端虽然展示两个 API Key 输入框，但保存向量模型会覆盖普通模型使用的共享 Key，导致其中一个服务鉴权失败。
+- 根因：普通供应商分别写入各自的供应商级 Key，而两个自定义入口都固定路由到 `custom-openai`，旧实现把两处输入都映射到同一个 `custom_openai_api_key`，核心网关也只按供应商读取该共享字段。
+- 解决方案：新增 `provider_touchpoint_api_keys`，按 Chat、Embedding、Expansion 和 Reranker 触点保存并解析凭证；Desktop 将普通模型与向量模型映射到独立 Key，Expansion 默认跟随 Chat，真实文本与多模态向量请求都统一使用 Embedding Key。旧 `custom_openai_api_key` 保留为兼容回退，供应商诊断与管理台状态同时改用统一配置链路，嵌套密钥在配置输出中整体脱敏。
+- 是否完成：是
+- 最终结果：custom-openai 的普通模型与向量模型可同时使用不同 Base URL、模型 ID 和 API Key；旧版共享 Key 配置无需迁移，不使用自定义模型的用户仍沿用原供应商字段和调用路径。未修改知识库、向量数据或原始资料。
+
 ## 2026-07-17 更换向量模型未全量重算修复
 
 - 时间：2026-07-17

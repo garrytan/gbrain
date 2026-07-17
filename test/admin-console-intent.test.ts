@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { buildCaptureCommand, buildDreamCommand, buildMarkdownExportCommand, commandForPreview, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
+import { getAdminLlmStatus } from '../src/commands/natural-lang/llm.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
 describe('admin console intent planning', () => {
@@ -109,6 +110,21 @@ describe('admin console intent planning', () => {
 
     expect(preview.intent).toBe('search_brain');
     expect(preview.slots.query).toBe('项目文档');
+  });
+
+  test('custom OpenAI chat is ready with a chat endpoint and an optional touchpoint key', () => {
+    const status = getAdminLlmStatus({
+      chat_model: 'custom-openai:qwen-chat',
+      provider_touchpoint_base_urls: {
+        'custom-openai': { chat: 'http://127.0.0.1:8000/v1' },
+      },
+      provider_touchpoint_api_keys: {
+        'custom-openai': { chat: 'chat-key' },
+      },
+    } as any);
+
+    expect(status.enabled).toBe(true);
+    expect(status.missing).toEqual([]);
   });
 
   test('knowledge questions use the existing think synthesis command', () => {

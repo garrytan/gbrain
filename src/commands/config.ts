@@ -25,6 +25,7 @@ function redactUrl(url: string): string {
 // false-positives (e.g. `monkey` doesn't match `key`).
 export function isSensitiveConfigKey(key: string): boolean {
   const lower = key.toLowerCase();
+  if (lower === 'provider_touchpoint_api_keys' || lower.startsWith('provider_touchpoint_api_keys.')) return true;
   // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
@@ -121,7 +122,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
     console.log('PMBrain config:');
     for (const [k, v] of Object.entries(config)) {
-      const display = typeof v === 'string' ? redactConfigValue(k, v) : v;
+      const display = isSensitiveConfigKey(k) ? '***' : typeof v === 'string' ? redactConfigValue(k, v) : v;
       console.log(`  ${k}: ${display}`);
     }
     return;

@@ -146,7 +146,7 @@ Windows 桌面端目前仍属于内测版本，安装或使用过程中可能会
 
 完整的新用户前置条件、首次配置、老用户升级和故障处理请阅读：[PMBrain 桌面版安装与首次使用](docs/desktop/安装与首次使用.md)。
 
-运行最新的 `PMBrain-Windows-x64-Setup-*.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、配置所需模型并选择知识库目录；本地 Qwen 等 OpenAI 兼容服务可为普通模型和向量模型分别填写 Base URL、模型 ID，并共用可选 API Key。桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
+运行最新的 `PMBrain-Windows-x64-Setup-*.exe` 后，桌面端会优先读取现有 `.pmbrain/config.json`，并兼容读取旧版 `.gbrain/config.json`；已有数据库和 API Key 会直接沿用，只有本机没有配置时才打开首次配置向导。首次配置时，用户只需选择 PGLite 本地数据库或 Docker Postgres、配置所需模型并选择知识库目录；本地 Qwen 等 OpenAI 兼容服务可为普通模型和向量模型分别填写 Base URL、模型 ID 和可选 API Key，因此可连接不同端口并使用不同凭证。桌面端会生成 `config.json`、初始化数据库、注册知识库 Source，并固定本机管理员 bootstrap token。
 
 安装包已内置固定版本、校验过的 Bun x64 baseline 运行时、PGLite 数据库及其 WASM 资源，可兼容不支持 AVX2 的较老 x64 CPU；选择 PGLite 时不需要另装 Bun、Docker 或 Postgres。首次安装会使用安装包内置的 PMBrain sidecar 自动创建数据库并执行迁移，不依赖系统 PATH、`gbrain.exe` 或用户手动命令。配置完成后可在桌面端生成 CodeBuddy、Workbuddy、Cursor、Claude Code、Codex、QwenPaw 的 MCP 接入配置，并在写入前备份原配置、合并 `pmbrain` 节点和执行 MCP smoke test。QwenPaw 2.x 通过其本机 API 安全更新 DriverCard 和凭证库，完整写入 Bearer Header，并以 QwenPaw 实际工具列表再次确认连接；旧版继续兼容 `%USERPROFILE%\.qwenpaw\config.json`，不会覆盖已有客户端。数据库模式可在配置页中切换；切换失败时会恢复原配置。
 

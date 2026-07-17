@@ -272,9 +272,17 @@ export function applyResolveAuth(
   cfg: AIGatewayConfig,
   touchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
 ): { apiKey?: string; headers?: Record<string, string> } {
+  const touchpointKeys = cfg.touchpoint_api_keys?.[recipe.id];
+  const touchpointKey = touchpointKeys?.[touchpoint]
+    ?? (touchpoint === 'expansion' ? touchpointKeys?.chat : undefined);
+  const authEnvName = recipe.auth_env?.required[0]
+    ?? (recipe.auth_env?.optional ?? []).find(name => !/_(BASE_)?URL$/.test(name));
+  const authEnv = touchpointKey && authEnvName
+    ? { ...cfg.env, [authEnvName]: touchpointKey }
+    : cfg.env;
   const resolved = recipe.resolveAuth
-    ? recipe.resolveAuth(cfg.env)
-    : defaultResolveAuth(recipe, cfg.env, touchpoint);
+    ? recipe.resolveAuth(authEnv)
+    : defaultResolveAuth(recipe, authEnv, touchpoint);
 
   // v0.37.6.0 — resolve default_headers (static or env-templated). Mutually
   // exclusive; declaring both is a config error.
@@ -389,6 +397,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     reranker_model: config.reranker_model,
     base_urls: config.base_urls,
     touchpoint_base_urls: config.touchpoint_base_urls,
+    touchpoint_api_keys: config.touchpoint_api_keys,
     env: config.env,
   };
   _modelCache.clear();
@@ -1756,9 +1765,7 @@ async function embedMultimodalOpenAICompat(
   // hard-required-auth recipes (OpenAI Authorization: Bearer
   // OPENAI_API_KEY) both work via the same code path. Throws AIConfigError
   // when required env is missing.
-  const authResult = recipe.resolveAuth
-    ? recipe.resolveAuth(cfg.env)
-    : defaultResolveAuth(recipe, cfg.env, 'embedding');
+  const auth = applyResolveAuth(recipe, cfg, 'embedding');
   const baseUrl = configuredBaseURL(cfg, recipe.id, 'embedding') ?? recipe.base_url_default;
   if (!baseUrl) {
     throw new AIConfigError(
@@ -1812,7 +1819,8 @@ async function embedMultimodalOpenAICompat(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          [authResult.headerName]: authResult.token,
+          ...(auth.headers ?? {}),
+          ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
         },
         body: JSON.stringify(body),
       });

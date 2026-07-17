@@ -135,14 +135,20 @@ function normalizeProviderForModel(provider: string): string {
   return trimmed === 'zeroentropy' ? 'zeroentropyai' : trimmed;
 }
 
-function providerKeyId(provider: string): string | null {
+type ModelKind = 'chat' | 'embedding';
+
+function providerKeyId(provider: string, kind?: ModelKind): string | null {
   const normalized = normalizeProviderForModel(provider);
   // 本地 provider，不需要 API Key
   if (['ollama', 'llama-server', 'litellm', 'llama-server-reranker'].includes(normalized)) {
     return '__none__';
   }
   if (normalized === 'zeroentropyai') return 'zeroentropy';
-  if (normalized === 'custom-openai') return 'customOpenai';
+  if (normalized === 'custom-openai') {
+    return kind === 'embedding' ? 'customOpenaiEmbedding'
+      : kind === 'chat' ? 'customOpenaiChat'
+        : 'customOpenai';
+  }
   if (['mimo', 'zhipu', 'deepseek', 'openai', 'anthropic',
     'google', 'voyage', 'groq', 'together', 'openrouter',
     'minimax', 'dashscope',
@@ -159,7 +165,6 @@ function composeModelId(provider: string, model: string): string {
   return `${normalizedProvider}:${trimmedModel}`;
 }
 
-type ModelKind = 'chat' | 'embedding';
 const ADVANCED_TIERS = ['utility', 'reasoning', 'deep', 'subagent'] as const satisfies readonly AdvancedModelTier[];
 const ADVANCED_TIER_LABELS: Record<AdvancedModelTier, string> = {
   utility: '轻量任务',
@@ -171,7 +176,7 @@ const ADVANCED_TIER_LABELS: Record<AdvancedModelTier, string> = {
 function syncProviderKeyField(kind: ModelKind): void {
   const provider = ($<HTMLSelectElement>(`#${kind}-provider`)).value;
   const input = $<HTMLInputElement>(`#${kind}-api-key`);
-  const keyId = providerKeyId(provider);
+  const keyId = providerKeyId(provider, kind);
   const local = keyId === '__none__';
   const optional = normalizeProviderForModel(provider) === 'custom-openai';
   input.disabled = local;
@@ -969,8 +974,8 @@ function populate(next: DesktopSetupState): void {
   previousProviderSelection.chat = ($<HTMLSelectElement>('#chat-provider')).value;
   previousProviderSelection.embedding = ($<HTMLSelectElement>('#embedding-provider')).value;
   ($<HTMLInputElement>('#embedding-model-name')).value = embedding.model;
-  const chatKey = providerKeyId(chat.provider);
-  const embeddingKey = providerKeyId(embedding.provider);
+  const chatKey = providerKeyId(chat.provider, 'chat');
+  const embeddingKey = providerKeyId(embedding.provider, 'embedding');
   if (chatKey && chatKey !== '__none__') {
     ($<HTMLInputElement>('#chat-api-key')).value = setup.current.keyValues[chatKey] || '';
   } else {
@@ -1110,8 +1115,8 @@ async function save(): Promise<void> {
   const keys: SetupPayload['keys'] = {};
   const chatModel = composeModelId(chatProvider, chatModelName);
   const embeddingModel = composeModelId(embeddingProvider, embeddingModelName);
-  const chatKey = providerKeyId(chatProvider);
-  const embeddingKey = providerKeyId(embeddingProvider);
+  const chatKey = providerKeyId(chatProvider, 'chat');
+  const embeddingKey = providerKeyId(embeddingProvider, 'embedding');
   // 需要 Key 的供应商才保存 Key
   if (chatKey && chatKey !== '__none__') {
     const chatKeyValue = ($<HTMLInputElement>('#chat-api-key')).value.trim();

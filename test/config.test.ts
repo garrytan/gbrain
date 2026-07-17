@@ -73,6 +73,8 @@ describe('isSensitiveConfigKey (v0.36.x #892 regression)', () => {
     expect(isSensitiveConfigKey('CLIENT_SECRET')).toBe(true);
     expect(isSensitiveConfigKey('auth')).toBe(true);
     expect(isSensitiveConfigKey('passwd')).toBe(true);
+    expect(isSensitiveConfigKey('provider_touchpoint_api_keys')).toBe(true);
+    expect(isSensitiveConfigKey('provider_touchpoint_api_keys.custom-openai.chat')).toBe(true);
   });
 
   test('does NOT false-positive on lookalike substrings', () => {

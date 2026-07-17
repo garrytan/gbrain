@@ -354,7 +354,7 @@
             <label><span>模型名称（模型 ID） <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-model-id" maxlength="160" placeholder="例如：Qwen3-6B 或 Qwen3-Embedding-8B" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /><small>填写模型服务实际暴露的模型 ID，添加后会自动选入对应模型卡片。</small></label>
             <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
           </div>
-          <div class="help-dialog-foot"><small>普通模型和向量模型的 Base URL、模型 ID 分别保存，可连接不同端口；API Key 可选且仍共用，本地无鉴权接口可留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">添加模型</button></div></div>
+          <div class="help-dialog-foot"><small>普通模型和向量模型的 Base URL、模型 ID、API Key 分别保存，可连接不同端口并使用不同凭证；API Key 可选，本地无鉴权接口可留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">添加模型</button></div></div>
       </form>
     </dialog>
     <div class="wait-overlay" id="setup-wait" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wait-title" aria-describedby="setup-wait-message">

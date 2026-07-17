@@ -619,13 +619,23 @@ function getProviderStatus(config: GBrainConfig | null) {
     zeroentropyai: 'zeroentropy',
   };
   const required = provider ? providerKeyMap[provider] : null;
-  const hasRequired = required ? providers[required] : false;
+  const customOpenAiBaseUrl = config?.provider_touchpoint_base_urls?.['custom-openai']?.chat
+    ?? config?.provider_base_urls?.['custom-openai'];
+  const hasRequired = provider === 'custom-openai'
+    ? !!customOpenAiBaseUrl
+    : required ? providers[required] : false;
   return {
     chat: {
       enabled: !!chatModel && hasRequired,
       chat_model: chatModel,
       provider,
-      missing: !chatModel ? ['chat_model'] : hasRequired ? [] : [`${provider}_api_key`],
+      missing: !chatModel
+        ? ['chat_model']
+        : hasRequired
+          ? []
+          : provider === 'custom-openai'
+            ? ['provider_touchpoint_base_urls.custom-openai.chat']
+            : [`${provider}_api_key`],
     },
     providers,
   };

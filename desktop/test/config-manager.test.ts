@@ -190,6 +190,7 @@ describe('desktop config manager', () => {
     expect(config['models.default']).toBe('zhipu:glm-4-plus');
     expect(config.embedding_model).toBe('zhipu:embedding-3');
     expect(config.embedding_dimensions).toBe(1024);
+    expect(config.provider_touchpoint_api_keys).toBeUndefined();
     expect(config.admin_bootstrap_token).toMatch(/^[A-Za-z0-9_-]{32,}$/);
     expect(config.desktop.knowledge_source_id).toMatch(/^desktop-[0-9a-f]{8}$/);
     const setupInfo = getSetupInfo();
@@ -379,15 +380,24 @@ describe('desktop config manager', () => {
     });
     expect(info.current.keyStatus.customOpenai).toBe(true);
     expect(info.current.keyValues.customOpenai).toBe('local-key');
+    expect(info.current.keyStatus.customOpenaiChat).toBe(true);
+    expect(info.current.keyStatus.customOpenaiEmbedding).toBe(true);
+    expect(info.current.keyValues.customOpenaiChat).toBe('local-key');
+    expect(info.current.keyValues.customOpenaiEmbedding).toBe('local-key');
   });
 
-  test('persists and restores separate custom OpenAI chat and embedding Base URLs', () => {
+  test('persists and restores separate custom OpenAI chat and embedding endpoints and keys', () => {
     const root = isolatedHome();
     writeJsonConfig(desktopConfigPath(), {
       engine: 'pglite',
       database_path: join(root, 'brain.pglite'),
       embedding_model: 'zhipu:embedding-3',
       embedding_dimensions: 1024,
+      custom_openai_api_key: 'legacy-shared-key',
+      provider_touchpoint_api_keys: {
+        'custom-openai': { expansion: 'keep-expansion-key', reranker: 'keep-reranker-key' },
+        openrouter: { chat: 'keep-other-provider-key' },
+      },
     });
 
     saveSetup({
@@ -399,6 +409,10 @@ describe('desktop config manager', () => {
           chat: 'http://10.0.0.20:8000/v1/',
           embedding: 'http://10.0.0.20:8001/v1/',
         },
+      },
+      keys: {
+        customOpenaiChat: 'chat-key',
+        customOpenaiEmbedding: 'embedding-key',
       },
       modelConfig: {
         chatModel: 'custom-openai:Qwen3-35B-A3B',
@@ -413,6 +427,16 @@ describe('desktop config manager', () => {
       embedding: 'http://10.0.0.20:8001/v1',
     });
     expect(config.provider_base_urls['custom-openai']).toBe('http://10.0.0.20:8000/v1');
+    expect(config.custom_openai_api_key).toBe('legacy-shared-key');
+    expect(config.provider_touchpoint_api_keys).toEqual({
+      'custom-openai': {
+        expansion: 'keep-expansion-key',
+        reranker: 'keep-reranker-key',
+        chat: 'chat-key',
+        embedding: 'embedding-key',
+      },
+      openrouter: { chat: 'keep-other-provider-key' },
+    });
     expect(getSetupInfo().current.customProvider).toEqual({
       id: 'custom-openai',
       displayName: 'Enterprise Qwen',
@@ -421,6 +445,10 @@ describe('desktop config manager', () => {
         embedding: 'http://10.0.0.20:8001/v1',
       },
     });
+    const info = getSetupInfo();
+    expect(info.current.keyValues.customOpenai).toBe('legacy-shared-key');
+    expect(info.current.keyValues.customOpenaiChat).toBe('chat-key');
+    expect(info.current.keyValues.customOpenaiEmbedding).toBe('embedding-key');
   });
 
   test('rejects unsafe custom provider URLs before writing config', () => {

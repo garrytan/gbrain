@@ -93,7 +93,7 @@ export interface SetupPayload {
   keys?: Partial<Record<
     'mimo' | 'zhipu' | 'deepseek' | 'openai' | 'anthropic' | 'zeroentropy' |
     'google' | 'voyage' | 'groq' | 'together' | 'openrouter' | 'minimax' | 'dashscope' |
-    'customOpenai',
+    'customOpenai' | 'customOpenaiChat' | 'customOpenaiEmbedding',
     string
   >>;
 }
@@ -133,6 +133,7 @@ type RawConfig = Record<string, unknown> & {
   embedding_dimensions?: number;
   provider_base_urls?: Record<string, string>;
   provider_touchpoint_base_urls?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
+  provider_touchpoint_api_keys?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
   custom_openai_api_key?: string;
   admin_bootstrap_token?: string;
   desktop?: {
@@ -314,6 +315,10 @@ export function getSetupInfo(): SetupInfo {
   const customTouchpointBaseUrls = config?.provider_touchpoint_base_urls?.['custom-openai'];
   const customChatBaseUrl = customTouchpointBaseUrls?.chat?.trim() || customBaseUrl;
   const customEmbeddingBaseUrl = customTouchpointBaseUrls?.embedding?.trim() || customBaseUrl;
+  const sharedCustomKey = typeof config?.custom_openai_api_key === 'string' ? config.custom_openai_api_key : undefined;
+  const customTouchpointApiKeys = config?.provider_touchpoint_api_keys?.['custom-openai'];
+  const customChatKey = customTouchpointApiKeys?.chat?.trim() || sharedCustomKey;
+  const customEmbeddingKey = customTouchpointApiKeys?.embedding?.trim() || sharedCustomKey;
   return {
     needsSetup: !config,
     configPath: path,
@@ -353,7 +358,9 @@ export function getSetupInfo(): SetupInfo {
         openrouter: Boolean(config?.openrouter_api_key),
         minimax: Boolean(config?.minimax_api_key),
         dashscope: Boolean(config?.dashscope_api_key),
-        customOpenai: Boolean(config?.custom_openai_api_key),
+        customOpenai: Boolean(sharedCustomKey),
+        customOpenaiChat: Boolean(customChatKey),
+        customOpenaiEmbedding: Boolean(customEmbeddingKey),
       },
       keyValues: {
         mimo: typeof config?.mimo_api_key === 'string' ? config.mimo_api_key : undefined,
@@ -369,7 +376,9 @@ export function getSetupInfo(): SetupInfo {
         openrouter: typeof config?.openrouter_api_key === 'string' ? config.openrouter_api_key : undefined,
         minimax: typeof config?.minimax_api_key === 'string' ? config.minimax_api_key : undefined,
         dashscope: typeof config?.dashscope_api_key === 'string' ? config.dashscope_api_key : undefined,
-        customOpenai: typeof config?.custom_openai_api_key === 'string' ? config.custom_openai_api_key : undefined,
+        customOpenai: sharedCustomKey,
+        customOpenaiChat: customChatKey,
+        customOpenaiEmbedding: customEmbeddingKey,
       },
       lastMigratedVersion: desktop?.last_migrated_version,
     },
@@ -540,7 +549,21 @@ export function saveSetup(payload: SetupPayload): {
     customOpenai: 'custom_openai_api_key',
   };
   for (const [provider, value] of Object.entries(payload.keys ?? {})) {
-    if (value?.trim()) config[keyMap[provider]] = value.trim();
+    const configKey = keyMap[provider];
+    if (configKey && value?.trim()) config[configKey] = value.trim();
+  }
+  const customChatKey = payload.keys?.customOpenaiChat?.trim();
+  const customEmbeddingKey = payload.keys?.customOpenaiEmbedding?.trim();
+  if (customChatKey || customEmbeddingKey) {
+    const existingProviderKeys = existing.provider_touchpoint_api_keys?.['custom-openai'] ?? {};
+    config.provider_touchpoint_api_keys = {
+      ...(existing.provider_touchpoint_api_keys ?? {}),
+      'custom-openai': {
+        ...existingProviderKeys,
+        ...(customChatKey ? { chat: customChatKey } : {}),
+        ...(customEmbeddingKey ? { embedding: customEmbeddingKey } : {}),
+      },
+    };
   }
   selectModelDefaults(config);
   const chatModel = payload.modelConfig?.chatModel?.trim();

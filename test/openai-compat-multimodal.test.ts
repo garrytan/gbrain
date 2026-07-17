@@ -73,6 +73,29 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
     expect(capturedBody.input[0].image_url.url).toBe('data:image/png;base64,fake-base64-bytes');
   });
 
+  test('multimodal embedding uses its provider touchpoint-specific API key', async () => {
+    configureGateway({
+      embedding_model: 'litellm:qwen-multimodal-embedding',
+      embedding_dimensions: 3,
+      env: { LITELLM_API_KEY: 'legacy-shared-key' },
+      touchpoint_base_urls: {
+        litellm: { embedding: 'http://127.0.0.1:8001/v1' },
+      },
+      touchpoint_api_keys: {
+        litellm: { embedding: 'embedding-specific-key' },
+      },
+    });
+    let capturedAuth = '';
+    fetchHandler = async (_url, init) => {
+      capturedAuth = (init.headers as Record<string, string>).Authorization ?? '';
+      return okResponse(3, 1);
+    };
+
+    await embedMultimodal([{ kind: 'image_base64', data: 'x', mime: 'image/png' }]);
+
+    expect(capturedAuth).toBe('Bearer embedding-specific-key');
+  });
+
   test('multiple inputs trigger sequential /embeddings calls', async () => {
     configureLitellm();
     let calls = 0;
