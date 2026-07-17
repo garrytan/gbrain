@@ -531,8 +531,8 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
 `Usage:
   gbrain models                   Show routing table (read-only)
   gbrain models doctor [flags]    Probe each configured model (~1 token each)
-  gbrain models align-embedding-dimension --yes
-                                  Align the DB vector column to config
+  gbrain models align-embedding-dimension --yes [--force-reembed]
+                                  Align the DB vector column; force also invalidates same-width vectors
   gbrain models detect-embedding-dimension --json
                                   Probe a custom model's actual width
   gbrain models --json            Machine-readable output
@@ -569,11 +569,20 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
       process.exit(1);
     }
 
-    const result = await alignEmbeddingDimension(engine, targetDimensions);
+    const forceReembed = args.includes('--force-reembed');
+    const result = await alignEmbeddingDimension(engine, targetDimensions, {
+      forceReembed,
+      targetModel: model,
+    });
     if (json) {
       process.stdout.write(JSON.stringify({ ...result, embedding_model: model }) + '\n');
     } else if (result.status === 'already_aligned') {
       process.stdout.write(`Embedding column already aligned at vector(${targetDimensions}).\n`);
+    } else if (result.status === 'invalidated') {
+      process.stdout.write(
+        `Embedding model changed to ${model}; ${result.cleared_embeddings} derived embeddings invalidated. ` +
+        'Run `pmbrain embed --stale --catch-up` to rebuild them. Source content preserved.\n',
+      );
     } else {
       process.stdout.write(
         `Embedding column aligned from vector(${result.previous_dimensions ?? 'unknown'}) to vector(${targetDimensions}); ` +

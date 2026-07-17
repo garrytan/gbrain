@@ -29,6 +29,8 @@ export interface StaleCursor {
 }
 
 export interface EmbedStaleOpts {
+  /** Actual configured model recorded beside every regenerated vector. */
+  model?: string;
   /** Chunks per cursor page. Default 2000 (matches the legacy CLI default). */
   batchSize?: number;
   /** Max parallel slug-keys embedded inside a single batch. Default 20. */
@@ -177,6 +179,7 @@ export async function embedStaleForSource(
           chunk_text: c.chunk_text,
           chunk_source: c.chunk_source,
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+          model: opts.model ?? c.model ?? undefined,
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
         }));
         await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));

@@ -160,6 +160,30 @@ describe('runEmbed --all (parallel)', () => {
 // ────────────────────────────────────────────────────────────────
 
 describe('runEmbedCore --dry-run never calls the embedding model', () => {
+  test('CLI --json emits a machine-readable completion summary as the final line', async () => {
+    const engine = mockEngine({
+      countStaleChunks: async () => 3,
+    });
+    let captured = '';
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      captured += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const result = await runEmbed(engine, ['--stale', '--dry-run', '--json']);
+      expect(result?.would_embed).toBe(3);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    expect(JSON.parse(captured.trim().split(/\r?\n/).at(-1) ?? '{}')).toMatchObject({
+      embedded: 0,
+      would_embed: 3,
+      total_chunks: 3,
+      dryRun: true,
+    });
+  });
+
   test('dry-run --all with stale chunks: no embedBatch calls, accurate would_embed', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     const pages = Array.from({ length: 3 }, (_, i) => ({ slug: `page-${i}` }));

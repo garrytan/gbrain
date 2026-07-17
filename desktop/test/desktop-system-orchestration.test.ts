@@ -75,6 +75,15 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain('revealMainWindow');
   });
 
+  test('invalidates and rebuilds embeddings on every model change with Dream-safe resume state', () => {
+    expect(main).toContain('saved.embeddingModelChanged');
+    expect(main).toContain("alignmentArgs.push('--force-reembed')");
+    expect(main).toContain("['embed', '--stale', '--catch-up', '--json']");
+    expect(main).toContain('(result.total_chunks ?? 0) - (result.embedded ?? 0)');
+    expect(main).toContain('if (!embeddingSwitchCommitted) restoreConfig(saved.snapshot)');
+    expect(main).toContain('Dream 会从剩余内容继续');
+  });
+
   test('allows credential listing and revocation while keeping creation behind the live gateway', () => {
     expect(main).toMatch(/readSharedAccess[\s\S]*requireSharedSidecar/);
     expect(main).toMatch(/revokeSharedAccess[\s\S]*requireSharedSidecar/);

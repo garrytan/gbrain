@@ -208,4 +208,10 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).toContain('document.documentElement.dataset.theme');
     expect(html).toContain('id="previous-version-action"');
   });
+
+  test('reports resumable re-embedding instead of claiming a mixed model switch succeeded', () => {
+    expect(renderer).toContain('next.reembeddingWarning');
+    expect(renderer).toContain('剩余向量将在 Dream 中继续处理');
+    expect(preload).toContain('reembeddingWarning?: string | null');
+  });
 });

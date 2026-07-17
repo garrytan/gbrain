@@ -3,6 +3,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   alignEmbeddingDimension,
+  invalidateMismatchedEmbeddingModels,
   recommendedEmbeddingDimension,
 } from '../src/core/embedding-dimension-alignment.ts';
 import { readContentChunksEmbeddingDim } from '../src/core/embedding-dim-check.ts';
@@ -60,5 +61,66 @@ describe('embedding dimension alignment', () => {
          (SELECT COUNT(*)::int FROM content_chunks WHERE embedding IS NOT NULL) AS embedded`,
     );
     expect(retained[0]).toEqual({ pages: 1, chunks: 1, embedded: 0 });
+  });
+
+  test('invalidates derived embeddings when the model changes at the same dimension', async () => {
+    const pages = await engine.executeRaw<{ id: number }>(
+      "SELECT id FROM pages WHERE slug = 'alignment/source'",
+    );
+    const vector = `[${new Array(1024).fill('0').join(',')}]`;
+    await engine.executeRaw(
+      `UPDATE content_chunks
+         SET embedding = '${vector}',
+             embedded_at = NOW(),
+             model = 'zhipu:embedding-3'
+       WHERE page_id = ${pages[0].id}`,
+    );
+
+    const result = await alignEmbeddingDimension(engine, 1024, {
+      forceReembed: true,
+      targetModel: 'ollama:qwen3-embedding:0.6b',
+    });
+
+    expect(result.status).toBe('invalidated');
+    expect(result.previous_dimensions).toBe(1024);
+    expect(result.cleared_embeddings).toBe(1);
+    const rows = await engine.executeRaw<{ embedding: unknown; embedded_at: unknown; model: string | null }>(
+      `SELECT embedding, embedded_at, model
+         FROM content_chunks
+        WHERE page_id = ${pages[0].id}`,
+    );
+    expect(rows[0]).toEqual({
+      embedding: null,
+      embedded_at: null,
+      model: 'ollama:qwen3-embedding:0.6b',
+    });
+  });
+
+  test('repairs vectors left behind by a model switch completed on an older version', async () => {
+    const pages = await engine.executeRaw<{ id: number }>(
+      "SELECT id FROM pages WHERE slug = 'alignment/source'",
+    );
+    const vector = `[${new Array(1024).fill('0').join(',')}]`;
+    await engine.executeRaw(
+      `UPDATE content_chunks
+          SET embedding = '${vector}',
+              embedded_at = NOW(),
+              model = 'zhipu:embedding-3'
+        WHERE page_id = ${pages[0].id}`,
+    );
+
+    const invalidated = await invalidateMismatchedEmbeddingModels(
+      engine,
+      'ollama:qwen3-embedding:0.6b',
+    );
+    expect(invalidated).toBe(1);
+    const rows = await engine.executeRaw<{ embedding: unknown; model: string }>(
+      `SELECT embedding, model FROM content_chunks WHERE page_id = ${pages[0].id}`,
+    );
+    expect(rows[0]).toEqual({
+      embedding: null,
+      model: 'ollama:qwen3-embedding:0.6b',
+    });
+    expect(await invalidateMismatchedEmbeddingModels(engine, 'ollama:qwen3-embedding:0.6b')).toBe(0);
   });
 });

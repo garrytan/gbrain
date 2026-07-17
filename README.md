@@ -311,7 +311,7 @@ PMBrain 配置存放在 `~/.pmbrain/config.json`（兼容 `~/.gbrain/config.json
 }
 ```
 
-编辑 `embedding_model`、`chat_model` 字段即可切换模型。切换嵌入模型后需同步修改数据库列宽。
+普通对话模型可以直接修改 `chat_model`。切换向量模型请使用桌面端“保存修改并重启”，或运行 `pmbrain config set embedding_model <provider:model>`：PMBrain 会先调用新模型验证连接和实际维度，验证通过后仅将旧向量标记为待重算并立即使用新模型重建；原始页面、分块和知识内容不会被删除。若重算中断，未完成分块保持待处理状态，下一次运行 Dream（默认包含 `embed` 阶段）会自动继续；从旧版本升级时，Dream 也会自动识别并修复模型标识与当前配置不一致的历史向量。
 
 ---
 

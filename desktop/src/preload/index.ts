@@ -100,7 +100,7 @@ export interface PMBrainDesktopApi {
   getProviderModels(provider: string, touchpoint: DesktopModelTouchpoint): Promise<DesktopProviderModels>;
   getAdvancedModelConfig(): Promise<AdvancedModelConfig>;
   saveAdvancedModelConfig(values: Partial<Record<AdvancedModelTier, string>>): Promise<AdvancedModelConfig>;
-  saveSetup(payload: SetupPayload): Promise<DesktopSetupState & { backup?: string | null }>;
+  saveSetup(payload: SetupPayload): Promise<DesktopSetupState & { backup?: string | null; reembeddingWarning?: string | null }>;
   configureIntegration(client: IntegrationClient, kind: CredentialKind): Promise<IntegrationResult>;
   copy(value: string): Promise<void>;
   openAdmin(): Promise<void>;

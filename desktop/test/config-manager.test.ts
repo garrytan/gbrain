@@ -288,6 +288,32 @@ describe('desktop config manager', () => {
     expect(saved.needsEmbeddingDimensionProbe).toBe(true);
   });
 
+  test('marks every existing embedding model change for validation and re-embedding', () => {
+    saveSetup({
+      engine: 'postgres',
+      databaseUrl: 'postgresql://u:p@127.0.0.1:5432/brain',
+      modelConfig: {
+        chatModel: 'zhipu:glm-4-flash',
+        embeddingModel: 'zhipu:embedding-3',
+        embeddingDimensions: 1024,
+      },
+      keys: { zhipu: 'key' },
+    });
+
+    const saved = saveSetup({
+      engine: 'postgres',
+      databaseUrl: 'postgresql://u:p@127.0.0.1:5432/brain',
+      modelConfig: {
+        chatModel: 'zhipu:glm-4-flash',
+        embeddingModel: 'ollama:qwen3-embedding:0.6b',
+      },
+      keys: { zhipu: '' },
+    });
+
+    expect(saved.embeddingModelChanged).toBe(true);
+    expect(saved.previousEmbeddingModel).toBe('zhipu:embedding-3');
+  });
+
   test('persists a local Ollama chat model without requiring an API key', () => {
     const root = isolatedHome();
     saveSetup({

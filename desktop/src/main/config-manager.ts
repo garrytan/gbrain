@@ -500,6 +500,8 @@ export function saveSetup(payload: SetupPayload): {
   snapshot: ConfigSnapshot;
   backup: string | null;
   needsEmbeddingDimensionProbe: boolean;
+  embeddingModelChanged: boolean;
+  previousEmbeddingModel?: string;
 } {
   const readPath = desktopConfigPath();
   const path = desktopWriteConfigPath();
@@ -549,8 +551,12 @@ export function saveSetup(payload: SetupPayload): {
   }
   const embeddingModel = payload.modelConfig?.embeddingModel?.trim();
   let needsEmbeddingDimensionProbe = false;
+  let previousEmbeddingModel: string | undefined;
+  let embeddingModelChanged = false;
   if (embeddingModel) {
     const previousModel = typeof existing.embedding_model === 'string' ? existing.embedding_model : undefined;
+    previousEmbeddingModel = previousModel;
+    embeddingModelChanged = Boolean(previousModel && embeddingModel !== previousModel);
     config.embedding_model = embeddingModel;
     delete config.embedding_disabled;
     // Existing users keep their saved dimension while the model is unchanged.
@@ -607,7 +613,14 @@ export function saveSetup(payload: SetupPayload): {
 
   const backup = backupFile(path, 'config');
   writeJsonConfig(path, config);
-  return { config, snapshot, backup, needsEmbeddingDimensionProbe };
+  return {
+    config,
+    snapshot,
+    backup,
+    needsEmbeddingDimensionProbe,
+    embeddingModelChanged,
+    previousEmbeddingModel,
+  };
 }
 
 export function saveDesktopTheme(theme: DesktopTheme): string | null {

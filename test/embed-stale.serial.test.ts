@@ -149,6 +149,7 @@ describe('embedStaleForSource', () => {
       batchSize: 4,
       concurrency: 1,
       signal: controller.signal,
+      model: 'ollama:qwen3-embedding:0.6b',
       embedFn: async (texts) => {
         if (texts.some((t) => t.includes(' of b'))) {
           controller.abort();
@@ -163,12 +164,17 @@ describe('embedStaleForSource', () => {
     // Second call with NO cursor — predicate excludes already-embedded chunks
     const second = await embedStaleForSource(engine, 'default', {
       embedFn: fakeEmbedFn,
+      model: 'ollama:qwen3-embedding:0.6b',
     });
     expect(second.done).toBe(true);
     expect(first.embedded + second.embedded).toBe(8);
 
     const stale = await engine.countStaleChunks({ sourceId: 'default' });
     expect(stale).toBe(0);
+    const models = await engine.executeRaw<{ model: string; count: number }>(
+      `SELECT model, COUNT(*)::int AS count FROM content_chunks GROUP BY model`,
+    );
+    expect(models).toEqual([{ model: 'ollama:qwen3-embedding:0.6b', count: 8 }]);
   });
 
   test('per-page embedFn throw is logged but does NOT propagate', async () => {
