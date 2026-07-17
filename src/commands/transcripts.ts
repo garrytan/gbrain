@@ -74,17 +74,31 @@ export async function runTranscripts(engine: BrainEngine, args: string[]): Promi
     return;
   }
   const { listRecentTranscripts } = await import('../core/transcripts.ts');
+  // Three states used to print the same line: no corpus dir configured, a
+  // configured dir that doesn't exist, and a genuinely empty dir. Read the
+  // config here so "unset" can be told apart, and pass onWarn so "unreadable"
+  // announces itself. Warnings go to stderr, keeping --json stdout parseable.
+  const sessionDir = await engine.getConfig('dream.synthesize.session_corpus_dir');
+  const meetingDir = await engine.getConfig('dream.synthesize.meeting_transcripts_dir');
   const rows = await listRecentTranscripts(engine, {
     days: parsed.days,
     summary: !parsed.full,
     limit: parsed.limit,
+    onWarn: msg => console.error(`warning: ${msg}`),
   });
   if (parsed.json) {
     console.log(JSON.stringify(rows, null, 2));
     return;
   }
   if (rows.length === 0) {
-    console.log('(no recent transcripts in the corpus dir)');
+    if (!sessionDir && !meetingDir) {
+      console.log(
+        '(no corpus dir configured — set dream.synthesize.session_corpus_dir ' +
+          'or dream.synthesize.meeting_transcripts_dir)'
+      );
+    } else {
+      console.log('(no recent transcripts in the corpus dir)');
+    }
     return;
   }
   rows.forEach(r => {

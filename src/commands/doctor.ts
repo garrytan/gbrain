@@ -5394,6 +5394,58 @@ export async function buildChecks(
     // Best-effort filesystem-hygiene check; never block doctor.
   }
 
+  // 3f. transcript_corpus_health.
+  //
+  // `listRecentTranscripts` skips an unreadable corpus dir and returns [], and
+  // its comment used to tell users to run `gbrain doctor` — but no such check
+  // existed, so a typo'd path was indistinguishable from an empty corpus and
+  // from no config at all. This is that check; the comment is now true.
+  //
+  // Unconfigured is OK, not a warning: the dream corpus is opt-in and most
+  // brains never set it. Only a configured-but-unreadable dir is a problem —
+  // the user asked for something that silently isn't happening.
+  if (engine !== null) try {
+    const corpusKeys: Array<[string, string]> = [
+      ['dream.synthesize.session_corpus_dir', 'session'],
+      ['dream.synthesize.meeting_transcripts_dir', 'meeting'],
+    ];
+    const configured: Array<{ label: string; dir: string }> = [];
+    for (const [key, label] of corpusKeys) {
+      const dir = await engine.getConfig(key);
+      if (dir) configured.push({ label, dir });
+    }
+
+    if (configured.length === 0) {
+      checks.push({
+        name: 'transcript_corpus_health',
+        status: 'ok',
+        message: 'no dream corpus dir configured (optional)',
+      });
+    } else {
+      const broken: string[] = [];
+      const okDirs: string[] = [];
+      for (const { label, dir } of configured) {
+        try {
+          const n = readdirSync(dir).filter(f => f.endsWith('.txt')).length;
+          okDirs.push(`${label}: ${n} .txt file(s)`);
+        } catch (err) {
+          broken.push(`${label}: ${dir} (${(err as NodeJS.ErrnoException).code ?? 'unreadable'})`);
+        }
+      }
+      checks.push({
+        name: 'transcript_corpus_health',
+        status: broken.length > 0 ? 'warn' : 'ok',
+        message: broken.length > 0
+          ? `corpus dir configured but not readable — ${broken.join('; ')}. ` +
+            `\`gbrain transcripts recent\` and the dream cycle silently see nothing.`
+          : okDirs.join('; '),
+        details: { configured: configured.length, unreadable: broken.length },
+      });
+    }
+  } catch {
+    // Best-effort; never block doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
