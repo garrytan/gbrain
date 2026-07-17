@@ -1108,7 +1108,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
       const takes = await engine.executeRaw<{
-        id: number;
+        id: string;
         page_slug: string;
         row_num: number;
         claim: string;
@@ -1116,10 +1116,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         resolved_quality: string | null;
         since_date: string | null;
       }>(
-        `SELECT id, page_slug, row_num, claim, weight, resolved_quality, since_date
-           FROM takes
-           WHERE holder = $1 AND active = true AND resolved_at IS NOT NULL
-           ORDER BY weight DESC, since_date DESC
+        // `takes` has no page_slug column — it comes from the joined page.
+        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
+        // raw bigint ("cannot serialize BigInt"), so project it as a string.
+        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC
            LIMIT 25`,
         [holder],
       );
@@ -1167,7 +1170,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // proper 90-day time series will read from calibration_profiles
         // generated_at history in v0.37 once we have multiple snapshots.
         const series = profile?.brier !== null && profile?.brier !== undefined
-          ? [{ date: profile.generated_at.slice(0, 10), brier: profile.brier }]
+          // generated_at comes back from the engine as a Date (TIMESTAMPTZ), not
+          // a string — `.slice` would throw. Normalize to a YYYY-MM-DD string.
+          ? [{ date: new Date(profile.generated_at).toISOString().slice(0, 10), brier: profile.brier }]
           : [];
         return res.send(renderBrierTrend({ series }));
       }
@@ -1194,12 +1199,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           weight: number;
           since_date: string;
         }>(
-          `SELECT id, page_slug, claim, weight, since_date
-             FROM takes
-             WHERE active = true AND resolved_at IS NULL AND superseded_by IS NULL
-               AND weight >= 0.7
-               AND since_date::date < (now() - INTERVAL '12 months')
-             ORDER BY since_date ASC
+          // `takes` has no page_slug column — it comes from the joined page.
+          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
+          // throws "invalid input syntax for type date", so normalize to the 1st
+          // before casting.
+          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC
              LIMIT 5`,
         );
         const now = new Date();

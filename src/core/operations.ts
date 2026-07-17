@@ -1741,6 +1741,8 @@ const takes_list: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.listTakes({
+      // #2200-class: honor federated/source scope (via the take's page.source_id).
+      ...sourceScopeOpts(ctx),
       page_slug: p.page_slug as string | undefined,
       holder: p.holder as string | undefined,
       kind: p.kind as never,
@@ -1767,6 +1769,7 @@ const takes_search: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.searchTakes(p.query as string, {
+      ...sourceScopeOpts(ctx),
       limit: p.limit as number | undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
     });
@@ -1795,6 +1798,7 @@ const takes_scorecard: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.getScorecard(
       {
+        ...sourceScopeOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
         since: p.since as string | undefined,
@@ -1821,6 +1825,7 @@ const takes_calibration: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.getCalibrationCurve(
       {
+        ...sourceScopeOpts(ctx),
         holder: p.holder as string | undefined,
         bucketSize: p.bucket_size as number | undefined,
       },
