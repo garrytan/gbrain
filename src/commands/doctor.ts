@@ -836,6 +836,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.
   checks.push(await checkSearchMode(engine));
+  checks.push(await checkDurabilityPushHealth(engine));
 
   // 8. v0.32.3 eval_drift: retrieval-affecting files changed since last
   // eval run? Non-blocking — surfaces as ok + hint.
@@ -2628,6 +2629,160 @@ export function checkCyclePhaseScope(): Check {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { name: 'cycle_phase_scope', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/** Per-repo git probe result for durability_push_health (pure input shape). */
+export interface DurabilityRepoProbe {
+  sourceId: string;
+  /** Commits on HEAD not on @{upstream}; null when the probe failed. */
+  ahead: number | null;
+  /** True when the branch has no upstream — pushes have nowhere to go. */
+  upstreamMissing: boolean;
+  /** `git status --porcelain` line count; null when the probe failed. */
+  dirty: number | null;
+}
+
+/**
+ * Score the git durability tier (pure; exported for tests).
+ *
+ * `gbrain sources harden` (#2426/#2938) promises agent writes reach git: a
+ * path-limited commit on write-through plus a background push with retry.
+ * Both tiers are DELIBERATELY best-effort at the write site (a git hiccup
+ * must never fail the write — the DB row and the file are the durable
+ * sinks), which means sustained failure is silent by design: commits stop
+ * landing, pushes stop reaching origin, and nothing surfaces it. For a
+ * source the operator explicitly hardened, that silence defeats the point
+ * — this check is the missing observability: unpushed commits (ahead),
+ * a branch with no upstream, and recent failures recorded by the push
+ * helper in ~/.gbrain/brain-push.log.
+ */
+export function computeDurabilityPushCheck(
+  probes: DurabilityRepoProbe[],
+  pushLog: { failures: number; lastFailure: string | null },
+): Check {
+  if (probes.length === 0) {
+    return {
+      name: 'durability_push_health',
+      status: 'ok',
+      message: 'No durability-hardened sources — not applicable (enable with: gbrain sources harden <id>)',
+    };
+  }
+  const problems: string[] = [];
+  for (const p of probes) {
+    if (p.upstreamMissing) {
+      problems.push(`${p.sourceId}: branch has no upstream — background pushes have nowhere to go`);
+    } else if (p.ahead !== null && p.ahead > 0) {
+      problems.push(`${p.sourceId}: ${p.ahead} commit(s) local-only (push tier not reaching origin)`);
+    }
+  }
+  if (pushLog.failures > 0) {
+    problems.push(
+      `${pushLog.failures} push failure(s) in brain-push.log (last 7d)` +
+      (pushLog.lastFailure ? ` — last: ${pushLog.lastFailure}` : ''),
+    );
+  }
+  const dirtyNote = probes
+    .filter(p => p.dirty !== null && p.dirty > 0)
+    .map(p => `${p.sourceId}=${p.dirty}`)
+    .join(', ');
+  if (problems.length > 0) {
+    return {
+      name: 'durability_push_health',
+      status: 'warn',
+      message: `Hardened-source git tier degraded: ${problems.join('; ')}.` +
+        (dirtyNote ? ` Dirty files: ${dirtyNote}.` : '') +
+        ' Recover: scripts/brain-commit-push.sh --push-only (in the repo), or gbrain sources pull <id> then git push; see ~/.gbrain/brain-push.log',
+    };
+  }
+  return {
+    name: 'durability_push_health',
+    status: 'ok',
+    message: `${probes.length} hardened source(s), all pushed (ahead=0)` +
+      (dirtyNote ? `. Dirty (uncommitted, non-write-through) files present: ${dirtyNote}` : ''),
+  };
+}
+
+/** Parse brain-push.log lines for failures inside a recency window (pure;
+ *  exported for tests). Failure markers come from the generated push-retry
+ *  template: terminal "LOCAL-ONLY, NEEDS ATTENTION" and "lock-timeout".
+ *  Lines start with an ISO UTC timestamp; unparseable lines are ignored. */
+export function parsePushLogFailures(
+  content: string,
+  now: Date,
+  windowDays = 7,
+): { failures: number; lastFailure: string | null } {
+  const cutoff = now.getTime() - windowDays * 24 * 3600 * 1000;
+  let failures = 0;
+  let lastFailure: string | null = null;
+  for (const line of content.split('\n')) {
+    if (!line.includes('LOCAL-ONLY') && !line.includes('lock-timeout')) continue;
+    const ts = Date.parse(line.slice(0, 20));
+    if (Number.isNaN(ts) || ts < cutoff) continue;
+    failures++;
+    lastFailure = line.length > 160 ? line.slice(0, 160) + '…' : line;
+  }
+  return { failures, lastFailure };
+}
+
+/** Probe cap: doctor must stay bounded on many-source brains. Dropped repos
+ *  are named in the message rather than silently skipped. */
+export const DURABILITY_PROBE_CAP = 5;
+
+/** DB+git wrapper: enumerate hardened sources, probe each repo's push
+ *  state, read the push log. Every git call is argv-array with a timeout;
+ *  any probe error degrades that field to null — never fails doctor. */
+export async function checkDurabilityPushHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const { isDurabilityHardened, pushLogPath } = await import('../core/brain-repo-durability.ts');
+    const { execFileSync } = await import('child_process');
+    const rows = await engine.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+    );
+    const hardened = rows.filter(r =>
+      typeof r.local_path === 'string' && r.local_path.length > 0 &&
+      existsSync(r.local_path) && isDurabilityHardened(r.local_path));
+    const capped = hardened.slice(0, DURABILITY_PROBE_CAP);
+    const probes: DurabilityRepoProbe[] = capped.map(r => {
+      const repo = r.local_path as string;
+      const git = (args: string[]): string =>
+        execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] });
+      let ahead: number | null = null;
+      let upstreamMissing = false;
+      try {
+        ahead = Number(git(['rev-list', '--count', '@{upstream}..HEAD']).trim());
+        if (Number.isNaN(ahead)) ahead = null;
+      } catch {
+        // rev-list against @{upstream} throws when no upstream is configured
+        // (or the repo is unreadable). Distinguish cheaply: HEAD resolvable
+        // but upstream not → upstreamMissing.
+        try {
+          git(['rev-parse', 'HEAD']);
+          upstreamMissing = true;
+        } catch { /* repo unreadable — leave both null/false, fail-open */ }
+      }
+      let dirty: number | null = null;
+      try {
+        const out = git(['status', '--porcelain']);
+        dirty = out === '' ? 0 : out.replace(/\n$/, '').split('\n').length;
+      } catch { /* fail-open */ }
+      return { sourceId: r.id, ahead, upstreamMissing, dirty };
+    });
+    let pushLog = { failures: 0, lastFailure: null as string | null };
+    try {
+      const logPath = pushLogPath();
+      if (existsSync(logPath)) {
+        pushLog = parsePushLogFailures(readFileSync(logPath, 'utf8'), new Date());
+      }
+    } catch { /* fail-open */ }
+    const check = computeDurabilityPushCheck(probes, pushLog);
+    if (hardened.length > capped.length) {
+      check.message += ` (probed ${capped.length}/${hardened.length} hardened sources — cap ${DURABILITY_PROBE_CAP})`;
+    }
+    return check;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'durability_push_health', status: 'ok', message: `Skipped (${msg})` };
   }
 }
 
@@ -7261,6 +7416,9 @@ export async function buildChecks(
   if (engine !== null) {
     progress.heartbeat('search_mode');
     checks.push(await checkSearchMode(engine));
+    // #2938 follow-up: hardened-source git tier observability.
+    progress.heartbeat('durability_push_health');
+    checks.push(await checkDurabilityPushHealth(engine));
     // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
     // search by the hard-exclude prefix policy (audit the surviving excludes).
     progress.heartbeat('hidden_by_search_policy');
