@@ -94,3 +94,47 @@ describe('#1422 — dream surfaces connectEngine failures', () => {
     }
   });
 });
+
+// ─── #2084 teardown contract: exit codes flow through the verdict seam ──
+//
+// dream.ts no longer calls process.exit; bail() throws DreamExit, runDream
+// records the verdict, and cli.ts's finally runs finishCliTeardown BEFORE the
+// central seam exits. These subprocess tests pin the end-to-end contract: the
+// process still terminates with the exact code each site asked for, through
+// the real dispatch + teardown path (not a direct runDream call).
+describe('#2084 — dream exit codes survive the teardown seam', () => {
+  function tmpHermeticHome(): { home: string; cleanup: () => void } {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-dream-exit-'));
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    // Same trick as the #1422 test above: a config pointing at a port that
+    // can't speak Postgres gets past the "No brain configured" gate; dream
+    // proceeds engine-less (WARNING on stderr) and reaches parseArgs.
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({
+      engine: 'postgres',
+      database_url: 'postgresql://nobody:nobody@127.0.0.1:9/nodb',
+    }));
+    return { home, cleanup: () => rmSync(home, { recursive: true, force: true }) };
+  }
+
+  test('usage error (--date not ISO) exits 2 after teardown', () => {
+    const { home, cleanup } = tmpHermeticHome();
+    try {
+      const r = runDream(['--date', 'not-a-date'], { GBRAIN_HOME: home });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/--date must be YYYY-MM-DD/);
+    } finally {
+      cleanup();
+    }
+  }, 60_000);
+
+  test('unknown --phase exits 1 after teardown', () => {
+    const { home, cleanup } = tmpHermeticHome();
+    try {
+      const r = runDream(['--phase', 'garbage'], { GBRAIN_HOME: home });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toMatch(/Unknown phase/);
+    } finally {
+      cleanup();
+    }
+  }, 60_000);
+});

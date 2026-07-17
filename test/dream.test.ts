@@ -135,6 +135,7 @@ describe('runDream — --phase <name> restricts the cycle', () => {
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
     await runDream(null, ['--dir', repo, '--phase', 'garbage']);
     expect(errSpy).toHaveBeenCalled();
+    expect(currentExitCode()).toBe(1);
     _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
@@ -225,9 +226,14 @@ describe('runDream — exit-code semantics', () => {
 
   test('clean/ok/partial statuses do not call process.exit', async () => {
     const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('UNEXPECTED_EXIT'); });
-    await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
-    expect(spy).not.toHaveBeenCalled();
-    _resetCliExitVerdictForTests();
+    try {
+      await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
+      expect(spy).not.toHaveBeenCalled();
+      expect(currentExitCode()).toBe(0);
+    } finally {
+      spy.mockRestore();
+      _resetCliExitVerdictForTests();
+    }
   });
 });
 
