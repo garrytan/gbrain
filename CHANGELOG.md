@@ -2,6 +2,41 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.61.0] - 2026-07-16
+
+**If gbrain's background daemon dies hard, a restart now takes over right away instead of waiting minutes for a stale lock to expire. Re-processing the same content no longer piles up near-duplicate knowledge atoms. On large brains, the takes bootstrap finally works through the whole corpus instead of re-scanning the same newest pages every run. And `gbrain schema use` can now activate the schema packs gbrain actually ships — including the install default — instead of just one hardcoded name. Cost tracking also learns the newest Claude models, so spend on them is metered instead of invisible.**
+
+### Itemized changes
+
+#### Fixed
+- **Autopilot recovers immediately from a crashed daemon.** The stale-lock check verifies whether the lock-holding process is still alive instead of relying on a fixed age window — a hard-killed autopilot no longer delays restarts, and the age check alone can no longer displace a busy, live one. (#477, contributed by @vinsew)
+- **Atom extraction stops minting duplicate atoms across runs.** Atom slugs are now deterministic (source-dated, canonical slugging, content-hashed suffix), so re-extracting the same content upserts instead of creating a near-duplicate under a new run-date path, and titles that truncate mid-word no longer produce trailing-dash slug variants. Pre-existing duplicates are not re-created but remain until cleaned up (an `atoms consolidate` command is tracked as a follow-up). (#2482, contributed by @joelwp)
+- **Takes bootstrap works through the whole corpus.** Bootstrap runs skip pages that already have takes, so brains larger than the per-run page cap make forward progress instead of rescanning the newest slice and re-spending extraction budget. `--include-covered` restores the old behavior. (#2638, contributed by @p3ob7o)
+- **`gbrain schema use` can activate the core bundled packs.** The command resolved only one hardcoded pack name; it now resolves through the bundled-pack registry, so the recommended and v2 base packs (including the install default) can be selected. (#1707, contributed by @mvanhorn)
+- **Budget tracking prices Sonnet 5 and Fable 5.** The canonical chat-pricing table adds the newest Claude models at standard list rates (time-limited introductory discounts are deliberately not modeled, so early Sonnet 5 spend reads slightly conservative), removing the no-pricing blind spot in cost telemetry and budget metering. (#2799, contributed by @p3ob7o)
+
+#### Added
+- **Inline `[Source: ..., YYYY-MM-DD]` citations become timeline entries.** Both the filesystem extract path and the auto-timeline write path recognize the citation convention gbrain’s own quality guidance recommends, with idempotent re-extraction. (#2524, contributed by @pabloglzg)
+- **Schema packs extend atom-extraction page discovery.** For packs that declare the `extract_atoms` phase, the manifest’s `extractable` flag now unions with the legacy page-type list (synthesis outputs stay excluded, so concepts never feed back into atom extraction). (#2615, contributed by @p3ob7o)
+- **Book-mirror two-column pages are generated as HTML tables** with top alignment instead of markdown pipe tables, which broke on multi-paragraph cells in most renderers. (#2270)
+
+#### Internal
+- Gateway tool-schema conversion extracted into a tested helper so the regression test exercises the exact code path production uses. (#2063, contributed by @maxpetrusenkoagent)
+- Reference docs synced for the v0.42.59.0 fixes (engine/testing entries). (#2798, contributed by @time-attack)
+
+### To take advantage of v0.42.61.0
+
+`gbrain upgrade`. No new schema migrations.
+
+1. **Heads-up on extraction scope:** if your active schema pack declares the `extract_atoms` phase, page types the pack marks `extractable` now feed atom extraction alongside the legacy list — the first cycle after upgrading may process page types (notes, emails, slack) it previously skipped. Per-run page and budget caps still apply; check `gbrain search stats` / budget output if you watch spend closely.
+2. **If takes bootstrap seemed stuck** on a large brain, re-run it — each run now covers new pages.
+3. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
 ## [0.42.60.0] - 2026-07-16
 
 **Eleven verified community fixes: Windows brains no longer risk losing subdirectory pages on a full sync, agent tool loops on non-Anthropic providers survive interruption instead of dead-lettering, multi-source brains get two source-isolation gaps closed, and the search cache stops leaking results across exclude policies. Every fix was reproduced and reviewed against master before landing.**
