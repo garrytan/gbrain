@@ -38,7 +38,7 @@ import {
   buildBasenameIndex,
   queryBasenameIndex,
 } from '../core/link-extraction.ts';
-import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
+import { probeSourceGitState } from '../core/git-head.ts';
 // v0.41.32.0: remote staleness reads the stored newest_content_at column via
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
 import { lagFromContentMs } from '../core/source-health.ts';
@@ -3614,29 +3614,51 @@ export async function checkSyncFreshness(
       // All four must hold; otherwise fall through to the time-based check.
       // The chunker version match is computed here (not in the helper)
       // because it depends on engine state, not git state.
+      //
+      // Clone-unavailable fallback: on stateless deploys (Docker on EB /
+      // K8s / Fly — the platforms the cloud recipes produce), a container
+      // restart wipes `local_path` and each clone is only re-materialized
+      // when that source's next sync job runs. Until then the HEAD probe
+      // cannot run at all ('unavailable'), which previously fell through to
+      // raw wall-clock age — and since a no-op sync doesn't advance
+      // `last_sync_at`, every QUIET source read as stale/FAIL after a
+      // restart (score-sinking alert storm; observed live: 16-source brain,
+      // 12 clones gone after a config-update restart, doctor 70→30).
+      // 'unavailable' + chunker match now reuses the v0.41.32.0 REMOTE lag
+      // signal (newest_content_at) below — DB-only, no subprocess, and it
+      // still reports staleness whenever content really is newer than the
+      // last sync. 'changed' (readable clone with real work) keeps
+      // wall-clock exactly as before, and a chunker mismatch is never
+      // masked (D7): it disables the fallback too.
+      let cloneUnavailable = false;
       if (localOnly) {
-        const gitUnchanged = isSourceUnchangedSinceSync(
+        const gitState = probeSourceGitState(
           source.local_path,
           source.last_commit,
           { requireCleanWorkingTree: 'ignore-untracked' },
         );
         const chunkerMatch = source.chunker_version === currentChunkerVersion;
-        if (gitUnchanged && chunkerMatch) {
+        if (gitState === 'unchanged' && chunkerMatch) {
           unchanged_count++;
           continue;
         }
+        cloneUnavailable = gitState === 'unavailable' && chunkerMatch;
       }
 
       // v0.41.32.0: REMOTE path (doctorReportRemote, !localOnly) computes lag
       // from the stored newest_content_at column — NO git subprocess on a
       // DB-supplied local_path (preserves the v0.41.27.0 trust boundary). A
       // quiet repo whose newest commit predates its last sync reports 0; NULL
-      // column → wall-clock fallback. LOCAL fall-through keeps wall-clock: the
-      // short-circuit already failed, so the source genuinely has work and
-      // "hours since last sync" is the right staleness measure. The `ageMs < 0`
-      // skew check above still runs on raw wall-clock for both paths (A1).
+      // column → wall-clock fallback. LOCAL fall-through keeps wall-clock when
+      // the clone is READABLE: the short-circuit failed on real evidence
+      // (HEAD moved / dirty tree), so the source genuinely has work and
+      // "hours since last sync" is the right staleness measure. A local clone
+      // that is UNAVAILABLE (not yet re-materialized, see above) carries no
+      // evidence either way, so it borrows this same DB-only lag. The
+      // `ageMs < 0` skew check above still runs on raw wall-clock for both
+      // paths (A1).
       let thresholdAgeMs = ageMs;
-      if (!localOnly) {
+      if (!localOnly || cloneUnavailable) {
         const contentMs = source.newest_content_at
           ? new Date(source.newest_content_at).getTime()
           : null;
