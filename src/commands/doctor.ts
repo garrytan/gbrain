@@ -5213,12 +5213,6 @@ export async function buildChecks(
     // Filesystem read failure is non-fatal.
   }
 
-  // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
-  // File-based, so it runs in the filesystem phase: `--fast` and DB-down
-  // runs still surface rerank failures (#2059 item 3). A null engine only
-  // costs the enabled/disabled nuance in the zero-failure message.
-  checks.push(await checkRerankerHealth(engine));
-
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
@@ -5237,6 +5231,12 @@ export async function buildChecks(
       }
       checks.push({ name: 'connection', status: 'warn', message: msg });
     }
+    // v0.35.0.0+ reranker_health — the audit JSONL is file-based (no DB),
+    // so `--fast` and DB-down runs still surface rerank failures (#2059
+    // item 3). A null engine only costs the enabled/disabled nuance in the
+    // zero-failure message. Full runs keep their original DB-phase call
+    // site below, so check ordering + progress events are unchanged there.
+    checks.push(await checkRerankerHealth(engine));
     // Early return: caller renders the partial check list + decides exit code.
     // Pre-v0.39 this site called outputResults + process.exit directly; the
     // narrow-seam extract moved both to the runDoctor CLI wrapper.
@@ -7285,6 +7285,9 @@ export async function buildChecks(
     checks.push(await checkHiddenBySearchPolicy(engine));
     progress.heartbeat('eval_drift');
     checks.push(await checkEvalDrift(engine));
+    // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
+    progress.heartbeat('reranker_health');
+    checks.push(await checkRerankerHealth(engine));
     // v0.41.18.0 batch_retry_health — Supavisor circuit-breaker incident
     // surfacing via the batch-retry audit JSONL. Codex H-9 thresholds.
     progress.heartbeat('batch_retry_health');

@@ -188,15 +188,20 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(conn.message.toLowerCase()).toContain('fast');
   });
 
-  test('reranker_health runs in --fast and null-engine paths (#2059 item 3)', async () => {
+  test('reranker_health runs exactly once in full, --fast, and DB-down paths (#2059 item 3)', async () => {
     // The rerank-failure audit is file-based (no DB), so the check must
     // survive the DB-phase early return. Pre-fix it was silently skipped
-    // in exactly the degraded states where its signal matters most.
-    const fastChecks = await buildChecks(engine, ['--fast']);
-    expect(fastChecks.map(c => c.name)).toContain('reranker_health');
+    // in exactly the degraded states where its signal matters most. The
+    // exactly-once assertion also guards against the fast-path and the
+    // DB-phase call sites both firing on the same run.
+    const count = (checks: Check[]) =>
+      checks.filter(c => c.name === 'reranker_health').length;
 
-    const noEngineChecks = await buildChecks(null, ['--fast'], 'env:DATABASE_URL');
-    expect(noEngineChecks.map(c => c.name)).toContain('reranker_health');
+    expect(count(await buildChecks(engine, []))).toBe(1);
+    expect(count(await buildChecks(engine, ['--fast']))).toBe(1);
+    expect(count(await buildChecks(null, ['--fast'], 'env:DATABASE_URL'))).toBe(1);
+    // DB-down (no --fast): connection failed upstream, engine is null.
+    expect(count(await buildChecks(null, [], 'env:DATABASE_URL'))).toBe(1);
   });
 
   test('--json arg does NOT alter the returned check list', async () => {
