@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { doctorReportRemote, computeDoctorReport, type DoctorReport, type Check } from '../src/commands/doctor.ts';
+import { doctorReportRemote, computeDoctorReport, _setServePsRunnerForTests, type DoctorReport, type Check } from '../src/commands/doctor.ts';
 
 let engine: PGLiteEngine;
 let tmpHome: string;
@@ -29,9 +29,13 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // serve_process_accumulation shells out to ps in production; stub it so
+  // host state (real serves running during CI) cannot flake the report.
+  _setServePsRunnerForTests(async () => '');
 });
 
 afterAll(async () => {
+  _setServePsRunnerForTests(null);
   await engine.disconnect();
   if (priorHome === undefined) delete process.env.GBRAIN_HOME;
   else process.env.GBRAIN_HOME = priorHome;
@@ -49,6 +53,7 @@ describe('doctorReportRemote', () => {
     expect(names).toContain('brain_score');
     expect(names).toContain('sync_failures');
     expect(names).toContain('queue_health');
+    expect(names).toContain('serve_process_accumulation');
   });
 
   test('connection check passes against a healthy engine', async () => {

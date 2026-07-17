@@ -1515,24 +1515,36 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  */
 export interface ServeProcessRow {
   pid: number;
+  uid: number;
   /** ps ELAPSED format: [[dd-]hh:]mm:ss */
   etime: string;
   command: string;
 }
 
-/** Parse `ps -axo pid=,etime=,command=` output into serve rows (pure). */
-export function parseServeProcesses(psOutput: string): ServeProcessRow[] {
+/**
+ * Parse `ps -axww -o pid=,uid=,etime=,command=` output into serve rows (pure).
+ * When `ownUid` is given, rows belonging to other users are dropped — three
+ * teammates each running one legitimate serve on a shared host is not
+ * accumulation (codex P2). `-ww` is load-bearing: without it procps may clip
+ * COMMAND at 80 columns when output is redirected, truncating long
+ * bun-install paths BEFORE the `serve` token and silently undercounting.
+ */
+export function parseServeProcesses(psOutput: string, ownUid?: number): ServeProcessRow[] {
   const rows: ServeProcessRow[] = [];
   for (const line of psOutput.split('\n')) {
-    const m = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/);
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
     if (!m) continue;
-    const command = m[3]!;
-    // Token-boundary match: "…/gbrain serve" or "gbrain serve" — but not
+    const uid = parseInt(m[2]!, 10);
+    if (ownUid !== undefined && uid !== ownUid) continue;
+    const command = m[4]!;
+    // Token-boundary match: "…/gbrain serve" or "gbrain serve", tolerating
+    // flag tokens between them (`gbrain --quiet serve`) — but not
     // `serve --http` (legit daemon) and not unrelated argv mentioning the
-    // words (e.g. an editor open on serve.ts).
-    if (!/(^|[/\s])gbrain\s+serve(\s|$)/.test(command)) continue;
+    // words (e.g. an editor open on serve.ts). ps gives flat text, not
+    // argv, so this stays a heuristic; the check is informational.
+    if (!/(^|[/\s])gbrain(\s+--?[\w-]+)*\s+serve(\s|$)/.test(command)) continue;
     if (/--http(\s|$)/.test(command)) continue;
-    rows.push({ pid: parseInt(m[1]!, 10), etime: m[2]!, command });
+    rows.push({ pid: parseInt(m[1]!, 10), uid, etime: m[3]!, command });
   }
   return rows;
 }
@@ -1561,48 +1573,76 @@ export function computeServeAccumulationCheck(rows: ServeProcessRow[]): Check {
       message: `${rows.length} gbrain serve stdio process(es) running`,
     };
   }
-  const oldest = rows.reduce((a, b) =>
-    parseEtimeSeconds(b.etime) > parseEtimeSeconds(a.etime) ? b : a,
+  const sorted = [...rows].sort(
+    (a, b) => parseEtimeSeconds(b.etime) - parseEtimeSeconds(a.etime),
   );
+  const oldest = sorted[0]!;
+  const pidList = sorted.map((r) => `${r.pid} (up ${r.etime})`).join(', ');
   return {
     name: 'serve_process_accumulation',
     status: 'warn',
     message:
-      `${rows.length} concurrent gbrain serve stdio processes (oldest up ${oldest.etime}). ` +
+      `${rows.length} concurrent gbrain serve stdio processes: ${pidList}. ` +
       `Clients that die without closing stdin (SSH half-open, slept laptop) leak servers ` +
-      `that each hold a DB connection. Fix: launch with \`gbrain serve --stdio-idle-timeout ` +
-      `<seconds>\` so abandoned servers exit on their own, and reap the current strays.`,
+      `that each hold a DB connection; if these are all live editor sessions, ignore. ` +
+      `Fix: launch with \`gbrain serve --stdio-idle-timeout <seconds>\` so abandoned ` +
+      `servers exit on their own, and \`kill\` the stale PIDs above (oldest: ${oldest.pid}).`,
   };
 }
 
 /**
  * Test seam — inject a fake ps runner. Production uses execFile('ps', …).
+ * `_setServePsRunnerForTests` is the module-level override used by the
+ * buildChecks/doctorReportRemote surface tests (same pattern as
+ * `__setRerankTransportForTests`) so orchestrator tests never shell out.
  */
 export type PsRunner = () => Promise<string>;
+let _servePsRunnerForTests: PsRunner | null = null;
+export function _setServePsRunnerForTests(fn: PsRunner | null): void {
+  _servePsRunnerForTests = fn;
+}
+
+/**
+ * 30s memo for the production scan. Remote `run_doctor` has no request
+ * rate limit, so without a cap concurrent admin calls could each spawn a
+ * `ps` child (codex P3). Injected runners bypass the cache (test seam).
+ */
+let _serveScanCache: { at: number; check: Check } | null = null;
+const SERVE_SCAN_CACHE_MS = 30_000;
 
 export async function checkServeProcessAccumulation(psRunner?: PsRunner): Promise<Check> {
-  if (process.platform === 'win32' && !psRunner) {
+  const injected = psRunner ?? _servePsRunnerForTests ?? undefined;
+  if (process.platform === 'win32' && !injected) {
     return {
       name: 'serve_process_accumulation',
       status: 'ok',
       message: 'Not applicable on Windows (ps scan is POSIX-only)',
     };
   }
+  if (!injected && _serveScanCache && Date.now() - _serveScanCache.at < SERVE_SCAN_CACHE_MS) {
+    return _serveScanCache.check;
+  }
   try {
     const runPs: PsRunner =
-      psRunner ??
+      injected ??
       (async () => {
         const { execFile } = await import('node:child_process');
         return await new Promise<string>((resolve, reject) => {
           execFile(
             'ps',
-            ['-axo', 'pid=,etime=,command='],
+            ['-axww', '-o', 'pid=,uid=,etime=,command='],
             { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
             (err, stdout) => (err ? reject(err) : resolve(stdout)),
           );
         });
       });
-    return computeServeAccumulationCheck(parseServeProcesses(await runPs()));
+    const ownUid =
+      typeof process.getuid === 'function' ? process.getuid() : undefined;
+    const check = computeServeAccumulationCheck(
+      parseServeProcesses(await runPs(), injected ? undefined : ownUid),
+    );
+    if (!injected) _serveScanCache = { at: Date.now(), check };
+    return check;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
