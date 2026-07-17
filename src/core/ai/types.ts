@@ -366,6 +366,8 @@ export interface AIGatewayConfig {
   chat_fallback_chain?: string[];
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
+  /** Optional per-provider, per-touchpoint base URL overrides. */
+  touchpoint_base_urls?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
 }

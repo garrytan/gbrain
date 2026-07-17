@@ -333,14 +333,28 @@ export function applyResolveAuth(
  *
  * @internal exported for tests.
  */
+type BaseUrlTouchpoint = 'embedding' | 'expansion' | 'chat' | 'reranker';
+
+function configuredBaseURL(
+  cfg: AIGatewayConfig,
+  recipeId: string,
+  touchpoint?: BaseUrlTouchpoint,
+): string | undefined {
+  const overrides = cfg.touchpoint_base_urls?.[recipeId];
+  const touchpointOverride = touchpoint ? overrides?.[touchpoint] : undefined;
+  const chatFallback = touchpoint === 'expansion' ? overrides?.chat : undefined;
+  return touchpointOverride ?? chatFallback ?? cfg.base_urls?.[recipeId];
+}
+
 export function applyOpenAICompatConfig(
   recipe: Recipe,
   cfg: AIGatewayConfig,
+  touchpoint?: BaseUrlTouchpoint,
 ): { baseURL: string; fetch?: typeof fetch } {
   if (recipe.resolveOpenAICompatConfig) {
     return recipe.resolveOpenAICompatConfig(cfg.env);
   }
-  const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  const baseURL = configuredBaseURL(cfg, recipe.id, touchpoint) ?? recipe.base_url_default;
   if (!baseURL) {
     throw new AIConfigError(
       `${recipe.name} requires a base URL.`,
@@ -374,6 +388,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     // wanted it. isAvailable('reranker') returns false when unset.
     reranker_model: config.reranker_model,
     base_urls: config.base_urls,
+    touchpoint_base_urls: config.touchpoint_base_urls,
     env: config.env,
   };
   _modelCache.clear();
@@ -1059,7 +1074,7 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
   const cfg = requireConfig();
 
-  const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
+  const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${configuredBaseURL(cfg, recipe.id, 'embedding') ?? ''}`;
   const cached = _modelCache.get(cacheKey);
   if (cached) return { model: cached, recipe, modelId: parsed.modelId };
 
@@ -1101,7 +1116,7 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
       // v0.32: env-templated base URL + optional fetch wrapper for Azure.
-      const compat = applyOpenAICompatConfig(recipe, cfg);
+      const compat = applyOpenAICompatConfig(recipe, cfg, 'embedding');
       // Voyage's openai-compat path needs voyageCompatFetch (translates
       // request/response shape) when the recipe doesn't ship its own fetch
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
@@ -1606,7 +1621,7 @@ export async function embedMultimodal(
       recipe.setup_hint,
     );
   }
-  const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  const baseUrl = configuredBaseURL(cfg, recipe.id, 'embedding') ?? recipe.base_url_default;
   if (!baseUrl) {
     throw new AIConfigError(
       `${recipe.name} requires a base URL for multimodal embedding.`,
@@ -1744,7 +1759,7 @@ async function embedMultimodalOpenAICompat(
   const authResult = recipe.resolveAuth
     ? recipe.resolveAuth(cfg.env)
     : defaultResolveAuth(recipe, cfg.env, 'embedding');
-  const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  const baseUrl = configuredBaseURL(cfg, recipe.id, 'embedding') ?? recipe.base_url_default;
   if (!baseUrl) {
     throw new AIConfigError(
       `${recipe.name} requires a base URL for multimodal embedding.`,
@@ -1984,7 +1999,7 @@ async function resolveExpansionProvider(modelStr: string): Promise<{ model: any;
   assertTouchpoint(recipe, 'expansion', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
   const cfg = requireConfig();
 
-  const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
+  const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${configuredBaseURL(cfg, recipe.id, 'expansion') ?? ''}`;
   const cached = _modelCache.get(cacheKey);
   if (cached) return { model: cached, recipe, modelId: parsed.modelId };
 
@@ -2014,7 +2029,7 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
       // v0.32: env-templated base URL + optional fetch wrapper.
-      const compat = applyOpenAICompatConfig(recipe, cfg);
+      const compat = applyOpenAICompatConfig(recipe, cfg, 'expansion');
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -2265,7 +2280,7 @@ async function resolveChatProvider(modelStr: string): Promise<{ model: any; reci
   assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
   const cfg = requireConfig();
 
-  const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
+  const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${configuredBaseURL(cfg, recipe.id, 'chat') ?? ''}`;
   const cached = _modelCache.get(cacheKey);
   if (cached) return { model: cached, recipe, modelId: parsed.modelId };
 
@@ -2295,7 +2310,7 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'chat');
       // v0.32: env-templated base URL + optional fetch wrapper.
-      const compat = applyOpenAICompatConfig(recipe, cfg);
+      const compat = applyOpenAICompatConfig(recipe, cfg, 'chat');
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -2930,7 +2945,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
 
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
-  const compat = applyOpenAICompatConfig(recipe, cfg);
+  const compat = applyOpenAICompatConfig(recipe, cfg, 'reranker');
   // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
   // legacy `/models/rerank`; openai-style providers like llama.cpp's
   // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider

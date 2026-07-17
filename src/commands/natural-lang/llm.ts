@@ -110,6 +110,7 @@ function extractIntentObjectFromChatResult(result: unknown): Record<string, unkn
 export function buildAdminGatewayConfig(config: GBrainConfig): AIGatewayConfig {
   const envFromConfig: Record<string, string> = {};
   if (config.openai_api_key) envFromConfig.OPENAI_API_KEY = config.openai_api_key;
+  if (config.custom_openai_api_key) envFromConfig.CUSTOM_OPENAI_API_KEY = config.custom_openai_api_key;
   if (config.mimo_api_key) envFromConfig.MIMO_API_KEY = config.mimo_api_key;
   if (config.zhipu_api_key) envFromConfig.ZHIPUAI_API_KEY = config.zhipu_api_key;
   if (config.deepseek_api_key) envFromConfig.DEEPSEEK_API_KEY = config.deepseek_api_key;
@@ -122,6 +123,7 @@ export function buildAdminGatewayConfig(config: GBrainConfig): AIGatewayConfig {
     chat_model: config.chat_model,
     chat_fallback_chain: config.chat_fallback_chain,
     base_urls: config.provider_base_urls,
+    touchpoint_base_urls: config.provider_touchpoint_base_urls,
     env: { ...envFromConfig, ...process.env },
   };
 }

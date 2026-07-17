@@ -1,7 +1,7 @@
 {
   "name": "pmbrain-desktop",
   "productName": "PMBrain Desktop",
-  "version": "1.0.66",
+  "version": "1.0.67",
   "private": true,
   "author": "PMBrain",
   "description": "PMBrain Windows desktop shell",

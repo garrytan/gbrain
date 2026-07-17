@@ -97,4 +97,23 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       expect(cfg.base_urls?.['custom-openai']).toBe('http://127.0.0.1:8000/v1');
     });
   });
+
+  test('forwards per-touchpoint provider Base URLs without changing the legacy fallback', async () => {
+    await withEnv(envFor(null), async () => {
+      const cfg = buildGatewayConfig({
+        provider_base_urls: { 'custom-openai': 'http://127.0.0.1:8000/v1' },
+        provider_touchpoint_base_urls: {
+          'custom-openai': {
+            chat: 'http://127.0.0.1:8001/v1',
+            embedding: 'http://127.0.0.1:8002/v1',
+          },
+        },
+      } as unknown as GBrainConfig);
+      expect(cfg.base_urls?.['custom-openai']).toBe('http://127.0.0.1:8000/v1');
+      expect(cfg.touchpoint_base_urls?.['custom-openai']).toEqual({
+        chat: 'http://127.0.0.1:8001/v1',
+        embedding: 'http://127.0.0.1:8002/v1',
+      });
+    });
+  });
 });
