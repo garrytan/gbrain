@@ -91,6 +91,8 @@ export interface GBrainConfig {
   provider_base_urls?: Record<string, string>;
   /** Optional per-touchpoint base URL overrides, falling back to provider_base_urls. */
   provider_touchpoint_base_urls?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
+  /** Optional per-touchpoint API key overrides, falling back to the provider's shared key. */
+  provider_touchpoint_api_keys?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -641,6 +643,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_fallback_chain',
   'provider_base_urls',
   'provider_touchpoint_base_urls',
+  'provider_touchpoint_api_keys',
   'storage',
   'eval',
   'eval.capture',

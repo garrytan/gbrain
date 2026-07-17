@@ -116,4 +116,23 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       });
     });
   });
+
+  test('forwards per-touchpoint provider API keys without changing the legacy fallback', async () => {
+    await withEnv(envFor(null), async () => {
+      const cfg = buildGatewayConfig({
+        custom_openai_api_key: 'shared-key',
+        provider_touchpoint_api_keys: {
+          'custom-openai': {
+            chat: 'chat-key',
+            embedding: 'embedding-key',
+          },
+        },
+      } as unknown as GBrainConfig);
+      expect(cfg.env.CUSTOM_OPENAI_API_KEY).toBe('shared-key');
+      expect(cfg.touchpoint_api_keys?.['custom-openai']).toEqual({
+        chat: 'chat-key',
+        embedding: 'embedding-key',
+      });
+    });
+  });
 });

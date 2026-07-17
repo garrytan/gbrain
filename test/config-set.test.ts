@@ -22,6 +22,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('deepseek_api_key');
     expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
     expect(KNOWN_CONFIG_KEYS).toContain('custom_openai_api_key');
+    expect(KNOWN_CONFIG_KEYS).toContain('provider_touchpoint_api_keys');
   });
 
   test('contains the search-mode keys (v0.32.3)', () => {

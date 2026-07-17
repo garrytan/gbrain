@@ -9,6 +9,7 @@ import { loadConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
+import { getEmbeddingModel } from '../core/ai/gateway.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -176,6 +177,14 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // hitting raw Postgres dimension errors.
   await preflightDimMismatch(engine, !!opts.dryRun);
 
+  if (opts.stale && !opts.dryRun) {
+    const { invalidateMismatchedEmbeddingModels } = await import('../core/embedding-dimension-alignment.ts');
+    const invalidated = await invalidateMismatchedEmbeddingModels(engine, getEmbeddingModel());
+    if (invalidated > 0) {
+      slog(`Invalidated ${invalidated} embeddings created by a different model; rebuilding with the current model.`);
+    }
+  }
+
   const result: EmbedResult = {
     embedded: 0,
     skipped: 0,
@@ -212,7 +221,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 
 export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up]');
+    console.log('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--json]');
     return;
   }
 
@@ -256,6 +265,7 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   const priorityRaw = priorityIdx >= 0 ? args[priorityIdx + 1] : undefined;
   const priority = priorityRaw === 'recent' ? 'recent' as const : undefined;
   const catchUp = args.includes('--catch-up');
+  const json = args.includes('--json');
 
   let opts: EmbedOpts;
   if (slugsIdx >= 0) {
@@ -287,6 +297,7 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   try {
     const result = await runEmbedCore(engine, opts);
     if (progressStarted) progress.finish();
+    if (json) process.stdout.write(JSON.stringify(result) + '\n');
     return result;
   } catch (e) {
     if (progressStarted) progress.finish();
@@ -370,6 +381,7 @@ async function embedPage(
   }
 
   const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+  const embeddingModel = getEmbeddingModel();
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
@@ -379,6 +391,7 @@ async function embedPage(
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
+    model: embeddingModel,
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
@@ -401,6 +414,7 @@ async function embedAll(
     catchUp?: boolean;
   },
 ) {
+  const embeddingModel = getEmbeddingModel();
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
   // bomb that pulled every page row + every chunk's embedding column
@@ -417,7 +431,7 @@ async function embedAll(
   if (staleOnly) {
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts);
+    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, embeddingModel);
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
@@ -484,6 +498,7 @@ async function embedAll(
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingModel,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated, pageOpts);
@@ -542,12 +557,13 @@ async function embedAllStale(
   sourceId: string | undefined,
   dryRun: boolean,
   result: EmbedResult,
-  onProgress?: (done: number, total: number, embedded: number) => void,
-  staleOpts?: {
+  onProgress: ((done: number, total: number, embedded: number) => void) | undefined,
+  staleOpts: {
     batchSize?: number;
     priority?: 'recent';
     catchUp?: boolean;
-  },
+  } | undefined,
+  embeddingModel: string,
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
@@ -673,6 +689,7 @@ async function embedAllStale(
             chunk_text: c.chunk_text,
             chunk_source: c.chunk_source,
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+            model: embeddingModel,
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
           await engine.upsertChunks(slug, merged, { sourceId: keySourceId });

@@ -679,6 +679,8 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   const hadRunningSidecar = Boolean(sidecar);
   await stopSidecar();
   let saved: ReturnType<typeof saveSetup>;
+  let embeddingSwitchCommitted = false;
+  let reembeddingWarning: string | null = null;
   try {
     saved = saveSetup(payload);
   } catch (error) {
@@ -688,13 +690,15 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   }
   try {
     await prepareConfiguredDatabase();
-    if (saved.needsEmbeddingDimensionProbe) {
+    if (saved.needsEmbeddingDimensionProbe || saved.embeddingModelChanged) {
       let probe: Awaited<ReturnType<typeof runCliChecked>>;
       try {
         probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
       } catch (error) {
         if (saved.config.embedding_model?.startsWith('custom-openai:')) {
-          const baseUrl = saved.config.provider_base_urls?.['custom-openai'] ?? '自定义 Base URL';
+          const baseUrl = saved.config.provider_touchpoint_base_urls?.['custom-openai']?.embedding
+            ?? saved.config.provider_base_urls?.['custom-openai']
+            ?? '自定义 Base URL';
           const model = saved.config.embedding_model.slice('custom-openai:'.length);
           throw new Error(
             `自定义向量模型验证失败：无法通过 ${baseUrl} 访问模型 ${model}。` +
@@ -708,8 +712,10 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
       if (!Number.isInteger(result.dimensions) || (result.dimensions ?? 0) <= 0) {
         throw new Error('无法从向量模型响应中判断有效维度。');
       }
-      updateSavedEmbeddingDimension(saved.snapshot.path, result.dimensions!);
-      saved.config.embedding_dimensions = result.dimensions!;
+      if (saved.config.embedding_dimensions !== result.dimensions) {
+        updateSavedEmbeddingDimension(saved.snapshot.path, result.dimensions!);
+        saved.config.embedding_dimensions = result.dimensions!;
+      }
     }
     sendStartupProgress({
       visible: true,
@@ -734,9 +740,38 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
     markDesktopMigration(app.getVersion());
     // Keep this as the final fallible setup step: once the DB column is
     // aligned, no later config rollback may restore an incompatible width.
-    await runCliChecked(runtime(), ['models', 'align-embedding-dimension', '--yes', '--json']);
+    const alignmentArgs = ['models', 'align-embedding-dimension', '--yes', '--json'];
+    if (saved.embeddingModelChanged) alignmentArgs.push('--force-reembed');
+    await runCliChecked(runtime(), alignmentArgs);
+    embeddingSwitchCommitted = saved.embeddingModelChanged;
+    if (saved.embeddingModelChanged) {
+      sendStartupProgress({
+        visible: true,
+        stage: 'migration',
+        title: '正在使用新模型重建向量',
+        message: '旧向量已安全失效，正在重新生成搜索索引。若本次中断，Dream 会从剩余内容继续。',
+      });
+      const reembed = await runCli(runtime(), ['embed', '--stale', '--catch-up', '--json']);
+      if (reembed.code !== 0) {
+        reembeddingWarning = (reembed.stderr || reembed.stdout).trim()
+          || '本次重新向量化未完成，Dream 会继续处理剩余内容。';
+      } else {
+        try {
+          const result = JSON.parse(reembed.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
+            embedded?: number;
+            total_chunks?: number;
+          };
+          const pending = Math.max(0, (result.total_chunks ?? 0) - (result.embedded ?? 0));
+          if (pending > 0) {
+            reembeddingWarning = `新模型已生效，但仍有 ${pending} 个分块等待向量化；Dream 下次启动会继续处理。`;
+          }
+        } catch {
+          reembeddingWarning = '新模型已生效，但无法确认重新向量化是否全部完成；Dream 下次启动会检查并继续处理。';
+        }
+      }
+    }
   } catch (error) {
-    restoreConfig(saved.snapshot);
+    if (!embeddingSwitchCommitted) restoreConfig(saved.snapshot);
     if (hadRunningSidecar && saved.snapshot.existed) {
       await startSidecar(false).catch(() => undefined);
     } else {
@@ -752,6 +787,7 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
     port: sidecar?.port,
     mcpUrl: sidecar?.mcpUrl,
     backup: saved.backup,
+    reembeddingWarning,
   };
 }
 

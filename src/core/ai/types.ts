@@ -368,6 +368,8 @@ export interface AIGatewayConfig {
   base_urls?: Record<string, string>;
   /** Optional per-provider, per-touchpoint base URL overrides. */
   touchpoint_base_urls?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
+  /** Optional per-provider, per-touchpoint API key overrides. */
+  touchpoint_api_keys?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
 }

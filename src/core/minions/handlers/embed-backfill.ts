@@ -33,6 +33,7 @@
  */
 import { tryAcquireDbLock } from '../../db-lock.ts';
 import { BudgetTracker, BudgetExhausted } from '../../budget/budget-tracker.ts';
+import { getEmbeddingModel } from '../../ai/gateway.ts';
 import { withBudgetTracker } from '../../ai/gateway.ts';
 import { embedStaleForSource } from '../../embed-stale.ts';
 import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
@@ -141,6 +142,7 @@ export function makeEmbedBackfillHandler(engine: BrainEngine) {
     try {
       const result = await withBudgetTracker(tracker, async () =>
         embedStaleForSource(engine, sourceId, {
+          model: getEmbeddingModel(),
           batchSize,
           pacer,
           ...(concurrency !== undefined ? { concurrency } : {}),

@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfig, loadConfigWithEngine } from '../core/config.ts';
+import { loadConfig, loadConfigWithEngine, saveConfig } from '../core/config.ts';
 import {
   getEmbeddingColumnRegistry,
   validateColumnKey,
@@ -25,6 +25,7 @@ function redactUrl(url: string): string {
 // false-positives (e.g. `monkey` doesn't match `key`).
 export function isSensitiveConfigKey(key: string): boolean {
   const lower = key.toLowerCase();
+  if (lower === 'provider_touchpoint_api_keys' || lower.startsWith('provider_touchpoint_api_keys.')) return true;
   // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
@@ -33,6 +34,75 @@ export function redactConfigValue(key: string, value: string): string {
   if (value.includes('postgresql://')) return redactUrl(value);
   if (isSensitiveConfigKey(key)) return '***';
   return value;
+}
+
+async function switchEmbeddingModel(engine: BrainEngine, nextModel: string): Promise<void> {
+  const current = loadConfig();
+  if (!current) throw new Error('No config found. Run: pmbrain init');
+  const previousModel = current.embedding_model?.trim();
+  if (previousModel === nextModel) {
+    console.log(`Embedding model is already ${nextModel}; no re-embedding needed.`);
+    return;
+  }
+
+  const { recommendedEmbeddingDimension, alignEmbeddingDimension } = await import('../core/embedding-dimension-alignment.ts');
+  const { configureGateway, detectEmbeddingDimensions } = await import('../core/ai/gateway.ts');
+  const { buildGatewayConfig } = await import('../core/ai/gateway-config.ts');
+  let provisionalDimensions = current.embedding_dimensions ?? 1536;
+  try {
+    provisionalDimensions = recommendedEmbeddingDimension(nextModel);
+  } catch {
+    // User-provided OpenAI-compatible model ids have no catalog dimension;
+    // the live one-vector probe below is the source of truth.
+  }
+  const candidate = {
+    ...current,
+    embedding_model: nextModel,
+    embedding_dimensions: provisionalDimensions,
+  };
+  delete candidate.embedding_disabled;
+
+  configureGateway(buildGatewayConfig(candidate));
+  let detectedDimensions: number;
+  try {
+    detectedDimensions = await detectEmbeddingDimensions(nextModel);
+  } catch (error) {
+    configureGateway(buildGatewayConfig(current));
+    throw new Error(
+      `Embedding model ${nextModel} validation failed; config and existing vectors were not changed. ` +
+      (error instanceof Error ? error.message : String(error)),
+      { cause: error },
+    );
+  }
+  candidate.embedding_dimensions = detectedDimensions;
+
+  saveConfig(candidate);
+  let committed = false;
+  try {
+    const alignment = await alignEmbeddingDimension(engine, detectedDimensions, {
+      forceReembed: Boolean(previousModel),
+      targetModel: nextModel,
+    });
+    committed = alignment.status === 'aligned' || alignment.status === 'invalidated';
+    console.log(
+      `Embedding model set to ${nextModel} (${detectedDimensions} dimensions); ` +
+      `${alignment.cleared_embeddings} derived vectors invalidated. Source content preserved.`,
+    );
+    if (committed) {
+      const { runEmbedCore } = await import('./embed.ts');
+      const result = await runEmbedCore(engine, { stale: true, catchUp: true });
+      console.log(
+        `Re-embedding finished: ${result.embedded} chunks updated, ` +
+        `${result.total_chunks - result.embedded} still pending.`,
+      );
+    }
+  } catch (error) {
+    if (!committed) {
+      saveConfig(current);
+      configureGateway(buildGatewayConfig(current));
+    }
+    throw error;
+  }
 }
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
@@ -52,7 +122,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
     console.log('PMBrain config:');
     for (const [k, v] of Object.entries(config)) {
-      const display = typeof v === 'string' ? redactConfigValue(k, v) : v;
+      const display = isSensitiveConfigKey(k) ? '***' : typeof v === 'string' ? redactConfigValue(k, v) : v;
       console.log(`  ${k}: ${display}`);
     }
     return;
@@ -112,6 +182,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       process.exit(1);
     }
   } else if (action === 'set' && key && value) {
+    if (key === 'embedding_model') {
+      await switchEmbeddingModel(engine, value.trim());
+      return;
+    }
     // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
     // fields unconditionally. These fields size the `content_chunks.embedding`
     // column at init time and are file-plane canonical. `gbrain config set
@@ -122,7 +196,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // write preserves the split-brain footgun the wave exists to close.
     // Switching providers requires wipe-and-reinit; the recipe below is
     // paste-ready and uses the actual command path that works after Lane B.
-    if (key === 'embedding_model' || key === 'embedding_dimensions') {
+    if (key === 'embedding_dimensions') {
       const { gbrainPath } = await import('../core/config.ts');
       const isPgliteEngine = (await import('../core/config.ts')).loadConfig()?.engine === 'pglite';
       const dbPath = gbrainPath('brain.pglite');
@@ -132,11 +206,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       if (isPgliteEngine) {
         console.error(`[config] To switch embedding models/dimensions on PGLite, wipe and re-init:`);
         console.error(`[config]   mv ${dbPath} ${dbPath}.bak`);
-        if (key === 'embedding_model') {
-          console.error(`[config]   gbrain init --pglite --embedding-model ${value}`);
-        } else {
-          console.error(`[config]   gbrain init --pglite --embedding-dimensions ${value}`);
-        }
+        console.error(`[config]   gbrain init --pglite --embedding-dimensions ${value}`);
         console.error(`[config]   gbrain sync   # re-imports your brain repo`);
       } else {
         console.error(`[config] To switch embedding models/dimensions on Postgres, see:`);

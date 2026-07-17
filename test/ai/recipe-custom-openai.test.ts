@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import {
   applyOpenAICompatConfig,
+  applyResolveAuth,
   configureGateway,
   defaultResolveAuth,
   detectEmbeddingDimensions,
@@ -32,6 +33,25 @@ describe('custom-openai recipe', () => {
       headerName: 'Authorization',
       token: 'Bearer local-key',
     });
+  });
+
+  test('resolves separate chat and embedding API keys with the shared key as fallback', () => {
+    const recipe = getRecipe('custom-openai')!;
+    const config = {
+      env: { CUSTOM_OPENAI_API_KEY: 'shared-key' },
+      touchpoint_api_keys: {
+        'custom-openai': {
+          chat: 'chat-key',
+          embedding: 'embedding-key',
+        },
+      },
+    };
+    expect(applyResolveAuth(recipe, config, 'chat')).toEqual({ apiKey: 'chat-key' });
+    expect(applyResolveAuth(recipe, config, 'embedding')).toEqual({ apiKey: 'embedding-key' });
+    expect(applyResolveAuth(recipe, config, 'expansion')).toEqual({ apiKey: 'chat-key' });
+    expect(applyResolveAuth(recipe, {
+      env: { CUSTOM_OPENAI_API_KEY: 'shared-key' },
+    }, 'embedding')).toEqual({ apiKey: 'shared-key' });
   });
 
   test('requires and resolves the configured Base URL', () => {
@@ -86,10 +106,11 @@ describe('custom-openai recipe', () => {
         env: {},
         base_urls: { 'custom-openai': 'http://127.0.0.1:1/v1' },
         touchpoint_base_urls: { 'custom-openai': { embedding: `${origin}/v1` } },
+        touchpoint_api_keys: { 'custom-openai': { embedding: 'embedding-key' } },
       });
       expect(await detectEmbeddingDimensions()).toBe(3);
       expect(requestPath).toBe('/v1/embeddings');
-      expect(authorization).toBe('Bearer unauthenticated');
+      expect(authorization).toBe('Bearer embedding-key');
     } finally {
       server.stop(true);
     }
