@@ -89,6 +89,8 @@ export interface GBrainConfig {
   chat_fallback_chain?: string[];
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
+  /** Optional per-touchpoint base URL overrides, falling back to provider_base_urls. */
+  provider_touchpoint_base_urls?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -638,6 +640,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
+  'provider_touchpoint_base_urls',
   'storage',
   'eval',
   'eval.capture',
@@ -732,6 +735,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'cycle.',            // cycle.<phase>.*
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
+  'provider_touchpoint_base_urls.', // per-provider, per-touchpoint base URL overrides
   'content_sanity.',    // v0.41 content-sanity tunables
 ];
 

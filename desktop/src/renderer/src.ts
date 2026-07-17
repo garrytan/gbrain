@@ -202,10 +202,12 @@ function openCustomProvider(target: ModelKind): void {
   const provider = $<HTMLSelectElement>(`#${target}-provider`).value;
   const currentModel = $<HTMLInputElement>(`#${target}-model-name`).value.trim();
   const editingModel = provider === 'custom-openai' && Boolean(currentModel);
+  const targetBaseUrl = customProviderDraft?.baseUrls?.[target] || '';
   ($<HTMLInputElement>('#custom-provider-name')).value = customProviderDraft?.displayName || '';
-  ($<HTMLInputElement>('#custom-provider-base-url')).value = customProviderDraft?.baseUrl || '';
+  ($<HTMLInputElement>('#custom-provider-base-url')).value = targetBaseUrl;
   ($<HTMLInputElement>('#custom-provider-model-id')).value = editingModel ? currentModel : '';
   const targetLabel = target === 'chat' ? '普通模型' : '向量模型';
+  $('#custom-provider-base-url-label').textContent = `${targetLabel} Base URL`;
   $('#custom-provider-title').textContent = `${editingModel ? '编辑' : '添加'}自定义${targetLabel}`;
   $('#custom-provider-target-copy').textContent = target === 'chat'
     ? 'PMBrain 将通过该地址调用 OpenAI 兼容的对话接口。'
@@ -213,7 +215,10 @@ function openCustomProvider(target: ModelKind): void {
   setCustomProviderError();
   const dialog = $<HTMLDialogElement>('#custom-provider-dialog');
   dialog.showModal();
-  setTimeout(() => $<HTMLInputElement>(customProviderDraft ? '#custom-provider-model-id' : '#custom-provider-name').focus(), 0);
+  const focusTarget = !customProviderDraft?.displayName
+    ? '#custom-provider-name'
+    : !targetBaseUrl ? '#custom-provider-base-url' : '#custom-provider-model-id';
+  setTimeout(() => $<HTMLInputElement>(focusTarget).focus(), 0);
 }
 
 function closeCustomProvider(): void {
@@ -255,12 +260,13 @@ function confirmCustomProvider(): void {
     setCustomProviderError('未识别要添加到哪一个模型卡片，请关闭后从“＋ 自定义模型”重新进入。');
     return;
   }
+  const target = customProviderTarget;
+  const normalizedBaseUrl = rawBaseUrl.replace(/\/+$/, '');
   customProviderDraft = {
     id: 'custom-openai',
     displayName,
-    baseUrl: rawBaseUrl.replace(/\/+$/, ''),
+    baseUrls: { ...customProviderDraft?.baseUrls, [target]: normalizedBaseUrl },
   };
-  const target = customProviderTarget;
   customProviderTarget = null;
   renderCustomProvider();
   $<HTMLDialogElement>('#custom-provider-dialog').close();
@@ -307,8 +313,9 @@ async function refreshProviderModels(kind: ModelKind, chooseDefault: boolean): P
   if (provider === 'custom-openai') {
     if (chooseDefault) input.value = '';
     providerModels[kind] = input.value.trim() ? [input.value.trim()] : [];
-    status.textContent = customProviderDraft
-      ? `接口：${customProviderDraft.baseUrl}。请输入该接口实际提供的模型 ID。`
+    const baseUrl = customProviderDraft?.baseUrls?.[kind];
+    status.textContent = baseUrl
+      ? `接口：${baseUrl}。请输入该接口实际提供的模型 ID。`
       : '请先添加自定义接口并填写 Base URL。';
     status.hidden = false;
     return;
@@ -1061,9 +1068,14 @@ async function save(): Promise<void> {
     setNotice('error', '请选择向量化模型供应商');
     return;
   }
-  if ((chatProvider === 'custom-openai' || embeddingProvider === 'custom-openai') && !customProviderDraft) {
+  const missingCustomTarget = chatProvider === 'custom-openai' && !customProviderDraft?.baseUrls?.chat
+    ? 'chat'
+    : embeddingProvider === 'custom-openai' && !customProviderDraft?.baseUrls?.embedding
+      ? 'embedding'
+      : null;
+  if (missingCustomTarget) {
     setNotice('error', '请先添加自定义接口并填写 Base URL。');
-    openCustomProvider(chatProvider === 'custom-openai' ? 'chat' : 'embedding');
+    openCustomProvider(missingCustomTarget);
     return;
   }
 
@@ -1216,7 +1228,7 @@ $<HTMLInputElement>('#shared-can-write').addEventListener('change', () => {
 (['chat', 'embedding'] as const).forEach(kind => {
   $<HTMLSelectElement>(`#${kind}-provider`).addEventListener('change', () => {
     const select = $<HTMLSelectElement>(`#${kind}-provider`);
-    if (select.value === 'custom-openai' && !customProviderDraft) {
+    if (select.value === 'custom-openai' && !customProviderDraft?.baseUrls?.[kind]) {
       select.value = previousProviderSelection[kind];
       openCustomProvider(kind);
       return;

@@ -46,7 +46,9 @@ export interface DesktopDatabaseRuntimeConfig {
 export interface DesktopCustomProvider {
   id: 'custom-openai';
   displayName: string;
-  baseUrl: string;
+  /** Legacy single-endpoint payload accepted for backward compatibility. */
+  baseUrl?: string;
+  baseUrls?: Partial<Record<'chat' | 'embedding', string>>;
 }
 
 export function normalizeDesktopTheme(value: unknown): DesktopTheme {
@@ -130,6 +132,7 @@ type RawConfig = Record<string, unknown> & {
   embedding_model?: string;
   embedding_dimensions?: number;
   provider_base_urls?: Record<string, string>;
+  provider_touchpoint_base_urls?: Record<string, Partial<Record<'embedding' | 'expansion' | 'chat' | 'reranker', string>>>;
   custom_openai_api_key?: string;
   admin_bootstrap_token?: string;
   desktop?: {
@@ -154,21 +157,31 @@ function normalizeCustomProvider(value: DesktopCustomProvider): DesktopCustomPro
   if (displayName.length > 80 || /[\r\n]/.test(displayName)) {
     throw new Error('自定义接口显示名称不能超过 80 个字符或包含换行。');
   }
-  const rawBaseUrl = value.baseUrl.trim();
-  if (!rawBaseUrl || rawBaseUrl.length > 2048) throw new Error('请填写有效的自定义接口 Base URL。');
-  let parsed: URL;
-  try {
-    parsed = new URL(rawBaseUrl);
-  } catch {
-    throw new Error('自定义接口 Base URL 格式无效，请填写完整的 http:// 或 https:// 地址。');
+  const legacyBaseUrl = value.baseUrl?.trim();
+  const candidates = {
+    chat: value.baseUrls?.chat?.trim() || legacyBaseUrl,
+    embedding: value.baseUrls?.embedding?.trim() || legacyBaseUrl,
+  };
+  const baseUrls: Partial<Record<'chat' | 'embedding', string>> = {};
+  for (const [touchpoint, rawBaseUrl] of Object.entries(candidates) as Array<['chat' | 'embedding', string | undefined]>) {
+    if (!rawBaseUrl) continue;
+    if (rawBaseUrl.length > 2048) throw new Error('请填写有效的自定义接口 Base URL。');
+    let parsed: URL;
+    try {
+      parsed = new URL(rawBaseUrl);
+    } catch {
+      throw new Error('自定义接口 Base URL 格式无效，请填写完整的 http:// 或 https:// 地址。');
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error('自定义接口 Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。');
+    }
+    baseUrls[touchpoint] = rawBaseUrl.replace(/\/+$/, '');
   }
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('自定义接口 Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。');
-  }
+  if (!baseUrls.chat && !baseUrls.embedding) throw new Error('请填写有效的自定义接口 Base URL。');
   return {
     id: 'custom-openai',
     displayName,
-    baseUrl: rawBaseUrl.replace(/\/+$/, ''),
+    baseUrls,
   };
 }
 
@@ -298,6 +311,9 @@ export function getSetupInfo(): SetupInfo {
   const customBaseUrl = typeof config?.provider_base_urls?.['custom-openai'] === 'string'
     ? config.provider_base_urls['custom-openai'].trim()
     : '';
+  const customTouchpointBaseUrls = config?.provider_touchpoint_base_urls?.['custom-openai'];
+  const customChatBaseUrl = customTouchpointBaseUrls?.chat?.trim() || customBaseUrl;
+  const customEmbeddingBaseUrl = customTouchpointBaseUrls?.embedding?.trim() || customBaseUrl;
   return {
     needsSetup: !config,
     configPath: path,
@@ -314,10 +330,13 @@ export function getSetupInfo(): SetupInfo {
       chatModel: typeof config?.chat_model === 'string' ? config.chat_model : undefined,
       embeddingModel: typeof config?.embedding_model === 'string' ? config.embedding_model : undefined,
       embeddingDimensions: typeof config?.embedding_dimensions === 'number' ? config.embedding_dimensions : undefined,
-      customProvider: customBaseUrl ? {
+      customProvider: customChatBaseUrl || customEmbeddingBaseUrl ? {
         id: 'custom-openai',
         displayName: desktop?.custom_openai_display_name?.trim() || '自定义 OpenAI 接口',
-        baseUrl: customBaseUrl,
+        baseUrls: {
+          ...(customChatBaseUrl ? { chat: customChatBaseUrl } : {}),
+          ...(customEmbeddingBaseUrl ? { embedding: customEmbeddingBaseUrl } : {}),
+        },
       } : undefined,
       theme: normalizeDesktopTheme(desktop?.theme),
       keyStatus: {
@@ -570,9 +589,18 @@ export function saveSetup(payload: SetupPayload): {
   };
   if (payload.customProvider) {
     const customProvider = normalizeCustomProvider(payload.customProvider);
+    const existingTouchpoints = existing.provider_touchpoint_base_urls?.['custom-openai'] ?? {};
+    const customTouchpoints = { ...existingTouchpoints, ...customProvider.baseUrls };
+    const fallbackBaseUrl = customTouchpoints.chat
+      ?? customTouchpoints.embedding
+      ?? existing.provider_base_urls?.['custom-openai'];
     config.provider_base_urls = {
       ...(existing.provider_base_urls ?? {}),
-      'custom-openai': customProvider.baseUrl,
+      ...(fallbackBaseUrl ? { 'custom-openai': fallbackBaseUrl } : {}),
+    };
+    config.provider_touchpoint_base_urls = {
+      ...(existing.provider_touchpoint_base_urls ?? {}),
+      'custom-openai': customTouchpoints,
     };
     config.desktop.custom_openai_display_name = customProvider.displayName;
   }

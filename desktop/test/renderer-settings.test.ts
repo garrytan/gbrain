@@ -50,6 +50,8 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).toContain("provider === 'custom-openai'");
     expect(renderer).toContain("openCustomProvider('chat')");
     expect(renderer).toContain("openCustomProvider('embedding')");
+    expect(renderer).toContain('customProviderDraft?.baseUrls?.[target]');
+    expect(renderer).toContain('baseUrls: { ...customProviderDraft?.baseUrls, [target]: normalizedBaseUrl }');
     expect(main).toContain('自定义向量模型验证失败');
     expect(styles).toContain('.model-add-button');
     expect(styles).toContain('.custom-provider-dialog');

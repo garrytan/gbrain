@@ -40,6 +40,24 @@ describe('custom-openai recipe', () => {
     expect(() => applyOpenAICompatConfig(recipe, { env: {} })).toThrow('requires a base URL');
   });
 
+  test('resolves separate chat and embedding Base URLs with legacy fallback', () => {
+    const recipe = getRecipe('custom-openai')!;
+    const config = {
+      env: {},
+      base_urls: { 'custom-openai': 'http://127.0.0.1:8000/v1' },
+      touchpoint_base_urls: {
+        'custom-openai': {
+          chat: 'http://127.0.0.1:8001/v1',
+          embedding: 'http://127.0.0.1:8002/v1',
+        },
+      },
+    };
+    expect(applyOpenAICompatConfig(recipe, config, 'chat')).toEqual({ baseURL: 'http://127.0.0.1:8001/v1' });
+    expect(applyOpenAICompatConfig(recipe, config, 'embedding')).toEqual({ baseURL: 'http://127.0.0.1:8002/v1' });
+    expect(applyOpenAICompatConfig(recipe, config, 'expansion')).toEqual({ baseURL: 'http://127.0.0.1:8001/v1' });
+    expect(applyOpenAICompatConfig(recipe, config)).toEqual({ baseURL: 'http://127.0.0.1:8000/v1' });
+  });
+
   test('probes embedding dimensions through a real OpenAI-compatible HTTP endpoint', async () => {
     let requestPath = '';
     let authorization = '';
@@ -63,7 +81,8 @@ describe('custom-openai recipe', () => {
         embedding_model: 'custom-openai:qwen-embedding',
         embedding_dimensions: 3,
         env: {},
-        base_urls: { 'custom-openai': `${origin}/v1` },
+        base_urls: { 'custom-openai': 'http://127.0.0.1:1/v1' },
+        touchpoint_base_urls: { 'custom-openai': { embedding: `${origin}/v1` } },
       });
       expect(await detectEmbeddingDimensions()).toBe(3);
       expect(requestPath).toBe('/v1/embeddings');

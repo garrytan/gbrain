@@ -274,6 +274,7 @@ function configureGatewayForCli(): boolean {
       chat_model: undefined,
       chat_fallback_chain: undefined,
       base_urls: undefined,
+      touchpoint_base_urls: undefined,
       env: { ...process.env },
     });
     return true;
@@ -285,6 +286,7 @@ function configureGatewayForCli(): boolean {
     chat_model: config.chat_model,
     chat_fallback_chain: config.chat_fallback_chain,
     base_urls: config.provider_base_urls,
+    touchpoint_base_urls: config.provider_touchpoint_base_urls,
     env: { ...process.env },
   });
   return true;

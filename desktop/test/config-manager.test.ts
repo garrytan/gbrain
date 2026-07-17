@@ -346,10 +346,55 @@ describe('desktop config manager', () => {
     expect(info.current.customProvider).toEqual({
       id: 'custom-openai',
       displayName: '本地 Qwen',
-      baseUrl: 'http://127.0.0.1:8000/v1',
+      baseUrls: {
+        chat: 'http://127.0.0.1:8000/v1',
+        embedding: 'http://127.0.0.1:8000/v1',
+      },
     });
     expect(info.current.keyStatus.customOpenai).toBe(true);
     expect(info.current.keyValues.customOpenai).toBe('local-key');
+  });
+
+  test('persists and restores separate custom OpenAI chat and embedding Base URLs', () => {
+    const root = isolatedHome();
+    writeJsonConfig(desktopConfigPath(), {
+      engine: 'pglite',
+      database_path: join(root, 'brain.pglite'),
+      embedding_model: 'zhipu:embedding-3',
+      embedding_dimensions: 1024,
+    });
+
+    saveSetup({
+      engine: 'pglite',
+      customProvider: {
+        id: 'custom-openai',
+        displayName: 'Enterprise Qwen',
+        baseUrls: {
+          chat: 'http://10.0.0.20:8000/v1/',
+          embedding: 'http://10.0.0.20:8001/v1/',
+        },
+      },
+      modelConfig: {
+        chatModel: 'custom-openai:Qwen3-35B-A3B',
+        embeddingModel: 'custom-openai:Qwen3-Embedding-8B',
+        embeddingDimensions: 4096,
+      },
+    });
+
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.provider_touchpoint_base_urls['custom-openai']).toEqual({
+      chat: 'http://10.0.0.20:8000/v1',
+      embedding: 'http://10.0.0.20:8001/v1',
+    });
+    expect(config.provider_base_urls['custom-openai']).toBe('http://10.0.0.20:8000/v1');
+    expect(getSetupInfo().current.customProvider).toEqual({
+      id: 'custom-openai',
+      displayName: 'Enterprise Qwen',
+      baseUrls: {
+        chat: 'http://10.0.0.20:8000/v1',
+        embedding: 'http://10.0.0.20:8001/v1',
+      },
+    });
   });
 
   test('rejects unsafe custom provider URLs before writing config', () => {
