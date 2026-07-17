@@ -2428,8 +2428,32 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
   return t;
 }
 
-function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): CycleStatus {
+/**
+ * True when a phase result must escalate the OVERALL cycle status to
+ * 'failed' (not 'partial'). Used for transport-budget abort: ordinary
+ * per-item phase failures still roll to 'partial', but a dead egress
+ * path that trips the consecutive-transport budget is cycle-fatal so
+ * `gbrain dream` exits nonzero.
+ *
+ * Marker: `details.transport_abort === true` (set by propose_takes when
+ * CONSECUTIVE_TRANSPORT_FAILURE_BUDGET trips).
+ */
+export function phaseForcesCycleFailed(p: PhaseResult): boolean {
+  return p.details?.transport_abort === true;
+}
+
+/**
+ * Derive overall CycleReport.status from phase results + totals.
+ * Exported for unit tests of the transport-abort fatal rollup.
+ */
+export function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): CycleStatus {
   if (phases.length === 0) return 'failed';
+  // Transport-budget abort is cycle-fatal. A multi-phase dream where
+  // propose_takes trips and another phase succeeds must NOT roll up to
+  // 'partial' (dream exits nonzero only on overall 'failed' — the
+  // silent-success wedge this patch kills). Ordinary fail+ok stays
+  // 'partial'.
+  if (phases.some(phaseForcesCycleFailed)) return 'failed';
   const anyFailed = phases.some(p => p.status === 'fail');
   const allFailed = phases.every(p => p.status === 'fail');
   const anyWarn = phases.some(p => p.status === 'warn');
