@@ -1503,20 +1503,26 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *   5) Payload-too-large failures: warn at >=1 (indicates a workload
  *      mismatch that the operator should know about).
  *
- * Engine-agnostic (file-based + one config-key read).
+ * Engine-agnostic (file-based + one config-key read). Accepts a null engine
+ * (`--fast` / DB-down): the audit JSONL needs no DB, so failure counts still
+ * surface; only the zero-failure message loses the enabled/disabled nuance
+ * (issue #2059 item 3 — the check used to be silently skipped in exactly the
+ * degraded states where its signal matters most).
  */
-export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
+export async function checkRerankerHealth(engine: BrainEngine | null): Promise<Check> {
   try {
     const { readRecentRerankFailures } = await import('../core/rerank-audit.ts');
-    const cfg = await engine.getConfig('search.reranker.enabled');
+    const cfg = engine ? await engine.getConfig('search.reranker.enabled') : null;
     const rerankerEnabled = cfg === 'true' || cfg === '1';
 
     const failures = readRecentRerankFailures(7);
     if (failures.length === 0) {
+      // Without an engine the enabled/disabled nuance is unknowable — don't
+      // claim "disabled" from a config key we never read.
       return {
         name: 'reranker_health',
         status: 'ok',
-        message: rerankerEnabled
+        message: engine === null || rerankerEnabled
           ? 'No rerank failures in last 7 days'
           : 'Reranker disabled — no failures expected',
       };
@@ -5207,6 +5213,12 @@ export async function buildChecks(
     // Filesystem read failure is non-fatal.
   }
 
+  // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
+  // File-based, so it runs in the filesystem phase: `--fast` and DB-down
+  // runs still surface rerank failures (#2059 item 3). A null engine only
+  // costs the enabled/disabled nuance in the zero-failure message.
+  checks.push(await checkRerankerHealth(engine));
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
@@ -7273,9 +7285,6 @@ export async function buildChecks(
     checks.push(await checkHiddenBySearchPolicy(engine));
     progress.heartbeat('eval_drift');
     checks.push(await checkEvalDrift(engine));
-    // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
-    progress.heartbeat('reranker_health');
-    checks.push(await checkRerankerHealth(engine));
     // v0.41.18.0 batch_retry_health — Supavisor circuit-breaker incident
     // surfacing via the batch-retry audit JSONL. Codex H-9 thresholds.
     progress.heartbeat('batch_retry_health');

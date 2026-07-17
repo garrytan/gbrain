@@ -188,6 +188,17 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(conn.message.toLowerCase()).toContain('fast');
   });
 
+  test('reranker_health runs in --fast and null-engine paths (#2059 item 3)', async () => {
+    // The rerank-failure audit is file-based (no DB), so the check must
+    // survive the DB-phase early return. Pre-fix it was silently skipped
+    // in exactly the degraded states where its signal matters most.
+    const fastChecks = await buildChecks(engine, ['--fast']);
+    expect(fastChecks.map(c => c.name)).toContain('reranker_health');
+
+    const noEngineChecks = await buildChecks(null, ['--fast'], 'env:DATABASE_URL');
+    expect(noEngineChecks.map(c => c.name)).toContain('reranker_health');
+  });
+
   test('--json arg does NOT alter the returned check list', async () => {
     // --json is a wrapper-level concern (controls outputResults render mode);
     // the buildChecks seam should return the same checks regardless.
