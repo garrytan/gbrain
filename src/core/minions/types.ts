@@ -456,6 +456,17 @@ export interface SubagentHandlerData {
    */
   allowed_slug_prefixes?: string[];
   /**
+   * Brain source the subagent's tool calls are scoped to (#1586).
+   *
+   * When set, every tool-call `OperationContext.sourceId` uses this value
+   * instead of the legacy 'default', so put_page writes land in the cycle's
+   * resolved source. Same trust story as `allowed_slug_prefixes`:
+   * PROTECTED_JOB_NAMES gates subagent submission, so only cycle.ts and
+   * direct CLI submitters can set it. Validated via `validateSourceId` at
+   * tool-registry build time.
+   */
+  source_id?: string;
+  /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
    * (omitted or false) prepends a deterministic preamble listing each

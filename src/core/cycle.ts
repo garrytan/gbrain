@@ -1682,6 +1682,9 @@ export async function runCycle(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
+          // #1586: scope synthesized writes to the cycle's resolved source
+          // (explicit --source wins, else derived from the checkout dir).
+          sourceId: cycleSourceId,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

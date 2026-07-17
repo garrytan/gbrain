@@ -19,7 +19,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -27,6 +27,9 @@ import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+// #2415: allow-list + output-root resolution shared with the synthesize
+// phase — both phases must agree on the configured namespace.
+import { loadAllowedSlugPrefixes, loadOutputRoot } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -49,7 +52,7 @@ export async function runPhasePatterns(
     }
 
     // Gather reflections within lookback window.
-    const reflections = await gatherReflections(engine, config.lookbackDays);
+    const reflections = await gatherReflections(engine, config.lookbackDays, config.outputRoot);
     if (reflections.length < config.minEvidence) {
       return skipped(
         'insufficient_evidence',
@@ -81,7 +84,7 @@ export async function runPhasePatterns(
       return skipped('no_provider', `pattern detection skipped: ${probe.detail}`);
     }
 
-    const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
+    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot);
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
@@ -89,7 +92,7 @@ export async function runPhasePatterns(
 
     const queue = new MinionQueue(engine);
     const data: SubagentHandlerData = {
-      prompt: buildPatternsPrompt(reflections, config.minEvidence),
+      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.outputRoot),
       model: config.model,
       max_turns: 30,
       allowed_slug_prefixes: allowedSlugPrefixes,
@@ -182,6 +185,8 @@ interface PatternsConfig {
   lookbackDays: number;
   minEvidence: number;
   model: string;
+  /** #2415: shared output namespace (dream.synthesize.output_root, default 'wiki'). */
+  outputRoot: string;
   /** #1594-family: subagent job timeout, config `dream.patterns.subagent_timeout_ms`. */
   subagentTimeoutMs: number;
   /** #1594-family: waitForCompletion timeout, config `dream.patterns.subagent_wait_timeout_ms`. */
@@ -216,6 +221,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
     minEvidence: minEvidenceStr ? Math.max(1, parseInt(minEvidenceStr, 10) || 3) : 3,
     model,
+    outputRoot: await loadOutputRoot(engine),
     subagentTimeoutMs: await getNumberConfig(
       engine, 'dream.patterns.subagent_timeout_ms', DEFAULT_PATTERNS_SUBAGENT_TIMEOUT_MS,
     ),
@@ -236,16 +242,19 @@ interface ReflectionRef {
 async function gatherReflections(
   engine: BrainEngine,
   lookbackDays: number,
+  outputRoot = 'wiki',
 ): Promise<ReflectionRef[]> {
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+  // #2415: reflections live under the configured output root (bound as a
+  // parameter; outputRoot is slug-grammar-validated by loadOutputRoot).
   const rows = await engine.executeRaw<{ slug: string; title: string | null; compiled_truth: string | null }>(
     `SELECT slug, title, compiled_truth
        FROM pages
-      WHERE slug LIKE 'wiki/personal/reflections/%'
+      WHERE slug LIKE $2
         AND updated_at >= $1::timestamptz
       ORDER BY updated_at DESC
       LIMIT 100`,
-    [since],
+    [since, `${outputRoot}/personal/reflections/%`],
   );
   return rows.map(r => ({
     slug: r.slug,
@@ -256,7 +265,7 @@ async function gatherReflections(
 
 // ── Prompt ────────────────────────────────────────────────────────────
 
-function buildPatternsPrompt(reflections: ReflectionRef[], minEvidence: number): string {
+function buildPatternsPrompt(reflections: ReflectionRef[], minEvidence: number, outputRoot = 'wiki'): string {
   const today = new Date().toISOString().slice(0, 10);
   const corpus = reflections
     .map((r, i) => `### ${i + 1}. [[${r.slug}]] — ${r.title}\n${r.excerpt}`)
@@ -266,15 +275,15 @@ function buildPatternsPrompt(reflections: ReflectionRef[], minEvidence: number):
 
 OUTPUT POLICY
 - Only name a pattern if it appears in at least ${minEvidence} DISTINCT reflections.
-- Each pattern page MUST cite the reflections that constitute its evidence (use [[wiki/personal/reflections/...]] wikilinks).
+- Each pattern page MUST cite the reflections that constitute its evidence (use [[${outputRoot}/personal/reflections/...]] wikilinks).
 - Use \`search\` to check whether a similar pattern page already exists; if yes, update it (use the same slug). If no, create a new one.
-- Pattern slug format: \`wiki/personal/patterns/<topic-slug>\` (lowercase alphanumeric + hyphens; no underscores, no extension, no date).
+- Pattern slug format: \`${outputRoot}/personal/patterns/<topic-slug>\` (lowercase alphanumeric + hyphens; no underscores, no extension, no date).
 - A "pattern" is a recurring theme, anxiety, decision pattern, relationship dynamic, or self-knowledge motif. NOT a single insight. NOT a list of unrelated topics.
 
 DO NOT WRITE
 - A "patterns from today" digest (that's the dream-cycle-summaries page; not your job).
 - Patterns with <${minEvidence} reflections cited.
-- Anything outside wiki/personal/patterns/.
+- Anything outside ${outputRoot}/personal/patterns/.
 
 CONTEXT
 - Today: ${today}
@@ -363,27 +372,6 @@ function renderPageToMarkdown(page: Page, tags: string[]): string {
       tags,
     },
   );
-}
-
-// ── Allow-list (shared with synthesize.ts) ───────────────────────────
-
-async function loadAllowedSlugPrefixes(): Promise<string[]> {
-  const candidates = [
-    join(process.cwd(), 'skills', '_brain-filing-rules.json'),
-    join(__dirname, '..', '..', '..', 'skills', '_brain-filing-rules.json'),
-  ];
-  for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    try {
-      const raw = readFileSync(path, 'utf8');
-      const parsed = JSON.parse(raw) as { dream_synthesize_paths?: { globs?: unknown } };
-      const globs = parsed?.dream_synthesize_paths?.globs;
-      if (Array.isArray(globs) && globs.every(g => typeof g === 'string')) {
-        return globs as string[];
-      }
-    } catch { /* try next */ }
-  }
-  return [];
 }
 
 // ── Status helpers ───────────────────────────────────────────────────

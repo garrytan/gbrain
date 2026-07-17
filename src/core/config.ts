@@ -915,6 +915,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
+  // #2415: top-level namespace for synthesize/patterns output (default 'wiki').
+  'dream.synthesize.output_root',
   'dream.synthesize.subagent_timeout_ms',
   'dream.synthesize.subagent_wait_timeout_ms',
   'dream.patterns.lookback_days',
@@ -971,6 +973,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover --force by reading source. Same class as the
   // spend-controls registration above.
   'auto_chronicle',
+  // #2606: chronicle judge output-token cap (default 4000). Event-dense
+  // pages overflowed the old hardcoded 1500 and were misrecorded as
+  // no_events; the cap is now configurable and truncation is surfaced.
+  'chronicle.judge_max_tokens',
   // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
