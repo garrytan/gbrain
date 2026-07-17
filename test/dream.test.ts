@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runDream } from '../src/commands/dream.ts';
+import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -77,28 +78,20 @@ describe('runDream — brainDir resolution', () => {
   });
 
   test('no --dir + engine=null exits 1', async () => {
-    const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(null, []);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(spy).toHaveBeenCalledWith(1);
-    spy.mockRestore();
+    await runDream(null, []);
+    expect(currentExitCode()).toBe(1);
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
   test('--dir pointing at nonexistent path exits 1', async () => {
-    const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(null, ['--dir', '/does/not/exist/hopefully']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(spy).toHaveBeenCalledWith(1);
-    spy.mockRestore();
+    await runDream(null, ['--dir', '/does/not/exist/hopefully']);
+    expect(currentExitCode()).toBe(1);
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 });
@@ -138,15 +131,11 @@ describe('runDream — --phase <name> restricts the cycle', () => {
   });
 
   test('--phase garbage exits 1 with an error message', async () => {
-    const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(null, ['--dir', repo, '--phase', 'garbage']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
+    await runDream(null, ['--dir', repo, '--phase', 'garbage']);
     expect(errSpy).toHaveBeenCalled();
-    spy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 });
@@ -238,7 +227,7 @@ describe('runDream — exit-code semantics', () => {
     const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('UNEXPECTED_EXIT'); });
     await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
     expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+    _resetCliExitVerdictForTests();
   });
 });
 
@@ -289,44 +278,32 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
   // ─── parseArgs: --source missing / conflict / repetition ────────────
 
   test('--source with no value exits 2 with usage hint', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(engine, ['--source']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(2);
+    await runDream(engine, ['--source']);
+    expect(currentExitCode()).toBe(2);
     expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--source.*missing value/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
   test('--source-id with no value exits 2 with usage hint', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(engine, ['--source-id']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(2);
+    await runDream(engine, ['--source-id']);
+    expect(currentExitCode()).toBe(2);
     expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--source-id.*missing value/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
   test('--source X --source Y (repeated, different values) exits 2', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(engine, ['--source', 'foo', '--source', 'bar']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(2);
+    await runDream(engine, ['--source', 'foo', '--source', 'bar']);
+    expect(currentExitCode()).toBe(2);
     expect(errSpy.mock.calls.flat().join(' ')).toMatch(/specify --source once/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
@@ -338,16 +315,12 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
   }, 60_000);
 
   test('--source X --source-id Y (conflict) exits 2', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(engine, ['--source', 'foo', '--source-id', 'bar']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(2);
+    await runDream(engine, ['--source', 'foo', '--source-id', 'bar']);
+    expect(currentExitCode()).toBe(2);
     expect(errSpy.mock.calls.flat().join(' ')).toMatch(/use --source OR --source-id, not both/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
@@ -355,7 +328,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
 
   test('--help --source whatever prints help and exits 0 (no engine-null error)', async () => {
     // engine null + --source set would normally exit 1, but --help short-circuits first.
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const logSpy = spyOn(console, 'log').mockImplementation(() => {});
     try {
       const result = await runDream(null, ['--help', '--source', 'anything']);
@@ -363,43 +336,35 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     } catch (e: any) {
       throw new Error('--help with --source should NOT exit; got: ' + e.message);
     }
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(currentExitCode()).toBe(0);
     expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: gbrain dream/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     logSpy.mockRestore();
   });
 
   // ─── Engine-null guard (D1) ─────────────────────────────────────────
 
   test('engine=null + --source set exits 1 with "requires a connected brain"', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(null, ['--source', 'whatever']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    await runDream(null, ['--source', 'whatever']);
+    expect(currentExitCode()).toBe(1);
     expect(errSpy.mock.calls.flat().join(' ')).toMatch(/requires a connected brain/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
   // ─── Unknown source (resolveSourceId throw) ─────────────────────────
 
   test('--source <unknown> exits 1 with assertSourceExists hint', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(engine, ['--source', 'no-such-source']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    await runDream(engine, ['--source', 'no-such-source']);
+    expect(currentExitCode()).toBe(1);
     const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/Source "no-such-source" not found/);
     expect(errOut).toMatch(/gbrain sources list/);
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
@@ -410,21 +375,17 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     const before = await readLastFullCycleAt('archived-thing');
     expect(before).toBeNull();
 
-    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      await runDream(engine, ['--source', 'archived-thing']);
-    } catch (e: any) {
-      expect(e.message).toBe('EXIT');
-    }
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    await runDream(engine, ['--source', 'archived-thing']);
+    expect(currentExitCode()).toBe(1);
     const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/source archived-thing is archived/);
     expect(errOut).toMatch(/gbrain sources restore archived-thing/);
 
     const after = await readLastFullCycleAt('archived-thing');
     expect(after).toBeNull(); // archived guard prevents writeback
-    exitSpy.mockRestore();
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 

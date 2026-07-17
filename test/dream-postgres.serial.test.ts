@@ -18,6 +18,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from '
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runDream } from '../src/commands/dream.ts';
 import { runCycle } from '../src/core/cycle.ts';
@@ -206,33 +207,20 @@ describe('runCycle — A7 deriveStatus counts resolved edges as work', () => {
 
 describe('runDream — both-null (no engine, no dir) still exits 1', () => {
   test('runDream(null, []) exits 1', async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation((() => { throw new Error('EXIT'); }) as never);
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    let threw = '';
-    try {
-      await runDream(null, []);
-    } catch (e) {
-      threw = (e as Error).message;
-    }
-    // Assert BEFORE mockRestore — bun's mockRestore clears recorded calls.
-    expect(threw).toBe('EXIT');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+        await runDream(null, []);
+    expect(currentExitCode()).toBe(1);
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 
   test("runDream(null, ['--phase','orphans']) exits 1", async () => {
-    const exitSpy = spyOn(process, 'exit').mockImplementation((() => { throw new Error('EXIT'); }) as never);
+    _resetCliExitVerdictForTests();
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
-    let threw = '';
-    try {
-      await runDream(null, ['--phase', 'orphans']);
-    } catch (e) {
-      threw = (e as Error).message;
-    }
-    expect(threw).toBe('EXIT');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+        await runDream(null, ['--phase', 'orphans']);
+    expect(currentExitCode()).toBe(1);
+    _resetCliExitVerdictForTests();
     errSpy.mockRestore();
   });
 });

@@ -32,6 +32,7 @@ import {
 } from '../core/cycle.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { fetchSource } from '../core/sources-load.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
 
@@ -84,6 +85,29 @@ const DEFAULT_DRAIN_WINDOW_SECONDS = 300;
 const EXIT_DRAIN_INCOMPLETE = 3;
 
 /**
+ * #2084 teardown contract: dream never calls `process.exit` directly — a
+ * direct exit preempts cli.ts's `finally { finishCliTeardown(...) }`, skipping
+ * the background-work drain, bounded disconnect, and stdout flush. An exiting
+ * mid-cycle path could discard in-flight facts/search-cache writes and
+ * truncate `--json` output through a slow pipe (the #1959 class). Instead,
+ * every exit site throws this sentinel via `bail(code)`; the public `runDream`
+ * wrapper catches it, records the verdict through `setCliExitVerdict`, and
+ * RETURNS — the central exit seam (`flushThenExit(currentExitCode())`) exits
+ * after teardown with the same code the site asked for.
+ */
+class DreamExit extends Error {
+  constructor(readonly code: number) {
+    super(`dream exit ${code}`);
+    this.name = 'DreamExit';
+  }
+}
+
+/** Throw the {@link DreamExit} sentinel — replaces in-command `process.exit`. */
+function bail(code: number): never {
+  throw new DreamExit(code);
+}
+
+/**
  * Collect every occurrence of `--<flag> <value>` in argv. Used to
  * detect repeated flags with different values (e.g.
  * `--source X --source Y`) and to surface a clean usage error
@@ -111,7 +135,7 @@ function parseArgs(args: string[]): DreamArgs {
     : null;
   if (rawPhase && !phase) {
     console.error(`Unknown phase "${rawPhase}". Valid: ${ALL_PHASES.join(', ')}`);
-    process.exit(1);
+    bail(1);
   }
 
   const dirIdx = args.indexOf('--dir');
@@ -124,32 +148,32 @@ function parseArgs(args: string[]): DreamArgs {
   const date = dateIdx !== -1 ? args[dateIdx + 1] ?? null : null;
   if (date && !ISO_DATE_RE.test(date)) {
     console.error(`--date must be YYYY-MM-DD; got "${date}"`);
-    process.exit(2);
+    bail(2);
   }
 
   const fromIdx = args.indexOf('--from');
   const from = fromIdx !== -1 ? args[fromIdx + 1] ?? null : null;
   if (from && !ISO_DATE_RE.test(from)) {
     console.error(`--from must be YYYY-MM-DD; got "${from}"`);
-    process.exit(2);
+    bail(2);
   }
 
   const toIdx = args.indexOf('--to');
   const to = toIdx !== -1 ? args[toIdx + 1] ?? null : null;
   if (to && !ISO_DATE_RE.test(to)) {
     console.error(`--to must be YYYY-MM-DD; got "${to}"`);
-    process.exit(2);
+    bail(2);
   }
   if (from && to && from > to) {
     console.error(`--from (${from}) is after --to (${to}); empty range`);
-    process.exit(2);
+    bail(2);
   }
 
   // --input + --date / --from / --to is incoherent: --input is a single
   // file, the date filters scan a directory.
   if (inputFile && (date || from || to)) {
     console.error('--input cannot be combined with --date / --from / --to');
-    process.exit(2);
+    bail(2);
   }
 
   // --input implies --phase synthesize.
@@ -167,28 +191,28 @@ function parseArgs(args: string[]): DreamArgs {
   const sourceIdValues = collectFlagValues(args, '--source-id');
   if (sourceValues === null) {
     console.error('--source <id>: missing value. Usage: gbrain dream --source <source-id>');
-    process.exit(2);
+    bail(2);
   }
   if (sourceIdValues === null) {
     console.error('--source-id <id>: missing value. Usage: gbrain dream --source-id <source-id>');
-    process.exit(2);
+    bail(2);
   }
   const uniqSource = Array.from(new Set(sourceValues));
   const uniqSourceId = Array.from(new Set(sourceIdValues));
   if (uniqSource.length > 1) {
     console.error(`specify --source once; got [${uniqSource.map(v => `"${v}"`).join(', ')}]`);
-    process.exit(2);
+    bail(2);
   }
   if (uniqSourceId.length > 1) {
     console.error(`specify --source-id once; got [${uniqSourceId.map(v => `"${v}"`).join(', ')}]`);
-    process.exit(2);
+    bail(2);
   }
   if (uniqSource.length === 1 && uniqSourceId.length === 1 && uniqSource[0] !== uniqSourceId[0]) {
     console.error(
       `use --source OR --source-id, not both (different values): ` +
       `--source="${uniqSource[0]}" vs --source-id="${uniqSourceId[0]}"`,
     );
-    process.exit(2);
+    bail(2);
   }
   const source = uniqSource[0] ?? uniqSourceId[0] ?? null;
 
@@ -202,7 +226,7 @@ function parseArgs(args: string[]): DreamArgs {
     const raw = args[windowIdx + 1];
     if (raw === undefined || !/^\d+$/.test(raw.trim()) || parseInt(raw, 10) <= 0) {
       console.error(`--window must be a positive integer (seconds); got "${raw}"`);
-      process.exit(2);
+      bail(2);
     }
     windowSeconds = parseInt(raw, 10);
   }
@@ -210,7 +234,7 @@ function parseArgs(args: string[]): DreamArgs {
     if (!phase) phase = 'extract_atoms';
     else if (phase !== 'extract_atoms') {
       console.error(`--drain currently supports only --phase extract_atoms (got "${phase}")`);
-      process.exit(2);
+      bail(2);
     }
   }
 
@@ -258,7 +282,7 @@ async function resolveBrainDir(
   if (explicit) {
     if (!existsSync(explicit)) {
       console.error(`--dir path does not exist: ${explicit}`);
-      process.exit(1);
+      bail(1);
     }
     // Resolve to absolute so downstream writeFileSync(join(brainDir, slug))
     // can't silently land at cwd when explicit is `.` / `./brain` / etc.
@@ -468,7 +492,7 @@ async function runDrain(
     // null = the backlog count query FAILED — treat as incomplete, never as
     // "drained" (Codex: `remaining ?? 0` would exit 0 on a failed count and
     // make automation believe the backlog cleared when it was never verified).
-    if (remaining === null || remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+    if (remaining === null || remaining > 0) bail(EXIT_DRAIN_INCOMPLETE);
     return;
   }
 
@@ -491,7 +515,7 @@ async function runDrain(
       } else {
         console.log('[drain] skipped: another cycle holds the lock (cycle_already_running) — run again shortly');
       }
-      process.exit(EXIT_DRAIN_INCOMPLETE);
+      bail(EXIT_DRAIN_INCOMPLETE);
     }
     throw e;
   }
@@ -502,10 +526,25 @@ async function runDrain(
     console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
   }
   // null remaining = the final count query failed; do not report success.
-  if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+  if (result.remaining === null || result.remaining > 0) bail(EXIT_DRAIN_INCOMPLETE);
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
+  try {
+    return await runDreamInner(engine, args);
+  } catch (e) {
+    // The one place the DreamExit sentinel lands: record the verdict and
+    // RETURN so cli.ts's finally runs finishCliTeardown before the central
+    // seam exits with this code. Anything else propagates with its stack.
+    if (e instanceof DreamExit) {
+      setCliExitVerdict(e.code);
+      return;
+    }
+    throw e;
+  }
+}
+
+async function runDreamInner(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
   const opts = parseArgs(args);
 
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
@@ -533,14 +572,14 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
         'gbrain dream --source <id> requires a connected brain ' +
         '(no engine available); omit --source or run `gbrain init` first',
       );
-      process.exit(1);
+      bail(1);
     }
     try {
       resolvedSourceId = await resolveSourceId(engine, opts.source);
     } catch (e) {
       if (isResolverUserError(e)) {
         console.error((e as Error).message);
-        process.exit(1);
+        bail(1);
       }
       throw e; // genuine bugs propagate with stack trace
     }
@@ -556,7 +595,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
         `source ${resolvedSourceId} is archived; restore with ` +
         `\`gbrain sources restore ${resolvedSourceId}\` before cycling`,
       );
-      process.exit(1);
+      bail(1);
     }
   }
 
@@ -570,13 +609,13 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       'No brain directory found and no database connection. ' +
       'Pass --dir <path> or configure a brain via `gbrain init`.',
     );
-    process.exit(1);
+    bail(1);
   }
   // ─── issue #1678: bounded single-hold extract_atoms drain ──────────
   if (opts.drain) {
     if (engine === null) {
       console.error('gbrain dream --drain requires a connected brain (no engine available)');
-      process.exit(1);
+      bail(1);
     }
     return runDrain(engine, opts, resolvedSourceId, brainDir);
   }
@@ -605,7 +644,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // Exit non-zero when the cycle failed overall (helps cron spot real problems).
   // 'partial' is not a failure — it means some phase warned but the cycle ran.
   if (report.status === 'failed') {
-    process.exit(1);
+    bail(1);
   }
 
   return report;
