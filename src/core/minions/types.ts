@@ -450,6 +450,18 @@ export interface SubagentHandlerData {
    */
   allowed_slug_prefixes?: string[];
   /**
+   * Write-target source for the subagent's brain tools (put_page etc.).
+   *
+   * Resolved AT SUBMIT TIME by the CLI (`gbrain agent run [--source <id>]`)
+   * through the canonical chain in src/core/source-resolver.ts (flag →
+   * GBRAIN_SOURCE env → .gbrain-source dotfile → local_path match →
+   * `sources.default` config → seed 'default') and persisted on the job
+   * payload, so restart/replay writes to the same source regardless of the
+   * worker's cwd/env. When absent (legacy rows, direct submitters), tools
+   * fall back to the seed 'default' — the pre-existing behavior.
+   */
+  source_id?: string;
+  /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
    * (omitted or false) prepends a deterministic preamble listing each
