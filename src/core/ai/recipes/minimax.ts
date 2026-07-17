@@ -23,7 +23,7 @@ export const minimax: Recipe = {
   base_url_default: 'https://api.minimaxi.com/v1',
   auth_env: {
     required: ['MINIMAX_API_KEY'],
-    optional: ['MINIMAX_GROUP_ID'],
+    optional: ['MINIMAX_GROUP_ID', 'MINIMAX_BASE_URL'],
     setup_url: 'https://www.minimaxi.com/document/guides/embeddings',
   },
   touchpoints: {
@@ -38,7 +38,6 @@ export const minimax: Recipe = {
       models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
       supports_tools: false,
       supports_subagent_loop: false,
-      supports_prompt_cache: false,
       max_context_tokens: 1_000_000,
       cost_per_1m_input_usd: 0.07,
       cost_per_1m_output_usd: 0.14,
@@ -48,14 +47,22 @@ export const minimax: Recipe = {
   resolveOpenAICompatConfig(env: Record<string, string | undefined>) {
     const baseURL = env.MINIMAX_BASE_URL ?? this.base_url_default!;
 
-    const wrappedFetch = (async (input: any, init: any) => {
+    const wrappedFetch = (async (input: RequestInfo | URL | Request, init?: RequestInit) => {
+      // Normalize URL: string / URL / Request.url → string URL.
       const url = typeof input === 'string'
         ? input
         : input instanceof URL
         ? input.toString()
         : input.url;
 
-      const doFetch = async (attemptInit: any): Promise<Response> => {
+      // If input is a Request, rebuild it from url so method/headers/body are preserved.
+      // If string/URL, use init as-is.
+      const finalInit: RequestInit | undefined =
+        typeof input === 'string' || input instanceof URL
+          ? init
+          : undefined;
+
+      const doFetch = async (attemptInit: RequestInit | undefined, retryCount = 0): Promise<Response> => {
         const resp = await fetch(url, attemptInit);
         const contentType = resp.headers.get('content-type') ?? '';
 
@@ -63,61 +70,65 @@ export const minimax: Recipe = {
           return resp;
         }
 
-        const json = await resp.json();
-
-        // Detect MiniMax rate-limit (status_code 1002).
-        const isRateLimit =
-          json?.base_resp?.status_code === 1002 ||
-          json?.base_resp?.status_msg?.includes?.('rate limit');
-
-        if (isRateLimit && attemptInit._retryCount < 5) {
-          const waitMs = Math.min(1000 * 2 ** attemptInit._retryCount, 30_000);
-          const jitter = Math.random() * 200;
-          await new Promise(r => setTimeout(r, waitMs + jitter));
-          return doFetch({ ...attemptInit, _retryCount: attemptInit._retryCount + 1 });
+        let json: unknown;
+        try {
+          json = await resp.json();
+        } catch {
+          // Non-JSON body despite content-type: pass through as-is.
+          return resp;
         }
 
-        // Rewrite response: MiniMax -> `{vectors: [[...]]}`, AI SDK wants `{data: [{embedding}]}`.
-        if (json && typeof json === 'object' && Array.isArray(json.vectors)) {
+        const baseResp = (json as Record<string, unknown>)?.base_resp as Record<string, unknown> | undefined;
+        const isRateLimit =
+          baseResp?.status_code === 1002 ||
+          String(baseResp?.status_msg ?? '').includes('rate limit');
+
+        if (isRateLimit && retryCount < 5) {
+          const waitMs = Math.min(1000 * 2 ** retryCount, 30_000);
+          const jitter = Math.random() * 200;
+          await new Promise(r => setTimeout(r, waitMs + jitter));
+          return doFetch(attemptInit, retryCount + 1);
+        }
+
+        // Rewrite response: MiniMax `{vectors: [[...]]}` → AI SDK `{data: [{embedding}]}`.
+        if (json && typeof json === 'object' && Array.isArray((json as Record<string, unknown>).vectors)) {
+          const vectors = (json as { vectors: number[][]; model?: string; total_tokens?: number }).vectors;
+          const outHeaders = new Headers(resp.headers);
+          outHeaders.delete('content-length');
+          outHeaders.delete('content-encoding');
           const rewritten = {
             object: 'list',
-            data: json.vectors.map((vec: number[], i: number) => ({
-              object: 'embedding',
-              embedding: vec,
-              index: i,
-            })),
-            model: json.model ?? 'embo-01',
+            data: vectors.map((vec, i) => ({ object: 'embedding', embedding: vec, index: i })),
+            model: (json as { model?: string }).model ?? 'embo-01',
             usage: {
-              prompt_tokens: json.total_tokens ?? 0,
-              total_tokens: json.total_tokens ?? 0,
+              prompt_tokens: (json as { total_tokens?: number }).total_tokens ?? 0,
+              total_tokens: (json as { total_tokens?: number }).total_tokens ?? 0,
             },
           };
           return new Response(JSON.stringify(rewritten), {
             status: resp.status,
             statusText: resp.statusText,
-            headers: resp.headers,
+            headers: outHeaders,
           });
         }
 
-        // Not rewritten — pass through (errors, non-embedding responses).
         return resp;
       };
 
-      let baseInit = init ?? {};
+      let baseInit = finalInit ?? {};
       if (baseInit.body && typeof baseInit.body === 'string') {
         try {
           const parsed = JSON.parse(baseInit.body);
           if (parsed && typeof parsed === 'object') {
             let mutated = false;
             // AI SDK sends `input: [...]`, MiniMax wants `texts: [...]`.
-            if (parsed.input !== undefined && parsed.texts === undefined) {
-              parsed.texts = parsed.input;
-              delete parsed.input;
-              mutated = true;
-            }
-            // Always inject type:'db' for the document (indexing) side.
-            if (parsed.type === undefined) {
-              parsed.type = 'db';
+            if ((parsed as Record<string, unknown>).input !== undefined && (parsed as Record<string, unknown>).texts === undefined) {
+              (parsed as Record<string, unknown>).texts = (parsed as Record<string, unknown>).input;
+              delete (parsed as Record<string, unknown>).input;
+              // Inject type:'db' only for embedding-shaped requests.
+              if ((parsed as Record<string, unknown>).type === undefined) {
+                (parsed as Record<string, unknown>).type = 'db';
+              }
               mutated = true;
             }
             if (mutated) {
@@ -126,11 +137,14 @@ export const minimax: Recipe = {
               baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
             }
           }
-        } catch {}
+        } catch (e) {
+          // Request body is not valid JSON: send as-is but warn for debugging.
+          console.warn('[minimax] request body is not valid JSON, sending as-is', e);
+        }
       }
 
-      return doFetch({ ...baseInit, _retryCount: 0 });
-    }) as typeof fetch;
+      return doFetch(baseInit, 0);
+    }) as unknown as typeof fetch;
 
     return { baseURL, fetch: wrappedFetch };
   },
