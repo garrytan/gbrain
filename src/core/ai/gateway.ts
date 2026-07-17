@@ -23,6 +23,7 @@
 
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -2849,6 +2850,30 @@ async function classifyGatewayGuardrail(input: {
   }
 }
 
+/**
+ * Derive OpenAI's `prompt_cache_key` (the AI SDK's `providerOptions.openai.
+ * promptCacheKey`). It's a ROUTING hint, not a cache breakpoint: OpenAI caches
+ * prefixes automatically, and a stable key makes requests sharing a prefix
+ * land on the same engine, raising the hit rate (OpenAI cites 60%→87%).
+ *
+ * Hash the system prompt + sorted tool names — that's the stable prefix
+ * gbrain's repeated loops (enrich, page-summary, skillopt, subagent) actually
+ * share. Returns undefined when there's no system prompt (nothing stable to
+ * key on), so one-off requests don't get pinned to a single engine. An
+ * explicit key can still be set per provider/model via
+ * `provider_chat_options` config, which overrides the derived key.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function openAIPromptCacheKey(args: {
+  system?: string;
+  toolNames?: string[];
+}): string | undefined {
+  if (!args.system) return undefined;
+  const basis = `${args.system} ${(args.toolNames ?? []).slice().sort().join(',')}`;
+  return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
+}
+
 export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, any> | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.reduce((acc, t) => {
@@ -2958,6 +2983,20 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const providerOptions: Record<string, any> = {};
   if (useCache) {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
+  }
+  // OpenAI prompt_cache_key (native-openai only): a stable per-prefix routing
+  // hint that keeps requests sharing a system prompt + tool set on the same
+  // inference engine, lifting OpenAI's automatic prefix-cache hit rate. The
+  // openai-compatible path (litellm/azure/groq/...) ignores
+  // providerOptions.openai, so it gets nothing. Applied BEFORE the configured
+  // provider options so `provider_chat_options.openai.promptCacheKey` from
+  // config still overrides the derived key.
+  if (recipe.implementation === 'native-openai') {
+    const promptCacheKey = openAIPromptCacheKey({
+      system: opts.system,
+      toolNames: (opts.tools ?? []).map(t => t.name),
+    });
+    if (promptCacheKey) providerOptions.openai = { promptCacheKey };
   }
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
 
