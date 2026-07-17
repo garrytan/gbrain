@@ -215,6 +215,58 @@ describe('v0.34 W0a — multi-source isolation in two-pass retrieval', () => {
       expect(result.source_subject).not.toBe('Denied exact subject');
     }
   });
+
+  test('two-pass selection and hydration reject archived, quarantined, and deleted pages', async () => {
+    const chunkRows = await engine.executeRaw<{ id: number; symbol_name_qualified: string }>(
+      `SELECT cc.id, cc.symbol_name_qualified
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE p.source_id = 'source-b' OR cc.symbol_name_qualified = 'callerInA'`,
+      [],
+    );
+    const deniedChunkId = chunkRows.find(r => r.symbol_name_qualified === 'parseMarkdown')!.id;
+    const callerChunkId = chunkRows.find(r => r.symbol_name_qualified === 'callerInA')!.id;
+    const anchor = [{
+      slug: 'code/src/caller-a.ts', page_id: 0, title: '', type: 'code' as const,
+      chunk_text: '', chunk_source: 'compiled_truth' as const,
+      chunk_id: callerChunkId, chunk_index: 0, score: 1, source_id: 'source-a', stale: false,
+    }];
+
+    const states = [
+      {
+        hide: () => engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'source-b'`, []),
+        restore: () => engine.executeRaw(`UPDATE sources SET archived = false WHERE id = 'source-b'`, []),
+      },
+      {
+        hide: () => engine.executeRaw(
+          `UPDATE pages SET frontmatter = frontmatter || '{"quarantine":true}'::jsonb WHERE source_id = 'source-b'`, [],
+        ),
+        restore: () => engine.executeRaw(
+          `UPDATE pages SET frontmatter = frontmatter - 'quarantine' WHERE source_id = 'source-b'`, [],
+        ),
+      },
+      {
+        hide: () => engine.executeRaw(`UPDATE pages SET deleted_at = NOW() WHERE source_id = 'source-b'`, []),
+        restore: () => engine.executeRaw(`UPDATE pages SET deleted_at = NULL WHERE source_id = 'source-b'`, []),
+      },
+    ];
+
+    for (const state of states) {
+      await state.hide();
+      try {
+        const near = await expandAnchors(engine, [], { nearSymbol: 'parseMarkdown', sourceId: 'source-b' });
+        expect(near).toEqual([]);
+
+        const expanded = await expandAnchors(engine, anchor, { walkDepth: 1 });
+        expect(expanded.map(r => r.chunk_id)).not.toContain(deniedChunkId);
+
+        const hydrated = await hydrateChunks(engine, [deniedChunkId]);
+        expect(hydrated).toEqual([]);
+      } finally {
+        await state.restore();
+      }
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

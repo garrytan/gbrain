@@ -47,6 +47,10 @@ beforeAll(async () => {
     frontmatter: { message_id: 12345, thread_id: 67890, subject: 98765 },
   });
   await eng.addLink('people/numeric-example', 'companies/widget-co', '', 'invested_in', 'manual');
+  await eng.putPage('people/hydrate-quarantined', {
+    type: 'person', title: 'Hydrate Quarantined', compiled_truth: 'Must remain hidden.', timeline: '',
+    frontmatter: { quarantine: true, message_id: '<hidden@example.com>', subject: 'Hidden exact subject' },
+  });
 }, 60_000);
 
 afterAll(async () => { await eng.disconnect(); });
@@ -82,6 +86,21 @@ describe('buildRelationalArm', () => {
   test('unresolvable seed → no-op (never traverse from a guess)', async () => {
     const list = await buildRelationalArm(eng, 'who invested in nonexistent-phantom-xyz');
     expect(list).toEqual([]);
+  });
+
+  test('hydrate rejects a quarantined row even if fanout returns it', async () => {
+    const original = eng.relationalFanout.bind(eng);
+    eng.relationalFanout = async () => [{
+      source_id: 'default', slug: 'people/hydrate-quarantined', hop: 1,
+      edge_count: 1, via_link_types: ['invested_in'],
+      path: ['companies/widget-co', 'people/hydrate-quarantined'], canonical_chunk_id: null,
+    }];
+    try {
+      const list = await buildRelationalArm(eng, 'who invested in widget-co');
+      expect(list).toEqual([]);
+    } finally {
+      eng.relationalFanout = original;
+    }
   });
 
   test('fail-open: fanout error returns [] + errored meta, never throws', async () => {

@@ -3093,15 +3093,18 @@ export class PostgresEngine implements BrainEngine {
     const mentionsFilter = opts?.includeMentions
       ? sql``
       : sql`AND l.link_source IS DISTINCT FROM 'mentions'`;
+    const seedVisibility = sql.unsafe(buildVisibilityClause('p', 's'));
+    const stepVisibility = sql.unsafe(buildVisibilityClause('p2', 's2'));
 
     // Recursive step join differs by direction; everything else is shared.
     const recurStep =
       direction === 'out'
-        ? sql`JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id`
+        ? sql`JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id JOIN sources s2 ON s2.id = p2.source_id`
         : direction === 'in'
-          ? sql`JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id`
+          ? sql`JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id JOIN sources s2 ON s2.id = p2.source_id`
           : sql`JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-                JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END`;
+                JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+                JOIN sources s2 ON s2.id = p2.source_id`;
 
     const rows = await sql`
       WITH RECURSIVE walk AS (
@@ -3109,7 +3112,8 @@ export class PostgresEngine implements BrainEngine {
                ARRAY[p.id] AS visited, ARRAY[p.slug] AS path,
                p.source_id AS seed_source, NULL::text AS last_link_type
         FROM pages p
-        WHERE p.slug = ANY(${seeds}::text[]) ${seedScope} AND p.deleted_at IS NULL
+        JOIN sources s ON s.id = p.source_id
+        WHERE p.slug = ANY(${seeds}::text[]) ${seedScope} ${seedVisibility}
         UNION ALL
         SELECT p2.id, p2.slug, p2.source_id, w.depth + 1,
                w.visited || p2.id, w.path || p2.slug,
@@ -3119,7 +3123,7 @@ export class PostgresEngine implements BrainEngine {
         WHERE w.depth < ${depth}
           AND NOT (p2.id = ANY(w.visited))
           AND p2.source_id = w.seed_source
-          AND p2.deleted_at IS NULL
+          ${stepVisibility}
           ${mentionsFilter}
           ${typeFilter}
       )
@@ -5222,18 +5226,25 @@ export class PostgresEngine implements BrainEngine {
         : opts?.sourceId
           ? [opts.sourceId]
           : null;
+    const visibility = sql.unsafe(buildVisibilityClause('p', 's'));
     const rows = sources
       ? await sql`
-          SELECT alias_norm, slug, source_id
-          FROM page_aliases
-          WHERE alias_norm = ANY(${aliasNorms}::text[])
-            AND source_id = ANY(${sources}::text[])
-          ORDER BY alias_norm, source_id, slug`
+          SELECT pa.alias_norm, pa.slug, pa.source_id
+          FROM page_aliases pa
+          JOIN pages p ON p.source_id = pa.source_id AND p.slug = pa.slug
+          JOIN sources s ON s.id = p.source_id
+          WHERE pa.alias_norm = ANY(${aliasNorms}::text[])
+            AND pa.source_id = ANY(${sources}::text[])
+            ${visibility}
+          ORDER BY pa.alias_norm, pa.source_id, pa.slug`
       : await sql`
-          SELECT alias_norm, slug, source_id
-          FROM page_aliases
-          WHERE alias_norm = ANY(${aliasNorms}::text[])
-          ORDER BY alias_norm, source_id, slug`;
+          SELECT pa.alias_norm, pa.slug, pa.source_id
+          FROM page_aliases pa
+          JOIN pages p ON p.source_id = pa.source_id AND p.slug = pa.slug
+          JOIN sources s ON s.id = p.source_id
+          WHERE pa.alias_norm = ANY(${aliasNorms}::text[])
+            ${visibility}
+          ORDER BY pa.alias_norm, pa.source_id, pa.slug`;
     for (const r of rows) {
       const a = r.alias_norm as string;
       const list = out.get(a) ?? [];

@@ -697,6 +697,7 @@ async function seedRelational(eng: BrainEngine) {
     ['people/ep-inv-b', 'person'],
     ['people/ep-emp-c', 'person'],
     ['people/ep-mentioner', 'person'],
+    ['people/ep-quarantined', 'person'],
   ];
   for (const [slug, type] of pages) {
     await eng.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '' });
@@ -709,7 +710,32 @@ async function seedRelational(eng: BrainEngine) {
   await eng.addLink('people/ep-inv-b', 'companies/ep-widget', '', 'invested_in', 'manual');
   await eng.addLink('people/ep-emp-c', 'companies/ep-widget', '', 'works_at', 'manual');
   await eng.addLink('people/ep-mentioner', 'companies/ep-widget', '', 'mentions', 'mentions');
+  await eng.addLink('people/ep-quarantined', 'companies/ep-widget', '', 'invested_in', 'manual');
   await eng.addLink('people/ep-inv-a', 'companies/ep-other', '', 'invested_in', 'manual');
+  await eng.executeRaw(
+    `UPDATE pages SET frontmatter = frontmatter || '{"quarantine":true}'::jsonb
+     WHERE slug = 'people/ep-quarantined' AND source_id = 'default'`,
+  );
+
+  await eng.executeRaw(
+    `INSERT INTO sources (id, name, archived, created_at)
+     VALUES ('ep-archived', 'ep-archived', false, NOW())`,
+  );
+  await eng.putPage(
+    'companies/ep-archived-widget',
+    { type: 'company', title: 'Archived Widget', compiled_truth: 'Hidden company.', timeline: '' },
+    { sourceId: 'ep-archived' },
+  );
+  await eng.putPage(
+    'people/ep-archived-investor',
+    { type: 'person', title: 'Archived Investor', compiled_truth: 'Hidden person.', timeline: '' },
+    { sourceId: 'ep-archived' },
+  );
+  await eng.addLink(
+    'people/ep-archived-investor', 'companies/ep-archived-widget', '', 'invested_in', 'manual', undefined, undefined,
+    { fromSourceId: 'ep-archived', toSourceId: 'ep-archived' },
+  );
+  await eng.executeRaw(`UPDATE sources SET archived = true WHERE id = 'ep-archived'`);
 }
 
 describeBoth('Engine parity — relationalFanout', () => {
@@ -751,6 +777,22 @@ describeBoth('Engine parity — relationalFanout', () => {
     const pglite = await pgliteEngine.relationalFanout(['companies/ep-widget'], { direction: 'in' });
     expect(shape(pg)).toEqual(shape(pglite));
     expect(pg.map(r => r.slug)).not.toContain('people/ep-mentioner');
+  });
+
+  test('archive and quarantine visibility is identical across engines', async () => {
+    const visibleOpts = { direction: 'in' as const, linkTypes: ['invested_in'] };
+    const pgVisible = await pgEngine.relationalFanout(['companies/ep-widget'], visibleOpts);
+    const pgliteVisible = await pgliteEngine.relationalFanout(['companies/ep-widget'], visibleOpts);
+    expect(shape(pgVisible)).toEqual(shape(pgliteVisible));
+    expect(pgVisible.map(r => r.slug)).not.toContain('people/ep-quarantined');
+
+    const archivedOpts = {
+      sourceId: 'ep-archived', direction: 'in' as const, linkTypes: ['invested_in'],
+    };
+    const pgArchived = await pgEngine.relationalFanout(['companies/ep-archived-widget'], archivedOpts);
+    const pgliteArchived = await pgliteEngine.relationalFanout(['companies/ep-archived-widget'], archivedOpts);
+    expect(shape(pgArchived)).toEqual(shape(pgliteArchived));
+    expect(pgArchived).toEqual([]);
   });
 
   test('connects (multi-seed, both) identical across engines', async () => {

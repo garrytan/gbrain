@@ -30,6 +30,7 @@ import { createAuditWriter } from '../audit/audit-writer.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
 import { projectEmailCitationMetadata } from '../utils.ts';
+import { buildVisibilityClause } from './sql-ranking.ts';
 
 export interface RelationalArmOpts {
   sourceId?: string;
@@ -123,7 +124,8 @@ async function hydrate(
               AND jsonb_typeof(p.frontmatter->'subject') = 'string'
               THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject
      FROM pages p
-     WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL`,
+     JOIN sources s ON s.id = p.source_id
+     WHERE p.slug = ANY($1::text[]) ${buildVisibilityClause('p', 's')}`,
     [slugs],
   );
   const byKey = new Map<string, typeof pageRows[number]>();

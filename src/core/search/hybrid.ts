@@ -14,7 +14,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
-import { projectEmailCitationMetadata } from '../utils.ts';
+import { projectEmailCitationFrontmatter } from '../utils.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
 import {
@@ -696,7 +696,7 @@ export async function applyAliasHop(
       score: injectScore,
       base_score: injectScore,
       alias_hit: true,
-      ...projectEmailCitationMetadata(page.frontmatter),
+      ...projectEmailCitationFrontmatter(page.frontmatter),
     } as SearchResult);
   }
   out.sort((a, b) => b.score - a.score);
@@ -1855,13 +1855,13 @@ function rrfKey(r: SearchResult): string {
  *   - federated (sourceIds set) → `__set__:` + sorted, comma-joined ids
  *     (order-independent; two different source-sets get distinct keys)
  *   - scalar sourceId           → the id itself (single-source unchanged)
- *   - unscoped                  → `'default'` (single-source brains unchanged)
+ *   - unscoped/all-source       → `'__all__'` (cannot collide with scalar default)
  */
 export function cacheScopeKey(opts?: { sourceId?: string; sourceIds?: string[] }): string {
   if (opts?.sourceIds && opts.sourceIds.length > 0) {
     return '__set__:' + [...opts.sourceIds].sort().join(',');
   }
-  return opts?.sourceId ?? 'default';
+  return opts?.sourceId ?? '__all__';
 }
 
 /**

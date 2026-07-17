@@ -332,8 +332,9 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
-export function projectEmailCitationMetadata(
+function projectCitationMetadata(
   record: Record<string, unknown> | null | undefined,
+  subjectField: 'subject' | 'source_subject',
 ): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
   if (!record) return {};
   const metadata: Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> = {};
@@ -343,11 +344,25 @@ export function projectEmailCitationMetadata(
   if (typeof record.thread_id === 'string' && record.thread_id.length > 0) {
     metadata.thread_id = record.thread_id;
   }
-  const subject = record.source_subject ?? record.subject;
+  const subject = record[subjectField];
   if (metadata.message_id && typeof subject === 'string' && subject.length > 0) {
     metadata.source_subject = subject;
   }
   return metadata;
+}
+
+/** Project normalized SQL result columns. `source_subject` is an internal alias. */
+export function projectEmailCitationMetadata(
+  record: Record<string, unknown> | null | undefined,
+): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
+  return projectCitationMetadata(record, 'source_subject');
+}
+
+/** Project raw page frontmatter. Internal SQL aliases are never trusted here. */
+export function projectEmailCitationFrontmatter(
+  record: Record<string, unknown> | null | undefined,
+): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
+  return projectCitationMetadata(record, 'subject');
 }
 
 export function rowToSearchResult(row: Record<string, unknown>): SearchResult {

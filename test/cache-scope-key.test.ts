@@ -3,18 +3,18 @@
  *
  * A federated search reads a different graph than a single-source one, so
  * the semantic cache must key them apart. `cacheScopeKey` produces an
- * order-independent key for federated scopes and leaves single-source
- * brains on their existing key (scalar id or 'default'), so single-source
- * cache hit-rate is unchanged.
+ * order-independent key for federated scopes and keeps unscoped all-source
+ * reads distinct from every scalar source key.
  */
 
 import { describe, test, expect } from 'bun:test';
 import { cacheScopeKey } from '../src/core/search/hybrid.ts';
 
 describe('cacheScopeKey', () => {
-  test('unscoped → default (single-source unchanged)', () => {
-    expect(cacheScopeKey(undefined)).toBe('default');
-    expect(cacheScopeKey({})).toBe('default');
+  test('unscoped → __all__ and never collides with scalar default', () => {
+    expect(cacheScopeKey(undefined)).toBe('__all__');
+    expect(cacheScopeKey({})).toBe('__all__');
+    expect(cacheScopeKey({})).not.toBe(cacheScopeKey({ sourceId: 'default' }));
   });
 
   test('scalar sourceId → itself (single-source unchanged)', () => {

@@ -36,6 +36,7 @@ beforeAll(async () => {
     ['people/employee-c', 'person', 'Employee C'],
     ['people/mentioner', 'person', 'Mentioner'],
     ['people/deleted-investor', 'person', 'Deleted Investor'],
+    ['people/quarantined-investor', 'person', 'Quarantined Investor'],
   ];
   for (const [slug, type, title] of pages) {
     await eng.putPage(slug, { type: type as 'company' | 'person', title, compiled_truth: `${title} body`, timeline: '' });
@@ -50,11 +51,39 @@ beforeAll(async () => {
   await eng.addLink('people/employee-c', 'companies/widget-co', '', 'works_at', 'manual');
   await eng.addLink('people/mentioner', 'companies/widget-co', '', 'mentions', 'mentions');
   await eng.addLink('people/deleted-investor', 'companies/widget-co', '', 'invested_in', 'manual');
+  await eng.addLink('people/quarantined-investor', 'companies/widget-co', '', 'invested_in', 'manual');
   // investor-a also invested in other-co → widget-co and other-co connect via investor-a.
   await eng.addLink('people/investor-a', 'companies/other-co', '', 'invested_in', 'manual');
 
   // Soft-delete one investor; it must never surface.
   await eng.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = $1`, ['people/deleted-investor']);
+  await eng.executeRaw(
+    `UPDATE pages SET frontmatter = frontmatter || '{"quarantine":true}'::jsonb WHERE slug = $1`,
+    ['people/quarantined-investor'],
+  );
+
+  // A complete graph inside an archived source must be invisible even when
+  // the caller explicitly scopes the fanout to that source.
+  await eng.executeRaw(
+    `INSERT INTO sources (id, name, archived, created_at)
+     VALUES ('archived-rel', 'archived-rel', false, NOW())`,
+    [],
+  );
+  await eng.putPage(
+    'companies/archived-widget',
+    { type: 'company', title: 'Archived Widget', compiled_truth: 'Hidden company.', timeline: '' },
+    { sourceId: 'archived-rel' },
+  );
+  await eng.putPage(
+    'people/archived-investor',
+    { type: 'person', title: 'Archived Investor', compiled_truth: 'Hidden person.', timeline: '' },
+    { sourceId: 'archived-rel' },
+  );
+  await eng.addLink(
+    'people/archived-investor', 'companies/archived-widget', '', 'invested_in', 'manual', undefined, undefined,
+    { fromSourceId: 'archived-rel', toSourceId: 'archived-rel' },
+  );
+  await eng.executeRaw(`UPDATE sources SET archived = true WHERE id = 'archived-rel'`, []);
 }, 60_000);
 
 afterAll(async () => {
@@ -75,6 +104,19 @@ describe('relationalFanout', () => {
   test('deleted pages are excluded', async () => {
     const rows = await eng.relationalFanout(['companies/widget-co'], { direction: 'in', linkTypes: ['invested_in'] });
     expect(rows.map(r => r.slug)).not.toContain('people/deleted-investor');
+  });
+
+  test('quarantined pages are excluded', async () => {
+    const rows = await eng.relationalFanout(['companies/widget-co'], { direction: 'in', linkTypes: ['invested_in'] });
+    expect(rows.map(r => r.slug)).not.toContain('people/quarantined-investor');
+  });
+
+  test('archived sources are excluded', async () => {
+    const rows = await eng.relationalFanout(
+      ['companies/archived-widget'],
+      { sourceId: 'archived-rel', direction: 'in', linkTypes: ['invested_in'] },
+    );
+    expect(rows).toEqual([]);
   });
 
   test('mentions excluded by default, included on opt-in', async () => {
