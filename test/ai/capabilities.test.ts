@@ -24,6 +24,12 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.maxContext).toBe(1000000); // Gemini 1.5 Pro
   });
 
+  it('returns tool-calling capabilities for an installation-specific Ollama chat model', () => {
+    const caps = getProviderCapabilities('ollama:qwen3:latest');
+    expect(caps.supportsToolCalling).toBe(true);
+    expect(caps.supportsPromptCaching).toBe(false);
+  });
+
   it('honors Anthropic alias (undated → dated)', () => {
     const caps = getProviderCapabilities('anthropic:claude-haiku-4-5');
     expect(caps.supportsToolCalling).toBe(true);

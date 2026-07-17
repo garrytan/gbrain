@@ -29,7 +29,7 @@ import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+  test('the six reference providers ship chat models with subagent-loop support', () => {
     const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
     for (const id of expected) {
       const r = getRecipe(id);
@@ -51,9 +51,17 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('embedding-only providers (voyage, ollama) do NOT declare chat', () => {
+  test('embedding-only provider voyage does NOT declare chat', () => {
     expect(getRecipe('voyage')!.touchpoints.chat).toBeUndefined();
-    expect(getRecipe('ollama')!.touchpoints.chat).toBeUndefined();
+  });
+
+  test('ollama declares OpenAI-compatible chat with installation-specific models', () => {
+    expect(getRecipe('ollama')!.touchpoints.chat).toMatchObject({
+      models: [],
+      supports_tools: true,
+      supports_subagent_loop: false,
+    });
+    expect(getRecipe('ollama')!.touchpoints.expansion?.models).toEqual([]);
   });
 
   test('openai-compat chat recipes have base_url_default', () => {
@@ -105,12 +113,12 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
     expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.2')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-3.5-flash')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-v4-flash')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'qwen3:latest')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'expansion', 'qwen3:latest')).not.toThrow();
   });
 
   test('assertTouchpoint rejects chat on embedding-only providers with a fix hint', () => {
     expect(() => assertTouchpoint(getRecipe('voyage')!, 'chat', 'voyage-3'))
-      .toThrow(AIConfigError);
-    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'nomic-embed-text'))
       .toThrow(AIConfigError);
   });
 
@@ -173,6 +181,11 @@ describe('chat touchpoint — gateway config plumbing', () => {
   test('isAvailable("chat") returns false when configured provider has no key', () => {
     configureGateway({ chat_model: 'openai:gpt-5.2', env: {} });
     expect(isAvailable('chat')).toBe(false);
+  });
+
+  test('isAvailable("chat") accepts local Ollama without an API key', () => {
+    configureGateway({ chat_model: 'ollama:qwen3:latest', env: {} });
+    expect(isAvailable('chat')).toBe(true);
   });
 
   test('isAvailable("chat") returns false on embedding-only chat target', () => {

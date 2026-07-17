@@ -152,9 +152,11 @@ window.pmbrainDesktop = {
   chooseDirectory: async () => null,
   getProviderModels: async (provider, touchpoint) => ({
     source: provider === 'ollama' ? 'ollama' : 'catalog',
-    models: touchpoint === 'embedding'
-      ? (provider === 'zhipu' ? ['embedding-3', 'embedding-2'] : ['nomic-embed-text'])
-      : ['mimo-v2.5-pro', 'mimo-v2-pro']
+    models: provider === 'ollama'
+      ? (touchpoint === 'embedding' ? ['nomic-embed-text'] : ['qwen3:latest', 'qwen2.5:latest'])
+      : touchpoint === 'embedding'
+        ? (provider === 'zhipu' ? ['embedding-3', 'embedding-2'] : ['nomic-embed-text'])
+        : ['mimo-v2.5-pro', 'mimo-v2-pro']
   }),
   getAdvancedModelConfig: async () => ({ tiers: {
     utility: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },

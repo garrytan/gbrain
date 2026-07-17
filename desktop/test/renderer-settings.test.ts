@@ -55,6 +55,16 @@ describe('desktop settings renderer contracts', () => {
     expect(styles).toContain('.custom-provider-dialog');
   });
 
+  test('offers local Ollama models for both ordinary and embedding model cards', () => {
+    const chatProvider = html.match(/<select id="chat-provider">([\s\S]*?)<\/select>/)?.[1] ?? '';
+    const embeddingProvider = html.match(/<select id="embedding-provider">([\s\S]*?)<\/select>/)?.[1] ?? '';
+    expect(chatProvider).toContain('<option value="ollama">ollama</option>');
+    expect(embeddingProvider).toContain('<option value="ollama">ollama</option>');
+    expect(renderer).toContain("if (['ollama', 'llama-server', 'litellm', 'llama-server-reranker'].includes(normalized))");
+    expect(renderer).toContain("provider === 'ollama' ? '正在读取本机 Ollama 模型…'");
+    expect(preview).toContain("touchpoint === 'embedding' ? ['nomic-embed-text'] : ['qwen3:latest', 'qwen2.5:latest']");
+  });
+
   test('moves appearance and native desktop behavior into an accessible system panel', () => {
     for (const id of [
       'network-mode-local',

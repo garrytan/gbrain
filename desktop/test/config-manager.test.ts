@@ -288,6 +288,26 @@ describe('desktop config manager', () => {
     expect(saved.needsEmbeddingDimensionProbe).toBe(true);
   });
 
+  test('persists a local Ollama chat model without requiring an API key', () => {
+    const root = isolatedHome();
+    saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'brain.pglite'),
+      keys: {},
+      modelConfig: {
+        chatModel: 'ollama:qwen3:latest',
+        embeddingModel: 'ollama:nomic-embed-text',
+        embeddingDimensions: 768,
+      },
+    });
+
+    const config = JSON.parse(readFileSync(desktopConfigPath(), 'utf8'));
+    expect(config.chat_model).toBe('ollama:qwen3:latest');
+    expect(config.expansion_model).toBe('ollama:qwen3:latest');
+    expect(config['models.default']).toBe('ollama:qwen3:latest');
+    expect(config.ollama_api_key).toBeUndefined();
+  });
+
   test('persists a validated custom OpenAI-compatible provider without losing other URLs', () => {
     const root = isolatedHome();
     writeJsonConfig(desktopConfigPath(), {
