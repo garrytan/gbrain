@@ -55,6 +55,19 @@ describe('desktop settings renderer contracts', () => {
     expect(styles).toContain('.custom-provider-dialog');
   });
 
+  test('marks and validates every required custom model field before accepting it', () => {
+    expect(html).toContain('id="custom-provider-form" novalidate');
+    for (const id of ['custom-provider-name', 'custom-provider-base-url', 'custom-provider-model-id']) {
+      expect(html).toMatch(new RegExp(`id="${id}"[^>]*required[^>]*aria-required="true"`));
+    }
+    expect(html.match(/class="required-marker"/g)).toHaveLength(3);
+    expect(html).toContain('模型名称（模型 ID）');
+    expect(styles).toContain('.required-marker');
+    expect(renderer).toContain("setCustomProviderError('请填写 Base URL。', baseUrlInput)");
+    expect(renderer).toContain("setCustomProviderError('请填写模型名称（模型 ID）。', modelIdInput)");
+    expect(renderer).toContain("field.setAttribute('aria-invalid', 'true')");
+  });
+
   test('offers local Ollama models for both ordinary and embedding model cards', () => {
     const chatProvider = html.match(/<select id="chat-provider">([\s\S]*?)<\/select>/)?.[1] ?? '';
     const embeddingProvider = html.match(/<select id="embedding-provider">([\s\S]*?)<\/select>/)?.[1] ?? '';

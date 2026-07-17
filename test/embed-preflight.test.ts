@@ -34,6 +34,26 @@ describe('validateEmbeddingCreds', () => {
     expect(() => validateEmbeddingCreds()).not.toThrow();
   });
 
+  test('passes for a configured custom OpenAI embedding model with an empty recipe catalog', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'custom-openai:Qwen3-Embedding-8B',
+      embedding_dimensions: 4096,
+      base_urls: { 'custom-openai': 'http://127.0.0.1:8000/v1' },
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
+
+  test('still rejects a custom OpenAI provider with an empty model id', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'custom-openai:',
+      embedding_dimensions: 4096,
+      base_urls: { 'custom-openai': 'http://127.0.0.1:8000/v1' },
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).toThrow(EmbeddingCredentialError);
+  });
+
   test('throws EmbeddingCredentialError with reason=missing_env when OPENAI_API_KEY is unset', () => {
     configureGateway(baseConfig({ env: {} }));
     let caught: unknown;

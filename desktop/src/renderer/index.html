@@ -344,14 +344,14 @@
       <div class="help-dialog-foot"><small>本教程摘自 docs/desktop/首次安装使用DockerPostgres.md。PMBrain 不会安装、创建、删除或重建 Docker 容器；启动时会尝试启动匹配的现有容器。</small><button type="button" class="solid" id="docker-help-done">我知道了</button></div>
     </dialog>
     <dialog class="help-dialog custom-provider-dialog" id="custom-provider-dialog" aria-labelledby="custom-provider-title">
-      <form id="custom-provider-form">
+      <form id="custom-provider-form" novalidate>
           <div class="help-dialog-head"><div><span>LOCAL MODEL ENDPOINT</span><h2 id="custom-provider-title">添加自定义模型</h2></div><button type="button" class="ghost icon-button" id="custom-provider-close" aria-label="关闭自定义模型表单">×</button></div>
           <div class="custom-provider-form-body">
             <div class="custom-provider-endpoint-preview"><i aria-hidden="true"></i><div><b>OpenAI-compatible</b><small id="custom-provider-target-copy">PMBrain 将调用该地址下的模型接口。</small></div></div>
             <div class="custom-provider-capabilities" aria-label="自定义模型固定能力"><span><small>供应商路由</small><code>custom-openai</code></span><span><small>协议</small><b>OpenAI 兼容</b></span></div>
-            <label><span>供应商名称</span><input id="custom-provider-name" maxlength="80" placeholder="例如：本地 Qwen" autocomplete="off" /></label>
-            <label><span>Base URL</span><input id="custom-provider-base-url" inputmode="url" placeholder="例如：http://127.0.0.1:8000/v1" autocomplete="off" /><small>请填写服务的 API 根地址；模型在另一台电脑时填写它的局域网 IP。</small></label>
-            <label><span>模型 ID</span><input id="custom-provider-model-id" maxlength="160" placeholder="例如：Qwen3-6B 或 Qwen3-Embedding-8B" autocomplete="off" /><small>填写模型服务实际暴露的模型 ID，添加后会自动选入对应模型卡片。</small></label>
+            <label><span>供应商名称 <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-name" maxlength="80" placeholder="例如：本地 Qwen" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /></label>
+            <label><span>Base URL <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-base-url" inputmode="url" placeholder="例如：http://127.0.0.1:8000/v1" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /><small>请填写服务的 API 根地址；模型在另一台电脑时填写它的局域网 IP。</small></label>
+            <label><span>模型名称（模型 ID） <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-model-id" maxlength="160" placeholder="例如：Qwen3-6B 或 Qwen3-Embedding-8B" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /><small>填写模型服务实际暴露的模型 ID，添加后会自动选入对应模型卡片。</small></label>
             <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
           </div>
           <div class="help-dialog-foot"><small>普通模型和向量模型共用这一个 OpenAI 兼容 Base URL；模型 ID 分别保存。API Key 可选：可在对应模型卡片中填写，本地无鉴权接口可留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">添加模型</button></div></div>

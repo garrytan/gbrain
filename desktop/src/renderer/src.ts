@@ -179,10 +179,16 @@ function syncProviderKeyField(kind: ModelKind): void {
   input.value = keyId && keyId !== '__none__' ? state?.setup.current.keyValues[keyId] || '' : '';
 }
 
-function setCustomProviderError(message = ''): void {
+function setCustomProviderError(message = '', field?: HTMLInputElement): void {
   const error = $('#custom-provider-error');
+  document.querySelectorAll<HTMLInputElement>('#custom-provider-form input[aria-invalid="true"]')
+    .forEach(input => input.removeAttribute('aria-invalid'));
   error.textContent = message;
   error.hidden = !message;
+  if (message && field) {
+    field.setAttribute('aria-invalid', 'true');
+    field.focus();
+  }
 }
 
 function renderCustomProvider(): void {
@@ -216,26 +222,33 @@ function closeCustomProvider(): void {
 }
 
 function confirmCustomProvider(): void {
-  const displayName = ($<HTMLInputElement>('#custom-provider-name')).value.trim();
-  const rawBaseUrl = ($<HTMLInputElement>('#custom-provider-base-url')).value.trim();
-  const modelId = ($<HTMLInputElement>('#custom-provider-model-id')).value.trim();
+  const displayNameInput = $<HTMLInputElement>('#custom-provider-name');
+  const baseUrlInput = $<HTMLInputElement>('#custom-provider-base-url');
+  const modelIdInput = $<HTMLInputElement>('#custom-provider-model-id');
+  const displayName = displayNameInput.value.trim();
+  const rawBaseUrl = baseUrlInput.value.trim();
+  const modelId = modelIdInput.value.trim();
   if (!displayName) {
-    setCustomProviderError('请填写显示名称，例如“本地 Qwen”。');
+    setCustomProviderError('请填写供应商名称，例如“本地 Qwen”。', displayNameInput);
+    return;
+  }
+  if (!rawBaseUrl) {
+    setCustomProviderError('请填写 Base URL。', baseUrlInput);
     return;
   }
   let parsed: URL;
   try {
     parsed = new URL(rawBaseUrl);
   } catch {
-    setCustomProviderError('Base URL 格式无效，请填写完整的 http:// 或 https:// 地址。');
+    setCustomProviderError('Base URL 格式无效，请填写完整的 http:// 或 https:// 地址。', baseUrlInput);
     return;
   }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    setCustomProviderError('Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。');
+    setCustomProviderError('Base URL 只能使用 http/https，且不能包含账号、查询参数或锚点。', baseUrlInput);
     return;
   }
   if (!modelId) {
-    setCustomProviderError('请填写模型服务实际提供的模型 ID。');
+    setCustomProviderError('请填写模型名称（模型 ID）。', modelIdInput);
     return;
   }
   if (!customProviderTarget) {

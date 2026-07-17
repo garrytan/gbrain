@@ -288,6 +288,7 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .custom-provider-dialog form { display: flex; max-height: calc(100vh - 48px); flex-direction: column; }
 .custom-provider-form-body { display: grid; gap: 15px; padding: 20px; overflow-y: auto; }
 .custom-provider-form-body label > span { display: block; margin-bottom: 7px; color: #c5cfc8; font-size: 12px; font-weight: 650; }
+.custom-provider-form-body .required-marker { color: #ff735c; font-style: normal; }
 .custom-provider-form-body label > small { display: block; margin-top: 6px; color: #6f7d75; font-size: 10px; line-height: 1.5; }
 .custom-provider-endpoint-preview { display: grid; grid-template-columns: 12px 1fr; align-items: center; gap: 12px; padding: 12px 13px; border-left: 2px solid #97e66c; background: #172019; }
 .custom-provider-endpoint-preview i { width: 8px; height: 8px; border-radius: 50%; background: #97e66c; box-shadow: 0 0 0 5px rgba(151,230,108,.08); }

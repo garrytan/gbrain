@@ -674,21 +674,9 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
-  const isUserProvided = (tp as any).user_provided_models === true;
-  if (
-    Array.isArray(tp.models) &&
-    tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
-  ) {
-    return {
-      ok: false,
-      reason: 'user_provided_model_unset',
-      model: modelStr,
-      provider: parsed.providerId,
-      recipeId: recipe.id,
-    };
-  }
+  // An empty recipe catalog means the provider accepts installation-specific
+  // model ids. It does not mean the configured model is missing: parseModelId
+  // above already guarantees that `provider:model` contains a non-empty model.
 
   const required = recipe.auth_env?.required ?? [];
   const missing = required.filter(k => !_config!.env[k]);
