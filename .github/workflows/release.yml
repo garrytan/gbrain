@@ -54,7 +54,7 @@ jobs:
       - run: bun run build:admin
       - name: Install desktop dependencies
         working-directory: desktop
-        run: bun install --frozen-lockfile --trust
+        run: bun install --trust
       - name: Verify desktop runtime compatibility code
         working-directory: desktop
         run: |
