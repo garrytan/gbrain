@@ -72,11 +72,18 @@ describe('computeContentSanityAuditCheck (#1893 chronic vs new scoring)', () => 
     expect(check.status).toBe('fail');
   });
 
-  test('bypass events surface in the message', () => {
-    const check = computeContentSanityAuditCheck(summarizeContentSanityEvents([
+  test('bypass events warn and surface in the message — chronicity never buries a switched-off gate', () => {
+    const single = computeContentSanityAuditCheck(summarizeContentSanityEvents([
       onDay('2026-07-17', { slug: 'x', bypass_active: true }),
     ]));
-    expect(check.message).toContain('bypass=1');
+    expect(single.status).toBe('warn');
+    expect(single.message).toContain('bypass=1');
+    const chronicBypass = computeContentSanityAuditCheck(summarizeContentSanityEvents([
+      onDay('2026-07-14', { slug: 'x', bypass_active: true }),
+      onDay('2026-07-15', { slug: 'x', bypass_active: true }),
+      onDay('2026-07-16', { slug: 'x', bypass_active: true }),
+    ]));
+    expect(chronicBypass.status).toBe('warn');
   });
 
   test('no chronic signatures omits the Top chronic callout', () => {

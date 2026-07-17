@@ -3816,9 +3816,13 @@ export function computeContentSanityAuditCheck(summary: ContentSanitySummary): C
   const hardBlocked =
     summary.by_type.hard_block + summary.by_type.reject + summary.by_type.quarantine;
   const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
+  // Bypass events always at least warn: the kill-switch is an incident-time
+  // escape hatch, and a bypassed junk page lands looking like a routine warn
+  // — chronicity must never bury a gate that is switched off.
   const status: 'ok' | 'warn' | 'fail' =
     hardBlocked > 0 ? 'fail' :
-      (summary.new_soft_pages > 0 ||
+      (summary.bypass_events > 0 ||
+        summary.new_soft_pages > 0 ||
         summary.new_warn_pages >= CONTENT_SANITY_NEW_PAGES_WARN_THRESHOLD) ? 'warn' : 'ok';
   const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
   const topSources = Object.entries(summary.by_source)

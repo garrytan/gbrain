@@ -194,7 +194,9 @@ export interface ContentSanitySummary {
   distinct_pages: number;
   /** Pages carrying at least one chronic signature. */
   chronic_pages: number;
-  /** distinct_pages - chronic_pages. */
+  /** Pages carrying at least one NEW (non-chronic) signature. A page
+   *  whose chronic signature gains a fresh one counts in BOTH chronic
+   *  and new — the sets overlap, so chronic + new can exceed distinct. */
   new_pages: number;
   /** Pages with a NEW soft-disposition signature (soft_block | flag).
    *  event_type is part of the signature, so a page whose chronic
@@ -213,17 +215,29 @@ export interface ContentSanitySummary {
 
 /** Stable reason discriminator for a signature. Pattern/literal names
  *  (sorted + deduped so array order can't split one signature into
- *  two), else the assessor's PREFIX_TOKEN before ':' on the first
- *  reason message, else empty (event_type alone discriminates). */
+ *  two; JSON-encoded so an operator literal containing a delimiter
+ *  can't collide with a multi-name set), else the assessor's
+ *  PREFIX_TOKEN before ':' on the first reason message, else empty
+ *  (event_type alone discriminates). */
 function reasonKey(ev: ContentSanityAuditEvent): string {
   const names = [...new Set([...ev.junk_pattern_matches, ...ev.literal_substring_matches])].sort();
-  if (names.length > 0) return names.join(',');
+  if (names.length > 0) return JSON.stringify(names);
   const first = ev.reason_messages[0];
   if (first) return first.split(':')[0].trim();
   return '';
 }
 
-const UTC_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Canonical UTC day for an audit timestamp, or null when it doesn't
+ *  parse. The writer always emits `toISOString()`, but foreign or
+ *  corrupted rows must not be able to fabricate extra distinct days
+ *  (offset timestamps re-normalize; unparseable ones don't count
+ *  toward chronicity — unknown recency scores as new, fail-safe). */
+function utcDayOf(ts: unknown): string | null {
+  if (typeof ts !== 'string' || ts === '') return null;
+  const parsed = new Date(ts);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
 
 export function summarizeContentSanityEvents(
   events: ReadonlyArray<ContentSanityAuditEvent>,
@@ -258,24 +272,27 @@ export function summarizeContentSanityEvents(
     for (const name of ev.literal_substring_matches) {
       patternCounts[name] = (patternCounts[name] ?? 0) + 1;
     }
-    const sigKey = [ev.source_id, ev.slug, ev.event_type, reasonKey(ev)].join(' ');
+    // JSON tuple encoding: collision-free even when a slug or operator
+    // literal contains a would-be delimiter.
+    const sigKey = JSON.stringify([ev.source_id, ev.slug, ev.event_type, reasonKey(ev)]);
     let agg = sigs.get(sigKey);
     if (!agg) {
       agg = { slug: ev.slug, source_id: ev.source_id, event_type: ev.event_type, days: new Set(), events: 0 };
       sigs.set(sigKey, agg);
     }
     agg.events++;
-    const day = typeof ev.ts === 'string' ? ev.ts.slice(0, 10) : '';
-    if (UTC_DAY_RE.test(day)) agg.days.add(day);
+    const day = utcDayOf(ev.ts);
+    if (day !== null) agg.days.add(day);
   }
 
   const top_patterns = Object.entries(patternCounts)
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  const pageKey = (a: { source_id: string; slug: string }) => `${a.source_id} ${a.slug}`;
+  const pageKey = (a: { source_id: string; slug: string }) => JSON.stringify([a.source_id, a.slug]);
   const allPages = new Set<string>();
   const chronicPages = new Set<string>();
+  const newPages = new Set<string>();
   const newSoftPages = new Set<string>();
   const newWarnPages = new Set<string>();
   const chronicSigs: SigAgg[] = [];
@@ -285,10 +302,13 @@ export function summarizeContentSanityEvents(
     if (chronic) {
       chronicPages.add(pageKey(agg));
       chronicSigs.push(agg);
-    } else if (agg.event_type === 'soft_block' || agg.event_type === 'flag') {
-      newSoftPages.add(pageKey(agg));
-    } else if (agg.event_type === 'warn') {
-      newWarnPages.add(pageKey(agg));
+    } else {
+      newPages.add(pageKey(agg));
+      if (agg.event_type === 'soft_block' || agg.event_type === 'flag') {
+        newSoftPages.add(pageKey(agg));
+      } else if (agg.event_type === 'warn') {
+        newWarnPages.add(pageKey(agg));
+      }
     }
   }
   const top_chronic = chronicSigs
@@ -303,7 +323,7 @@ export function summarizeContentSanityEvents(
     top_patterns,
     distinct_pages: allPages.size,
     chronic_pages: chronicPages.size,
-    new_pages: allPages.size - chronicPages.size,
+    new_pages: newPages.size,
     new_soft_pages: newSoftPages.size,
     new_warn_pages: newWarnPages.size,
     bypass_events,

@@ -305,6 +305,33 @@ describe('summarizeContentSanityEvents — chronic vs new signatures (#1893)', (
     expect(s.chronic_pages).toBe(1);
   });
 
+  test('a literal containing a comma cannot collide with a multi-name set (signature stays distinct)', () => {
+    const s = summarizeContentSanityEvents([
+      onDay('2026-07-14', { slug: 'p', event_type: 'quarantine', literal_substring_matches: ['a,b'] }),
+      onDay('2026-07-15', { slug: 'p', event_type: 'quarantine', literal_substring_matches: ['a', 'b'] }),
+      onDay('2026-07-16', { slug: 'p', event_type: 'quarantine', literal_substring_matches: ['a,b'] }),
+    ]);
+    // two distinct signatures: neither reaches 3 distinct days
+    expect(s.chronic_pages).toBe(0);
+  });
+
+  test('offset timestamps normalize to UTC days (no fabricated chronicity)', () => {
+    const s = summarizeContentSanityEvents([
+      // all three are the same UTC day (2026-07-16) despite different offsets
+      event({ slug: 'tz', ts: '2026-07-16T01:00:00.000Z' }),
+      event({ slug: 'tz', ts: '2026-07-15T23:00:00-05:00' }),
+      event({ slug: 'tz', ts: '2026-07-17T03:00:00+09:00' }),
+    ]);
+    expect(s.chronic_pages).toBe(0);
+    // invalid calendar dates never count toward chronicity
+    const s2 = summarizeContentSanityEvents([
+      event({ slug: 'bad', ts: '2026-13-99T10:00:00.000Z' }),
+      event({ slug: 'bad', ts: '2026-14-99T10:00:00.000Z' }),
+      event({ slug: 'bad', ts: '2026-15-99T10:00:00.000Z' }),
+    ]);
+    expect(s2.chronic_pages).toBe(0);
+  });
+
   test('pages on different sources are distinct', () => {
     const s = summarizeContentSanityEvents([
       onDay('2026-07-16', { slug: 'same-slug', source_id: 'src-a' }),
