@@ -39,6 +39,14 @@ beforeAll(async () => {
     chunk_source: 'compiled_truth', embedding: new Float32Array(dim), token_count: 8,
   }] satisfies ChunkInput[]);
   await eng.addLink('people/alice-example', 'companies/widget-co', '', 'invested_in', 'manual');
+  await eng.putPage('people/numeric-example', {
+    type: 'person',
+    title: 'Numeric Example',
+    compiled_truth: 'A second seed-stage investor.',
+    timeline: '',
+    frontmatter: { message_id: 12345, thread_id: 67890, subject: 98765 },
+  });
+  await eng.addLink('people/numeric-example', 'companies/widget-co', '', 'invested_in', 'manual');
 }, 60_000);
 
 afterAll(async () => { await eng.disconnect(); });
@@ -56,6 +64,12 @@ describe('buildRelationalArm', () => {
     expect(alice!.message_id).toBe('<alice-investor@example.com>');
     expect(alice!.thread_id).toBe('thread-alice-investor');
     expect(alice!.source_subject).toBe('Investor profile update');
+
+    const malformed = list.find(r => r.slug === 'people/numeric-example');
+    expect(malformed).toBeDefined();
+    expect(malformed!.message_id).toBeUndefined();
+    expect(malformed!.thread_id).toBeUndefined();
+    expect(malformed!.source_subject).toBeUndefined();
   });
 
   test('non-relational query is a pure no-op', async () => {

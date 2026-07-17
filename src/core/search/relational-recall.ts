@@ -113,9 +113,15 @@ async function hydrate(
   }>(
     `SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type,
             LEFT(p.compiled_truth, 240) AS synopsis,
-            p.frontmatter->>'message_id' AS message_id,
-            p.frontmatter->>'thread_id' AS thread_id,
-            p.frontmatter->>'subject' AS source_subject
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              THEN p.frontmatter->>'message_id' END AS message_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string'
+              THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              AND jsonb_typeof(p.frontmatter->'subject') = 'string'
+              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject
      FROM pages p
      WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL`,
     [slugs],
