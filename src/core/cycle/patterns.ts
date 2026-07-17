@@ -64,9 +64,12 @@ export async function runPhasePatterns(
     }
 
     // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
-    }
+    // v0.42.53.0-fork: removed ANTHROPIC_API_KEY gate — the subagent
+    // submission below routes through the gateway model-tier resolver,
+    // which handles non-Anthropic providers correctly. When the gateway
+    // is misconfigured, dispatch surfaces a clear AIConfigError per-call
+    // rather than a misclassified "skipped: no_api_key" verdict.
+    // (Same fix as upstream PR #2279 by brettdavies.)
 
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
     if (allowedSlugPrefixes.length === 0) {
