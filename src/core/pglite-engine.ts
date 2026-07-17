@@ -150,8 +150,8 @@ export function computeSnapshotSchemaHash(
  * `macos-26-3` — the pre-existing #223 hint signature (early macOS
  *   26.3 builds shipped a broken WASM runtime).
  *
- * `unknown` — falls through to a generic hint that still names the
- *   doctor command and the most-common-cause link.
+ * `unknown` — falls through to a generic hint that names the doctor
+ *   command; the macOS 26.3 link is offered only on darwin (#2674).
  *
  * Regex tightened per Codex eng-review finding #9: don't match
  * generic `pglite.data` substring (could fire on unrelated PGLite
@@ -159,6 +159,12 @@ export function computeSnapshotSchemaHash(
  * co-occurrence.
  */
 export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'corrupt' | 'unknown';
+
+// #2674: non-Error rejections (Emscripten aborts can throw plain objects)
+// used to stringify as "[object Object]" — prefer .message when present.
+export function stringifyPgliteInitError(err: unknown): string {
+  return String((err as { message?: unknown })?.message ?? err);
+}
 
 export function classifyPgliteInitError(message: string): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
@@ -179,6 +185,9 @@ export function classifyPgliteInitError(message: string): PgliteInitFailure {
 export function buildPgliteInitErrorMessage(
   verdict: PgliteInitFailure,
   original: string,
+  // #2674: threaded (defaulted) so tests can exercise both branches without
+  // monkey-patching process.platform.
+  platform: NodeJS.Platform = process.platform,
 ): string {
   const header = 'PGLite failed to initialize its WASM runtime.';
   let hint: string;
@@ -210,10 +219,16 @@ export function buildPgliteInitErrorMessage(
       break;
     case 'unknown':
     default:
-      hint =
-        '  Most common cause: the macOS 26.3 WASM bug\n' +
-        '  (https://github.com/garrytan/gbrain/issues/223).\n' +
-        '  Run `gbrain doctor` for a full diagnosis.';
+      // #2674: only blame the macOS 26.3 WASM bug on macOS. On other
+      // platforms, point at the causes that are actually plausible there.
+      hint = platform === 'darwin'
+        ? '  Possible cause: the macOS 26.3 WASM bug\n' +
+          '  (https://github.com/garrytan/gbrain/issues/223).\n' +
+          '  Run `gbrain doctor` for a full diagnosis.'
+        : '  Possible causes: another gbrain process holding the database\n' +
+          '  (lock contention), or a damaged PGLite data directory.\n' +
+          '  Run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
+          '  damaged, `gbrain reinit-pglite` rebuilds it from your brain repo.';
       break;
   }
   return `${header}\n${hint}\n  Original error: ${original}`;
@@ -309,7 +324,7 @@ export class PGLiteEngine implements BrainEngine {
       // read-only on older macOS + Bun 1.3.x, so PGLite can't extract its
       // pglite.data WASM payload). Route the hint by failure shape so
       // users get the right next step.
-      const original = err instanceof Error ? err.message : String(err);
+      const original = stringifyPgliteInitError(err); // #2674
       const verdict = classifyPgliteInitError(original);
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
       // Release the lock so a fresh process can try again; leaking the lock
