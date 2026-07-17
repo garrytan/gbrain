@@ -13,16 +13,18 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
-
-// Cold-init schema path so the archive columns exist (same as destructive-guard tests).
-delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
+  // Cold-init schema path so the archive columns exist (same intent as
+  // destructive-guard tests, but env-isolated per check-test-isolation R1).
+  await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => {
+    await engine.connect({});
+    await engine.initSchema();
+  });
   await engine.executeRaw(
     `INSERT INTO sources (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
     ['arch-idem', 'arch-idem'],

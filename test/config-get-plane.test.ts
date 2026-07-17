@@ -4,16 +4,21 @@
  * runtime-effective key in ~/.gbrain/config.json reported not-found while
  * the runtime happily used it.
  *
- * Hermetic: GBRAIN_HOME points at a tmp dir (configDir() honors it) and the
- * engine is a getConfig-only stub — the `get` path touches nothing else.
+ * Hermetic: GBRAIN_HOME points at a tmp dir (configDir() honors it) via
+ * withEnv (check-test-isolation R1), and the engine is a getConfig-only
+ * stub — the `get` path touches nothing else.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { describe, test, expect, spyOn } from 'bun:test';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runConfig } from '../src/commands/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+
+const home = mkdtempSync(join(tmpdir(), 'gbrain-config-get-'));
+mkdirSync(join(home, '.gbrain'), { recursive: true });
 
 function stubEngine(dbValues: Record<string, string>): BrainEngine {
   return {
@@ -21,52 +26,52 @@ function stubEngine(dbValues: Record<string, string>): BrainEngine {
   } as unknown as BrainEngine;
 }
 
-describe('#2120 — config get resolves file plane with DB fallback', () => {
-  let home: string;
-  let savedHome: string | undefined;
-  let savedChatModel: string | undefined;
-  let logs: string[];
-  let errs: string[];
-  let logSpy: ReturnType<typeof spyOn>;
-  let errSpy: ReturnType<typeof spyOn>;
+function writeFileConfig(cfg: Record<string, unknown>): void {
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(cfg));
+}
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-config-get-'));
-    mkdirSync(join(home, '.gbrain'), { recursive: true });
-    savedHome = process.env.GBRAIN_HOME;
-    process.env.GBRAIN_HOME = home;
-    // loadConfig() overlays this env var onto the file plane — keep it out.
-    savedChatModel = process.env.GBRAIN_CHAT_MODEL;
-    delete process.env.GBRAIN_CHAT_MODEL;
-    logs = [];
-    errs = [];
-    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
-    errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
-  });
-
-  afterEach(() => {
+/** Run `config get <key>` with GBRAIN_HOME pinned to the tmp brain and the
+ *  chat-model env overlay cleared, capturing output + exit code. */
+async function runGet(
+  dbValues: Record<string, string>,
+  key: string,
+): Promise<{ logs: string[]; errs: string[]; exit: number | null }> {
+  const logs: string[] = [];
+  const errs: string[] = [];
+  let exit: number | null = null;
+  const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+  const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
+  const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
+    exit = code ?? 0;
+    throw new Error(`EXIT:${code}`);
+  }) as never);
+  try {
+    await withEnv(
+      { GBRAIN_HOME: home, GBRAIN_CHAT_MODEL: undefined },
+      () => runConfig(stubEngine(dbValues), ['get', key]),
+    );
+  } catch (e) {
+    if (!(e as Error).message.startsWith('EXIT:')) throw e;
+  } finally {
     logSpy.mockRestore();
     errSpy.mockRestore();
-    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
-    else process.env.GBRAIN_HOME = savedHome;
-    if (savedChatModel !== undefined) process.env.GBRAIN_CHAT_MODEL = savedChatModel;
-    rmSync(home, { recursive: true, force: true });
-  });
-
-  function writeFileConfig(cfg: Record<string, unknown>): void {
-    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(cfg));
+    exitSpy.mockRestore();
   }
+  return { logs, errs, exit };
+}
 
+describe('#2120 — config get resolves file plane with DB fallback', () => {
   test('file-plane key with no DB row is found (the pre-fix not-found bug)', async () => {
     writeFileConfig({ engine: 'pglite', chat_model: 'anthropic:claude-sonnet-4-6' });
-    await runConfig(stubEngine({}), ['get', 'chat_model']);
+    const { logs, errs, exit } = await runGet({}, 'chat_model');
+    expect(exit).toBeNull();
     expect(logs).toContain('anthropic:claude-sonnet-4-6');
     expect(errs.join('\n')).toContain('file/env plane');
   });
 
   test('file plane wins over DB plane (matches runtime precedence) and reports the shadow', async () => {
     writeFileConfig({ engine: 'pglite', chat_model: 'anthropic:claude-sonnet-4-6' });
-    await runConfig(stubEngine({ chat_model: 'openai:gpt-5' }), ['get', 'chat_model']);
+    const { logs, errs } = await runGet({ chat_model: 'openai:gpt-5' }, 'chat_model');
     expect(logs).toContain('anthropic:claude-sonnet-4-6');
     expect(logs).not.toContain('openai:gpt-5');
     expect(errs.join('\n')).toContain('shadowed');
@@ -74,21 +79,15 @@ describe('#2120 — config get resolves file plane with DB fallback', () => {
 
   test('DB-plane-only key still resolves (no regression for dotted keys)', async () => {
     writeFileConfig({ engine: 'pglite' });
-    await runConfig(stubEngine({ 'search.mode': 'balanced' }), ['get', 'search.mode']);
+    const { logs, errs } = await runGet({ 'search.mode': 'balanced' }, 'search.mode');
     expect(logs).toContain('balanced');
     expect(errs.join('\n')).toContain('db plane');
   });
 
   test('key in neither plane is still not-found (exit 1)', async () => {
     writeFileConfig({ engine: 'pglite' });
-    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      throw new Error(`EXIT:${code}`);
-    }) as never);
-    try {
-      await expect(runConfig(stubEngine({}), ['get', 'chat_model'])).rejects.toThrow('EXIT:1');
-      expect(errs.join('\n')).toContain('Config key not found: chat_model');
-    } finally {
-      exitSpy.mockRestore();
-    }
+    const { errs, exit } = await runGet({}, 'chat_model');
+    expect(exit).toBe(1);
+    expect(errs.join('\n')).toContain('Config key not found: chat_model');
   });
 });
