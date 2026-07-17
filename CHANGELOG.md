@@ -11,6 +11,7 @@ All notable changes to GBrain will be documented in this file.
 
 ### Added
 - **Sonnet 5 pricing.** `model-pricing.ts` gains `anthropic:claude-sonnet-5` at the $3/$15 list rate so cost accounting resolves for the new default. (Opus 4.8 was already priced.) (contributed by @mdcruz88)
+- **Recipe allowlist: Sonnet 5 + Opus 4.8 listed for Anthropic chat.** Without this, `probeChatModel`'s `assertTouchpoint` rejects the new defaults (`unknown_model: Model "claude-opus-4-8" is not listed for Anthropic chat`) and the configured-model path degrades **silently** to the no-LLM stub — every brain on defaults would skip synthesis after upgrading. Verified live against the gateway. (contributed by @mdcruz88)
 
 ### To take advantage of v0.42.60.0
 
