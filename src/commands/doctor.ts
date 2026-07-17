@@ -2632,15 +2632,21 @@ export function checkCyclePhaseScope(): Check {
   }
 }
 
-/** Extract the text-search config name from a search_vector trigger
+/** Extract every text-search config literal from a search_vector trigger
  *  function body (pure; exported for tests). The migration/reindex path
  *  interpolates the language as a literal (`to_tsvector('english', …)`),
- *  so the first to_tsvector literal IS the language the stored vectors
- *  were built with. Returns null when no literal is found (unexpected
- *  body shape — fail-open, never guess). */
-export function parseFtsLanguageFromProsrc(prosrc: string): string | null {
-  const m = /to_tsvector\('([a-z][a-z0-9_]*)'/.exec(prosrc);
-  return m ? m[1] : null;
+ *  so the to_tsvector literals ARE the language the stored vectors were
+ *  built with. Tolerates optional `pg_catalog.` qualification and
+ *  whitespace. Returns unique literals in body order; empty when none
+ *  found (unexpected body shape — fail-open, never guess). More than one
+ *  unique literal in a single body is a real anomaly the caller warns on. */
+export function parseFtsLanguagesFromProsrc(prosrc: string): string[] {
+  const re = /(?:pg_catalog\s*\.\s*)?to_tsvector\s*\(\s*'([a-z][a-z0-9_]*)'/g;
+  const out: string[] = [];
+  for (const m of prosrc.matchAll(re)) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
 }
 
 /**
@@ -2659,7 +2665,7 @@ export function parseFtsLanguageFromProsrc(prosrc: string): string | null {
  */
 export function computeFtsLanguageCheck(
   runtimeLang: string,
-  fns: Array<{ proname: string; lang: string | null }>,
+  fns: Array<{ proname: string; langs: string[] }>,
 ): Check {
   if (fns.length === 0) {
     // Pre-configurable-FTS brain (functions not yet created) — schema
@@ -2670,7 +2676,20 @@ export function computeFtsLanguageCheck(
       message: 'search_vector trigger functions not found (pre-FTS-language schema) — not applicable',
     };
   }
-  const unparsed = fns.filter(f => f.lang === null);
+  const EXPECTED = ['update_page_search_vector', 'update_chunk_search_vector'];
+  const present = new Set(fns.map(f => f.proname));
+  const missing = EXPECTED.filter(n => !present.has(n));
+  if (missing.length > 0) {
+    // One function exists but the other doesn't — that's not a pre-schema
+    // brain (both would be absent), it's a dropped/renamed function whose
+    // trigger can no longer fire.
+    return {
+      name: 'fts_language_drift',
+      status: 'warn',
+      message: `search_vector trigger function ${missing.join(', ')} is missing while its sibling exists — schema anomaly; run migrations or: gbrain reindex-search-vector --yes`,
+    };
+  }
+  const unparsed = fns.filter(f => f.langs.length === 0);
   if (unparsed.length > 0) {
     return {
       name: 'fts_language_drift',
@@ -2678,12 +2697,20 @@ export function computeFtsLanguageCheck(
       message: `Could not parse FTS language from ${unparsed.map(f => f.proname).join(', ')} — skipping comparison (unexpected function body shape)`,
     };
   }
-  const langs = [...new Set(fns.map(f => f.lang as string))];
+  const mixed = fns.filter(f => f.langs.length > 1);
+  if (mixed.length > 0) {
+    return {
+      name: 'fts_language_drift',
+      status: 'warn',
+      message: `${mixed.map(f => `${f.proname} mixes FTS languages [${f.langs.join(', ')}]`).join('; ')} — hand-edited or corrupted trigger body. Run: gbrain reindex-search-vector --yes`,
+    };
+  }
+  const langs = [...new Set(fns.map(f => f.langs[0]))];
   if (langs.length > 1) {
     return {
       name: 'fts_language_drift',
       status: 'warn',
-      message: `search_vector trigger functions disagree on FTS language (${fns.map(f => `${f.proname}='${f.lang}'`).join(', ')}) — a partial reindex left pages and chunks tokenized differently. Run: gbrain reindex-search-vector --yes`,
+      message: `search_vector trigger functions disagree on FTS language (${fns.map(f => `${f.proname}='${f.langs[0]}'`).join(', ')}) — a partial reindex left pages and chunks tokenized differently. Run: gbrain reindex-search-vector --yes`,
     };
   }
   const stored = langs[0];
@@ -2702,15 +2729,27 @@ export function computeFtsLanguageCheck(
 }
 
 /** DB-backed wrapper: introspect the trigger functions and compare against
- *  this process's resolved language. Fail-open — an introspection error
- *  must never fail doctor. */
+ *  this process's resolved language. Scoped to the public schema (where
+ *  the migration creates them) so a same-named function in another schema
+ *  can't shadow the comparison. Fail-open — an introspection error must
+ *  never fail doctor.
+ *
+ *  Known limitation (deliberate): the trigger bodies are ground truth for
+ *  what NEW writes tokenize with, not a per-row guarantee — an interrupted
+ *  reindex backfill can leave older rows under the previous language while
+ *  the functions already carry the new one. The reindex command is
+ *  idempotent; re-running it converges. Tracking per-table backfill state
+ *  would need a persisted stamp and belongs to the reindex command itself. */
 export async function checkFtsLanguageDrift(engine: BrainEngine): Promise<Check> {
   try {
     const { getFtsLanguage } = await import('../core/fts-language.ts');
     const rows = await engine.executeRaw<{ proname: string; prosrc: string }>(
-      `SELECT proname, prosrc FROM pg_proc WHERE proname IN ('update_page_search_vector', 'update_chunk_search_vector')`,
+      `SELECT p.proname, p.prosrc FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('update_page_search_vector', 'update_chunk_search_vector')`,
     );
-    const fns = rows.map(r => ({ proname: r.proname, lang: parseFtsLanguageFromProsrc(r.prosrc) }));
+    const fns = rows.map(r => ({ proname: r.proname, langs: parseFtsLanguagesFromProsrc(r.prosrc) }));
     return computeFtsLanguageCheck(getFtsLanguage(), fns);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
