@@ -836,6 +836,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.
   checks.push(await checkSearchMode(engine));
+  checks.push(await checkFtsLanguageDrift(engine));
 
   // 8. v0.32.3 eval_drift: retrieval-affecting files changed since last
   // eval run? Non-blocking — surfaces as ok + hint.
@@ -2628,6 +2629,92 @@ export function checkCyclePhaseScope(): Check {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { name: 'cycle_phase_scope', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/** Extract the text-search config name from a search_vector trigger
+ *  function body (pure; exported for tests). The migration/reindex path
+ *  interpolates the language as a literal (`to_tsvector('english', …)`),
+ *  so the first to_tsvector literal IS the language the stored vectors
+ *  were built with. Returns null when no literal is found (unexpected
+ *  body shape — fail-open, never guess). */
+export function parseFtsLanguageFromProsrc(prosrc: string): string | null {
+  const m = /to_tsvector\('([a-z][a-z0-9_]*)'/.exec(prosrc);
+  return m ? m[1] : null;
+}
+
+/**
+ * Score FTS-language drift (pure; exported for tests).
+ *
+ * v0.42.62 made the FTS language configurable (GBRAIN_FTS_LANGUAGE): the
+ * QUERY side resolves it from the process env at first call, while the
+ * STORED side (search_vector columns) was tokenized with whatever language
+ * the trigger functions carried at migration/reindex time. Those two can
+ * silently diverge — a launchd daemon, autopilot, or MCP serve missing the
+ * env var tokenizes queries under a different dictionary than the stored
+ * vectors, and the keyword recall arm quietly degrades (docs currently
+ * make cross-context consistency a manual operator duty). The trigger
+ * function bodies in pg_proc are the ground truth for the stored side —
+ * no stamp to trust, works retroactively on any brain.
+ */
+export function computeFtsLanguageCheck(
+  runtimeLang: string,
+  fns: Array<{ proname: string; lang: string | null }>,
+): Check {
+  if (fns.length === 0) {
+    // Pre-configurable-FTS brain (functions not yet created) — schema
+    // checks own migration lag; nothing to compare here.
+    return {
+      name: 'fts_language_drift',
+      status: 'ok',
+      message: 'search_vector trigger functions not found (pre-FTS-language schema) — not applicable',
+    };
+  }
+  const unparsed = fns.filter(f => f.lang === null);
+  if (unparsed.length > 0) {
+    return {
+      name: 'fts_language_drift',
+      status: 'ok',
+      message: `Could not parse FTS language from ${unparsed.map(f => f.proname).join(', ')} — skipping comparison (unexpected function body shape)`,
+    };
+  }
+  const langs = [...new Set(fns.map(f => f.lang as string))];
+  if (langs.length > 1) {
+    return {
+      name: 'fts_language_drift',
+      status: 'warn',
+      message: `search_vector trigger functions disagree on FTS language (${fns.map(f => `${f.proname}='${f.lang}'`).join(', ')}) — a partial reindex left pages and chunks tokenized differently. Run: gbrain reindex-search-vector --yes`,
+    };
+  }
+  const stored = langs[0];
+  if (stored !== runtimeLang) {
+    return {
+      name: 'fts_language_drift',
+      status: 'warn',
+      message: `FTS language split-brain: this process tokenizes queries with '${runtimeLang}' but stored search vectors were built with '${stored}' — the keyword recall arm silently degrades. Either export GBRAIN_FTS_LANGUAGE=${stored} in THIS context (and every launchd/cron/MCP context), or retokenize the brain: GBRAIN_FTS_LANGUAGE=${runtimeLang} gbrain reindex-search-vector --yes`,
+    };
+  }
+  return {
+    name: 'fts_language_drift',
+    status: 'ok',
+    message: `FTS language '${stored}' consistent between stored vectors and this process`,
+  };
+}
+
+/** DB-backed wrapper: introspect the trigger functions and compare against
+ *  this process's resolved language. Fail-open — an introspection error
+ *  must never fail doctor. */
+export async function checkFtsLanguageDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    const { getFtsLanguage } = await import('../core/fts-language.ts');
+    const rows = await engine.executeRaw<{ proname: string; prosrc: string }>(
+      `SELECT proname, prosrc FROM pg_proc WHERE proname IN ('update_page_search_vector', 'update_chunk_search_vector')`,
+    );
+    const fns = rows.map(r => ({ proname: r.proname, lang: parseFtsLanguageFromProsrc(r.prosrc) }));
+    return computeFtsLanguageCheck(getFtsLanguage(), fns);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'fts_language_drift', status: 'ok', message: `Skipped (${msg})` };
   }
 }
 
@@ -7261,6 +7348,9 @@ export async function buildChecks(
   if (engine !== null) {
     progress.heartbeat('search_mode');
     checks.push(await checkSearchMode(engine));
+    // v0.42.62+ fts_language_drift — query-side tokenizer vs stored vectors.
+    progress.heartbeat('fts_language_drift');
+    checks.push(await checkFtsLanguageDrift(engine));
     // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
     // search by the hard-exclude prefix policy (audit the surviving excludes).
     progress.heartbeat('hidden_by_search_policy');
