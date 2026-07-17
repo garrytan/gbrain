@@ -12,6 +12,9 @@
  */
 
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   __setChatTransportForTests,
@@ -246,11 +249,13 @@ const SAMPLE_BODY = [
 
 describe('runExtractConversationFactsCore', () => {
   let engine: PGLiteEngine;
+  let repoDir: string;
 
   beforeAll(async () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
+    repoDir = mkdtempSync(join(tmpdir(), 'gbrain-convo-facts-'));
 
     // Deterministic chat-transport stub. Records calls + returns one
     // fact per turn. Real-LLM extraction quality is the eval suite's job.
@@ -293,6 +298,7 @@ describe('runExtractConversationFactsCore', () => {
     __setEmbedTransportForTests(null);
     resetGateway();
     await engine.disconnect();
+    rmSync(repoDir, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -303,6 +309,7 @@ describe('runExtractConversationFactsCore', () => {
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
+    await engine.setConfig('sync.repo_path', repoDir);
     // Seed test pages.
     await engine.putPage('conversations/imessage/alice-example', {
       type: 'conversation',
@@ -317,6 +324,31 @@ describe('runExtractConversationFactsCore', () => {
       compiled_truth: 'Profile content for Alice Example.',
       timeline: '',
       frontmatter: {},
+    });
+    const rawDir = join(repoDir, 'meetings/raw-speaker-example.raw');
+    mkdirSync(rawDir, { recursive: true });
+    writeFileSync(
+      join(rawDir, 'transcript.txt'),
+      [
+        'Speaker A: We finally shipped the parser fix.',
+        'Speaker B: Good. Now rerun extraction.',
+        'Speaker A: I also turned the fallback flag on.',
+        'Speaker B: Perfect.',
+      ].join('\n'),
+      'utf8',
+    );
+    await engine.putPage('meetings/raw-speaker-example', {
+      type: 'meeting',
+      title: 'Raw speaker transcript example',
+      compiled_truth: [
+        '## Executive Summary',
+        '- This is a polished meeting note, not the transcript.',
+      ].join('\n'),
+      timeline: '',
+      frontmatter: {
+        date: '2026-06-01',
+        raw_transcript: 'meetings/raw-speaker-example.raw/transcript.txt',
+      },
     });
   });
 
@@ -354,6 +386,18 @@ describe('runExtractConversationFactsCore', () => {
     });
     expect(result.pages_processed).toBe(0);
     expect(result.pages_skipped).toBe(1);
+  });
+
+  test('meeting page reads raw_transcript sidecar instead of polished summary body', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'meetings/raw-speaker-example',
+      dryRun: true,
+      sleepMs: 0,
+    });
+    expect(result.pages_processed).toBe(1);
+    expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+    expect(result.pages_skipped).toBe(0);
   });
 
   test('writes facts with per-segment source_session AND terminal audit row (E16)', async () => {

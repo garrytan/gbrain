@@ -17,6 +17,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_disabled');  // v0.37 D9
     expect(KNOWN_CONFIG_KEYS).toContain('expansion_model');
     expect(KNOWN_CONFIG_KEYS).toContain('chat_model');
+    expect(KNOWN_CONFIG_KEYS).toContain('provider_chat_options');
   });
 
   test('contains the search-mode keys (v0.32.3)', () => {
@@ -38,6 +39,15 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
   });
 
+  test('includes the gateway-loop toggle and provider API keys the wave wires', () => {
+    // The subagent handler's error message tells users to run
+    // `gbrain config set agent.use_gateway_loop true`; it must be a known key
+    // or `config set` rejects the wave's own enable command without --force.
+    expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
+    expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
+    expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
@@ -49,6 +59,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('search.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('provider_chat_options.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {
@@ -122,6 +133,10 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 
   test('models.custom.x (under prefix) → "prefix"', () => {
     expect(gate('models.custom.x')).toBe('prefix');
+  });
+
+  test('provider_chat_options.anthropic (under prefix) → "prefix"', () => {
+    expect(gate('provider_chat_options.anthropic')).toBe('prefix');
   });
 
   test('bug-reporter: embedding.provider → "unknown" (no prefix match)', () => {

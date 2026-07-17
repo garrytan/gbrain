@@ -41,6 +41,13 @@ export interface GBrainConfig {
    * merge → buildGatewayConfig env dict → recipe reads ZEROENTROPY_API_KEY.
    */
   zeroentropy_api_key?: string;
+  /**
+   * OpenRouter API key. File-plane slot so `gbrain config set
+   * openrouter_api_key X` (or config.json) reaches the openrouter recipe:
+   * file plane → loadConfig env merge → buildGatewayConfig env dict → recipe
+   * reads OPENROUTER_API_KEY.
+   */
+  openrouter_api_key?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -67,6 +74,8 @@ export interface GBrainConfig {
   chat_fallback_chain?: string[];
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
+  /** Optional chat request providerOptions overrides keyed by recipe id or "recipe:modelId". */
+  provider_chat_options?: Record<string, Record<string, unknown>>;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -526,6 +535,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
+    ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
@@ -815,6 +825,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'database_path',
   'openai_api_key',
   'anthropic_api_key',
+  'zeroentropy_api_key',
+  'openrouter_api_key',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',
@@ -822,6 +834,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
+  'provider_chat_options',
   'storage',
   'eval',
   'eval.capture',
@@ -836,6 +849,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync',
   'sync.repo_path',
   'sync.last_commit',
+  // Gateway-native subagent loop toggle (routes subagent jobs through the
+  // provider-agnostic gateway.toolLoop for non-Anthropic providers). The
+  // subagent handler's error message tells users to `config set` this, so it
+  // must be a known key or `config set` rejects it without --force.
+  'agent.use_gateway_loop',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -921,6 +939,16 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.
   'spend.posture',
+  // Life Chronicle (v0.42.56.0, #2390). The release notes' enable command is
+  // `gbrain config set auto_chronicle true`, but the key was never registered
+  // — so the documented command failed with "Unknown config key" and the
+  // operator had to discover --force by reading source. Same class as the
+  // spend-controls registration above.
+  'auto_chronicle',
+  // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
+  // consent reads this key, and enabling it is the documented path to
+  // `gbrain takes extract --from-pages` — same unregistered-key class.
+  'takes.bootstrap_enabled',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
   'embed.backfill_cooldown_min',
@@ -940,9 +968,11 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'cycle.',            // cycle.<phase>.*
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
+  'provider_chat_options.', // per-provider / per-model chat providerOptions
   'content_sanity.',    // v0.41 content-sanity tunables
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
+  'chronicle.',         // chronicle.tz + future Life Chronicle knobs (#2390)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
 ];
 

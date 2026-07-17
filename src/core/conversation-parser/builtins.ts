@@ -179,6 +179,39 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   },
 
   {
+    // Fathom/phone-call raw transcripts in this workspace use a plain
+    // `Speaker A: ...` / `Speaker B: ...` shape with no per-line time.
+    // Narrow on the literal `Speaker ` prefix so we don't accidentally
+    // parse ordinary prose labels (`Owner:`, `Decision:`) as chat.
+    id: 'speaker-letter-no-time',
+    origin: 'builtin',
+    regex: /^(Speaker [A-Z0-9]+):\s*(.*)$/,
+    captures: {
+      speaker_group: 1,
+      text_group: 2,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: false,
+    quick_reject: /^Speaker /,
+    score_full_body: true,
+    test_positive: [
+      'Speaker A: That is exactly the issue.',
+      'Speaker B: Yeah, I know.',
+      'Speaker Z9: Let me ask him.',
+    ],
+    test_negative: [
+      '**Speaker A:** bold no-time shape',
+      'Speaker: missing participant suffix',
+      'Owner: this is a prose label, not a transcript line',
+      'Participant 2: different raw format',
+    ],
+    source_doc:
+      'Workspace raw transcript sidecar shape from capture-cli / phone-call transcripts: `Speaker A: ...`',
+  },
+
+  {
     // Modern meeting-transcription tools (Circleback, Granola, Zoom)
     // emit `**Speaker Name:** message text` with NO per-line
     // timestamp. Every other built-in requires a time anchor, so this

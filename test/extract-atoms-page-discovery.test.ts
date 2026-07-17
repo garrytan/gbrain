@@ -50,7 +50,7 @@ function stubChat(text: string): (o: ChatOpts) => Promise<ChatResult> {
 
 /**
  * Stub that returns a unique-title atom on each call so atoms write to
- * distinct slugs (`atoms/${date}/${slugify(title)}`) instead of upserting
+ * distinct slugs (`atoms/<source-date>/<stem>-<title-hash>`) instead of upserting
  * into one row. Needed for tests that count atoms after multiple work items.
  */
 function stubChatUnique(): (o: ChatOpts) => Promise<ChatResult> {
@@ -108,12 +108,15 @@ async function seedPage(opts: {
 }
 
 describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
-  test('filters by all 6 extractable types', async () => {
-    for (const type of ['meeting', 'source', 'article', 'video', 'book', 'original']) {
+  test('discovers legacy + pack-extractable types, excludes synthesis outputs', async () => {
+    // Legacy floor + `note` (declared extractable:true in gbrain-base, now
+    // honored via the pack manifest — the D2 fix).
+    for (const type of ['meeting', 'source', 'article', 'video', 'book', 'original', 'note']) {
       await seedPage({ slug: `${type}/x`, type });
     }
-    // Add a non-extractable page that should NOT appear
-    await seedPage({ slug: 'notes/skip-me', type: 'note' });
+    // `concept` is also extractable:true in gbrain-base, but extracting atoms
+    // FROM concepts would loop — synthesis outputs are always excluded.
+    await seedPage({ slug: 'wiki/concepts/skip-me', type: 'concept' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();
@@ -121,6 +124,7 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
       'article/x',
       'book/x',
       'meeting/x',
+      'note/x',
       'original/x',
       'source/x',
       'video/x',
@@ -337,6 +341,41 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
       `SELECT COUNT(*)::int AS count FROM pages WHERE type = 'atom'`,
     );
     expect(after[0].count).toBe(before[0].count);
+  });
+
+  test('deterministic slug: source-dated + title-hashed, trailing dash stripped, re-extract upserts (no cross-day twin)', async () => {
+    // 16 three-letter words → slugifySegment output truncates ON a hyphen at the
+    // 60-char cut, exercising the trailing-dash re-strip (Bug A).
+    const title = 'aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp';
+    const chat = stubChat(`[{"title":"${title}","atom_type":"insight","body":"b"}]`);
+    // Transcript filename carries a date DIFFERENT from the run date, so a
+    // source-dated slug is observably distinct from the old run-date one.
+    const filePath = '/srv/transcripts/2026-06-12-telegram.md';
+    await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath, content: 'first', contentHash: 'aaaa1111bbbb2222' }],
+      _pages: [],
+      _chat: chat,
+    });
+    // Same file, GROWN content (append-only) → different contentHash, so the
+    // source-hash fast-path does NOT skip and the atom is re-extracted. Pre-fix
+    // this minted a second atom under a new run-date prefix (Bug B); the
+    // source-dated, title-hashed slug must upsert into the same row instead.
+    await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath, content: 'first plus appended', contentHash: 'cccc3333dddd4444' }],
+      _pages: [],
+      _chat: chat,
+    });
+    const rows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE type = 'atom'`,
+    );
+    expect(rows.length).toBe(1); // upsert, not a cross-day duplicate
+    const slug = rows[0].slug;
+    expect(slug.startsWith('atoms/2026-06-12/')).toBe(true); // SOURCE date, not run date
+    expect(slug).toMatch(/-[0-9a-f]{6}$/); // 6-char title-hash suffix
+    expect(slug).not.toContain('--'); // trailing dash stripped before -<hash>
+    const stem = slug.slice('atoms/2026-06-12/'.length).replace(/-[0-9a-f]{6}$/, '');
+    expect(stem.endsWith('-')).toBe(false);
+    expect(stem.length).toBeLessThanOrEqual(60);
   });
 
   test('PhaseResult.details has additive page fields populated', async () => {

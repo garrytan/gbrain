@@ -494,6 +494,38 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
   }
 
+  // Format 3: Inline citation — [Source: <source>, YYYY-MM-DD]
+  //
+  // This is the citation convention gbrain's own quality rules require on
+  // every brain write (skills/conventions/quality.md), so dated evidence is
+  // pervasive in curated pages — but until now the extractor could not see
+  // it, and a page whose dates all live in citations scored zero timeline
+  // coverage. The entry's summary is the sentence the citation annotates
+  // (the surrounding line with citation markers stripped).
+  //
+  // Lines already captured by Format 1 are skipped: a timeline bullet often
+  // carries its own [Source: ...] citation, and re-extracting it would file
+  // a duplicate entry under a different (source, summary) shape that the
+  // DB-level uniqueness cannot collapse.
+  const citationPattern = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
+  const bulletLinePattern = /^-\s+\*\*\d{4}-\d{2}-\d{2}\*\*\s*\|/;
+  for (const line of content.split(/\r?\n/)) {
+    if (bulletLinePattern.test(line)) continue;
+    const lineMatches = [...line.matchAll(citationPattern)];
+    if (lineMatches.length === 0) continue;
+    // Strip every citation marker from the line to leave the annotated text.
+    const summary = line
+      .replace(/\[Source:[^\]]*\]/g, '')
+      .replace(/^[-*>#\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
+    if (!summary) continue; // a bare citation with no surrounding text is not an event
+    for (const m of lineMatches) {
+      entries.push({ slug, date: m[2], source: m[1].trim().slice(0, 200), summary });
+    }
+  }
+
   return entries;
 }
 

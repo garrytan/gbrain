@@ -43,8 +43,18 @@ for (const op of operations) {
   }
 }
 
+/**
+ * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
+ * comes back as a string on the routed path). Lets the local-engine output
+ * normalizer round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of
+ * throwing `TypeError: Do not know how to serialize a BigInt`.
+ */
+export function bigintToStringReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -233,6 +243,17 @@ async function main() {
   // DX alias: `ask` is a natural-language alias for `query`
   if (command === 'ask') {
     command = 'query';
+  }
+
+  // Local patch 2026-06-11 — mark one-shot CLI processes so the facts
+  // backstop routes absorb work to the durable jobs worker instead of the
+  // in-process queue that the exit teardown drains-then-aborts after ~1-2s
+  // (the `pipeline_error: [chat(...)] The operation was aborted.` class in
+  // ingest_log). Daemons keep the in-process queue: their event loop
+  // outlives the work. See src/core/facts/cli-process-mode.ts.
+  if (!['serve', 'jobs', 'autopilot'].includes(command)) {
+    const { markShortLivedCliProcess } = await import('./core/facts/cli-process-mode.ts');
+    markShortLivedCliProcess();
   }
 
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
@@ -442,7 +463,7 @@ async function main() {
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const result = JSON.parse(JSON.stringify(rawResult));
+    const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {

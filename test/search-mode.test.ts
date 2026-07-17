@@ -407,10 +407,13 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // now produces query-side vectors for asymmetric providers (zembed-1,
     // Voyage v3+), so rows keyed on pre-fix document-side query vectors
     // must not be served to post-fix lookups.
-    // Email citation metadata projection bumps 11→12 because cached
-    // SearchResult rows from earlier versions do not carry message_id,
-    // thread_id, or source_subject and must not survive deployment.
-    expect(KNOBS_HASH_VERSION).toBe(12);
+    // #2825: bumped 11→12 to fold the resolved hard-exclude prefix list
+    // (hx=) — cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across
+    // processes.
+    // Email citation metadata projection: bumped 12→13 because cached
+    // SearchResult rows from older versions lack message_id, thread_id, and
+    // Message-ID-gated source_subject.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -575,8 +578,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 12 (11→12 email citation result-schema fix)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(12);
+  test('KNOBS_HASH_VERSION is 13 (12→13 email citation result-schema projection)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

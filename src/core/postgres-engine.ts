@@ -60,7 +60,7 @@ import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -1614,16 +1614,16 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
-    // v0.27.0: date filtering support
+    // v0.29.1: since/until filter by effective date, with import-time fallback.
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation filter. When the
     // caller's auth scope is set, narrow the inner CTE candidate set so
@@ -1768,16 +1768,16 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
-    // v0.27.0: date filtering support
+    // v0.29.1: since/until filter by effective date, with import-time fallback.
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation. Anchor primitive
     // for two-pass retrieval, so cross-source anchors would let the walk
@@ -1894,16 +1894,16 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
-    // v0.27.0: date filtering support
+    // v0.29.1: since/until filter by effective date, with import-time fallback.
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
     // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
     // specifically. Pushing the filter inside narrows the HNSW candidate set
@@ -4598,6 +4598,14 @@ export class PostgresEngine implements BrainEngine {
     const limit = clampSearchLimit(opts.limit, 100, 500);
     const offset = Math.max(0, Math.floor(opts.offset ?? 0));
     const active = opts.active ?? true;
+    // #2200-class: takes have no source_id of their own; scope via the page's
+    // source_id (already JOINed). Array wins over scalar, matching sourceScopeOpts.
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+        : opts.sourceId
+          ? sql`AND p.source_id = ${opts.sourceId}`
+          : sql``;
     const rows = await sql`
       SELECT t.*, p.slug AS page_slug
       FROM takes t
@@ -4617,6 +4625,7 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        ${sourceFilter}
       ORDER BY
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -4626,7 +4635,7 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
   }
 
-  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[] } = {}): Promise<TakeHit[]> {
+  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {}): Promise<TakeHit[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const sourceFilter = opts.sourceIds && opts.sourceIds.length > 0
@@ -4650,12 +4659,15 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY score DESC, t.weight DESC
       LIMIT ${limit}
     `;
-    return rows as unknown as TakeHit[];
+    // #2450-class: int8 columns arrive as native BigInt from the pg driver;
+    // coerce per-row (takeRowToTake precedent) so MCP/CLI JSON.stringify
+    // doesn't crash the moment a search actually matches.
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
   ): Promise<TakeHit[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 30, 100);
@@ -4681,7 +4693,10 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY t.embedding <=> ${vec}::vector
       LIMIT ${limit}
     `;
-    return rows as unknown as TakeHit[];
+    // #2450-class: int8 columns arrive as native BigInt from the pg driver;
+    // coerce per-row (takeRowToTake precedent) so MCP/CLI JSON.stringify
+    // doesn't crash the moment a search actually matches.
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
@@ -4816,6 +4831,14 @@ export class PostgresEngine implements BrainEngine {
       : sql``;
     const sinceClause = opts.since ? sql`AND since_date >= ${opts.since}` : sql``;
     const untilClause = opts.until ? sql`AND since_date <= ${opts.until}` : sql``;
+    // #2200-class: takes carry no source_id; scope via the take's page via EXISTS
+    // (this query has no pages JOIN). Array wins over scalar (sourceScopeOpts shape).
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY(${opts.sourceIds}::text[]))`
+        : opts.sourceId
+          ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ${opts.sourceId})`
+          : sql``;
     // v0.36.1.1 T1c: `resolved` deliberately filters to the 3-state subset
     // (correct|incorrect|partial) — NOT `resolved_quality IS NOT NULL` — so
     // historical comparisons against pre-v74 scorecards stay valid.
@@ -4834,7 +4857,7 @@ export class PostgresEngine implements BrainEngine {
           END
         )::float                                                                               AS brier
       FROM takes
-      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed}
+      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed} ${sourceFilter}
     `;
     const r = rows[0] as { total_bets: number; resolved: number; correct: number; incorrect: number; partial: number; unresolvable_count: number; brier: number | null };
     return finalizeScorecard(r);
@@ -4856,6 +4879,12 @@ export class PostgresEngine implements BrainEngine {
     const maxIdx = Math.floor(1 / bucketSize) - 1;
     const allowed = allowList ? sql`AND holder = ANY(${allowList}::text[])` : sql``;
     const holderClause = opts.holder ? sql`AND holder = ${opts.holder}` : sql``;
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY(${opts.sourceIds}::text[]))`
+        : opts.sourceId
+          ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ${opts.sourceId})`
+          : sql``;
     // Bucketing uses NUMERIC for exact decimal arithmetic. Going through
     // FLOAT introduces IEEE 754 rounding (e.g. 0.7/0.1 = 6.9999..., FLOOR=6
     // instead of the expected 7), which makes Postgres and PGLite diverge
@@ -4869,7 +4898,7 @@ export class PostgresEngine implements BrainEngine {
           (resolved_quality = 'correct')::int AS hit
         FROM takes
         WHERE resolved_quality IN ('correct','incorrect')
-          ${holderClause} ${allowed}
+          ${holderClause} ${allowed} ${sourceFilter}
       )
       SELECT
         (bucket_idx::numeric * ${bucketSize}::numeric)::float       AS bucket_lo,

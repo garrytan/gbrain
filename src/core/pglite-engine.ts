@@ -45,7 +45,7 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
@@ -150,8 +150,8 @@ export function computeSnapshotSchemaHash(
  * `macos-26-3` — the pre-existing #223 hint signature (early macOS
  *   26.3 builds shipped a broken WASM runtime).
  *
- * `unknown` — falls through to a generic hint that still names the
- *   doctor command and the most-common-cause link.
+ * `unknown` — falls through to a generic hint that names the doctor
+ *   command; the macOS 26.3 link is offered only on darwin (#2674).
  *
  * Regex tightened per Codex eng-review finding #9: don't match
  * generic `pglite.data` substring (could fire on unrelated PGLite
@@ -159,6 +159,12 @@ export function computeSnapshotSchemaHash(
  * co-occurrence.
  */
 export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'corrupt' | 'unknown';
+
+// #2674: non-Error rejections (Emscripten aborts can throw plain objects)
+// used to stringify as "[object Object]" — prefer .message when present.
+export function stringifyPgliteInitError(err: unknown): string {
+  return String((err as { message?: unknown })?.message ?? err);
+}
 
 export function classifyPgliteInitError(message: string): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
@@ -179,6 +185,9 @@ export function classifyPgliteInitError(message: string): PgliteInitFailure {
 export function buildPgliteInitErrorMessage(
   verdict: PgliteInitFailure,
   original: string,
+  // #2674: threaded (defaulted) so tests can exercise both branches without
+  // monkey-patching process.platform.
+  platform: NodeJS.Platform = process.platform,
 ): string {
   const header = 'PGLite failed to initialize its WASM runtime.';
   let hint: string;
@@ -210,10 +219,16 @@ export function buildPgliteInitErrorMessage(
       break;
     case 'unknown':
     default:
-      hint =
-        '  Most common cause: the macOS 26.3 WASM bug\n' +
-        '  (https://github.com/garrytan/gbrain/issues/223).\n' +
-        '  Run `gbrain doctor` for a full diagnosis.';
+      // #2674: only blame the macOS 26.3 WASM bug on macOS. On other
+      // platforms, point at the causes that are actually plausible there.
+      hint = platform === 'darwin'
+        ? '  Possible cause: the macOS 26.3 WASM bug\n' +
+          '  (https://github.com/garrytan/gbrain/issues/223).\n' +
+          '  Run `gbrain doctor` for a full diagnosis.'
+        : '  Possible causes: another gbrain process holding the database\n' +
+          '  (lock contention), or a damaged PGLite data directory.\n' +
+          '  Run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
+          '  damaged, `gbrain reinit-pglite` rebuilds it from your brain repo.';
       break;
   }
   return `${header}\n${hint}\n  Original error: ${original}`;
@@ -309,7 +324,7 @@ export class PGLiteEngine implements BrainEngine {
       // read-only on older macOS + Bun 1.3.x, so PGLite can't extract its
       // pglite.data WASM payload). Route the hint by failure shape so
       // users get the right next step.
-      const original = err instanceof Error ? err.message : String(err);
+      const original = stringifyPgliteInitError(err); // #2674
       const verdict = classifyPgliteInitError(original);
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
       // Release the lock so a fresh process can try again; leaking the lock
@@ -4601,6 +4616,8 @@ export class PGLiteEngine implements BrainEngine {
            OR ($6::boolean = false AND t.resolved_at IS NULL)
          )
          AND ($7::text[] IS NULL OR t.holder = ANY($7::text[]))
+         AND ($11::text[] IS NULL OR p.source_id = ANY($11::text[]))
+         AND ($12::text   IS NULL OR p.source_id = $12::text)
        ORDER BY
          CASE WHEN $8 = 'weight'      THEN t.weight     END DESC NULLS LAST,
          CASE WHEN $8 = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -4617,6 +4634,9 @@ export class PGLiteEngine implements BrainEngine {
         sortBy,
         limit,
         offset,
+        // #2200-class: source scope via the take's page.source_id (array wins over scalar).
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
@@ -4648,7 +4668,9 @@ export class PGLiteEngine implements BrainEngine {
         opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async searchTakesVector(
@@ -4678,7 +4700,9 @@ export class PGLiteEngine implements BrainEngine {
         opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
@@ -4847,6 +4871,10 @@ export class PGLiteEngine implements BrainEngine {
     if (opts.since !== undefined) { params.push(opts.since); clauses.push(`AND since_date >= $${params.length}`); }
     if (opts.until !== undefined) { params.push(opts.until); clauses.push(`AND since_date <= $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).
+    const srcIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
+    if (srcIds) { params.push(srcIds); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`); }
+    else if (opts.sourceId) { params.push(opts.sourceId); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`); }
     const where = clauses.join(' ');
     // v0.36.1.1 T1c: `resolved` deliberately filters to the 3-state subset
     // (correct|incorrect|partial) — NOT `resolved_quality IS NOT NULL` — so
@@ -4883,6 +4911,10 @@ export class PGLiteEngine implements BrainEngine {
     const clauses: string[] = [];
     if (opts.holder !== undefined) { params.push(opts.holder); clauses.push(`AND holder = $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).
+    const srcIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
+    if (srcIds) { params.push(srcIds); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`); }
+    else if (opts.sourceId) { params.push(opts.sourceId); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`); }
     const where = clauses.join(' ');
     // NUMERIC casts for exact decimal arithmetic — keeps PGLite + Postgres
     // bucket boundaries identical at FP-edge weights (e.g. 0.7/0.1).
