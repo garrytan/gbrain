@@ -1,5 +1,16 @@
 # Bug 修复台账
 
+## 2026-07-17 Desktop 测试误写真实数据库配置修复
+
+- 时间：2026-07-17
+- 版本号：PMBrain 1.1.29；PMBrain Desktop 1.0.70
+- 标题：修复 Desktop 配置测试覆盖真实用户 `database_url` 导致重启失败
+- 描述：安装新版后重启 Desktop 时提示本机 Postgres 5432 不可达。实际用户数据库仍在 `localhost:5433/gbrain` 正常运行，但真实 `config.json` 被测试用的 `postgresql://u:…@127.0.0.1:5432/brain` 覆盖，服务在下一次重启时才暴露错误。
+- 根因：`desktop/test/config-manager.test.ts` 的向量模型切换用例漏掉 `isolatedHome()`，直接调用 `saveSetup()`；测试因此沿用真实用户目录，并把测试数据库地址写入用户配置。由于当时 sidecar 已经连接旧配置，运行中的服务未立即中断。
+- 解决方案：为该用例启用临时 PMBrain Home 隔离，测试结束后只清理临时目录；从自动备份中仅恢复真实 `database_url`，保留之后新增的模型、API Key、Desktop 设置和知识库配置，并再次执行真实数据库健康检查。
+- 是否完成：是
+- 最终结果：真实配置恢复为 `localhost:5433/gbrain`，数据库健康检查通过，页面、分块、向量、Source 和原始资料均未修改；后续运行 Desktop 测试不会再把测试地址写入真实用户配置。
+
 ## 2026-07-17 自定义普通模型与向量模型 API Key 覆盖修复
 
 - 时间：2026-07-17
