@@ -28,7 +28,10 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+// Issue #1493: bumped for the any-dir exact-path wikilink pass so
+// already-stamped pages re-extract on the next `extract --stale` sweep
+// and gain their newly-resolvable path-shaped edges.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-18T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
