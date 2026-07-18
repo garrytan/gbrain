@@ -944,6 +944,32 @@ export function discoverGitRoot(inputPath: string): string {
 }
 
 /**
+ * #2964: snapshot the CURRENT on-disk state of a gbrain-owned brain dir as
+ * a baseline commit — used both right after a self-healing `git init` (no
+ * `.git` at all) and to recover a repo left with `.git` but zero commits
+ * (an interrupted prior self-heal, or a `git init` from some other source
+ * that never got a first commit). Respects `.gitignore` (written first) so
+ * future incremental syncs diff against what's actually here rather than
+ * an empty tree — an empty initial commit would make every existing file
+ * look "added" again on the next sync, even though the full-sync pass that
+ * follows already imported them from disk directly.
+ *
+ * `--no-gpg-sign` + explicit `-c user.name/user.email`: this runs from a
+ * headless nightly cron/launchd invocation, which has no reason to have
+ * git signing/identity configured, and must not block on an unavailable
+ * signing agent or pinentry prompt.
+ */
+function createSyncBaselineCommit(repoPath: string, engineKind?: 'pglite' | 'postgres'): void {
+  manageGitignore(repoPath, engineKind);
+  git(repoPath, ['add', '-A']);
+  git(
+    repoPath,
+    ['commit', '--quiet', '--allow-empty', '--no-gpg-sign', '-m', 'gbrain: initial commit (auto-init by sync)'],
+    ['user.name=gbrain', 'user.email=gbrain@localhost'],
+  );
+}
+
+/**
  * #774 NAV-1 TOCTOU: true only if filePath realpath-resolves inside gitRoot.
  * Guards symlink escape at the per-file level (a committed symlink whose
  * target lives outside the repo), not just at scope entry.
@@ -1636,34 +1662,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // local `sources add --path` entry is), so self-heal by initializing it
   // in place instead of failing the sync phase every single run. Mirrors
   // the recloneIfMissing self-recovery above for owned remote clones.
-  // Scoped to !opts.sourceId only — a registered local source without a
-  // remote_url stays a loud, actionable error (it's the user's own
-  // directory; silently git-initializing it without consent is an
-  // overreach).
+  // Scoped to !opts.sourceId and !opts.dryRun only — a registered local
+  // source without a remote_url stays a loud, actionable error (it's the
+  // user's own directory; silently git-initializing it without consent is
+  // an overreach), and a dry-run preview must never write to disk.
   let gitContextRoot: string;
   try {
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   } catch (err) {
-    if (opts.sourceId || !existsSync(repoPath)) throw err;
+    if (opts.sourceId || opts.dryRun || !existsSync(repoPath)) throw err;
     serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
     git(repoPath, ['init', '--quiet']);
-    // A fresh `git init` has zero commits, and `git rev-parse HEAD` a few
-    // lines below requires at least one — without a baseline commit we'd
-    // just trade "not a git repo" for "no commits in repo" on the very next
-    // line. Snapshot the CURRENT on-disk state as that baseline (respecting
-    // .gitignore, written first) so future incremental syncs diff against
-    // what's actually here rather than an empty tree — an empty initial
-    // commit would make every existing file look "added" again on the next
-    // sync, even though this full-sync pass already imported them.
-    manageGitignore(repoPath, engine.kind);
-    git(repoPath, ['add', '-A']);
-    // Explicit identity via -c: a headless nightly cron/launchd invocation
-    // has no reason to have global git user.name/user.email configured.
-    git(
-      repoPath,
-      ['commit', '--quiet', '--allow-empty', '-m', 'gbrain: initial commit (auto-init by sync)'],
-      ['user.name=gbrain', 'user.email=gbrain@localhost'],
-    );
+    createSyncBaselineCommit(repoPath, engine.kind);
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
@@ -1790,7 +1800,19 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   try {
     headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
   } catch {
-    throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
+    // #2964: unborn-HEAD recovery. `.git` exists (discoverGitRoot succeeded
+    // above) but there are zero commits — e.g. a prior self-heal `git init`
+    // ran but the process died before the baseline commit landed, leaving
+    // this brain permanently wedged on "No commits in repo" every night
+    // thereafter. Finish the same baseline-commit self-heal the
+    // discoverGitRoot catch above would have done, gated the same way
+    // (gbrain-owned default brain only, never on a dry-run preview).
+    if (opts.sourceId || opts.dryRun) {
+      throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
+    }
+    serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
+    createSyncBaselineCommit(gitContextRoot, engine.kind);
+    headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
   }
 
   // #1970: bookmark reachability. The ONLY thing that should force a full

@@ -109,4 +109,40 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     ).rejects.toThrow(/git repository/i);
     expect(existsSync(join(dir, '.git'))).toBe(false);
   });
+
+  test('--dry-run on a non-git dir throws without writing anything to disk', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await expect(
+      performSync(engine, {
+        repoPath: dir,
+        dryRun: true,
+        noPull: true,
+        noEmbed: true,
+        full: true,
+      }),
+    ).rejects.toThrow(/git repository/i);
+    // The whole point of --dry-run is "preview only" — it must never git-init
+    // or commit on our behalf, even though we could self-heal.
+    expect(existsSync(join(dir, '.git'))).toBe(false);
+  });
+
+  test('unborn-HEAD recovery: a bare `git init` with zero commits (interrupted prior self-heal) still completes', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { execSync } = await import('child_process');
+    // Simulate a self-heal that ran `git init` but died before the baseline
+    // commit landed (process killed, disk full, etc.) — `.git` exists so
+    // discoverGitRoot succeeds, but `git rev-parse HEAD` still fails.
+    execSync('git init -q', { cwd: dir });
+
+    const result = await performSync(engine, {
+      repoPath: dir,
+      noPull: true,
+      noEmbed: true,
+      full: true,
+    });
+
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBe(2);
+    expect(execSync('git rev-parse HEAD', { cwd: dir }).toString().trim()).not.toBe('');
+  });
 });
