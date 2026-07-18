@@ -989,10 +989,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const { runCycle } = await import('../core/cycle.ts');
         const report = await runCycle(engine, {
           brainDir: repoPath,
-          // Autopilot daemon path: pulls by default (matches
-          // pre-v0.17 autopilot behavior). CLI dream defaults false
-          // for cron safety; that choice is scoped to dream only.
           pull: true,
+          executionAuthority: 'manual',
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
           },

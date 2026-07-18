@@ -478,8 +478,17 @@ export interface CycleOpts {
    *
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
+  /**
+   * Internal execution authority — required to prevent unauthorized / misconfigured cycle execution.
+   * - 'manual': user CLI invocation (`gbrain dream`).
+   * - 'dreamcycle_source': per-source cycle pass (requires sourceId, sync/extract/extract_facts only).
+   * - 'dreamcycle_global': server internal daily finalizer pass (resolve_symbol_edges/embed/orphans only).
+   */
+  executionAuthority?: ExecutionAuthority;
   sourceId?: string;
 }
+
+export type ExecutionAuthority = 'manual' | 'dreamcycle_source' | 'dreamcycle_global';
 
 // ─── Lock primitives ───────────────────────────────────────────────
 
@@ -1416,6 +1425,38 @@ export async function runCycle(
 ): Promise<CycleReport> {
   const start = performance.now();
   const phases = opts.phases ?? ALL_PHASES;
+  const authority = opts.executionAuthority;
+  if (!authority || (authority !== 'manual' && authority !== 'dreamcycle_source' && authority !== 'dreamcycle_global')) {
+    throw new Error(`[cycle] missing or invalid executionAuthority: ${String(authority)}`);
+  }
+
+  if (authority === 'dreamcycle_source') {
+    if (!opts.sourceId) {
+      throw new Error('[cycle] dreamcycle_source requires sourceId');
+    }
+    const allowed = new Set<CyclePhase>(['sync', 'extract', 'extract_facts']);
+    const invalidPhases = phases.filter(p => !allowed.has(p));
+    if (invalidPhases.length > 0) {
+      throw new Error(`[cycle] dreamcycle_source does not allow phase(s): ${invalidPhases.join(', ')}`);
+    }
+  } else if (authority === 'dreamcycle_global') {
+    if (opts.sourceId) {
+      throw new Error('[cycle] dreamcycle_global cannot be scoped to a single sourceId');
+    }
+    const allowed = new Set<CyclePhase>(['resolve_symbol_edges', 'embed', 'orphans']);
+    const invalidPhases = phases.filter(p => !allowed.has(p));
+    if (invalidPhases.length > 0) {
+      throw new Error(`[cycle] dreamcycle_global does not allow phase(s): ${invalidPhases.join(', ')}`);
+    }
+  } else if (authority === 'manual') {
+    if (opts.sourceId) {
+      const hasGlobal = phases.some(p => GLOBAL_PHASES.includes(p));
+      if (hasGlobal) {
+        throw new Error('[cycle] manual --source cannot be combined with global phases. Run source maintenance or global maintenance separately.');
+      }
+    }
+  }
+
   const dryRun = !!opts.dryRun;
   const pull = !!opts.pull;
   const timestamp = new Date().toISOString();

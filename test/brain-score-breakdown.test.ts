@@ -92,14 +92,18 @@ describe('Bug 11 — orphan_pages is "no inbound links"', () => {
     const h = await engine.getHealth();
     // hub has outbound, no inbound → NOT orphan (under the fixed definition).
     // leaf1/2/3 have inbound from hub → NOT orphan.
-    // So orphan_pages should be 0.
+    // So orphan_pages and islanded_pages should be 0, pages_without_inbound_links is 1 (hub).
     expect(h.orphan_pages).toBe(0);
+    expect(h.islanded_pages).toBe(0);
+    expect(h.pages_without_inbound_links).toBe(1);
   });
 
   test('a page with no links at all IS an orphan', async () => {
     await engine.putPage('loner', { type: 'note', title: 'Loner', compiled_truth: 'alone', frontmatter: {} });
     const h = await engine.getHealth();
     expect(h.orphan_pages).toBe(1);
+    expect(h.islanded_pages).toBe(1);
+    expect(h.pages_without_inbound_links).toBe(1);
   });
 
   test('a page with inbound links only is NOT an orphan', async () => {
@@ -116,6 +120,8 @@ describe('Bug 11 — orphan_pages is "no inbound links"', () => {
     // sink has 1 inbound (from source) → not orphan.
     // source has no inbound (but has outbound) → not orphan under new definition.
     expect(h.orphan_pages).toBe(0);
+    expect(h.islanded_pages).toBe(0);
+    expect(h.pages_without_inbound_links).toBe(1);
   });
 });
 
@@ -134,6 +140,8 @@ describe('Bug 11 — BrainHealth type shape', () => {
   test('type includes dead_links + breakdown scores', async () => {
     const typesSource = await Bun.file(new URL('../src/core/types.ts', import.meta.url)).text();
     expect(typesSource).toContain('dead_links: number');
+    expect(typesSource).toContain('islanded_pages: number');
+    expect(typesSource).toContain('pages_without_inbound_links: number');
     expect(typesSource).toContain('embed_coverage_score: number');
     expect(typesSource).toContain('link_density_score: number');
     expect(typesSource).toContain('timeline_coverage_score: number');

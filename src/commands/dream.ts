@@ -588,6 +588,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    executionAuthority: 'manual',
     sourceId: resolvedSourceId, // undefined when --source not set → legacy back-compat
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,

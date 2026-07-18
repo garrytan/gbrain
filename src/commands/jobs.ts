@@ -1780,8 +1780,11 @@ export async function registerBuiltinHandlers(
       brainDir: effectiveBrainDir,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
-      ...(sourceId ? { sourceId } : {}),
-      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
+      executionAuthority: 'dreamcycle_source',
+      sourceId: sourceId ?? 'default',
+      phases: requestedPhases && requestedPhases.length > 0
+        ? (requestedPhases.filter(p => ['sync', 'extract', 'extract_facts'].includes(p)) as any)
+        : ['sync', 'extract', 'extract_facts'],
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));
@@ -1802,20 +1805,22 @@ export async function registerBuiltinHandlers(
   // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const { runCycle, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
+    const { DAILY_GLOBAL_ALLOWLIST } = await import('./autopilot-fanout.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
-    const validPhases = new Set(ALL_PHASES);
+    const validPhases = new Set(DAILY_GLOBAL_ALLOWLIST);
     const requested = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
-      : GLOBAL_PHASES;
-    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+      : DAILY_GLOBAL_ALLOWLIST;
+    const phases = (requested.length > 0 ? requested : DAILY_GLOBAL_ALLOWLIST) as typeof DAILY_GLOBAL_ALLOWLIST;
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull: false, // brain-wide DB/maintenance work never git-pulls
+      executionAuthority: 'dreamcycle_global',
       signal: job.signal,
       phases,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
@@ -1961,6 +1966,7 @@ export async function registerBuiltinHandlers(
     const report = await runCycle(engine, {
       brainDir: repoPath,
       phases: [phase as any],
+      executionAuthority: 'manual',
       signal: job.signal,
     });
     return { phase, status: report.status, report };

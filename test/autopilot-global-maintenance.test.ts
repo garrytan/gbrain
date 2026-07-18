@@ -62,11 +62,16 @@ describe('isGlobalMaintenanceStale', () => {
 });
 
 describe('dispatchGlobalMaintenance — single-flight gate', () => {
-  function stubs(lastGlobalAt: string | null) {
+  function stubs(lastGlobalAt: string | null, authority: string | null = 'daily_finalizer', sources: any[] = []) {
     const added: Array<{ name: string; data: any; opts: any }> = [];
     const engine = {
       kind: 'postgres' as const,
-      getConfig: async (k: string) => (k === LAST_GLOBAL_AT_KEY ? lastGlobalAt : null),
+      getConfig: async (k: string) => {
+        if (k === LAST_GLOBAL_AT_KEY) return lastGlobalAt;
+        if (k === 'autopilot.global_maintenance.authority') return authority;
+        return null;
+      },
+      listAllSources: async () => sources,
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
@@ -76,19 +81,30 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
     return { engine, queue, added };
   }
 
-  test('stale (never run) → dispatches one global job with single-flight opts', async () => {
-    const { engine, queue, added } = stubs(null);
+  test('stale (never run) with daily_finalizer authority → dispatches one global job with single-flight opts', async () => {
+    const { engine, queue, added } = stubs(null, 'daily_finalizer', []);
     const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
     expect(r.dispatched).toBe(true);
     expect(added.length).toBe(1);
     expect(added[0].name).toBe('autopilot-global-maintenance');
-    expect(added[0].opts.idempotency_key).toBe('autopilot-global:s1');
+    expect(added[0].opts.idempotency_key).toBe('dreamcycle:global:s1');
     expect(added[0].opts.maxWaiting).toBe(1); // structural single-flight
-    expect(added[0].data.phases).toEqual(GLOBAL_PHASES);
+    expect(added[0].data.phases).toEqual(['resolve_symbol_edges', 'embed', 'orphans']);
+  });
+
+  test('external_dreamcycle / builtin / unknown / missing authority → fail closed 0 / deferred / unauthorized', async () => {
+    for (const auth of ['external_dreamcycle', 'builtin', 'unknown', null]) {
+      const { engine, queue, added } = stubs(null, auth, []);
+      const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
+      expect(r.dispatched).toBe(false);
+      expect(added.length).toBe(0);
+      if (auth === 'external_dreamcycle') expect(r.reason).toBe('unauthorized');
+      else expect(r.reason).toBe('deferred');
+    }
   });
 
   test('fresh → does NOT dispatch', async () => {
-    const { engine, queue, added } = stubs(new Date().toISOString());
+    const { engine, queue, added } = stubs(new Date().toISOString(), 'daily_finalizer', []);
     const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
     expect(r.dispatched).toBe(false);
     expect(added.length).toBe(0);

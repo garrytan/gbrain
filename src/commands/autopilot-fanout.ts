@@ -521,6 +521,22 @@ export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = D
   return (now - d.getTime()) / 60_000 >= floorMin;
 }
 
+export function getJSTDaySlot(now = new Date()): string {
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 10);
+}
+
+export const DAILY_GLOBAL_ALLOWLIST: CyclePhase[] = ['resolve_symbol_edges', 'embed', 'orphans'];
+
+export async function readGlobalMaintenanceAuthority(engine: BrainEngine): Promise<string> {
+  try {
+    const val = await engine.getConfig('autopilot.global_maintenance.authority');
+    return val ?? 'missing';
+  } catch {
+    return 'read_failure';
+  }
+}
+
 /**
  * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
  * that runs the `global` cycle phases (embed, orphans, purge, …) ONCE per
@@ -534,9 +550,31 @@ export async function dispatchGlobalMaintenance(
   engine: BrainEngine,
   queue: MinionQueue,
   opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
-): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh' }> {
+): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh' | 'deferred' | 'unauthorized' }> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
+
+  // Check authority — fail-closed on external_dreamcycle, builtin, unknown, missing, read_failure
+  const auth = await readGlobalMaintenanceAuthority(engine);
+  if (auth !== 'daily_finalizer') {
+    return { dispatched: false, reason: auth === 'external_dreamcycle' ? 'unauthorized' : 'deferred' };
+  }
+
+  // All source success receipt check
+  let sources: SourceRow[] = [];
+  try {
+    sources = await engine.listAllSources({ localPathOnly: true });
+  } catch {
+    sources = [];
+  }
+
+  const jstSlot = getJSTDaySlot();
+  for (const src of sources) {
+    const lastSuccess = readLastSuccessAt(src);
+    if (!lastSuccess || getJSTDaySlot(lastSuccess) !== jstSlot) {
+      return { dispatched: false, reason: 'deferred' };
+    }
+  }
 
   let floorMin = GLOBAL_FLOOR_MIN;
   const floorCfg = await engine.getConfig('autopilot.global_floor_min');
@@ -549,21 +587,21 @@ export async function dispatchGlobalMaintenance(
     return { dispatched: false, reason: 'fresh' };
   }
 
+  const slotKey = opts.slot || jstSlot;
   const job = await queue.add(
     'autopilot-global-maintenance',
-    { repoPath: opts.repoPath, phases: GLOBAL_PHASES },
+    { repoPath: opts.repoPath, phases: DAILY_GLOBAL_ALLOWLIST },
     {
       queue: 'default',
-      // Structural single-flight: one global job per slot; maxWaiting:1 coalesces
-      // any surplus so a slow brain-wide pass never stacks duplicates.
-      idempotency_key: `autopilot-global:${opts.slot}`,
+      // Structural single-flight with atomic idempotency slot
+      idempotency_key: `dreamcycle:global:${slotKey}`,
       max_attempts: 2,
       timeout_ms: opts.timeoutMs,
       maxWaiting: 1,
     },
   );
   if (opts.jsonMode) {
-    emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: opts.slot }));
+    emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: slotKey }));
   } else {
     log(`[dispatch] job #${job.id} autopilot-global-maintenance (brain-wide phases)`);
   }

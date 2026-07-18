@@ -66,47 +66,47 @@ async function runHandlerOnce(jobData: Record<string, unknown>): Promise<{ parti
 
 describe('autopilot-cycle handler source_id validation + archive recheck', () => {
   test('missing source_id (legacy caller) runs cycle normally', async () => {
-    const result = await runHandlerOnce({ repoPath: brainDir, phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, phases: ['extract_facts'] });
     // status is whatever runCycle decided; just ensure handler didn't reject
     expect(['ok', 'clean', 'partial', 'failed', 'skipped']).toContain(result.status);
   });
 
   test('valid source_id + existing source runs cycle', async () => {
     await seedSource('alpha');
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'alpha', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'alpha', phases: ['extract_facts'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
 
   test('source_id pointing at non-existent source returns skipped', async () => {
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'no-such-source', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'no-such-source', phases: ['extract_facts'] });
     expect(result.status).toBe('skipped');
     expect(result.report.reason).toBe('source_not_found');
   });
 
   test('source_id pointing at archived source returns skipped (codex P1-5)', async () => {
     await seedSource('archived-src', { archived: true });
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'archived-src', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'archived-src', phases: ['extract_facts'] });
     expect(result.status).toBe('skipped');
     expect(result.report.reason).toBe('source_archived');
   });
 
   test('malformed source_id (regex fail) throws (codex P1-B)', async () => {
     await expect(
-      runHandlerOnce({ repoPath: brainDir, source_id: 'BAD ID', phases: ['lint'] }),
+      runHandlerOnce({ repoPath: brainDir, source_id: 'BAD ID', phases: ['extract_facts'] }),
     ).rejects.toThrow(/invalid source_id/);
   });
 
   test('non-string source_id throws', async () => {
     await expect(
-      runHandlerOnce({ repoPath: brainDir, source_id: 42, phases: ['lint'] }),
+      runHandlerOnce({ repoPath: brainDir, source_id: 42, phases: ['extract_facts'] }),
     ).rejects.toThrow(/not a string/);
   });
 
   test('explicit pull: false overrides default pull: true', async () => {
     // Behavior check via lack-of-throw + return shape — no actual pull
-    // is invoked because the phase set is just ['lint'].
+    // is invoked because the phase set is just ['extract_facts'].
     await seedSource('echo');
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['extract_facts'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
 });
