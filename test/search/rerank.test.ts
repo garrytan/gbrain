@@ -11,9 +11,9 @@
  *  - rerankerFn test seam used over gateway.rerank
  */
 
-import { describe, test, expect, beforeAll } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { applyReranker, type RerankerOpts } from '../../src/core/search/rerank.ts';
-import { RerankError, type RerankResult } from '../../src/core/ai/gateway.ts';
+import { RerankError, resetGateway, type RerankResult } from '../../src/core/ai/gateway.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 
 function makeResult(slug: string, score: number, chunk: string): SearchResult {
@@ -39,6 +39,8 @@ beforeAll(async () => {
     env: { ZEROENTROPY_API_KEY: 'test-key' },
   });
 });
+
+afterAll(() => resetGateway());
 
 describe('applyReranker — happy path', () => {
   test('reorders top-N by reranker relevance score', async () => {

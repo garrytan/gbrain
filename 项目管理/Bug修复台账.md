@@ -942,3 +942,14 @@
 - 解决方案：增加文件级 `afterAll(() => resetGateway())`，测试结束后恢复 Gateway 初始状态；不改变生产代码和用户数据。
 - 是否完成：是
 - 最终结果：本地 `recipe-custom-openai` 与 `capture` 定向测试通过；PR #11 的 Test 运行 29559170345 的全部分片通过，未再出现 Gateway 配置污染。
+
+## 2026-07-18 GitHub Actions Rerank 测试隔离修复
+
+- 时间：2026-07-18
+- 版本号：PMBrain 1.1.30
+- 标题：清理 Rerank 测试残留的 ZeroEntropy Gateway 配置
+- 描述：最新 `master` 的 Test 运行 29628024545 在 `test (9)` 的 `capture` 集成测试中访问 `zeroentropyai:zembed-1`，沿用了 Rerank 测试中的测试凭证并报 `Unauthorized`。
+- 根因：`test/search/rerank.test.ts` 在 `beforeAll` 中配置了测试用 ZeroEntropy API Key，但文件结束后没有调用 `resetGateway()`，进程级 Gateway 状态污染了后续 `capture` 测试。
+- 解决方案：增加 `afterAll(() => resetGateway())`，测试结束后恢复 Gateway 状态；不改变生产代码、用户配置或知识库数据。
+- 是否完成：是
+- 最终结果：本地 Rerank 与 capture 定向测试通过；PR #14 的 Test 运行 29628581923、E2E 运行 29628581901 和 Heavy Tests 运行 29628713377 均通过。E2E 的 `xlsx` tarball 解压失败未再复现，确认是瞬时依赖下载故障。
