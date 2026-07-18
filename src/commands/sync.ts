@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, statSync, realpathSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -1003,6 +1003,20 @@ function createSyncBaselineCommit(repoPath: string): void {
   // `supabase_only` — same keep-out-of-git semantics, still a supported
   // backward-compat key per storage-config.ts) but nothing resolved from
   // it, refuse rather than guess "genuinely empty" vs "syntax ignored".
+  //
+  // Known false-positive (round 8 review): a genuinely, intentionally
+  // empty `db_only: []` mentioning the word also refuses, and can't be
+  // told apart from the unsupported-syntax case — `loadStorageConfig`
+  // returns the IDENTICAL `{db_tracked:[],db_only:[]}` for both (verified
+  // directly: flow-style `[dir/]` and literal `[]` both collapse to that
+  // same shape). Distinguishing them would mean teaching this function
+  // about the parser's internal line-recognition rules, which belongs in
+  // storage-config.ts, not here. Accepted trade-off: the false-positive
+  // cost is low and self-resolving (the brain stays wedged with a clear,
+  // actionable error until the user drops the pointless empty stanza or
+  // fixes their syntax; retried on every subsequent sync); the
+  // false-negative this guards against — silently committing db_only
+  // content into permanent git history — is high-cost and hard to undo.
   if (dbOnlyDirs.length === 0) {
     const yamlPath = join(repoPath, 'gbrain.yml');
     const yamlContent = existsSync(yamlPath) ? readFileSync(yamlPath, 'utf-8') : '';
@@ -1052,15 +1066,24 @@ function createSyncBaselineCommit(repoPath: string): void {
   git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs], [], 600_000);
   git(
     repoPath,
-    // --no-verify: skip pre-commit/commit-msg hooks. An operator's global
-    // core.hooksPath or init.templateDir can wire hooks that expect
-    // project tooling, prompt interactively, or reject the snapshot —
-    // none of which a headless self-heal commit can satisfy.
+    // --no-verify only skips pre-commit/commit-msg — prepare-commit-msg
+    // and (worse, since it runs AFTER the commit object already exists,
+    // synchronously inside this same git invocation) post-commit are
+    // NOT covered by it. An operator's global core.hooksPath or
+    // init.templateDir can wire either, expecting project tooling,
+    // prompting interactively, or hanging — none of which a headless
+    // self-heal commit can satisfy, and a hanging post-commit hook would
+    // burn the 600s budget above without even being the slow step.
+    // `-c core.hooksPath=/dev/null` (in configs, below) makes git look
+    // for hook scripts inside a location that can't contain any,
+    // disabling the entire hooks path for this one invocation — the
+    // complete form of what --no-verify only partially covers, kept for
+    // explicitness on the two hooks it does name.
     [
       'commit', '--quiet', '--allow-empty', '--no-gpg-sign', '--no-verify',
       '-m', 'gbrain: initial commit (auto-init by sync)',
     ],
-    ['user.name=gbrain', 'user.email=gbrain@localhost'],
+    ['user.name=gbrain', 'user.email=gbrain@localhost', 'core.hooksPath=/dev/null'],
   );
 }
 
@@ -1819,7 +1842,6 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the mere absence of `opts.sourceId`/`opts.repoPath` — see that
   // function's docstring. `!opts.dryRun`: a preview must never write.
   let gitContextRoot: string;
-  let didSelfHeal = false;
   try {
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   } catch (err) {
@@ -1835,7 +1857,6 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     git(repoPath, ['init', '--quiet']);
     createSyncBaselineCommit(repoPath);
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
-    didSelfHeal = true;
   }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
   if (!existsSync(rawScopeRoot)) {
@@ -1986,64 +2007,28 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
     createSyncBaselineCommit(gitContextRoot);
     headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
-    didSelfHeal = true;
   }
 
-  // #2964: after a self-heal, write .gitignore for db_only dirs the SAME
-  // way `runSync` does for every other successful sync (post-completion,
-  // never before — see `createSyncBaselineCommit`'s docstring on why
-  // ordering matters). Needed here specifically because the dream cycle
-  // (`cycle.ts:runPhaseSync`) calls `performSync` directly and never goes
-  // through `runSync`'s CLI-only post-success `manageGitignoreAtGitRoot`
-  // call — without this, a brain self-healed via the dream cycle would
-  // have db_only content correctly excluded from THIS commit (the
-  // pathspec exclusion in `createSyncBaselineCommit`) but no `.gitignore`
-  // ever written, leaving future manual `git add`/`commit` by the user
-  // unprotected (Codex review round 6, P2). No-op for a normal
-  // already-git-initialized sync (didSelfHeal stays false) — that case
-  // is unaffected and still relies on `runSync`'s existing post-success
-  // call, exactly as before.
-  async function performFullSyncAndMaybeGitignore(
-    roots: typeof fullSyncRoots,
-  ): Promise<SyncResult> {
-    // #2964 (round 7, P1 — Codex caught this with an actual repro run): a
-    // brain rsync'd from another machine without its `.git` can still
-    // retain that machine's auto-managed `.gitignore`. collectSyncableFiles
-    // (inside performFullSync) enumerates via `git ls-files
-    // --exclude-standard`, so a leftover db_only ignore rule would
-    // silently omit those pages from THIS first sync's DB import — the
-    // same data-loss bug class the ordering fix above prevents for a
-    // .gitignore gbrain itself would have written, just from a
-    // pre-existing file instead. Neutralize any existing .gitignore for
-    // the duration of this ONE first-sync call only, byte-for-byte
-    // restoring it immediately after (even on error) — matching exactly
-    // what a truly fresh brain with no .gitignore at all already does on
-    // its first sync (nothing to suppress collection there either).
-    // db_only content still stays out of the COMMIT independently
-    // (createSyncBaselineCommit's pathspec exclusion doesn't depend on
-    // .gitignore); manageGitignore below re-merges the managed block onto
-    // the restored original content afterward, so any of the user's own
-    // unrelated ignore rules in that file survive intact.
-    const gitignorePath = join(roots.gitContextRoot, '.gitignore');
-    const savedGitignore = didSelfHeal && existsSync(gitignorePath)
-      ? readFileSync(gitignorePath, 'utf-8')
-      : null;
-    if (savedGitignore !== null) unlinkSync(gitignorePath);
-    try {
-      const result = await performFullSync(engine, roots, headCommit, opts);
-      if (savedGitignore !== null) writeFileSync(gitignorePath, savedGitignore);
-      if (didSelfHeal && result.status !== 'blocked_by_failures' && result.status !== 'partial') {
-        // repoPath is `string` by construction (guarded at function
-        // entry), but the guard's narrowing doesn't carry into this
-        // nested closure — reassert via roots, realpath-derived from it.
-        manageGitignore(roots.gitContextRoot, engine.kind);
-      }
-      return result;
-    } catch (err) {
-      if (savedGitignore !== null && !existsSync(gitignorePath)) writeFileSync(gitignorePath, savedGitignore);
-      throw err;
-    }
-  }
+  // #2964: self-heal deliberately does NOT special-case db_only/.gitignore
+  // interaction beyond the COMMIT itself (createSyncBaselineCommit's
+  // pathspec exclusion, which stands on its own regardless of what
+  // .gitignore says). db_only content is documented as DB-sourced ("bulk
+  // machine-generated content... written to disk as a local cache", see
+  // docs/storage-tiering.md) — it reaches the database via ingest-specific
+  // paths, never via gbrain sync's git-diff-based file collection, and
+  // `.gitignore` management there is entirely about keeping db_only out of
+  // git history, not about what sync imports. An earlier version of this
+  // fix (Codex review rounds 6-7) tried to also guarantee db_only markdown
+  // gets imported on this first sync and that .gitignore gets written
+  // post-success even when called outside runSync — solving a problem
+  // that, per the docs above, isn't actually in scope for what sync is
+  // for. Reverted in round 8 review discussion in favor of this simpler
+  // design: after self-heal, the import + any subsequent .gitignore
+  // management behave EXACTLY the same as for any other brain, self-healed
+  // or not (runSync's existing post-success manageGitignoreAtGitRoot call
+  // covers the CLI path identically either way; the dream cycle not
+  // calling it is a separate, pre-existing characteristic of the dream
+  // cycle in general, not something this fix introduces or worsens).
 
   // #1970: bookmark reachability. The ONLY thing that should force a full
   // reconcile is a truly-absent object; a present-but-non-ancestor bookmark
@@ -2071,7 +2056,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // back to the authoritative full reconcile (which now also purges stale
       // pages for deleted files; see performFullSync's delete-reconcile pass).
       serr(`Sync anchor ${lastCommit.slice(0, 8)} object missing (gc'd after history rewrite). Running full reimport.`);
-      return performFullSyncAndMaybeGitignore(fullSyncRoots);
+      return performFullSync(engine, fullSyncRoots, headCommit, opts);
     }
 
     // Observability only — NOT control flow. A non-ancestor bookmark is still
@@ -2094,7 +2079,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // First sync
   if (!lastCommit) {
-    return performFullSyncAndMaybeGitignore(fullSyncRoots);
+    return performFullSync(engine, fullSyncRoots, headCommit, opts);
   }
 
   // v0.42.x (#1794): resumable incremental sync — resolve the PINNED target.
@@ -2215,7 +2200,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `[sync] delta ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} unavailable ` +
       `(${delta.reason}) — falling back to full reconcile.`,
     );
-    return performFullSyncAndMaybeGitignore(fullSyncRoots);
+    return performFullSync(engine, fullSyncRoots, headCommit, opts);
   }
   const manifest = delta.manifest;
 
