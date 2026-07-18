@@ -946,6 +946,63 @@ describe('addSource --path — #2707 git-repo validation', () => {
     expect(row.local_path).toBe(bigDir);
   });
 
+  // Codex round 4 (P2): the empty-tree OID is hash-algorithm-specific — a
+  // hardcoded SHA-1 constant silently mismatched (and so accepted) an empty
+  // SHA-256 repo. --object-format=sha256 needs git 2.29+; skip rather than
+  // hard-fail on an older CI git.
+  const SHA256_SUPPORTED = (() => {
+    try {
+      const probe = join(tmpdir(), `gbrain-2707-sha256-probe-${process.pid}`);
+      mkdirSync(probe, { recursive: true });
+      execFileSync('git', ['-C', probe, 'init', '-q', '--object-format=sha256'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      rmSync(probe, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  test.skipIf(!SHA256_SUPPORTED)(
+    'rejects an empty-commit SHA-256 repo the same as a SHA-1 one (codex round 4)',
+    async () => {
+      const sha256Dir = join(SANDBOX, 'sha256-empty');
+      mkdirSync(sha256Dir, { recursive: true });
+      execFileSync('git', ['-C', sha256Dir, 'init', '-q', '--object-format=sha256']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', sha256Dir, 'commit', '--allow-empty', '-q', '-m', 'empty']);
+      writeFileSync(join(sha256Dir, 'notes.md'), 'never committed');
+
+      let threw: SourceOpError | undefined;
+      try {
+        await addSource(engine, { id: 'sha256-empty-src', localPath: sha256Dir });
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw).toBeInstanceOf(SourceOpError);
+      expect(threw?.code).toBe('not_a_git_repo');
+    },
+  );
+
+  test.skipIf(!SHA256_SUPPORTED)(
+    'registers a SHA-256 repo with real committed content (no regression)',
+    async () => {
+      const sha256Dir = join(SANDBOX, 'sha256-real');
+      mkdirSync(sha256Dir, { recursive: true });
+      writeFileSync(join(sha256Dir, 'README.md'), '# fixture');
+      execFileSync('git', ['-C', sha256Dir, 'init', '-q', '--object-format=sha256']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', sha256Dir, 'add', '-A']);
+      execFileSync('git', ['-C', sha256Dir, 'commit', '-q', '-m', 'initial import']);
+
+      const row = await addSource(engine, { id: 'sha256-real-src', localPath: sha256Dir });
+      expect(row.local_path).toBe(sha256Dir);
+    },
+  );
+
   test('quotes a path with a space in the remediation command (codex round 1)', async () => {
     const spacedDir = join(SANDBOX, 'has space here');
     mkdirSync(spacedDir, { recursive: true });
