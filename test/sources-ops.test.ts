@@ -925,6 +925,27 @@ describe('addSource --path — #2707 git-repo validation', () => {
     expect(threw?.code).toBe('not_a_git_repo');
   });
 
+  test('registers a repo with many tracked entries without buffer-size false rejection (codex round 3)', async () => {
+    // Codex round 3 (P2): the earlier `git ls-tree` listing implementation
+    // buffered the whole tree and could exceed execFileSync's default 1 MiB
+    // maxBuffer on a large repo, causing an incorrect rejection. The
+    // rev-parse HEAD:./ + empty-tree-SHA-comparison implementation reads a
+    // fixed ~40-byte SHA regardless of tree size — this locks that in.
+    const bigDir = join(SANDBOX, 'many-entries');
+    mkdirSync(bigDir, { recursive: true });
+    for (let i = 0; i < 300; i++) {
+      writeFileSync(join(bigDir, `file-${i}.md`), `# entry ${i}`);
+    }
+    execFileSync('git', ['-C', bigDir, 'init', '-q']);
+    execFileSync('git', ['-C', bigDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', bigDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', bigDir, 'add', '-A']);
+    execFileSync('git', ['-C', bigDir, 'commit', '-q', '-m', 'many files']);
+
+    const row = await addSource(engine, { id: 'many-entries-src', localPath: bigDir });
+    expect(row.local_path).toBe(bigDir);
+  });
+
   test('quotes a path with a space in the remediation command (codex round 1)', async () => {
     const spacedDir = join(SANDBOX, 'has space here');
     mkdirSync(spacedDir, { recursive: true });
