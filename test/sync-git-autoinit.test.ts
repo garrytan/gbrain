@@ -2,19 +2,22 @@
  * #2964 — sync phase self-heals a never-git-initialized default brain dir.
  *
  * A legacy `sync.repo_path`-anchored default brain (no `sources` row, no
- * `--source`) can reach `performSync` pointed at a directory that was never
- * `git init`-ed (predates git-backed sync, or was rsync'd from another
- * machine without its `.git`). Before this fix, `discoverGitRoot` threw
- * unconditionally and the dream cycle's sync phase failed every night with
- * no self-recovery, even though `doctor`'s sync checks reported "ok" (for
- * an unrelated reason — they only look at the `sources` table, which has
- * no rows for this kind of brain).
+ * `--source`, no caller-supplied `--repo`) can reach `performSync` pointed
+ * at a directory that was never `git init`-ed (predates git-backed sync, or
+ * was rsync'd from another machine without its `.git`). Before this fix,
+ * `discoverGitRoot` threw unconditionally and the dream cycle's sync phase
+ * failed every night with no self-recovery, even though `doctor`'s sync
+ * checks reported "ok" (for an unrelated reason — they only look at the
+ * `sources` table, which has no rows for this kind of brain).
  *
- * gbrain owns this directory outright, so the fix self-heals by
- * `git init`-ing it and capturing the current on-disk state as the sync
- * baseline — but ONLY for the default/no-`sourceId` path. A registered
- * local source (`sources add --path`, no `--url`) is the user's own
- * external directory and must keep failing loudly rather than being
+ * gbrain owns THAT directory outright, so the fix self-heals by `git
+ * init`-ing it and capturing the current on-disk state as the sync
+ * baseline — but ONLY when the path was resolved from gbrain's own
+ * persisted `sync.repo_path` anchor, never `sourceId` and never a
+ * caller-supplied `repoPath`. Either of those means someone else named the
+ * directory (a registered local source, or — per Codex review — an
+ * admin-scope `submit_job({name:'sync', data:{repoPath}})` caller with no
+ * matching source row), which must keep failing loudly rather than being
  * silently git-initialized without consent.
  */
 
@@ -48,18 +51,20 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     dir = mkdtempSync(join(tmpdir(), 'gbrain-2964-'));
     writeFileSync(join(dir, 'page1.md'), mdPage('Page 1'));
     writeFileSync(join(dir, 'page2.md'), mdPage('Page 2'));
+    // The self-heal-eligible path: gbrain's own persisted anchor, not a
+    // caller-supplied --repo / job.data.repoPath.
+    await engine.setConfig('sync.repo_path', dir);
   });
 
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  test('default (no sourceId) sync on a non-git dir auto-inits git and imports files', async () => {
+  test('anchor-resolved sync (no repoPath, no sourceId) on a non-git dir auto-inits git and imports files', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     expect(existsSync(join(dir, '.git'))).toBe(false);
 
     const result = await performSync(engine, {
-      repoPath: dir,
       noPull: true,
       noEmbed: true,
       full: true,
@@ -74,23 +79,14 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
 
   test('a second sync after auto-init sees no changes (baseline commit captured current on-disk state)', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
-    const first = await performSync(engine, {
-      repoPath: dir,
-      noPull: true,
-      noEmbed: true,
-      full: true,
-    });
+    const first = await performSync(engine, { noPull: true, noEmbed: true, full: true });
     expect(first.added).toBe(2);
 
     // No new files, no explicit `full` — a real incremental sync against the
     // auto-init baseline. Before this fix there was no baseline to diff
     // against (sync errored outright); a naive fix that skipped the initial
     // commit would make this call re-report both files as "added" again.
-    const second = await performSync(engine, {
-      repoPath: dir,
-      noPull: true,
-      noEmbed: true,
-    });
+    const second = await performSync(engine, { noPull: true, noEmbed: true });
     expect(second.status).not.toBe('first_sync');
     expect(second.added).toBe(0);
     expect(second.modified).toBe(0);
@@ -110,16 +106,28 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     expect(existsSync(join(dir, '.git'))).toBe(false);
   });
 
-  test('--dry-run on a non-git dir throws without writing anything to disk', async () => {
+  test('a caller-supplied repoPath with no sourceId still throws — not auto-inited (P1: MCP submit_job arbitrary-path guard)', async () => {
+    // Mirrors jobs.ts: submit_job({name:'sync', data:{repoPath}}) reaches
+    // performSyncInner with sourceId left undefined whenever repoPath
+    // doesn't match a registered source's local_path. Auto-init must not
+    // fire here even though sourceId is unset — only the anchor-resolved
+    // default path is gbrain's own.
     const { performSync } = await import('../src/commands/sync.ts');
     await expect(
       performSync(engine, {
         repoPath: dir,
-        dryRun: true,
         noPull: true,
         noEmbed: true,
         full: true,
       }),
+    ).rejects.toThrow(/git repository/i);
+    expect(existsSync(join(dir, '.git'))).toBe(false);
+  });
+
+  test('--dry-run on the anchor-resolved path throws without writing anything to disk', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await expect(
+      performSync(engine, { dryRun: true, noPull: true, noEmbed: true, full: true }),
     ).rejects.toThrow(/git repository/i);
     // The whole point of --dry-run is "preview only" — it must never git-init
     // or commit on our behalf, even though we could self-heal.
@@ -134,12 +142,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     // discoverGitRoot succeeds, but `git rev-parse HEAD` still fails.
     execSync('git init -q', { cwd: dir });
 
-    const result = await performSync(engine, {
-      repoPath: dir,
-      noPull: true,
-      noEmbed: true,
-      full: true,
-    });
+    const result = await performSync(engine, { noPull: true, noEmbed: true, full: true });
 
     expect(result.status).toBe('first_sync');
     expect(result.added).toBe(2);

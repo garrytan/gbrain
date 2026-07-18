@@ -1655,22 +1655,29 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // In the common case (repoPath == git root, no subpath) they are identical.
   serr(`[gbrain phase] sync.discover_git_root`);
   // #2964: a legacy `sync.repo_path`-anchored default brain (no `sources`
-  // row, no `opts.sourceId`) can reach here having never been `git init`-ed
-  // — e.g. a brain-pages dir that predates git-backed sync, or one rsync'd
-  // from another machine without its `.git`. gbrain owns this directory
-  // outright (it's not a user-external path the way an `opts.sourceId` +
-  // local `sources add --path` entry is), so self-heal by initializing it
-  // in place instead of failing the sync phase every single run. Mirrors
-  // the recloneIfMissing self-recovery above for owned remote clones.
-  // Scoped to !opts.sourceId and !opts.dryRun only — a registered local
-  // source without a remote_url stays a loud, actionable error (it's the
-  // user's own directory; silently git-initializing it without consent is
-  // an overreach), and a dry-run preview must never write to disk.
+  // row, no `opts.sourceId`, no caller-supplied `opts.repoPath`) can reach
+  // here having never been `git init`-ed — e.g. a brain-pages dir that
+  // predates git-backed sync, or one rsync'd from another machine without
+  // its `.git`. gbrain owns THAT directory outright (it's the one path
+  // resolved from gbrain's own persisted anchor, not a caller-named one),
+  // so self-heal by initializing it in place instead of failing the sync
+  // phase every single run. Mirrors the recloneIfMissing self-recovery
+  // above for owned remote clones.
+  //
+  // Ownership gate — `!opts.repoPath` is the load-bearing check, not just
+  // `!opts.sourceId`: `submit_job({name:'sync', data:{repoPath}})` reaches
+  // performSyncInner with sourceId undefined whenever the given path
+  // doesn't match a registered source's local_path (jobs.ts), so an
+  // admin-scope MCP caller could otherwise point this at an arbitrary
+  // directory and have it silently git-init + commit + ingest it. Only the
+  // anchor-resolved default path (`repoPath = opts.repoPath || anchor`,
+  // taking the anchor branch) is something gbrain chose for itself.
+  // `!opts.dryRun`: a dry-run preview must never write to disk.
   let gitContextRoot: string;
   try {
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   } catch (err) {
-    if (opts.sourceId || opts.dryRun || !existsSync(repoPath)) throw err;
+    if (opts.sourceId || opts.repoPath || opts.dryRun || !existsSync(repoPath)) throw err;
     serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
     git(repoPath, ['init', '--quiet']);
     createSyncBaselineCommit(repoPath, engine.kind);
@@ -1806,8 +1813,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // this brain permanently wedged on "No commits in repo" every night
     // thereafter. Finish the same baseline-commit self-heal the
     // discoverGitRoot catch above would have done, gated the same way
-    // (gbrain-owned default brain only, never on a dry-run preview).
-    if (opts.sourceId || opts.dryRun) {
+    // (gbrain-owned default brain only, never on a dry-run preview) PLUS a
+    // scope check: `discoverGitRoot` walks UP from `repoPath`, so for a
+    // `--src-subpath`/subdir-as-repoPath sync it can resolve to an ANCESTOR
+    // repo, not `repoPath` itself. Committing there (`git add -A` at
+    // gitContextRoot) would capture sibling files well outside the sync
+    // scope — refuse instead of guessing.
+    if (
+      opts.sourceId ||
+      opts.repoPath ||
+      opts.dryRun ||
+      gitContextRoot !== realpathSync(repoPath)
+    ) {
       throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
     }
     serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
