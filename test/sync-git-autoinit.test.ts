@@ -1,29 +1,40 @@
 /**
  * #2964 — sync phase self-heals a never-git-initialized default brain dir.
  *
- * A legacy `sync.repo_path`-anchored default brain (no `sources` row) can
- * reach `performSync` pointed at a directory that was never `git init`-ed
- * (predates git-backed sync, or was rsync'd from another machine without
- * its `.git`). Before this fix, `discoverGitRoot` threw unconditionally and
- * the dream cycle's sync phase failed every night with no self-recovery,
- * even though `doctor`'s sync checks reported "ok" (for an unrelated
- * reason — they only look at the `sources` table, which has no rows for
- * this kind of brain).
+ * A legacy `sync.repo_path`-anchored default brain can reach `performSync`
+ * pointed at a directory that was never `git init`-ed (predates git-backed
+ * sync, or was rsync'd from another machine without its `.git`). Before
+ * this fix, `discoverGitRoot` threw unconditionally and the dream cycle's
+ * sync phase failed every night with no self-recovery, even though
+ * `doctor`'s sync checks reported "ok" (for an unrelated reason — they
+ * only look at the `sources` table in a way this brain shape doesn't hit).
  *
  * gbrain owns that directory outright, so the fix self-heals by `git
  * init`-ing it and capturing the current on-disk state as the sync
  * baseline. Ownership is proven by VALUE — the resolved `repoPath` must
- * equal gbrain's own persisted `sync.repo_path` anchor — not by whether
- * `opts.repoPath`/`opts.sourceId` happen to be set. That distinction
- * matters because the real production caller (`runPhaseSync` in
- * cycle.ts, i.e. `gbrain dream`'s sync phase) always passes the resolved
- * anchor through explicitly as `opts.repoPath`; gating on
- * `!opts.repoPath` (an earlier, insufficiently-reviewed version of this
- * fix) would have made the self-heal never fire on the exact path it was
- * written to repair (Codex review round 3 caught this). A caller-supplied
- * path that does NOT match the anchor (a registered local source, or an
- * admin-scope `submit_job({name:'sync', data:{repoPath}})` MCP call with
- * an unrelated path) must keep failing loudly rather than being silently
+ * realpath-equal gbrain's own anchor — not by whether
+ * `opts.repoPath`/`opts.sourceId` happen to be set:
+ *
+ * - Gating on `!opts.repoPath` (round 3) would have made self-heal never
+ *   fire on `runPhaseSync` (dream cycle), which always resolves the
+ *   anchor itself and passes it through explicitly as `opts.repoPath`.
+ * - Gating on `!opts.sourceId` (round 4) would ALSO never fire in
+ *   practice: migration `sources_table_additive` seeds a `'default'`
+ *   source row whose `local_path` mirrors `sync.repo_path` on every
+ *   brain that's run it (i.e. virtually all installed brains today), so
+ *   both the dream cycle and bare `gbrain sync` resolve
+ *   `sourceId: 'default'`, never `undefined`, in reality — a fresh test
+ *   brain's null `local_path` masked this (Codex review round 5).
+ *
+ * The actual boundary implemented by `isAnchorOwnedSyncPath`: `sourceId`
+ * must be `undefined` OR exactly `'default'` (gbrain's own bootstrap
+ * identity — a DIFFERENT id is what an explicit `sources add <id> --path
+ * <dir>` registration of a user's own external directory looks like),
+ * AND the resolved `repoPath` must realpath-equal the LIVE anchor for
+ * that same identity. A caller-supplied path that does not match (a
+ * registered non-default source, or an admin-scope
+ * `submit_job({name:'sync', data:{repoPath}})` MCP call with an
+ * unrelated path) must keep failing loudly rather than being silently
  * git-initialized without consent.
  */
 
@@ -111,12 +122,38 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     expect(second.modified).toBe(0);
   });
 
-  test('a registered local source (sourceId set, no remote_url) on a non-git dir still throws — not auto-inited', async () => {
+  test("sourceId='default' whose local_path mirrors the anchor still auto-inits (P1: the real installed-brain shape)", async () => {
+    // Migration sources_table_additive seeds a 'default' source row with
+    // local_path copied from sync.repo_path on every brain that's run it
+    // — i.e. this, not a bare no-sourceId call, is what runPhaseSync/CLI
+    // `gbrain sync` actually resolve to on a real installed brain.
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [dir]);
+    const { performSync } = await import('../src/commands/sync.ts');
+    expect(existsSync(join(dir, '.git'))).toBe(false);
+
+    const result = await performSync(engine, {
+      repoPath: dir,
+      sourceId: 'default',
+      noPull: true,
+      noEmbed: true,
+      full: true,
+    });
+
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBe(2);
+    expect(existsSync(join(dir, '.git'))).toBe(true);
+  });
+
+  test('a registered non-default local source (sourceId != default, no remote_url) on a non-git dir still throws — not auto-inited', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('mysource', 'mysource', $1, '{}'::jsonb)`,
+      [dir],
+    );
     const { performSync } = await import('../src/commands/sync.ts');
     await expect(
       performSync(engine, {
         repoPath: dir,
-        sourceId: 'default',
+        sourceId: 'mysource',
         noPull: true,
         noEmbed: true,
         full: true,

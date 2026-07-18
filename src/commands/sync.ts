@@ -919,10 +919,10 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
  * 100 MiB is generous but still bounded — a 100K-file diff with long
  * paths tops out around 10–20 MiB in practice.
  */
-function git(repoPath: string, args: string[], configs: string[] = []): string {
+function git(repoPath: string, args: string[], configs: string[] = [], timeoutMs = 30000): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
-    timeout: 30000,
+    timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
   }).trim();
 }
@@ -992,10 +992,24 @@ function createSyncBaselineCommit(repoPath: string, engineKind?: 'pglite' | 'pos
       }
     })
     .map((dir) => `:!${dir}`);
-  git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs]);
+  // #2964: 10 minutes, not the shared git() helper's 30s default — this
+  // full-tree `git add -A` walks a legacy brain that may hold years of
+  // accumulated content. A 30s timeout would abort staging after `git
+  // init` already created `.git`, leaving an unborn repo that every
+  // subsequent sync would retry (and time out identically) forever;
+  // the unborn-HEAD recovery path exists for OTHER causes of that state,
+  // not to be this one's normal first outcome.
+  git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs], [], 600_000);
   git(
     repoPath,
-    ['commit', '--quiet', '--allow-empty', '--no-gpg-sign', '-m', 'gbrain: initial commit (auto-init by sync)'],
+    // --no-verify: skip pre-commit/commit-msg hooks. An operator's global
+    // core.hooksPath or init.templateDir can wire hooks that expect
+    // project tooling, prompt interactively, or reject the snapshot —
+    // none of which a headless self-heal commit can satisfy.
+    [
+      'commit', '--quiet', '--allow-empty', '--no-gpg-sign', '--no-verify',
+      '-m', 'gbrain: initial commit (auto-init by sync)',
+    ],
     ['user.name=gbrain', 'user.email=gbrain@localhost'],
   );
 }
@@ -1067,20 +1081,39 @@ async function readSyncAnchor(
 }
 
 /**
- * #2964: is `repoPath` gbrain's own legacy default anchor, as opposed to a
+ * #2964: is `repoPath` gbrain's own default-brain anchor, as opposed to a
  * path some caller merely happened to pass through unchanged?
  *
- * `!opts.sourceId` alone is NOT sufficient: `runPhaseSync` (dream cycle)
- * and `submit_job({name:'sync', data:{repoPath}})` (MCP, jobs.ts) both
- * reach `performSyncInner` with `sourceId` undefined AND `opts.repoPath`
- * set explicitly — the former legitimately (it already resolved the
- * anchor itself and is passing it through), the latter potentially with
- * an attacker-controlled path. The two are indistinguishable from
- * `opts.repoPath`'s mere presence/absence, so ownership has to be proven
- * by VALUE: read the anchor fresh from config and require the resolved
- * `repoPath` to equal it exactly. An arbitrary caller-supplied path only
- * passes this check if it happens to already equal gbrain's own anchor —
- * at which point self-healing it is exactly the legitimate case.
+ * `!opts.sourceId` alone is NOT sufficient — and neither is rejecting
+ * `opts.sourceId` outright: migration `sources_table_additive` (v20)
+ * seeds a `'default'` source row whose `local_path` is copied FROM
+ * `config.sync.repo_path` on every brain that has ever run it (i.e.
+ * effectively all of them by now), and `writeSyncAnchor` keeps that row's
+ * `local_path` current on every sync thereafter. So on a real installed
+ * brain, `resolveSourceForDir` (dream cycle) and the CLI's bare `gbrain
+ * sync` both resolve `sourceId: 'default'`, NOT `undefined` — rejecting
+ * all non-empty `sourceId` (an earlier, insufficiently-reviewed version
+ * of this check) made self-heal never fire on that real path either,
+ * masked in tests only because a freshly-`initSchema()`'d test brain's
+ * `'default'` row has a null `local_path` (Codex review round 5).
+ *
+ * The actual boundary: `'default'` is gbrain's own bootstrap identity,
+ * not something a caller names — a DIFFERENT, non-default `sourceId` is
+ * what an explicit `sources add <id> --path <dir>` registration (a
+ * user's own external directory) looks like, and that's what must keep
+ * failing loudly. So: permit `sourceId` when it's exactly `undefined` or
+ * `'default'`, reject any other id, and for BOTH permitted cases prove
+ * ownership by VALUE — reread the live anchor for that same identity
+ * (`sources.default.local_path` when sourceId='default', else
+ * `config.sync.repo_path`) and require the resolved `repoPath` to
+ * REALPATH-equal it (not raw string equality: `dream`'s `resolveBrainDir`
+ * normalizes via `path.resolve`, so a trailing slash or `..` in the
+ * stored anchor must not defeat the match — Codex review round 5, P2).
+ * An arbitrary caller-supplied path (e.g. an admin-scope
+ * `submit_job({name:'sync', data:{repoPath}})`) only passes this check
+ * if it already equals gbrain's own anchor by realpath identity — at
+ * which point self-healing it is exactly the legitimate case, not an
+ * escalation.
  *
  * `opts.srcSubpath` disqualifies unconditionally: a subpath-scoped sync
  * only wants THAT subdirectory captured, but the self-heal baseline
@@ -1093,9 +1126,17 @@ async function isAnchorOwnedSyncPath(
   opts: SyncOpts,
   repoPath: string,
 ): Promise<boolean> {
-  if (opts.sourceId || opts.srcSubpath) return false;
-  const anchor = await readSyncAnchor(engine, undefined, 'repo_path');
-  return anchor !== null && anchor === repoPath;
+  if (opts.srcSubpath) return false;
+  if (opts.sourceId && opts.sourceId !== 'default') return false;
+  const anchor = await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (anchor === null) return false;
+  try {
+    return realpathSync(anchor) === realpathSync(repoPath);
+  } catch {
+    // Anchor or repoPath doesn't realpath-resolve (dangling/nonexistent) —
+    // can't prove identity, so don't self-heal.
+    return false;
+  }
 }
 
 async function writeSyncAnchor(
