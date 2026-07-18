@@ -1020,7 +1020,16 @@ function createSyncBaselineCommit(repoPath: string): void {
   if (dbOnlyDirs.length === 0) {
     const yamlPath = join(repoPath, 'gbrain.yml');
     const yamlContent = existsSync(yamlPath) ? readFileSync(yamlPath, 'utf-8') : '';
-    if (yamlContent.includes('db_only') || yamlContent.includes('supabase_only')) {
+    // A YAML KEY line (`db_only:` / `supabase_only:`, ignoring leading
+    // whitespace and `#` comments), not a bare substring search — round 9,
+    // P2: a comment or unrelated prose value that happens to mention the
+    // word (e.g. `# db_only handling TBD`) must not trip this guard on an
+    // otherwise-genuinely-config-free gbrain.yml.
+    const mentionsUnresolvedKey = yamlContent.split('\n').some((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('#') && /^(db_only|supabase_only)\s*:/.test(trimmed);
+    });
+    if (mentionsUnresolvedKey) {
       throw new Error(
         `${yamlPath} mentions db_only but no directories resolved from it — refusing to ` +
           `auto-commit (cannot tell "genuinely empty" from "unsupported syntax silently ignored"). ` +
@@ -1028,25 +1037,23 @@ function createSyncBaselineCommit(repoPath: string): void {
       );
     }
   }
-  // Only pathspec-exclude db_only dirs `.gitignore` does NOT already
-  // cover (a pre-existing `.gitignore` from before this brain lost its
-  // `.git` is possible even though we never write one here ourselves). A
-  // redundant negation pathspec for an already-ignored path makes git's
-  // `-A` bail with "paths ignored by .gitignore, use -f"
-  // (advice.addIgnoredFile) even though the negation is semantically
-  // correct and git would otherwise skip it silently. `check-ignore`
-  // throwing (not ignored, or the check itself failed) defaults to
-  // excluding explicitly — the fail-closed direction.
-  const excludePathspecs = dbOnlyDirs
-    .filter((dir) => {
-      try {
-        git(repoPath, ['check-ignore', '-q', dir]);
-        return false;
-      } catch {
-        return true;
-      }
-    })
-    .map((dir) => `:!${dir}`);
+  // #2964 (round 9, P1): every db_only dir is ALWAYS pathspec-excluded,
+  // unconditionally — never pre-filtered against what an existing
+  // `.gitignore` claims to already cover. An earlier version checked
+  // `git check-ignore -q dir` first and skipped the pathspec when it
+  // already reported "ignored" (to dodge the advisory error below), but
+  // `check-ignore` on a directory can say "ignored" even when a
+  // pre-existing `.gitignore` re-includes a child via negation (e.g.
+  // `private-cache/*` + `!private-cache/index.md`) — the filter would
+  // then skip excluding it via pathspec, and `git add -A` would stage
+  // that re-included child despite the whole directory being declared
+  // db_only. Our OWN pathspec exclusion is unconditional and doesn't
+  // consult `.gitignore` at all, so it can't be defeated by ANY
+  // .gitignore content, negated or not. `:(exclude,literal)dir` (not the
+  // `:!dir` shorthand) so a db_only dir name that itself starts with a
+  // pathspec magic character like `:` is excluded literally rather than
+  // reinterpreted (round 9, P2).
+  const excludePathspecs = dbOnlyDirs.map((dir) => `:(exclude,literal)${dir}`);
   // Clear the index before staging (round 6, P1): the unborn-HEAD
   // recovery site can reach this function with a repo whose index
   // already has entries staged from some OTHER prior operation (a manual
@@ -1056,14 +1063,28 @@ function createSyncBaselineCommit(repoPath: string): void {
   // --empty` resets the index without touching the working tree; a
   // no-op on a freshly-`git init`-ed repo, whose index is already empty.
   git(repoPath, ['read-tree', '--empty']);
-  // #2964: 10 minutes, not the shared git() helper's 30s default — this
-  // full-tree `git add -A` walks a legacy brain that may hold years of
-  // accumulated content. A 30s timeout would abort staging after `git
-  // init` already created `.git`, leaving an unborn repo that every
-  // subsequent sync would retry (and time out identically) forever;
-  // the unborn-HEAD recovery path exists for OTHER causes of that state,
-  // not to be this one's normal first outcome.
-  git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs], [], 600_000);
+  try {
+    // #2964: 10 minutes, not the shared git() helper's 30s default — this
+    // full-tree `git add -A` walks a legacy brain that may hold years of
+    // accumulated content. A 30s timeout would abort staging after `git
+    // init` already created `.git`, leaving an unborn repo that every
+    // subsequent sync would retry (and time out identically) forever;
+    // the unborn-HEAD recovery path exists for OTHER causes of that
+    // state, not to be this one's normal first outcome.
+    git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs], [], 600_000);
+  } catch (err) {
+    // Now that exclusion is always applied (never pre-filtered), an
+    // explicit pathspec exclusion for a path a pre-existing `.gitignore`
+    // ALSO happens to cover trips git's advice.addIgnoredFile: nonzero
+    // exit + "paths ignored by one of your .gitignore files, use -f",
+    // even though the add otherwise fully succeeded (verified directly:
+    // `git status --short` right after this exact error shows every
+    // non-excluded path staged correctly). Recognize and swallow ONLY
+    // this exact advisory; anything else (timeout, permission denied,
+    // real corruption) rethrows.
+    const stderr = err && typeof err === 'object' && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : '';
+    if (!stderr.includes('ignored by one of your .gitignore files')) throw err;
+  }
   git(
     repoPath,
     // --no-verify only skips pre-commit/commit-msg — prepare-commit-msg

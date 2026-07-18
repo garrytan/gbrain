@@ -241,6 +241,39 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     expect(tracked).not.toContain('private-cache');
   });
 
+  test('db_only exclusion applies even when a pre-existing .gitignore already covers the same dir (round 9 P1: unconditional pathspec)', async () => {
+    // Regression for the "check-ignore pre-filter" version of this logic:
+    // when a dir is ALSO already covered by an existing .gitignore, git's
+    // `-A` bails with an advisory "paths ignored... use -f" even though
+    // the add otherwise succeeds. Exclusion must be unconditional and the
+    // advisory must not surface as a hard failure.
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { mkdirSync } = await import('fs');
+    const { execSync } = await import('child_process');
+    mkdirSync(join(dir, 'private-cache'));
+    writeFileSync(join(dir, 'private-cache', 'secret.bin'), 'binary-ish content');
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - private-cache\n');
+    writeFileSync(join(dir, '.gitignore'), 'private-cache/\n');
+
+    const result = await performSync(engine, { noPull: true, noEmbed: true, full: true });
+
+    expect(result.status).toBe('first_sync');
+    const tracked = execSync('git ls-files', { cwd: dir }).toString();
+    expect(tracked).not.toContain('private-cache');
+  });
+
+  test('a comment merely mentioning db_only does not false-positive the sniff test (round 9 P2)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // No `storage:` section at all — just a comment mentioning the word.
+    // A bare substring search would wrongly refuse this brain forever.
+    writeFileSync(join(dir, 'gbrain.yml'), '# db_only handling: TBD, not configured yet\n');
+
+    const result = await performSync(engine, { noPull: true, noEmbed: true, full: true });
+
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBe(2);
+  });
+
   test('a gbrain.yml that mentions db_only but resolves no dirs refuses the baseline commit (round 6 P2: unsupported-syntax sniff test)', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const { execSync } = await import('child_process');
