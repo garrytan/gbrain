@@ -681,21 +681,31 @@ export async function extractPageLinks(
   // Limited to the same entity directories ENTITY_REF_RE covers.
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
+  // Issue #1493 (codex P1, tightened in round 2): mask qualified-wikilink
+  // spans out of the bare-slug scan. The slug tail inside
+  // `[[src:people/alice]]` double-matches here; pass 2a/2a' already emitted
+  // it WITH its source pin, and since the pin is part of the dedup key the
+  // unpinned duplicate would persist a second edge. Masking the exact
+  // wikilink spans (instead of skipping any `:`-preceded match) keeps
+  // legitimate prose like `Owner:people/alice` extracting as before.
+  const qualifiedSpans: Array<[number, number]> = [];
+  for (const re of [QUALIFIED_WIKILINK_RE, QUALIFIED_WIKILINK_ANY_PATH_RE]) {
+    const p = new RegExp(re.source, re.flags);
+    let qm: RegExpExecArray | null;
+    while ((qm = p.exec(strippedContent)) !== null) {
+      qualifiedSpans.push([qm.index, qm.index + qm[0].length]);
+    }
+  }
+  const bareScan = maskRanges(strippedContent, qualifiedSpans);
   const bareRe = new RegExp(
     `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
     'g',
   );
   let m: RegExpExecArray | null;
-  while ((m = bareRe.exec(strippedContent)) !== null) {
+  while ((m = bareRe.exec(bareScan)) !== null) {
     // Skip matches that are part of a markdown link (already handled above).
-    // Issue #1493 (codex P1): also skip a slug immediately preceded by `:` —
-    // that's the tail of a qualified wikilink `[[src:people/alice]]`, which
-    // pass 2a/2a' already emitted WITH its source pin. Pre-#1493 this
-    // duplicate was absorbed by the within-page dedup; now the pin is part
-    // of the dedup key, so the unpinned duplicate must not be born at all
-    // (it would persist a second, unpinned edge beside the pinned one).
-    const charBefore = m.index > 0 ? strippedContent[m.index - 1] : '';
-    if (charBefore === '/' || charBefore === '(' || charBefore === ':') continue;
+    const charBefore = m.index > 0 ? bareScan[m.index - 1] : '';
+    if (charBefore === '/' || charBefore === '(') continue;
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],

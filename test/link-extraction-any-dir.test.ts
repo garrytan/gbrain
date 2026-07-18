@@ -566,3 +566,42 @@ describe('makeResolver — slugExists default-source fallback domain (codex P1)'
     expect((engine as any)._calls().sort()).toEqual(['default', 'src-a']);
   });
 });
+
+// ─── Issue #1493 codex round 2: bare-slug pass vs qualified spans ────
+
+describe('extractPageLinks — bare-slug pass masks qualified spans only (codex P2 round 2)', () => {
+  test('legit prose `Owner:people/alice` still emits a bare-slug candidate', async () => {
+    // Regression: round 1 skipped ANY `:`-preceded bare slug, which also
+    // dropped legitimate prose refs. Only actual qualified-wikilink spans
+    // are masked now.
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'Owner:people/alice runs this.',
+      {}, 'concept', makeExistsResolver([]),
+    );
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].targetSlug).toBe('people/alice');
+    expect(candidates[0].targetSourceId).toBeUndefined();
+  });
+
+  test('qualified wikilink still emits exactly ONE (pinned) candidate — no bare-slug duplicate', async () => {
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[wiki:people/alice]].',
+      {}, 'concept', makeExistsResolver([]),
+    );
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].targetSourceId).toBe('wiki');
+  });
+
+  test('prose colon ref and qualified wikilink coexist correctly', async () => {
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'Owner:people/bob maintains it. See [[wiki:people/alice]].',
+      {}, 'concept', makeExistsResolver([]),
+    );
+    const bob = candidates.filter(c => c.targetSlug === 'people/bob');
+    const alice = candidates.filter(c => c.targetSlug === 'people/alice');
+    expect(bob.length).toBe(1);
+    expect(bob[0].targetSourceId).toBeUndefined();
+    expect(alice.length).toBe(1);
+    expect(alice[0].targetSourceId).toBe('wiki');
+  });
+});

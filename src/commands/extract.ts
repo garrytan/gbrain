@@ -37,7 +37,7 @@ import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
   extractFrontmatterLinks, isAnyDirExactPathEnabled, isGlobalBasenameEnabled,
-  LINK_EXTRACTOR_VERSION_TS,
+  LINK_EXTRACTOR_VERSION_TS, type SlugResolver,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
   type UnresolvedFrontmatterRef, type LinkCandidate,
@@ -1716,7 +1716,26 @@ async function extractStaleFromDB(
   // meant the default sweep (no --include-frontmatter) had no slugExists,
   // so any-dir exact-path misses were silently discarded by the endpoint
   // check instead of being verified + recorded as unresolved.
-  const resolver = makeResolver(engine, { mode: 'batch' });
+  //
+  // Issue #1493 (codex P2, round 2): the resolver is scoped PER PAGE SOURCE,
+  // not one unscoped instance for the sweep. An unscoped slugExists spans
+  // all sources, so an alpha page's `[[janus/foo]]` whose target exists
+  // only in beta passed verification, became a candidate, was rejected by
+  // resolveCandidateSources (not in alpha ∪ default) — and the miss was
+  // never recorded. Per-source resolvers give each page the SAME
+  // resolution domain resolveCandidateSources applies (page source ∪
+  // default). Cached per source_id: getAllSlugs runs at most twice per
+  // distinct source across the whole sweep (scoped + default overlay),
+  // matching the DB path's fetch discipline.
+  const resolverBySource = new Map<string, SlugResolver>();
+  function resolverForSource(sourceId: string): SlugResolver {
+    let r = resolverBySource.get(sourceId);
+    if (!r) {
+      r = makeResolver(engine, { mode: 'batch', sourceId });
+      resolverBySource.set(sourceId, r);
+    }
+    return r;
+  }
   // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
   // whitelist. Read once per sweep.
   const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
@@ -1755,7 +1774,7 @@ async function extractStaleFromDB(
     for (const page of rows) {
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
-        page.slug, fullContent, page.frontmatter, page.type, resolver,
+        page.slug, fullContent, page.frontmatter, page.type, resolverForSource(page.source_id),
         { skipFrontmatter: !includeFrontmatter, anyDirExactPath },
       );
       unresolved.push(...extracted.unresolved);

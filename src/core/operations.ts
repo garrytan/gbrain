@@ -1177,10 +1177,25 @@ async function runAutoLink(
   // Cross-source pinned edges are the extract paths' job
   // (resolveCandidateSources honors targetSourceId).
   const effectiveSourceId = opts?.sourceId ?? 'default';
-  const valid = candidates.filter(c =>
+  const accepted = candidates.filter(c =>
     allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug)) &&
     (!c.targetSourceId || c.targetSourceId === effectiveSourceId)
   );
+  // Issue #1493 (codex P2, round 2): within put_page's single-source write
+  // scope, a pinned `[[alpha:people/alice]]` and an unpinned
+  // `[[people/alice]]` on an alpha page resolve to the SAME edge row — the
+  // pin survived extractPageLinks' within-page dedup (it's part of that
+  // key) and the guard above (pin === this source). Re-dedupe by the
+  // RESOLVED single-source edge key so addLink isn't called twice and
+  // `created` isn't double-counted (the second insert hits ON CONFLICT,
+  // leaving one row but two counts).
+  const seenEdgeKeys = new Set<string>();
+  const valid = accepted.filter(c => {
+    const key = `${c.fromSlug ?? slug}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
+    if (seenEdgeKeys.has(key)) return false;
+    seenEdgeKeys.add(key);
+    return true;
+  });
 
   // Split candidates by direction. Outgoing (fromSlug === slug or unset) are
   // this page's own edges, reconciled against getLinks(slug). Incoming

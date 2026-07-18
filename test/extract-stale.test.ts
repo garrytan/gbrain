@@ -358,3 +358,67 @@ describe('extract --stale: any-dir exact-path wikilinks (#1493)', () => {
     expect(done.unresolved_refs).toBeUndefined();
   });
 });
+
+// ─── Issue #1493 (codex P2, round 2): per-page-source resolution domain ──
+
+describe('extract --stale: per-source resolution domain (#1493 round 2)', () => {
+  test('alpha page linking a beta-only target records the miss (no silent drop, no cross-source edge)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('alpha', 'alpha'), ('beta', 'beta')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[janus/foreign]].', ''),
+         ('janus/foreign', 'beta', 'concept', 'Foreign', 'x', '')`,
+    );
+
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as any;
+    try {
+      await runExtract(engine, ['--stale', '--json']);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const done = lines
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l.trim()))
+      .find(o => o.action === 'extract_stale_done');
+    expect(done).toBeDefined();
+    // The alpha page's resolution domain is alpha ∪ default — the beta-only
+    // target is a MISS and must be recorded, not silently dropped after
+    // passing an unscoped existence check.
+    expect(done.unresolved_refs ?? []).toContainEqual({ field: 'wikilink', name: 'janus/foreign' });
+    const linkRows = await engine.executeRaw<{ n: string }>(`SELECT COUNT(*)::text AS n FROM links`);
+    expect(Number(linkRows[0]?.n ?? 0)).toBe(0);
+  });
+
+  test('alpha page linking a default-source target resolves via the default overlay', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('alpha', 'alpha')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[janus/shared]].', ''),
+         ('janus/shared', 'default', 'concept', 'Shared', 'x', '')`,
+    );
+
+    await runExtract(engine, ['--stale']);
+
+    const rows = await engine.executeRaw<{ to_slug: string; to_source: string }>(
+      `SELECT t.slug AS to_slug, t.source_id AS to_source
+         FROM links l JOIN pages t ON l.to_page_id = t.id`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].to_slug).toBe('janus/shared');
+    expect(rows[0].to_source).toBe('default');
+  });
+});
