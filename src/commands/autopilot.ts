@@ -17,7 +17,7 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -1242,7 +1242,14 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');
     mkdirSync(agentsDir, { recursive: true });
-    writeFileSync(plistPath(), plist);
+    writeFileSync(plistPath(), plist, { mode: 0o644 });
+    // launchd rejects group/world-writable agent plists: bootstrap/load fails
+    // with the opaque "Bootstrap failed: 5: Input/output error" and the login
+    // scan skips the file silently. writeFileSync's mode only applies on
+    // create — a reinstall over an existing plist keeps the old bits (a 0666
+    // plist written under an umask-0 parent stays 0666 forever) — so
+    // normalize unconditionally.
+    chmodSync(plistPath(), 0o644);
     execSync(`launchctl load "${plistPath()}"`, { stdio: 'pipe' });
     console.log('Installed launchd service: com.gbrain.autopilot');
     console.log(`  Repo: ${repoPath}`);
@@ -1332,7 +1339,11 @@ export function migrateSystemdUnitToRestartAlways(): { rewritten: boolean; reaso
     return { rewritten: false, reason: 'hand-edited' };
   }
   try {
-    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]));
+    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]), { mode: 0o644 });
+    // This path always rewrites an EXISTING unit, so writeFileSync's mode
+    // never applies — chmod is the only thing that normalizes a unit born
+    // 0666 under a umask-0 parent (systemd warns on world-writable units).
+    chmodSync(unitPath, 0o644);
     try {
       execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
     } catch {
@@ -1349,7 +1360,10 @@ function installSystemd(wrapperPath: string, repoPath: string) {
   try {
     const unitPath = systemdUnitPath();
     mkdirSync(join(process.env.HOME || '', '.config', 'systemd', 'user'), { recursive: true });
-    writeFileSync(unitPath, unit);
+    writeFileSync(unitPath, unit, { mode: 0o644 });
+    // Same umask-0 hardening as the launchd path (systemd warns on
+    // world-writable units); mode only applies on create, so normalize.
+    chmodSync(unitPath, 0o644);
     execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
     execSync('systemctl --user enable --now gbrain-autopilot.service', { stdio: 'pipe', timeout: 15_000 });
     console.log('Installed systemd user service: gbrain-autopilot.service');
