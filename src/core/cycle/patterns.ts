@@ -177,8 +177,18 @@ export async function runPhasePatterns(
       });
       outcome = final.status;
     } catch (e) {
-      if (e instanceof TimeoutError) outcome = 'timeout';
-      else throw e;
+      if (e instanceof TimeoutError) {
+        outcome = 'timeout';
+        // The child's own timeout_ms clock starts at ITS claim, not at
+        // submit — a child that sat queued behind other work can outlive
+        // the parent deadline this wait was clamped to. Cancel it so the
+        // subagent can't keep spending/writing after the phase gave up
+        // (waiting child → cancelled immediately; active child → lock
+        // stripped, worker abort fires on next renew tick).
+        try { await queue.cancelJob(job.id); } catch { /* best-effort */ }
+      } else {
+        throw e;
+      }
     }
 
     if (opts.yieldDuringPhase) {

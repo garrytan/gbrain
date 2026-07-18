@@ -83,7 +83,7 @@ describe('claim stamps timeout_at (deadlineAtMs ground truth)', () => {
 
   beforeAll(async () => {
     engine = new PGLiteEngine();
-    await engine.connect({ dataDir: 'memory://' });
+    await engine.connect({ database_url: '' }); // in-memory
     await engine.initSchema();
     queue = new MinionQueue(engine);
   });
@@ -132,9 +132,9 @@ describe('deadline plumbing wiring (structural)', () => {
     expect(workerSrc).toContain('job.timeout_at.getTime() - Date.now()');
   });
 
-  test('autopilot-cycle AND global-maintenance handlers thread deadlineAtMs into runCycle', () => {
+  test('autopilot-cycle, global-maintenance AND phase-wrapper handlers thread deadlineAtMs into runCycle', () => {
     const matches = jobsSrc.match(/deadlineAtMs: job\.deadlineAtMs/g) ?? [];
-    expect(matches.length).toBe(2);
+    expect(matches.length).toBe(3);
   });
 
   test('runCycle forwards deadlineAtMs to the patterns phase', () => {
@@ -146,6 +146,12 @@ describe('deadline plumbing wiring (structural)', () => {
     expect(patternsSrc).toContain('timeoutMs: budgets.waitTimeoutMs');
     expect(patternsSrc).not.toContain('timeout_ms: config.subagentTimeoutMs');
     expect(patternsSrc).not.toContain('timeoutMs: config.subagentWaitTimeoutMs');
+  });
+
+  test('patterns cancels the child on wait timeout (child clock starts at ITS claim)', () => {
+    // A child that sat queued can outlive the parent deadline the wait was
+    // clamped to; the timeout path must strip it so it can't keep spending.
+    expect(patternsSrc).toContain('queue.cancelJob(job.id)');
   });
 
   test('patterns skips honestly when the remaining budget is too small', () => {

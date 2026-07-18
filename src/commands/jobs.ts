@@ -1964,6 +1964,7 @@ export async function registerBuiltinHandlers(
       brainDir: repoPath,
       phases: [phase as any],
       signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
     });
     return { phase, status: report.status, report };
   };
