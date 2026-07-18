@@ -57,6 +57,13 @@ beforeAll(async () => {
   ];
   for (const p of pages) {
     await engine.putPage(p.slug, p.page);
+    // putPage never chunks — searchKeyword joins content_chunks, so a
+    // page without explicit chunks is invisible to the keyword arm and
+    // every result-dependent assertion below runs against an empty set.
+    // (Pattern: test/chunk-grain-fts.test.ts.)
+    await engine.upsertChunks(p.slug, [
+      { chunk_index: 0, chunk_text: p.page.compiled_truth!, chunk_source: 'compiled_truth' },
+    ]);
   }
   // Force keyword-only fallback by unsetting the embedding provider key.
   delete process.env.OPENAI_API_KEY;
@@ -103,10 +110,10 @@ describe('hybridSearchCached \u2014 token budget', () => {
       limit: 10,
       onMeta: (m) => { meta = m; },
     });
-    // Don't assert non-empty here — keyword tokenization depends on the
-    // pglite analyzer config. What matters: meta is shaped right and
-    // budget metadata is absent when budget isn't set.
-    expect(results).toBeDefined();
+    // Non-empty matters: pre-fix the fixture had no chunks, so this ran
+    // against an empty result set and the absent-budget assertion was
+    // trivially true.
+    expect(results.length).toBeGreaterThan(0);
     expect(meta?.token_budget).toBeUndefined();
   });
 
@@ -117,19 +124,20 @@ describe('hybridSearchCached \u2014 token budget', () => {
       tokenBudget: 250,
       onMeta: (m) => { meta = m; },
     });
+    expect(results.length).toBeGreaterThan(0);
     expect(meta?.token_budget).toBeDefined();
     expect(meta?.token_budget?.budget).toBe(250);
     expect(meta?.token_budget?.kept).toBe(results.length);
   });
 
   test('tight budget cuts the result set', async () => {
-    // First find out the result count without a budget so the assertion
-    // is robust to the fixture’s actual chunking.
+    // All three fixture pages match 'builder', so the unbounded set MUST
+    // have enough rows for the cut to be observable. Pre-fix this was a
+    // silent `return` when fewer than 2 rows came back — and with no
+    // chunks in the fixture, zero rows ALWAYS came back, so the cut
+    // assertions below had never executed anywhere.
     const unbounded = await hybridSearchCached(engine, 'builder', { limit: 10 });
-    // Skip the cut test if the fixture happens to return only one row
-    // (keyword search may dedupe by page); the budget enforcement itself
-    // is exhaustively unit-tested in test/token-budget.test.ts.
-    if (unbounded.length < 2) return;
+    expect(unbounded.length).toBeGreaterThanOrEqual(2);
 
     let meta: HybridSearchMeta | undefined;
     const results = await hybridSearchCached(engine, 'builder', {
@@ -137,6 +145,8 @@ describe('hybridSearchCached \u2014 token budget', () => {
       tokenBudget: 250,  // enough for ~1 row of fixture data
       onMeta: (m) => { meta = m; },
     });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.length).toBeLessThan(unbounded.length);
     expect(meta?.token_budget?.budget).toBe(250);
     expect(meta?.token_budget?.kept).toBe(results.length);
     expect(meta?.token_budget?.dropped).toBeGreaterThan(0);

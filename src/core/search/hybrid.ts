@@ -1794,8 +1794,15 @@ export async function hybridSearchCached(
     ...(innerMeta?.embedding_column ? { embedding_column: innerMeta.embedding_column } : {}),
     ...(innerMeta?.adaptive_return ? { adaptive_return: innerMeta.adaptive_return } : {}),
     ...(innerMeta?.autocut ? { autocut: innerMeta.autocut } : {}),
+    // Per-call budget: prefer the INNER meta's budget record. The inner
+    // hybridSearch already enforced the same resolved budget (per-call wins
+    // in resolveSearchMode), so the re-application above sees an
+    // already-cut set and its meta reads dropped=0 — masking the real cut
+    // from onMeta consumers (the `dropped` under-report the restored
+    // search-lite test caught). The outer pass stays as the enforcement
+    // for the cache-HIT path, where no inner run exists.
     ...(opts?.tokenBudget && opts.tokenBudget > 0
-      ? { token_budget: budgetMeta }
+      ? { token_budget: innerMeta?.token_budget ?? budgetMeta }
       : {}),
   };
   try {
