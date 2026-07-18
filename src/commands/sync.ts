@@ -972,17 +972,55 @@ export function discoverGitRoot(inputPath: string): string {
  * gbrain.yml, or a semantic overlap) propagates — better to leave this
  * self-heal wedged with a clear error than commit unknown content.
  */
-function createSyncBaselineCommit(repoPath: string, engineKind?: 'pglite' | 'postgres'): void {
-  manageGitignore(repoPath, engineKind);
+function createSyncBaselineCommit(repoPath: string): void {
+  // #2964: db_only exclusion is computed directly from loadStorageConfig
+  // and passed to `git add` as pathspecs — deliberately NOT via
+  // manageGitignore/.gitignore, for two independent reasons:
+  //
+  // 1. Ordering (Codex review round 6, P1): `collectSyncableFiles` — the
+  //    file enumeration `performFullSync` runs right after this function
+  //    returns — honors `.gitignore` via `git ls-files --exclude-standard`.
+  //    Writing db_only entries into `.gitignore` BEFORE that first import
+  //    would silently exclude those pages from the database entirely.
+  //    That's the exact bug class `runSync`'s existing "manage .gitignore
+  //    ONLY on successful sync" ordering (this file, `manageGitignoreAtGitRoot`
+  //    callers below — itself a prior Codex P1 fix) exists to prevent. Leave
+  //    `.gitignore` untouched here; the existing post-sync flow writes it
+  //    once this sync completes, same as it does for every other sync.
+  // 2. Fail-closed (rounds 5-6): `manageGitignore`'s "warn and return" on a
+  //    broken gbrain.yml/unwritable .gitignore is the right default for its
+  //    OTHER callers (a side effect that must never kill the sync job), but
+  //    wrong for a commit we are creating ourselves — silently committing
+  //    db_only content into git history.
   const storageConfig = loadStorageConfig(repoPath);
-  // Only pathspec-exclude db_only dirs `.gitignore` did NOT already cover.
-  // A redundant negation pathspec for an already-ignored path makes git's
+  const dbOnlyDirs = storageConfig?.db_only ?? [];
+  // Sniff-test fail-closed (round 6, P2): `loadStorageConfig` warns-and-
+  // returns an EMPTY config for syntactically-valid-but-unsupported YAML
+  // (e.g. flow-style `db_only: [dir/]` — the narrow custom parser only
+  // handles block-style lists), which would silently resolve zero
+  // exclusions from a file that clearly intended some. If gbrain.yml
+  // exists and mentions db_only but nothing resolved from it, refuse
+  // rather than guess "genuinely empty" vs "unsupported syntax ignored".
+  if (dbOnlyDirs.length === 0) {
+    const yamlPath = join(repoPath, 'gbrain.yml');
+    if (existsSync(yamlPath) && readFileSync(yamlPath, 'utf-8').includes('db_only')) {
+      throw new Error(
+        `${yamlPath} mentions db_only but no directories resolved from it — refusing to ` +
+          `auto-commit (cannot tell "genuinely empty" from "unsupported syntax silently ignored"). ` +
+          `Fix gbrain.yml's storage.db_only syntax, or git-init this directory manually.`,
+      );
+    }
+  }
+  // Only pathspec-exclude db_only dirs `.gitignore` does NOT already
+  // cover (a pre-existing `.gitignore` from before this brain lost its
+  // `.git` is possible even though we never write one here ourselves). A
+  // redundant negation pathspec for an already-ignored path makes git's
   // `-A` bail with "paths ignored by .gitignore, use -f"
   // (advice.addIgnoredFile) even though the negation is semantically
   // correct and git would otherwise skip it silently. `check-ignore`
   // throwing (not ignored, or the check itself failed) defaults to
   // excluding explicitly — the fail-closed direction.
-  const excludePathspecs = (storageConfig?.db_only ?? [])
+  const excludePathspecs = dbOnlyDirs
     .filter((dir) => {
       try {
         git(repoPath, ['check-ignore', '-q', dir]);
@@ -992,6 +1030,15 @@ function createSyncBaselineCommit(repoPath: string, engineKind?: 'pglite' | 'pos
       }
     })
     .map((dir) => `:!${dir}`);
+  // Clear the index before staging (round 6, P1): the unborn-HEAD
+  // recovery site can reach this function with a repo whose index
+  // already has entries staged from some OTHER prior operation (a manual
+  // `git add`, an interrupted workflow) before gbrain ever touched it.
+  // `add -A` only adds/updates — it does not drop an already-staged path
+  // that our exclusion pathspecs above now want excluded. `read-tree
+  // --empty` resets the index without touching the working tree; a
+  // no-op on a freshly-`git init`-ed repo, whose index is already empty.
+  git(repoPath, ['read-tree', '--empty']);
   // #2964: 10 minutes, not the shared git() helper's 30s default — this
   // full-tree `git add -A` walks a legacy brain that may hold years of
   // accumulated content. A 30s timeout would abort staging after `git
@@ -1777,7 +1824,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
     serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
     git(repoPath, ['init', '--quiet']);
-    createSyncBaselineCommit(repoPath, engine.kind);
+    createSyncBaselineCommit(repoPath);
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
@@ -1926,7 +1973,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
     }
     serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
-    createSyncBaselineCommit(gitContextRoot, engine.kind);
+    createSyncBaselineCommit(gitContextRoot);
     headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
   }
 

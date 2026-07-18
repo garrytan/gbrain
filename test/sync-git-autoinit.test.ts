@@ -240,4 +240,68 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     const tracked = execSync('git ls-files', { cwd: dir }).toString();
     expect(tracked).not.toContain('private-cache');
   });
+
+  test('db_only markdown IS still imported into the DB on first sync (round 6 P1: ordering vs .gitignore)', async () => {
+    // If .gitignore had been written BEFORE the initial import (as an
+    // earlier version of this fix did via manageGitignore inside the
+    // self-heal), collectSyncableFiles's `git ls-files --exclude-standard`
+    // would have silently excluded this page from the database entirely
+    // — not just from git history, which is the only thing db_only is
+    // actually supposed to keep it out of.
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { mkdirSync } = await import('fs');
+    mkdirSync(join(dir, 'private-cache'));
+    writeFileSync(join(dir, 'private-cache', 'note.md'), mdPage('DB-only note'));
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - private-cache\n');
+
+    const result = await performSync(engine, { noPull: true, noEmbed: true, full: true });
+
+    expect(result.added).toBe(3); // page1, page2, private-cache/note
+    expect(await engine.getPage('private-cache/note')).not.toBeNull();
+  });
+
+  test('a gbrain.yml that mentions db_only but resolves no dirs refuses the baseline commit (round 6 P2: unsupported-syntax sniff test)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { execSync } = await import('child_process');
+    // Flow-style array — valid YAML, but the narrow custom parser only
+    // handles block-style lists, so loadStorageConfig warns and resolves
+    // an empty db_only list rather than throwing.
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only: [private-cache/]\n');
+
+    await expect(
+      performSync(engine, { noPull: true, noEmbed: true, full: true }),
+    ).rejects.toThrow(/db_only/i);
+    // `git init` (site 1's first step) already ran before the sniff-test
+    // guard (inside createSyncBaselineCommit) refused — that's fine, it's
+    // the same "unborn repo" state the round-6-P1 index-rebuild test above
+    // recovers from on a later retry, which would hit this same guard and
+    // refuse again until gbrain.yml is fixed. What must NOT happen is a
+    // commit landing with unknown/unexcluded content.
+    expect(existsSync(join(dir, '.git'))).toBe(true);
+    let hasCommit = true;
+    try {
+      execSync('git rev-parse HEAD', { cwd: dir, stdio: 'pipe' });
+    } catch {
+      hasCommit = false;
+    }
+    expect(hasCommit).toBe(false);
+  });
+
+  test('unborn-HEAD recovery drops stale staged content the exclusion pathspec now wants excluded (round 6 P1: index rebuild)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { mkdirSync } = await import('fs');
+    const { execSync } = await import('child_process');
+    mkdirSync(join(dir, 'private-cache'));
+    writeFileSync(join(dir, 'private-cache', 'secret.bin'), 'binary-ish content');
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - private-cache\n');
+    // Simulate an interrupted workflow that left this file staged in an
+    // unborn repo BEFORE gbrain's self-heal ever ran.
+    execSync('git init -q', { cwd: dir });
+    execSync('git add private-cache/secret.bin', { cwd: dir });
+
+    await performSync(engine, { noPull: true, noEmbed: true, full: true });
+
+    const tracked = execSync('git ls-files', { cwd: dir }).toString();
+    expect(tracked).not.toContain('private-cache');
+  });
 });
