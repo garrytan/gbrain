@@ -864,6 +864,35 @@ describe('addSource --path — #2707 git-repo validation', () => {
     expect(rows.length).toBe(0);
   });
 
+  test('rejects a git-initialized directory with zero commits (codex round 1)', async () => {
+    const unbornDir = join(SANDBOX, 'unborn');
+    mkdirSync(unbornDir, { recursive: true });
+    execFileSync('git', ['-C', unbornDir, 'init', '-q']);
+    // No `git add` / `git commit` — isInsideGitRepo alone would pass this.
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'unborn-src', localPath: unbornDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('quotes a path with a space in the remediation command (codex round 1)', async () => {
+    const spacedDir = join(SANDBOX, 'has space here');
+    mkdirSync(spacedDir, { recursive: true });
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'spaced-src', localPath: spacedDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw?.message).toContain(`'${spacedDir}'`);
+  });
+
   test('--force bypasses the check and registers the plain directory as-is', async () => {
     const plainDir = join(SANDBOX, 'plain-forced');
     mkdirSync(plainDir, { recursive: true });

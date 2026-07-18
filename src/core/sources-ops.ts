@@ -46,6 +46,7 @@ import {
   cloneRepo,
   validateRepoState,
   isInsideGitRepo,
+  hasGitCommits,
   RemoteUrlError,
   GitOperationError,
   type RepoState,
@@ -165,6 +166,20 @@ export interface RemoveSourceOpts {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * POSIX single-quote `arg` unless it's already shell-safe. #2707 codex round
+ * 1: the `not_a_git_repo` remediation error prints a pasteable `git ...`
+ * command built from the caller-supplied path — spaces, `$()`, backticks,
+ * etc. must be inert literals when pasted, which double-quoting would not
+ * guarantee (command substitution still runs inside "..."). Mirrors
+ * `src/commands/connect.ts:shellQuote` (not imported — that file is a
+ * commands/ caller of core/, not the other way around).
+ */
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_.:/@-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
 
 /**
  * Validate via the canonical regex from `source-id.ts` but rethrow as the
@@ -463,21 +478,26 @@ export async function addSource(
     // gating on existsSync keeps this a fail-fast check on the exact bug
     // report ("plain directory accepted, sync fails later") rather than a
     // broader "does this path exist" check nobody asked for.
+    //
+    // Both isInsideGitRepo AND hasGitCommits must hold: a `git init`ed-but-
+    // never-committed directory passes the first check yet still can't sync
+    // (codex round 1 finding — sync.ts throws "No commits in repo ...").
     if (
       opts.localPath &&
       !opts.force &&
       existsSync(opts.localPath) &&
-      !isInsideGitRepo(opts.localPath)
+      (!isInsideGitRepo(opts.localPath) || !hasGitCommits(opts.localPath))
     ) {
+      const q = shellQuote(opts.localPath);
       throw new SourceOpError(
         'not_a_git_repo',
-        `"${opts.localPath}" is not a git repository (or a subdirectory of one). ` +
-          `GBrain sync requires every --path source to be git-initialized, with the ` +
-          `files actually committed (an empty commit is not enough — the walker reads ` +
-          `through git objects, so untracked files stay invisible). Fix: ` +
-          `\`git -C ${opts.localPath} init && git -C ${opts.localPath} add -A && ` +
-          `git -C ${opts.localPath} commit -m "initial import"\`, then re-run this ` +
-          `command. To register anyway and git-init later, pass --force.`,
+        `"${opts.localPath}" is not a git repository with at least one commit ` +
+          `(or a subdirectory of one). GBrain sync requires every --path source to ` +
+          `be git-initialized, with the files actually committed (an empty commit is ` +
+          `not enough — the walker reads through git objects, so untracked files stay ` +
+          `invisible). Fix: \`git -C ${q} init && git -C ${q} add -A && git -C ${q} ` +
+          `commit -m "initial import"\`, then re-run this command. To register ` +
+          `anyway and git-init later, pass --force.`,
       );
     }
     const config: Record<string, unknown> = {};

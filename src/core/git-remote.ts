@@ -325,6 +325,28 @@ export function isInsideGitRepo(path: string): boolean {
   }
 }
 
+/**
+ * True if `path` has at least one commit reachable from HEAD, per
+ * `git rev-parse HEAD`. A directory that's `git init`ed but never committed
+ * passes `isInsideGitRepo` yet still can't sync — `sync.ts` throws
+ * "No commits in repo ... Make at least one commit before syncing." Checking
+ * this too at `addSource` registration time (#2707 codex round 1) turns that
+ * later, easy-to-miss sync failure into an immediate one, matching the error
+ * copy's existing "files actually committed" claim.
+ */
+export function hasGitCommits(path: string): boolean {
+  try {
+    execFileSync('git', ['-C', path, 'rev-parse', 'HEAD'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10_000,
+      env: { ...process.env, ...GIT_ENV },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Durability helpers (v0.42.44) ───────────────────────────────────────────
 // Used by the brain-repo durability feature (`gbrain sources harden/pull`) and
 // the DB-free pull cron. These are the auth-capable, rebase-aware counterparts
