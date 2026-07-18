@@ -1874,6 +1874,20 @@ describe('MinionQueue: v0.19.1 maxWaiting — cap correctness + race (D2/H2)', (
     expect(b.queue).toBe('shell');
   });
 
+  test('cross-source isolation — waiting sync for source A does NOT swallow source B (multi-source regression)', async () => {
+    // Regression: the cap counted all waiting (name, queue) rows regardless
+    // of data.sourceId, so a waiting default-source sync coalesced away every
+    // other source's freshness sync — a secondary source sat 29h stale while
+    // dispatch logs showed its syncs "dispatched".
+    const a = await queue.add('srcsync', { sourceId: 'default' }, { maxWaiting: 1 });
+    const a2 = await queue.add('srcsync', { sourceId: 'default' }, { maxWaiting: 1 });
+    expect(a2.id).toBe(a.id); // same source still coalesces
+    const b = await queue.add('srcsync', { sourceId: 'projects' }, { maxWaiting: 1 });
+    expect(b.id).not.toBe(a.id); // different source MUST get its own row
+    const b2 = await queue.add('srcsync', { sourceId: 'projects' }, { maxWaiting: 1 });
+    expect(b2.id).toBe(b.id); // and its own cap
+  });
+
   test('unset maxWaiting — normal submit path, no coalesce, no cap', async () => {
     const a = await queue.add('uncapped', {});
     const b = await queue.add('uncapped', {});

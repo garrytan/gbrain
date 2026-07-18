@@ -163,24 +163,36 @@ export class MinionQueue {
       if (opts?.maxWaiting !== undefined) {
         const maxWaiting = Math.max(1, Math.floor(opts.maxWaiting));
         const backpressureQueue = opts?.queue ?? 'default';
+        // Multi-source scope: jobs of the same (name, queue) but different
+        // data.sourceId are independent workstreams (per-source sync/cycle).
+        // Counting them together made a waiting default-source sync swallow
+        // every other source's freshness sync — a secondary source sat 29h stale
+        // while dispatch logs showed its syncs "dispatched" (coalesced into
+        // the default row). Key the lock and the count on sourceId when the
+        // submission carries one; NULL keeps legacy single-scope behavior.
+        const bpSourceId = typeof (data as Record<string, unknown> | undefined)?.sourceId === 'string'
+          ? (data as Record<string, unknown>).sourceId as string
+          : null;
         await tx.executeRaw(
-          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2))`,
-          [jobName, backpressureQueue]
+          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2 || ':' || coalesce($3, '')))`,
+          [jobName, backpressureQueue, bpSourceId]
         );
         const waitingCountRows = await tx.executeRaw<{ count: string }>(
           `SELECT count(*)::text AS count
            FROM minion_jobs
-           WHERE name = $1 AND queue = $2 AND status = 'waiting'`,
-          [jobName, backpressureQueue]
+           WHERE name = $1 AND queue = $2 AND status = 'waiting'
+             AND ($3::text IS NULL OR data->>'sourceId' IS NOT DISTINCT FROM $3)`,
+          [jobName, backpressureQueue, bpSourceId]
         );
         const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
         if (waitingCount >= maxWaiting) {
           const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
             `SELECT * FROM minion_jobs
              WHERE name = $1 AND queue = $2 AND status = 'waiting'
+               AND ($3::text IS NULL OR data->>'sourceId' IS NOT DISTINCT FROM $3)
              ORDER BY created_at DESC, id DESC
              LIMIT 1`,
-            [jobName, backpressureQueue]
+            [jobName, backpressureQueue, bpSourceId]
           );
           if (existingWaiting.length > 0) {
             const coalesced = rowToMinionJob(existingWaiting[0]);
