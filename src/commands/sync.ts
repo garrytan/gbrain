@@ -958,10 +958,41 @@ export function discoverGitRoot(inputPath: string): string {
  * headless nightly cron/launchd invocation, which has no reason to have
  * git signing/identity configured, and must not block on an unavailable
  * signing agent or pinentry prompt.
+ *
+ * db_only exclusion is recomputed directly and passed to `git add` as
+ * negative pathspecs, rather than relying solely on `manageGitignore`
+ * having written `.gitignore` successfully: that helper is deliberately
+ * best-effort (a broken gbrain.yml parse, or an unwritable .gitignore,
+ * only warns and returns — the right default for its OTHER callers, where
+ * .gitignore management is a side effect that must never kill the sync
+ * job). For a commit we are about to create ourselves, "fail open" there
+ * would mean silently committing db_only content into git history. Fail
+ * closed instead: db_only exclusion doesn't depend on the .gitignore
+ * write having succeeded. `loadStorageConfig` throwing (unreadable
+ * gbrain.yml, or a semantic overlap) propagates — better to leave this
+ * self-heal wedged with a clear error than commit unknown content.
  */
 function createSyncBaselineCommit(repoPath: string, engineKind?: 'pglite' | 'postgres'): void {
   manageGitignore(repoPath, engineKind);
-  git(repoPath, ['add', '-A']);
+  const storageConfig = loadStorageConfig(repoPath);
+  // Only pathspec-exclude db_only dirs `.gitignore` did NOT already cover.
+  // A redundant negation pathspec for an already-ignored path makes git's
+  // `-A` bail with "paths ignored by .gitignore, use -f"
+  // (advice.addIgnoredFile) even though the negation is semantically
+  // correct and git would otherwise skip it silently. `check-ignore`
+  // throwing (not ignored, or the check itself failed) defaults to
+  // excluding explicitly — the fail-closed direction.
+  const excludePathspecs = (storageConfig?.db_only ?? [])
+    .filter((dir) => {
+      try {
+        git(repoPath, ['check-ignore', '-q', dir]);
+        return false;
+      } catch {
+        return true;
+      }
+    })
+    .map((dir) => `:!${dir}`);
+  git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs]);
   git(
     repoPath,
     ['commit', '--quiet', '--allow-empty', '--no-gpg-sign', '-m', 'gbrain: initial commit (auto-init by sync)'],
@@ -1033,6 +1064,38 @@ async function readSyncAnchor(
     return rows[0]?.value ?? null;
   }
   return await engine.getConfig(`sync.${which}`);
+}
+
+/**
+ * #2964: is `repoPath` gbrain's own legacy default anchor, as opposed to a
+ * path some caller merely happened to pass through unchanged?
+ *
+ * `!opts.sourceId` alone is NOT sufficient: `runPhaseSync` (dream cycle)
+ * and `submit_job({name:'sync', data:{repoPath}})` (MCP, jobs.ts) both
+ * reach `performSyncInner` with `sourceId` undefined AND `opts.repoPath`
+ * set explicitly — the former legitimately (it already resolved the
+ * anchor itself and is passing it through), the latter potentially with
+ * an attacker-controlled path. The two are indistinguishable from
+ * `opts.repoPath`'s mere presence/absence, so ownership has to be proven
+ * by VALUE: read the anchor fresh from config and require the resolved
+ * `repoPath` to equal it exactly. An arbitrary caller-supplied path only
+ * passes this check if it happens to already equal gbrain's own anchor —
+ * at which point self-healing it is exactly the legitimate case.
+ *
+ * `opts.srcSubpath` disqualifies unconditionally: a subpath-scoped sync
+ * only wants THAT subdirectory captured, but the self-heal baseline
+ * commit runs `git add -A` at the git root (there's no file list yet to
+ * scope it to — collection happens after this point) — see the P2 review
+ * finding on `createSyncBaselineCommit`'s callers.
+ */
+async function isAnchorOwnedSyncPath(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  repoPath: string,
+): Promise<boolean> {
+  if (opts.sourceId || opts.srcSubpath) return false;
+  const anchor = await readSyncAnchor(engine, undefined, 'repo_path');
+  return anchor !== null && anchor === repoPath;
 }
 
 async function writeSyncAnchor(
@@ -1654,30 +1717,23 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //   - syncScopeRoot:  file walking, imports, deletes, renames
   // In the common case (repoPath == git root, no subpath) they are identical.
   serr(`[gbrain phase] sync.discover_git_root`);
-  // #2964: a legacy `sync.repo_path`-anchored default brain (no `sources`
-  // row, no `opts.sourceId`, no caller-supplied `opts.repoPath`) can reach
-  // here having never been `git init`-ed — e.g. a brain-pages dir that
-  // predates git-backed sync, or one rsync'd from another machine without
-  // its `.git`. gbrain owns THAT directory outright (it's the one path
-  // resolved from gbrain's own persisted anchor, not a caller-named one),
-  // so self-heal by initializing it in place instead of failing the sync
-  // phase every single run. Mirrors the recloneIfMissing self-recovery
-  // above for owned remote clones.
-  //
-  // Ownership gate — `!opts.repoPath` is the load-bearing check, not just
-  // `!opts.sourceId`: `submit_job({name:'sync', data:{repoPath}})` reaches
-  // performSyncInner with sourceId undefined whenever the given path
-  // doesn't match a registered source's local_path (jobs.ts), so an
-  // admin-scope MCP caller could otherwise point this at an arbitrary
-  // directory and have it silently git-init + commit + ingest it. Only the
-  // anchor-resolved default path (`repoPath = opts.repoPath || anchor`,
-  // taking the anchor branch) is something gbrain chose for itself.
-  // `!opts.dryRun`: a dry-run preview must never write to disk.
+  // #2964: a legacy `sync.repo_path`-anchored default brain can reach here
+  // having never been `git init`-ed — e.g. a brain-pages dir that predates
+  // git-backed sync, or one rsync'd from another machine without its
+  // `.git`. gbrain owns that directory outright, so self-heal by
+  // initializing it in place instead of failing the sync phase every
+  // single run. Mirrors the recloneIfMissing self-recovery above for
+  // owned remote clones. Ownership is proven by VALUE (resolved repoPath
+  // equals gbrain's persisted anchor) via `isAnchorOwnedSyncPath`, not by
+  // the mere absence of `opts.sourceId`/`opts.repoPath` — see that
+  // function's docstring. `!opts.dryRun`: a preview must never write.
   let gitContextRoot: string;
   try {
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   } catch (err) {
-    if (opts.sourceId || opts.repoPath || opts.dryRun || !existsSync(repoPath)) throw err;
+    if (opts.dryRun || !existsSync(repoPath) || !(await isAnchorOwnedSyncPath(engine, opts, repoPath))) {
+      throw err;
+    }
     serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
     git(repoPath, ['init', '--quiet']);
     createSyncBaselineCommit(repoPath, engine.kind);
@@ -1813,17 +1869,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // this brain permanently wedged on "No commits in repo" every night
     // thereafter. Finish the same baseline-commit self-heal the
     // discoverGitRoot catch above would have done, gated the same way
-    // (gbrain-owned default brain only, never on a dry-run preview) PLUS a
-    // scope check: `discoverGitRoot` walks UP from `repoPath`, so for a
-    // `--src-subpath`/subdir-as-repoPath sync it can resolve to an ANCESTOR
-    // repo, not `repoPath` itself. Committing there (`git add -A` at
-    // gitContextRoot) would capture sibling files well outside the sync
-    // scope — refuse instead of guessing.
+    // (ownership proven by value, never on a dry-run preview) PLUS a scope
+    // check: `discoverGitRoot` walks UP from `repoPath`, so it can resolve
+    // to an ANCESTOR repo, not `repoPath` itself (most plausible for a
+    // `--src-subpath` sync, but `isAnchorOwnedSyncPath` already refuses
+    // that case — kept here too as defense in depth against any other path
+    // where gitContextRoot could diverge from repoPath). Committing at an
+    // ancestor (`git add -A` at gitContextRoot) would capture sibling
+    // files well outside the sync scope — refuse instead of guessing.
     if (
-      opts.sourceId ||
-      opts.repoPath ||
       opts.dryRun ||
-      gitContextRoot !== realpathSync(repoPath)
+      gitContextRoot !== realpathSync(repoPath) ||
+      !(await isAnchorOwnedSyncPath(engine, opts, repoPath))
     ) {
       throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
     }
