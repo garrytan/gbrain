@@ -1170,8 +1170,16 @@ async function runAutoLink(
   // v0.31.8 (D12): scoped to the source when opts.sourceId is set so wikilink
   // resolution doesn't span unrelated sources.
   const allSlugs = await engine.getAllSlugs(sourceOpts);
+  // Issue #1493 (codex P1): put_page auto-link writes are single-source
+  // (linkSourceOpts pins from/to to the page's own source), so a qualified
+  // wikilink pinned to a DIFFERENT source cannot be honored here — skip it
+  // rather than misdirect the edge to a same-slug page in this source.
+  // Cross-source pinned edges are the extract paths' job
+  // (resolveCandidateSources honors targetSourceId).
+  const effectiveSourceId = opts?.sourceId ?? 'default';
   const valid = candidates.filter(c =>
-    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug))
+    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug)) &&
+    (!c.targetSourceId || c.targetSourceId === effectiveSourceId)
   );
 
   // Split candidates by direction. Outgoing (fromSlug === slug or unset) are

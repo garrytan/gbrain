@@ -538,6 +538,18 @@ export interface LinkCandidate {
   originSlug?: string;
   /** Frontmatter field name (e.g. 'key_people'), for debug + unresolved report. */
   originField?: string;
+  /**
+   * Issue #1493 (codex P1): source pin from a qualified wikilink
+   * `[[source-id:slug]]`, threaded from EntityRef.sourceId. Callers doing
+   * cross-source resolution (resolveCandidateSources) must honor it — the
+   * target must exist in THIS source — instead of applying the
+   * local-first/default fallback used by unqualified refs. Absent =
+   * unqualified. Pre-#1493 the pin was dropped at this layer for EVERY
+   * qualified wikilink (whitelisted dirs included), so `[[b:slug]]`
+   * written in source `a` either linked to a same-slug page in `a`/default
+   * (misdirected) or vanished; now the pinned source wins.
+   */
+  targetSourceId?: string;
 }
 
 /**
@@ -658,6 +670,10 @@ export async function extractPageLinks(
       linkType: inferLinkType(pageType, context, content, ref.slug),
       context,
       linkSource: 'markdown',
+      // Issue #1493 (codex P1): carry the qualified-wikilink source pin
+      // ([[src:slug]] → EntityRef.sourceId) so resolveCandidateSources can
+      // honor it. Applies to whitelisted AND any-dir qualified refs alike.
+      ...(ref.sourceId ? { targetSourceId: ref.sourceId } : {}),
     });
   }
 
@@ -672,8 +688,14 @@ export async function extractPageLinks(
   let m: RegExpExecArray | null;
   while ((m = bareRe.exec(strippedContent)) !== null) {
     // Skip matches that are part of a markdown link (already handled above).
+    // Issue #1493 (codex P1): also skip a slug immediately preceded by `:` —
+    // that's the tail of a qualified wikilink `[[src:people/alice]]`, which
+    // pass 2a/2a' already emitted WITH its source pin. Pre-#1493 this
+    // duplicate was absorbed by the within-page dedup; now the pin is part
+    // of the dedup key, so the unpinned duplicate must not be born at all
+    // (it would persist a second, unpinned edge beside the pinned one).
     const charBefore = m.index > 0 ? strippedContent[m.index - 1] : '';
-    if (charBefore === '/' || charBefore === '(') continue;
+    if (charBefore === '/' || charBefore === '(' || charBefore === ':') continue;
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
@@ -709,7 +731,10 @@ export async function extractPageLinks(
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {
-    const key = `${c.fromSlug ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}`;
+    // Issue #1493 (codex P1): targetSourceId participates in the key — a
+    // pinned `[[b:slug]]` and an unqualified `[[slug]]` can resolve to
+    // different (to_slug, to_source_id) rows, so they must not collapse.
+    const key = `${c.fromSlug ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}\u0000${c.targetSourceId ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(c);
@@ -1090,6 +1115,31 @@ export function makeResolver(
     return basenameIndex;
   }
 
+  // Issue #1493 (codex P1): slugExists domain = scoped source ∪ 'default'.
+  // resolveCandidateSources resolves an unqualified target local-first,
+  // THEN falls back to the default source — so a source-scoped extract of
+  // source `a` must not pre-discard a candidate whose target lives only in
+  // `default` (whitelisted refs bypass slugExists and survive to that
+  // fallback; any-dir refs must survive the SAME resolution domain). The
+  // basename index deliberately stays scoped (#972 [P1]: no cross-source
+  // basename edges) — only exact-match existence gets the default overlay.
+  let slugExistsDomain: Set<string> | null = null;
+  async function ensureSlugExistsDomain(): Promise<Set<string>> {
+    if (slugExistsDomain !== null) return slugExistsDomain;
+    const scoped = await ensureAllSlugsSet();
+    if (!opts.sourceId || opts.sourceId === 'default' || typeof engine.getAllSlugs !== 'function') {
+      slugExistsDomain = scoped;
+      return slugExistsDomain;
+    }
+    try {
+      const def = await engine.getAllSlugs({ sourceId: 'default' });
+      slugExistsDomain = new Set([...scoped, ...def]);
+    } catch {
+      slugExistsDomain = scoped;
+    }
+    return slugExistsDomain;
+  }
+
   return {
     async resolveBasenameMatches(name: string): Promise<string[]> {
       // Issue #972 (codex [P2] DRY): shared query so resolver + FS + doctor
@@ -1099,9 +1149,10 @@ export function makeResolver(
 
     async slugExists(slug: string): Promise<boolean> {
       // Issue #1493: exact-match existence for path-shaped wikilink targets.
-      // Same source-scoped snapshot as the basename index; no fuzzing.
+      // Scoped-source snapshot plus the default-source fallback overlay
+      // (mirrors resolveCandidateSources' resolution domain); no fuzzing.
       if (!slug || typeof slug !== 'string') return false;
-      return (await ensureAllSlugsSet()).has(slug);
+      return (await ensureSlugExistsDomain()).has(slug);
     },
 
     async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {

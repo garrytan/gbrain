@@ -4,8 +4,10 @@ import {
   extractPageLinks,
   isAnyDirExactPathEnabled,
   makeResolver,
+  type LinkCandidate,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
+import { resolveCandidateSources } from '../src/commands/extract.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -405,5 +407,162 @@ describe('isAnyDirExactPathEnabled', () => {
     } finally {
       delete process.env.GBRAIN_LINK_RESOLUTION_ANY_DIR_EXACT_PATH;
     }
+  });
+});
+
+// ─── Issue #1493 codex P1: qualified source pin threading ──────────
+
+describe('extractPageLinks — qualified wikilink source pin (codex P1)', () => {
+  test('qualified any-dir ref carries targetSourceId on the candidate', async () => {
+    const resolver = makeExistsResolver([]);
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[beta:janus/foo]].',
+      {}, 'concept', resolver,
+    );
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].targetSlug).toBe('janus/foo');
+    expect(candidates[0].targetSourceId).toBe('beta');
+  });
+
+  test('qualified WHITELIST ref carries targetSourceId identically', async () => {
+    const resolver = makeExistsResolver([]);
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[beta:people/alice]].',
+      {}, 'concept', resolver,
+    );
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].targetSlug).toBe('people/alice');
+    expect(candidates[0].targetSourceId).toBe('beta');
+  });
+
+  test('unqualified refs carry NO targetSourceId', async () => {
+    const resolver = makeExistsResolver(['janus/foo']);
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[janus/foo]] and [[people/alice]].',
+      {}, 'concept', resolver,
+    );
+    for (const c of candidates) {
+      expect(c.targetSourceId).toBeUndefined();
+    }
+  });
+
+  test('pinned + unpinned refs to the same target do NOT dedup-collapse', async () => {
+    // [[beta:janus/foo]] and [[janus/foo]] resolve to different
+    // (to_slug, to_source_id) rows — both candidates must survive.
+    const resolver = makeExistsResolver(['janus/foo']);
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'Pinned [[beta:janus/foo]] and local [[janus/foo]].',
+      {}, 'concept', resolver,
+    );
+    const toFoo = candidates.filter(c => c.targetSlug === 'janus/foo');
+    expect(toFoo.length).toBe(2);
+    expect(new Set(toFoo.map(c => c.targetSourceId))).toEqual(new Set(['beta', undefined]));
+  });
+});
+
+describe('resolveCandidateSources — honors the qualified source pin (codex P1)', () => {
+  const mk = (over: Partial<LinkCandidate> = {}): LinkCandidate => ({
+    targetSlug: 'janus/foo', linkType: 'mentions', context: 'ctx', linkSource: 'markdown', ...over,
+  });
+
+  test('pinned candidate resolves to the pinned source', () => {
+    const r = resolveCandidateSources(
+      mk({ targetSourceId: 'beta' }), 'concepts/x', 'alpha',
+      new Set(['concepts/x', 'janus/foo']),
+      new Map([['concepts/x', ['alpha']], ['janus/foo', ['beta']]]),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.toSourceId).toBe('beta');
+    expect(r!.fromSourceId).toBe('alpha');
+  });
+
+  test('pin miss returns null even when origin/default HAS a same-slug page (no misdirection)', () => {
+    const r = resolveCandidateSources(
+      mk({ targetSourceId: 'beta' }), 'concepts/x', 'alpha',
+      new Set(['concepts/x', 'janus/foo']),
+      // Target exists in origin source AND default — but NOT in beta.
+      new Map([['concepts/x', ['alpha']], ['janus/foo', ['alpha', 'default']]]),
+    );
+    expect(r).toBeNull();
+  });
+
+  test('unpinned candidate keeps the local-first → default fallback', () => {
+    const local = resolveCandidateSources(
+      mk(), 'concepts/x', 'alpha',
+      new Set(['concepts/x', 'janus/foo']),
+      new Map([['concepts/x', ['alpha']], ['janus/foo', ['alpha']]]),
+    );
+    expect(local!.toSourceId).toBe('alpha');
+    const viaDefault = resolveCandidateSources(
+      mk(), 'concepts/x', 'alpha',
+      new Set(['concepts/x', 'janus/foo']),
+      new Map([['concepts/x', ['alpha']], ['janus/foo', ['default']]]),
+    );
+    expect(viaDefault!.toSourceId).toBe('default');
+  });
+});
+
+// ─── Issue #1493 codex P1: scoped slugExists includes default fallback ─
+
+describe('makeResolver — slugExists default-source fallback domain (codex P1)', () => {
+  function makeMultiSourceEngine(bySource: Record<string, string[]>): BrainEngine {
+    const calls: Array<string | undefined> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs(opts?: { sourceId?: string }) {
+        calls.push(opts?.sourceId);
+        const sid = opts?.sourceId;
+        return new Set(sid ? (bySource[sid] ?? []) : Object.values(bySource).flat());
+      },
+    } as unknown as BrainEngine;
+    (engine as any)._calls = () => calls;
+    return engine;
+  }
+
+  test('scoped resolver sees default-source slugs (mirrors resolveCandidateSources fallback)', async () => {
+    const engine = makeMultiSourceEngine({
+      'src-a': ['janus/local'],
+      'default': ['janus/shared-doc'],
+      'src-b': ['janus/foreign'],
+    });
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    expect(await r.slugExists!('janus/local')).toBe(true);       // scoped source
+    expect(await r.slugExists!('janus/shared-doc')).toBe(true);  // default fallback
+    expect(await r.slugExists!('janus/foreign')).toBe(false);    // other source: NOT in domain
+  });
+
+  test('basename index stays source-scoped (#972 P1 preserved — no default overlay)', async () => {
+    const engine = makeMultiSourceEngine({
+      'src-a': ['janus/local'],
+      'default': ['projects/shared-doc'],
+    });
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    // Basename lookup must NOT see the default source's pages.
+    expect(await r.resolveBasenameMatches!('shared-doc')).toEqual([]);
+    expect(await r.resolveBasenameMatches!('local')).toEqual(['janus/local']);
+  });
+
+  test('unscoped and default-scoped resolvers do not double-fetch', async () => {
+    const unscoped = makeMultiSourceEngine({ 'default': ['janus/foo'] });
+    const r1 = makeResolver(unscoped, { mode: 'batch' });
+    await r1.slugExists!('janus/foo');
+    await r1.slugExists!('janus/foo');
+    expect((unscoped as any)._calls()).toEqual([undefined]);
+
+    const defScoped = makeMultiSourceEngine({ 'default': ['janus/foo'] });
+    const r2 = makeResolver(defScoped, { mode: 'batch', sourceId: 'default' });
+    await r2.slugExists!('janus/foo');
+    expect((defScoped as any)._calls()).toEqual(['default']);
+  });
+
+  test('scoped resolver fetches exactly scoped + default snapshots', async () => {
+    const engine = makeMultiSourceEngine({ 'src-a': [], 'default': ['janus/foo'] });
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    await r.slugExists!('janus/foo');
+    await r.slugExists!('janus/foo');
+    await r.resolveBasenameMatches!('foo');
+    expect((engine as any)._calls().sort()).toEqual(['default', 'src-a']);
   });
 });

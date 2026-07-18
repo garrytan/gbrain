@@ -290,3 +290,71 @@ describe('gbrain extract --stale', () => {
     expect(msg).toContain('DB-source only');
   });
 });
+
+// ─── Issue #1493 (codex P2): any-dir links + unresolved surfacing ────
+
+describe('extract --stale: any-dir exact-path wikilinks (#1493)', () => {
+  test('creates the edge for an existing any-dir target', async () => {
+    await engine.putPage('janus/real', { type: 'concept', title: 'Real', compiled_truth: 'The target.', timeline: '' });
+    await engine.putPage('concepts/note', { type: 'concept', title: 'Note', compiled_truth: 'See [[janus/real]].', timeline: '' });
+
+    await runExtract(engine, ['--stale']);
+
+    const links = await engine.getLinks('concepts/note');
+    expect(links.some(l => l.to_slug === 'janus/real')).toBe(true);
+  });
+
+  test('misses are surfaced in the --json sweep summary, not silently dropped', async () => {
+    await engine.putPage('concepts/note', {
+      type: 'concept', title: 'Note',
+      compiled_truth: 'See [[janus/never-existed]] and [[janus/also-gone]].', timeline: '',
+    });
+
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as any;
+    try {
+      await runExtract(engine, ['--stale', '--json']);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const done = lines
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l.trim()))
+      .find(o => o.action === 'extract_stale_done');
+    expect(done).toBeDefined();
+    expect(done.unresolved_count).toBe(2);
+    expect(done.unresolved_refs).toContainEqual({ field: 'wikilink', name: 'janus/never-existed' });
+    expect(done.unresolved_refs).toContainEqual({ field: 'wikilink', name: 'janus/also-gone' });
+    // And no ghost edges were written.
+    expect((await engine.getLinks('concepts/note')).length).toBe(0);
+  });
+
+  test('clean sweep reports unresolved_count 0 with no unresolved_refs key', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as any;
+    try {
+      await runExtract(engine, ['--stale', '--json']);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const done = lines
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l.trim()))
+      .find(o => o.action === 'extract_stale_done');
+    expect(done).toBeDefined();
+    expect(done.unresolved_count).toBe(0);
+    expect(done.unresolved_refs).toBeUndefined();
+  });
+});
