@@ -12,7 +12,7 @@ All notable changes to GBrain will be documented in this file.
 - **Search results expose exact email provenance.** `SearchResult` can include `message_id`, `thread_id`, and `source_subject`, projected consistently by PGLite and Postgres keyword, vector, chunk, relational, alias, and two-pass paths. Subjects are emitted only when a non-blank Message-ID establishes email identity; page titles and generated summaries are never promoted into source metadata.
 
 #### Security
-- **Auxiliary retrieval preserves scope and visibility.** Near-symbol lookup, unresolved-symbol resolution, direct chunk-edge traversal, hydration, relational fanout, and alias injection enforce `sourceId` or `sourceIds` and exclude deleted, archived-source, and quarantined pages; destination checks fail closed if verification fails.
+- **Auxiliary retrieval preserves scope and visibility.** Near-symbol lookup, unresolved-symbol resolution, direct chunk-edge traversal, hydration, relational fanout, alias injection, and semantic-cache hits enforce `sourceId` or `sourceIds` and exclude deleted, archived-source, and quarantined pages; destination checks fail closed if verification fails. Cache visibility is rechecked independently of page-generation freshness, so archiving a source takes effect immediately rather than waiting for TTL expiry.
 - **Malformed or forged frontmatter cannot become trusted citation metadata.** JSON numbers, booleans, arrays, and objects are rejected instead of being stringified by JSONB extraction. Raw frontmatter always ignores the internal `source_subject` projection alias and accepts only the allowlisted `subject` field.
 
 #### Internal

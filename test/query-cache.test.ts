@@ -195,8 +195,8 @@ describe('SemanticQueryCache \u2014 TTL', () => {
   });
 });
 
-describe('SemanticQueryCache \u2014 source isolation', () => {
-  test('different source_id cannot read each other\u2019s rows', async () => {
+describe('SemanticQueryCache — source isolation', () => {
+  test('different source_id cannot read each other’s rows', async () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(7);
     await cache.store('q', emb, [makeResult('a')], META, { sourceId: 'src-A' });
@@ -204,6 +204,40 @@ describe('SemanticQueryCache \u2014 source isolation', () => {
     expect(hitB.hit).toBe(false);
     const hitA = await cache.lookup(emb, { sourceId: 'src-A' });
     expect(hitA.hit).toBe(true);
+  });
+
+  test('archiving a source invalidates its cached result without a page write', async () => {
+    const sourceId = 'cache-archive-src';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived)
+       VALUES ($1, $1, false)
+       ON CONFLICT (id) DO UPDATE SET archived = false`,
+      [sourceId],
+    );
+    const page = await engine.putPage(
+      'cache/archive-visibility',
+      {
+        type: 'note',
+        title: 'Archive visibility',
+        compiled_truth: 'archive visibility cache canary',
+        timeline: '',
+        frontmatter: {},
+      },
+      { sourceId },
+    );
+    const result = { ...makeResult(page.slug), page_id: page.id, source_id: sourceId };
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(71);
+
+    await cache.store('archive visibility', emb, [result], META, { sourceId });
+    expect((await cache.lookup(emb, { sourceId })).hit).toBe(true);
+
+    await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = $1`, [sourceId]);
+    try {
+      expect((await cache.lookup(emb, { sourceId })).hit).toBe(false);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET archived = false WHERE id = $1`, [sourceId]);
+    }
   });
 });
 

@@ -51,6 +51,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { buildVisibilityClause } from './sql-ranking.ts';
 
 /**
  * Snapshot of (pageId, generation) pairs plus the corpus-state MAX
@@ -185,6 +186,21 @@ export const CACHE_GATE_WHERE_CLAUSE = `
         WHERE p.id IS NULL                              -- page deleted → invalidate
            OR p.generation <> ((g.stored_gen)::text)::bigint  -- bumped → invalidate
       )
+    )
+  )
+  AND NOT EXISTS (
+    -- Visibility is independent of freshness. Archiving a source does not
+    -- mutate its pages or advance the page-generation clock, so this check
+    -- MUST sit outside the Layer 1 / Layer 2 OR. Otherwise Layer 1 can serve
+    -- a fresh-but-now-hidden cached result until TTL expiry.
+    SELECT 1
+    FROM jsonb_each(qc.page_generations) AS visible(page_id, stored_gen)
+    LEFT JOIN pages p_visible ON p_visible.id = (visible.page_id)::int
+    LEFT JOIN sources s_visible ON s_visible.id = p_visible.source_id
+    WHERE NOT (
+      p_visible.id IS NOT NULL
+      AND s_visible.id IS NOT NULL
+      ${buildVisibilityClause('p_visible', 's_visible')}
     )
   )
 `;
