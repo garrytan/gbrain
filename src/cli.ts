@@ -998,6 +998,13 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
   //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
   'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
+  // scratch-DB audit: `config` get/set operate on the host brain's config
+  // plane (DB rows / host file-plane). On a thin client they fabricated an
+  // ephemeral local PGLite (full migration replay per call) and read/wrote
+  // config nobody would ever see. NOTE: `jobs` is deliberately NOT here —
+  // it gets a partial dispatch (list/get route over MCP engine-free, the
+  // rest refuse) in the main dispatch before connectEngine().
+  'config',
 ]);
 
 /**
@@ -1035,6 +1042,9 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
   'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
   'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
+  // scratch-DB audit additions
+  config: "config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set.",
+  jobs: '`jobs list` and `jobs get <id>` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job MCP tools from your agent, or run on the host with GBRAIN_HOME set.',
 };
 
 /**
@@ -1590,6 +1600,27 @@ async function handleCliOnly(command: string, args: string[]) {
       // A bad --hard-deadline value throws here (same posture as --timeout).
       console.error(e instanceof Error ? e.message : String(e));
       process.exit(1);
+    }
+  }
+
+  // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32
+  // routing branches in commands/jobs.ts) and never touch a local engine —
+  // but falling through to connectEngine() below fabricates an empty
+  // scratch PGLite in the thin-client GBRAIN_HOME and replays the entire
+  // migration chain on every invocation before the remote call even runs.
+  // Dispatch them engine-free here; every other jobs subcommand is
+  // host-queue-bound, so refuse with a pinpoint hint instead of building
+  // the scratch store.
+  if (command === 'jobs') {
+    const cfgJobs = loadConfig();
+    if (isThinClient(cfgJobs)) {
+      const jobsSub = args[0];
+      if (jobsSub === 'list' || jobsSub === 'get') {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(null, args);
+        return;
+      }
+      refuseThinClient('jobs', cfgJobs!.remote_mcp!.mcp_url);
     }
   }
 
