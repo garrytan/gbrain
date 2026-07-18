@@ -451,13 +451,21 @@ export async function runPhaseSynthesize(
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
 
+    // Set when the budget runs out anywhere past the pre-fanout gate. A
+    // budget-truncated run must NOT stamp last_completion_ts — the default
+    // 12h cooldown would contradict "next cycle retries with a fresh
+    // budget" and pin the skipped work for half a day.
+    let budgetExhausted = false;
+
     for (const t of worthProcessing) {
       // #2781: the submit loop itself is fast (DB inserts, no LLM), but the
-      // budget can still decay across a long worthProcessing list. Once it's
-      // gone, stop submitting — remaining transcripts re-attempt next cycle
-      // (idempotency keys make the partial fan-out safe to resume).
+      // budget can still decay across a long worthProcessing list. Below
+      // the start minimum, stop submitting — remaining transcripts
+      // re-attempt next cycle (idempotency keys make the partial fan-out
+      // safe to resume).
       const remainingMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
-      if (remainingMs !== null && remainingMs <= 0) {
+      if (remainingMs !== null && remainingMs < MIN_SUBAGENT_START_BUDGET_MS) {
+        budgetExhausted = true;
         skipReports.push({ filePath: t.filePath, reason: 'insufficient_cycle_budget' });
         continue;
       }
@@ -530,11 +538,18 @@ export async function runPhaseSynthesize(
         // at submit. The child's timeout_ms clock starts at ITS claim, so
         // this alone can't bound a child that sits queued — the wait loop's
         // cancel below closes that — but it bounds the common promptly-
-        // claimed case without waiting for the cancel path.
+        // claimed case without waiting for the cancel path. Below the
+        // start minimum, stop submitting this transcript's remaining
+        // chunks (per-chunk idempotency keys resume the rest next cycle).
         const remainingAtSubmitMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
+        if (remainingAtSubmitMs !== null && remainingAtSubmitMs < MIN_SUBAGENT_START_BUDGET_MS) {
+          budgetExhausted = true;
+          skipReports.push({ filePath: t.filePath, reason: 'insufficient_cycle_budget' });
+          break;
+        }
         const childTimeoutMs = remainingAtSubmitMs === null
           ? config.subagentTimeoutMs
-          : Math.max(1, Math.min(config.subagentTimeoutMs, remainingAtSubmitMs));
+          : Math.min(config.subagentTimeoutMs, remainingAtSubmitMs);
         const submitOpts: Partial<MinionJobInput> = {
           max_stalled: 3,
           on_child_fail: 'continue',
@@ -565,21 +580,13 @@ export async function runPhaseSynthesize(
     // THEIR claim, so an unwaited child could otherwise outlive the parent).
     // A child that already reached a terminal state on its own keeps its
     // real status — earlier siblings' waits gave it time to finish, and its
-    // pages still collect normally (cancelJob wouldn't touch a completed
-    // row anyway; the read is for honest reporting).
+    // pages still collect normally.
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
-    for (const jobId of childIds) {
+    let waitIdx = 0;
+    for (; waitIdx < childIds.length; waitIdx++) {
+      const jobId = childIds[waitIdx];
       const remainingWaitMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
-      if (remainingWaitMs !== null && remainingWaitMs <= 0) {
-        const current = await queue.getJob(jobId);
-        if (current && ['completed', 'failed', 'dead', 'cancelled'].includes(current.status)) {
-          childOutcomes.push({ jobId, status: current.status });
-        } else {
-          try { await queue.cancelJob(jobId); } catch { /* best-effort */ }
-          childOutcomes.push({ jobId, status: 'timeout' });
-        }
-        continue;
-      }
+      if (remainingWaitMs !== null && remainingWaitMs <= 0) break;
       const waitTimeoutMs = remainingWaitMs === null
         ? config.subagentWaitTimeoutMs
         : Math.min(config.subagentWaitTimeoutMs, remainingWaitMs);
@@ -602,6 +609,30 @@ export async function runPhaseSynthesize(
       // After each child terminal, give the cycle lock + worker job lock a chance.
       if (opts.yieldDuringPhase) {
         try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
+      }
+    }
+    // Budget ran out before every child was waited on: settle the rest
+    // without waiting. Cancel-first (one write per child): a non-null
+    // return means we cancelled it; null means it was already terminal —
+    // read its real status so a completed sibling isn't misreported as
+    // timeout. Deliberately sequential per-child rather than one bulk SQL:
+    // cancelJob carries per-job semantics (child_done emission, aggregator
+    // unblocking) a bulk UPDATE would skip, each call is a millisecond-
+    // scale write with NO waits, and realistic fan-outs (children ≤
+    // max_chunks × transcripts per cycle) settle well inside the reserve.
+    if (waitIdx < childIds.length) {
+      budgetExhausted = true;
+      for (; waitIdx < childIds.length; waitIdx++) {
+        const jobId = childIds[waitIdx];
+        let status = 'timeout';
+        try {
+          const cancelled = await queue.cancelJob(jobId);
+          if (cancelled === null) {
+            const current = await queue.getJob(jobId);
+            if (current) status = current.status;
+          }
+        } catch { /* best-effort */ }
+        childOutcomes.push({ jobId, status });
       }
     }
 
@@ -636,8 +667,13 @@ export async function runPhaseSynthesize(
       await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, cycleSourceId);
     }
 
-    // Write completion timestamp ON SUCCESS only.
-    await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+    // Write completion timestamp ON SUCCESS only — and NOT on a
+    // budget-truncated run: stamping would arm the cooldown (default 12h)
+    // over transcripts/children this run never gave a real chance,
+    // contradicting "next cycle retries with a fresh budget" (#2781).
+    if (!budgetExhausted) {
+      await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+    }
 
     const ms = Date.now() - start;
     const submittedTranscripts = worthProcessing.length - skipReports.length;

@@ -65,9 +65,9 @@ describe('synthesize deadline wiring (structural)', () => {
   });
 
   test('sequential wait loop recomputes the remaining budget EVERY iteration', () => {
-    // The recompute call must be INSIDE the `for (const jobId of childIds)`
-    // loop body — a single pre-loop computation is exactly the bug.
-    const loopIdx = synthSrc.indexOf('for (const jobId of childIds)');
+    // The recompute call must be INSIDE the wait-loop body — a single
+    // pre-loop computation is exactly the accumulation bug.
+    const loopIdx = synthSrc.indexOf('for (; waitIdx < childIds.length; waitIdx++)');
     expect(loopIdx).toBeGreaterThan(0);
     const loopSlice = synthSrc.slice(loopIdx, loopIdx + 800);
     expect(loopSlice).toContain('remainingChildBudgetMs(opts.deadlineAtMs, Date.now())');
@@ -75,17 +75,32 @@ describe('synthesize deadline wiring (structural)', () => {
     expect(synthSrc).not.toContain('timeoutMs: config.subagentWaitTimeoutMs');
   });
 
-  test('exhausted budget cancels un-terminal children but keeps real terminal statuses', () => {
-    const loopIdx = synthSrc.indexOf('for (const jobId of childIds)');
-    const loopSlice = synthSrc.slice(loopIdx, loopIdx + 1600);
-    expect(loopSlice).toContain('queue.getJob(jobId)');
-    expect(loopSlice).toContain('queue.cancelJob(jobId)');
+  test('exhausted budget settles remaining children: cancel-first, real status when already terminal', () => {
+    // Cancel returns null for an already-terminal row → refetch so a
+    // completed sibling isn't misreported as timeout.
+    expect(synthSrc).toContain('cancelled === null');
+    expect(synthSrc).toContain('queue.getJob(jobId)');
   });
 
   test('wait-timeout path cancels the child (queued child can outlive the clamp)', () => {
-    // Two cancel sites in the wait loop: budget-exhausted and TimeoutError.
+    // Two cancel sites: TimeoutError in the wait loop + the settle loop.
     const matches = synthSrc.match(/queue\.cancelJob\(jobId\)/g) ?? [];
     expect(matches.length).toBe(2);
+  });
+
+  test('budget-truncated runs do not arm the synthesize cooldown', () => {
+    expect(synthSrc).toContain('if (!budgetExhausted) {');
+    const stampIdx = synthSrc.indexOf("setConfig('dream.synthesize.last_completion_ts'");
+    const guardIdx = synthSrc.indexOf('if (!budgetExhausted) {');
+    expect(stampIdx).toBeGreaterThan(guardIdx);
+  });
+
+  test('mid-fanout exhaustion stops submitting below the start minimum, not merely at zero', () => {
+    // Both the per-transcript guard and the per-chunk guard compare against
+    // MIN_SUBAGENT_START_BUDGET_MS (a <= 0 guard would still submit
+    // guaranteed-kill children with second-scale timeouts).
+    const matches = synthSrc.match(/< MIN_SUBAGENT_START_BUDGET_MS/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(3); // pre-fanout + transcript + chunk guards
   });
 
   test('shared helpers live in deadline-budget.ts (no patterns↔synthesize cycle)', () => {
