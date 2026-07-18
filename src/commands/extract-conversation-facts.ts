@@ -141,7 +141,14 @@ export const DEFAULT_MAX_COST_USD = 5.0;
  * `--types` flag is an explicit per-run override; cycle config is
  * the single source of truth.
  */
-export const ALLOWED_TYPES = ['conversation', 'meeting', 'slack', 'email'] as const;
+export const ALLOWED_TYPES = [
+  'conversation',
+  'meeting',
+  'slack',
+  'email',
+  'imessage',
+  'imessage-daily',
+] as const;
 export type AllowedType = (typeof ALLOWED_TYPES)[number];
 
 /**
@@ -757,6 +764,12 @@ async function processPage(
         source_markdown_slug: page.slug,
         source: PER_SEGMENT_SOURCE_PREFIX,
         source_session: sessionId,
+        // Preserve the conversation's valid time instead of defaulting every
+        // extracted fact to extraction time. Epoch-anchored parses have no
+        // trustworthy date, so they retain the existing now() fallback.
+        ...(seg.startIso && !seg.startIso.startsWith('1970-')
+          ? { valid_from: new Date(seg.startIso) }
+          : {}),
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));

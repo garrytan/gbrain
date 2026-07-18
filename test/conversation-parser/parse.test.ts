@@ -3,7 +3,7 @@
  *
  * Covers:
  *   - PR #1461's 6 telegram-bracket cases verbatim (REGRESSION pin)
- *   - All 12 built-in patterns hit their test_positive samples
+ *   - All built-in patterns hit their test_positive samples
  *   - Date derivation precedence (D8)
  *   - Pattern priority scoring (D18) — overlap resolution
  *   - Quick-reject fast path (D11)
@@ -116,7 +116,7 @@ describe('parseConversation — REGRESSION PR #1461 (telegram-bracket)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// All 12 built-ins must parse their test_positive samples
+// All built-ins must parse their test_positive samples
 // ---------------------------------------------------------------------------
 
 describe('parseConversation — every built-in matches its test_positive sample', () => {
@@ -258,6 +258,40 @@ describe('parseConversation — multi-line continuation (D5)', () => {
       'first line\ncontinuation line\nanother continuation',
     );
     expect(r.messages[1].text).toBe('second message');
+  });
+});
+
+describe('parseConversation — iMessage time-only 12h and date headings (#2756)', () => {
+  test('parses the time-only 12-hour iMessage shape', () => {
+    const r = parseConversation('**Alice Example** (9:04 PM): hello', {
+      fallbackDate: '2024-03-15',
+    });
+    expect(r.matched_pattern_id).toBe('bold-paren-time-12h');
+    expect(r.messages).toHaveLength(1);
+    expect(r.messages[0].timestamp).toBe('2024-03-15T21:04:00Z');
+  });
+
+  test('markdown date headings advance the running date without becoming message text', () => {
+    const body = [
+      '## 2024-03-15',
+      '**Alice Example** (9:04 AM): first day',
+      '## 2024-03-16',
+      '**Bob Example** (10:05 PM): second day',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-01' });
+    expect(r.matched_pattern_id).toBe('bold-paren-time-12h');
+    expect(r.messages.map((m) => m.timestamp)).toEqual([
+      '2024-03-15T09:04:00Z',
+      '2024-03-16T22:05:00Z',
+    ]);
+    expect(r.messages[0].text).toBe('first day');
+  });
+
+  test('date headings do not mutate the caller-provided context', () => {
+    const ctx = { fallbackDate: '2024-03-01', source: 'explicit' as const };
+    const pattern = BUILTIN_PATTERNS.find((p) => p.id === 'bold-paren-time-12h')!;
+    applyPattern('## 2024-03-16\n**Alice** (9:04 AM): hello', pattern, ctx);
+    expect(ctx.fallbackDate).toBe('2024-03-01');
   });
 });
 

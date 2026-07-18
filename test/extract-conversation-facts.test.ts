@@ -36,6 +36,7 @@ import {
   MAX_PAGE_BODY_BYTES,
   TERMINAL_AUDIT_SOURCE,
   PER_SEGMENT_SOURCE_PREFIX,
+  ALLOWED_TYPES,
 } from '../src/commands/extract-conversation-facts.ts';
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,11 @@ describe('parseConversationMessages', () => {
   test('empty body returns empty array', () => {
     expect(parseConversationMessages('')).toEqual([]);
   });
+});
+
+test('conversation-facts allowlist includes native iMessage page types (#2756)', () => {
+  expect(ALLOWED_TYPES).toContain('imessage');
+  expect(ALLOWED_TYPES).toContain('imessage-daily');
 });
 
 // ---------------------------------------------------------------------------
@@ -318,6 +324,13 @@ describe('runExtractConversationFactsCore', () => {
       timeline: '',
       frontmatter: {},
     });
+    await engine.putPage('conversations/imessage/native-example', {
+      type: 'imessage',
+      title: 'Native iMessage export',
+      compiled_truth: SAMPLE_BODY,
+      timeline: '',
+      frontmatter: {},
+    });
     await engine.putPage('people/alice-example', {
       type: 'person',
       title: 'Alice Example',
@@ -376,6 +389,17 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_considered).toBe(0);
   });
 
+  test('native imessage page types are eligible by default', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/native-example',
+      dryRun: true,
+      sleepMs: 0,
+    });
+    expect(result.pages_considered).toBe(1);
+    expect(result.pages_processed).toBe(1);
+  });
+
   test('sinceIso filters already-processed history', async () => {
     const result = await runExtractConversationFactsCore(engine, {
       sourceId: 'default',
@@ -415,6 +439,17 @@ describe('runExtractConversationFactsCore', () => {
       [PER_SEGMENT_SOURCE_PREFIX, `${PER_SEGMENT_SOURCE_PREFIX}:conversations/imessage/alice-example`],
     );
     expect(Number(perSegFacts[0]?.count ?? 0)).toBeGreaterThan(0);
+
+    const validTimes = await engine.executeRaw<{ valid_from: Date }>(
+      `SELECT valid_from FROM facts
+       WHERE source = $1 AND source_session = $2
+       ORDER BY valid_from ASC`,
+      [PER_SEGMENT_SOURCE_PREFIX, `${PER_SEGMENT_SOURCE_PREFIX}:conversations/imessage/alice-example`],
+    );
+    expect(validTimes.map((row) => new Date(row.valid_from).toISOString())).toEqual([
+      '2024-03-15T09:00:00.000Z',
+      '2024-03-16T08:00:00.000Z',
+    ]);
 
     // Terminal audit row present.
     const terminalRows = await engine.executeRaw<{ count: string | number }>(
