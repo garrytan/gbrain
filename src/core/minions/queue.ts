@@ -485,13 +485,20 @@ export class MinionQueue {
    * with `attempts_made` already past `max_attempts`. This made retry
    * useless for exactly the case it exists for: recovering work after an
    * outage that outlasted the job's timeout.
+   *
+   * Also resets `stalled_counter` (Codex review): `handleStalled()`
+   * dead-letters once `stalled_counter + 1 >= max_stalled` (`queue.ts:1190`).
+   * A job dead-lettered BY stall exhaustion, left un-reset, would hit that
+   * same threshold on its very first lock expiry after retry — a job
+   * killed by 3 stalls doesn't get a fresh stall budget, contradicting
+   * "run this fresh" the same way the unreset attempt counters did.
    */
   async retryJob(id: number): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
         lock_token = NULL, lock_until = NULL, delay_until = NULL,
         finished_at = NULL, started_at = NULL, attempts_made = 0,
-        attempts_started = 0, updated_at = now()
+        attempts_started = 0, stalled_counter = 0, updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'dead')
        RETURNING *`,
       [id]

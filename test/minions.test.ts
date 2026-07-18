@@ -736,16 +736,19 @@ describe('MinionQueue: Cancel & Retry', () => {
     expect(retried!.error_text).toBeNull();
   });
 
-  // #2783: retry must reset started_at/attempts_made/attempts_started —
-  // an explicit `jobs retry` is an operator asserting "run this fresh".
-  test('retry resets started_at/attempts_made/attempts_started', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 3 });
+  // #2783: retry must reset started_at/attempts_made/attempts_started/
+  // stalled_counter — an explicit `jobs retry` is an operator asserting
+  // "run this fresh".
+  test('retry resets started_at/attempts_made/attempts_started/stalled_counter', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 3 });
     await queue.claim('tok1', 30000, 'default', ['sync']);
     await queue.failJob(job.id, 'tok1', 'error', 'dead');
-    // Simulate the original claim having stamped started_at long ago and
-    // attempts already elevated, matching what a real dead job looks like.
+    // Simulate the original claim having stamped started_at long ago,
+    // attempts already elevated, and a near-exhausted stall budget —
+    // matching what a real dead job (killed by wall-clock OR by stall
+    // exhaustion) looks like.
     await engine.executeRaw(
-      "UPDATE minion_jobs SET started_at = now() - interval '1 hour' WHERE id = $1",
+      "UPDATE minion_jobs SET started_at = now() - interval '1 hour', stalled_counter = 2 WHERE id = $1",
       [job.id],
     );
     const retried = await queue.retryJob(job.id);
@@ -753,6 +756,7 @@ describe('MinionQueue: Cancel & Retry', () => {
     expect(retried!.started_at).toBeNull();
     expect(retried!.attempts_made).toBe(0);
     expect(retried!.attempts_started).toBe(0);
+    expect(retried!.stalled_counter).toBe(0);
   });
 
   // #2783 repro: retry issued long after the original claim must NOT be
@@ -784,6 +788,45 @@ describe('MinionQueue: Cancel & Retry', () => {
     const stillAlive = await queue.handleWallClockTimeouts(30000);
     expect(stillAlive.length).toBe(0);
     expect((await queue.getJob(job.id))!.status).toBe('active');
+  });
+
+  // #2783 repro (stall side): a job dead-lettered by stall exhaustion must
+  // get a fresh stall budget on retry, not immediately re-die on its first
+  // stall after being re-claimed.
+  test('retry survives one stall after re-claim, even after the original stall budget was exhausted', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 2 });
+
+    // Exhaust the stall budget the same way the existing stall test does:
+    // one requeue stall, then one dead-lettering stall.
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    await queue.handleStalled();
+    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    const r2 = await queue.handleStalled();
+    expect(r2.dead.length).toBe(1);
+    expect(r2.dead[0].status).toBe('dead');
+    expect(r2.dead[0].stalled_counter).toBe(2); // == max_stalled — exhausted
+
+    // Operator retries. Without the stalled_counter reset, the very next
+    // stall would immediately satisfy `stalled_counter + 1 >= max_stalled`
+    // and dead-letter again despite "run this fresh".
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.stalled_counter).toBe(0);
+    await queue.claim('tok3', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    const r3 = await queue.handleStalled();
+    expect(r3.requeued.length).toBe(1); // fresh budget — requeued, not dead
+    expect(r3.dead.length).toBe(0);
   });
 });
 
