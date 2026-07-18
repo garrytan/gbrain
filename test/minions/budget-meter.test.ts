@@ -161,9 +161,14 @@ describe('minions/budget-meter (v0.38 Slice 2 — D3 reserve-then-settle)', () =
       const n = await sweepExpiredReservations(engine);
       expect(n).toBe(1);
       const rows = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT status FROM mcp_spend_reservations WHERE reservation_id = '00000000-0000-0000-0000-000000000001'`,
+        `SELECT status, actual_cents::text AS actual FROM mcp_spend_reservations WHERE reservation_id = '00000000-0000-0000-0000-000000000001'`,
       );
       expect(rows[0]?.status).toBe('expired');
+      expect(Number(rows[0]?.actual)).toBe(50);
+      const logged = await engine.executeRaw<Record<string, unknown>>(
+        `SELECT spend_cents::text AS spend FROM mcp_spend_log WHERE client_id = 'alice'`,
+      );
+      expect(Number(logged[0]?.spend)).toBe(50);
     });
 
     it('leaves fresh pending rows alone', async () => {

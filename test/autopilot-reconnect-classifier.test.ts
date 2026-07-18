@@ -13,7 +13,12 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { classifyReconnectError, generateLaunchdPlist } from '../src/commands/autopilot.ts';
+import {
+  classifyReconnectError,
+  generateLaunchdPlist,
+  generateSystemdUnit,
+  resolveAutopilotInterval,
+} from '../src/commands/autopilot.ts';
 
 describe('classifyReconnectError (#1162)', () => {
   test('database_url undefined → unrecoverable (the #1162 fingerprint)', () => {
@@ -76,9 +81,9 @@ describe('generateLaunchdPlist (#1162)', () => {
     expect(plist).toMatch(/<key>ThrottleInterval<\/key><integer>60<\/integer>/);
   });
 
-  test('plist contains KeepAlive (existing behavior preserved)', () => {
+  test('plist fails stopped instead of relaunching indefinitely', () => {
     const plist = generateLaunchdPlist('/Users/me/.gbrain/autopilot-run.sh', '/Users/me');
-    expect(plist).toMatch(/<key>KeepAlive<\/key><true\/>/);
+    expect(plist).toMatch(/<key>KeepAlive<\/key><false\/>/);
   });
 
   test('plist references the wrapper path correctly', () => {
@@ -97,5 +102,23 @@ describe('generateLaunchdPlist (#1162)', () => {
   test('plist writes StandardErrorPath under the home dir (#1162 — error visibility)', () => {
     const plist = generateLaunchdPlist('/wrapper.sh', '/Users/alice');
     expect(plist).toContain('/Users/alice/.gbrain/autopilot.err');
+  });
+});
+
+describe('autopilot cost-safety scheduling', () => {
+  test('low health cannot shorten the configured floor', () => {
+    expect(resolveAutopilotInterval(7_200, 55, 7_200)).toBe(7_200);
+  });
+
+  test('healthy brains may slow down but never speed up', () => {
+    expect(resolveAutopilotInterval(7_200, 95, 7_200)).toBe(14_400);
+    expect(resolveAutopilotInterval(300, 55, 7_200)).toBe(7_200);
+  });
+
+  test('systemd restarts only failures and caps restart bursts', () => {
+    const unit = generateSystemdUnit('/home/u/.gbrain/autopilot-run.sh');
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).not.toContain('Restart=always');
+    expect(unit).toContain('StartLimitBurst=3');
   });
 });

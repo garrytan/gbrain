@@ -8,9 +8,9 @@ const AUTOPILOT_SRC = readFileSync(join(import.meta.dir, '../src/commands/autopi
 describe('generateSystemdUnit', () => {
   const unit = generateSystemdUnit('/home/u/.gbrain/autopilot-run.sh');
 
-  test('uses Restart=always (NOT on-failure) so a clean exit-for-relaunch respawns', () => {
-    expect(unit).toContain('Restart=always');
-    expect(unit).not.toContain('Restart=on-failure');
+  test('uses bounded failure-only restarts so clean exits stay stopped', () => {
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).not.toContain('Restart=always');
   });
   test('caps a clean-exit respawn storm with StartLimit*', () => {
     expect(unit).toContain('StartLimitIntervalSec=');

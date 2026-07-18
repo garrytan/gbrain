@@ -967,6 +967,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.
   'spend.posture',
+  // Cross-process hard ceiling for every priced AI gateway call. Zero or
+  // absent disables the governor; positive values are USD per UTC day.
+  'ai.daily_budget_usd',
   // Life Chronicle (v0.42.56.0, #2390). The release notes' enable command is
   // `gbrain config set auto_chronicle true`, but the key was never registered
   // — so the documented command failed with "Unknown config key" and the

@@ -204,10 +204,20 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   return null;
 }
 
-function costForUsage(modelId: string, inputTokens: number, outputTokens: number, kind: BudgetKind): number | null {
+export function costForUsage(modelId: string, inputTokens: number, outputTokens: number, kind: BudgetKind): number | null {
   const p = lookupPricing(modelId, kind);
   if (!p) return null;
   return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;
+}
+
+/** Shared preflight pricing for persistent and in-process budget gates. */
+export function estimateBudgetCostUsd(estimate: BudgetEstimate): number | null {
+  return costForUsage(
+    estimate.modelId,
+    estimate.estimatedInputTokens,
+    estimate.maxOutputTokens,
+    estimate.kind,
+  );
 }
 
 export class BudgetTracker {

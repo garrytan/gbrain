@@ -338,7 +338,7 @@ async function attemptAutopilotSelfUpgrade(
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'Usage: gbrain autopilot [--repo <path>] [--interval N] [--json] [--no-worker]\n' +
+      'Usage: gbrain autopilot [--repo <path>] [--interval N] [--min-interval N] [--json] [--no-worker]\n' +
       '       gbrain autopilot --install [--repo <path>]\n' +
       '       gbrain autopilot --uninstall\n' +
       '       gbrain autopilot --status [--json]\n\n' +
@@ -364,6 +364,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
   const baseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
+  const minimumInterval = parseInt(parseArg(args, '--min-interval') || String(baseInterval), 10);
   const jsonMode = args.includes('--json');
   const forceInline = args.includes('--inline');
   const noWorker = !shouldSpawnAutopilotWorker(args);
@@ -699,7 +700,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                   {
                     queue: 'default',
                     idempotency_key: `autopilot-sync:${src.id}:${slot}`,
-                    max_attempts: 2,
+                    max_attempts: 1,
                     timeout_ms: timeoutMs,
                     maxWaiting: 1,
                   },
@@ -959,7 +960,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               const submitOpts = {
                 queue: 'default',
                 idempotency_key: step.idempotency_key,
-                max_attempts: 2,
+                max_attempts: 1,
                 timeout_ms: timeoutMs,
                 maxWaiting: 1,
               };
@@ -1020,9 +1021,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     try {
       const health = await engine.getHealth();
       const score = (health as any).brain_score ?? 50;
-      interval = score >= 90 ? baseInterval * 2
-               : score < 70 ? Math.max(Math.floor(baseInterval / 2), 60)
-               : baseInterval;
+      interval = resolveAutopilotInterval(baseInterval, score, minimumInterval);
 
       const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(0);
       const line = `[cycle] score=${score} elapsed=${elapsed}s next=${interval}s`;
@@ -1077,6 +1076,22 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // Wait for next cycle
     await new Promise(r => setTimeout(r, interval * 1000));
   }
+}
+
+/** Adaptive cadence with an operator-controlled hard floor. */
+export function resolveAutopilotInterval(
+  baseSeconds: number,
+  brainScore: number,
+  minimumSeconds: number,
+): number {
+  const safeBase = Math.max(60, Math.floor(baseSeconds));
+  const safeMinimum = Math.max(60, Math.floor(minimumSeconds));
+  const adaptive = brainScore >= 90
+    ? safeBase * 2
+    : brainScore < 70
+      ? Math.max(Math.floor(safeBase / 2), 60)
+      : safeBase;
+  return Math.max(adaptive, safeMinimum);
 }
 
 // --- Install/Uninstall ---
@@ -1165,7 +1180,7 @@ function writeWrapperScript(repoPath: string): string {
 # OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
-exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
+exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}' --interval 7200 --min-interval 7200
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
@@ -1219,15 +1234,11 @@ export function generateLaunchdPlist(wrapperPath: string, home: string): string 
     <string>${escapeXml(wrapperPath)}</string>
   </array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>KeepAlive</key><false/>
   <!--
-    v0.37.7.0 #1162: ThrottleInterval=60 forces launchd to wait at
-    least 60s between relaunches. Combined with the in-process
-    classifier (recoverable vs unrecoverable in the supervisor loop),
-    this prevents the spinning respawn pattern where an unrecoverable
-    error (missing database_url, malformed config) immediately
-    relaunched and re-hit the same error. ThrottleInterval is a hard
-    floor; launchd would have applied a default of 10s if unset.
+    Cost-safety: fatal exits stay stopped. RunAtLoad starts the daemon at
+    login, while KeepAlive=false prevents repeated billable work after an
+    unrecoverable configuration, provider, or database failure.
   -->
   <key>ThrottleInterval</key><integer>60</integer>
   <key>StandardOutPath</key><string>${escapeXml(home)}/.gbrain/autopilot.log</string>
@@ -1262,27 +1273,22 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
 /**
  * Generate the gbrain-autopilot systemd user unit.
  *
- * v0.42: `Restart=always` (was `on-failure`). The self-upgrade silent channel
- * does swap-only + `exit(0)` and relies on the supervisor to relaunch the new
- * binary — there is no in-process re-exec (Bun has no `execve`). `on-failure`
- * would NOT relaunch on a clean exit, silently killing the daemon after it
- * upgraded itself. `StartLimitIntervalSec`/`StartLimitBurst` cap a clean-exit
- * respawn storm (systemd's analog to the launchd `ThrottleInterval=60`).
- *
- * Exported so the v0.42 migration can recognize the prior generated shape and
- * rewrite existing `on-failure` units in place.
+ * Cost-safe supervisor definition. Failed processes have a small bounded
+ * restart allowance, while clean exits remain stopped. This prevents a bad
+ * configuration or repeated paid-provider failure from becoming an unbounded
+ * respawn loop.
  */
 export function generateSystemdUnit(wrapperPath: string): string {
   return `[Unit]
 Description=GBrain Autopilot
 After=network-online.target
 StartLimitIntervalSec=300
-StartLimitBurst=10
+StartLimitBurst=3
 
 [Service]
 Type=simple
 ExecStart=${wrapperPath}
-Restart=always
+Restart=on-failure
 RestartSec=30
 StandardOutput=append:%h/.gbrain/autopilot.log
 StandardError=append:%h/.gbrain/autopilot.err
@@ -1293,55 +1299,12 @@ WantedBy=default.target
 }
 
 /**
- * v0.42 migration: rewrite an existing `Restart=on-failure` autopilot systemd
- * unit to `Restart=always` so the self-upgrade silent channel's clean
- * exit-for-relaunch actually respawns. HARD-GUARDED: only rewrites a unit that
- * matches the known gbrain-generated shape (never a hand-edited one), only
- * user-level units (never system, never needs root), Linux only. Idempotent:
- * a no-op once already `Restart=always`. Best-effort; called from runPostUpgrade.
+ * Back-compatible post-upgrade hook. The former migration promoted units to
+ * `Restart=always`; cost-safety policy now deliberately leaves them fail-stop.
+ * Keep the export so older upgrade code can call it safely.
  */
 export function migrateSystemdUnitToRestartAlways(): { rewritten: boolean; reason: string } {
-  if (process.platform !== 'linux') return { rewritten: false, reason: 'not-linux' };
-  let unitPath: string;
-  try {
-    unitPath = systemdUnitPath();
-  } catch {
-    return { rewritten: false, reason: 'no-unit-path' };
-  }
-  if (!existsSync(unitPath)) return { rewritten: false, reason: 'no-unit' };
-  let content: string;
-  try {
-    content = readFileSync(unitPath, 'utf8');
-  } catch {
-    return { rewritten: false, reason: 'unreadable' };
-  }
-  if (!content.includes('Restart=on-failure')) {
-    return { rewritten: false, reason: 'already-migrated' };
-  }
-  // Hard guard: must look like OUR generated unit, not a hand-edited one.
-  const execMatch = content.match(/ExecStart=(\S+)/);
-  const looksGenerated =
-    content.includes('Description=GBrain Autopilot') &&
-    content.includes('StandardOutput=append:%h/.gbrain/autopilot.log') &&
-    !!execMatch;
-  if (!looksGenerated) {
-    process.stderr.write(
-      '[gbrain] autopilot systemd unit looks hand-edited; NOT rewriting Restart=on-failure. ' +
-        'Set Restart=always manually so self-upgrade relaunch works.\n',
-    );
-    return { rewritten: false, reason: 'hand-edited' };
-  }
-  try {
-    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]));
-    try {
-      execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
-    } catch {
-      /* daemon-reload best-effort */
-    }
-    return { rewritten: true, reason: 'rewritten' };
-  } catch (e) {
-    return { rewritten: false, reason: e instanceof Error ? e.message : 'write-failed' };
-  }
+  return { rewritten: false, reason: 'cost-safety-policy' };
 }
 
 function installSystemd(wrapperPath: string, repoPath: string) {
@@ -1434,9 +1397,9 @@ echo \$! > ~/.gbrain/autopilot.pid
 }
 
 function installCrontab(wrapperPath: string, home: string) {
-  // Linux/WSL without systemd — crontab runs the wrapper every 5 minutes.
+  // Linux/WSL without systemd — crontab starts autopilot every two hours.
   const safeWrapperPath = wrapperPath.replace(/'/g, "'\\''");
-  const cronLine = `*/5 * * * * '${safeWrapperPath}' >> '${home.replace(/'/g, "'\\''")}/.gbrain/autopilot.log' 2>&1`;
+  const cronLine = `0 */2 * * * '${safeWrapperPath}' >> '${home.replace(/'/g, "'\\''")}/.gbrain/autopilot.log' 2>&1`;
   try {
     const existing = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
     if (existing.includes('gbrain autopilot') || existing.includes('autopilot-run.sh')) {
@@ -1448,7 +1411,7 @@ function installCrontab(wrapperPath: string, home: string) {
     writeFileSync(tmpFile, existing.trimEnd() + '\n' + cronLine + '\n');
     execSync(`crontab '${tmpFile.replace(/'/g, "'\\''")}'`, { stdio: 'pipe' });
     try { unlinkSync(tmpFile); } catch { /* best-effort */ }
-    console.log('Installed crontab entry for gbrain autopilot (every 5 minutes)');
+    console.log('Installed crontab entry for gbrain autopilot (every 2 hours)');
     console.log('  Uninstall: gbrain autopilot --uninstall');
   } catch (e: unknown) {
     console.error(`Failed to install crontab: ${e instanceof Error ? e.message : e}`);

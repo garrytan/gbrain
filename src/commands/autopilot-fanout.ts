@@ -42,8 +42,8 @@ const FULL_CYCLE_FLOOR_MIN = 60;
 // self-perpetuating dead-job storm. Back a failed source off with bounded
 // exponential cooldown so a chronically-slow source can't re-dispatch every
 // tick. Disabled with autopilot.failure_cooldown_min=0.
-const FAILURE_COOLDOWN_BASE_MIN = 10;
-const FAILURE_COOLDOWN_CAP_MIN = 120;
+const FAILURE_COOLDOWN_BASE_MIN = 120;
+const FAILURE_COOLDOWN_CAP_MIN = 1440;
 const FAILURE_COOLDOWN_EXP_CAP = 4; // 2^4 = 16× base before the cap clamps
 
 /** Recent-failure record for one source (from minion_jobs dead/failed rows). */
@@ -395,7 +395,7 @@ export async function dispatchPerSource(
       {
         queue: 'default',
         idempotency_key: `autopilot-cycle:${opts.slot}`,
-        max_attempts: 2,
+        max_attempts: 1,
         timeout_ms: opts.timeoutMs,
         maxWaiting: 1,
       },
@@ -448,7 +448,7 @@ export async function dispatchPerSource(
           // Per-source idempotency key — two ticks for the same source
           // within the same slot coalesce; different sources never collide.
           idempotency_key: `autopilot-cycle:${src.id}:${opts.slot}`,
-          max_attempts: 2,
+          max_attempts: 1,
           timeout_ms: opts.timeoutMs,
           // DELIBERATELY no maxWaiting: 1 here. maxWaiting is per
           // (name, queue), so it would coalesce all N per-source jobs
@@ -557,7 +557,7 @@ export async function dispatchGlobalMaintenance(
       // Structural single-flight: one global job per slot; maxWaiting:1 coalesces
       // any surplus so a slow brain-wide pass never stacks duplicates.
       idempotency_key: `autopilot-global:${opts.slot}`,
-      max_attempts: 2,
+      max_attempts: 1,
       timeout_ms: opts.timeoutMs,
       maxWaiting: 1,
     },
