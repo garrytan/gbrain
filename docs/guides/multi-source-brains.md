@@ -134,10 +134,13 @@ gbrain sources unfederate <id>
 ## The git requirement for --path sources
 
 Every `--path` source must be a git repository (or live inside one — a
-subdirectory of a git repo works too). `gbrain sources add` validates this at
-registration time and refuses a plain, non-git directory with an actionable
-error instead of silently registering a source that will fail on its first
-`gbrain sync`. Fix it with:
+subdirectory of a git repo works too) with at least one committed, tracked
+file under that path. `gbrain sources add` validates this at registration
+time and refuses a directory that doesn't qualify — no `.git` at all, a
+`git init` with no commit yet, or a commit made before `git add` — with an
+actionable error instead of silently registering a source that will fail
+(or worse, "succeed" while importing nothing) on its first `gbrain sync`.
+Fix it with:
 
 ```bash
 git -C <path> init
@@ -149,9 +152,11 @@ gbrain sources add <id> --path <path>
 Two details that are easy to miss:
 
 - **Files must actually be committed, not just present.** The sync walker
-  reads files through git objects, so an empty repo (`git init` with no
-  commit) or a commit made before `git add` won't surface any content —
-  `git init` alone is not enough.
+  reads files through git objects, so `git init` alone — even followed by an
+  empty commit (`git commit --allow-empty`) — isn't enough. Registration
+  checks for real tracked content (`git ls-tree HEAD` scoped to the path),
+  not just a resolvable `HEAD`, so this footgun is caught immediately
+  instead of surfacing later as a sync that imports nothing.
 - **`--force` registers the source anyway**, skipping the check. Use this if
   you're registering a path before an automated pipeline gets around to
   `git init`-ing it. GBrain never auto-`git init`s a `--path` source for

@@ -46,7 +46,7 @@ import {
   cloneRepo,
   validateRepoState,
   isInsideGitRepo,
-  hasGitCommits,
+  hasTrackedContent,
   RemoteUrlError,
   GitOperationError,
   type RepoState,
@@ -479,25 +479,29 @@ export async function addSource(
     // report ("plain directory accepted, sync fails later") rather than a
     // broader "does this path exist" check nobody asked for.
     //
-    // Both isInsideGitRepo AND hasGitCommits must hold: a `git init`ed-but-
-    // never-committed directory passes the first check yet still can't sync
-    // (codex round 1 finding — sync.ts throws "No commits in repo ...").
+    // Both isInsideGitRepo AND hasTrackedContent must hold. isInsideGitRepo
+    // alone lets through a `git init`ed-but-never-committed directory (fails
+    // sync's "No commits in repo ..."), AND an empty-commit-then-untracked-
+    // files directory (git resolves HEAD fine but the tree is empty — the
+    // exact silent-staleness footgun #2707(c) describes: sync "succeeds"
+    // importing nothing, then never notices the untracked files change).
+    // hasTrackedContent's `ls-tree HEAD -- .` catches both (codex round 2).
     if (
       opts.localPath &&
       !opts.force &&
       existsSync(opts.localPath) &&
-      (!isInsideGitRepo(opts.localPath) || !hasGitCommits(opts.localPath))
+      (!isInsideGitRepo(opts.localPath) || !hasTrackedContent(opts.localPath))
     ) {
       const q = shellQuote(opts.localPath);
       throw new SourceOpError(
         'not_a_git_repo',
-        `"${opts.localPath}" is not a git repository with at least one commit ` +
+        `"${opts.localPath}" is not a git repository with committed, tracked files ` +
           `(or a subdirectory of one). GBrain sync requires every --path source to ` +
-          `be git-initialized, with the files actually committed (an empty commit is ` +
-          `not enough — the walker reads through git objects, so untracked files stay ` +
-          `invisible). Fix: \`git -C ${q} init && git -C ${q} add -A && git -C ${q} ` +
-          `commit -m "initial import"\`, then re-run this command. To register ` +
-          `anyway and git-init later, pass --force.`,
+          `be git-initialized, with the files actually committed — an empty commit ` +
+          `is not enough (the walker reads through git objects, so untracked files ` +
+          `stay invisible). Fix: \`git -C ${q} init && git -C ${q} add -A && ` +
+          `git -C ${q} commit -m "initial import"\`, then re-run this command. To ` +
+          `register anyway and git-init later, pass --force.`,
       );
     }
     const config: Record<string, unknown> = {};

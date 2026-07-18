@@ -880,6 +880,51 @@ describe('addSource --path — #2707 git-repo validation', () => {
     expect(threw?.code).toBe('not_a_git_repo');
   });
 
+  test('rejects an empty-commit repo whose files are untracked (codex round 2)', async () => {
+    // git commit --allow-empty gives a resolvable HEAD (so a bare "has a
+    // commit" check would wrongly pass this) but the tree is empty; files
+    // written afterward are untracked and invisible to the sync walker.
+    const emptyCommitDir = join(SANDBOX, 'empty-commit');
+    mkdirSync(emptyCommitDir, { recursive: true });
+    execFileSync('git', ['-C', emptyCommitDir, 'init', '-q']);
+    execFileSync('git', ['-C', emptyCommitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', emptyCommitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', emptyCommitDir, 'commit', '--allow-empty', '-q', '-m', 'empty']);
+    writeFileSync(join(emptyCommitDir, 'notes.md'), 'never committed');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'empty-commit-src', localPath: emptyCommitDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('rejects an untracked subdirectory of an otherwise-real git repo (codex round 2)', async () => {
+    const parent = join(SANDBOX, 'partial-repo');
+    const trackedFile = join(parent, 'README.md');
+    const untrackedSub = join(parent, 'untracked-sub');
+    mkdirSync(untrackedSub, { recursive: true });
+    writeFileSync(trackedFile, '# fixture');
+    execFileSync('git', ['-C', parent, 'init', '-q']);
+    execFileSync('git', ['-C', parent, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', parent, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', parent, 'add', 'README.md']);
+    execFileSync('git', ['-C', parent, 'commit', '-q', '-m', 'initial import']);
+    writeFileSync(join(untrackedSub, 'x.md'), 'never git add-ed');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'partial-repo-src', localPath: untrackedSub });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
   test('quotes a path with a space in the remediation command (codex round 1)', async () => {
     const spacedDir = join(SANDBOX, 'has space here');
     mkdirSync(spacedDir, { recursive: true });

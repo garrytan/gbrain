@@ -326,22 +326,31 @@ export function isInsideGitRepo(path: string): boolean {
 }
 
 /**
- * True if `path` has at least one commit reachable from HEAD, per
- * `git rev-parse HEAD`. A directory that's `git init`ed but never committed
- * passes `isInsideGitRepo` yet still can't sync — `sync.ts` throws
- * "No commits in repo ... Make at least one commit before syncing." Checking
- * this too at `addSource` registration time (#2707 codex round 1) turns that
- * later, easy-to-miss sync failure into an immediate one, matching the error
- * copy's existing "files actually committed" claim.
+ * True if `path`'s HEAD tree has at least one tracked entry scoped to
+ * `path` itself, per `git ls-tree HEAD -- .` (non-recursive — one entry is
+ * enough to know the tree isn't empty; no need to walk the whole subtree).
+ * `-C path` + pathspec `.` scopes the listing to `path`, so this is correct
+ * for both a repo's toplevel AND a subdirectory-of-a-repo source.
+ *
+ * Subsumes "no commits at all" (`ls-tree HEAD` on an unborn repo fails —
+ * there's no HEAD to resolve) AND the narrower "has a HEAD commit but it's
+ * empty" case (#2707 codex round 2): `git commit --allow-empty` followed by
+ * creating untracked files resolves `HEAD:.` successfully (to git's
+ * well-known empty-tree object) but lists zero entries — a directory that
+ * would pass a bare `rev-parse HEAD` check yet still can't sync (or worse,
+ * syncs "successfully" importing nothing, then silently never notices the
+ * untracked files change — the exact silent-staleness class #2707 exists to
+ * prevent). A directory that's `git init`ed but never committed, or where
+ * this specific path was never `git add`ed, fails this check either way.
  */
-export function hasGitCommits(path: string): boolean {
+export function hasTrackedContent(path: string): boolean {
   try {
-    execFileSync('git', ['-C', path, 'rev-parse', 'HEAD'], {
+    const out = execFileSync('git', ['-C', path, 'ls-tree', 'HEAD', '--', '.'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 10_000,
+      timeout: 30_000,
       env: { ...process.env, ...GIT_ENV },
     });
-    return true;
+    return out.toString().trim().length > 0;
   } catch {
     return false;
   }
