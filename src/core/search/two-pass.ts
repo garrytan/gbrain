@@ -145,8 +145,19 @@ export async function expandAnchors(
       const directChunkIds: number[] = [];
       const unresolvedTargets: string[] = [];
       for (const e of edges) {
-        if (e.to_chunk_id != null) directChunkIds.push(e.to_chunk_id);
-        else if (e.to_symbol_qualified) unresolvedTargets.push(e.to_symbol_qualified);
+        if (e.to_chunk_id != null) {
+          // getEdgesByChunk(direction:'both') returns incoming and outgoing
+          // edges. Follow the endpoint opposite the current chunk; always
+          // taking to_chunk_id makes incoming A→B edges reselect B.
+          const neighborId = e.from_chunk_id === chunkId
+            ? e.to_chunk_id
+            : e.to_chunk_id === chunkId
+              ? e.from_chunk_id
+              : null;
+          if (neighborId != null) directChunkIds.push(neighborId);
+        } else if (e.to_symbol_qualified) {
+          unresolvedTargets.push(e.to_symbol_qualified);
+        }
       }
       // Resolve unresolved edges by looking up chunks whose
       // symbol_name_qualified matches. One batch query per frontier node.

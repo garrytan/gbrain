@@ -15,6 +15,7 @@ import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { projectEmailCitationFrontmatter } from '../utils.ts';
+import { assertValidSourceId } from '../source-id.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
 import {
@@ -1852,16 +1853,22 @@ function rrfKey(r: SearchResult): string {
  * cache only saw scalar `sourceId`; a federated query fell through to
  * `'default'` and could cross-serve an unrelated scope.
  *
- *   - federated (sourceIds set) → `__set__:` + sorted, comma-joined ids
- *     (order-independent; two different source-sets get distinct keys)
- *   - scalar sourceId           → the id itself (single-source unchanged)
- *   - unscoped/all-source       → `'__all__'` (cannot collide with scalar default)
+ * Keys are typed JSON tuples so arbitrary scalar text cannot collide with a
+ * federated encoding. Every source id is validated before it reaches cache
+ * lookup/store; this keeps internal/trusted callers on the same boundary as
+ * registered sources.
  */
 export function cacheScopeKey(opts?: { sourceId?: string; sourceIds?: string[] }): string {
   if (opts?.sourceIds && opts.sourceIds.length > 0) {
-    return '__set__:' + [...opts.sourceIds].sort().join(',');
+    const ids = [...new Set(opts.sourceIds)].sort();
+    for (const id of ids) assertValidSourceId(id);
+    return JSON.stringify(['set', ...ids]);
   }
-  return opts?.sourceId ?? '__all__';
+  if (opts?.sourceId !== undefined) {
+    assertValidSourceId(opts.sourceId);
+    return JSON.stringify(['scalar', opts.sourceId]);
+  }
+  return JSON.stringify(['all']);
 }
 
 /**

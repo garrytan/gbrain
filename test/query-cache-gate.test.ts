@@ -283,6 +283,7 @@ describe('CACHE_GATE_WHERE_CLAUSE (SQL shape regression)', () => {
   });
 
   test('visibility seal is unconditional and uses canonical page/source predicates', () => {
+    expect(CACHE_GATE_WHERE_CLAUSE).toContain('jsonb_array_elements(qc.results)');
     expect(CACHE_GATE_WHERE_CLAUSE).toContain('LEFT JOIN sources s_visible');
     expect(CACHE_GATE_WHERE_CLAUSE).toContain('p_visible.deleted_at IS NULL');
     expect(CACHE_GATE_WHERE_CLAUSE).toContain('NOT s_visible.archived');

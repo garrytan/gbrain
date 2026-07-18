@@ -22,6 +22,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { SearchResult, HybridSearchMeta } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
+let visiblePageId: number;
 
 // Build a stable, normalized embedding. PGLite ships pgvector with 1536-dim
 // support (the default); a smaller test dim won't match the column. We
@@ -60,7 +61,7 @@ function makeOrthogonalEmbedding(seed: number, dim = DIM): Float32Array {
 function makeResult(slug: string): SearchResult {
   return {
     slug,
-    page_id: 1,
+    page_id: visiblePageId,
     title: `Title for ${slug}`,
     type: 'concept',
     chunk_text: `chunk text for ${slug}`,
@@ -95,6 +96,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  const page = await engine.putPage('cache/visible-fixture', {
+    type: 'note',
+    title: 'Visible cache fixture',
+    compiled_truth: 'visible cache fixture',
+    timeline: '',
+    frontmatter: {},
+  });
+  visiblePageId = page.id;
 });
 
 afterAll(async () => {
@@ -238,6 +247,24 @@ describe('SemanticQueryCache — source isolation', () => {
     } finally {
       await engine.executeRaw(`UPDATE sources SET archived = false WHERE id = $1`, [sourceId]);
     }
+  });
+
+  test('a result hard-deleted before cache snapshot cannot be served', async () => {
+    const page = await engine.putPage('cache/deleted-before-store', {
+      type: 'note',
+      title: 'Deleted before store',
+      compiled_truth: 'private cache race canary',
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = { ...makeResult(page.slug), page_id: page.id, source_id: 'default' };
+    await engine.executeRaw(`DELETE FROM pages WHERE id = $1`, [page.id]);
+
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(72);
+    await cache.store('deleted before store', emb, [result], META);
+
+    expect((await cache.lookup(emb)).hit).toBe(false);
   });
 });
 

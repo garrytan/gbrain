@@ -216,6 +216,41 @@ describe('v0.34 W0a — multi-source isolation in two-pass retrieval', () => {
     }
   });
 
+  test('incoming direct edges cannot bypass source scope or visibility', async () => {
+    const chunks = await engine.executeRaw<{ id: number; source_id: string; symbol_name_qualified: string }>(
+      `SELECT cc.id, p.source_id, cc.symbol_name_qualified
+         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE cc.symbol_name_qualified IN ('callerInA', 'parseMarkdown')`,
+      [],
+    );
+    const callerA = chunks.find(r => r.source_id === 'source-a' && r.symbol_name_qualified === 'callerInA')!.id;
+    const targetB = chunks.find(r => r.source_id === 'source-b' && r.symbol_name_qualified === 'parseMarkdown')!.id;
+    const anchor = [{
+      slug: 'code/src/markdown-b.ts', page_id: 0, title: '', type: 'code' as const,
+      chunk_text: '', chunk_source: 'compiled_truth' as const,
+      chunk_id: targetB, chunk_index: 0, score: 1, source_id: 'source-b', stale: false,
+    }];
+
+    const scoped = await expandAnchors(engine, anchor, { walkDepth: 1, sourceId: 'source-b' });
+    expect(scoped.map(r => r.chunk_id)).not.toContain(callerA);
+
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = frontmatter || '{"quarantine":true}'::jsonb
+        WHERE source_id = 'source-a' AND slug = 'code/src/caller-a.ts'`,
+      [],
+    );
+    try {
+      const hidden = await expandAnchors(engine, anchor, { walkDepth: 1 });
+      expect(hidden.map(r => r.chunk_id)).not.toContain(callerA);
+    } finally {
+      await engine.executeRaw(
+        `UPDATE pages SET frontmatter = frontmatter - 'quarantine'
+          WHERE source_id = 'source-a' AND slug = 'code/src/caller-a.ts'`,
+        [],
+      );
+    }
+  });
+
   test('two-pass selection and hydration reject archived, quarantined, and deleted pages', async () => {
     const chunkRows = await engine.executeRaw<{ id: number; symbol_name_qualified: string }>(
       `SELECT cc.id, cc.symbol_name_qualified

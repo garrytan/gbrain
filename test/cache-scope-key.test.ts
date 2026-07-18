@@ -11,21 +11,21 @@ import { describe, test, expect } from 'bun:test';
 import { cacheScopeKey } from '../src/core/search/hybrid.ts';
 
 describe('cacheScopeKey', () => {
-  test('unscoped → __all__ and never collides with scalar default', () => {
-    expect(cacheScopeKey(undefined)).toBe('__all__');
-    expect(cacheScopeKey({})).toBe('__all__');
+  test('unscoped uses a typed key and never collides with scalar default', () => {
+    expect(cacheScopeKey(undefined)).toBe('["all"]');
+    expect(cacheScopeKey({})).toBe('["all"]');
     expect(cacheScopeKey({})).not.toBe(cacheScopeKey({ sourceId: 'default' }));
   });
 
-  test('scalar sourceId → itself (single-source unchanged)', () => {
-    expect(cacheScopeKey({ sourceId: 'host' })).toBe('host');
+  test('scalar sourceId uses a typed key', () => {
+    expect(cacheScopeKey({ sourceId: 'host' })).toBe('["scalar","host"]');
   });
 
   test('federated sourceIds → order-independent set key', () => {
     const k1 = cacheScopeKey({ sourceIds: ['team-b', 'team-a', 'host'] });
     const k2 = cacheScopeKey({ sourceIds: ['host', 'team-a', 'team-b'] });
     expect(k1).toBe(k2); // order does not matter
-    expect(k1).toBe('__set__:host,team-a,team-b');
+    expect(k1).toBe('["set","host","team-a","team-b"]');
   });
 
   test('different source-sets do NOT share a key', () => {
@@ -38,5 +38,10 @@ describe('cacheScopeKey', () => {
     const set = cacheScopeKey({ sourceIds: ['host'] });
     const scalar = cacheScopeKey({ sourceId: 'host' });
     expect(set).not.toBe(scalar); // a 1-element set still cannot serve a scalar read
+  });
+
+  test('rejects forged scalar/set encodings and invalid federated ids', () => {
+    expect(() => cacheScopeKey({ sourceId: '__set__:a,b' })).toThrow('Invalid source_id');
+    expect(() => cacheScopeKey({ sourceIds: ['a', '__all__'] })).toThrow('Invalid source_id');
   });
 });

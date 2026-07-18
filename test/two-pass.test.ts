@@ -90,6 +90,9 @@ describe('Layer 7 (A2) — expandAnchors', () => {
       { from_chunk_id: chunkB, to_chunk_id: null,
         from_symbol_qualified: 'b', to_symbol_qualified: 'c',
         edge_type: 'calls' },
+      { from_chunk_id: chunkA, to_chunk_id: chunkB,
+        from_symbol_qualified: 'a', to_symbol_qualified: 'b',
+        edge_type: 'imports' },
     ]);
   });
 
@@ -124,6 +127,16 @@ describe('Layer 7 (A2) — expandAnchors', () => {
     expect(neighbor!.hop).toBe(1);
     // 1/(1+1) * 1.0 = 0.5
     expect(neighbor!.score).toBeCloseTo(0.5, 2);
+  });
+
+  test('walkDepth=1 follows an incoming resolved edge to the opposite endpoint', async () => {
+    const anchors = [{
+      slug: 'src-b-ts', page_id: 0, title: 'b', type: 'code',
+      chunk_text: '', chunk_source: 'compiled_truth', chunk_id: chunkB,
+      chunk_index: 0, score: 1.0, stale: false, source_id: 'default',
+    } as never];
+    const expanded = await expandAnchors(engine, anchors, { walkDepth: 1 });
+    expect(expanded.map(e => e.chunk_id)).toContain(chunkA);
   });
 
   test('walkDepth=2 reaches grandchildren', async () => {

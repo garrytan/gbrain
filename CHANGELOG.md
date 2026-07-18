@@ -4,7 +4,23 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.42.63.0] - 2026-07-18
 
-**Email-backed search results now carry the exact message identity needed to open the original evidence. Keyword, vector, graph, alias, and structural-search paths return the same Message-ID, thread ID, and subject when those fields are present in trusted email frontmatter. Pages without email identity never gain Message-ID or subject metadata; an existing string thread ID remains available for source-native thread navigation. Source grants and canonical page visibility remain enforced during auxiliary retrieval, so a search cannot pull content or citation metadata from a hidden or unreadable source.**
+**Email-backed search results now carry the exact message identity needed to open original evidence. Keyword, vector, graph, alias, and structural-search paths return the same Message-ID, thread ID, and subject when those fields are present in trusted email frontmatter. This release also tightens authorization and visibility enforcement throughout retrieval and caching.**
+
+## To take advantage of v0.42.63.0
+
+`gbrain upgrade` should install the binary, apply schema migration v123, and run post-upgrade checks automatically. If it did not, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the migration orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Restart long-running MCP, HTTP, and worker processes** so they load the expanded search-result contract. No email re-import or host-specific migration is required.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** file an issue at https://github.com/garrytan/gbrain/issues with the `gbrain doctor` output, `~/.gbrain/upgrade-errors.jsonl` if present, and the failing step.
 
 ### Itemized changes
 
@@ -12,15 +28,11 @@ All notable changes to GBrain will be documented in this file.
 - **Search results expose exact email provenance.** `SearchResult` can include `message_id`, `thread_id`, and `source_subject`, projected consistently by PGLite and Postgres keyword, vector, chunk, relational, alias, and two-pass paths. Subjects are emitted only when a non-blank Message-ID establishes email identity; page titles and generated summaries are never promoted into source metadata.
 
 #### Security
-- **Auxiliary retrieval preserves scope and visibility.** Near-symbol lookup, unresolved-symbol resolution, direct chunk-edge traversal, hydration, relational fanout, alias injection, and semantic-cache hits enforce `sourceId` or `sourceIds` and exclude deleted, archived-source, and quarantined pages; destination checks fail closed if verification fails. Cache visibility is rechecked independently of page-generation freshness, so archiving a source takes effect immediately rather than waiting for TTL expiry.
-- **Malformed or forged frontmatter cannot become trusted citation metadata.** JSON numbers, booleans, arrays, and objects are rejected instead of being stringified by JSONB extraction. Raw frontmatter always ignores the internal `source_subject` projection alias and accepts only the allowlisted `subject` field.
+- **Search authorization hardening.** Retrieval, structural traversal, hydration, and semantic-cache responses consistently enforce the requested source scope and canonical visibility policy.
+- **Citation metadata validation.** Search results publish only typed, allowlisted source metadata and fail closed when inputs do not satisfy that contract.
 
 #### Internal
-- Search cache contract v13 forces a one-time cold miss so cached pre-provenance rows cannot hide newly available citation fields. Unscoped/all-source reads also use a distinct cache scope from scalar `default` reads. The citation contract itself adds no schema; this merged release includes upstream migration v123 for configurable FTS, applied by the normal upgrade path.
-
-### To take advantage of v0.42.63.0
-
-Run `gbrain upgrade`, then restart long-running MCP and HTTP processes so they load the expanded search-result contract. Existing email pages do not need re-importing; their allowlisted frontmatter fields are projected at query time.
+- Search cache contract v13 forces a one-time cold miss so cached pre-provenance rows cannot hide newly available citation fields. Cache scopes now use collision-proof typed identities. The citation contract itself adds no schema; this merged release includes upstream migration v123 for configurable FTS, applied by the normal upgrade path.
 
 ## [0.42.62.0] - 2026-07-17
 

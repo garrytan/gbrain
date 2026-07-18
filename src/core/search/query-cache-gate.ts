@@ -194,8 +194,8 @@ export const CACHE_GATE_WHERE_CLAUSE = `
     -- MUST sit outside the Layer 1 / Layer 2 OR. Otherwise Layer 1 can serve
     -- a fresh-but-now-hidden cached result until TTL expiry.
     SELECT 1
-    FROM jsonb_each(qc.page_generations) AS visible(page_id, stored_gen)
-    LEFT JOIN pages p_visible ON p_visible.id = (visible.page_id)::int
+    FROM jsonb_array_elements(qc.results) AS visible(result)
+    LEFT JOIN pages p_visible ON p_visible.id = (visible.result->>'page_id')::int
     LEFT JOIN sources s_visible ON s_visible.id = p_visible.source_id
     WHERE NOT (
       p_visible.id IS NOT NULL
