@@ -46,6 +46,7 @@ import {
   SemanticQueryCache,
   loadCacheConfig,
 } from './query-cache.ts';
+import { readPageGenerationClock } from './query-cache-gate.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -1676,6 +1677,7 @@ export async function hybridSearchCached(
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
+    !isSemanticCacheRequestSafe(opts) ||
     adaptiveReturnOn;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
@@ -1770,6 +1772,10 @@ export async function hybridSearchCached(
   // we use a single-element box to keep the type stable.
   const innerMetaBox: { current: HybridSearchMeta | null } = { current: null };
   const userOnMeta = opts?.onMeta;
+  const maxGenerationAtSearchStart =
+    !skipCache && cacheStatus === 'miss' && queryEmbedding
+      ? await readPageGenerationClock(engine)
+      : null;
   const results = await hybridSearch(engine, query, {
     ...opts,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
@@ -1817,11 +1823,16 @@ export async function hybridSearchCached(
     cacheStatus === 'miss' &&
     queryEmbedding &&
     results.length > 0 &&
-    (innerMeta?.vector_enabled ?? false)
+    (innerMeta?.vector_enabled ?? false) &&
+    maxGenerationAtSearchStart !== null
   ) {
     trackCacheWrite(
       cache
-        .store(query, queryEmbedding, results, finalMeta, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash })
+        .store(query, queryEmbedding, results, finalMeta, {
+          sourceId: cacheScopeKey(opts),
+          knobsHash: cacheKnobsHash,
+          maxGenerationAtSearchStart,
+        })
         .catch(() => { /* swallow */ }),
     );
   }
@@ -1869,6 +1880,36 @@ export function cacheScopeKey(opts?: { sourceId?: string; sourceIds?: string[] }
     return JSON.stringify(['scalar', opts.sourceId]);
   }
   return JSON.stringify(['all']);
+}
+
+/**
+ * Semantic-cache replay is safe only when every result-shaping input is either
+ * represented by the existing knobs/scope key or absent. Unsupported shapes
+ * bypass lookup and writeback rather than risk cross-serving a different view.
+ */
+export function isSemanticCacheRequestSafe(opts?: HybridSearchOpts): boolean {
+  if (!opts) return true;
+  return !(
+    (opts.offset !== undefined && opts.offset !== 0) ||
+    opts.type !== undefined ||
+    opts.types !== undefined ||
+    opts.exclude_slugs !== undefined ||
+    opts.detail !== undefined ||
+    opts.language !== undefined ||
+    opts.symbolKind !== undefined ||
+    opts.afterDate !== undefined ||
+    opts.beforeDate !== undefined ||
+    opts.recencyBoost !== undefined ||
+    opts.salience !== undefined ||
+    opts.recency !== undefined ||
+    opts.since !== undefined ||
+    opts.until !== undefined ||
+    opts.crossModal !== undefined ||
+    opts.reranker !== undefined ||
+    opts.rrfK !== undefined ||
+    opts.dedupOpts !== undefined ||
+    opts.expandFn !== undefined
+  );
 }
 
 /**

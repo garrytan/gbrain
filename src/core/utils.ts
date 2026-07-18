@@ -117,7 +117,16 @@ export function rowToPage(row: Record<string, unknown>): Page {
     title: row.title as string,
     compiled_truth: row.compiled_truth as string,
     timeline: row.timeline as string,
-    frontmatter: (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as Record<string, unknown>,
+    // Postgres and PGLite both decode JSONB objects. A string here means the
+    // JSONB top level itself is a string (legacy double-encoding), not a driver
+    // transport shape. Never decode it into trusted frontmatter.
+    frontmatter: (
+      row.frontmatter !== null &&
+      typeof row.frontmatter === 'object' &&
+      !Array.isArray(row.frontmatter)
+        ? row.frontmatter
+        : {}
+    ) as Record<string, unknown>,
     content_hash: row.content_hash as string | undefined,
     // v0.29 (column added in migration v40). Old brains pre-migration return undefined.
     emotional_weight: row.emotional_weight == null ? undefined : Number(row.emotional_weight),
@@ -162,7 +171,9 @@ export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
     title: (row.title as string | null) ?? '',
     compiled_truth: (row.compiled_truth as string | null) ?? '',
     timeline: (row.timeline as string | null) ?? '',
-    frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
+    frontmatter: (
+      fm !== null && typeof fm === 'object' && !Array.isArray(fm) ? fm : {}
+    ) as Record<string, unknown>,
     updated_at: new Date(row.updated_at as string),
     // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
     // Fallback derives an ISO string from the Date — NEVER String(Date), which

@@ -72,6 +72,18 @@ export interface PageGenerationsSnapshot {
   max_generation_at_store: number;
 }
 
+/** Read the global page-generation clock. Null means the safety substrate is unavailable. */
+export async function readPageGenerationClock(engine: BrainEngine): Promise<number | null> {
+  try {
+    const rows = await engine.executeRaw<{ v: number }>(
+      `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
+    );
+    return Number(rows[0]?.v ?? 0);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build the page-generations snapshot for a set of page_ids in one SQL
  * round trip. Used by query-cache.ts:store() at cache-write time.
@@ -103,10 +115,7 @@ export async function buildPageGenerationsSnapshot(
       // Empty-result query: only need the Layer 1 bookmark (clock value).
       // Per D20, empty-result cache rows trust Layer 1 exclusively;
       // bumping the clock on subsequent writes correctly invalidates them.
-      const rows = await engine.executeRaw<{ v: number }>(
-        `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
-      );
-      snapshot.max_generation_at_store = Number(rows[0]?.v ?? 0);
+      snapshot.max_generation_at_store = (await readPageGenerationClock(engine)) ?? 0;
       return snapshot;
     }
 

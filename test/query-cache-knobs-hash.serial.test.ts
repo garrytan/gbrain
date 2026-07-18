@@ -23,6 +23,7 @@ import { resolveHardExcludes } from '../src/core/search/source-boost.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
+let visiblePageId: number;
 
 const conservativeHash = knobsHash(resolveSearchMode({ mode: 'conservative' }));
 const balancedHash = knobsHash(resolveSearchMode({ mode: 'balanced' }));
@@ -45,6 +46,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  const page = await engine.putPage('cache/knobs-visible-fixture', {
+    type: 'note',
+    title: 'Knobs cache fixture',
+    compiled_truth: 'visible knobs cache fixture',
+    timeline: '',
+    frontmatter: {},
+  });
+  visiblePageId = page.id;
 });
 
 afterAll(async () => {
@@ -80,9 +89,24 @@ const makeResults = (label: string, n: number): SearchResult[] =>
     chunk_index: i,
     type: 'note' as const,
     chunk_source: 'compiled_truth' as const,
-    page_id: i + 1,
+    page_id: visiblePageId,
     stale: false,
   }));
+
+async function storeCurrent(
+  cache: SemanticQueryCache,
+  ...args: Parameters<SemanticQueryCache['store']>
+): Promise<void> {
+  const [queryText, queryEmbedding, results, meta, opts = {}] = args;
+  const rows = await engine.executeRaw<{ v: number }>(
+    `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
+  );
+  await cache.store(queryText, queryEmbedding, results, meta, {
+    ...opts,
+    maxGenerationAtSearchStart:
+      opts.maxGenerationAtSearchStart ?? Number(rows[0]?.v ?? 0),
+  });
+}
 
 describe('cacheRowId is bifurcated by knobsHash', () => {
   test('same (query, source) but different knobs → different row IDs', () => {
@@ -116,7 +140,7 @@ describe('SemanticQueryCache cross-mode isolation (CDX-4 hotfix)', () => {
     const tokenmaxResults = makeResults('tokenmax', 50);
 
     // Write under tokenmax knobs.
-    await cache.store('what is the meaning of life', emb, tokenmaxResults, {
+    await storeCurrent(cache, 'what is the meaning of life', emb, tokenmaxResults, {
       vector_enabled: true,
       detail_resolved: null,
       expansion_applied: true,
@@ -137,13 +161,13 @@ describe('SemanticQueryCache cross-mode isolation (CDX-4 hotfix)', () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(2);
 
-    await cache.store('q', emb, makeResults('conservative', 10), {
+    await storeCurrent(cache, 'q', emb, makeResults('conservative', 10), {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     }, { knobsHash: conservativeHash });
-    await cache.store('q', emb, makeResults('balanced', 25), {
+    await storeCurrent(cache, 'q', emb, makeResults('balanced', 25), {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     }, { knobsHash: balancedHash });
-    await cache.store('q', emb, makeResults('tokenmax', 50), {
+    await storeCurrent(cache, 'q', emb, makeResults('tokenmax', 50), {
       vector_enabled: true, detail_resolved: null, expansion_applied: true,
     }, { knobsHash: tokenmaxHash });
 
@@ -194,11 +218,11 @@ describe('SemanticQueryCache cross-mode isolation (CDX-4 hotfix)', () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(4);
 
-    await cache.store('q', emb, makeResults('first', 5), {
+    await storeCurrent(cache, 'q', emb, makeResults('first', 5), {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     }, { knobsHash: balancedHash });
 
-    await cache.store('q', emb, makeResults('second', 7), {
+    await storeCurrent(cache, 'q', emb, makeResults('second', 7), {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     }, { knobsHash: balancedHash });
 
@@ -217,7 +241,7 @@ describe('SemanticQueryCache cross-mode isolation (CDX-4 hotfix)', () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(5);
 
-    await cache.store('q', emb, makeResults('no-mode', 3), {
+    await storeCurrent(cache, 'q', emb, makeResults('no-mode', 3), {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     });
 
@@ -251,7 +275,7 @@ describe('hard-exclude cache isolation (#2825)', () => {
     // Simulate a no-exclude process writing results that include a slug the
     // excluding process must never see.
     const leaky = makeResults('private', 5);
-    await cache.store('who is alice', emb, leaky, {
+    await storeCurrent(cache, 'who is alice', emb, leaky, {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     }, { knobsHash: noEnvHash });
 
@@ -269,7 +293,7 @@ describe('hard-exclude cache isolation (#2825)', () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(7);
 
-    await cache.store('who is alice', emb, makeResults('filtered', 3), {
+    await storeCurrent(cache, 'who is alice', emb, makeResults('filtered', 3), {
       vector_enabled: true, detail_resolved: null, expansion_applied: false,
     }, { knobsHash: envExcludeHash });
 

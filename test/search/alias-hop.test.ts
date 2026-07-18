@@ -83,6 +83,36 @@ describe('applyAliasHop', () => {
     expect(out).toEqual([]);
   });
 
+  test('does not inject aliases whose top-level frontmatter is an encoded JSON string', async () => {
+    const encoded = JSON.stringify({
+      message_id: '<encoded@example.com>',
+      thread_id: 'encoded-thread',
+      subject: 'Encoded subject',
+    });
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, title, type, compiled_truth, frontmatter, created_at, updated_at)
+       VALUES ('mail/encoded-frontmatter', 'default', 'Encoded frontmatter', 'note', 'Hidden.', to_jsonb($1::text), NOW(), NOW())`,
+      [encoded],
+    );
+    await engine.setPageAliases('mail/encoded-frontmatter', 'default', ['encoded mail']);
+
+    const out = await applyAliasHop(engine, [], 'encoded mail', { sourceId: 'default' });
+    expect(out).toEqual([]);
+  });
+
+  test('encoded-string quarantine markers remain hidden from alias retrieval', async () => {
+    const encoded = JSON.stringify({ quarantine: true });
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, title, type, compiled_truth, frontmatter, created_at, updated_at)
+       VALUES ('notes/encoded-quarantine', 'default', 'Encoded quarantine', 'note', 'Hidden.', to_jsonb($1::text), NOW(), NOW())`,
+      [encoded],
+    );
+    await engine.setPageAliases('notes/encoded-quarantine', 'default', ['encoded hidden']);
+
+    const out = await applyAliasHop(engine, [], 'encoded hidden', { sourceId: 'default' });
+    expect(out).toEqual([]);
+  });
+
   test('does not inject aliases from archived sources', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, archived, created_at)

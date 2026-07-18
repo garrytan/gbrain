@@ -48,11 +48,21 @@ describe('contentHash', () => {
 });
 
 describe('rowToPage', () => {
-  test('parses string frontmatter', () => {
+  test('rejects encoded-string frontmatter instead of double-decoding it', () => {
     const page = rowToPage({
       id: 1, slug: 'test', type: 'concept', title: 'Test',
       compiled_truth: 'body', timeline: '',
       frontmatter: '{"key":"val"}',
+      content_hash: 'abc', created_at: '2024-01-01', updated_at: '2024-01-01',
+    });
+    expect(page.frontmatter).toEqual({});
+  });
+
+  test('preserves object-shaped JSONB frontmatter', () => {
+    const page = rowToPage({
+      id: 1, slug: 'test', type: 'concept', title: 'Test',
+      compiled_truth: 'body', timeline: '',
+      frontmatter: { key: 'val' },
       content_hash: 'abc', created_at: '2024-01-01', updated_at: '2024-01-01',
     });
     expect(page.frontmatter.key).toBe('val');

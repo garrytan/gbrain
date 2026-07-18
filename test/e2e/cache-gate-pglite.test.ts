@@ -52,6 +52,21 @@ describe('cache gate end-to-end (PGLite)', () => {
   let engine: PGLiteEngine;
   let cache: SemanticQueryCache;
 
+  async function storeCurrent(
+    cacheInstance: SemanticQueryCache,
+    ...args: Parameters<SemanticQueryCache['store']>
+  ): Promise<void> {
+    const [queryText, queryEmbedding, results, meta, opts = {}] = args;
+    const rows = await engine.executeRaw<{ v: number }>(
+      `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
+    );
+    await cacheInstance.store(queryText, queryEmbedding, results, meta, {
+      ...opts,
+      maxGenerationAtSearchStart:
+        opts.maxGenerationAtSearchStart ?? Number(rows[0]?.v ?? 0),
+    });
+  }
+
   beforeAll(async () => {
     engine = new PGLiteEngine();
     await engine.connect({});
@@ -90,7 +105,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(1);
-    await cache.store('alpha bravo', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'alpha bravo', emb, results, fakeMeta(), { sourceId: 'default' });
     const hit = await cache.lookup(emb, { sourceId: 'default' });
     expect(hit.hit).toBe(true);
     expect(hit.results?.length).toBe(1);
@@ -102,7 +117,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p1, slug: 'test/p1', title: 'test/p1', snippet: 'x', score: 1.0 } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(2);
-    await cache.store('alpha bravo', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'alpha bravo', emb, results, fakeMeta(), { sourceId: 'default' });
 
     // Update content_truth — trigger bumps p1.generation
     await engine.putPage('test/p1', {
@@ -123,7 +138,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p1, slug: 'test/p1', title: 'test/p1', snippet: 'a', score: 1.0 } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(3);
-    await cache.store('alpha', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'alpha', emb, results, fakeMeta(), { sourceId: 'default' });
 
     // Create an UNRELATED new page (different topic, not in result set).
     await seedPage('test/p2', 'beta gamma');
@@ -143,7 +158,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p1, slug: 'test/p1', title: 'test/p1', snippet: 'g', score: 1.0 } as unknown as SearchResult,
     ];
     // Simulate a pre-v0.40.3.0 row: empty snapshot + zero bookmark.
-    await cache.store('gamma delta', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'gamma delta', emb, results, fakeMeta(), { sourceId: 'default' });
     await engine.executeRaw(
       `UPDATE query_cache
           SET page_generations = '{}'::jsonb,
@@ -171,7 +186,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p2, slug: 'test/p2', title: 'test/p2', snippet: 'q', score: 0.9 } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(7);
-    await cache.store('phi chi', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'phi chi', emb, results, fakeMeta(), { sourceId: 'default' });
 
     // Hard-delete via engine.deletePage. Pre-v0.41.19.0 the trigger
     // didn't fire on DELETE so MAX(generation) didn't move and the cache
@@ -197,7 +212,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p1, slug: 'test/non-max-p1', title: 'test/non-max-p1', snippet: 'o', score: 1.0 } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(8);
-    await cache.store('omega psi', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'omega psi', emb, results, fakeMeta(), { sourceId: 'default' });
 
     // UPDATE p1 (the non-max page) with new content.
     await engine.putPage('test/non-max-p1', {
@@ -218,7 +233,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p1, slug: 'test/p1', title: 'test/p1', snippet: 'e', score: 1.0 } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(5);
-    await cache.store('epsilon', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'epsilon', emb, results, fakeMeta(), { sourceId: 'default' });
 
     // Soft-delete: UPDATE pages SET deleted_at = now() — production path
     // for the user-facing `archive` command. The row-level trigger fires
@@ -245,7 +260,7 @@ describe('cache gate end-to-end (PGLite)', () => {
       { page_id: p2, slug: 'test/p2', title: 'test/p2', snippet: 'e', score: 0.9 } as unknown as SearchResult,
     ];
     const emb = fakeEmbedding(6);
-    await cache.store('zeta eta', emb, results, fakeMeta(), { sourceId: 'default' });
+    await storeCurrent(cache, 'zeta eta', emb, results, fakeMeta(), { sourceId: 'default' });
 
     // Bump only p2.
     await engine.putPage('test/p2', {

@@ -8,7 +8,8 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { cacheScopeKey } from '../src/core/search/hybrid.ts';
+import { cacheScopeKey, isSemanticCacheRequestSafe } from '../src/core/search/hybrid.ts';
+import type { HybridSearchOpts } from '../src/core/search/hybrid.ts';
 
 describe('cacheScopeKey', () => {
   test('unscoped uses a typed key and never collides with scalar default', () => {
@@ -43,5 +44,22 @@ describe('cacheScopeKey', () => {
   test('rejects forged scalar/set encodings and invalid federated ids', () => {
     expect(() => cacheScopeKey({ sourceId: '__set__:a,b' })).toThrow('Invalid source_id');
     expect(() => cacheScopeKey({ sourceIds: ['a', '__all__'] })).toThrow('Invalid source_id');
+  });
+});
+
+describe('isSemanticCacheRequestSafe', () => {
+  test('accepts the standard cache-safe request shape', () => {
+    expect(isSemanticCacheRequestSafe({ limit: 20, sourceId: 'default' })).toBe(true);
+  });
+
+  const unsafeRequests: HybridSearchOpts[] = [
+    { offset: 10 }, { detail: 'high' }, { language: 'typescript' },
+    { symbolKind: 'function' }, { types: ['note'] }, { since: '7d' },
+    { until: '2026-07-18' }, { salience: 'on' }, { recency: 'strong' },
+    { crossModal: 'both' }, { exclude_slugs: ['private/page'] },
+  ];
+
+  test.each(unsafeRequests)('rejects unsupported result-shaping request %#', (opts) => {
+    expect(isSemanticCacheRequestSafe(opts)).toBe(false);
   });
 });
