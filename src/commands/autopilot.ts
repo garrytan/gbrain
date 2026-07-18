@@ -109,7 +109,21 @@ function logError(phase: string, e: unknown) {
  */
 export function resolveGbrainCliPath(): string {
   try {
-    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // #2747: `env: process.env` is required under Bun. Bun's execSync
+    // snapshots process.env at Bun's OWN startup, not at call time — a
+    // runtime PATH mutation (dotenv/config loading, shell-profile sourcing
+    // in a wrapper, etc.) happening between Bun boot and this call is
+    // invisible to `which` without explicitly forwarding the current env.
+    // This is why "which gbrain" succeeds when run standalone (fresh Bun
+    // process, no prior mutation) but can fail from inside autopilot's own
+    // process at this exact call site. Same fix already applied to
+    // detectTini() in spawn-helpers.ts (see its comment) — this call site
+    // was missed.
+    const which = execSync('which gbrain', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: process.env,
+    }).trim();
     if (which) return which;
   } catch { /* not on $PATH — fall through */ }
 
@@ -123,7 +137,14 @@ export function resolveGbrainCliPath(): string {
     return arg1;
   }
 
-  throw new Error('Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH (e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly.');
+  // #2747: include what we actually saw so an operator (or a future bug
+  // report) doesn't have to guess whether PATH/execPath/argv[1] looked
+  // sane at the moment of failure.
+  throw new Error(
+    'Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH ' +
+      '(e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly. ' +
+      `Debug: PATH=${JSON.stringify(process.env.PATH ?? '')} execPath=${JSON.stringify(exec)} argv1=${JSON.stringify(arg1)}`,
+  );
 }
 
 export function shouldSpawnAutopilotWorker(args: string[]): boolean {
