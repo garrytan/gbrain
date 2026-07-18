@@ -1628,7 +1628,44 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //   - syncScopeRoot:  file walking, imports, deletes, renames
   // In the common case (repoPath == git root, no subpath) they are identical.
   serr(`[gbrain phase] sync.discover_git_root`);
-  const gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  // #2964: a legacy `sync.repo_path`-anchored default brain (no `sources`
+  // row, no `opts.sourceId`) can reach here having never been `git init`-ed
+  // — e.g. a brain-pages dir that predates git-backed sync, or one rsync'd
+  // from another machine without its `.git`. gbrain owns this directory
+  // outright (it's not a user-external path the way an `opts.sourceId` +
+  // local `sources add --path` entry is), so self-heal by initializing it
+  // in place instead of failing the sync phase every single run. Mirrors
+  // the recloneIfMissing self-recovery above for owned remote clones.
+  // Scoped to !opts.sourceId only — a registered local source without a
+  // remote_url stays a loud, actionable error (it's the user's own
+  // directory; silently git-initializing it without consent is an
+  // overreach).
+  let gitContextRoot: string;
+  try {
+    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  } catch (err) {
+    if (opts.sourceId || !existsSync(repoPath)) throw err;
+    serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
+    git(repoPath, ['init', '--quiet']);
+    // A fresh `git init` has zero commits, and `git rev-parse HEAD` a few
+    // lines below requires at least one — without a baseline commit we'd
+    // just trade "not a git repo" for "no commits in repo" on the very next
+    // line. Snapshot the CURRENT on-disk state as that baseline (respecting
+    // .gitignore, written first) so future incremental syncs diff against
+    // what's actually here rather than an empty tree — an empty initial
+    // commit would make every existing file look "added" again on the next
+    // sync, even though this full-sync pass already imported them.
+    manageGitignore(repoPath, engine.kind);
+    git(repoPath, ['add', '-A']);
+    // Explicit identity via -c: a headless nightly cron/launchd invocation
+    // has no reason to have global git user.name/user.email configured.
+    git(
+      repoPath,
+      ['commit', '--quiet', '--allow-empty', '-m', 'gbrain: initial commit (auto-init by sync)'],
+      ['user.name=gbrain', 'user.email=gbrain@localhost'],
+    );
+    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
   if (!existsSync(rawScopeRoot)) {
     throw new Error(`Sync scope does not exist: ${rawScopeRoot}`);
