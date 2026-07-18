@@ -6,7 +6,10 @@
  * shape, validation, and flag parsing.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -155,6 +158,47 @@ describe('sources add', () => {
     // New source at /tmp/gstack/plans is inside existing gstack at /tmp/gstack.
     await expect(runSources(engine, ['add', 'plans', '--path', '/tmp/gstack/plans']))
       .rejects.toThrow(/overlaps with existing source "gstack"/);
+  });
+});
+
+// ── add — #2707 git-repo validation (CLI wiring) ───────────────
+//
+// Uses a REAL on-disk temp dir (unlike the fake-path tests above) so the
+// core addSource git check actually runs; the stub engine still fakes the
+// DB round-trip. Confirms --force parses through to opsAddSource.
+
+describe('sources add — #2707 --force flag wiring', () => {
+  let plainDir: string;
+
+  beforeEach(() => {
+    plainDir = mkdtempSync(join(tmpdir(), 'gbrain-sources-cli-2707-'));
+  });
+  afterEach(() => {
+    rmSync(plainDir, { recursive: true, force: true });
+  });
+
+  test('rejects a real non-git --path directory by default', async () => {
+    const { engine } = makeStub();
+    await expect(runSources(engine, ['add', 'cli-plain', '--path', plainDir]))
+      .rejects.toThrow(/not a git repository/);
+  });
+
+  test('--force registers the same directory anyway', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'cli-forced',
+        name: 'cli-forced',
+        local_path: plainDir,
+        last_commit: null,
+        last_sync_at: null,
+        config: '{}',
+        created_at: new Date(),
+      }],
+    });
+    await runSources(engine, ['add', 'cli-forced', '--path', plainDir, '--force']);
+    const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
+    expect(insert).toBeDefined();
+    expect(insert!.params[2]).toBe(plainDir);
   });
 });
 

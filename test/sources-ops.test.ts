@@ -15,6 +15,7 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   addSource,
@@ -358,7 +359,10 @@ describe('removeSource — clone-cleanup', () => {
       const userPath = join(GBRAIN_HOME, 'user-managed-fixture');
       mkdirSync(userPath, { recursive: true });
       writeFileSync(join(userPath, 'file'), 'hi');
-      await addSource(engine, { id: 'cleanup-no', localPath: userPath });
+      // #2707: this fixture is intentionally not a git repo (unrelated to
+      // what this test covers — clone-cleanup ownership) — force past the
+      // registration-time git check.
+      await addSource(engine, { id: 'cleanup-no', localPath: userPath, force: true });
       const result = await removeSource(engine, {
         id: 'cleanup-no',
         confirmDestructive: true,
@@ -485,8 +489,10 @@ describe('getSourceStatus', () => {
       // path-only source still gets validateRepoState — but with no expected
       // URL, it just probes existence + .git. Path exists with no .git → 'no-git'.
       // To match contract docstring we'd want 'not-applicable' only when
-      // local_path is null. Test the truthful behavior:
-      await addSource(engine, { id: 'status-no-url', localPath: userPath });
+      // local_path is null. Test the truthful behavior. #2707: this fixture
+      // is deliberately no-git (that's what's under test for getSourceStatus)
+      // — force past the registration-time git check to construct it.
+      await addSource(engine, { id: 'status-no-url', localPath: userPath, force: true });
       const s = await getSourceStatus(engine, 'status-no-url');
       // local_path set but no .git: returns 'no-git'
       expect(s.clone_state).toBe('no-git');
@@ -811,6 +817,100 @@ describe('addSource --url — writes ownership marker', () => {
       expect(recloned).toBe(true);
       expect(existsSync(join(externalClone, '.git'))).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addSource --path — #2707 git-repo validation at registration time
+//
+// Deliberately does NOT run under withEnv2 (the fake-git harness above):
+// writeFakeGit()'s catch-all `exit 0` would make `rev-parse --show-toplevel`
+// (and therefore isInsideGitRepo) succeed unconditionally for any path,
+// which defeats the point of these tests. Real system git applies here.
+// ---------------------------------------------------------------------------
+
+describe('addSource --path — #2707 git-repo validation', () => {
+  const SANDBOX = join(tmpdir(), `gbrain-2707-git-validate-${process.pid}`);
+
+  beforeEach(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+    mkdirSync(SANDBOX, { recursive: true });
+  });
+  afterAll(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  });
+
+  test('rejects an existing non-git directory with an actionable error', async () => {
+    const plainDir = join(SANDBOX, 'plain');
+    mkdirSync(plainDir, { recursive: true });
+    writeFileSync(join(plainDir, 'notes.md'), 'not committed anywhere');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'plain-src', localPath: plainDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+    expect(threw?.message).toContain(plainDir);
+    expect(threw?.message).toContain('--force');
+    expect(threw?.message).toMatch(/git .*init/);
+
+    // Source was never registered — no partial row left behind.
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = 'plain-src'`,
+    );
+    expect(rows.length).toBe(0);
+  });
+
+  test('--force bypasses the check and registers the plain directory as-is', async () => {
+    const plainDir = join(SANDBOX, 'plain-forced');
+    mkdirSync(plainDir, { recursive: true });
+
+    const row = await addSource(engine, {
+      id: 'plain-forced-src',
+      localPath: plainDir,
+      force: true,
+    });
+    expect(row.local_path).toBe(plainDir);
+  });
+
+  test('an already git-initialized directory registers unaffected (no regression)', async () => {
+    const gitDir = join(SANDBOX, 'gitrepo');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(gitDir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', gitDir, 'init', '-q']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', gitDir, 'add', '-A']);
+    execFileSync('git', ['-C', gitDir, 'commit', '-q', '-m', 'initial import']);
+
+    const row = await addSource(engine, { id: 'gitrepo-src', localPath: gitDir });
+    expect(row.local_path).toBe(gitDir);
+  });
+
+  test('a subdirectory of a git repo registers unaffected (#753/#774 parity with sync-time discovery)', async () => {
+    const gitDir = join(SANDBOX, 'gitrepo-parent');
+    const subDir = join(gitDir, 'sub');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', gitDir, 'init', '-q']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', gitDir, 'add', '-A']);
+    execFileSync('git', ['-C', gitDir, 'commit', '-q', '-m', 'initial import']);
+
+    const row = await addSource(engine, { id: 'subdir-src', localPath: subDir });
+    expect(row.local_path).toBe(subDir);
+  });
+
+  test('a not-yet-created path is unaffected (pre-existing lenient behavior, out of #2707 scope)', async () => {
+    const missingDir = join(SANDBOX, 'does-not-exist-yet');
+    expect(existsSync(missingDir)).toBe(false);
+
+    const row = await addSource(engine, { id: 'missing-src', localPath: missingDir });
+    expect(row.local_path).toBe(missingDir);
   });
 });
 

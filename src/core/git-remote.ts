@@ -303,6 +303,28 @@ export function validateRepoState(
   return 'healthy';
 }
 
+/**
+ * True if `path` is itself a git repo OR a subdirectory of one, per
+ * `git rev-parse --show-toplevel`. Mirrors the walk-up discovery
+ * `sync.ts:discoverGitRoot` performs at sync time (#753/#774 — subdir-of-git
+ * sources are valid), so a directory that passes this check is guaranteed
+ * not to hit sync's "Not inside a git repository" error later. Used by
+ * `addSource` (#2707) to validate `--path` at registration time instead of
+ * deferring the failure to the first sync.
+ */
+export function isInsideGitRepo(path: string): boolean {
+  try {
+    execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10_000,
+      env: { ...process.env, ...GIT_ENV },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Durability helpers (v0.42.44) ───────────────────────────────────────────
 // Used by the brain-repo durability feature (`gbrain sources harden/pull`) and
 // the DB-free pull cron. These are the auth-capable, rebase-aware counterparts

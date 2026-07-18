@@ -45,6 +45,7 @@ import {
   parseRemoteUrl,
   cloneRepo,
   validateRepoState,
+  isInsideGitRepo,
   RemoteUrlError,
   GitOperationError,
   type RepoState,
@@ -67,7 +68,8 @@ export type SourceOpErrorCode =
   | 'protected_id'
   | 'clone_dir_outside_gbrain'
   | 'symlink_escape'
-  | 'unmanaged_path';
+  | 'unmanaged_path'
+  | 'not_a_git_repo';
 
 export class SourceOpError extends Error {
   constructor(
@@ -145,6 +147,13 @@ export interface AddSourceOpts {
    * Only honored when remoteUrl is set.
    */
   cloneDir?: string;
+  /**
+   * Skip the #2707 git-repo validation on `localPath`. Opt-in escape hatch
+   * for registering a path before it's git-initialized (e.g. an automated
+   * pipeline that populates + `git init`s the directory after `sources add`
+   * runs). Does NOT auto-`git init` anything — see `addSource` docstring.
+   */
+  force?: boolean;
 }
 
 export interface RemoveSourceOpts {
@@ -310,6 +319,18 @@ export function unownedHint(
 
 // ── addSource ───────────────────────────────────────────────────────────────
 
+/**
+ * #2707: `--path` registration used to accept any existing directory with
+ * zero git validation, deferring the failure to the first `gbrain sync`
+ * ("Not inside a git repository: ..."). By the time that surfaces the
+ * source has already been silently stale for however long nobody read the
+ * sync logs. This is registration-time, fail-fast validation ONLY — it
+ * never auto-`git init`s the directory (that would cross the consent
+ * boundary #2967 established for sync-time self-heal: a `--path` source is
+ * the user's own external directory, and gbrain must not mutate it without
+ * explicit ask). Callers who want to register before git-init exists opt in
+ * via `force: true` (CLI: `--force`).
+ */
 export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
@@ -437,6 +458,28 @@ export async function addSource(
     }
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
+    // #2707: only validate when the path actually exists — a not-yet-created
+    // path is a different (pre-existing, out of scope) failure mode, and
+    // gating on existsSync keeps this a fail-fast check on the exact bug
+    // report ("plain directory accepted, sync fails later") rather than a
+    // broader "does this path exist" check nobody asked for.
+    if (
+      opts.localPath &&
+      !opts.force &&
+      existsSync(opts.localPath) &&
+      !isInsideGitRepo(opts.localPath)
+    ) {
+      throw new SourceOpError(
+        'not_a_git_repo',
+        `"${opts.localPath}" is not a git repository (or a subdirectory of one). ` +
+          `GBrain sync requires every --path source to be git-initialized, with the ` +
+          `files actually committed (an empty commit is not enough — the walker reads ` +
+          `through git objects, so untracked files stay invisible). Fix: ` +
+          `\`git -C ${opts.localPath} init && git -C ${opts.localPath} add -A && ` +
+          `git -C ${opts.localPath} commit -m "initial import"\`, then re-run this ` +
+          `command. To register anyway and git-init later, pass --force.`,
+      );
+    }
     const config: Record<string, unknown> = {};
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;

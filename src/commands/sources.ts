@@ -7,7 +7,9 @@
  * full story.
  *
  * Subcommands:
- *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated]
+ *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force]
+ *                               --path must be a git-initialized repo (files committed,
+ *                               not just present) — #2707. --force skips the check.
  *   gbrain sources list [--json]
  *   gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
  *   gbrain sources rename <id> <new-name>
@@ -120,7 +122,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>]',
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]',
     );
     process.exit(2);
   }
@@ -132,6 +134,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let cloneDir: string | undefined;
   let patFile: string | undefined;
   let noHarden = false;
+  let force = false;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -143,6 +146,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--clone-dir') { cloneDir = args[++i]; continue; }
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
+    if (a === '--force') { force = true; continue; }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -162,6 +166,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     remoteUrl,
     federated,
     cloneDir,
+    force,
   });
 
   // Topology A discovery: if the just-added source carries a brain-resident
@@ -1368,8 +1373,9 @@ function printHelp(): void {
   console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
-  add <id> --path <p> [--name <n>] [--federated|--no-federated]
-                                    Register a new source.
+  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+                                    Register a new source. --path must be a git repo
+                                    with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
