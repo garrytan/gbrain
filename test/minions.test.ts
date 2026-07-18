@@ -735,6 +735,56 @@ describe('MinionQueue: Cancel & Retry', () => {
     expect(retried!.status).toBe('waiting');
     expect(retried!.error_text).toBeNull();
   });
+
+  // #2783: retry must reset started_at/attempts_made/attempts_started —
+  // an explicit `jobs retry` is an operator asserting "run this fresh".
+  test('retry resets started_at/attempts_made/attempts_started', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.failJob(job.id, 'tok1', 'error', 'dead');
+    // Simulate the original claim having stamped started_at long ago and
+    // attempts already elevated, matching what a real dead job looks like.
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '1 hour' WHERE id = $1",
+      [job.id],
+    );
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.status).toBe('waiting');
+    expect(retried!.started_at).toBeNull();
+    expect(retried!.attempts_made).toBe(0);
+    expect(retried!.attempts_started).toBe(0);
+  });
+
+  // #2783 repro: retry issued long after the original claim must NOT be
+  // immediately dead-lettered by the wall-clock sweep on re-claim.
+  test('retry survives handleWallClockTimeouts after re-claim, even long after the original attempt', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    // Original attempt dies from a wall-clock timeout — matches the issue's
+    // repro (an outage that outlasts timeout_ms).
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id],
+    );
+    const firstDead = await queue.handleWallClockTimeouts(30000);
+    expect(firstDead.length).toBe(1);
+    expect(firstDead[0].status).toBe('dead');
+
+    // Outage clears; operator retries — LONG after the original claim time
+    // (this is the exact scenario that used to dead-letter in <1s: without
+    // the fix, started_at would still be the original claim's timestamp).
+    await queue.retryJob(job.id);
+    const reclaimed = await queue.claim('tok2', 30000, 'default', ['sync']);
+    expect(reclaimed).not.toBeNull();
+    expect(reclaimed!.attempts_made).toBe(0);
+
+    // The sweep must NOT kill it immediately this time — started_at was
+    // re-stamped fresh on re-claim (claim()'s COALESCE(started_at, now())).
+    const stillAlive = await queue.handleWallClockTimeouts(30000);
+    expect(stillAlive.length).toBe(0);
+    expect((await queue.getJob(job.id))!.status).toBe('active');
+  });
 });
 
 // --- Pause / Resume (5 tests) ---
