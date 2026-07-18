@@ -94,6 +94,11 @@ describe('runDream — checkout-less brain (no --dir, no sync.repo_path)', () =>
     if (!report) return;
     expect(report.brain_dir).toBeNull();
     expect(report.status).not.toBe('failed');
+    expect(report.phases.map((entry: any) => entry.phase)).toEqual(['sync', 'extract', 'extract_facts']);
+
+    await expect(
+      runDream(engine, ['--source', 'repo-a', '--phase', 'embed', '--dry-run', '--json']),
+    ).rejects.toThrow('manual --source cannot be combined with global phases');
   });
 });
 
@@ -196,7 +201,7 @@ describe('runCycle — A7 deriveStatus counts resolved edges as work', () => {
       [caller[0]!.id],
     );
 
-    const report = await runCycle(engine, { brainDir: null, phases: ['resolve_symbol_edges'] });
+    const report = await runCycle(engine, { executionAuthority: 'manual', brainDir: null, phases: ['resolve_symbol_edges'] });
     expect(report.totals.edges_resolved).toBe(1);
     expect(report.status).toBe('ok'); // pre-A7 this was 'clean'
   });

@@ -16,6 +16,7 @@
  *   gbrain dream --phase lint          # run a single phase
  *   gbrain dream --pull                # also git pull the brain repo
  *   gbrain dream --dir /path/to/brain  # explicit brain location
+ *   gbrain dream --source <id>          # source receipt: sync/extract/extract_facts
  *
  * Cron: 0 2 * * * gbrain dream --json >> /var/log/gbrain-dream.log
  *
@@ -25,6 +26,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import {
+  DREAMCYCLE_SOURCE_PHASES,
   runCycle,
   ALL_PHASES,
   type CyclePhase,
@@ -321,7 +323,10 @@ Options:
                       cycle_freshness check sees a fresh stamp on
                       completion. Without this, gbrain dream's
                       timestamp never lands and federated brains
-                      see "stale cycle" forever.
+                      see "stale cycle" forever. Without --phase,
+                      runs only sync, extract, and extract_facts.
+                      Global phases (embed/orphans/purge/etc.) require
+                      an unscoped \`gbrain dream\` invocation.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 
@@ -581,7 +586,14 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     return runDrain(engine, opts, resolvedSourceId, brainDir);
   }
 
-  const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  // An explicit `--source` is a source-maintenance request. Its omitted-phase
+  // default must not smuggle global work through manual authority; global
+  // phases remain available only on the unscoped manual CLI path.
+  const phases: CyclePhase[] | undefined = opts.phase
+    ? [opts.phase]
+    : resolvedSourceId
+      ? [...DREAMCYCLE_SOURCE_PHASES]
+      : undefined;
 
   const report = await runCycle(engine, {
     brainDir,

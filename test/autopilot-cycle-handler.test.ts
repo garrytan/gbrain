@@ -109,4 +109,10 @@ describe('autopilot-cycle handler source_id validation + archive recheck', () =>
     const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['extract_facts'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
+
+  test('raw unsupported phase is rejected instead of filtered into the source default', async () => {
+    await expect(
+      runHandlerOnce({ repoPath: brainDir, phases: ['embed'] }),
+    ).rejects.toThrow('unsupported DreamCycle source phase(s): embed');
+  });
 });

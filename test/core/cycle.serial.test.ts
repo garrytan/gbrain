@@ -563,25 +563,25 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
 
 describe('runCycle — executionAuthority validation', () => {
   test('missing or invalid executionAuthority throws error', async () => {
-    expect(runCycle(sharedEngine, { brainDir: '/tmp/brain' } as any)).rejects.toThrow('missing or invalid executionAuthority');
-    expect(runCycle(sharedEngine, { executionAuthority: 'fake_auth' as any, brainDir: '/tmp/brain' })).rejects.toThrow('missing or invalid executionAuthority');
+    await expect(runCycle(sharedEngine, { brainDir: '/tmp/brain' } as any)).rejects.toThrow('missing or invalid executionAuthority');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'fake_auth' as any, brainDir: '/tmp/brain' })).rejects.toThrow('missing or invalid executionAuthority');
   });
 
   test('dreamcycle_source requires sourceId and allows only sync/extract/extract_facts', async () => {
-    expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_source', brainDir: '/tmp/brain', phases: ['sync'] })).rejects.toThrow('dreamcycle_source requires sourceId');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_source', brainDir: '/tmp/brain', phases: ['sync'] })).rejects.toThrow('dreamcycle_source requires sourceId');
 
     // Attempting global phase (embed) on dreamcycle_source throws
-    expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_source', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['sync', 'embed'] })).rejects.toThrow('dreamcycle_source does not allow phase(s): embed');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_source', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['sync', 'embed'] })).rejects.toThrow('dreamcycle_source does not allow phase(s): embed');
   });
 
   test('dreamcycle_global rejects sourceId and non-allowlisted phases', async () => {
-    expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_global', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('dreamcycle_global cannot be scoped to a single sourceId');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_global', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('dreamcycle_global cannot be scoped to a single sourceId');
 
     // Attempting non-allowlisted phase (sync/purge) on dreamcycle_global throws
-    expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_global', brainDir: '/tmp/brain', phases: ['sync', 'embed'] })).rejects.toThrow('dreamcycle_global does not allow phase(s): sync');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_global', brainDir: '/tmp/brain', phases: ['sync', 'embed'] })).rejects.toThrow('dreamcycle_global does not allow phase(s): sync');
   });
 
   test('manual with --source and global phases emits helpful error', async () => {
-    expect(runCycle(sharedEngine, { executionAuthority: 'manual', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('manual --source cannot be combined with global phases');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'manual', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('manual --source cannot be combined with global phases');
   });
 });

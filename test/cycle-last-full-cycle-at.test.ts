@@ -75,6 +75,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
       // Run a minimal cycle: just lint (filesystem, no DB writes, always returns 'ok')
       const t0 = Date.now();
       const report = await runCycle(engine, {
+        executionAuthority: 'manual',
         brainDir,
         sourceId: 'alpha',
         phases: ['lint'],
@@ -95,6 +96,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
       await seedSource('default-like');
       // No sourceId passed; should remain untouched.
       await runCycle(engine, {
+        executionAuthority: 'manual',
         brainDir,
         phases: ['lint'],
       });
@@ -108,6 +110,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('beta');
       await runCycle(engine, {
+        executionAuthority: 'manual',
         brainDir,
         sourceId: 'beta',
         phases: ['lint'],
@@ -131,6 +134,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
         [lockId, pid + 99999],
       );
       const report = await runCycle(engine, {
+        executionAuthority: 'manual',
         brainDir,
         sourceId: 'gamma',
         phases: ['lint', 'sync'], // sync triggers lock acquisition
@@ -145,12 +149,12 @@ describe('runCycle last_full_cycle_at exit hook', () => {
   test('two consecutive per-source cycles update the timestamp on each run', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('delta');
-      await runCycle(engine, { brainDir, sourceId: 'delta', phases: ['lint'] });
+      await runCycle(engine, { executionAuthority: 'manual', brainDir, sourceId: 'delta', phases: ['lint'] });
       const first = await readLastFullCycleAt('delta');
       expect(first).not.toBeNull();
       // Wait 10ms so the timestamp can advance
       await new Promise(r => setTimeout(r, 10));
-      await runCycle(engine, { brainDir, sourceId: 'delta', phases: ['lint'] });
+      await runCycle(engine, { executionAuthority: 'manual', brainDir, sourceId: 'delta', phases: ['lint'] });
       const second = await readLastFullCycleAt('delta');
       expect(second).not.toBeNull();
       expect(new Date(second!).getTime()).toBeGreaterThan(new Date(first!).getTime());

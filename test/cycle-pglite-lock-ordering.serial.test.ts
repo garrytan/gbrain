@@ -77,6 +77,7 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
     // right after acquisition by hooking into yieldBetweenPhases.
     let lockFileExisted = false;
     await runCycle(engine, {
+      executionAuthority: 'manual',
       brainDir,
       sourceId: 'alpha',
       phases: ['lint', 'backlinks'], // sync triggers DB-needing phase set
@@ -120,9 +121,9 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
     // this test as the "lock exists during cycle" companion to test #1.
 
     // Run cycle alpha to clear our planted file (recovers as stale)
-    await runCycle(engine, { brainDir, sourceId: 'alpha', phases: ['lint', 'backlinks'] });
+    await runCycle(engine, { executionAuthority: 'manual', brainDir, sourceId: 'alpha', phases: ['lint', 'backlinks'] });
     // Run cycle beta — should succeed too (alpha already released)
-    const r = await runCycle(engine, { brainDir, sourceId: 'beta', phases: ['lint', 'backlinks'] });
+    const r = await runCycle(engine, { executionAuthority: 'manual', brainDir, sourceId: 'beta', phases: ['lint', 'backlinks'] });
     // Status: succeeded after the previous cycle released the file lock
     expect(['ok', 'clean']).toContain(r.status);
   });
@@ -140,6 +141,7 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
       [lockId, process.pid + 99999],
     );
     const r = await runCycle(engine, {
+      executionAuthority: 'manual',
       brainDir,
       sourceId: 'gamma',
       phases: ['lint'], // needs lock (lint is in NEEDS_LOCK_PHASES)
@@ -153,6 +155,7 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
   test('cycle without engine (file-lock-only path) still works', async () => {
     // engine=null path: file lock acquired, no DB lock involved.
     const r = await runCycle(null, {
+      executionAuthority: 'manual',
       brainDir,
       phases: ['lint'], // no DB phases
     });
@@ -165,6 +168,7 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
     await seed('epsilon');
     let dbLockRowSeen: { id: string } | null = null;
     await runCycle(engine, {
+      executionAuthority: 'manual',
       brainDir,
       sourceId: 'epsilon',
       phases: ['lint', 'backlinks'],
@@ -183,8 +187,8 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
   test('subsequent cycle after clean exit can acquire both locks', async () => {
     await seed('zeta');
     // Run twice — confirms release worked correctly the first time
-    const r1 = await runCycle(engine, { brainDir, sourceId: 'zeta', phases: ['lint', 'backlinks'] });
-    const r2 = await runCycle(engine, { brainDir, sourceId: 'zeta', phases: ['lint', 'backlinks'] });
+    const r1 = await runCycle(engine, { executionAuthority: 'manual', brainDir, sourceId: 'zeta', phases: ['lint', 'backlinks'] });
+    const r2 = await runCycle(engine, { executionAuthority: 'manual', brainDir, sourceId: 'zeta', phases: ['lint', 'backlinks'] });
     expect(['ok', 'clean']).toContain(r1.status);
     expect(['ok', 'clean']).toContain(r2.status);
     // Both locks released after second cycle too

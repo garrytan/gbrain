@@ -32,7 +32,12 @@
 
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
-import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import {
+  DREAMCYCLE_GLOBAL_PHASES,
+  DREAMCYCLE_SOURCE_PHASES,
+  LAST_GLOBAL_AT_KEY,
+  type CyclePhase,
+} from '../core/cycle.ts';
 
 const FULL_CYCLE_FLOOR_MIN = 60;
 
@@ -437,11 +442,10 @@ export async function dispatchPerSource(
           repoPath: opts.repoPath,
           source_id: src.id,
           pull: !!remoteUrl,
-          // #2194 fix #3 (cycle split): per-source cycles run ONLY source-scoped
-          // (+ mixed) phases. The brain-wide global phases (embed, orphans,
-          // purge, …) run once in autopilot-global-maintenance, not N times
-          // concurrently here — the fix for the 4→10GB RSS blowout.
-          phases: NON_GLOBAL_PHASES,
+          // DreamCycle source receipts are intentionally narrow. Taxonomy-wide
+          // NON_GLOBAL_PHASES is not an execution allowlist: it contains phases
+          // that can spend or aggregate outside this source batch.
+          phases: [...DREAMCYCLE_SOURCE_PHASES],
         },
         {
           queue: 'default',
@@ -526,7 +530,71 @@ export function getJSTDaySlot(now = new Date()): string {
   return jst.toISOString().slice(0, 10);
 }
 
-export const DAILY_GLOBAL_ALLOWLIST: CyclePhase[] = ['resolve_symbol_edges', 'embed', 'orphans'];
+/** Fixed, non-destructive daily finalizer allowlist. */
+export const DAILY_GLOBAL_ALLOWLIST: CyclePhase[] = [...DREAMCYCLE_GLOBAL_PHASES];
+
+export interface GlobalMaintenanceSourceReceipt {
+  source_id: string;
+  /** Exact source-cycle receipt timestamp that authorizes this finalizer. */
+  receipt_at: string;
+}
+
+export interface GlobalMaintenanceSourceSnapshot {
+  jst_day: string;
+  sources: GlobalMaintenanceSourceReceipt[];
+  /** Deterministic representation of the exact source set + receipts. */
+  revision: string;
+}
+
+/**
+ * Build the receipt snapshot that travels with one daily finalizer job.
+ *
+ * A missing/invalid receipt, a receipt from a different JST day, or an empty
+ * source batch returns null. Callers must defer rather than guessing that the
+ * global work is safe to run.
+ */
+export function createGlobalMaintenanceSourceSnapshot(
+  sources: SourceRow[],
+  jstDay: string,
+): GlobalMaintenanceSourceSnapshot | null {
+  if (sources.length === 0) return null;
+
+  const receipts: GlobalMaintenanceSourceReceipt[] = [];
+  for (const source of sources) {
+    const receipt = readLastSuccessAt(source);
+    if (!receipt || getJSTDaySlot(receipt) !== jstDay) return null;
+    receipts.push({ source_id: source.id, receipt_at: receipt.toISOString() });
+  }
+  receipts.sort((a, b) => a.source_id.localeCompare(b.source_id));
+  const revision = receipts.map((r) => `${r.source_id}\u0000${r.receipt_at}`).join('\u0001');
+  return { jst_day: jstDay, sources: receipts, revision };
+}
+
+/**
+ * Verify the server-created job data against the currently visible batch.
+ * This is deliberately exact: any source add/remove or receipt advancement
+ * invalidates the finalizer, which then waits for the next JST slot.
+ */
+export function globalMaintenanceSnapshotMatches(
+  snapshot: unknown,
+  revision: unknown,
+  jstDay: unknown,
+  currentSources: SourceRow[],
+  now = new Date(),
+): boolean {
+  if (typeof revision !== 'string' || typeof jstDay !== 'string' || !Array.isArray(snapshot)) return false;
+  const currentDay = getJSTDaySlot(now);
+  if (jstDay !== currentDay) return false;
+  const expected = createGlobalMaintenanceSourceSnapshot(currentSources, currentDay);
+  if (!expected || revision !== expected.revision) return false;
+  if (snapshot.length !== expected.sources.length) return false;
+  return snapshot.every((value, index) => {
+    if (!value || typeof value !== 'object') return false;
+    const entry = value as { source_id?: unknown; receipt_at?: unknown };
+    const wanted = expected.sources[index];
+    return entry.source_id === wanted.source_id && entry.receipt_at === wanted.receipt_at;
+  });
+}
 
 export async function readGlobalMaintenanceAuthority(engine: BrainEngine): Promise<string> {
   try {
@@ -539,18 +607,15 @@ export async function readGlobalMaintenanceAuthority(engine: BrainEngine): Promi
 
 /**
  * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
- * that runs the `global` cycle phases (embed, orphans, purge, …) ONCE per
- * window, instead of N per-source cycles each running them concurrently (the
- * RSS blowout). Single-flight is structural: one `idempotency_key` +
- * `maxWaiting:1`, so a slow run never stacks. Gated on `autopilot.last_global_at`
- * (stamped by the handler on success). Postgres-only fan-out concern; on PGLite
- * the file lock already serializes, but the job is still correct there.
+ * that runs the fixed non-destructive global phases once per completed source
+ * batch. The queue payload is a sealed-by-construction snapshot: the handler
+ * re-reads and compares it before invoking runCycle. Any uncertainty defers.
  */
 export async function dispatchGlobalMaintenance(
   engine: BrainEngine,
   queue: MinionQueue,
-  opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
-): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh' | 'deferred' | 'unauthorized' }> {
+  opts: { repoPath: string; slot?: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
+): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh' | 'deferred' | 'global_deferred' | 'unauthorized' }> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
@@ -560,48 +625,59 @@ export async function dispatchGlobalMaintenance(
     return { dispatched: false, reason: auth === 'external_dreamcycle' ? 'unauthorized' : 'deferred' };
   }
 
-  // All source success receipt check
-  let sources: SourceRow[] = [];
+  // Listing and receipt reads are security/correctness gates. Do not treat an
+  // unreadable source table as an empty, completed batch.
+  let sources: SourceRow[];
   try {
     sources = await engine.listAllSources({ localPathOnly: true });
   } catch {
-    sources = [];
+    return { dispatched: false, reason: 'global_deferred' };
   }
 
-  const jstSlot = getJSTDaySlot();
-  for (const src of sources) {
-    const lastSuccess = readLastSuccessAt(src);
-    if (!lastSuccess || getJSTDaySlot(lastSuccess) !== jstSlot) {
-      return { dispatched: false, reason: 'deferred' };
-    }
-  }
+  const now = new Date();
+  const jstSlot = getJSTDaySlot(now);
+  const snapshot = createGlobalMaintenanceSourceSnapshot(sources, jstSlot);
+  if (!snapshot) return { dispatched: false, reason: 'global_deferred' };
 
   let floorMin = GLOBAL_FLOOR_MIN;
-  const floorCfg = await engine.getConfig('autopilot.global_floor_min');
-  if (floorCfg) {
-    const n = parseInt(floorCfg, 10);
-    if (Number.isFinite(n) && n >= 1) floorMin = n;
+  let lastGlobalAt: string | null;
+  try {
+    const floorCfg = await engine.getConfig('autopilot.global_floor_min');
+    if (floorCfg) {
+      const n = parseInt(floorCfg, 10);
+      if (Number.isFinite(n) && n >= 1) floorMin = n;
+    }
+    lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
+  } catch {
+    return { dispatched: false, reason: 'global_deferred' };
   }
-  const lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
   if (!isGlobalMaintenanceStale(lastGlobalAt, Date.now(), floorMin)) {
     return { dispatched: false, reason: 'fresh' };
   }
 
-  const slotKey = opts.slot || jstSlot;
   const job = await queue.add(
     'autopilot-global-maintenance',
-    { repoPath: opts.repoPath, phases: DAILY_GLOBAL_ALLOWLIST },
+    {
+      repoPath: opts.repoPath,
+      phases: [...DAILY_GLOBAL_ALLOWLIST],
+      execution_authority: 'dreamcycle_global',
+      source_snapshot: snapshot.sources,
+      source_snapshot_revision: snapshot.revision,
+      source_snapshot_jst_day: snapshot.jst_day,
+    },
     {
       queue: 'default',
       // Structural single-flight with atomic idempotency slot
-      idempotency_key: `dreamcycle:global:${slotKey}`,
+      idempotency_key: `dreamcycle:global:${jstSlot}`,
       max_attempts: 2,
       timeout_ms: opts.timeoutMs,
       maxWaiting: 1,
     },
+    // The finalizer is intentionally protected from generic CLI/MCP submits.
+    { allowProtectedSubmit: true },
   );
   if (opts.jsonMode) {
-    emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: slotKey }));
+    emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: jstSlot }));
   } else {
     log(`[dispatch] job #${job.id} autopilot-global-maintenance (brain-wide phases)`);
   }

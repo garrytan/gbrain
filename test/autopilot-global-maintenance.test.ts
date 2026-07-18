@@ -16,6 +16,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import {
   ALL_PHASES,
+  DREAMCYCLE_SOURCE_PHASES,
   GLOBAL_PHASES,
   NON_GLOBAL_PHASES,
   PHASE_SCOPE,
@@ -23,6 +24,8 @@ import {
 } from '../src/core/cycle.ts';
 import {
   dispatchGlobalMaintenance,
+  createGlobalMaintenanceSourceSnapshot,
+  getJSTDaySlot,
   isGlobalMaintenanceStale,
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
@@ -62,8 +65,12 @@ describe('isGlobalMaintenanceStale', () => {
 });
 
 describe('dispatchGlobalMaintenance — single-flight gate', () => {
-  function stubs(lastGlobalAt: string | null, authority: string | null = 'daily_finalizer', sources: any[] = []) {
-    const added: Array<{ name: string; data: any; opts: any }> = [];
+  function receiptSource(id = 'source-a', receiptAt = new Date().toISOString()) {
+    return { id, name: id, local_path: '/tmp/brain', config: { last_source_cycle_at: receiptAt } };
+  }
+
+  function stubs(lastGlobalAt: string | null, authority: string | null = 'daily_finalizer', sources: any[] = [receiptSource()]) {
+    const added: Array<{ name: string; data: any; opts: any; trusted: any }> = [];
     const engine = {
       kind: 'postgres' as const,
       getConfig: async (k: string) => {
@@ -74,22 +81,26 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
       listAllSources: async () => sources,
     } as unknown as BrainEngine;
     const queue = {
-      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
-        added.push({ name, data, opts }); return { id: 1 };
+      add: async (name: string, data: unknown, opts: Record<string, unknown>, trusted: unknown) => {
+        added.push({ name, data, opts, trusted }); return { id: 1 };
       },
     } as any;
     return { engine, queue, added };
   }
 
   test('stale (never run) with daily_finalizer authority → dispatches one global job with single-flight opts', async () => {
-    const { engine, queue, added } = stubs(null, 'daily_finalizer', []);
-    const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
+    const { engine, queue, added } = stubs(null, 'daily_finalizer');
+    const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 'caller-controlled-slot', timeoutMs: 1, jsonMode: true, emit: () => {} });
     expect(r.dispatched).toBe(true);
     expect(added.length).toBe(1);
     expect(added[0].name).toBe('autopilot-global-maintenance');
-    expect(added[0].opts.idempotency_key).toBe('dreamcycle:global:s1');
+    expect(added[0].opts.idempotency_key).toBe(`dreamcycle:global:${getJSTDaySlot()}`);
     expect(added[0].opts.maxWaiting).toBe(1); // structural single-flight
     expect(added[0].data.phases).toEqual(['resolve_symbol_edges', 'embed', 'orphans']);
+    expect(added[0].data.execution_authority).toBe('dreamcycle_global');
+    expect(added[0].data.source_snapshot).toHaveLength(1);
+    expect(added[0].data.source_snapshot_revision).toBeTypeOf('string');
+    expect(added[0].trusted).toEqual({ allowProtectedSubmit: true });
   });
 
   test('external_dreamcycle / builtin / unknown / missing authority → fail closed 0 / deferred / unauthorized', async () => {
@@ -104,15 +115,33 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
   });
 
   test('fresh → does NOT dispatch', async () => {
-    const { engine, queue, added } = stubs(new Date().toISOString(), 'daily_finalizer', []);
+    const { engine, queue, added } = stubs(new Date().toISOString(), 'daily_finalizer');
     const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
     expect(r.dispatched).toBe(false);
     expect(added.length).toBe(0);
   });
+
+  test('source listing failure or incomplete receipt fails closed with zero enqueue', async () => {
+    const unavailable = {
+      kind: 'postgres' as const,
+      getConfig: async (k: string) => k === 'autopilot.global_maintenance.authority' ? 'daily_finalizer' : null,
+      listAllSources: async () => { throw new Error('database unavailable'); },
+    } as unknown as BrainEngine;
+    const added: unknown[] = [];
+    const queue = { add: async (...args: unknown[]) => { added.push(args); return { id: 1 }; } } as any;
+    const unavailableResult = await dispatchGlobalMaintenance(unavailable, queue, { repoPath: '/tmp', timeoutMs: 1, jsonMode: true, emit: () => {} });
+    expect(unavailableResult).toEqual({ dispatched: false, reason: 'global_deferred' });
+    expect(added).toHaveLength(0);
+
+    const incomplete = stubs(null, 'daily_finalizer', [{ id: 'source-a', name: 'source-a', local_path: '/tmp/brain', config: {} }]);
+    const incompleteResult = await dispatchGlobalMaintenance(incomplete.engine, incomplete.queue, { repoPath: '/tmp', timeoutMs: 1, jsonMode: true, emit: () => {} });
+    expect(incompleteResult).toEqual({ dispatched: false, reason: 'global_deferred' });
+    expect(incomplete.added).toHaveLength(0);
+  });
 });
 
-describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embed)', () => {
-  test('each per-source job sets phases = NON_GLOBAL_PHASES', async () => {
+describe('dispatchPerSource — per-source jobs carry exact DreamCycle source phases', () => {
+  test('each per-source job sets the fixed source receipt allowlist', async () => {
     const sources = [{ id: 'repo-a', name: 'a', config: {} }, { id: 'repo-b', name: 'b', config: {} }];
     const added: any[] = [];
     const engine = {
@@ -125,7 +154,7 @@ describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embe
     await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true, emit: () => {}, log: () => {} });
     expect(added.length).toBe(2);
     for (const j of added) {
-      expect(j.data.phases).toEqual(NON_GLOBAL_PHASES);
+      expect(j.data.phases).toEqual(DREAMCYCLE_SOURCE_PHASES);
       expect(j.data.phases).not.toContain('embed');
     }
   });
@@ -144,13 +173,37 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     return handlers;
   }
 
+  async function makeVerifiedFinalizerData(phases: string[] = ['orphans', 'embed']) {
+    const nowIso = new Date().toISOString();
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path, archived = false`,
+      ['daily-source', 'daily-source', '/tmp/gbrain-daily-source'],
+    );
+    await engine.updateSourceConfig('daily-source', {
+      last_source_cycle_at: nowIso,
+      last_full_cycle_at: nowIso,
+    });
+    const sources = await engine.listAllSources({ localPathOnly: true });
+    const snapshot = createGlobalMaintenanceSourceSnapshot(sources, getJSTDaySlot());
+    if (!snapshot) throw new Error('test fixture did not create a valid source snapshot');
+    return {
+      phases,
+      execution_authority: 'dreamcycle_global',
+      source_snapshot: snapshot.sources,
+      source_snapshot_revision: snapshot.revision,
+      source_snapshot_jst_day: snapshot.jst_day,
+    };
+  }
+
   test('runs global phases (no source_id) and stamps autopilot.last_global_at on success', async () => {
     expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-global-maintenance');
     expect(handler).toBeTruthy();
 
-    const result = await handler!({ data: { phases: ['orphans', 'embed'] }, signal: undefined });
+    const result = await handler!({ data: await makeVerifiedFinalizerData(), signal: undefined });
     // The cycle ran the requested global phases (DB-only on an empty brain).
     expect(result.report.phases.some((p: any) => p.phase === 'orphans')).toBe(true);
     expect(['ok', 'clean', 'partial']).toContain(result.report.status);
@@ -158,5 +211,29 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const stamped = await engine.getConfig(LAST_GLOBAL_AT_KEY);
     expect(stamped).not.toBeNull();
     expect(Number.isFinite(new Date(stamped!).getTime())).toBe(true);
+  });
+
+  test('missing authority/snapshot and a changed receipt defer without global execution', async () => {
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    expect(handler).toBeTruthy();
+
+    const missing = await handler!({ data: { phases: ['orphans'] }, signal: undefined });
+    expect(missing.status).toBe('skipped');
+    expect(missing.report.reason).toBe('global_deferred');
+
+    const data = await makeVerifiedFinalizerData(['orphans']);
+    await engine.updateSourceConfig('daily-source', { last_source_cycle_at: new Date(Date.now() + 60_000).toISOString() });
+    const changed = await handler!({ data, signal: undefined });
+    expect(changed.status).toBe('skipped');
+    expect(changed.report.reason).toBe('global_deferred');
+  });
+
+  test('raw invalid global phase is rejected rather than filtered to a default', async () => {
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    expect(handler).toBeTruthy();
+    await expect(handler!({ data: await makeVerifiedFinalizerData(['purge']), signal: undefined }))
+      .rejects.toThrow('unsupported finalizer phase(s): purge');
   });
 });

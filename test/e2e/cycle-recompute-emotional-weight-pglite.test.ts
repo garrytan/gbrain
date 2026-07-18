@@ -63,6 +63,7 @@ describe('v0.29 — recompute_emotional_weight phase is registered', () => {
 describe('v0.29 — recompute_emotional_weight phase runs end-to-end', () => {
   test('--phase recompute_emotional_weight populates the column for every page (full mode)', async () => {
     const report = await runCycle(engine, {
+      executionAuthority: 'manual',
       brainDir,
       phases: ['recompute_emotional_weight'],
     });
@@ -92,6 +93,7 @@ describe('v0.29 — recompute_emotional_weight phase runs end-to-end', () => {
     await engine.executeRaw(`UPDATE pages SET emotional_weight = 0.99`);
 
     const report = await runCycle(engine, {
+      executionAuthority: 'manual',
       brainDir,
       phases: ['recompute_emotional_weight'],
       dryRun: true,

@@ -2848,6 +2848,14 @@ const submit_job: Operation = {
   scope: 'admin',
   handler: async (ctx, p) => {
     const name = typeof p.name === 'string' ? p.name.trim() : '';
+    const { isInternalOnlyJobName, isProtectedJobName } = await import('./minions/protected-names.ts');
+
+    // Server-internal finalizers are never exposed through generic submission,
+    // including a locally trusted CLI OperationContext. Their payload binds a
+    // verified source snapshot and is created only by the internal fanout path.
+    if (isInternalOnlyJobName(name)) {
+      throw new OperationError('permission_denied', `'${name}' is reserved for server-internal DreamCycle dispatch`);
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name };
 
     // Submit-side MCP guard: reject protected job names from untrusted callers
@@ -2855,7 +2863,6 @@ const submit_job: Operation = {
     // (the second is MinionQueue.add's check). Independent of the worker-side
     // GBRAIN_ALLOW_SHELL_JOBS env flag — even if that flag is on, MCP callers
     // cannot submit protected-type jobs.
-    const { isProtectedJobName } = await import('./minions/protected-names.ts');
     // F7b fail-closed: anything that is not strictly false (i.e., remote=true OR
     // the field somehow leaks in undefined despite the required type) rejects
     // protected job submissions. Closes the HTTP MCP shell-job RCE that surfaced

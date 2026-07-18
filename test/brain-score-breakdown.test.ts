@@ -140,8 +140,11 @@ describe('Bug 11 — BrainHealth type shape', () => {
   test('type includes dead_links + breakdown scores', async () => {
     const typesSource = await Bun.file(new URL('../src/core/types.ts', import.meta.url)).text();
     expect(typesSource).toContain('dead_links: number');
-    expect(typesSource).toContain('islanded_pages: number');
-    expect(typesSource).toContain('pages_without_inbound_links: number');
+    // These additive health fields remain optional in the public TypeScript
+    // shape so stored/fixture JSON produced before their introduction still
+    // deserializes. Engines themselves always populate both values.
+    expect(typesSource).toContain('islanded_pages?: number');
+    expect(typesSource).toContain('pages_without_inbound_links?: number');
     expect(typesSource).toContain('embed_coverage_score: number');
     expect(typesSource).toContain('link_density_score: number');
     expect(typesSource).toContain('timeline_coverage_score: number');

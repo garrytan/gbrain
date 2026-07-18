@@ -245,18 +245,21 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
 /**
  * #2194 fix #3 / #2227 bug #3 — the cycle split.
  *
- * Per-source autopilot cycles run ONLY the source-scoped (and mixed) phases;
- * the brain-wide `global` phases (embed, orphans, purge, resolve_symbol_edges,
- * grade_takes, calibration_profile, synthesize_concepts, skillopt) run ONCE in
- * a separate `autopilot-global-maintenance` job instead of N times concurrently
- * across per-source cycles (the 4→10GB RSS blowout). Single-flight is
- * structural: one global job, not a skip-and-pretend-fresh hack (codex #1/#2).
+ * Per-source autopilot cycles and the daily finalizer deliberately use smaller,
+ * fixed phase allowlists. `GLOBAL_PHASES` and `NON_GLOBAL_PHASES` remain useful
+ * taxonomy exports, but are not execution permissions.
  *
  * GLOBAL_PHASES ∪ NON_GLOBAL_PHASES == ALL_PHASES, with no overlap — pinned by
  * test/autopilot-global-maintenance.test.ts.
  */
 export const GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'global');
 export const NON_GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] !== 'global');
+
+/** The only phases a per-source DreamCycle receipt may execute. */
+export const DREAMCYCLE_SOURCE_PHASES = ['sync', 'extract', 'extract_facts'] as const satisfies readonly CyclePhase[];
+
+/** The only phases a server-internal daily DreamCycle finalizer may execute. */
+export const DREAMCYCLE_GLOBAL_PHASES = ['resolve_symbol_edges', 'embed', 'orphans'] as const satisfies readonly CyclePhase[];
 
 /** Config key holding the ISO timestamp of the last successful global-maintenance run. */
 export const LAST_GLOBAL_AT_KEY = 'autopilot.last_global_at';
@@ -484,7 +487,7 @@ export interface CycleOpts {
    * - 'dreamcycle_source': per-source cycle pass (requires sourceId, sync/extract/extract_facts only).
    * - 'dreamcycle_global': server internal daily finalizer pass (resolve_symbol_edges/embed/orphans only).
    */
-  executionAuthority?: ExecutionAuthority;
+  executionAuthority: ExecutionAuthority;
   sourceId?: string;
 }
 
@@ -1434,7 +1437,7 @@ export async function runCycle(
     if (!opts.sourceId) {
       throw new Error('[cycle] dreamcycle_source requires sourceId');
     }
-    const allowed = new Set<CyclePhase>(['sync', 'extract', 'extract_facts']);
+    const allowed = new Set<CyclePhase>(DREAMCYCLE_SOURCE_PHASES);
     const invalidPhases = phases.filter(p => !allowed.has(p));
     if (invalidPhases.length > 0) {
       throw new Error(`[cycle] dreamcycle_source does not allow phase(s): ${invalidPhases.join(', ')}`);
@@ -1443,7 +1446,7 @@ export async function runCycle(
     if (opts.sourceId) {
       throw new Error('[cycle] dreamcycle_global cannot be scoped to a single sourceId');
     }
-    const allowed = new Set<CyclePhase>(['resolve_symbol_edges', 'embed', 'orphans']);
+    const allowed = new Set<CyclePhase>(DREAMCYCLE_GLOBAL_PHASES);
     const invalidPhases = phases.filter(p => !allowed.has(p));
     if (invalidPhases.length > 0) {
       throw new Error(`[cycle] dreamcycle_global does not allow phase(s): ${invalidPhases.join(', ')}`);
