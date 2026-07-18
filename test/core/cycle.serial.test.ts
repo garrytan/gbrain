@@ -19,8 +19,10 @@ let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined
 let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undefined }> = [];
 let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
+let extractFactsCalls: Array<{ slugs: string[] | undefined; sourceId: string; dryRun: boolean | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
+let nextSyncPagesAffected: string[] | undefined = ['a', 'b'];
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
@@ -60,13 +62,41 @@ mock.module('../../src/commands/sync.ts', () => ({
       renamed: 0,
       chunksCreated: opts.dryRun ? 0 : 10,
       embedded: 0,
-      pagesAffected: opts.dryRun ? [] : ['a', 'b'],
+      pagesAffected: opts.dryRun ? [] : nextSyncPagesAffected,
     };
   },
   runSync: async () => {},
   buildSyncManifest: () => ({ added: [], modified: [], deleted: [], renamed: [] }),
   isSyncable: () => true,
   pathToSlug: (s: string) => s,
+}));
+
+// Mock extract_facts so cycle-level merge/scope behavior can be asserted
+// without running full SQL-backed fence reconciliation.
+mock.module('../../src/core/cycle/extract-facts.ts', () => ({
+  runExtractFacts: async (_engine: any, opts: any) => {
+    extractFactsCalls.push({
+      slugs: opts.slugs,
+      sourceId: opts.sourceId,
+      dryRun: opts.dryRun,
+    });
+    const pagesScanned = Array.isArray(opts?.slugs) ? opts.slugs.length : 0;
+    return {
+      pagesScanned,
+      pagesWithFacts: pagesScanned,
+      factsInserted: 0,
+      factsDeleted: 0,
+      legacyRowsPending: 0,
+      guardTriggered: false,
+      warnings: [],
+      phantomsScanned: 0,
+      phantomsRedirected: 0,
+      phantomsAmbiguous: 0,
+      phantomsSkippedDrift: 0,
+      phantomsLockBusy: false,
+      phantomsMorePending: false,
+    };
+  },
 }));
 
 // Mock extract
@@ -146,6 +176,8 @@ beforeEach(() => {
   backlinksCalls = [];
   syncCalls = [];
   extractCalls = [];
+  extractFactsCalls = [];
+  nextSyncPagesAffected = ['a', 'b'];
   embedCalls = [];
   orphansCalls = 0;
 });
@@ -444,6 +476,97 @@ describe('runCycle — incremental extract slug propagation (#417)', () => {
     expect(syncCalls.length).toBe(0);
     expect(extractCalls.length).toBe(1);
     expect(extractCalls[0].slugs).toBeUndefined();
+  });
+});
+
+describe('runCycle — capturedSlugs handoff contract (#DreamCycle)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    syncCalls = [];
+    extractCalls = [];
+    extractFactsCalls = [];
+  });
+
+  test('sync delta 0 + capturedSlugs still scans the captured page in extract_facts', async () => {
+    nextSyncPagesAffected = [];
+    await sharedEngine.putPage(
+      'captured/page',
+      { type: 'note', title: 'Captured', compiled_truth: 'captured page' },
+      { sourceId: 'default' },
+    );
+
+    const report = await runCycle(sharedEngine, {
+      executionAuthority: 'dreamcycle_source',
+      brainDir: '/tmp/brain',
+      sourceId: 'default',
+      capturedSlugs: ['captured/page'],
+      phases: ['sync', 'extract_facts'],
+    });
+
+    expect(extractFactsCalls.at(-1)?.slugs).toEqual(['captured/page']);
+    const extractFactsPhase = report.phases.find(p => p.phase === 'extract_facts');
+    expect(extractFactsPhase?.details.pagesScanned).toBe(1);
+    expect(extractFactsCalls.at(-1)?.sourceId).toBe('default');
+  });
+
+  test('capturedSlugs + syncPagesAffected duplicates are deduped deterministically before extract_facts', async () => {
+    nextSyncPagesAffected = ['dup/page', 'dup/page', 'alpha/page'];
+    await sharedEngine.putPage(
+      'dup/page',
+      { type: 'note', title: 'Dup', compiled_truth: 'dup page' },
+      { sourceId: 'default' },
+    );
+    await sharedEngine.putPage(
+      'alpha/page',
+      { type: 'note', title: 'Alpha', compiled_truth: 'alpha page' },
+      { sourceId: 'default' },
+    );
+
+    await runCycle(sharedEngine, {
+      executionAuthority: 'dreamcycle_source',
+      brainDir: '/tmp/brain',
+      sourceId: 'default',
+      capturedSlugs: ['alpha/page', 'dup/page', 'alpha/page', 'dup/page'],
+      phases: ['sync', 'extract_facts'],
+    });
+
+    expect(extractFactsCalls.at(-1)?.slugs).toEqual(['dup/page', 'alpha/page']);
+  });
+
+  test('malformed and cross-source capturedSlugs are ignored after source scoping', async () => {
+    nextSyncPagesAffected = [];
+    await sharedEngine.putPage(
+      'alpha/page',
+      { type: 'note', title: 'Alpha', compiled_truth: 'alpha page' },
+      { sourceId: 'alpha' },
+    );
+    await sharedEngine.putPage(
+      'beta/page',
+      { type: 'note', title: 'Beta', compiled_truth: 'beta page' },
+      { sourceId: 'beta' },
+    );
+
+    await runCycle(sharedEngine, {
+      executionAuthority: 'dreamcycle_source',
+      brainDir: '/tmp/brain',
+      sourceId: 'alpha',
+      capturedSlugs: ['alpha/page', '', '  ', 'beta/page', 42 as unknown as string],
+      phases: ['extract_facts'],
+    });
+
+    expect(extractFactsCalls.at(-1)?.slugs).toEqual(['alpha/page']);
+  });
+
+  test('existing no-capturedSlugs path remains unchanged for full reconcile', async () => {
+    const report = await runCycle(sharedEngine, {
+      executionAuthority: 'manual',
+      brainDir: '/tmp/brain',
+      phases: ['extract_facts'],
+    });
+
+    const extractFactsPhase = report.phases.find((p) => p.phase === 'extract_facts');
+    expect(extractFactsPhase).not.toBeUndefined();
+    expect(extractFactsCalls.at(-1)?.slugs).toBeUndefined();
   });
 });
 

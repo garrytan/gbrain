@@ -23,6 +23,33 @@ function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+/**
+ * Internal captured-slug contract for autopilot-cycle jobs.
+ *
+ * Accept only an array of non-empty strings, trim whitespace, and perform
+ * deterministic first-seen deduplication. This is a strict no-op for
+ * non-arrays/malformed values; malformed entries cannot widen scope or
+ * bypass source-authority guards.
+ */
+function parseCapturedSlugs(rawCapturedSlugs: unknown): string[] {
+  if (!Array.isArray(rawCapturedSlugs)) return [];
+  const candidate: string[] = [];
+  for (const value of rawCapturedSlugs) {
+    if (typeof value !== 'string') continue;
+    const slug = value.trim();
+    if (!slug) continue;
+    candidate.push(slug);
+  }
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const slug of candidate) {
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    deduped.push(slug);
+  }
+  return deduped;
+}
+
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
  *  Throws on malformed input (caller should surface the error and exit).
  *  Clamps to [1, 100] to match the queue-layer clamp in MinionQueue.add.
@@ -1765,6 +1792,7 @@ export async function registerBuiltinHandlers(
     // invalid data is rejected, never filtered into an accidental fallback;
     // absence alone receives the safe default.
     const rawPhases = job.data.phases;
+    const capturedSlugs = parseCapturedSlugs(job.data.capturedSlugs);
     let phases: CyclePhase[];
     if (rawPhases === undefined) {
       phases = [...DREAMCYCLE_SOURCE_PHASES];
@@ -1804,6 +1832,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       executionAuthority: 'dreamcycle_source',
       sourceId: sourceId ?? 'default',
+      capturedSlugs,
       phases,
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.

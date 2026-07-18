@@ -465,6 +465,13 @@ export interface CycleOpts {
    */
   signal?: AbortSignal;
   /**
+   * Internal DreamCycle capture hook (webhook + webhook-integration path).
+   *
+   * Non-empty trimmed strings only; duplicates are ignored. Only authoritative
+   * `dreamcycle_source` callers are allowed to pass this through runCycle.
+   */
+  capturedSlugs?: string[];
+  /**
    * v0.38: source-scope the cycle lock. When set, the cycle acquires
    * `gbrain-cycle:<source_id>` instead of the legacy global `gbrain-cycle`,
    * so two cycles for different sources can run concurrently on Postgres.
@@ -830,6 +837,82 @@ export async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Prom
 interface SyncPhaseResult extends PhaseResult {
   /** Slugs that sync added or modified. Used by extract for incremental processing. */
   pagesAffected?: string[];
+}
+
+/**
+ * Deterministic list de-duplication with stable first-seen order.
+ */
+function dedupeStringList(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+/**
+ * Parse captured slugs defensively: only non-empty trimmed strings, deduped.
+ */
+function normalizeCapturedSlugs(rawCapturedSlugs: unknown): string[] {
+  if (!Array.isArray(rawCapturedSlugs)) return [];
+  const candidate: string[] = [];
+  for (const item of rawCapturedSlugs) {
+    if (typeof item !== 'string') continue;
+    const slug = item.trim();
+    if (!slug) continue;
+    candidate.push(slug);
+  }
+  return dedupeStringList(candidate);
+}
+
+/**
+ * Filter captured slugs to one source. Only slugs that resolve to existing
+ * pages in `sourceId` are allowed to pass through.
+ */
+async function scopeCapturedSlugs(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  capturedSlugs: string[],
+): Promise<string[]> {
+  if (!engine || sourceId === undefined || capturedSlugs.length === 0) return [];
+  const scoped: string[] = [];
+  const seen = new Set<string>();
+  for (const slug of capturedSlugs) {
+    try {
+      const page = await engine.getPage(slug, { sourceId });
+      if (!page) continue;
+    } catch {
+      continue;
+    }
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    scoped.push(slug);
+  }
+  return scoped;
+}
+
+/**
+ * Merge capture hints with sync results for incremental work sets.
+ */
+function mergeIncrementalSlugs(
+  syncPagesAffected: string[] | undefined,
+  capturedSlugs: string[],
+): string[] | undefined {
+  const canonicalSync = syncPagesAffected ? dedupeStringList(syncPagesAffected) : undefined;
+  if (canonicalSync === undefined) {
+    return capturedSlugs.length > 0 ? capturedSlugs : undefined;
+  }
+  const merged = [...canonicalSync];
+  const seen = new Set(merged);
+  for (const slug of capturedSlugs) {
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    merged.push(slug);
+  }
+  return merged;
 }
 
 /**
@@ -1492,6 +1575,15 @@ export async function runCycle(
     ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
     : opts.sourceId;
 
+  const normalizedCapturedSlugs = normalizeCapturedSlugs(opts.capturedSlugs);
+  const capturedSlugs = authority === 'dreamcycle_source'
+    ? await scopeCapturedSlugs(
+      engine,
+      cycleSourceId,
+      normalizedCapturedSlugs,
+    )
+    : [];
+
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // Decide if we need the cycle lock: any state-mutating phase in the selection.
@@ -1756,11 +1848,13 @@ export async function runCycle(
       } else if (brainDir === null) {
         phaseResults.push(skipNoBrainDir('extract'));
       } else {
-        // Pass changed slugs from sync for incremental extract.
+        // Pass changed slugs from sync (plus capturedSlugs from authoritative
+        // internal jobs) for incremental extract.
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal, cycleSourceId));
+        const xfTargetSlugs = mergeIncrementalSlugs(syncPagesAffected, capturedSlugs);
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, xfTargetSlugs, opts.signal, cycleSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1807,7 +1901,7 @@ export async function runCycle(
         // (#1928, codex: keying off phases.includes('sync') wrongly suppressed
         // the skipped-sync full reconcile).
         const syncRanButFailed = syncAttempted && syncPagesAffected === undefined;
-        const xfSlugs = syncRanButFailed ? [] : syncPagesAffected;
+        const xfSlugs = syncRanButFailed ? [] : mergeIncrementalSlugs(syncPagesAffected, capturedSlugs);
         const { result, duration_ms } = await timePhase(() =>
           runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, xfSlugs, opts.signal));
         result.duration_ms = duration_ms;

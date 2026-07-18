@@ -33,6 +33,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM minion_jobs').catch(() => {});
   await engine.executeRaw('DELETE FROM gbrain_cycle_locks').catch(() => {});
   await engine.executeRaw(`DELETE FROM sources WHERE id <> 'default'`).catch(() => {});
+  await engine.executeRaw('DELETE FROM pages').catch(() => {});
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-handler-'));
 });
 
@@ -43,6 +44,10 @@ async function seedSource(id: string, opts: { archived?: boolean } = {}): Promis
      ON CONFLICT (id) DO UPDATE SET archived = EXCLUDED.archived`,
     [id, id, brainDir, opts.archived === true],
   );
+}
+
+async function seedPage(sourceId: string, slug: string, title = 'Captured'): Promise<void> {
+  await engine.putPage(slug, { type: 'note', title, compiled_truth: `${slug} content` }, { sourceId });
 }
 
 /**
@@ -114,5 +119,22 @@ describe('autopilot-cycle handler source_id validation + archive recheck', () =>
     await expect(
       runHandlerOnce({ repoPath: brainDir, phases: ['embed'] }),
     ).rejects.toThrow('unsupported DreamCycle source phase(s): embed');
+  });
+
+  test('capturedSlugs are source-scoped and malformed entries are ignored', async () => {
+    await seedSource('alpha');
+    await seedSource('beta');
+    await seedPage('alpha', 'alpha/page');
+    await seedPage('beta', 'beta/page');
+
+    const result = await runHandlerOnce({
+      repoPath: brainDir,
+      source_id: 'alpha',
+      phases: ['extract_facts'],
+      capturedSlugs: ['alpha/page', '', '  ', 'beta/page', 7, 'alpha/page'],
+    });
+    const extractFacts = result.report.phases.find((p: any) => p.phase === 'extract_facts');
+    expect(extractFacts?.status).toBe('ok');
+    expect(extractFacts?.details.pagesScanned).toBe(1);
   });
 });
