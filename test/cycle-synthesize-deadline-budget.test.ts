@@ -95,6 +95,13 @@ describe('synthesize deadline wiring (structural)', () => {
     expect(stampIdx).toBeGreaterThan(guardIdx);
   });
 
+  test('a timeout on a deadline-CLAMPED wait counts as budget truncation', () => {
+    // The child never got its full configured wait — suppressing the
+    // cooldown stamp lets the next cycle retry. A timeout at the full
+    // configured wait keeps the pre-existing stamping behavior.
+    expect(synthSrc).toContain('waitTimeoutMs < config.subagentWaitTimeoutMs');
+  });
+
   test('mid-fanout exhaustion stops submitting below the start minimum, not merely at zero', () => {
     // Both the per-transcript guard and the per-chunk guard compare against
     // MIN_SUBAGENT_START_BUDGET_MS (a <= 0 guard would still submit

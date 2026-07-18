@@ -602,6 +602,14 @@ export async function runPhaseSynthesize(
           // Same rationale as patterns: a child that sat queued can outlive
           // the deadline this wait was clamped to. Strip it.
           try { await queue.cancelJob(jobId); } catch { /* best-effort */ }
+          // A timeout on a DEADLINE-CLAMPED wait is budget truncation, not
+          // a genuine child overrun — the child never got its full
+          // configured wait. Suppress the cooldown stamp so the next cycle
+          // retries. A timeout at the full configured wait keeps the
+          // pre-existing stamping behavior.
+          if (remainingWaitMs !== null && waitTimeoutMs < config.subagentWaitTimeoutMs) {
+            budgetExhausted = true;
+          }
         } else {
           throw e;
         }
