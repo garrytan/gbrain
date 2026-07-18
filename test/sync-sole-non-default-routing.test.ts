@@ -164,9 +164,13 @@ describe('#1434 — runSync auto-routes to sole_non_default source', () => {
   test('2+ non-default sources: no auto-route, no nudge, falls through to default', async () => {
     // Both need local_path to be counted by the sole_non_default helper.
     // Pre-existing helper filters local_path IS NOT NULL.
+    // secondRepo is a bare temp dir (no git init) — its content is
+    // irrelevant to what this test verifies (that 2+ non-default sources
+    // disable auto-routing); --force skips #2707's registration-time git
+    // validation, which is orthogonal to this test's assertion.
     const secondRepo = mkdtempSync(join(tmpdir(), 'gbrain-snd-routing-second-'));
     await runSources(engine, ['add', 'studiovault', '--path', repoPath, '--no-federated']);
-    await runSources(engine, ['add', 'second-vault', '--path', secondRepo, '--no-federated']);
+    await runSources(engine, ['add', 'second-vault', '--path', secondRepo, '--no-federated', '--force']);
     const { runSync } = await import('../src/commands/sync.ts');
 
     const origWrite = process.stderr.write.bind(process.stderr);
