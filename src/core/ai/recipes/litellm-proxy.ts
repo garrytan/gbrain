@@ -41,6 +41,21 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    expansion: {
+      models: [],
+      cost_per_1m_tokens_usd: undefined,
+      price_last_verified: '2026-06-14',
+    },
+    chat: {
+      models: [],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      max_context_tokens: 200_000,
+      cost_per_1m_input_usd: undefined,
+      cost_per_1m_output_usd: undefined,
+      price_last_verified: '2026-06-14',
+    },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL (include the /v1 suffix if your proxy serves the OpenAI route there, e.g. http://localhost:4000/v1) + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
 };

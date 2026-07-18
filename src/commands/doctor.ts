@@ -5138,13 +5138,7 @@ export async function buildChecks(
         checks.push({
           name: 'multi_source_drift',
           status: 'warn',
-          message:
-            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
-            `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
-            `(2) source X never completed initial sync and the default page is unrelated. ` +
-            `Verify with 'gbrain sources status', then either re-sync with ` +
-            `'gbrain sync --source <id> --full' or 'gbrain delete <slug>' if the default-source ` +
-            `row is the misroute. (A 'gbrain sources rehome' cleanup command is tracked for v0.32.0.)`,
+          message: multiSourceDriftAdvice(result.count, sampleStr),
         });
       } else {
         checks.push({
@@ -8073,4 +8067,25 @@ async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<Check> {
       message: `Skipped: ${(e as Error).message}`,
     };
   }
+}
+
+/**
+ * #1123 — multi_source_drift remediation advice. Exported so the regression
+ * test can pin that it only references CLI surfaces that actually exist
+ * (the pre-fix text pointed at 'gbrain sources rehome', which was never
+ * built, and at 'gbrain delete <slug>' without explaining that delete
+ * targets the ACTIVE source — following it literally on a multi-source
+ * brain deletes the correctly-routed row).
+ */
+export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
+  return (
+    `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
+    `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
+    `(2) the intended source never completed initial sync and the default page is unrelated. ` +
+    `Verify with 'gbrain sources status', then re-sync with ` +
+    `'gbrain sync --source <id> --full' (reconciles drift without deleting data). ` +
+    `If a misrouted default-source row remains after re-sync, remove it with ` +
+    `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
+    `so pin it to 'default' explicitly.`
+  );
 }

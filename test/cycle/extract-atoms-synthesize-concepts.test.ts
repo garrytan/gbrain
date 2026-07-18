@@ -316,4 +316,32 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
     );
     expect(rows[0].compiled_truth).toContain('Custom synthesized narrative');
   });
+
+  // #2163: concept pages must enter the retrieval surface. The write routes
+  // through importFromContent (the same parse→chunk pipeline put_page uses),
+  // so content_chunks rows exist and source-boost's 1.3× 'concepts/' weight
+  // has something to boost. (Embeddings are skipped in this env — no
+  // provider — but chunks + search_vector land regardless.)
+  test('concept pages are chunked (#2163)', async () => {
+    const atoms = Array.from({ length: 12 }, (_, i) => ({
+      slug: `c${i}`,
+      title: `Chunk atom ${i}`,
+      body: `Chunky body ${i}.`,
+      concept_refs: ['chunked-concept'],
+    }));
+    const chat = stubChat('A concept narrative long enough to produce at least one chunk.');
+    await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat });
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n
+         FROM content_chunks c JOIN pages p ON p.id = c.page_id
+        WHERE p.slug = 'concepts/chunked-concept'`,
+    );
+    expect(Number(rows[0].n)).toBeGreaterThan(0);
+    // Page metadata survives the importFromContent round-trip.
+    const page = await engine.executeRaw<{ type: string; fm: Record<string, unknown> }>(
+      `SELECT type, frontmatter AS fm FROM pages WHERE slug = 'concepts/chunked-concept'`,
+    );
+    expect(page[0].type).toBe('concept');
+    expect((page[0].fm as Record<string, unknown>).tier).toBe('T1');
+  });
 });

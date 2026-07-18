@@ -107,7 +107,7 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
 
 async function countPages(engine: BrainEngine, sourceId: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
     [sourceId],
   );
   return rows[0]?.n ?? 0;
@@ -502,6 +502,19 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
 
   const result = await softDeleteSource(engine, id);
   if (!result) {
+    // #2792: softDeleteSource returns null both for "not found" (handled by
+    // the impact check above) and for "already archived" (UPDATE matched no
+    // `archived = false` row). Distinguish them: already-archived is a
+    // friendly idempotent no-op, not a reasonless failure.
+    const rows = await engine.executeRaw<{ archived: boolean }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    if (rows[0]?.archived) {
+      console.log(`Source "${id}" is already archived — nothing to do.`);
+      console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
+      return;
+    }
     console.error(`Failed to archive source "${id}".`);
     process.exit(4);
   }
@@ -1134,7 +1147,8 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
         continue;
       }
       if (stat.isDirectory()) {
-        if (pruneDir(entry, dir)) continue;
+        // pruneDir returns true = descend, false = prune (see core/sync.ts).
+        if (!pruneDir(entry, dir)) continue;
         walk(full);
       } else if (entry.endsWith('.md')) {
         files.push(full);

@@ -507,7 +507,17 @@ export class MinionWorker extends EventEmitter {
         try {
           await this.queue.promoteDelayed();
         } catch (e) {
-          console.error('Promotion error:', e instanceof Error ? e.message : String(e));
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error('Promotion error:', msg);
+          // issue #1491: a retryable pool/connection loss during promotion used
+          // to be logged and ignored, leaving the worker in a repeated
+          // "Promotion error: No database connection" loop until a later path
+          // happened to reconnect or crash. Promotion is a standalone UPDATE
+          // from delayed→waiting, so after a connection failure we can safely
+          // rebuild the worker-owned pool before continuing to claim work.
+          if (isRetryableConnError(e)) {
+            await this.reconnectAfterConnectionError('promoteDelayed', e);
+          }
         }
 
         // Claim jobs up to concurrency limit
@@ -532,13 +542,7 @@ export class MinionWorker extends EventEmitter {
             if (!isRetryableConnError(e)) throw e;
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
-            const reconnect = (this.engine as { reconnect?: () => Promise<void> }).reconnect;
-            if (reconnect) {
-              try { await reconnect.call(this.engine); }
-              catch (re) {
-                console.error(`[worker] reconnect after claim error failed: ${re instanceof Error ? re.message : String(re)}`);
-              }
-            }
+            await this.reconnectAfterConnectionError('claim', e);
             await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
             continue;
           }
@@ -656,6 +660,22 @@ export class MinionWorker extends EventEmitter {
   /** Stop the worker gracefully. */
   stop(): void {
     this.running = false;
+  }
+
+  /**
+   * Rebuild the worker-owned DB pool after a retryable connection failure.
+   *
+   * PostgresEngine exposes reconnect(); PGLite and test doubles may not. Absence
+   * is a no-op so non-Postgres workers preserve their legacy behavior.
+   */
+  private async reconnectAfterConnectionError(site: string, error: unknown): Promise<void> {
+    const reconnect = (this.engine as { reconnect?: (ctx?: { error?: unknown }) => Promise<void> }).reconnect;
+    if (!reconnect) return;
+    try {
+      await reconnect.call(this.engine, { error });
+    } catch (re) {
+      console.error(`[worker] reconnect after ${site} error failed: ${re instanceof Error ? re.message : String(re)}`);
+    }
   }
 
   /** RSS watchdog. Called from the per-job finally and the periodic timer.

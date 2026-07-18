@@ -212,9 +212,17 @@ async function fetchSourceRow(engine: BrainEngine, id: string): Promise<SourceRo
   return { ...r, config: parseConfig(r.config) };
 }
 
-async function countPages(engine: BrainEngine, id: string): Promise<number> {
+async function countAllPages(engine: BrainEngine, id: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+    [id],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+async function countVisiblePages(engine: BrainEngine, id: string): Promise<number> {
+  const rows = await engine.executeRaw<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
     [id],
   );
   return rows[0]?.n ?? 0;
@@ -575,7 +583,7 @@ export async function listSources(
       local_path: r.local_path,
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
-      page_count: await countPages(engine, r.id),
+      page_count: await countVisiblePages(engine, r.id),
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
   }
@@ -621,7 +629,7 @@ export async function removeSource(
     throw new SourceOpError('not_found', `Source "${opts.id}" not found.`);
   }
 
-  const pageCount = await countPages(engine, opts.id);
+  const pageCount = await countAllPages(engine, opts.id);
 
   if (opts.dryRun) {
     return {
@@ -720,7 +728,7 @@ export async function getSourceStatus(
     local_path: src.local_path,
     remote_url: remoteUrl,
     federated: isFederated(src.config),
-    page_count: await countPages(engine, id),
+    page_count: await countVisiblePages(engine, id),
     last_sync_at: src.last_sync_at ? new Date(src.last_sync_at).toISOString() : null,
     last_commit: src.last_commit,
     archived,

@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isChronicleEligible } from '../src/core/chronicle/eligibility.ts';
-import { runChronicleExtract, type ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
+import { runChronicleExtract, parseJudgeJson, type ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
 import { runChronicleBackstop } from '../src/core/chronicle/backstop.ts';
 
 let engine: PGLiteEngine;
@@ -110,6 +110,44 @@ describe('runChronicleExtract', () => {
     const none: ChronicleJudge = async () => ({ events: [] });
     const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync', judge: none });
     expect(r.status).toBe('no_events');
+  });
+
+  // #2606: a truncated or unparseable judge response must NOT be recorded as
+  // a legitimate no_events — it gets a distinct skipped reason.
+  test('truncated judge output → skipped/judge_truncated, not no_events (#2606)', async () => {
+    const truncated: ChronicleJudge = async () => ({ events: [], failure: 'truncated' });
+    const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync', judge: truncated });
+    expect(r.status).toBe('skipped');
+    expect(r.reason).toBe('judge_truncated');
+    expect(await countEvents()).toBe(0);
+  });
+
+  test('unparseable judge output → skipped/judge_parse_failed (#2606)', async () => {
+    const parseFailed: ChronicleJudge = async () => ({ events: [], failure: 'parse_failed' });
+    const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync', judge: parseFailed });
+    expect(r.status).toBe('skipped');
+    expect(r.reason).toBe('judge_parse_failed');
+  });
+});
+
+describe('parseJudgeJson failure signalling (#2606)', () => {
+  test('a legitimate empty array parses to []', () => {
+    expect(parseJudgeJson('[]')).toEqual([]);
+    expect(parseJudgeJson('```json\n[]\n```')).toEqual([]);
+  });
+
+  test('a valid array round-trips', () => {
+    const arr = parseJudgeJson('[{"when":"2026-06-18","who":[],"what":"x","kind":"meeting"}]');
+    expect(Array.isArray(arr)).toBe(true);
+    expect(arr!.length).toBe(1);
+  });
+
+  test('empty / no-array / truncated / non-array responses return null', () => {
+    expect(parseJudgeJson('')).toBeNull();
+    expect(parseJudgeJson('I found no events worth extracting.')).toBeNull();
+    // Truncated mid-array (the maxTokens-cap shape from the issue).
+    expect(parseJudgeJson('[{"when":"2026-06-18","who":["a"],"what":"long ev')).toBeNull();
+    expect(parseJudgeJson('{"events": 1}')).toBeNull();
   });
 });
 

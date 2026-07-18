@@ -301,6 +301,41 @@ describe('listSources', () => {
 // ---------------------------------------------------------------------------
 
 describe('removeSource — clone-cleanup', () => {
+  test('counts soft-deleted pages for destructive removal while list/status show active pages', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, { id: 'soft-only', localPath: '/tmp/soft-only-fixture' });
+      await engine.putPage(
+        'notes/recoverable',
+        {
+          type: 'note',
+          title: 'Recoverable',
+          compiled_truth: 'still recoverable during the soft-delete window',
+          timeline: '',
+          frontmatter: {},
+        },
+        { sourceId: 'soft-only' },
+      );
+      expect(await engine.softDeletePage('notes/recoverable', { sourceId: 'soft-only' }))
+        .toEqual({ slug: 'notes/recoverable' });
+
+      const listed = await listSources(engine);
+      expect(listed.find((s) => s.id === 'soft-only')?.page_count).toBe(0);
+      const status = await getSourceStatus(engine, 'soft-only');
+      expect(status.page_count).toBe(0);
+
+      const dryRun = await removeSource(engine, { id: 'soft-only', dryRun: true });
+      expect(dryRun.pages_deleted).toBe(1);
+
+      try {
+        await removeSource(engine, { id: 'soft-only' });
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).message).toContain('with 1 pages');
+      }
+    });
+  });
+
   test('removes clone IFF managed (local_path under $GBRAIN_HOME/clones/ + remote_url set)', async () => {
     await withEnv2(async () => {
       const row = await addSource(engine, {

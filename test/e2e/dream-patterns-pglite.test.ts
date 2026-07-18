@@ -9,7 +9,9 @@
  * Anthropic call:
  *   - disabled: dream.patterns.enabled=false → skipped
  *   - insufficient_evidence: <min_evidence reflections → skipped
- *   - no_api_key: enough reflections, no ANTHROPIC_API_KEY → skipped
+ *   - no_provider: enough reflections, no reachable provider for the
+ *     resolved patterns model (default: Anthropic with no key in env OR
+ *     config) → skipped
  *   - dry-run: passes through with reflections_considered + zero pages
  *
  * The Sonnet detection path is structurally covered in
@@ -23,6 +25,7 @@
 import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhasePatterns } from '../../src/core/cycle/patterns.ts';
+import { withoutAnthropicKey } from '../helpers/no-anthropic-key.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -41,17 +44,6 @@ async function setupRig(): Promise<TestRig> {
       try { await engine.disconnect(); } catch { /* */ }
     },
   };
-}
-
-async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
-  const saved = process.env.ANTHROPIC_API_KEY;
-  delete process.env.ANTHROPIC_API_KEY;
-  try {
-    return await body();
-  } finally {
-    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = saved;
-  }
 }
 
 /**
@@ -141,18 +133,23 @@ describe('E2E patterns — insufficient_evidence', () => {
   }, 30_000);
 });
 
-describe('E2E patterns — no API key', () => {
-  test('enough reflections, no ANTHROPIC_API_KEY → skipped no_api_key', async () => {
+describe('E2E patterns — no reachable provider', () => {
+  test('enough reflections, no Anthropic key in env OR config → skipped no_provider', async () => {
     const rig = await setupRig();
     try {
       await seedReflections(rig.engine, 5); // above default min_evidence (3)
+      // Default patterns model resolves to Anthropic; with no key reachable
+      // from EITHER source (env + config file — the shared helper neuters
+      // both) the gateway probe reports the provider unavailable. A
+      // non-Anthropic stack (litellm, deepseek, ...) passes this gate and
+      // dispatches through the gateway instead (PR #2279).
       await withoutAnthropicKey(async () => {
         const result = await runPhasePatterns(rig.engine, {
           brainDir: rig.brainDir,
           dryRun: false,
         });
         expect(result.status).toBe('skipped');
-        expect((result.details as { reason?: string }).reason).toBe('no_api_key');
+        expect((result.details as { reason?: string }).reason).toBe('no_provider');
       });
     } finally {
       await rig.cleanup();
