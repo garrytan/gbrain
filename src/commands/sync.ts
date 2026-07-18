@@ -999,11 +999,14 @@ function createSyncBaselineCommit(repoPath: string): void {
   // (e.g. flow-style `db_only: [dir/]` — the narrow custom parser only
   // handles block-style lists), which would silently resolve zero
   // exclusions from a file that clearly intended some. If gbrain.yml
-  // exists and mentions db_only but nothing resolved from it, refuse
-  // rather than guess "genuinely empty" vs "unsupported syntax ignored".
+  // exists and mentions db_only (or its deprecated pre-v0.22.11 alias
+  // `supabase_only` — same keep-out-of-git semantics, still a supported
+  // backward-compat key per storage-config.ts) but nothing resolved from
+  // it, refuse rather than guess "genuinely empty" vs "syntax ignored".
   if (dbOnlyDirs.length === 0) {
     const yamlPath = join(repoPath, 'gbrain.yml');
-    if (existsSync(yamlPath) && readFileSync(yamlPath, 'utf-8').includes('db_only')) {
+    const yamlContent = existsSync(yamlPath) ? readFileSync(yamlPath, 'utf-8') : '';
+    if (yamlContent.includes('db_only') || yamlContent.includes('supabase_only')) {
       throw new Error(
         `${yamlPath} mentions db_only but no directories resolved from it — refusing to ` +
           `auto-commit (cannot tell "genuinely empty" from "unsupported syntax silently ignored"). ` +
@@ -1816,16 +1819,23 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the mere absence of `opts.sourceId`/`opts.repoPath` — see that
   // function's docstring. `!opts.dryRun`: a preview must never write.
   let gitContextRoot: string;
+  let didSelfHeal = false;
   try {
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
   } catch (err) {
-    if (opts.dryRun || !existsSync(repoPath) || !(await isAnchorOwnedSyncPath(engine, opts, repoPath))) {
+    if (
+      opts.dryRun ||
+      opts.signal?.aborted ||
+      !existsSync(repoPath) ||
+      !(await isAnchorOwnedSyncPath(engine, opts, repoPath))
+    ) {
       throw err;
     }
     serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
     git(repoPath, ['init', '--quiet']);
     createSyncBaselineCommit(repoPath);
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+    didSelfHeal = true;
   }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
   if (!existsSync(rawScopeRoot)) {
@@ -1967,6 +1977,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // files well outside the sync scope — refuse instead of guessing.
     if (
       opts.dryRun ||
+      opts.signal?.aborted ||
       gitContextRoot !== realpathSync(repoPath) ||
       !(await isAnchorOwnedSyncPath(engine, opts, repoPath))
     ) {
@@ -1975,6 +1986,34 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
     createSyncBaselineCommit(gitContextRoot);
     headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
+    didSelfHeal = true;
+  }
+
+  // #2964: after a self-heal, write .gitignore for db_only dirs the SAME
+  // way `runSync` does for every other successful sync (post-completion,
+  // never before — see `createSyncBaselineCommit`'s docstring on why
+  // ordering matters). Needed here specifically because the dream cycle
+  // (`cycle.ts:runPhaseSync`) calls `performSync` directly and never goes
+  // through `runSync`'s CLI-only post-success `manageGitignoreAtGitRoot`
+  // call — without this, a brain self-healed via the dream cycle would
+  // have db_only content correctly excluded from THIS commit (the
+  // pathspec exclusion in `createSyncBaselineCommit`) but no `.gitignore`
+  // ever written, leaving future manual `git add`/`commit` by the user
+  // unprotected (Codex review round 6, P2). No-op for a normal
+  // already-git-initialized sync (didSelfHeal stays false) — that case
+  // is unaffected and still relies on `runSync`'s existing post-success
+  // call, exactly as before.
+  async function performFullSyncAndMaybeGitignore(
+    roots: typeof fullSyncRoots,
+  ): Promise<SyncResult> {
+    const result = await performFullSync(engine, roots, headCommit, opts);
+    if (didSelfHeal && result.status !== 'blocked_by_failures' && result.status !== 'partial') {
+      // repoPath is `string` by construction (guarded at function entry),
+      // but the guard's narrowing doesn't carry into this nested closure —
+      // reassert via the local roots, which is realpath-derived from it.
+      manageGitignore(roots.gitContextRoot, engine.kind);
+    }
+    return result;
   }
 
   // #1970: bookmark reachability. The ONLY thing that should force a full
@@ -2003,7 +2042,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // back to the authoritative full reconcile (which now also purges stale
       // pages for deleted files; see performFullSync's delete-reconcile pass).
       serr(`Sync anchor ${lastCommit.slice(0, 8)} object missing (gc'd after history rewrite). Running full reimport.`);
-      return performFullSync(engine, fullSyncRoots, headCommit, opts);
+      return performFullSyncAndMaybeGitignore(fullSyncRoots);
     }
 
     // Observability only — NOT control flow. A non-ancestor bookmark is still
@@ -2026,7 +2065,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // First sync
   if (!lastCommit) {
-    return performFullSync(engine, fullSyncRoots, headCommit, opts);
+    return performFullSyncAndMaybeGitignore(fullSyncRoots);
   }
 
   // v0.42.x (#1794): resumable incremental sync — resolve the PINNED target.
@@ -2147,7 +2186,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `[sync] delta ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} unavailable ` +
       `(${delta.reason}) — falling back to full reconcile.`,
     );
-    return performFullSync(engine, fullSyncRoots, headCommit, opts);
+    return performFullSyncAndMaybeGitignore(fullSyncRoots);
   }
   const manifest = delta.manifest;
 

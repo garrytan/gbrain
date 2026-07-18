@@ -39,7 +39,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -303,5 +303,25 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
 
     const tracked = execSync('git ls-files', { cwd: dir }).toString();
     expect(tracked).not.toContain('private-cache');
+  });
+
+  test('a self-heal via bare performSync (mirrors cycle.ts:runPhaseSync — no runSync CLI wrapper) still writes .gitignore for db_only dirs (round 6 P2)', async () => {
+    // The dream cycle calls performSync directly and never runs runSync's
+    // post-success manageGitignoreAtGitRoot. Without performSyncInner doing
+    // this itself after a self-heal, a brain that's only ever synced via
+    // the dream cycle would have db_only content correctly excluded from
+    // the baseline commit but .gitignore never written — leaving the
+    // user's own future manual `git add`/`commit` unprotected.
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { mkdirSync } = await import('fs');
+    mkdirSync(join(dir, 'private-cache'));
+    writeFileSync(join(dir, 'private-cache', 'secret.bin'), 'binary-ish content');
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - private-cache\n');
+
+    const result = await performSync(engine, { noPull: true, noEmbed: true, full: true });
+
+    expect(result.status).toBe('first_sync');
+    const gitignore = existsSync(join(dir, '.gitignore')) ? readFileSync(join(dir, '.gitignore'), 'utf-8') : '';
+    expect(gitignore).toContain('private-cache');
   });
 });
