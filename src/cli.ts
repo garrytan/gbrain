@@ -2258,7 +2258,7 @@ IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
-  sync --install-cron                Install persistent sync daemon
+                                     See also: autopilot --install (continuous daemon).
   export [--dir ./out/]              Export to markdown
   export --restore-only [--repo <p>] Restore missing supabase-only files
         [--type T] [--slug-prefix S] With optional filters
