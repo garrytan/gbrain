@@ -41,7 +41,11 @@ beforeAll(async () => {
     {
       slug: 'bob-bar',
       page: {
-        type: 'person',
+        // Mixed types across the fixture keep dedup Layer 3 (no page type
+        // above 60% of results) out of this test's way — an all-person set
+        // would be capped to 2 of 3 and couple these assertions to the
+        // diversity policy.
+        type: 'company',
         title: 'Bob Bar',
         compiled_truth: `Bob Bar is a builder. ${longText}`,
       },
@@ -49,7 +53,7 @@ beforeAll(async () => {
     {
       slug: 'carol-baz',
       page: {
-        type: 'person',
+        type: 'note',
         title: 'Carol Baz',
         compiled_truth: `Carol Baz is a builder. ${longText}`,
       },
@@ -131,7 +135,8 @@ describe('hybridSearchCached \u2014 token budget', () => {
   });
 
   test('tight budget cuts the result set', async () => {
-    // All three fixture pages match 'builder', so the unbounded set MUST
+    // All three fixture pages match 'builder' (mixed types, so dedup's
+    // type-diversity layer keeps all of them), and the unbounded set MUST
     // have enough rows for the cut to be observable. Pre-fix this was a
     // silent `return` when fewer than 2 rows came back — and with no
     // chunks in the fixture, zero rows ALWAYS came back, so the cut
@@ -149,8 +154,12 @@ describe('hybridSearchCached \u2014 token budget', () => {
     expect(results.length).toBeLessThan(unbounded.length);
     expect(meta?.token_budget?.budget).toBe(250);
     expect(meta?.token_budget?.kept).toBe(results.length);
-    expect(meta?.token_budget?.dropped).toBeGreaterThan(0);
-    // The budget must hold: cumulative cost <= budget.
+    // Exact accounting: every row the budget removed is a reported drop —
+    // dropped > 0 alone would accept any wrong positive count (codex).
+    expect(meta?.token_budget?.dropped).toBe(unbounded.length - results.length);
+    // The budget must hold with a real (non-zero) cost: cumulative cost
+    // <= budget, and used=0 would mean the accounting never ran.
+    expect(meta?.token_budget?.used).toBeGreaterThan(0);
     expect(meta?.token_budget?.used).toBeLessThanOrEqual(250);
   });
 });
