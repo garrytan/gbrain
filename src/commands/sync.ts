@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync, realpathSync, unlinkSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -2006,14 +2006,43 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   async function performFullSyncAndMaybeGitignore(
     roots: typeof fullSyncRoots,
   ): Promise<SyncResult> {
-    const result = await performFullSync(engine, roots, headCommit, opts);
-    if (didSelfHeal && result.status !== 'blocked_by_failures' && result.status !== 'partial') {
-      // repoPath is `string` by construction (guarded at function entry),
-      // but the guard's narrowing doesn't carry into this nested closure —
-      // reassert via the local roots, which is realpath-derived from it.
-      manageGitignore(roots.gitContextRoot, engine.kind);
+    // #2964 (round 7, P1 — Codex caught this with an actual repro run): a
+    // brain rsync'd from another machine without its `.git` can still
+    // retain that machine's auto-managed `.gitignore`. collectSyncableFiles
+    // (inside performFullSync) enumerates via `git ls-files
+    // --exclude-standard`, so a leftover db_only ignore rule would
+    // silently omit those pages from THIS first sync's DB import — the
+    // same data-loss bug class the ordering fix above prevents for a
+    // .gitignore gbrain itself would have written, just from a
+    // pre-existing file instead. Neutralize any existing .gitignore for
+    // the duration of this ONE first-sync call only, byte-for-byte
+    // restoring it immediately after (even on error) — matching exactly
+    // what a truly fresh brain with no .gitignore at all already does on
+    // its first sync (nothing to suppress collection there either).
+    // db_only content still stays out of the COMMIT independently
+    // (createSyncBaselineCommit's pathspec exclusion doesn't depend on
+    // .gitignore); manageGitignore below re-merges the managed block onto
+    // the restored original content afterward, so any of the user's own
+    // unrelated ignore rules in that file survive intact.
+    const gitignorePath = join(roots.gitContextRoot, '.gitignore');
+    const savedGitignore = didSelfHeal && existsSync(gitignorePath)
+      ? readFileSync(gitignorePath, 'utf-8')
+      : null;
+    if (savedGitignore !== null) unlinkSync(gitignorePath);
+    try {
+      const result = await performFullSync(engine, roots, headCommit, opts);
+      if (savedGitignore !== null) writeFileSync(gitignorePath, savedGitignore);
+      if (didSelfHeal && result.status !== 'blocked_by_failures' && result.status !== 'partial') {
+        // repoPath is `string` by construction (guarded at function
+        // entry), but the guard's narrowing doesn't carry into this
+        // nested closure — reassert via roots, realpath-derived from it.
+        manageGitignore(roots.gitContextRoot, engine.kind);
+      }
+      return result;
+    } catch (err) {
+      if (savedGitignore !== null && !existsSync(gitignorePath)) writeFileSync(gitignorePath, savedGitignore);
+      throw err;
     }
-    return result;
   }
 
   // #1970: bookmark reachability. The ONLY thing that should force a full

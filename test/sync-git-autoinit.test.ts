@@ -324,4 +324,34 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     const gitignore = existsSync(join(dir, '.gitignore')) ? readFileSync(join(dir, '.gitignore'), 'utf-8') : '';
     expect(gitignore).toContain('private-cache');
   });
+
+  test('a leftover .gitignore from before the brain lost its .git does not suppress db_only import (round 7 P1: rsync scenario)', async () => {
+    // The exact primary motivating scenario: a brain rsync'd from another
+    // machine keeps its OLD auto-managed .gitignore (already listing
+    // db_only dirs from before) even though `.git` itself never made the
+    // trip. Codex's round-7 review caught this with a live repro: without
+    // neutralizing the pre-existing file for this one first-sync call,
+    // collectSyncableFiles's `git ls-files --exclude-standard` silently
+    // omits db_only pages from the DATABASE — same bug class as round 6's
+    // ordering fix, just triggered by a file gbrain didn't write itself.
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { mkdirSync } = await import('fs');
+    mkdirSync(join(dir, 'private-cache'));
+    writeFileSync(join(dir, 'private-cache', 'note.md'), mdPage('DB-only note'));
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - private-cache\n');
+    // A leftover .gitignore with an UNRELATED custom rule too, proving the
+    // restore preserves the user's own content rather than discarding it.
+    writeFileSync(
+      join(dir, '.gitignore'),
+      '.DS_Store\n\n# Auto-managed by gbrain (db_only directories)\nprivate-cache/\n',
+    );
+
+    const result = await performSync(engine, { noPull: true, noEmbed: true, full: true });
+
+    expect(result.added).toBe(3); // page1, page2, private-cache/note
+    expect(await engine.getPage('private-cache/note')).not.toBeNull();
+    const gitignore = readFileSync(join(dir, '.gitignore'), 'utf-8');
+    expect(gitignore).toContain('.DS_Store');
+    expect(gitignore).toContain('private-cache');
+  });
 });
