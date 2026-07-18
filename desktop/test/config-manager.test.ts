@@ -290,6 +290,7 @@ describe('desktop config manager', () => {
   });
 
   test('marks every existing embedding model change for validation and re-embedding', () => {
+    isolatedHome();
     saveSetup({
       engine: 'postgres',
       databaseUrl: 'postgresql://u:p@127.0.0.1:5432/brain',
