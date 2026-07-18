@@ -37,6 +37,57 @@ export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
   yieldDuringPhase?: () => Promise<void>;
+  /**
+   * Absolute deadline (epoch ms) of the enclosing minion job, or null for
+   * direct callers (`gbrain dream`). When set, the subagent's job timeout
+   * and the wait timeout are clamped so the phase finishes (or times out)
+   * BEFORE the parent job's budget expires — a fixed 30/35-min default
+   * inside an interval-derived cycle budget dead-letters the whole cycle
+   * mid-phase and starves every tail phase (#2781).
+   */
+  deadlineAtMs?: number | null;
+}
+
+/**
+ * Stop-margin reserved under the parent deadline when clamping subagent
+ * budgets. NOT a promise that tail phases complete — the cycle is allowed
+ * to go partial and resume next tick. This only guarantees the phase's
+ * wait returns and the handler unwinds cleanly before the worker's abort
+ * fires: wait poll interval (5s) + worker force-evict grace (30s) + lock
+ * and DB cleanup headroom.
+ */
+export const CYCLE_DEADLINE_RESERVE_MS = 60 * 1000;
+
+/**
+ * Smallest remaining budget worth submitting a subagent for. Below this,
+ * the LLM call is near-certain to be killed mid-flight — wasted spend and
+ * a guaranteed-timeout child — so the phase skips honestly instead
+ * (`insufficient_cycle_budget`) and the next cycle retries with a fresh
+ * budget.
+ */
+export const MIN_PATTERNS_SUBAGENT_BUDGET_MS = 2 * 60 * 1000;
+
+/**
+ * Clamp the configured subagent budgets to the remaining parent-job time.
+ * Both timeouts derive from the SAME absolute child deadline
+ * (`deadlineAtMs - reserve`) so the child job's kill switch and our wait
+ * agree. Returns null when the remaining budget is below the minimum —
+ * caller should skip the phase without submitting.
+ */
+export function clampSubagentBudgets(
+  config: { subagentTimeoutMs: number; subagentWaitTimeoutMs: number },
+  deadlineAtMs: number | null | undefined,
+  nowMs: number,
+): { timeoutMs: number; waitTimeoutMs: number } | null {
+  if (deadlineAtMs == null) {
+    return { timeoutMs: config.subagentTimeoutMs, waitTimeoutMs: config.subagentWaitTimeoutMs };
+  }
+  const childBudgetMs = deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - nowMs;
+  if (childBudgetMs < MIN_PATTERNS_SUBAGENT_BUDGET_MS) return null;
+  return {
+    timeoutMs: Math.min(config.subagentTimeoutMs, childBudgetMs),
+    waitTimeoutMs: Math.min(config.subagentWaitTimeoutMs, childBudgetMs),
+  };
 }
 
 export async function runPhasePatterns(
@@ -90,6 +141,19 @@ export async function runPhasePatterns(
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
     }
 
+    // #2781: budget the subagent from the REMAINING parent-job time, not
+    // the fixed config default. Checked after the cheap gates (disabled /
+    // insufficient_evidence / no_provider) so a skip for budget reasons
+    // only fires when the phase would otherwise have submitted.
+    const budgets = clampSubagentBudgets(config, opts.deadlineAtMs, Date.now());
+    if (budgets === null) {
+      return skipped(
+        'insufficient_cycle_budget',
+        `remaining cycle budget under ${Math.round(MIN_PATTERNS_SUBAGENT_BUDGET_MS / 1000)}s ` +
+        `(reserve ${Math.round(CYCLE_DEADLINE_RESERVE_MS / 1000)}s); next cycle retries with a fresh budget`,
+      );
+    }
+
     const queue = new MinionQueue(engine);
     const data: SubagentHandlerData = {
       prompt: buildPatternsPrompt(reflections, config.minEvidence, config.outputRoot),
@@ -99,7 +163,7 @@ export async function runPhasePatterns(
     };
     const submitOpts: Partial<MinionJobInput> = {
       max_stalled: 3,
-      timeout_ms: config.subagentTimeoutMs,
+      timeout_ms: budgets.timeoutMs,
     };
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
@@ -108,7 +172,7 @@ export async function runPhasePatterns(
     let outcome: string;
     try {
       const final = await waitForCompletion(queue, job.id, {
-        timeoutMs: config.subagentWaitTimeoutMs,
+        timeoutMs: budgets.waitTimeoutMs,
         pollMs: 5 * 1000,
       });
       outcome = final.status;
