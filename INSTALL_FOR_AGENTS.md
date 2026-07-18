@@ -163,11 +163,16 @@ and supports `--since YYYY-MM-DD` for incremental runs.
 
 ### Obsidian-style bare wikilinks (opt-in)
 
+Path-qualified refs like `[[projects/struktura]]` or `[[janus/agents/drift-check]]`
+resolve out of the box for ANY directory — the target just has to exist as a page
+with that exact slug (`link_resolution.any_dir_exact_path`, on by default; misses
+land in the unresolved report instead of dropping silently).
+
 If the user imported an Obsidian or Notion vault that uses **bare** `[[note-name]]`
 wikilinks — where `[[struktura]]` written in one folder means the page that lives
-at `projects/struktura.md` in another — GBrain does NOT connect those by default.
-Out of the box it only resolves path-qualified refs like `[[projects/struktura]]`,
-so a vault full of bare links shows up as a thin, broken graph. Turn on basename
+at `projects/struktura.md` in another — GBrain does NOT connect those by default:
+a bare name is fuzzy (basename match, possibly several winners), so a vault full
+of bare links shows up as a thin, broken graph until you opt in. Turn on basename
 resolution so the cross-folder links connect:
 
 ```bash

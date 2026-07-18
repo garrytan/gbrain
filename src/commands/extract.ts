@@ -36,7 +36,8 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
+  extractFrontmatterLinks, isAnyDirExactPathEnabled, isGlobalBasenameEnabled,
+  LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
   type UnresolvedFrontmatterRef, type LinkCandidate,
@@ -1381,6 +1382,9 @@ async function extractLinksFromDB(
   // Issue #972: opt-in global-basename wikilink resolution. Read once
   // per extract run; threaded into each extractPageLinks call.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
+  // whitelist. On by default; read once per run like globalBasename.
+  const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1461,7 +1465,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename },
+      { skipFrontmatter: !includeFrontmatter, globalBasename, anyDirExactPath },
     );
     unresolved.push(...extracted.unresolved);
 
@@ -1528,10 +1532,13 @@ async function extractLinksFromDB(
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
-    if (includeFrontmatter && unresolved.length > 0) {
-      // Top-20 preview of unresolvable frontmatter names so the user can
-      // see where the graph has holes (codex tension 6.4).
-      console.log(`Unresolved frontmatter refs: ${unresolved.length} total`);
+    if (unresolved.length > 0) {
+      // Top-20 preview of unresolvable names so the user can see where the
+      // graph has holes (codex tension 6.4). Pre-#1493 this was gated on
+      // includeFrontmatter because frontmatter was the only unresolved
+      // source; path-shaped wikilink misses (field='wikilink') now report
+      // here too, so the gate is simply "anything unresolved".
+      console.log(`Unresolved refs (frontmatter + wikilinks): ${unresolved.length} total`);
       const bucket = new Map<string, number>();
       for (const u of unresolved) {
         const key = `${u.field}:${u.name}`;
@@ -1687,6 +1694,12 @@ async function extractStaleFromDB(
   const resolver = makeResolver(engine, { mode: 'batch' });
   const nullResolver = { resolve: async () => null as string | null };
   const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
+  // whitelist. Read once per sweep. Note the nullResolver branch has no
+  // slugExists — those candidates go out unverified and the endpoint check
+  // in resolveCandidateSources below drops dead links, same as whitelisted
+  // refs.
+  const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1719,6 +1732,7 @@ async function extractStaleFromDB(
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
         page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        { anyDirExactPath },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);

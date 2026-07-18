@@ -16,7 +16,7 @@ import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAnyDirExactPathEnabled, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
@@ -1157,9 +1157,12 @@ async function runAutoLink(
   const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
   // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
+  // whitelist. On by default (escape hatch: link_resolution.any_dir_exact_path).
+  const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-    { globalBasename },
+    { globalBasename, anyDirExactPath },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
