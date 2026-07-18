@@ -1779,11 +1779,16 @@ export async function hybridSearchCached(
       // #2952 — a cache hit never reaches the inner hybridSearch (the only
       // other telemetry site), so record the search HERE or it vanishes from
       // stats entirely (count, results, tokens, rank-1 — not just the hit
-      // counter). Same rank-1 rule as the inner return paths; tokens from
-      // the budget pass, which computes `used` even when no budget is set.
+      // counter). Same rank-1 rule as the inner return paths. Tokens are
+      // gated on the MODE-resolved budget, mirroring the inner paths' `if
+      // (resolvedMode.tokenBudget > 0)` meta condition — otherwise a
+      // tokenmax (budget-off) brain would record real tokens on hits but 0
+      // on misses, skewing avg-tokens upward as the hit rate rises (codex).
       recordSearchTelemetry(engine, cachedMeta, {
         results_count: budgeted.length,
-        tokens_estimate: budgetMeta.used,
+        ...(resolvedForCache.tokenBudget && resolvedForCache.tokenBudget > 0
+          ? { tokens_estimate: budgetMeta.used }
+          : {}),
         rank1_score: budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined,
       });
       return budgeted;

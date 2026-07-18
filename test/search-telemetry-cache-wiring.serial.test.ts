@@ -37,13 +37,17 @@ function fixedEmbedding(): Float32Array {
   return arr;
 }
 
+// Pluggable behavior so individual tests can simulate an embed-provider
+// failure (the 'disabled'-via-catch flavor). null → deterministic vector.
+let embedBehavior: (() => Promise<Float32Array>) | null = null;
+
 // Mock the embedding seam BEFORE importing hybrid.ts so both the cache-lookup
 // embed and the inner vector-arm embed resolve without a provider call. Spread
 // the real module so every other export stays live.
 mock.module('../src/core/embedding.ts', () => ({
   ...realEmbedding,
-  embed: async () => fixedEmbedding(),
-  embedQuery: async () => fixedEmbedding(),
+  embed: async () => (embedBehavior ? embedBehavior() : fixedEmbedding()),
+  embedQuery: async () => (embedBehavior ? embedBehavior() : fixedEmbedding()),
 }));
 
 // Import AFTER mocking.
@@ -134,6 +138,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  embedBehavior = null;
   _resetTelemetryWriterForTest();
   _resetPendingSearchCacheWritesForTests();
   await engine.executeRaw('DELETE FROM search_telemetry');
@@ -179,7 +184,24 @@ describe('hybridSearchCached — telemetry carries the cache outcome', () => {
     // The hit search contributes results/rank-1/tokens telemetry too.
     expect(afterHit.rank1).toBe(2);
     expect(afterHit.results).toBeGreaterThan(afterMiss.results);
-    expect(afterHit.tokens).toBeGreaterThan(afterMiss.tokens);
+    // Token parity (codex): the hit serves the SAME result set the miss
+    // stored, so its token contribution must EQUAL the miss's — a hit/miss
+    // accounting asymmetry (e.g. hits counting tokens the miss convention
+    // skips) would break this exact-delta check.
+    expect(afterHit.tokens - afterMiss.tokens).toBe(afterMiss.tokens);
+  });
+
+  test('lookup-embed failure: consult degrades to disabled — recorded once, neither counter', async () => {
+    embedBehavior = async () => { throw new Error('embed provider down'); };
+    // The failed consult must not break the search: keyword fallback serves.
+    const results = await hybridSearchCached(engine, 'bob cache wiring', { limit: 5 });
+    expect(results.length).toBeGreaterThan(0);
+
+    const counters = await readCounters();
+    expect(counters.c).toBe(1);
+    expect(counters.hit).toBe(0);
+    expect(counters.miss).toBe(0);
+    expect(counters.rank1).toBe(1);
   });
 
   test('consult skipped (useCache:false): recorded once, neither counter', async () => {
