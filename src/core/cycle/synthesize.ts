@@ -39,6 +39,11 @@ import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
+import {
+  remainingChildBudgetMs,
+  CYCLE_DEADLINE_RESERVE_MS,
+  MIN_SUBAGENT_START_BUDGET_MS,
+} from './deadline-budget.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
@@ -252,6 +257,15 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /**
+   * Absolute deadline (epoch ms) of the enclosing minion job, or null for
+   * direct callers (`gbrain dream`). When set, every child's job timeout
+   * is clamped to the remaining time at submit and — unlike patterns'
+   * single wait — the SEQUENTIAL per-child wait loop recomputes the
+   * remaining budget before each wait, so N children can't accumulate
+   * N × subagent_wait_timeout_ms past the parent budget (#2781).
+   */
+  deadlineAtMs?: number | null;
 }
 
 export async function runPhaseSynthesize(
@@ -405,6 +419,21 @@ export async function runPhaseSynthesize(
       });
     }
 
+    // #2781: budget the fan-out from the REMAINING parent-job time.
+    // Checked after the cheap gates (not_configured / cooldown / verdicts /
+    // dry-run) so a budget skip only fires when the phase would otherwise
+    // have submitted Sonnet work. Note the verdict loop above may itself
+    // have consumed wall-clock — that's why this reads Date.now() here,
+    // not at phase entry.
+    const preFanoutBudgetMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
+    if (preFanoutBudgetMs !== null && preFanoutBudgetMs < MIN_SUBAGENT_START_BUDGET_MS) {
+      return skipped(
+        'insufficient_cycle_budget',
+        `remaining cycle budget under ${Math.round(MIN_SUBAGENT_START_BUDGET_MS / 1000)}s ` +
+        `(reserve ${Math.round(CYCLE_DEADLINE_RESERVE_MS / 1000)}s); next cycle retries with a fresh budget`,
+      );
+    }
+
     // Fan-out: submit one subagent per worth-processing transcript (or one
     // per chunk for transcripts that exceed the model's per-prompt budget).
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot);
@@ -423,6 +452,16 @@ export async function runPhaseSynthesize(
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
 
     for (const t of worthProcessing) {
+      // #2781: the submit loop itself is fast (DB inserts, no LLM), but the
+      // budget can still decay across a long worthProcessing list. Once it's
+      // gone, stop submitting — remaining transcripts re-attempt next cycle
+      // (idempotency keys make the partial fan-out safe to resume).
+      const remainingMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
+      if (remainingMs !== null && remainingMs <= 0) {
+        skipReports.push({ filePath: t.filePath, reason: 'insufficient_cycle_budget' });
+        continue;
+      }
+
       const hash16 = t.contentHash.slice(0, 16);
       const hash6 = t.contentHash.slice(0, 6);
 
@@ -487,11 +526,20 @@ export async function runPhaseSynthesize(
         const idempotency_key = isChunked
           ? `dream:synth:${t.filePath}:${hash16}:c${i}of${chunks.length}`
           : `dream:synth:${t.filePath}:${hash16}`;
+        // #2781: clamp each child's own kill switch to the remaining time
+        // at submit. The child's timeout_ms clock starts at ITS claim, so
+        // this alone can't bound a child that sits queued — the wait loop's
+        // cancel below closes that — but it bounds the common promptly-
+        // claimed case without waiting for the cancel path.
+        const remainingAtSubmitMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
+        const childTimeoutMs = remainingAtSubmitMs === null
+          ? config.subagentTimeoutMs
+          : Math.max(1, Math.min(config.subagentTimeoutMs, remainingAtSubmitMs));
         const submitOpts: Partial<MinionJobInput> = {
           max_stalled: 3,
           on_child_fail: 'continue',
           idempotency_key,
-          timeout_ms: config.subagentTimeoutMs,
+          timeout_ms: childTimeoutMs,
         };
         const child = await queue.add(
           'subagent',
@@ -508,17 +556,45 @@ export async function runPhaseSynthesize(
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
+    //
+    // #2781: the waits are SEQUENTIAL, so a fixed per-wait timeout
+    // accumulates N × subagent_wait_timeout_ms across N children — past any
+    // parent budget. Each iteration recomputes the remaining budget against
+    // the same absolute deadline; once it's gone, the rest of the children
+    // are cancelled instead of waited on (their timeout_ms clock starts at
+    // THEIR claim, so an unwaited child could otherwise outlive the parent).
+    // A child that already reached a terminal state on its own keeps its
+    // real status — earlier siblings' waits gave it time to finish, and its
+    // pages still collect normally (cancelJob wouldn't touch a completed
+    // row anyway; the read is for honest reporting).
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
     for (const jobId of childIds) {
+      const remainingWaitMs = remainingChildBudgetMs(opts.deadlineAtMs, Date.now());
+      if (remainingWaitMs !== null && remainingWaitMs <= 0) {
+        const current = await queue.getJob(jobId);
+        if (current && ['completed', 'failed', 'dead', 'cancelled'].includes(current.status)) {
+          childOutcomes.push({ jobId, status: current.status });
+        } else {
+          try { await queue.cancelJob(jobId); } catch { /* best-effort */ }
+          childOutcomes.push({ jobId, status: 'timeout' });
+        }
+        continue;
+      }
+      const waitTimeoutMs = remainingWaitMs === null
+        ? config.subagentWaitTimeoutMs
+        : Math.min(config.subagentWaitTimeoutMs, remainingWaitMs);
       try {
         const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: config.subagentWaitTimeoutMs,
+          timeoutMs: waitTimeoutMs,
           pollMs: 5 * 1000,
         });
         childOutcomes.push({ jobId, status: job.status });
       } catch (e) {
         if (e instanceof TimeoutError) {
           childOutcomes.push({ jobId, status: 'timeout' });
+          // Same rationale as patterns: a child that sat queued can outlive
+          // the deadline this wait was clamped to. Strip it.
+          try { await queue.cancelJob(jobId); } catch { /* best-effort */ }
         } else {
           throw e;
         }
