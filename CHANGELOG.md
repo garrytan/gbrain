@@ -2,6 +2,53 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.63.0] - 2026-07-18
+
+**You can now ask your brain structured questions about what's inside your pages' metadata — and pin down how different kinds of content rank. Every page carries frontmatter fields (status, dates, review deadlines, custom fields), but until now search couldn't see them: there was no way to ask "show me decisions whose review date has passed and still have no recorded outcome." Search, hybrid query, and page listing now accept metadata filters that do exactly that — match a field's value, check that a field exists or is missing, or compare dates. Hybrid query also accepts a list of page types, so you can scope a question to just your people, lessons, and decisions while leaving bulk reference content out. And the ranking weights that decide which shelves of your brain surface first (boost your own writing, demote noisy imports) can now be set once as persistent configuration instead of an environment variable that every process had to remember to carry — with the query cache made change-aware so a ranking change takes effect everywhere immediately.**
+
+## To take advantage of v0.42.63.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns:
+
+1. Rebuild/reinstall the binary as usual (`gbrain upgrade` or your install path).
+2. Optionally set persistent ranking weights, e.g.:
+   `gbrain config set search.source_boosts '{"resources/":0.8,"emails/":0.8}'`
+   (`GBRAIN_SOURCE_BOOST` still works and beats config — it is the emergency override.)
+3. Expect a one-time dip in query-cache hit rate after upgrading or after changing
+   the boost map — the cache key format changed so stale rankings can never be served.
+   It refills within the cache TTL (an hour by default).
+
+### Itemized changes
+
+**Search & retrieval**
+
+- `search`, `query`, and `list_pages` accept a `frontmatter_filter` parameter — a list
+  of `{key, op, value?}` predicates with ops `eq`, `exists`, `missing`, `lt`, `lte`,
+  `gt`, `gte`, ANDed together, validated loudly at the operation boundary (a filtered
+  query never silently degrades to unfiltered). Equality matches are index-accelerated;
+  date comparisons work on ISO-8601 strings. Available over MCP and the CLI
+  (`--frontmatter-filter '[{"key":"status","op":"eq","value":"active"}]'`).
+- `query` accepts a `types` parameter (list of page-type names, validated against the
+  active schema pack — unknown names error with the valid set). Scope a hybrid query
+  to a set of types, e.g. core knowledge vs bulk reference.
+- New persistent config key `search.source_boosts` (JSON object of slug-prefix →
+  ranking factor). Resolution ladder: built-in defaults ← config ← `GBRAIN_SOURCE_BOOST`
+  env (env last, the emergency override). One shared resolver feeds both CLI and MCP
+  server processes.
+- The resolved boost map now participates in the query-cache key (canonical
+  serialization), and queries carrying `frontmatter_filter`, `types`, or `since`/`until`
+  skip the cache entirely — a filtered or re-weighted lookup can never be served a
+  stale or differently-shaped cached result. (`since`/`until` predate this release but
+  had the same cache hole; it is closed for them too.)
+
+**Docs**
+
+- New guide: `docs/guides/typed-personal-streams.md` — the prefix-per-stream +
+  two-layer-records + tier-ranking pattern for running a personal brain as the memory
+  layer for multiple client agents.
+- `docs/architecture/RETRIEVAL.md` and `docs/architecture/KEY_FILES.md` updated for the
+  new resolution ladder and filter module.
+
 ## [0.42.62.0] - 2026-07-17
 
 **If your brain holds more than one source, everything now lands in the right one. Link extraction, timeline extraction, background cycles, and webhook captures used to quietly file some of their output under the default source; all of those paths now carry the correct source identity. Background agent jobs got tougher too: a failed database reconnect can no longer wedge the engine, and workers recover from dropped connections instead of crash-looping. If you run the admin dashboard behind a reverse proxy, the live activity panel finally connects. Long agent conversations cost less because repeated context is reused between turns on Anthropic calls. Local LiteLLM proxies work out of the box. Nested sources scan correctly again instead of reporting zero files. And the project's automated checks now include dependency vulnerability scanning, static code-security analysis, and signed provenance for release builds. Thirty merged changes in all, the largest batch to date, each one reviewed and verified against the live codebase before landing.**

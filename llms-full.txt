@@ -369,6 +369,13 @@ depth into the cache key so a relational-on result set can't be served to a
 relational-off lookup (same contamination class as graph_signals). One-time
 miss spike on upgrade.
 
+**v0.42.63.0 knobs_hash v=12 → v=13.** Folds the resolved source-boost map
+(defaults ← `search.source_boosts` config ← `GBRAIN_SOURCE_BOOST` env) into
+the cache key so a boost change can't serve pre-change rankings. Per-call
+result-set filters (`frontmatter_filter`, `types[]`, `since`/`until`) skip
+the cache instead of hashing (`hasCacheSkippingFilters` in hybrid.ts).
+One-time miss spike on upgrade.
+
 **Relational retrieval (v0.42.34.0).** `relationalRetrieval` (on for
 balanced/tokenmax) adds a fourth recall arm: a relational query ("who invested
 in X", "what connects A and B") resolves its seed entity and walks the typed-edge

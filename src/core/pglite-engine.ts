@@ -64,6 +64,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { compileFrontmatterFilter } from './search/frontmatter-filter.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1264,6 +1265,9 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
     }
+    // v0.42.63: frontmatter-field predicates (shared compiler — parity with
+    // postgres-engine.listPages). Keys/values bind as params.
+    where.push(...compileFrontmatterFilter(filters?.frontmatterFilter, params, 'p.frontmatter'));
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     params.push(limit, offset);
@@ -1569,7 +1573,7 @@ export class PGLiteEngine implements BrainEngine {
     const innerLimit = Math.min(limit * 3, MAX_SEARCH_LIMIT * 3);
 
     // Source-aware ranking (v0.22): see postgres-engine.ts for rationale.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.sourceBoosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1624,6 +1628,11 @@ export class PGLiteEngine implements BrainEngine {
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+    // v0.42.63: frontmatter-field predicates (shared compiler — parity with
+    // postgres-engine.searchKeyword). Keys/values bind as params.
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      extraFilter += ` AND ${cond}`;
     }
 
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
@@ -1732,6 +1741,11 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
+    // v0.42.63: frontmatter-field predicates on the CJK fallback too — a
+    // CJK query with a filter must not silently return unfiltered rows.
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      extraFilter += ` AND ${cond}`;
+    }
 
     // Bigram-frequency count: count occurrences of $qRaw in chunk_text via
     // (length(chunk) - length(replace(chunk, q, ''))) / length(q). Acts as
@@ -1814,7 +1828,7 @@ export class PGLiteEngine implements BrainEngine {
 
     // Source-aware ranking applied here too — searchKeywordChunks is the
     // chunk-grain anchor primitive that two-pass retrieval (Layer 7) uses.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.sourceBoosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1860,6 +1874,11 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
+    // v0.42.63: frontmatter-field predicates on the anchor primitive too so
+    // a filtered two-pass walk can't seed from out-of-filter anchors.
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      extraFilter += ` AND ${cond}`;
+    }
 
     // visibilityClause already declared above (v0.32.7: hoisted so CJK branch can reuse).
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
@@ -1901,7 +1920,7 @@ export class PGLiteEngine implements BrainEngine {
     // HNSW; outer SELECT re-ranks by raw_score * source_factor over the
     // narrow candidate pool. innerLimit scales with offset to preserve the
     // pagination contract. See postgres-engine.ts searchVector for rationale.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.sourceBoosts ?? resolveBoostMap();
     // Outer SELECT references the aliased CTE column. Aliasing the CTE as `hc`
     // disambiguates the correlated subquery (`te.page_id = hc.page_id`) from
     // the inner column. Without the alias, an unqualified `page_id` in the
@@ -1953,6 +1972,11 @@ export class PGLiteEngine implements BrainEngine {
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+    // v0.42.63: frontmatter-field predicates inside the HNSW candidate CTE
+    // (same placement rationale as the source filter — narrow before re-rank).
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      extraFilter += ` AND ${cond}`;
     }
 
     // v0.26.5: visibility filter applied in the inner CTE so HNSW sees the

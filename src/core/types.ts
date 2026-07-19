@@ -330,6 +330,12 @@ export interface PageFilters {
    * pre-v0.34 unscoped behavior is preserved for local CLI callers.
    */
   sourceIds?: string[];
+  /**
+   * v0.42.63: frontmatter-field predicates (AND-combined). Same contract
+   * as SearchOpts.frontmatterFilter — validated at the op boundary,
+   * compiled by src/core/search/frontmatter-filter.ts in both engines.
+   */
+  frontmatterFilter?: import('./search/frontmatter-filter.ts').FrontmatterPredicate[];
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
@@ -917,6 +923,23 @@ export interface SearchOpts {
    * entity-only search reuses the parameter.
    */
   types?: PageType[];
+  /**
+   * v0.42.63: frontmatter-field predicates (AND-combined), compiled to SQL
+   * by the shared helper in src/core/search/frontmatter-filter.ts (eq →
+   * GIN-backed `@>` containment; exists/missing → jsonb `?`; lt/lte/gt/gte
+   * → `->>` text comparison). Validated at the op boundary
+   * (parseFrontmatterFilterParam); both engines bind keys AND values as
+   * query parameters. Presence of this filter skips the semantic query
+   * cache (per-call filters are not part of knobsHash).
+   */
+  frontmatterFilter?: import('./search/frontmatter-filter.ts').FrontmatterPredicate[];
+  /**
+   * v0.42.63 — the RESOLVED source-boost map (defaults ← search.source_boosts
+   * config ← GBRAIN_SOURCE_BOOST env), threaded by op-surface callers via
+   * resolveSourceBoostsForEngine(). Engines use it for buildSourceFactorCase;
+   * when absent they fall back to env-only resolveBoostMap() (legacy callers).
+   */
+  sourceBoosts?: Record<string, number>;
   exclude_slugs?: string[];
   /**
    * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/,

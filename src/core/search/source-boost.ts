@@ -114,6 +114,85 @@ export function resolveBoostMap(
 }
 
 /**
+ * v0.42.63 — persistent boost-map config key. Value is a JSON object of
+ * prefix → factor, e.g. `{"resources/":0.8,"emails/":0.8}`. Set via
+ * `gbrain config set search.source_boosts '{"resources/":0.8}'`.
+ */
+export const SOURCE_BOOSTS_CONFIG_KEY = 'search.source_boosts';
+
+/**
+ * Parse the `search.source_boosts` config value (JSON object string).
+ * Same per-entry guards as parseSourceBoostEnv (finite factor, >= 0,
+ * non-empty prefix) but malformed entries are skipped LOUDLY via a stderr
+ * warning — config is user-authored intent, so silent drops would hide a
+ * typo'd prefix until someone notices rankings never changed. An
+ * unparseable value in its entirety also warns and returns {}.
+ */
+export function parseSourceBoostConfig(raw: string | null | undefined): Record<string, number> {
+  if (raw === undefined || raw === null || raw.trim() === '') return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.error(`[source-boost] ${SOURCE_BOOSTS_CONFIG_KEY} is not valid JSON — ignoring config value`);
+    return {};
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    console.error(`[source-boost] ${SOURCE_BOOSTS_CONFIG_KEY} must be a JSON object of {"prefix/": factor} — ignoring config value`);
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const [prefix, factor] of Object.entries(parsed as Record<string, unknown>)) {
+    const f = typeof factor === 'number' ? factor : Number.parseFloat(String(factor));
+    if (!prefix.trim() || !Number.isFinite(f) || f < 0) {
+      console.error(`[source-boost] skipping malformed ${SOURCE_BOOSTS_CONFIG_KEY} entry ${JSON.stringify(prefix)}: ${JSON.stringify(factor)} (need non-empty prefix and finite factor >= 0)`);
+      continue;
+    }
+    out[prefix] = f;
+  }
+  return out;
+}
+
+/**
+ * v0.42.63 — the ONE shared async resolution ladder for the effective
+ * boost map: DEFAULT_SOURCE_BOOSTS ← `search.source_boosts` config ←
+ * GBRAIN_SOURCE_BOOST env (env last: the emergency override that beats
+ * config, mirroring the pace-mode precedent). Used by every op-surface
+ * caller (hybrid search, the plain `search` op, the image-branch
+ * searchVector); engines fall back to env-only resolveBoostMap() only
+ * when no map was threaded via SearchOpts.sourceBoosts.
+ *
+ * Config read failures fall through to defaults+env (fail-open — a config
+ * hiccup must never kill search).
+ */
+export async function resolveSourceBoostsForEngine(
+  engine: { getConfig(key: string): Promise<string | null> },
+  envValue: string | undefined = process.env.GBRAIN_SOURCE_BOOST,
+): Promise<Record<string, number>> {
+  let configMap: Record<string, number> = {};
+  try {
+    const raw = await engine.getConfig(SOURCE_BOOSTS_CONFIG_KEY);
+    configMap = parseSourceBoostConfig(typeof raw === 'string' ? raw : undefined);
+  } catch {
+    // fail-open: defaults + env
+  }
+  return { ...DEFAULT_SOURCE_BOOSTS, ...configMap, ...parseSourceBoostEnv(envValue) };
+}
+
+/**
+ * Canonical serialization of a resolved boost map for the query-cache
+ * knobs hash: sorted keys, fixed 4-decimal factors, comma-joined. Stable
+ * across key insertion order so two processes with the same effective map
+ * produce the same hash part.
+ */
+export function serializeBoostMap(map: Record<string, number>): string {
+  return Object.keys(map)
+    .sort()
+    .map((k) => `${k}:${map[k]!.toFixed(4)}`)
+    .join(',');
+}
+
+/**
  * Resolve the effective hard-exclude prefix list.
  *
  * - Defaults union with env-supplied excludes

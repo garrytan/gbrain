@@ -1396,8 +1396,21 @@ const list_pages: Operation = {
       description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
+    frontmatter_filter: {
+      type: 'array',
+      items: { type: 'object' },
+      description:
+        'v0.42.63 — filter by frontmatter fields. Array of {key, op, value?} predicates, AND-combined. ' +
+        'op: eq (scalar equality, type-sensitive), exists / missing (key presence; no value), ' +
+        'lt | lte | gte | gt (text comparison on the field — ISO dates compare correctly). ' +
+        'CLI: pass the array as a JSON string, e.g. --frontmatter-filter \'[{"key":"status","op":"eq","value":"active"}]\'.',
+    },
   },
   handler: async (ctx, p) => {
+    // v0.42.63 — loud validation at the op boundary; invalid input throws,
+    // never silently returns an unfiltered (or empty) page list.
+    const { parseFrontmatterFilterParam } = await import('./search/frontmatter-filter.ts');
+    const frontmatterFilter = parseFrontmatterFilterParam(p.frontmatter_filter);
     // Whitelist the sort enum at the handler before passing to the engine.
     // Engines also whitelist via PAGE_SORT_SQL but defending here keeps
     // unsupported strings from reaching the SQL layer.
@@ -1418,6 +1431,7 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
+      ...(frontmatterFilter ? { frontmatterFilter } : {}),
       ...scope,
     });
     return pages.map(pg => ({
@@ -1442,6 +1456,15 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    frontmatter_filter: {
+      type: 'array',
+      items: { type: 'object' },
+      description:
+        'v0.42.63 — filter results by frontmatter fields. Array of {key, op, value?} predicates, AND-combined. ' +
+        'op: eq (scalar equality, type-sensitive), exists / missing (key presence; no value), ' +
+        'lt | lte | gte | gt (text comparison on the field — ISO dates compare correctly). ' +
+        'Filtered searches bypass the semantic query cache. CLI: pass the array as a JSON string.',
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1449,6 +1472,10 @@ const search: Operation = {
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
     const scope = sourceScopeOpts(ctx);
+    // v0.42.63 — loud validation at the op boundary; invalid input throws,
+    // never silently degrades to an unfiltered search.
+    const { parseFrontmatterFilterParam } = await import('./search/frontmatter-filter.ts');
+    const frontmatterFilter = parseFrontmatterFilterParam(p.frontmatter_filter);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
@@ -1461,7 +1488,13 @@ const search: Operation = {
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
 
     if (keywordOnly) {
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, ...scope });
+      // v0.42.63 — this branch bypasses hybridSearch entirely, so it must
+      // resolve the boost ladder (defaults ← search.source_boosts config ←
+      // env) itself or plain keyword search would silently keep serving
+      // env-only boosts after a config change.
+      const { resolveSourceBoostsForEngine } = await import('./search/source-boost.ts');
+      const sourceBoosts = await resolveSourceBoostsForEngine(ctx.engine);
+      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, sourceBoosts, ...scope, ...(frontmatterFilter ? { frontmatterFilter } : {}) });
       const results = dedupResults(raw);
       stampEvidenceSafe(results);
       // #1699: the keyword-only opt-out must STILL surface the content_flag
@@ -1482,6 +1515,9 @@ const search: Operation = {
       expansion: false,
       ...scope,
       ...(perCallMode ? { mode: perCallMode } : {}),
+      // v0.42.63 — frontmatter predicates; presence skips the query cache
+      // (per-call filters are not part of knobsHash).
+      ...(frontmatterFilter ? { frontmatterFilter } : {}),
       onMeta: (m) => { capturedMeta = m; },
     });
     const latency_ms = Date.now() - startedAt;
@@ -1492,6 +1528,33 @@ const search: Operation = {
   scope: 'read',
   cliHints: { name: 'search', positional: ['query'] },
 };
+
+/**
+ * v0.42.63 — validate a caller-supplied `types[]` filter against the active
+ * schema pack's declared types (canonical `page_types[].name` PLUS their
+ * `aliases`, since pre-unify residual pages still carry alias types).
+ * Unknown names throw loudly, naming the valid set. When no pack loads
+ * (best-effort null), validation is skipped — "unknown" has no meaning
+ * without a pack reference (same stance as the put_page unknown-type gate).
+ */
+async function validateTypesAgainstActivePack(ctx: OperationContext, types: string[]): Promise<void> {
+  const { loadActivePackBestEffort } = await import('./schema-pack/index.ts');
+  const pack = await loadActivePackBestEffort(ctx);
+  if (!pack) return;
+  const known = new Set<string>();
+  for (const pt of pack.manifest.page_types) {
+    known.add(pt.name);
+    for (const alias of pt.aliases ?? []) known.add(alias);
+  }
+  const unknown = types.filter((t) => !known.has(t));
+  if (unknown.length > 0) {
+    throw new OperationError(
+      'invalid_params',
+      `Unknown page type${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. ` +
+      `Active pack '${pack.manifest.name}' declares: ${[...known].sort().join(', ')}`,
+    );
+  }
+}
 
 const query: Operation = {
   name: 'query',
@@ -1591,6 +1654,23 @@ const query: Operation = {
       description:
         "v0.43 — relational recall arm. SMART DEFAULT (on in balanced/tokenmax). When the question is about a RELATIONSHIP ('who invested in widget-co', 'who introduced me to alice', 'what connects fund-a and fund-b'), the brain resolves the named entity and walks its typed-edge graph (invested_in, works_at, founded, …), surfacing the answer even when no passage mentions both sides. Pure no-op for non-relational questions. Pass FALSE to force lexical/vector-only retrieval (e.g. debugging why a graph answer appeared). You almost never set this.",
     },
+    types: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        "v0.42.63 — filter results to pages whose type is in this list (SQL-level `p.type = ANY(...)`, same filter whoknows uses internally). " +
+        "Validated against the active schema pack's declared types (canonical names + aliases); an unknown type errors loudly naming the valid types. " +
+        'Filtered queries bypass the semantic query cache. CLI: comma-separated, e.g. --types person,company.',
+    },
+    frontmatter_filter: {
+      type: 'array',
+      items: { type: 'object' },
+      description:
+        'v0.42.63 — filter results by frontmatter fields. Array of {key, op, value?} predicates, AND-combined. ' +
+        'op: eq (scalar equality, type-sensitive), exists / missing (key presence; no value), ' +
+        'lt | lte | gte | gt (text comparison on the field — ISO dates compare correctly). ' +
+        'Filtered queries bypass the semantic query cache. CLI: pass the array as a JSON string.',
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1612,6 +1692,27 @@ const query: Operation = {
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
     const querySourceScope = resolveRequestedScope(ctx, sourceIdParam);
 
+    // v0.42.63 — frontmatter predicates + multi-type filter, both validated
+    // loudly at the op boundary (invalid input throws, never a silent
+    // unfiltered result). `types` accepts the MCP array shape or the CLI
+    // comma-separated string, and is validated against the active schema
+    // pack's declared types below.
+    const { parseFrontmatterFilterParam } = await import('./search/frontmatter-filter.ts');
+    const frontmatterFilter = parseFrontmatterFilterParam(p.frontmatter_filter);
+    let typesFilter: string[] | undefined;
+    if (Array.isArray(p.types)) {
+      if (p.types.some((t) => typeof t !== 'string')) {
+        throw new OperationError('invalid_params', 'types must be an array of type-name strings');
+      }
+      typesFilter = (p.types as string[]).map((t) => t.trim()).filter(Boolean);
+    } else if (typeof p.types === 'string') {
+      typesFilter = p.types.split(',').map((s) => s.trim()).filter(Boolean);
+    } else if (p.types !== undefined && p.types !== null) {
+      throw new OperationError('invalid_params', 'types must be an array of type-name strings (or a comma-separated string on the CLI)');
+    }
+    if (typesFilter && typesFilter.length === 0) typesFilter = undefined;
+    if (typesFilter) await validateTypesAgainstActivePack(ctx, typesFilter);
+
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
     // vector search against the embedding_image column.
@@ -1624,11 +1725,18 @@ const query: Operation = {
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked
       // image pages across sources independent of the text path's fix.
+      const { resolveSourceBoostsForEngine } = await import('./search/source-boost.ts');
       const results = await ctx.engine.searchVector(vec, {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         ...querySourceScope,
+        // v0.42.63 — the image branch bypasses hybridSearch, so it needs its
+        // own thread of the new filters (same shape as the source-scope
+        // thread above), and its own boost-ladder resolution.
+        sourceBoosts: await resolveSourceBoostsForEngine(ctx.engine),
+        ...(typesFilter ? { types: typesFilter } : {}),
+        ...(frontmatterFilter ? { frontmatterFilter } : {}),
       });
       return results;
     }
@@ -1689,6 +1797,10 @@ const query: Operation = {
       autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : undefined,
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
+      // v0.42.63 — multi-type filter + frontmatter predicates. Presence of
+      // either skips the query cache (per-call filters aren't in knobsHash).
+      ...(typesFilter ? { types: typesFilter } : {}),
+      ...(frontmatterFilter ? { frontmatterFilter } : {}),
     });
     const latency_ms = Date.now() - startedAt;
 

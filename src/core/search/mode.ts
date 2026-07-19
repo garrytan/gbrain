@@ -26,6 +26,7 @@
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
+import { serializeBoostMap } from './source-boost.ts';
 
 /**
  * Look up the `reranker.default_timeout_ms` declared by the resolved
@@ -756,7 +757,15 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // slugs written by a process without it, and vice versa. Same one-time
 // global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 12;
+//
+// bump 12→13 (v0.42.63): the resolved source-boost map (defaults ←
+// `search.source_boosts` config ← GBRAIN_SOURCE_BOOST env) folds into the
+// key via ctx.sourceBoosts (canonical serialization: sorted keys, fixed
+// 4-decimal factors). The boost map multiplies into ranking at SQL build
+// time, so a config change would otherwise keep serving pre-change
+// rankings for up to cache.ttl_seconds. Same one-time global cold-miss
+// pattern as the bumps above.
+export const KNOBS_HASH_VERSION = 13;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -795,6 +804,15 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /**
+   * v=13 (v0.42.63): the RESOLVED effective source-boost map — the same
+   * value resolveSourceBoostsForEngine() produces at query time (defaults
+   * ← search.source_boosts config ← GBRAIN_SOURCE_BOOST env). Serialized
+   * canonically (sorted keys, fixed decimals) so key order is irrelevant.
+   * Undefined falls back to the literal 'none' for legacy callers that
+   * don't thread the map.
+   */
+  sourceBoosts?: Record<string, number>;
 }
 
 export function knobsHash(
@@ -888,6 +906,13 @@ export function knobsHash(
     // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
     // identically; undefined falls back to 'none' for legacy callers.
     `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
+    // v=13 addition (v0.42.63, append-only): resolved source-boost map.
+    // The map multiplies into ranking at SQL build time; without this a
+    // `search.source_boosts` config change (or env flip) would keep
+    // serving pre-change rankings from cache for up to the TTL. Canonical
+    // serialization (sorted keys, 4-decimal factors) so insertion order
+    // is irrelevant; undefined falls back to 'none' for legacy callers.
+    `sb=${ctx?.sourceBoosts ? serializeBoostMap(ctx.sourceBoosts) : 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

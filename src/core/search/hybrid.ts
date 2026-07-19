@@ -15,7 +15,7 @@ import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
-import { resolveHardExcludes } from './source-boost.ts';
+import { resolveHardExcludes, resolveSourceBoostsForEngine } from './source-boost.ts';
 import {
   resolveAdaptiveReturn,
   applyAdaptiveReturn,
@@ -873,6 +873,14 @@ export async function hybridSearch(
   const offset = opts?.offset || 0;
   const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
 
+  // v0.42.63 — resolve the effective source-boost map ONCE per query
+  // (defaults ← search.source_boosts config ← GBRAIN_SOURCE_BOOST env)
+  // and thread it into every engine call below. Callers that already
+  // resolved (hybridSearchCached folds it into the cache knobs hash)
+  // pass it via opts.sourceBoosts and skip the config read here.
+  const resolvedSourceBoosts =
+    opts?.sourceBoosts ?? (await resolveSourceBoostsForEngine(engine));
+
   // v0.32.x search-lite: classify intent once up front. Drives BOTH the
   // legacy auto-detail / salience / recency suggestions AND the new
   // weight-adjustment path. Intent weighting is on by default and can
@@ -898,6 +906,15 @@ export async function hybridSearch(
     // type filter to SQL level so the limit budget goes to candidate-typed
     // pages instead of being eaten by note/transcript/article pages.
     types: opts?.types,
+    // v0.42.63: frontmatter-field predicates. Pushed to SQL in both
+    // engines (searchKeyword + searchVector) via the shared compiler in
+    // frontmatter-filter.ts. This explicit rebuild MUST carry the field —
+    // dropping it here would silently return unfiltered results.
+    frontmatterFilter: opts?.frontmatterFilter,
+    // v0.42.63: resolved source-boost map — engines fall back to env-only
+    // resolveBoostMap() when absent, so dropping this here would silently
+    // ignore the search.source_boosts config key in ranking.
+    sourceBoosts: resolvedSourceBoosts,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
@@ -1567,6 +1584,26 @@ export async function hybridSearch(
  * skipped vector search entirely (no embedding provider configured). In
  * that case the cache is also skipped — there's no embedding to key on.
  */
+/**
+ * v0.42.63 — per-call RESULT-SET filters that are NOT folded into
+ * knobsHash. A query carrying any of these must skip the semantic cache
+ * entirely: cache rows are keyed on (embedding, source scope, knobs)
+ * only, so a filtered lookup served from an unfiltered row — or vice
+ * versa — would be silent cross-filter contamination (same class as
+ * [CDX-4]). since/until predate this fix but had the same hole; they
+ * join the disjunction here. Folding these filters into knobsHash is the
+ * follow-up that would let them cache. Exported for the unit test that
+ * pins the disjunction.
+ */
+export function hasCacheSkippingFilters(opts?: HybridSearchOpts): boolean {
+  return (
+    (opts?.frontmatterFilter?.length ?? 0) > 0 ||
+    (opts?.types?.length ?? 0) > 0 ||
+    Boolean(opts?.since ?? opts?.afterDate) ||
+    Boolean(opts?.until ?? opts?.beforeDate)
+  );
+}
+
 export async function hybridSearchCached(
   engine: BrainEngine,
   query: string,
@@ -1627,6 +1664,12 @@ export async function hybridSearchCached(
   const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);
   const isNonDefaultColumn = !isCacheSafe(resolvedColCached, cfgCached);
 
+  // v0.42.63 — resolve the effective source-boost map once here: it folds
+  // into the cache knobs hash (v=13) AND threads into the inner
+  // hybridSearch so the config key is read exactly once per query.
+  const resolvedSourceBoostsCached =
+    opts?.sourceBoosts ?? (await resolveSourceBoostsForEngine(engine));
+
   // Cache key carries the column + provider so different embedding spaces
   // never collide on the same `(source_id, query_text)` row.
   const cacheKnobsHash = knobsHash(resolvedForCache, {
@@ -1638,6 +1681,10 @@ export async function hybridSearchCached(
     // resolves) into the cache key so a row written under one exclude
     // policy can't be served to a lookup under another.
     hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
+    // v=13 — resolved boost map participates in the key so a
+    // search.source_boosts config change (or env flip) can never serve
+    // pre-change rankings from cache.
+    sourceBoosts: resolvedSourceBoostsCached,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
@@ -1669,7 +1716,8 @@ export async function hybridSearchCached(
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
-    adaptiveReturnOn;
+    adaptiveReturnOn ||
+    hasCacheSkippingFilters(opts);
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;
@@ -1765,6 +1813,9 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
+    // v0.42.63 — already-resolved boost map; inner hybridSearch skips its
+    // own config read and the hash/ranking use the identical map.
+    sourceBoosts: resolvedSourceBoostsCached,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,

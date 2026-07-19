@@ -64,7 +64,9 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // pre-fix document-side query vectors must not be served.
     // #2825: 11→12 to fold the resolved hard-exclude prefix list (hx=) —
     // cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across processes.
-    expect(KNOBS_HASH_VERSION).toBe(12);
+    // v0.42.63: 12→13 to fold the resolved source-boost map (sb=) so a
+    // search.source_boosts config change can't serve pre-change rankings.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

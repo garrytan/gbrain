@@ -63,6 +63,7 @@ import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
+import { compileFrontmatterFilter, FRONTMATTER_CMP_SQL } from './search/frontmatter-filter.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
@@ -1321,6 +1322,31 @@ export class PostgresEngine implements BrainEngine {
       ? sql``
       : sql`AND p.deleted_at IS NULL`;
 
+    // v0.42.63: frontmatter-field predicates. This is the one call site on
+    // the postgres.js tagged-template path (search paths share the
+    // positional compiler in search/frontmatter-filter.ts), so the
+    // operator semantics are mirrored here fragment-by-fragment:
+    // eq → GIN-backed `@>` containment via sql.json (the canonical
+    // postgres.js jsonb bind); exists/missing → jsonb `?`; comparisons →
+    // `->>` text compare with the operator spliced from the
+    // FRONTMATTER_CMP_SQL whitelist (same sql.unsafe discipline as
+    // PAGE_SORT_SQL below). Keys/values always bind as params.
+    let frontmatterCondition = sql``;
+    for (const pred of filters?.frontmatterFilter ?? []) {
+      if (pred.op === 'eq') {
+        const containment = { [pred.key]: pred.value } as Parameters<typeof sql.json>[0];
+        frontmatterCondition = sql`${frontmatterCondition} AND p.frontmatter @> ${sql.json(containment)}`;
+      } else if (pred.op === 'exists') {
+        frontmatterCondition = sql`${frontmatterCondition} AND p.frontmatter ? ${pred.key}::text`;
+      } else if (pred.op === 'missing') {
+        frontmatterCondition = sql`${frontmatterCondition} AND NOT (p.frontmatter ? ${pred.key}::text)`;
+      } else {
+        const cmp = FRONTMATTER_CMP_SQL[pred.op];
+        if (!cmp) throw new Error(`Invalid frontmatter_filter op: ${String((pred as { op?: unknown }).op)}`);
+        frontmatterCondition = sql`${frontmatterCondition} AND (p.frontmatter ->> ${pred.key}::text) ${sql.unsafe(cmp)} ${String(pred.value)}::text`;
+      }
+    }
+
     // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
     // postgres.js sql.unsafe lets us splice the literal fragment safely.
     const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
@@ -1333,7 +1359,7 @@ export class PostgresEngine implements BrainEngine {
       const rows = await tx`
         SELECT p.* FROM pages p
         ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${frontmatterCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `;
       return rows.map(rowToPage);
@@ -1685,7 +1711,7 @@ export class PostgresEngine implements BrainEngine {
     // (test/, attachments/, .raw/ by default) filter at the chunk-rank stage
     // so they never enter the candidate set. (archive/ is demoted, not
     // excluded — issue #1777.)
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.sourceBoosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1745,6 +1771,12 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
+    // v0.42.63: frontmatter-field predicates (shared compiler — parity with
+    // pglite-engine.searchKeyword). Keys/values bind as params.
+    let frontmatterClause = '';
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      frontmatterClause += ` AND ${cond}`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -1781,6 +1813,7 @@ export class PostgresEngine implements BrainEngine {
           ${afterDateClause}
           ${beforeDateClause}
           ${sourceClause}
+          ${frontmatterClause}
           ${hardExcludeClause}
           ${visibilityClause}
           -- v0.27.1: hide image rows from text-keyword search so OCR text
@@ -1840,7 +1873,7 @@ export class PostgresEngine implements BrainEngine {
     // chunk-grain anchor primitive that two-pass retrieval (Layer 7) uses,
     // so curated-vs-bulk dampening should affect the anchor pool. Same
     // detail-gate, same hard-exclude behavior as searchKeyword.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.sourceBoosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1895,6 +1928,12 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
+    // v0.42.63: frontmatter-field predicates on the anchor primitive too so
+    // a filtered two-pass walk can't seed from out-of-filter anchors.
+    let frontmatterClause = '';
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      frontmatterClause += ` AND ${cond}`;
+    }
     params.push(limit);
     const limitParam = `$${params.length}`;
     params.push(offset);
@@ -1926,6 +1965,7 @@ export class PostgresEngine implements BrainEngine {
         ${afterDateClause}
         ${beforeDateClause}
         ${sourceClause}
+        ${frontmatterClause}
         ${hardExcludeClause}
         ${visibilityClause}
       ORDER BY score DESC
@@ -1966,7 +2006,7 @@ export class PostgresEngine implements BrainEngine {
     //
     // innerLimit scales with offset to preserve the pagination contract:
     // a fixed cap of 100 would silently empty offset > 100.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.sourceBoosts ?? resolveBoostMap();
     const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -2024,6 +2064,12 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
+    // v0.42.63: frontmatter-field predicates inside the HNSW candidate CTE
+    // (same placement rationale as the source filter — narrow before re-rank).
+    let frontmatterClause = '';
+    for (const cond of compileFrontmatterFilter(opts?.frontmatterFilter, params, 'p.frontmatter')) {
+      frontmatterClause += ` AND ${cond}`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -2077,6 +2123,7 @@ export class PostgresEngine implements BrainEngine {
           ${afterDateClause}
           ${beforeDateClause}
           ${sourceClause}
+          ${frontmatterClause}
           ${hardExcludeClause}
           ${visibilityClause}
         ORDER BY cc.${col} <=> ${castSql}
