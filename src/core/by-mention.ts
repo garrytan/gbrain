@@ -53,6 +53,21 @@ const MIN_NAME_LENGTH = 4;
  */
 const DEFAULT_IGNORE_LIST = ['Apple', 'Amazon', 'Square', 'Stripe', 'Box', 'Meta', 'Target', 'Oracle'];
 
+/**
+ * v0.43 — CJK subroutine (P3). Regex to detect CJK characters in entity
+ * titles. CJK_ENTRY_MIN_LENGTH sets the minimum title length for CJK
+ * sub-string matching (same as MIN_NAME_LENGTH).
+ */
+const CJK_RE = /[\u4e00-\u9fff]/;
+
+/**
+ * v0.43 — CJK matching mode selector. 'substring' (default) enables the
+ * CJK substring-matching pass. 'disabled' turns it off for performance.
+ * Future: 'trie' for Aho-Corasick-based matching on large CJK corpora.
+ */
+export type CjkMatchMode = 'substring' | 'disabled';
+const CJK_MATCH_MODE: CjkMatchMode = 'substring';
+
 export interface GazetteerEntry {
   /** Canonical page slug (e.g. `companies/acme-corp`). */
   slug: string;
@@ -62,6 +77,13 @@ export interface GazetteerEntry {
   title: string;
   /** Lowercase title tokens in order. Length 1 = single-word entity. */
   tokens: string[];
+  /**
+   * v0.43 — CJK substrings for entity-typed pages whose title contains
+   * CJK characters (中文) and is ≥ MIN_NAME_LENGTH. Used by the CJK
+   * substring-matching pass in findMentionedEntities. Empty for
+   * ASCII-only entities. Set from CJK_SUBSTRING_MIN_LENGTH.
+   */
+  cjkSubstrings?: string[];
 }
 
 /**
@@ -178,9 +200,48 @@ export async function buildGazetteer(
     if (!row.title || row.title.length < MIN_NAME_LENGTH) continue;
     if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
 
+    const hasCJK = CJK_RE.test(row.title);
     const tokens = tokenizeTitle(row.title);
+
+    // ── P3: CJK-only entry — tokenizer 输出 0 token，走 CJK 子串匹配 ──
+    // 不需要 ASCII tokens，直接用整题字符串做 body 子串 indexOf。
+    // ──────────────────────────────────────────────────────────────────
+    if (hasCJK && tokens.length === 0) {
+      // Pure CJK title: skip ASCII filters, directly create CJK entry.
+      const entry: GazetteerEntry = {
+        slug: row.slug,
+        source_id: row.source_id ?? 'default',
+        title: row.title,
+        tokens: [],
+        cjkSubstrings: [row.title],
+      };
+      // Use first CJK character (or first 2 chars) as gazetteer key.
+      // This key is never matched by the ASCII scanner — CJK entries
+      // are found via the CJK substring pass, not via token lookup.
+      const dummyKey = `__cjk__${row.title.length}`;
+      const bucket = gazetteer.get(dummyKey);
+      if (bucket) bucket.push(entry);
+      else gazetteer.set(dummyKey, [entry]);
+      continue;
+    }
+
+    // ── 以下路径需要 ASCII tokens 存在 ──────────────────────────────────
     if (tokens.length === 0) continue;
     if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1) continue;
+
+    // ── Fable5 P2: 覆盖率过滤器 ──────────────────────────────────────
+    // 丢弃 token 拼接长度 / 标题总长 < 50% 的条目。
+    // 消除 "浪潮集团2026上半年工作总结会议" 类 false positive：
+    //   tokenize → ["2026"] → 4/17 = 24% < 50% → 丢弃
+    // ────────────────────────────────────────────────────────────────
+    const joinedTokens = tokens.join('');
+    const coverage = joinedTokens.length / row.title.length;
+    if (coverage < 0.5) continue;
+
+    // ── Fable5 P2: 纯数字单 token 过滤器 ─────────────────────────────
+    // 丢弃纯数字单 token 条目。消除 "2026" → 每页匹配的 false positive。
+    // ────────────────────────────────────────────────────────────────
+    if (tokens.length === 1 && /^\d+$/.test(tokens[0]!)) continue;
 
     const entry: GazetteerEntry = {
       slug: row.slug,
@@ -188,6 +249,13 @@ export async function buildGazetteer(
       title: row.title,
       tokens,
     };
+    // ── P3: CJK 子串索引 ──────────────────────────────────────────────
+    // 对同时含有 CJK + ASCII 的混合标题（如 "腾讯Tencent"），
+    // 同时走 ASCII token 匹配 + CJK 整题子串匹配。
+    // ──────────────────────────────────────────────────────────────────
+    if (CJK_MATCH_MODE === 'substring' && hasCJK) {
+      entry.cjkSubstrings = [row.title];
+    }
     const key = tokens[0]!;
     const bucket = gazetteer.get(key);
     if (bucket) bucket.push(entry);
@@ -301,6 +369,54 @@ export function findMentionedEntities(
     });
     seenSlugs.add(matched.slug);
     i += matchedTokens;
+  }
+
+  // ── P3: CJK 子串匹配通道 ──────────────────────────────────────────────
+  // 中文无词边界，token maximal-munch 不适用。独立通道用整题 indexOf
+  // 在 body text 中扫描所有 CJK 条目，maximal-munch 取最长匹配。
+  // ──────────────────────────────────────────────────────────────────────
+  if (CJK_MATCH_MODE === 'substring') {
+    // Collect all CJK entries in one flat list, sorted by title DESC.
+    const cjkEntries: Array<{ entry: GazetteerEntry; title: string }> = [];
+    for (const bucket of gazetteer.values()) {
+      for (const entry of bucket) {
+        if (entry.cjkSubstrings && entry.cjkSubstrings.length > 0) {
+          cjkEntries.push({ entry, title: entry.cjkSubstrings[0] });
+        }
+      }
+    }
+    // Sort longest-first for maximal-munch.
+    cjkEntries.sort((a, b) => b.title.length - a.title.length);
+
+    // CJK maximal-munch: walk each character offset in stripped text,
+    // find the longest CJK entry that matches at that offset.
+    const stext = stripped;
+    let ci = 0;
+    while (ci < stext.length) {
+      let best: { entry: GazetteerEntry; title: string } | null = null;
+      for (const candidate of cjkEntries) {
+        if (ci + candidate.title.length > stext.length) continue;
+        if (stext.slice(ci, ci + candidate.title.length) === candidate.title) {
+          best = candidate;
+          break;  // sorted longest-first → first hit is best
+        }
+      }
+      if (!best) { ci++; continue; }
+
+      // Guards.
+      if (best.entry.slug === opts.fromSlug) { ci += best.title.length; continue; }
+      if (best.entry.source_id !== opts.fromSourceId) { ci += best.title.length; continue; }
+      if (seenSlugs.has(best.entry.slug)) { ci += best.title.length; continue; }
+
+      out.push({
+        slug: best.entry.slug,
+        source_id: best.entry.source_id,
+        name: best.entry.title,
+        offset: ci,
+      });
+      seenSlugs.add(best.entry.slug);
+      ci += best.title.length;
+    }
   }
 
   return out;
