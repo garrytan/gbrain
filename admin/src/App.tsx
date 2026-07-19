@@ -3,7 +3,6 @@ import { LoginPage } from './pages/Login';
 import { AgentsPage } from './pages/Agents';
 import { RequestLogPage } from './pages/RequestLog';
 import { CalibrationPage } from './pages/Calibration';
-import { JobsWatchPage } from './pages/JobsWatch';
 import {
   DreamCalibrationPage,
   DreamExecutePage,
@@ -22,16 +21,27 @@ import {
   NaturalLanguagePage,
   DocumentationPage,
   SettingsPage,
-  SystemDiagnosticPage,
 } from './pages/Console';
 import { api } from './api';
-import { applyThemeMode, normalizeThemeMode, readThemeMode, type ThemeMode } from './lib/theme';
+import {
+  applyThemeMode,
+  normalizeThemeMode,
+  readStoredThemeMode,
+  readThemeMode,
+  storeThemeMode,
+  type ThemeMode,
+} from './lib/theme';
+import {
+  BookOpenText, Bot, BrainCircuit, Cable,
+  Database, FileClock, FolderKanban, LayoutDashboard,
+  SlidersHorizontal, type LucideIcon,
+} from 'lucide-react';
 
 const PAGES = [
   'login', 'dashboard', 'natural',
   'dream', 'dream-execute', 'dream-knowledge', 'dream-takes', 'dream-scoring', 'dream-calibration', 'dream-insights',
   'import', 'data', 'docs',
-  'mcp', 'config', 'agents', 'log', 'calibration', 'jobs', 'diagnostics', 'settings',
+  'mcp', 'config', 'agents', 'log', 'calibration', 'settings',
 ] as const;
 
 type Page = typeof PAGES[number];
@@ -41,54 +51,49 @@ function getPage(): Page {
   return PAGES.includes(hash as Page) ? hash as Page : 'dashboard';
 }
 
+type NavIconName = 'overview' | 'workspace' | 'database' | 'organize' | 'mcp' | 'log' | 'settings' | 'assistant';
+
+const NAV_ICONS: Record<NavIconName, LucideIcon> = {
+  overview: LayoutDashboard,
+  workspace: FolderKanban,
+  database: Database,
+  organize: BookOpenText,
+  mcp: Cable,
+  log: FileClock,
+  settings: SlidersHorizontal,
+  assistant: Bot,
+};
+
+function NavIcon({ name }: { name: NavIconName }) {
+  const Icon = NAV_ICONS[name];
+  return <Icon className="nav-icon" aria-hidden="true" />;
+}
+
+function BrandMark() {
+  return <span className="brand-mark" aria-hidden="true"><BrainCircuit /></span>;
+}
+
 export function App() {
   const [page, setPage] = useState<Page>(getPage);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
-  const [helpOpen, setHelpOpen] = useState(false);
   const [supportPanel, setSupportPanel] = useState<'wecom' | null>(null);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const wecomQrSrc = `${import.meta.env.BASE_URL}wecom-helper.jpg`;
-  const navGroups: Array<{ title: string; items: Array<{ page: Page; label: string }> }> = useMemo(() => [
-    {
-      title: '概览',
-      items: [
-        { page: 'dashboard', label: '总体概览' },
-      ],
-    },
-    {
-      title: '知识工作台',
-      items: [
-        { page: 'import', label: '知识工作台' },
-      ],
-    },
-    {
-      title: '知识库',
-      items: [
-        { page: 'data', label: '知识库' },
-      ],
-    },
-    {
-      title: '知识整理',
-      items: [
-        { page: 'dream', label: '知识整理' },
-      ],
-    },
-    {
-      title: '知识调用',
-      items: [
-        { page: 'mcp', label: 'MCP 接入' },
-        { page: 'log', label: '请求日志' },
-      ],
-    },
-    {
-      title: '系统与设置',
-      items: [
-        { page: 'jobs', label: '任务监控' },
-        { page: 'diagnostics', label: '系统诊断' },
-        { page: 'settings', label: '设置' },
-      ],
-    },
+  const navSections: Array<{ title: string; items: Array<{ page: Page; label: string; icon: NavIconName }> }> = useMemo(() => [
+    { title: '知识', items: [
+      { page: 'import', label: '知识工作台', icon: 'workspace' },
+      { page: 'data', label: '知识库', icon: 'database' },
+      { page: 'dream', label: '知识整理', icon: 'organize' },
+    ] },
+    { title: '集成', items: [
+      { page: 'mcp', label: 'MCP 接入', icon: 'mcp' },
+      { page: 'log', label: '请求日志', icon: 'log' },
+    ] },
   ], []);
+  const allNavItems = useMemo(() => [
+    { page: 'dashboard' as Page, label: '总体概览' },
+    ...navSections.flatMap(section => section.items.map(({ page: itemPage, label }) => ({ page: itemPage, label }))),
+    { page: 'settings' as Page, label: '设置' },
+  ], [navSections]);
 
   useEffect(() => {
     const onHash = () => setPage(getPage());
@@ -106,7 +111,9 @@ export function App() {
     const syncDesktopTheme = () => {
       void api.theme()
         .then((result) => {
-          if (active) setThemeMode(normalizeThemeMode((result as { source?: unknown }).source));
+          if (active && readStoredThemeMode() === null) {
+            setThemeMode(normalizeThemeMode((result as { source?: unknown }).source));
+          }
         })
         .catch(() => undefined);
     };
@@ -128,24 +135,9 @@ export function App() {
     setPage(target);
   };
 
-  // 根据当前 page 自动展开所在分组
-  const currentGroup = navGroups.find(g => g.items.some(i => i.page === page));
-  useEffect(() => {
-    if (currentGroup) {
-      setExpandedGroups(prev => new Set(prev).add(currentGroup.title));
-    }
-  }, [page]);
-
-  const toggleGroup = (title: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(title)) {
-        next.delete(title);
-      } else {
-        next.add(title);
-      }
-      return next;
-    });
+  const changeThemeMode = (mode: ThemeMode) => {
+    storeThemeMode(mode);
+    setThemeMode(mode);
   };
 
   if (page === 'login') {
@@ -168,59 +160,36 @@ export function App() {
     <div className="app">
       <nav className="sidebar">
         <div className="sidebar-logo">
-          <span className="brand-mark">P</span>
+          <BrandMark />
           <div>
             <b>PMBrain</b>
             <small>知识控制台</small>
           </div>
         </div>
         <div className="sidebar-nav">
-          {navGroups.map(group => {
-            if (group.items.length === 1) {
-              const item = group.items[0];
-              return (
-                <button
-                  type="button"
-                  key={item.page}
-                  className={`nav-item nav-item-top ${page === item.page ? 'active' : ''}`}
-                  onClick={() => navigate(item.page)}
-                >
-                  {item.label}
+          <button type="button" className={`nav-item nav-item-overview ${page === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')}>
+            <NavIcon name="overview" /><span>总体概览</span>
+          </button>
+          {navSections.map(section => (
+            <section className="nav-section" key={section.title} aria-label={section.title}>
+              <div className="nav-section-label">{section.title}</div>
+              {section.items.map(item => (
+                <button type="button" key={item.page} className={`nav-item ${page === item.page ? 'active' : ''}`} onClick={() => navigate(item.page)}>
+                  <NavIcon name={item.icon} /><span>{item.label}</span>
                 </button>
-              );
-            }
-            return (
-              <div className={`nav-group ${expandedGroups.has(group.title) ? 'expanded' : ''}`} key={group.title}>
-                <button type="button" className="nav-group-title" onClick={() => toggleGroup(group.title)} aria-expanded={expandedGroups.has(group.title)}>
-                  {group.title}
-                </button>
-                {group.items.map(item => (
-                  <button
-                    type="button"
-                    key={item.page}
-                    className={`nav-item ${page === item.page ? 'active' : ''}`}
-                    onClick={() => navigate(item.page)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            );
-          })}
+              ))}
+            </section>
+          ))}
+          <section className="nav-section" aria-label="系统">
+            <div className="nav-section-label">系统</div>
+            <button type="button" className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}>
+              <NavIcon name="settings" /><span>设置</span>
+            </button>
+          </section>
         </div>
         <div className="sidebar-support">
-          <button className="support-link" onClick={() => setHelpOpen(open => !open)}>
-            <span className="support-icon">?</span>
-            <span>帮助中心</span>
-          </button>
-          {helpOpen && (
-            <div className="support-submenu">
-              <button onClick={() => { sessionStorage.setItem('pmbrain.docs.article', 'readme'); navigate('docs'); }}>使用文档</button>
-              <button onClick={() => { sessionStorage.setItem('pmbrain.docs.article', 'faq'); navigate('docs'); }}>常见问题</button>
-            </div>
-          )}
           <button className="support-link" onClick={() => setSupportPanel('wecom')}>
-            <span className="support-icon">◎</span>
+            <NavIcon name="assistant" />
             <span>企微助手</span>
           </button>
           <button
@@ -233,19 +202,15 @@ export function App() {
         </div>
       </nav>
       <header className="mobile-nav">
-        <div className="mobile-brand"><span className="brand-mark">P</span><b>PMBrain</b></div>
+        <div className="mobile-brand"><BrandMark /><b>PMBrain</b></div>
         <select
           aria-label="选择管理台页面"
-          value={navGroups.some(group => group.items.some(item => item.page === page)) ? page : 'dashboard'}
+          value={allNavItems.some(item => item.page === page) ? page : 'dashboard'}
           onChange={event => navigate(event.target.value as Page)}
         >
-          {navGroups.map(group => group.items.length === 1 ? (
-            <option key={group.items[0].page} value={group.items[0].page}>{group.items[0].label}</option>
-          ) : (
-            <optgroup key={group.title} label={group.title}>
-              {group.items.map(item => <option key={item.page} value={item.page}>{item.label}</option>)}
-            </optgroup>
-          ))}
+          <option value="dashboard">总体概览</option>
+          {navSections.map(section => <optgroup key={section.title} label={section.title}>{section.items.map(item => <option key={item.page} value={item.page}>{item.label}</option>)}</optgroup>)}
+          <optgroup label="系统"><option value="settings">设置</option></optgroup>
         </select>
         <button type="button" className="mobile-signout" onClick={handleSignOutEverywhere}>退出</button>
       </header>
@@ -267,13 +232,8 @@ export function App() {
         {page === 'agents' && <AgentsPage />}
         {page === 'log' && <RequestLogPage />}
         {page === 'calibration' && <CalibrationPage />}
-        {page === 'jobs' && <JobsWatchPage />}
-        {page === 'diagnostics' && <SystemDiagnosticPage />}
         {page === 'settings' && (
-          <SettingsPage
-            themeMode={themeMode}
-            onNavigate={(target) => navigate(target as Page)}
-          />
+          <SettingsPage themeMode={themeMode} onThemeModeChange={changeThemeMode} />
         )}
       </main>
       {supportPanel && (

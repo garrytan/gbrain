@@ -211,17 +211,17 @@ export function AgentsPage({
   };
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 18, marginBottom: 24 }}>
+    <section className="agents-section">
+      <div className="agents-section-head">
         <div>
-          <h1 className="page-title title-with-info" style={{ marginBottom: description ? 6 : 0 }}>
+          <h1 className="page-title title-with-info">
             {title}
             {titleHelp}
           </h1>
           {description && <p className="pm-section-desc">{description}</p>}
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <label style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+        <div className="agents-section-actions">
+          <label className="agents-revoked-filter">
             <input type="checkbox" checked={hideRevoked} onChange={e => setHideRevoked(e.target.checked)} /> 隐藏已撤销项
           </label>
           <button className="btn btn-secondary" onClick={() => setShowApiKeyCreate(true)}>+ API Key</button>
@@ -237,21 +237,21 @@ export function AgentsPage({
         const visibleAgents = agents.filter(a => !hideRevoked || a.status !== 'revoked');
         if (agents.length === 0) {
           return (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
+            <div className="pm-empty agents-empty">
               暂无已注册 Agent。请先注册第一个 Agent。
             </div>
           );
         }
         if (visibleAgents.length === 0) {
           return (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
+            <div className="pm-empty agents-empty">
               所有 Agent 均已撤销。取消勾选“隐藏已撤销项”即可查看。
             </div>
           );
         }
         return (
         <>
-          <table>
+          <div className="table-scroll"><table className="agents-table">
             <thead>
               <tr>
                 <th>名称</th>
@@ -265,8 +265,7 @@ export function AgentsPage({
             </thead>
             <tbody>
               {visibleAgents.map(a => (
-                <tr key={a.id} onClick={() => setSelectedAgent(a)}
-                    style={{ cursor: 'pointer' }}>
+                <tr key={a.id} onClick={() => setSelectedAgent(a)} className="agents-table-row">
                   <td style={{ fontWeight: 500 }}>{a.name || a.client_name}</td>
                   <td>
                     <span className={`badge ${a.auth_type === 'oauth' ? 'badge-read' : 'badge-write'}`} style={{ fontSize: 11 }}>
@@ -294,8 +293,8 @@ export function AgentsPage({
                 </tr>
               ))}
             </tbody>
-          </table>
-          <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>
+          </table></div>
+          <div className="agents-table-summary">
             {visibleAgents.filter(a => a.status === 'active').length} 个活跃凭证
             {!hideRevoked && ` / 当前显示 ${visibleAgents.length} 个`}
           </div>
@@ -345,7 +344,7 @@ export function AgentsPage({
       {showApiKeyToken && (
         <ApiKeyTokenModal token={showApiKeyToken} onClose={() => setShowApiKeyToken(null)} />
       )}
-    </>
+    </section>
   );
 }
 

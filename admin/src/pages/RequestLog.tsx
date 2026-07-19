@@ -58,28 +58,31 @@ export function RequestLogPage() {
   data.rows.forEach(r => { if (r.token_name) agentMap.set(r.token_name, r.agent_name || r.token_name); });
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 className="page-title title-with-info" style={{ marginBottom: 0 }}>
+    <div className="pm-page request-log-page">
+      <div className="pm-section-head page-command-head">
+        <h1 className="page-title title-with-info">
           请求日志
           <InfoIcon title="请求日志">
             记录外部 Agent 通过 MCP 调用 PMBrain 的时间、操作、参数、延迟和状态。用它排查 CodeBuddy 等工具是否接入成功。
           </InfoIcon>
         </h1>
-        <select value={agentFilter} onChange={e => { setAgentFilter(e.target.value); setPage(1); }}
-          style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', fontSize: 13 }}>
-          <option value="all">全部 Agent</option>
-          {[...agentMap.entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
+        <label className="request-agent-filter">
+          <span>Agent</span>
+          <select value={agentFilter} onChange={e => { setAgentFilter(e.target.value); setPage(1); }}>
+            <option value="all">全部 Agent</option>
+            {[...agentMap.entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        </label>
       </div>
 
       {data.rows.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
+        <div className="pm-card pm-empty request-log-empty">
           暂无请求。
         </div>
       ) : (
-        <>
-          <table>
+        <div className="pm-card request-log-card">
+          <div className="table-scroll">
+          <table className="request-log-table">
             <thead>
               <tr>
                 <th>时间</th>
@@ -94,45 +97,45 @@ export function RequestLogPage() {
               {data.rows.map(r => (
                 <React.Fragment key={r.id}>
                   <tr onClick={() => setExpandedRow(expandedRow === r.id ? null : r.id)}
-                      style={{ cursor: 'pointer' }}>
-                    <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{timeAgo(r.created_at)}</td>
+                      className="request-log-row">
+                    <td className="request-log-time">{timeAgo(r.created_at)}</td>
                     <td>
-                      <a style={{ color: 'var(--text-link, #88aaff)', cursor: 'pointer', textDecoration: 'none', fontWeight: 500 }}
+                      <button type="button" className="request-agent-link"
                          onClick={(e) => { e.stopPropagation(); setAgentFilter(r.token_name); setPage(1); }}>
                         {r.agent_name || r.token_name}
-                      </a>
+                      </button>
                     </td>
                     <td className="mono">{r.operation}</td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td className="request-log-params" title={formatParams(r.params) ?? undefined}>
                       {formatParams(r.params)}
                     </td>
                     <td className="mono">{r.latency_ms}ms</td>
                     <td><span className={`badge badge-${r.status}`}>{statusLabel(r.status)}</span></td>
                   </tr>
                   {expandedRow === r.id && (
-                    <tr>
-                      <td colSpan={6} style={{ background: 'var(--bg-secondary, #0f0f1a)', padding: 16 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '6px 12px', fontSize: 13 }}>
-                          <span style={{ color: 'var(--text-muted)' }}>时间</span>
+                    <tr className="request-detail-row">
+                      <td colSpan={6}>
+                        <div className="request-detail-grid">
+                          <span>时间</span>
                           <span>{new Date(r.created_at).toLocaleString()}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>Agent</span>
+                          <span>Agent</span>
                           <span className="mono">{r.token_name}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>操作</span>
+                          <span>操作</span>
                           <span className="mono">{r.operation}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>延迟</span>
+                          <span>延迟</span>
                           <span>{r.latency_ms}ms</span>
                           {r.params && (
                             <>
-                              <span style={{ color: 'var(--text-muted)' }}>参数</span>
-                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                              <span>参数</span>
+                              <pre className="mono">
                                 {JSON.stringify(r.params, null, 2)}
                               </pre>
                             </>
                           )}
                           {r.error_message && (
                             <>
-                              <span style={{ color: 'var(--error, #ff6b6b)' }}>错误</span>
-                              <span style={{ color: 'var(--error, #ff6b6b)' }}>{r.error_message}</span>
+                              <span className="request-error-text">错误</span>
+                              <span className="request-error-text">{r.error_message}</span>
                             </>
                           )}
                         </div>
@@ -143,16 +146,17 @@ export function RequestLogPage() {
               ))}
             </tbody>
           </table>
+          </div>
 
-          <div className="pagination">
+          <div className="pagination request-pagination">
             <span>第 {data.page} / {data.pages} 页（共 {data.total} 条）</span>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="pagination-actions">
               <button disabled={data.page <= 1} onClick={() => setPage(p => p - 1)}>上一页</button>
               <button disabled={data.page >= data.pages} onClick={() => setPage(p => p + 1)}>下一页</button>
             </div>
           </div>
-        </>
+        </div>
       )}
-    </>
+    </div>
   );
 }

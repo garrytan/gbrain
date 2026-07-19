@@ -8,6 +8,16 @@ import type { ThemeMode } from '../lib/theme';
 import { getThinkRetrievalWarning, parseThinkOutput } from '../lib/think-output';
 import { CopyButton } from '../lib/clipboard';
 import { parseMarkdownTable } from '../lib/markdown-table';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import {
+  Activity, AlertTriangle, Bot, Boxes, CheckCircle2, Clock3, Cpu, Database,
+  Download, FileText, FolderKanban, FolderTree, History, Layers3, Link2,
+  MonitorCog, Plus, RefreshCw, Search, Sparkles, Tags, Upload, type LucideIcon,
+} from 'lucide-react';
+import {
+  Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer,
+  Tooltip as ChartTooltip, XAxis, YAxis,
+} from 'recharts';
 
 interface SourceSummary {
   id: string;
@@ -50,6 +60,16 @@ interface BrainOverview {
   };
   llm_enabled: boolean;
   config: Record<string, unknown>;
+}
+
+interface RecentRequest {
+  id: number;
+  token_name: string;
+  agent_name?: string | null;
+  operation: string;
+  latency_ms: number;
+  status: string;
+  created_at: string;
 }
 
 interface BrainPageRow {
@@ -126,6 +146,52 @@ function pct(value: number): string {
   return `${Number.isFinite(value) ? value.toFixed(value % 1 === 0 ? 0 : 1) : '0'}%`;
 }
 
+function formatCount(value: number): string {
+  return new Intl.NumberFormat('zh-CN').format(Number.isFinite(value) ? value : 0);
+}
+
+const OVERVIEW_CHART_COLORS = ['#7568f0', '#5f93f5', '#4fc29c', '#f1a454', '#db6d7a', '#8b84d8'];
+
+function shortTime(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+    : '--:--:--';
+}
+
+function shortDate(value: string | null): string {
+  if (!value) return '暂无';
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`
+    : '暂无';
+}
+
+type OverviewIconName = 'page' | 'chunk' | 'embedding' | 'source' | 'pulse' | 'clock' | 'agent' | 'check' | 'warning' | 'database' | 'refresh' | 'link' | 'tag' | 'timeline' | 'model';
+
+const OVERVIEW_ICONS: Record<OverviewIconName, LucideIcon> = {
+  page: FileText,
+  chunk: Layers3,
+  embedding: Boxes,
+  source: FolderKanban,
+  pulse: Activity,
+  clock: Clock3,
+  agent: Bot,
+  check: CheckCircle2,
+  warning: AlertTriangle,
+  database: Database,
+  refresh: RefreshCw,
+  link: Link2,
+  tag: Tags,
+  timeline: History,
+  model: Cpu,
+};
+
+function OverviewIcon({ name }: { name: OverviewIconName }) {
+  const Icon = OVERVIEW_ICONS[name];
+  return <Icon className="overview-icon" aria-hidden="true" />;
+}
+
 function MetricCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
     <div className="pm-card pm-metric">
@@ -155,22 +221,6 @@ function useOverview() {
 
   useEffect(() => { void load(); }, [load]);
   return { overview, error, reload: load };
-}
-
-function OverviewStrip({ overview }: { overview: BrainOverview }) {
-  const engineLabel = overview.engine === 'pglite' ? '本地 PGLite' : overview.engine === 'postgres' ? 'Docker / Postgres' : overview.engine;
-  return (
-    <div className="pm-status-strip">
-      <span>数据库 <b>{engineLabel}</b></span>
-      <span>版本 <b>{overview.version}</b></span>
-      <span>知识结构 <b>{overview.schema_pack}</b></span>
-      <span>普通模型 <b>{overview.chat_model ?? '未配置'}</b></span>
-      <span>向量模型 <b>{overview.embedding_model ?? '未配置'}</b></span>
-      <span className={overview.llm_enabled ? 'pm-ok' : 'pm-warn'}>
-        自然语言 {overview.llm_enabled ? '已启用' : '未配置'}
-      </span>
-    </div>
-  );
 }
 
 function sourceLabel(source?: SourceSummary): string {
@@ -207,27 +257,38 @@ function MainSourceSettings({ overview, onSaved }: { overview: BrainOverview; on
   };
 
   return (
-    <div className="pm-card main-source-card">
-      <div className="pm-section-head">
-        <div>
-          <h2>主知识库源</h2>
-          <p className="pm-hint">主源会作为默认导入位置，也会作为 MCP 未指定 source 时的默认读取范围。</p>
+    <div className="pm-card main-source-card settings-panel">
+      <div className="pm-section-head settings-panel-head">
+        <div className="settings-panel-title">
+          <span className="settings-panel-icon"><Database /></span>
+          <div>
+            <h2>主知识库源</h2>
+            <p className="pm-hint">主源会作为默认导入位置，也会作为 MCP 未指定 source 时的默认读取范围。</p>
+          </div>
         </div>
+      </div>
+      <div className="main-source-current">
+        <div className="main-source-current-copy">
+          <span>当前主源</span>
+          <strong>{sourceLabel(mainSource)}</strong>
+          <code>{mainSource?.local_path ?? '未绑定本地目录'}</code>
+        </div>
+        <div className="main-source-purpose" aria-label="主知识库源用途">
+          <span><Download />默认导入</span>
+          <span><Link2 />MCP 默认读取</span>
+        </div>
+      </div>
+      <div className="main-source-select-row">
+        <label htmlFor="main-source-select">切换主源</label>
+        <select id="main-source-select" value={selected} onChange={event => setSelected(event.target.value)}>
+          {activeSources.map(source => (
+            <option key={source.id} value={source.id}>{sourceLabel(source)}</option>
+          ))}
+        </select>
         <button className="pm-primary" onClick={() => void save()} disabled={saving || !selected || selected === overview.main_source_id}>
           {saving ? '保存中' : '设为主源'}
         </button>
       </div>
-      <div className="main-source-grid">
-        <MetricCard label="当前主源" value={overview.main_source_id} hint={mainSource?.local_path ?? '未绑定本地目录'} />
-        <MetricCard label="默认导入" value={overview.main_source_id} hint="导入时未填写 Source ID 会写入这里" />
-        <MetricCard label="MCP 默认读取" value={overview.main_source_id} hint="Agent 未指定 source 时会读取这里" />
-      </div>
-      <label>选择已有 source</label>
-      <select value={selected} onChange={event => setSelected(event.target.value)}>
-        {activeSources.map(source => (
-          <option key={source.id} value={source.id}>{sourceLabel(source)}</option>
-        ))}
-      </select>
       {message && <div className={message.includes('已设置') ? 'pm-hint pm-ok' : 'pm-error-text'}>{message}</div>}
     </div>
   );
@@ -237,96 +298,258 @@ export function KnowledgeWorkbenchPage({ onNavigate }: { onNavigate?: (page: str
   const { overview, error, reload } = useOverview();
   const [serviceStats, setServiceStats] = useState({ connected_agents: 0, requests_today: 0, active_tokens: 0 });
   const [health, setHealth] = useState({ expiring_soon: 0, error_rate: '0%' });
+  const [showAllTypes, setShowAllTypes] = useState(false);
+  const [showAllSources, setShowAllSources] = useState(false);
+  const [recentRequests, setRecentRequests] = useState<RecentRequest[]>([]);
 
   useEffect(() => {
-    void Promise.all([api.stats(), api.health()]).then(([nextStats, nextHealth]: any[]) => {
-      setServiceStats(nextStats);
-      setHealth(nextHealth);
-    }).catch(() => undefined);
+    let active = true;
+    const loadServiceSnapshot = async () => {
+      try {
+        const [nextStats, nextHealth] = await Promise.all([api.stats(), api.health()]);
+        if (active) {
+          setServiceStats(nextStats as typeof serviceStats);
+          setHealth(nextHealth as typeof health);
+        }
+      } catch {
+        // The overview data remains useful when the optional service snapshot is unavailable.
+      }
+      try {
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const rows: RecentRequest[] = [];
+        let requestPage = 1;
+        let totalPages = 1;
+        while (requestPage <= totalPages && requestPage <= 20) {
+          const response = await api.requests(requestPage) as { rows?: RecentRequest[]; pages?: number };
+          const pageRows = Array.isArray(response.rows) ? response.rows : [];
+          rows.push(...pageRows);
+          totalPages = Math.max(1, Number(response.pages) || 1);
+          const oldest = pageRows[pageRows.length - 1];
+          if (pageRows.length === 0 || (oldest && new Date(oldest.created_at).getTime() < cutoff)) break;
+          requestPage += 1;
+        }
+        if (active) setRecentRequests(rows.filter(row => new Date(row.created_at).getTime() >= cutoff));
+      } catch {
+        if (active) setRecentRequests([]);
+      }
+    };
+    void loadServiceSnapshot();
+    const timer = window.setInterval(() => void loadServiceSnapshot(), 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   if (error) return <div className="pm-card pm-error">{error}</div>;
   if (!overview) return <LoadingBlock />;
 
-  const sourceMax = Math.max(...overview.sources.map(s => s.page_count), 1);
+  const activeSources = overview.sources.filter(source => !source.archived);
+  const sourceMax = Math.max(...activeSources.map(s => s.page_count), 1);
   const typeEntries = Object.entries(overview.stats.pages_by_type).sort((a, b) => b[1] - a[1]);
+  const sourceEntries = [...activeSources].sort((a, b) => b.page_count - a.page_count);
+  const coverage = Math.min(100, Math.max(0, overview.embedding_coverage || 0));
+  const engineLabel = overview.engine === 'pglite' ? '本地 PGLite' : overview.engine === 'postgres' ? 'Docker / Postgres' : overview.engine;
+  const typeChartEntries: Array<[string, number]> = typeEntries.length > 6
+    ? [...typeEntries.slice(0, 5), ['其他', typeEntries.slice(5).reduce((sum, [, count]) => sum + count, 0)]]
+    : typeEntries;
+  const visibleTypeEntries = showAllTypes ? typeEntries : typeEntries.slice(0, 6);
+  const visibleSourceEntries = showAllSources ? sourceEntries : sourceEntries.slice(0, 5);
+  const now = new Date();
+  const trendDays = Array.from({ length: 7 }, (_, offset) => {
+    const date = new Date(now);
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - (6 - offset));
+    const next = new Date(date);
+    next.setDate(next.getDate() + 1);
+    return {
+      label: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`,
+      count: recentRequests.filter(row => {
+        const timestamp = new Date(row.created_at).getTime();
+        return timestamp >= date.getTime() && timestamp < next.getTime();
+      }).length,
+    };
+  });
+  const todayRequests = trendDays[trendDays.length - 1]?.count ?? 0;
+  const yesterdayRequests = trendDays[trendDays.length - 2]?.count ?? 0;
+  const requestDelta = todayRequests - yesterdayRequests;
+  const recentSuccesses = recentRequests.filter(row => row.status === 'success').length;
+  const recentSuccessRate = recentRequests.length > 0 ? recentSuccesses / recentRequests.length * 100 : 100;
+  const averageLatency = recentRequests.length > 0
+    ? Math.round(recentRequests.reduce((sum, row) => sum + (Number(row.latency_ms) || 0), 0) / recentRequests.length)
+    : 0;
 
   return (
-    <div className="pm-page">
-      <OverviewStrip overview={overview} />
-      <section className="pm-hero workbench-hero">
+    <div className="pm-page overview-page">
+      <header className="overview-header">
         <div>
-          <div className="pm-eyebrow">PMBRAIN OVERVIEW</div>
-          <h1>你的知识库，现在是什么状态</h1>
-          <p>概览只负责看：数据规模、向量覆盖、知识结构、来源、模型和 MCP 调用状态都汇总在这里。</p>
+          <h1>总体概览</h1>
+          <p>欢迎回来，以下是 PMBrain 知识库与系统的整体运行情况。</p>
         </div>
+        <div className="overview-header-actions">
+          <Tooltip.Provider delayDuration={160}>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <button type="button" className="overview-status-pill overview-system-status"><i />系统运行正常</button>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content className="overview-status-popover" sideOffset={10} align="start">
+              <div className="overview-popover-head"><span><i />系统运行正常</span><small>悬浮信息</small></div>
+              <dl>
+                <div><dt>数据库</dt><dd>{engineLabel}</dd></div>
+                <div><dt>知识结构</dt><dd>{overview.schema_pack}</dd></div>
+                <div><dt>普通模型</dt><dd>{overview.chat_model ?? '未配置'}</dd></div>
+                <div><dt>向量模型</dt><dd>{overview.embedding_model ?? '未配置'}</dd></div>
+                <div><dt>向量维度</dt><dd>{overview.embedding_dimensions ?? '-'}</dd></div>
+                <div><dt>扩展模型</dt><dd>{overview.expansion_model ?? '未配置'}</dd></div>
+                <div><dt>自然语言</dt><dd className={overview.llm_enabled ? 'pm-ok' : 'pm-warn'}>{overview.llm_enabled ? '已启用' : '未配置'}</dd></div>
+              </dl>
+                  <Tooltip.Arrow className="overview-tooltip-arrow" />
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          </Tooltip.Provider>
+          <span className="overview-meta-pill"><OverviewIcon name="database" />数据库 {engineLabel}</span>
+          <span className="overview-meta-pill"><OverviewIcon name="model" />模型 {overview.chat_model ?? '未配置'}</span>
+          <span className="overview-meta-pill"><OverviewIcon name="agent" />版本 v{overview.version}</span>
+          <button type="button" className="overview-refresh" onClick={() => void reload()} aria-label="刷新概览" title="刷新概览"><OverviewIcon name="refresh" /></button>
+        </div>
+      </header>
+
+      <section className="overview-top-grid">
+        <div className="overview-stage-main">
+          <div className="overview-hero">
+          <div className="overview-hero-copy">
+            <div className="overview-kicker">PMBRAIN OVERVIEW</div>
+            <h2>你的知识库，现在是什么状态</h2>
+            <p>概览只负责看：数据规模、向量覆盖、知识结构、来源、模型和 MCP 调用状态都汇总在这里。</p>
+            <div className="overview-hero-facts">
+              <span><OverviewIcon name="chunk" />{formatCount(overview.stats.chunk_count)} 搜索切片</span>
+              <span><OverviewIcon name="link" />{formatCount(overview.stats.link_count)} 个知识关联</span>
+              <span><OverviewIcon name="source" />{formatCount(overview.federated_source_count)} 个联邦数据源</span>
+            </div>
+          </div>
+          <div className="overview-orbit" aria-hidden="true">
+            <div className="overview-orbit-ring overview-orbit-ring-one" />
+            <div className="overview-orbit-ring overview-orbit-ring-two" />
+            <div className="overview-orbit-core" />
+            <i className="overview-orbit-dot overview-orbit-dot-one" />
+            <i className="overview-orbit-dot overview-orbit-dot-two" />
+          </div>
+        </div>
+
+          <section className="overview-metrics-grid" aria-label="核心指标">
+            <article className="overview-stat-card overview-accent-violet">
+              <div className="overview-stat-icon overview-stat-icon-violet"><OverviewIcon name="page" /></div>
+              <div className="overview-stat-copy"><span>知识总数</span><strong>{formatCount(overview.stats.page_count)}</strong><small>文档与知识条目</small><em>最近更新 {shortDate(overview.recent_write_at)}</em></div>
+            </article>
+            <article className="overview-stat-card overview-accent-blue">
+              <div className="overview-stat-icon overview-stat-icon-blue"><OverviewIcon name="embedding" /></div>
+              <div className="overview-stat-copy"><span>可被检索</span><strong>{pct(coverage)}</strong><small>可用于 AI 搜索</small><em className={overview.pending_embeddings > 0 ? 'is-warning' : 'is-positive'}>{overview.pending_embeddings > 0 ? `${formatCount(overview.pending_embeddings)} 待处理` : '全部完成'} <span>↑</span></em></div>
+            </article>
+            <article className="overview-stat-card overview-accent-green">
+              <div className="overview-stat-icon overview-stat-icon-green"><OverviewIcon name="source" /></div>
+              <div className="overview-stat-copy"><span>外部数据源</span><strong>{formatCount(activeSources.length)}</strong><small>{formatCount(overview.federated_source_count)} 个联邦源已连接</small><em className="is-positive">连接正常</em></div>
+            </article>
+            <article className="overview-stat-card overview-accent-orange">
+              <div className="overview-stat-icon overview-stat-icon-orange"><OverviewIcon name="agent" /></div>
+              <div className="overview-stat-copy"><span>今日 MCP 调用</span><strong>{formatCount(serviceStats.requests_today)}</strong><small>{formatCount(serviceStats.connected_agents)} 个活跃 Agent</small><em className={requestDelta >= 0 ? 'is-positive' : 'is-negative'}>较昨日 {requestDelta >= 0 ? '+' : ''}{requestDelta} <span>{requestDelta >= 0 ? '↑' : '↓'}</span></em></div>
+            </article>
+          </section>
+        </div>
+
+        <aside className="overview-panel overview-runtime-card">
+          <div className="overview-panel-head"><div><div className="overview-section-eyebrow">SYSTEM HEALTH</div><h2>运行状态</h2></div><span className="overview-panel-note"><i />正常</span></div>
+          <div className="overview-runtime-list">
+            <div><span><OverviewIcon name="embedding" />向量待处理</span><b>{formatCount(overview.pending_embeddings)}</b><small>{pct(coverage)} 已完成</small></div>
+            <div><span><OverviewIcon name="warning" />调用错误率</span><b className={Number.parseFloat(health.error_rate) > 0 ? 'pm-warn' : ''}>{health.error_rate}</b><small>{formatCount(serviceStats.requests_today)} 次请求</small></div>
+            <div><span><OverviewIcon name="agent" />已连接 Agent</span><b>{formatCount(serviceStats.connected_agents)}</b><small>{formatCount(health.expiring_soon)} 个凭证将到期</small></div>
+            <div><span><OverviewIcon name="check" />自然语言</span><b className={overview.llm_enabled ? 'pm-ok' : 'pm-warn'}>{overview.llm_enabled ? '已启用' : '未配置'}</b><small>{overview.schema_pack}</small></div>
+          </div>
+        </aside>
       </section>
 
-      <div className="pm-grid metrics-grid">
-        <MetricCard label="知识页面" value={overview.stats.page_count} hint="数据库中的 Markdown 页面" />
-        <MetricCard label="搜索切片" value={overview.stats.chunk_count} hint={`${overview.stats.embedded_count} 已向量化`} />
-        <MetricCard label="向量覆盖" value={pct(overview.embedding_coverage)} hint={`${overview.pending_embeddings} 待处理`} />
-        <MetricCard label="数据源" value={overview.sources.filter((s: {archived?: boolean}) => !s.archived).length} hint={`${overview.federated_source_count} 个参与跨源搜索`} />
-        <MetricCard label="今日 MCP 请求" value={serviceStats.requests_today} hint={`${serviceStats.connected_agents} 个已连接 Agent`} />
-        <MetricCard label="调用错误率" value={health.error_rate} hint={`${health.expiring_soon} 个凭证即将到期`} />
-      </div>
-
-      <div className="pm-grid two-col">
-        <div className="pm-card">
-          <div className="pm-section-head">
-            <h2>页面类型分布</h2>
-            <button className="pm-ghost" onClick={() => onNavigate?.('data')}>浏览数据</button>
+      <section className="overview-content-grid overview-insight-grid">
+        <article className={`overview-panel overview-type-panel ${showAllTypes ? 'is-expanded' : ''}`}>
+          <div className="overview-panel-head"><div><div className="overview-section-eyebrow">CONTENT MAP</div><h2>内容类型分布</h2></div><button type="button" onClick={() => setShowAllTypes(value => !value)}>{showAllTypes ? '收起' : '查看全部'} <span>›</span></button></div>
+          <div className="overview-donut-layout">
+            <div className="overview-donut">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={typeChartEntries.map(([name, value]) => ({ name: name === '其他' ? name : pageTypeLabel(name), value }))} dataKey="value" nameKey="name" innerRadius="67%" outerRadius="91%" paddingAngle={1.4} stroke="none">
+                    {typeChartEntries.map(([type], index) => <Cell key={type} fill={OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length]} />)}
+                  </Pie>
+                  <ChartTooltip formatter={(value) => formatCount(Number(value))} contentStyle={{ borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', fontSize: 11 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="overview-donut-center"><strong>{formatCount(overview.stats.page_count)}</strong><span>总数</span></div>
+            </div>
+            <div className="overview-donut-legend">
+              {typeChartEntries.map(([type, count], index) => (
+                <div key={type} title={pageTypeTitle(type)}><i style={{ background: OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length] }} /><span>{type === '其他' ? type : pageTypeLabel(type)}</span><b>{formatCount(count)}</b><small>{pct(count / Math.max(overview.stats.page_count, 1) * 100)}</small></div>
+              ))}
+            </div>
           </div>
-          <div className="pm-bars">
-            {typeEntries.length === 0 && <div className="pm-empty">暂无类型数据</div>}
-            {typeEntries.map(([type, count]) => (
-              <div className="pm-bar-row" key={type}>
-                <span title={pageTypeTitle(type)}>{pageTypeLabel(type)}</span>
-                <div><i style={{ width: `${Math.max(4, count / Math.max(overview.stats.page_count, 1) * 100)}%` }} /></div>
-                <b>{count}</b>
+          {showAllTypes && <div className="overview-expanded-list">{visibleTypeEntries.map(([type, count]) => <div key={type} title={pageTypeTitle(type)}><span>{pageTypeLabel(type)}</span><b>{formatCount(count)}</b></div>)}</div>}
+          <button type="button" className="overview-panel-link" onClick={() => onNavigate?.('data')}>浏览知识库 <span>→</span></button>
+        </article>
+
+        <article className={`overview-panel overview-source-panel ${showAllSources ? 'is-expanded' : ''}`}>
+          <div className="overview-panel-head"><div><div className="overview-section-eyebrow">SOURCE MAP</div><h2>数据源分布</h2></div><button type="button" onClick={() => setShowAllSources(value => !value)}>{showAllSources ? '收起' : '查看全部'} <span>›</span></button></div>
+          <div className="overview-bars">
+            {sourceEntries.length === 0 && <div className="overview-empty">暂无数据源</div>}
+            {visibleSourceEntries.map((source, index) => (
+              <div className="overview-source-row" key={source.id} title={source.id}>
+                <span className="overview-source-glyph" style={{ '--source-color': OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length] } as React.CSSProperties}><OverviewIcon name="database" /></span>
+                <div className="overview-source-name"><span>{source.name || source.id}</span><small>{source.id} · {source.federated ? '联邦' : '独立'}</small></div>
+                <div className="overview-source-track"><i style={{ width: `${Math.max(3, source.page_count / sourceMax * 100)}%`, background: OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length] }} /></div>
+                <b>{formatCount(source.page_count)}</b>
               </div>
             ))}
           </div>
-        </div>
+          <button type="button" className="overview-panel-link" onClick={() => onNavigate?.('import')}>管理数据源 <span>→</span></button>
+        </article>
 
-        <div className="pm-card">
-          <div className="pm-section-head">
-            <h2>数据源分布</h2>
-            <button className="pm-ghost" onClick={() => onNavigate?.('import')}>导入数据</button>
-          </div>
-          <div className="pm-source-list">
-            {overview.sources.filter(s => !s.archived).map(source => (
-              <div className="pm-source-row" key={source.id}>
-                <div>
-                  <b>{source.name || source.id}</b>
-                  <span>{source.id} · {source.federated ? 'federated' : 'isolated'}</span>
-                </div>
-                <div className="pm-mini-bar"><i style={{ width: `${source.page_count / sourceMax * 100}%` }} /></div>
-                <strong>{source.page_count}</strong>
+        <article className="overview-panel overview-activity-panel">
+          <div className="overview-panel-head"><div><div className="overview-section-eyebrow">MCP ACTIVITY</div><h2>最近活动</h2></div><button type="button" onClick={() => onNavigate?.('log')}>查看全部 <span>›</span></button></div>
+          <div className="overview-activity-list">
+            {recentRequests.length === 0 ? <div className="overview-empty">暂无 MCP 调用记录</div> : recentRequests.slice(0, 6).map(request => (
+              <div className="overview-activity-item" key={request.id}>
+                <time>{shortTime(request.created_at)}</time>
+                <span className={`overview-activity-badge ${request.status === 'success' ? 'is-success' : 'is-error'}`}>{request.status === 'success' ? '成功' : '错误'}</span>
+                <b>{request.agent_name || request.token_name || '本地 Agent'}</b>
+                <code>{request.operation}</code>
+                <small>{formatCount(request.latency_ms)}ms</small>
               </div>
             ))}
           </div>
-        </div>
-      </div>
+          <button type="button" className="overview-panel-link" onClick={() => onNavigate?.('log')}>查看完整日志 <span>→</span></button>
+        </article>
+      </section>
 
-      <div className="pm-grid two-col">
-        <div className="pm-card">
-          <h2>运行状态</h2>
-          <div className="pm-kv"><span>最近写入</span><b>{formatDate(overview.recent_write_at)}</b></div>
-          <div className="pm-kv"><span>Links</span><b>{overview.stats.link_count}</b></div>
-          <div className="pm-kv"><span>Tags</span><b>{overview.stats.tag_count}</b></div>
-          <div className="pm-kv"><span>Timeline</span><b>{overview.stats.timeline_entry_count}</b></div>
+      <section className="overview-panel overview-trend-panel">
+        <div className="overview-panel-head"><div><div className="overview-section-eyebrow">7 DAY ACTIVITY</div><h2>MCP 调用趋势（近 7 天）</h2></div><span className="overview-panel-note">基于真实请求日志</span></div>
+        <div className="overview-trend-layout">
+          <div className="overview-chart-wrap">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={trendDays} margin={{ top: 8, right: 8, bottom: 0, left: -22 }}>
+                <defs><linearGradient id="overviewTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7c6ff1" stopOpacity={0.3} /><stop offset="100%" stopColor="#7c6ff1" stopOpacity={0.02} /></linearGradient></defs>
+                <CartesianGrid vertical={false} stroke="var(--overview-line)" strokeDasharray="3 3" />
+                <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-muted)', fontSize: 10 }} />
+                <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-muted)', fontSize: 10 }} />
+                <ChartTooltip formatter={(value) => [`${formatCount(Number(value))} 次`, 'MCP 调用']} contentStyle={{ borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', fontSize: 11 }} />
+                <Area type="monotone" dataKey="count" stroke="#7c6ff1" strokeWidth={2.4} fill="url(#overviewTrendFill)" activeDot={{ r: 4 }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="overview-trend-summary">
+            <div><span>今日调用</span><strong>{formatCount(todayRequests)}</strong><small className={requestDelta >= 0 ? 'is-positive' : 'is-negative'}>较昨日 {requestDelta >= 0 ? '+' : ''}{requestDelta}</small></div>
+            <div><span>7 天成功率</span><strong>{pct(recentSuccessRate)}</strong><small className="is-positive">成功 {formatCount(recentSuccesses)}</small></div>
+            <div><span>平均响应</span><strong>{formatCount(averageLatency)}<i>ms</i></strong><small>最近 {formatCount(recentRequests.length)} 次调用</small></div>
+            <div><span>知识关联</span><strong>{formatCount(overview.stats.link_count)}</strong><small>{formatCount(overview.stats.tag_count)} 标签 · {formatCount(overview.stats.timeline_entry_count)} 时间线</small></div>
+          </div>
         </div>
-        <div className="pm-card">
-          <h2>模型与 API</h2>
-          <div className="pm-kv"><span>Chat model</span><b>{overview.chat_model ?? '未配置'}</b></div>
-          <div className="pm-kv"><span>Embedding model</span><b>{overview.embedding_model ?? '未配置'}</b></div>
-          <div className="pm-kv"><span>Dimensions</span><b>{overview.embedding_dimensions ?? '-'}</b></div>
-          <div className="pm-kv"><span>Expansion</span><b>{overview.expansion_model ?? '-'}</b></div>
-        </div>
-      </div>
-
-      <button className="pm-secondary-action" onClick={() => void reload()}>刷新状态</button>
+      </section>
     </div>
   );
 }
@@ -962,7 +1185,7 @@ function NaturalLanguagePanel({
               onClick={() => fileInputRef.current?.click()}
               disabled={loading || attachments.length >= MAX_KNOWLEDGE_ATTACHMENTS}
             >
-              +
+              <Plus aria-hidden="true" />
             </button>
             <span
               className="assistant-attachment-help"
@@ -988,7 +1211,7 @@ function NaturalLanguagePanel({
             onClick={() => void startDirect('import')}
             disabled={loading || (!text.trim() && attachments.length === 0) || inputTooLong}
           >
-            <span className="assistant-action-icon" aria-hidden="true">↥</span>
+            <span className="assistant-action-icon" aria-hidden="true"><Upload /></span>
             <span className="assistant-action-copy"><strong>导入</strong></span>
           </button>
           <button
@@ -997,7 +1220,7 @@ function NaturalLanguagePanel({
             onClick={() => void startDirect('search')}
             disabled={loading || !text.trim() || inputTooLong}
           >
-            <span className="assistant-action-icon" aria-hidden="true">⌕</span>
+            <span className="assistant-action-icon" aria-hidden="true"><Search /></span>
             <span className="assistant-action-copy"><strong>搜索</strong></span>
           </button>
           <button
@@ -1006,7 +1229,7 @@ function NaturalLanguagePanel({
             onClick={() => void submitAuto()}
             disabled={loading || (!text.trim() && attachments.length === 0) || inputTooLong}
           >
-            <span className="assistant-action-icon" aria-hidden="true">✦</span>
+            <span className="assistant-action-icon" aria-hidden="true"><Sparkles /></span>
             <span className="assistant-action-copy"><strong>{loading ? '处理中…' : '发送'}</strong></span>
           </button>
         </div>
@@ -1203,14 +1426,17 @@ function SourceManagementSettings() {
   };
 
   return (
-    <section className="settings-source-section">
-      <div className="pm-section-head">
-        <div><h2>数据源与归档</h2><p className="pm-hint">注册要持续同步的资料目录；不再使用的 Source 可归档，72 小时内恢复。</p></div>
+    <section className="settings-source-section settings-panel-group">
+      <div className="pm-section-head settings-group-head">
+        <div className="settings-panel-title">
+          <span className="settings-panel-icon"><FolderTree /></span>
+          <div><h2>数据源与归档</h2><p className="pm-hint">注册要持续同步的资料目录；不再使用的 Source 可归档，72 小时内恢复。</p></div>
+        </div>
       </div>
       {error && <div className="pm-card pm-error">{error}</div>}
       {!overview ? <LoadingBlock /> : (
         <div className="pm-grid two-col import-layout">
-          <div className="pm-card import-sources-card">
+          <div className="pm-card import-sources-card settings-subcard">
             <div className="pm-section-head">
               <h3>已有数据源</h3>
               <label className="checkbox-label" style={{ fontSize: 12, fontWeight: 400, cursor: 'pointer' }}>
@@ -1253,7 +1479,7 @@ function SourceManagementSettings() {
             </table>
             </div>
           </div>
-          <div className="pm-card">
+          <div className="pm-card settings-subcard">
             <h3>注册资料目录</h3>
             <p className="pm-hint">注册后，PMBrain 可按 Source 同步这个目录。单次导入请到“知识工作台”。</p>
             <label>本地资料目录</label>
@@ -1802,7 +2028,7 @@ export function ConnectionCenterPage() {
     },
   }, null, 2), [origin]);
   return (
-    <div className="pm-page">
+    <div className="pm-page connection-center-page">
       <div className="pm-section-head">
         <div>
           <h1 className="title-with-info">
@@ -1817,38 +2043,6 @@ export function ConnectionCenterPage() {
         </div>
         <button className="pm-primary" onClick={() => setShowCodeBuddyGuide(true)}>MCP 接入教程</button>
       </div>
-      <div className="pm-card mcp-guide-strip compact-guide">
-        <div className="mcp-guide-steps">
-          <span>1 创建 Agent</span>
-          <span>2 复制配置</span>
-          <span>3 重启/刷新 AI 工具</span>
-          <span>4 让 Agent 搜索 PMBrain</span>
-        </div>
-      </div>
-      <section className="mcp-client-section" aria-labelledby="mcp-client-title">
-        <div className="pm-section-head compact-head">
-          <div>
-            <h2 id="mcp-client-title">可接入的 AI 工具</h2>
-            <p className="pm-hint">本地客户端共用标准 HTTP MCP 地址；ChatGPT 远程接入使用下方安全隧道。</p>
-          </div>
-        </div>
-        <div className="mcp-client-grid">
-          {[
-            ['CodeBuddy', '标准 HTTP', '配置模板已就绪'],
-            ['Cursor', '标准 HTTP', '使用同一 MCP 地址'],
-            ['Claude', '标准 HTTP', '使用客户端 MCP 配置'],
-            ['Codex', '标准 HTTP', '使用同一 MCP 地址'],
-            ['ChatGPT', '远程隧道', '见下方连接向导'],
-            ['其他客户端', '标准 HTTP', '兼容 MCP 即可接入'],
-          ].map(([name, mode, note]) => (
-            <article className="mcp-client-card" key={name}>
-              <div><b>{name}</b><span>{mode}</span></div>
-              <p>{note}</p>
-              {name === 'CodeBuddy' && <button className="pm-ghost" onClick={() => setShowCodeBuddyGuide(true)}>查看配置</button>}
-            </article>
-          ))}
-        </div>
-      </section>
       {overview && (
         <div className="pm-card main-source-note mcp-main-source">
           <b>默认读取源：{overview.main_source_id}</b>
@@ -1990,11 +2184,14 @@ function MarkdownExportSettings() {
   };
 
   return (
-    <div className="pm-card markdown-export-card">
-      <div className="pm-section-head">
-        <div>
-          <h2>导出本地 Markdown</h2>
-          <p className="pm-hint">可选择 Obsidian Vault 的上级目录。每次都会创建新的 PMBrain-Export 快照目录，不覆盖现有笔记。</p>
+    <div className="pm-card markdown-export-card settings-panel">
+      <div className="pm-section-head settings-panel-head">
+        <div className="settings-panel-title">
+          <span className="settings-panel-icon"><Download /></span>
+          <div>
+            <h2>导出本地 Markdown</h2>
+            <p className="pm-hint">可选择 Obsidian Vault 的上级目录。每次都会创建新的 PMBrain-Export 快照目录，不覆盖现有笔记。</p>
+          </div>
         </div>
       </div>
       <label>保存到哪个目录</label>
@@ -2068,12 +2265,18 @@ function DreamSettings() {
       : null;
 
   return (
-    <section className="pm-card dream-settings-card">
-      <div className="pm-section-head">
-        <div>
-          <h2>知识整理设置</h2>
-          <p className="pm-hint">设置 Dream 生成内容的本地保存位置，以及是否同时保留 Markdown 文件。</p>
+    <section className="pm-card dream-settings-card settings-panel">
+      <div className="pm-section-head settings-panel-head">
+        <div className="settings-panel-title">
+          <span className="settings-panel-icon"><Sparkles /></span>
+          <div>
+            <h2>知识整理设置</h2>
+            <p className="pm-hint">设置 Dream 生成内容的本地保存位置，以及是否同时保留 Markdown 文件。</p>
+          </div>
         </div>
+        <button className="pm-primary" onClick={() => void save()} disabled={loading || saving}>
+          {saving ? '正在保存…' : '保存设置'}
+        </button>
       </div>
       <div className="dream-settings-grid">
         <div className="dream-output-setting">
@@ -2110,23 +2313,20 @@ function DreamSettings() {
           />
         </label>
       </div>
-      <div className="pm-actions">
-        <button className="pm-primary" onClick={() => void save()} disabled={loading || saving}>
-          {saving ? '正在保存…' : '保存知识整理设置'}
-        </button>
+      {(message || error) && <div className="settings-feedback" aria-live="polite">
         {message && <span className="pm-ok">{message}</span>}
         {error && <span className="pm-error-text">{error}</span>}
-      </div>
+      </div>}
     </section>
   );
 }
 
 export function SettingsPage({
   themeMode,
-  onNavigate,
+  onThemeModeChange,
 }: {
   themeMode: ThemeMode;
-  onNavigate?: (page: string) => void;
+  onThemeModeChange: (mode: ThemeMode) => void;
 }) {
   const { overview, error, reload } = useOverview();
   if (error) return <div className="pm-card pm-error">{error}</div>;
@@ -2136,27 +2336,48 @@ export function SettingsPage({
 
   return (
     <div className="pm-page settings-page">
-      <div className="settings-heading">
-        <div><h1>设置</h1></div>
+      <header className="settings-heading">
+        <div className="pm-eyebrow">SYSTEM · PREFERENCES</div>
+        <h1>设置</h1>
+        <p className="pm-page-intro">管理知识库默认位置、知识整理输出、本地数据源和当前模型状态。</p>
+      </header>
+
+      <div className="settings-primary-grid">
+        <section className="pm-card appearance-settings settings-panel">
+          <div className="settings-panel-title">
+            <span className="settings-panel-icon"><MonitorCog /></span>
+            <div><h2>界面外观</h2><p>仅调整当前浏览器的显示方式，不会改动 PMBrain 桌面端主题。</p></div>
+          </div>
+          <div className="theme-choice" role="radiogroup" aria-label="界面主题">
+            {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={themeMode === value}
+                className={themeMode === value ? 'active' : ''}
+                onClick={() => onThemeModeChange(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <MainSourceSettings overview={overview} onSaved={reload} />
       </div>
-
-      <section className="pm-card appearance-settings">
-        <div><h2>界面外观</h2><p>由 PMBrain 桌面端统一设置；选择“跟随系统”时，以浏览器和电脑当前主题为准。</p></div>
-        <div className="theme-choice" role="radiogroup" aria-label="界面主题">
-          {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
-            <button key={value} className={themeMode === value ? 'active' : ''} disabled title="请在 PMBrain 桌面端修改界面主题">{label}</button>
-          ))}
-        </div>
-      </section>
-
-      <MainSourceSettings overview={overview} onSaved={reload} />
       <DreamSettings />
       <SourceManagementSettings />
       <MarkdownExportSettings />
 
-      <section className="pm-card model-snapshot-card">
-        <div className="pm-section-head"><div><h2>桌面端模型配置</h2><p className="pm-hint">这里用于核对当前配置。修改模型和 API Key 请回到 PMBrain 桌面端“模型配置”。</p></div></div>
-        <div className="pm-grid two-col">
+      <section className="pm-card model-snapshot-card settings-panel">
+        <div className="pm-section-head settings-panel-head">
+          <div className="settings-panel-title">
+            <span className="settings-panel-icon"><Cpu /></span>
+            <div><h2>桌面端模型配置</h2><p className="pm-hint">这里用于核对当前配置。修改模型和 API Key 请回到 PMBrain 桌面端“模型配置”。</p></div>
+          </div>
+        </div>
+        <div className="pm-grid two-col model-snapshot-grid">
           <div>
             <div className="pm-kv"><span>普通模型</span><b>{overview.chat_model ?? '未配置'}</b></div>
             <div className="pm-kv"><span>向量模型</span><b>{overview.embedding_model ?? '未配置'}</b></div>
@@ -2177,11 +2398,6 @@ export function SettingsPage({
         </details>
       </section>
 
-      <section className="settings-operations">
-        <button onClick={() => onNavigate?.('mcp')}><b>MCP 接入</b><span>管理外部 AI 工具连接</span></button>
-        <button onClick={() => onNavigate?.('jobs')}><b>任务监控</b><span>查看导入和整理任务</span></button>
-        <button onClick={() => onNavigate?.('diagnostics')}><b>系统诊断</b><span>检查数据库和模型状态</span></button>
-      </section>
     </div>
   );
 }
@@ -2236,8 +2452,8 @@ export function SystemDiagnosticPage() {
   };
 
   return (
-    <div className="pm-page">
-      <h1>系统诊断</h1>
+    <div className="pm-page system-diagnostic-page">
+      <div className="pm-section-head page-command-head"><h1>系统诊断</h1></div>
       {overview && (
         <div className="pm-grid metrics-grid">
           <MetricCard label="数据库" value={overview.engine} hint={overview.recent_write_at ? '可读取' : '无最近写入'} />

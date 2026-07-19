@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAdminBrainPageDetail, listAdminBrainPages } from '../src/commands/admin-console.ts';
-import { normalizeThemeMode, readThemeMode, resolveTheme } from '../admin/src/lib/theme.ts';
+import { normalizeThemeMode, readStoredThemeMode, readThemeMode, resolveTheme } from '../admin/src/lib/theme.ts';
 import { getThinkRetrievalWarning, parseThinkOutput } from '../admin/src/lib/think-output.ts';
 
 const appSource = readFileSync(join(process.cwd(), 'admin/src/App.tsx'), 'utf8');
@@ -13,6 +13,7 @@ const serveHttpSource = readFileSync(join(process.cwd(), 'src/commands/serve-htt
 describe('Admin GUI update contract', () => {
   test('theme defaults to system and supports explicit overrides', () => {
     expect(readThemeMode()).toBe('system');
+    expect(readStoredThemeMode()).toBeNull();
     expect(normalizeThemeMode('dark')).toBe('dark');
     expect(normalizeThemeMode('invalid')).toBe('system');
     expect(resolveTheme('system', true)).toBe('dark');
@@ -20,12 +21,25 @@ describe('Admin GUI update contract', () => {
     expect(resolveTheme('light', true)).toBe('light');
   });
 
-  test('admin theme follows the desktop source and browser system fallback', () => {
+  test('admin theme supports a browser override with desktop fallback', () => {
     expect(normalizeThemeMode('light')).toBe('light');
     expect(normalizeThemeMode('system')).toBe('system');
     expect(resolveTheme(normalizeThemeMode('system'), true)).toBe('dark');
     expect(appSource).toContain('api.theme()');
+    expect(appSource).toContain('readStoredThemeMode() === null');
+    expect(appSource).toContain('storeThemeMode(mode)');
+    expect(consoleSource).toContain('onThemeModeChange(value)');
+    expect(consoleSource).not.toContain('请在 PMBrain 桌面端修改界面主题');
     expect(serveHttpSource).toContain("app.get('/admin/api/theme'");
+  });
+
+  test('settings consolidates the main source and aligns Dream actions', () => {
+    expect(consoleSource).toContain('className="main-source-current"');
+    expect(consoleSource).toContain('className="main-source-purpose"');
+    expect(consoleSource).not.toContain('className="main-source-grid"');
+    expect(consoleSource).toContain("{saving ? '正在保存…' : '保存设置'}");
+    expect(adminStyles).toContain('.dream-output-setting,');
+    expect(adminStyles).toContain('.settings-feedback');
   });
 
   test('dark mode covers code blocks and Dream contrast-sensitive content', () => {
@@ -38,10 +52,10 @@ describe('Admin GUI update contract', () => {
   });
 
   test('navigation exposes the consolidated beginner surfaces', () => {
-    expect(appSource).toContain("{ page: 'dashboard', label: '总体概览' }");
-    expect(appSource).toContain("{ page: 'import', label: '知识工作台' }");
-    expect(appSource).toContain("{ page: 'data', label: '知识库' }");
-    expect(appSource).toContain("{ page: 'dream', label: '知识整理' }");
+    expect(appSource).toContain("{ page: 'dashboard' as Page, label: '总体概览' }");
+    expect(appSource).toContain("page: 'import', label: '知识工作台'");
+    expect(appSource).toContain("page: 'data', label: '知识库'");
+    expect(appSource).toContain("page: 'dream', label: '知识整理'");
     expect(appSource).not.toContain("title: '知识工作'");
     expect(appSource).not.toContain('nav-arrow');
     expect(appSource).not.toContain("{ page: 'natural', label: '自然语言任务' }");

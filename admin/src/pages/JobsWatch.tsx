@@ -60,15 +60,17 @@ export function JobsWatchPage() {
 
   if (err) {
     return (
-      <div style={{ padding: 24, color: 'var(--accent-danger, #f85149)' }}>
+      <div className="pm-page jobs-page">
+        <div className="pm-card pm-error jobs-state-card">
         <h2>任务监控：错误</h2>
-        <pre style={{ whiteSpace: 'pre-wrap' }}>{err}</pre>
+        <pre>{err}</pre>
+        </div>
       </div>
     );
   }
 
   if (!snap) {
-    return <div style={{ padding: 24, color: 'var(--text-muted, #777)' }}>正在加载任务监控...</div>;
+    return <div className="pm-page jobs-page"><div className="pm-card pm-empty jobs-state-card">正在加载任务监控...</div></div>;
   }
 
   const ts = new Date(snap.ts_ms).toLocaleTimeString();
@@ -113,24 +115,24 @@ export function JobsWatchPage() {
       {snap.by_type.length > 0 && (
         <section className="pm-card">
           <h2>按类型统计（24 小时）</h2>
-          <table style={{ borderCollapse: 'collapse' }}>
+          <table className="jobs-table">
             <thead>
-              <tr style={{ color: 'var(--text-muted, #777)', fontSize: 12 }}>
-                <th style={{ textAlign: 'left', padding: '4px 12px 4px 0' }}>名称</th>
-                <th style={{ textAlign: 'right', padding: '4px 12px' }}>总数</th>
-                <th style={{ textAlign: 'right', padding: '4px 12px' }}>完成</th>
-                <th style={{ textAlign: 'right', padding: '4px 12px' }}>失败</th>
-                <th style={{ textAlign: 'right', padding: '4px 12px' }}>失效</th>
+              <tr>
+                <th>名称</th>
+                <th>总数</th>
+                <th>完成</th>
+                <th>失败</th>
+                <th>失效</th>
               </tr>
             </thead>
             <tbody>
               {snap.by_type.slice(0, 6).map(t => (
                 <tr key={t.name}>
-                  <td style={{ padding: '4px 12px 4px 0' }}>{t.name}</td>
-                  <td style={{ textAlign: 'right', padding: '4px 12px' }}>{t.total}</td>
-                  <td style={{ textAlign: 'right', padding: '4px 12px' }}>{t.completed}</td>
-                  <td style={{ textAlign: 'right', padding: '4px 12px' }}>{t.failed}</td>
-                  <td style={{ textAlign: 'right', padding: '4px 12px' }}>{t.dead}</td>
+                  <td>{t.name}</td>
+                  <td>{t.total}</td>
+                  <td className="pm-ok">{t.completed}</td>
+                  <td className={t.failed > 0 ? 'pm-warn' : ''}>{t.failed}</td>
+                  <td className={t.dead > 0 ? 'pm-error-text' : ''}>{t.dead}</td>
                 </tr>
               ))}
             </tbody>
@@ -141,14 +143,14 @@ export function JobsWatchPage() {
       {snap.top_errors.length > 0 && (
         <section className="pm-card">
           <h2>主要错误（24 小时）</h2>
-          <table style={{ borderCollapse: 'collapse' }}>
+          <table className="jobs-table jobs-error-table">
             <tbody>
               {snap.top_errors.slice(0, 5).map(e => (
                 <tr key={e.cluster}>
-                  <td style={{ textAlign: 'right', padding: '4px 12px 4px 0', color: 'var(--text-muted, #777)' }}>
+                  <td>
                     {e.count}×
                   </td>
-                  <td style={{ padding: '4px 12px 4px 0' }}>{e.cluster}</td>
+                  <td>{e.cluster}</td>
                 </tr>
               ))}
             </tbody>
@@ -159,20 +161,20 @@ export function JobsWatchPage() {
       {snap.budget_owners.length > 0 && (
         <section className="pm-card">
           <h2>预算所有者</h2>
-          <table style={{ borderCollapse: 'collapse' }}>
+          <table className="jobs-table">
             <thead>
-              <tr style={{ color: 'var(--text-muted, #777)', fontSize: 12 }}>
-                <th style={{ textAlign: 'left', padding: '4px 12px 4px 0' }}>所有者</th>
-                <th style={{ textAlign: 'right', padding: '4px 12px' }}>已用</th>
-                <th style={{ textAlign: 'right', padding: '4px 12px' }}>剩余</th>
+              <tr>
+                <th>所有者</th>
+                <th>已用</th>
+                <th>剩余</th>
               </tr>
             </thead>
             <tbody>
               {snap.budget_owners.slice(0, 5).map(b => (
                 <tr key={b.owner_id}>
-                  <td style={{ padding: '4px 12px 4px 0' }}>{b.owner_id}</td>
-                  <td style={{ textAlign: 'right', padding: '4px 12px' }}>{dollars(b.total_spent_cents)}</td>
-                  <td style={{ textAlign: 'right', padding: '4px 12px' }}>{dollars(b.remaining_cents)}</td>
+                  <td>{b.owner_id}</td>
+                  <td>{dollars(b.total_spent_cents)}</td>
+                  <td>{dollars(b.remaining_cents)}</td>
                 </tr>
               ))}
             </tbody>
