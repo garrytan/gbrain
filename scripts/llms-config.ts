@@ -158,6 +158,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/push-context.md",
       },
       {
+        title: "docs/guides/governed-mcp-dispatch.md",
+        description:
+          "Supported public dispatch/tool-definition seam for policy-owning gateways embedding a governed subset of native gbrain operations.",
+        path: "docs/guides/governed-mcp-dispatch.md",
+      },
+      {
         title: "docs/mcp/DEPLOY.md",
         description: "MCP server deployment.",
         path: "docs/mcp/DEPLOY.md",

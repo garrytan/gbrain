@@ -10,6 +10,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import type { GBrainConfig } from '../core/config.ts';
+
+/** @internal Stable response text used by the public governed embedding seam. */
+export const SCRUBBED_INTERNAL_ERROR_MESSAGE = 'The tool failed unexpectedly.';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -70,6 +74,22 @@ export interface DispatchOpts {
    * was replaced by dispatchToolCall.
    */
   auth?: AuthInfo;
+  /**
+   * Explicit config snapshot for an embedding transport. When omitted, the
+   * built-in CLI/server compatibility path still resolves config via
+   * `loadConfig()`. Public governed dispatch always supplies this field, so it
+   * never consults ambient `GBRAIN_HOME` or process config files.
+   *
+   * @internal Use `createGovernedMcpDispatcher` from `gbrain/mcp/dispatch` in
+   * downstream gateways rather than constructing this option directly.
+   */
+  config?: Readonly<GBrainConfig>;
+  /** Resolve from a caller-governed operation registry instead of all native operations. @internal */
+  resolveOperation?: (name: string) => Operation | undefined;
+  /** Replace unexpected exception messages with the stable public error text. @internal */
+  scrubUnexpectedErrors?: boolean;
+  /** Freeze the top-level OperationContext before invoking the handler. @internal */
+  freezeContext?: boolean;
 }
 
 /**
@@ -197,9 +217,11 @@ export function buildOperationContext(
   params: Record<string, unknown>,
   opts: DispatchOpts = {},
 ): OperationContext {
-  return {
+  const ctx: OperationContext = {
     engine,
-    config: loadConfig() || { engine: 'postgres' },
+    // The governed public seam always supplies config explicitly. Preserve the
+    // ambient lookup only for existing in-repo CLI/server callers.
+    config: (opts.config ?? loadConfig() ?? { engine: 'postgres' }) as GBrainConfig,
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
@@ -211,6 +233,7 @@ export function buildOperationContext(
     sourceId: opts.sourceId ?? 'default',
     auth: opts.auth,
   };
+  return opts.freezeContext ? Object.freeze(ctx) : ctx;
 }
 
 /**
@@ -225,7 +248,9 @@ export async function dispatchToolCall(
   params: Record<string, unknown> | undefined,
   opts: DispatchOpts = {},
 ): Promise<ToolResult> {
-  const op = operations.find(o => o.name === name);
+  const op = opts.resolveOperation
+    ? opts.resolveOperation(name)
+    : operations.find(o => o.name === name);
   if (!op) {
     // Always return JSON-shaped error content. v0.31 e2e tests
     // (sources-remote-mcp.test.ts) parse content via JSON.parse so a
@@ -261,7 +286,9 @@ export async function dispatchToolCall(
         const meta = await opts.metaHook(name, ctx);
         if (meta && Object.keys(meta).length > 0) out._meta = meta;
       } catch (metaErr) {
-        const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
+        const msg = opts.scrubUnexpectedErrors
+          ? SCRUBBED_INTERNAL_ERROR_MESSAGE
+          : (metaErr instanceof Error ? metaErr.message : String(metaErr));
         ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
       }
     }
@@ -274,7 +301,9 @@ export async function dispatchToolCall(
     // every error response is JSON-parseable. The pre-v0.31 path emitted
     // plain `Error: ${msg}` strings here, which broke any caller that
     // tried JSON.parse(content).
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = opts.scrubUnexpectedErrors
+      ? SCRUBBED_INTERNAL_ERROR_MESSAGE
+      : (e instanceof Error ? e.message : String(e));
     return {
       content: [{ type: 'text', text: JSON.stringify({ error: 'internal_error', message: msg }, null, 2) }],
       isError: true,

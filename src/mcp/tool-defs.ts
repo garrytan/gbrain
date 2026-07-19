@@ -37,7 +37,7 @@ export function paramDefToSchema(p: ParamDef): Record<string, unknown> {
   };
 }
 
-export function buildToolDefs(ops: Operation[]): McpToolDef[] {
+export function buildToolDefs(ops: readonly Operation[]): McpToolDef[] {
   return ops.map(op => ({
     name: op.name,
     description: op.description,

@@ -26,6 +26,7 @@ Repo: https://github.com/garrytan/gbrain
 - [docs/guides/quiet-hours.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md): Notification hold + timezone-aware delivery.
 - [docs/guides/scaling-skills.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/scaling-skills.md): Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.
 - [docs/guides/push-context.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/push-context.md): Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, gbrain watch), config knobs, and the volunteered-vs-used feedback loop.
+- [docs/guides/governed-mcp-dispatch.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/governed-mcp-dispatch.md): Supported public dispatch/tool-definition seam for policy-owning gateways embedding a governed subset of native gbrain operations.
 - [docs/mcp/DEPLOY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md): MCP server deployment.
 
 ## AI providers
