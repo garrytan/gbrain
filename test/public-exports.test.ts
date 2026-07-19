@@ -37,7 +37,11 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   { subpath: 'gbrain/engine', canary: ['clampSearchLimit', 'MAX_SEARCH_LIMIT'] },
   { subpath: 'gbrain/types', canary: ['GBrainError'] },
   { subpath: 'gbrain/operations', canary: ['operations', 'OperationError'] },
-  { subpath: 'gbrain/minions', canary: [] }, // barrel module; re-exports many names
+  { subpath: 'gbrain/minions', canary: ['MinionQueue', 'MinionWorker'] },
+  {
+    subpath: 'gbrain/operation-checkpoints',
+    canary: ['fingerprint', 'loadOpCheckpoint', 'recordCompleted', 'appendCompleted'],
+  },
   { subpath: 'gbrain/engine-factory', canary: [] }, // factory exports a default creator
   { subpath: 'gbrain/pglite-engine', canary: ['PGLiteEngine'] },
   { subpath: 'gbrain/link-extraction', canary: ['extractEntityRefs', 'extractPageLinks'] },
@@ -68,7 +72,7 @@ describe('public exports — package.json exports map', () => {
     // Adding new exports: increment this + add to EXPECTED_EXPORTS below.
     // Removing exports: see CLAUDE.md "Removing any of these is a
     // breaking change going forward" — bump minor and update this count.
-    expect(count).toBe(20);
+    expect(count).toBe(21);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {

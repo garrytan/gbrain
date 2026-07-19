@@ -20,7 +20,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.ts';
-import { recordCompleted, loadOpCheckpoint } from '../../src/core/op-checkpoint.ts';
+import { recordCompleted, loadOpCheckpoint } from 'gbrain/operation-checkpoints';
 
 const describeE2E = hasDatabase() ? describe : describe.skip;
 

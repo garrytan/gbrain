@@ -12,6 +12,7 @@
     "./types": "./src/core/types.ts",
     "./operations": "./src/core/operations.ts",
     "./minions": "./src/core/minions/index.ts",
+    "./operation-checkpoints": "./src/core/operation-checkpoints.ts",
     "./engine-factory": "./src/core/engine-factory.ts",
     "./pglite-engine": "./src/core/pglite-engine.ts",
     "./link-extraction": "./src/core/link-extraction.ts",

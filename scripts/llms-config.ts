@@ -141,6 +141,13 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        title: "docs/guides/operation-checkpoints.md",
+        description:
+          "Supported Minion job and DB-backed operation-checkpoint imports for downstream orchestrators, including replay, TTL, and governance boundaries.",
+        path: "docs/guides/operation-checkpoints.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/quiet-hours.md",
         description: "Notification hold + timezone-aware delivery.",
         path: "docs/guides/quiet-hours.md",
