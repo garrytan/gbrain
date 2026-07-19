@@ -55,6 +55,7 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   { subpath: 'gbrain/ingestion/test-harness', canary: ['IngestionTestHarness', 'expectEvent'] },
   { subpath: 'gbrain/mcp/dispatch', canary: ['createGovernedMcpDispatcher', 'GOVERNED_INTERNAL_ERROR_MESSAGE'] },
   { subpath: 'gbrain/mcp/tool-defs', canary: ['buildToolDefs', 'paramDefToSchema'] },
+  { subpath: 'gbrain/mcp/rate-limit', canary: ['RateLimiter', 'buildDefaultLimiters'] },
 ];
 
 function readPackageExports(): Record<string, string> {
@@ -70,7 +71,7 @@ describe('public exports — package.json exports map', () => {
     // Adding new exports: increment this + add to EXPECTED_EXPORTS below.
     // Removing exports: see CLAUDE.md "Removing any of these is a
     // breaking change going forward" — bump minor and update this count.
-    expect(count).toBe(22);
+    expect(count).toBe(23);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {

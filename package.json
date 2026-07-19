@@ -28,7 +28,8 @@
     "./ingestion": "./src/core/ingestion/index.ts",
     "./ingestion/test-harness": "./src/core/ingestion/test-harness.ts",
     "./mcp/dispatch": "./src/mcp/governed-dispatch.ts",
-    "./mcp/tool-defs": "./src/mcp/tool-defs.ts"
+    "./mcp/tool-defs": "./src/mcp/tool-defs.ts",
+    "./mcp/rate-limit": "./src/mcp/rate-limit.ts"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",

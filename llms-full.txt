@@ -3695,10 +3695,14 @@ const result = await nativeMcp.dispatch(toolName, params, {
   thrown details do not cross the MCP boundary.
 - `gbrain/mcp/tool-defs` exposes the native `buildToolDefs` and
   `paramDefToSchema` helpers without exposing either gbrain HTTP server.
+- `gbrain/mcp/rate-limit` exposes the bounded token-bucket `RateLimiter` used
+  by the native HTTP transport, so embedding gateways preserve native rate
+  behavior without mounting or copying that transport.
 
 This seam does **not** enforce OAuth scopes, `localOnly`, application rate
 limits, spend policy, or per-tenant audit. Exclude disallowed operations before
 factory construction and enforce caller-specific policy before every dispatch.
+Use the exported native `RateLimiter` for that application rate boundary.
 It also does not remove process-global state from an operation's own handler;
 operations that depend on ambient provider, schema-pack, or filesystem state
 still require a reviewed isolated worker or must remain denied.
