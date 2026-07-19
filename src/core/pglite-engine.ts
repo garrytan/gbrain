@@ -3544,6 +3544,13 @@ export class PGLiteEngine implements BrainEngine {
                  THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END
           ) AS w(name) WHERE w.name = $1 OR w.name LIKE $2)))`,
     ];
+    // "Last seen" is a PAST relation: chronicle stores future events
+    // (calendar-event is eligible), which must not read as "last seen".
+    // Bound to <= asof/today, mirroring getOnThisDay's `te.date < target`.
+    let seenThrough: string;
+    if (opts?.asof) { params.push(opts.asof); seenThrough = `$${params.length}::date`; }
+    else { seenThrough = `current_date`; }
+    where.push(`te.date <= ${seenThrough}`);
     this.pushChronicleSource(where, params, opts);
     const result = await this.db.query(
       `SELECT te.date::text AS last_date, ep.slug AS last_event_slug
