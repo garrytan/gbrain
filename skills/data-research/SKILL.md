@@ -118,6 +118,8 @@ Three example recipes ship with GBrain (see `~/.gbrain/recipes/`):
 - Creating tracker entries without raw source links
 - Running without deduplication (leads to double-counted entries)
 - Hardcoding source-specific patterns in the pipeline code (use recipes)
+- Giving up on dynamic websites after direct HTTP/API access fails. Use browser/manual click-through for user-relevant fields visible in the rendered site, then structure the data.
+- Leading with technical scrape limitations instead of delivering the researched data. Mention limitations only where they affect confidence in a specific field.
 
 ## Output Format
 
