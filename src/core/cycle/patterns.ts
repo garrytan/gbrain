@@ -37,6 +37,12 @@ export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
   yieldDuringPhase?: () => Promise<void>;
+  /**
+   * issue #2860 — `gbrain dream --phase patterns --once`. Bypasses the
+   * `dream.patterns.enabled` gate for THIS call only; never reads or
+   * writes config.
+   */
+  once?: boolean;
 }
 
 export async function runPhasePatterns(
@@ -48,7 +54,13 @@ export async function runPhasePatterns(
     const config = await loadPatternsConfig(engine);
 
     if (!config.enabled) {
-      return skipped('disabled', 'dream.patterns.enabled is false');
+      if (!opts.once) {
+        return skipped('disabled', 'dream.patterns.enabled is false');
+      }
+      process.stderr.write(
+        '[dream] --once: dream.patterns.enabled is false but ' +
+        '--phase patterns --once forces this run (config untouched)\n',
+      );
     }
 
     // Gather reflections within lookback window.

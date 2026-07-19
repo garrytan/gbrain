@@ -135,4 +135,28 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('cycle_already_running');
     });
   });
+
+  // issue #2860 — --once one-shot phase-enabled-gate bypass (structural).
+  // Behavioral coverage: test/e2e/dream-patterns-pglite.test.ts (bypass +
+  // config-untouched) and test/core/cycle.serial.test.ts (non-leak across
+  // phases via CycleOpts.onceForPhase).
+  describe('--once wiring (issue #2860)', () => {
+    test('declares --once flag', () => {
+      expect(dreamSrc).toContain("'--once'");
+    });
+
+    test('rejects bare --once with no --phase (exit 2)', () => {
+      expect(dreamSrc).toContain('--once requires --phase <name>');
+      expect(dreamSrc).toContain('if (once && !phase)');
+    });
+
+    test('threads onceForPhase to runCycle, gated on opts.once', () => {
+      expect(dreamSrc).toMatch(/onceForPhase:\s*opts\.once\s*\?\s*opts\.phase!\s*:\s*undefined/);
+    });
+
+    test('documents --once in --help output', () => {
+      expect(dreamSrc).toContain('--once');
+      expect(dreamSrc).toContain('Never reads or writes config');
+    });
+  });
 });

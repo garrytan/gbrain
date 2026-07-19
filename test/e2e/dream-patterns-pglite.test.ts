@@ -99,6 +99,45 @@ describe('E2E patterns — disabled', () => {
       await rig.cleanup();
     }
   }, 30_000);
+
+  // issue #2860 — `gbrain dream --phase patterns --once` must bypass the
+  // enabled gate WITHOUT touching config (the whole point: the old
+  // toggle-on/run/toggle-off workaround left `enabled` stuck true forever
+  // if the process died between steps, running patterns hourly and
+  // burning ~$400 in LLM spend before it was caught).
+  test('once:true bypasses the disabled gate for this call only', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.patterns.enabled', 'false');
+
+      // Without --once: still skipped as 'disabled' (unchanged behavior).
+      const gated = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+      });
+      expect(gated.status).toBe('skipped');
+      expect((gated.details as { reason?: string }).reason).toBe('disabled');
+
+      // With --once: the disabled gate no longer short-circuits — the call
+      // proceeds past it to the NEXT gate (insufficient_evidence, since no
+      // reflections were seeded). If --once didn't work, this would still
+      // report 'disabled'.
+      const forced = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+        once: true,
+      });
+      expect(forced.status).toBe('skipped');
+      expect((forced.details as { reason?: string }).reason).toBe('insufficient_evidence');
+
+      // Config was NEVER written — the override is call-scoped only, unlike
+      // the toggle-on/toggle-off workaround the issue exists to replace.
+      const stillDisabled = await rig.engine.getConfig('dream.patterns.enabled');
+      expect(stillDisabled).toBe('false');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
 });
 
 describe('E2E patterns — insufficient_evidence', () => {

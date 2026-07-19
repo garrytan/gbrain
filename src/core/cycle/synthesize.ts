@@ -252,6 +252,13 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /**
+   * issue #2860 — `gbrain dream --phase synthesize --once`. Bypasses the
+   * `dream.synthesize.enabled` gate for THIS call only (does NOT bypass
+   * the `session_corpus_dir` not-configured check — there's nothing to
+   * run without a corpus). Never reads or writes config.
+   */
+  once?: boolean;
 }
 
 export async function runPhaseSynthesize(
@@ -285,8 +292,14 @@ export async function runPhaseSynthesize(
         'dream.synthesize.session_corpus_dir is unset');
     }
     if (!opts.inputFile && !config.enabled) {
-      return skipped('not_configured',
-        'dream.synthesize.enabled is explicitly false');
+      if (!opts.once) {
+        return skipped('not_configured',
+          'dream.synthesize.enabled is explicitly false');
+      }
+      process.stderr.write(
+        '[dream] --once: dream.synthesize.enabled is false but ' +
+        '--phase synthesize --once forces this run (config untouched)\n',
+      );
     }
 
     // Cooldown check (skipped for explicit --input / --date / --from / --to runs).
