@@ -177,7 +177,46 @@ describe('runDream — --once (issue #2860)', () => {
       expect(e.message).toBe('EXIT');
     }
     expect(exitSpy).toHaveBeenCalledWith(2);
-    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires --phase <name>/);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires an explicit --phase <name>/);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  // Codex P3 finding: --input implicitly sets `phase = 'synthesize'` and
+  // --drain implicitly sets `phase = 'extract_atoms'` — an EARLIER version
+  // of the --once validation checked the derived `phase` value, which was
+  // already non-null by the time it ran, so both of these silently slipped
+  // past the "explicit --phase required" contract (and --once became a
+  // no-op: --drain returns before onceForPhase is ever read; --input
+  // already bypasses the synthesize gate on its own). The fix validates
+  // against `phaseWasExplicit` (whether the user actually typed --phase)
+  // instead of the derived value.
+  test('--input <file> --once (no explicit --phase) exits 2 — an implied phase does not count', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--input', '/tmp/gbrain-2860-nonexistent.txt', '--once']);
+      throw new Error('expected runDream to exit');
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    }
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires an explicit --phase <name>/);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  test('--drain --once (no explicit --phase) exits 2 — an implied phase does not count', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--drain', '--once']);
+      throw new Error('expected runDream to exit');
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    }
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires an explicit --phase <name>/);
     exitSpy.mockRestore();
     errSpy.mockRestore();
   });

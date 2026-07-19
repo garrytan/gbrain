@@ -117,6 +117,14 @@ function collectFlagValues(args: string[], flag: string): string[] | null {
 
 function parseArgs(args: string[]): DreamArgs {
   const phaseIdx = args.indexOf('--phase');
+  // issue #2860 (Codex P3): captured BEFORE --input/--drain get a chance to
+  // implicitly default `phase` below, so --once's validation can require
+  // the user actually TYPED --phase, not merely that some phase ended up
+  // resolved. Without this, `--input <f> --once` and `--drain --once`
+  // slip past the "explicit --phase required" contract (the derived
+  // `phase` value is already non-null by the time that check runs) and
+  // --once becomes silently ineffective for both.
+  const phaseWasExplicit = phaseIdx !== -1;
   const rawPhase = phaseIdx !== -1 ? args[phaseIdx + 1] : null;
   let phase = rawPhase && (ALL_PHASES as string[]).includes(rawPhase)
     ? (rawPhase as CyclePhase)
@@ -226,10 +234,17 @@ function parseArgs(args: string[]): DreamArgs {
     }
   }
 
-  // issue #2860: --once requires an explicit single --phase target. Bare
-  // `--once` (full/default cycle) has no single phase to bypass the gate
-  // for, and force-enabling EVERY currently-disabled phase at once would
-  // be exactly the kind of surprise-spend risk the flag exists to prevent.
+  // issue #2860: --once requires an EXPLICIT single --phase target (typed
+  // by the user, not merely implied by --input/--drain — see
+  // `phaseWasExplicit` above). Bare `--once` (full/default cycle) has no
+  // single phase to bypass the gate for, and force-enabling EVERY
+  // currently-disabled phase at once would be exactly the kind of
+  // surprise-spend risk the flag exists to prevent. An implicit phase
+  // (from --input or --drain) is rejected too: --drain returns before
+  // onceForPhase is ever read, and --input already bypasses the
+  // synthesize gate on its own, so --once would silently do nothing in
+  // either case — reject loudly instead of pretending it worked (Codex
+  // review finding).
   //
   // Codex review finding: `--help` must short-circuit BEFORE this exits(2),
   // matching the "IRON RULE" pinned by test/dream.test.ts's
@@ -237,11 +252,13 @@ function parseArgs(args: string[]): DreamArgs {
   // dream --help --once` (no --phase) must show help, not a usage error.
   const once = args.includes('--once');
   const wantsHelp = args.includes('--help') || args.includes('-h');
-  if (once && !phase && !wantsHelp) {
+  if (once && !phaseWasExplicit && !wantsHelp) {
     console.error(
-      '--once requires --phase <name> (bypasses that one phase\'s ' +
-      'dream.<phase>.enabled / cycle.<phase>.enabled gate for this run only; ' +
-      'never touches config). Usage: gbrain dream --phase <name> --once',
+      '--once requires an explicit --phase <name> (bypasses that one ' +
+      'phase\'s dream.<phase>.enabled / cycle.<phase>.enabled gate for ' +
+      'this run only; never touches config). A phase implied by --input ' +
+      'or --drain does not count — --once would silently do nothing for ' +
+      'those. Usage: gbrain dream --phase <name> --once',
     );
     process.exit(2);
   }
@@ -350,7 +367,10 @@ Options:
                       crash mid-invocation can't leave it stuck. Applies to
                       patterns, synthesize, conversation_facts_backfill,
                       enrich_thin, skillopt; no-op on phases with no such
-                      gate. Requires --phase (bare --once is a usage error).
+                      gate. Requires an EXPLICIT --phase <name> — a phase
+                      implied by --input or --drain does not count (bare
+                      --once, or --once with --input/--drain and no
+                      explicit --phase, is a usage error).
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain). On a
                       postgres/remote brain with no local checkout, the
