@@ -6,6 +6,8 @@ import { spawnSync } from 'node:child_process';
 
 const VALID_PANELS = ['basic', 'models', 'integrations', 'system', 'updates', 'recovery'] as const;
 type Panel = (typeof VALID_PANELS)[number];
+const VALID_THEMES = ['dark', 'light'] as const;
+type PreviewTheme = (typeof VALID_THEMES)[number];
 
 const root = process.cwd();
 const rendererHtml = join(root, 'out', 'renderer', 'index.html');
@@ -16,6 +18,14 @@ const panel: Panel = panelArg
   : 'basic';
 if (!VALID_PANELS.includes(panel)) {
   throw new Error(`Invalid panel "${panel}". Valid values: ${VALID_PANELS.join(', ')}`);
+}
+
+const themeArg = process.argv.find((arg) => arg.startsWith('--theme='));
+const theme: PreviewTheme = themeArg
+  ? (themeArg.slice('--theme='.length) as PreviewTheme)
+  : 'dark';
+if (!VALID_THEMES.includes(theme)) {
+  throw new Error(`Invalid theme "${theme}". Valid values: ${VALID_THEMES.join(', ')}`);
 }
 
 const outputArg = process.argv.find((arg) => arg.startsWith('--out='));
@@ -98,7 +108,7 @@ window.pmbrainDesktop = {
   getState: async () => ({ phase: 'ready', port: 3132 }),
   getStartupProgress: async () => ({ visible: false, stage: 'sidecar', title: '', message: '' }),
   onStartupProgress: () => () => {},
-  getTheme: async () => ({ source: 'system', resolved: 'dark' }),
+  getTheme: async () => ({ source: '${theme}', resolved: '${theme}' }),
   setTheme: async (source) => ({ source, resolved: source === 'light' ? 'light' : 'dark' }),
   onThemeState: () => () => {},
   getSystemSettings: async () => ({
@@ -106,7 +116,7 @@ window.pmbrainDesktop = {
       networkMode: 'shared', closeBehavior: 'tray', sharedAdapter: 'Wi-Fi',
       sharedIp: '192.168.1.20', sharedResumeRequired: false,
     },
-    theme: { source: 'system', resolved: 'dark' },
+    theme: { source: '${theme}', resolved: '${theme}' },
     launchAtLogin: true,
     networkCandidates: [{
       adapterName: 'Wi-Fi', address: '192.168.1.20', netmask: '255.255.255.0',
@@ -176,7 +186,7 @@ window.pmbrainDesktop = {
   openLogs: async () => '',
   quit: async () => {}
 };
-console.log('PMBrain mock injected: panel=${panel}, integrations count=6');
+console.log('PMBrain mock injected: panel=${panel}, theme=${theme}, integrations count=6');
 // HTML 初始状态已在 Node.js 侧修改，无需 setTimeout 切换面板
 // 等 DOM 渲染后滚动到目标区域
 setTimeout(() => {
@@ -302,7 +312,7 @@ html = html.replace('id="finish-open-admin"', 'id="finish-open-admin" disabled')
 writeFileSync(previewHtml, html, 'utf8');
 
 if (prepareOnly) {
-  console.log(`[${new Date().toISOString()}] Prepared browser-use preview: panel=${panel}, html=${previewHtml}`);
+  console.log(`[${new Date().toISOString()}] Prepared browser-use preview: panel=${panel}, theme=${theme}, html=${previewHtml}`);
   process.exit(0);
 }
 
@@ -322,4 +332,4 @@ if (result.status !== 0) {
 }
 
 const size = statSync(output).size;
-console.log(`[${new Date().toISOString()}] Preview: panel=${panel}, output=${output}, mock integrations count=6`);
+console.log(`[${new Date().toISOString()}] Preview: panel=${panel}, theme=${theme}, output=${output}, mock integrations count=6`);

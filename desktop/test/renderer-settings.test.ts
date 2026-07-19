@@ -11,6 +11,17 @@ const builder = readFileSync(resolve('electron-builder.yml'), 'utf8');
 const preview = readFileSync(resolve('scripts/preview-renderer.ts'), 'utf8');
 
 describe('desktop settings renderer contracts', () => {
+  test('shares the PMBrain violet visual identity across dark and light themes', () => {
+    expect(styles).toContain('--accent: #938aff;');
+    expect(styles).toContain('--accent: #6b5de8;');
+    expect(styles).toContain('--success: #55c89c;');
+    expect(styles).toContain('--danger: #ff7e8e;');
+    expect(styles).toContain('.rail-item.active');
+    expect(styles).toContain('border-radius: 13px');
+    expect(styles).toContain('button.primary:hover:not(:disabled)');
+    expect(styles).not.toContain('#97e66c');
+  });
+
   test('keeps the five desktop tasks separate and exposes advanced-only controls', () => {
     for (const panel of ['basic', 'models', 'integrations', 'system', 'updates']) {
       expect(html).toContain(`data-target="${panel}"`);
@@ -113,7 +124,7 @@ describe('desktop settings renderer contracts', () => {
     expect(renderer).toContain('saveSystemSettings(payload)');
     expect(renderer).toContain('restartSharedGateway()');
     expect(renderer).toContain("setBusy(button, true, '正在重启…')");
-    expect(styles).toContain('.gateway-status.warning > i { background: #ff6655;');
+    expect(styles).toContain('.gateway-status.warning > i { background: var(--danger);');
     expect(styles).toContain('grid-template-columns: 8px minmax(0, 1fr) auto');
     expect(renderer).toContain('onSystemSettingsState((next) => applySystemSettingsState(next))');
     expect(styles).toContain('.connection-spine');
@@ -166,6 +177,8 @@ describe('desktop settings renderer contracts', () => {
 
   test('keeps the browser preview aligned with system and shared-access APIs', () => {
     expect(preview).toContain("'system'");
+    expect(preview).toContain("process.argv.find((arg) => arg.startsWith('--theme=')");
+    expect(preview).toContain("const VALID_THEMES = ['dark', 'light'] as const");
     expect(preview).toContain('getSystemSettings: async');
     expect(preview).toContain('onSystemSettingsState:');
     expect(preview).toContain('getSharedAccess: async');
