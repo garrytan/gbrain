@@ -7,6 +7,7 @@
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
@@ -164,8 +165,18 @@ async function runTest(args: string[]): Promise<void> {
     // the divergence at the top of the test so the recovery experience
     // doesn't repeat the bug-reporter's "providers test ✓ but import still
     // broken" trap.
+    //
+    // #2863: `cfg` is lifted out of the try block (not just used for the
+    // warning) so the configureGateway calls below can reuse it. Before this
+    // fix, the --model override only forwarded embedding_model/chat_model +
+    // env, dropping config.provider_base_urls entirely — a probe against a
+    // custom endpoint (e.g. a regional DashScope base URL) would silently
+    // fall back to the recipe's hardcoded default endpoint and fail with a
+    // misleading "Incorrect API key" error even though the key was valid for
+    // the configured endpoint.
+    let cfg: ReturnType<typeof loadConfig> | null = null;
     try {
-      const cfg = loadConfig();
+      cfg = loadConfig();
       const configuredModel = tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
       if (!configuredModel) {
         console.error(
@@ -181,17 +192,27 @@ async function runTest(args: string[]): Promise<void> {
       }
     } catch { /* loadConfig throws when no brain configured — first-time install path; the no-config branch above handles it. */ }
 
+    // Reuse the SAME resolver the production path uses (buildGatewayConfig —
+    // also used by cli.ts#connectEngine and init-embed-check.ts) so the probe
+    // sees the identical base_urls / provider_chat_options / folded API keys
+    // that a real `gbrain import`/`gbrain query` call would. Only the
+    // touchpoint's model (+ embedding dims) is overridden on top, so an
+    // isolated `--model` probe still targets exactly the requested model —
+    // it just resolves that model's endpoint the way the brain actually
+    // would. Falls back to bare env when no brain is configured yet (cfg is
+    // null on first-time install, matching the old behavior for that case).
+    const baseGatewayConfig = cfg ? buildGatewayConfig(cfg) : { env: { ...process.env } };
     if (tpArg === 'embedding') {
       const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
       configureGateway({
+        ...baseGatewayConfig,
         embedding_model: modelArg,
         embedding_dimensions: dims,
-        env: { ...process.env },
       });
     } else {
       configureGateway({
+        ...baseGatewayConfig,
         chat_model: modelArg,
-        env: { ...process.env },
       });
     }
     void modelId; // intentionally unused but preserved for readability
