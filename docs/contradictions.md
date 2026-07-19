@@ -142,10 +142,12 @@ Semantics:
   the pair re-flags automatically. There is no TTL.
 - One dismissal covers every occurrence of the same two texts, regardless
   of slug/source — the review judged the statements, not their location.
-- Dismissals take effect immediately on every read surface (doctor,
-  `review`, MCP `find_contradictions`, the synthesize prior block) without
-  re-running the probe. New runs additionally exclude dismissed pairs from
-  headline counts and the Wilson-CI denominator, keeping full details under
+- Dismissals (and undismissals) take effect immediately on every read
+  surface (doctor, `review`, MCP `find_contradictions`, the synthesize
+  prior block) without re-running the probe. New runs additionally exclude
+  dismissed pairs from headline counts and the Wilson-CI numerator — the
+  query stays in the denominator, since a human-verified false positive is
+  exactly a clean evaluated sample — keeping full details under
   `per_query[].dismissed` for audit.
 - `--reason` is required and `undismiss` is soft-state (the row is kept,
   stamped `undismissed_at`) — the ledger doubles as an audit trail.

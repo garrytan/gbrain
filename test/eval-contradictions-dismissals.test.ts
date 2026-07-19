@@ -24,6 +24,7 @@ import {
   computePairId,
   contradictionPairKey,
   dismissalHashPair,
+  flattenRunFindings,
   loadActivePairKeySetBestEffort,
   pairIdFromKey,
   projectContradictionFindings,
@@ -132,6 +133,25 @@ describe('computeFindingPairKey / projectContradictionFindings', () => {
     expect(surfaced).toHaveLength(1);
     expect(dismissed).toHaveLength(0);
   });
+
+  test('undismiss restores runner-parked dismissed findings at read time (union projection)', () => {
+    // A prior run parked this finding under per_query.dismissed; the ledger
+    // row has since been revoked. Projecting the UNION against the current
+    // (now-empty) ledger must surface it again — codex round-1 P1.
+    const perQuery = [
+      { contradictions: [finding({ a: { slug: 'x', text: 'other A' }, b: { slug: 'y', text: 'other B' } })],
+        dismissed: [finding()] },
+    ];
+    const union = flattenRunFindings(perQuery);
+    expect(union).toHaveLength(2);
+    const { surfaced, dismissed } = projectContradictionFindings(union, new Set());
+    expect(surfaced).toHaveLength(2);
+    expect(dismissed).toHaveLength(0);
+  });
+
+  test('flattenRunFindings tolerates pre-ledger rows without a dismissed array', () => {
+    expect(flattenRunFindings([{ contradictions: [finding()] }])).toHaveLength(1);
+  });
 });
 
 // ── engine CRUD ─────────────────────────────────────────────────────────
@@ -187,9 +207,12 @@ describe('dismissal ledger engine methods (PGLite)', () => {
     expect(await engine.listContradictionDismissals()).toHaveLength(2);
   });
 
-  test('reason CHECK rejects blank and over-long reasons', async () => {
+  test('reason CHECK rejects blank (incl. tab/newline-only) and over-long reasons', async () => {
     const row = ledgerRow('cross_slug_chunks', TEXT_A, TEXT_B);
     await expect(engine.putContradictionDismissal({ ...row, reason: '   ' })).rejects.toThrow();
+    // btrim's default trim set is spaces only — codex round-1 P2 pinned the
+    // CHECK to a whitespace character class instead.
+    await expect(engine.putContradictionDismissal({ ...row, reason: '\t\n' })).rejects.toThrow();
     await expect(engine.putContradictionDismissal({ ...row, reason: 'x'.repeat(1001) })).rejects.toThrow();
   });
 

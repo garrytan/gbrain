@@ -181,8 +181,10 @@ export interface PerQueryResult {
    * dismissals.ts). Kept in the report rather than dropped so
    * `review --include-dismissed` can show them and the suppression stays
    * auditable. Excluded from `contradictions`, from every headline count,
-   * and from the Wilson-CI denominator. Optional for wire-compatibility
-   * with pre-ledger report rows.
+   * and from the Wilson-CI NUMERATOR — the query itself stays in the
+   * denominator: a human-verified false positive means the query genuinely
+   * has no contradiction, which is exactly a clean evaluated sample.
+   * Optional for wire-compatibility with pre-ledger report rows.
    */
   dismissed?: ContradictionFinding[];
   /** Pairs the date pre-filter rejected before any judge call. Diagnostic only. */

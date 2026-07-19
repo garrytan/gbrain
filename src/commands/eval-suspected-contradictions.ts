@@ -43,6 +43,7 @@ import {
 import {
   computeFindingPairKey,
   dismissalHashPair,
+  flattenRunFindings,
   loadDismissals,
   pairIdFromKey,
   projectContradictionFindings,
@@ -439,12 +440,12 @@ async function runReview(engine: BrainEngine, f: ParsedFlags): Promise<void> {
     console.error('Latest run has no findings to review.');
     return;
   }
-  const allFindings: ContradictionFinding[] = report.per_query.flatMap((q) => q.contradictions);
-  // v124: the runner already partitioned ledger-dismissed findings into
-  // per-query `dismissed`, but the ledger may have grown since that run —
-  // project surfaced findings against the CURRENT ledger too so a dismissal
-  // takes effect without paying for a fresh probe run. pair_keys are
-  // recomputed from finding content, so pre-ledger report rows filter too.
+  // v124: project the UNION of surfaced + runner-parked dismissed findings
+  // against the CURRENT ledger — the ledger may have grown (dismiss takes
+  // effect without a fresh probe run) or shrunk (undismiss must restore
+  // findings the runner already parked under `dismissed`). pair_keys are
+  // recomputed from finding content, so pre-ledger report rows project too.
+  const allFindings: ContradictionFinding[] = flattenRunFindings(report.per_query);
   let reasonByKey = new Map<string, string>();
   try {
     reasonByKey = new Map((await loadDismissals(engine)).map((r) => [r.pair_key, r.reason]));
@@ -452,11 +453,10 @@ async function runReview(engine: BrainEngine, f: ParsedFlags): Promise<void> {
     // Ledger unavailable (pre-migration brain): show everything.
   }
   const activeKeys = new Set(reasonByKey.keys());
-  const { surfaced, dismissed: newlyDismissed } = projectContradictionFindings(allFindings, activeKeys);
-  const dismissedFindings = [
-    ...newlyDismissed,
-    ...report.per_query.flatMap((q) => q.dismissed ?? []),
-  ];
+  const { surfaced, dismissed } = projectContradictionFindings(allFindings, activeKeys);
+  const dismissedFindings = f.severity
+    ? dismissed.filter((c) => c.severity === f.severity)
+    : dismissed;
   const filtered = f.severity ? surfaced.filter((c) => c.severity === f.severity) : surfaced;
   if (filtered.length === 0 && !(f.includeDismissed && dismissedFindings.length > 0)) {
     const suppressed = dismissedFindings.length > 0

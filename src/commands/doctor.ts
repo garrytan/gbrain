@@ -24,6 +24,7 @@ import { createProgress, startHeartbeat, type ProgressReporter } from '../core/p
 import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
 import {
   computeFindingPairKey,
+  flattenRunFindings,
   loadActivePairKeySetBestEffort,
   pairIdFromKey,
   projectContradictionFindings,
@@ -6964,16 +6965,27 @@ export async function buildChecks(
           resolution_command: string;
           pair_id?: string;
         }>;
+        dismissed?: Array<{
+          kind?: string;
+          severity: 'low' | 'medium' | 'high';
+          axis: string;
+          a: { slug: string; text?: string };
+          b: { slug: string; text?: string };
+          resolution_command: string;
+          pair_id?: string;
+        }>;
       }> | undefined) ?? [];
-      // v124: dismissal ledger — a manual review's outcome must silence the
-      // warning immediately, without paying for a fresh probe run, so the
-      // shared projection also runs here at read time. pair_keys are
-      // recomputed from finding content (kind + member texts), so report
-      // rows written before findings carried pair_id filter too; findings
-      // whose texts are absent cannot be matched and stay surfaced.
-      // Fail-open: a ledger read error never takes down the doctor check.
+      // v124: dismissal ledger — a manual review's outcome must apply
+      // immediately, without paying for a fresh probe run, so the shared
+      // projection runs here at read time over the UNION of surfaced +
+      // runner-parked dismissed findings (dismiss hides at once; undismiss
+      // restores at once). pair_keys are recomputed from finding content
+      // (kind + member texts), so report rows written before findings
+      // carried pair_id project too; findings whose texts are absent cannot
+      // be matched and stay surfaced. Fail-open: a ledger read error never
+      // takes down the doctor check.
       const activeKeys = await loadActivePairKeySetBestEffort(engine);
-      const allFindings = perQuery.flatMap((q) => q.contradictions);
+      const allFindings = flattenRunFindings(perQuery);
       const { surfaced, dismissed } = projectContradictionFindings(allFindings, activeKeys);
       const dismissedN = dismissed.length;
       let high = 0, medium = 0, low = 0;

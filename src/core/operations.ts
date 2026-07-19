@@ -3680,13 +3680,15 @@ const find_contradictions: Operation = {
         resolution_command: string;
       }>;
     }> | undefined) ?? [];
-    const allFindings = perQuery.flatMap((q) => q.contradictions);
-    // v124: shared dismissal projection — a manual review's outcome must
-    // suppress the pair on the MCP surface too, or agents keep re-raising
-    // human-rejected findings. pair_keys recompute from finding content;
-    // fail-open (empty set) on ledger read errors.
-    const { loadActivePairKeySetBestEffort, projectContradictionFindings } =
+    // v124: shared dismissal projection over the UNION of surfaced +
+    // runner-parked dismissed findings — a manual review's outcome must
+    // suppress the pair on the MCP surface too (and undismiss must restore
+    // it), or agents keep re-raising human-rejected findings. pair_keys
+    // recompute from finding content; fail-open (empty set) on ledger read
+    // errors.
+    const { flattenRunFindings, loadActivePairKeySetBestEffort, projectContradictionFindings } =
       await import('./eval-contradictions/dismissals.ts');
+    const allFindings = flattenRunFindings(perQuery);
     const activeKeys = await loadActivePairKeySetBestEffort(ctx.engine);
     const { surfaced, dismissed } = projectContradictionFindings(allFindings, activeKeys);
     const filtered = surfaced.filter((f) => {

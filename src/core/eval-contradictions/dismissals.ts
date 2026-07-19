@@ -124,6 +124,19 @@ export function activePairKeySet(rows: DismissalRow[]): Set<string> {
 }
 
 /**
+ * Union of surfaced + previously-dismissed findings for one run's
+ * per_query rows. Read surfaces MUST project this union — not just
+ * `contradictions` — against the CURRENT ledger: an `undismiss` has to
+ * restore findings the runner already parked under `dismissed`, without
+ * waiting for the next paid probe run.
+ */
+export function flattenRunFindings<T>(
+  perQuery: Array<{ contradictions: T[]; dismissed?: T[] }>,
+): T[] {
+  return perQuery.flatMap((q) => [...q.contradictions, ...(q.dismissed ?? [])]);
+}
+
+/**
  * The shared read-time projection: split findings into surfaced vs
  * dismissed by recomputing each finding's pair_key against the active
  * ledger. Generic so every consumer keeps its own (partial) finding shape.

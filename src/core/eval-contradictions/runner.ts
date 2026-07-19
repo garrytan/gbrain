@@ -425,8 +425,11 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
 
     // v124: partition ledger-dismissed findings out BEFORE any counting so
     // a human-reviewed false positive stops driving the headline metrics
-    // and the Wilson-CI denominator. verdict_breakdown intentionally still
-    // tallies them above — it describes judge behavior, not surfaced state.
+    // and the Wilson-CI numerator. The query itself deliberately stays in
+    // the CI denominator: the human verdict makes it a genuinely clean
+    // sample, not a non-sample. verdict_breakdown intentionally still
+    // tallies dismissed pairs above — it describes judge behavior, not
+    // surfaced state.
     const { surfaced, dismissed } = projectContradictionFindings(findings, dismissedKeys);
     dismissedTotal += dismissed.length;
 

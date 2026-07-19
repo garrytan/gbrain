@@ -735,7 +735,7 @@ CREATE TABLE IF NOT EXISTS eval_contradictions_dismissals (
   kind            TEXT         NOT NULL,
   chunk_a_hash    TEXT         NOT NULL,
   chunk_b_hash    TEXT         NOT NULL,
-  reason          TEXT         NOT NULL CHECK (btrim(reason) <> '' AND length(reason) <= 1000),
+  reason          TEXT         NOT NULL CHECK (reason ~ '[^[:space:]]' AND length(reason) <= 1000),
   dismissed_by    TEXT,
   dismissed_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
   undismissed_at  TIMESTAMPTZ
