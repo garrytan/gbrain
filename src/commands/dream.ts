@@ -230,8 +230,14 @@ function parseArgs(args: string[]): DreamArgs {
   // `--once` (full/default cycle) has no single phase to bypass the gate
   // for, and force-enabling EVERY currently-disabled phase at once would
   // be exactly the kind of surprise-spend risk the flag exists to prevent.
+  //
+  // Codex review finding: `--help` must short-circuit BEFORE this exits(2),
+  // matching the "IRON RULE" pinned by test/dream.test.ts's
+  // "--help --source whatever prints help and exits 0" case — `gbrain
+  // dream --help --once` (no --phase) must show help, not a usage error.
   const once = args.includes('--once');
-  if (once && !phase) {
+  const wantsHelp = args.includes('--help') || args.includes('-h');
+  if (once && !phase && !wantsHelp) {
     console.error(
       '--once requires --phase <name> (bypasses that one phase\'s ' +
       'dream.<phase>.enabled / cycle.<phase>.enabled gate for this run only; ' +

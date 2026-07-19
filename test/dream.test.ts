@@ -151,6 +151,80 @@ describe('runDream — --phase <name> restricts the cycle', () => {
   });
 });
 
+// ─── --once (issue #2860) ───────────────────────────────────────────
+
+describe('runDream — --once (issue #2860)', () => {
+  let repo: string;
+  let engine: InstanceType<typeof PGLiteEngine>;
+
+  beforeEach(async () => {
+    repo = makeGitRepo();
+    engine = await makePGLite();
+  }, 60_000);
+
+  afterEach(async () => {
+    if (engine) await engine.disconnect();
+    rmSync(repo, { recursive: true, force: true });
+  }, 60_000);
+
+  test('bare --once (no --phase) exits 2 with a usage hint', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--once']);
+      throw new Error('expected runDream to exit');
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    }
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires --phase <name>/);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  // Codex review finding: --help must short-circuit BEFORE the bare---once
+  // usage error, matching the same IRON RULE pinned above for --source
+  // ("--help --source whatever prints help and exits 0").
+  test('--help --once (no --phase) prints help and exits 0, not the usage error', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const result = await runDream(engine, ['--help', '--once']);
+      expect(result).toBeUndefined();
+    } catch (e: any) {
+      throw new Error('--help with --once should NOT exit; got: ' + e.message);
+    }
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: gbrain dream/);
+    exitSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  test('--phase patterns --once bypasses dream.patterns.enabled=false without writing config', async () => {
+    await engine.setConfig('dream.patterns.enabled', 'false');
+    const report = await runDream(engine, ['--dir', repo, '--phase', 'patterns', '--once', '--json']);
+    expect(report).toBeTruthy();
+    if (report) {
+      expect(report.phases.length).toBe(1);
+      // Bypassed 'disabled' → falls through to the next gate. No
+      // reflections seeded, so it reports insufficient_evidence, not
+      // 'disabled' — proving --once actually forced the run.
+      expect(report.phases[0].phase).toBe('patterns');
+      expect((report.phases[0].details as { reason?: string }).reason).toBe('insufficient_evidence');
+    }
+    expect(await engine.getConfig('dream.patterns.enabled')).toBe('false');
+  });
+
+  test('--phase patterns (no --once) with dream.patterns.enabled=false still skips as disabled', async () => {
+    await engine.setConfig('dream.patterns.enabled', 'false');
+    const report = await runDream(engine, ['--dir', repo, '--phase', 'patterns', '--json']);
+    expect(report).toBeTruthy();
+    if (report) {
+      expect((report.phases[0].details as { reason?: string }).reason).toBe('disabled');
+    }
+  });
+});
+
 // ─── Output format ─────────────────────────────────────────────────
 
 describe('runDream — output format', () => {

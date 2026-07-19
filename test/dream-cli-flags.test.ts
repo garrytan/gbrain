@@ -147,7 +147,10 @@ describe('dream CLI flag wiring', () => {
 
     test('rejects bare --once with no --phase (exit 2)', () => {
       expect(dreamSrc).toContain('--once requires --phase <name>');
-      expect(dreamSrc).toContain('if (once && !phase)');
+      // --help must short-circuit this validation (Codex review finding) —
+      // see the "--help --once" test in test/dream.test.ts for the
+      // behavioral pin of this exact ordering.
+      expect(dreamSrc).toContain('if (once && !phase && !wantsHelp)');
     });
 
     test('threads onceForPhase to runCycle, gated on opts.once', () => {
