@@ -24,15 +24,54 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { listEverCommittedPaths } from '../src/commands/sync.ts';
+import { listEverCommittedPaths, type SyncResult } from '../src/commands/sync.ts';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let repoPath: string;
+let brainHome: string;
 
 function gitInit(repo: string): void {
   execSync('git init', { cwd: repo, stdio: 'pipe' });
   execSync('git config user.email "t@t.t"', { cwd: repo, stdio: 'pipe' });
   execSync('git config user.name "T"', { cwd: repo, stdio: 'pipe' });
+}
+
+function operationContext(sourceId = 'default'): OperationContext {
+  return {
+    engine,
+    config: {} as OperationContext['config'],
+    logger: { info() {}, warn() {}, error() {}, debug() {} } as OperationContext['logger'],
+    dryRun: false,
+    remote: false,
+    sourceId,
+  };
+}
+
+async function fullSyncThroughOperation(): Promise<SyncResult> {
+  return withEnv({ GBRAIN_HOME: brainHome }, () =>
+    operationsByName.sync_brain.handler(operationContext(), {
+      repo: repoPath,
+      full: true,
+      no_pull: true,
+      no_embed: true,
+    }) as Promise<SyncResult>,
+  );
+}
+
+async function defaultSourceBookmark(): Promise<string | null> {
+  const rows = await engine.executeRaw<{ last_commit: string | null }>(
+    `SELECT last_commit FROM sources WHERE id = 'default'`,
+  );
+  return rows[0]?.last_commit ?? null;
+}
+
+async function activePageCount(): Promise<number> {
+  const rows = await engine.executeRaw<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = 'default' AND deleted_at IS NULL`,
+  );
+  return rows[0]?.n ?? 0;
 }
 
 describe('listEverCommittedPaths (#2426)', () => {
@@ -77,6 +116,7 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
   beforeEach(async () => {
     await resetPgliteState(engine);
     repoPath = mkdtempSync(join(tmpdir(), 'gbrain-dbonly-'));
+    brainHome = mkdtempSync(join(tmpdir(), 'gbrain-dbonly-home-'));
     gitInit(repoPath);
     mkdirSync(join(repoPath, 'topics'), { recursive: true });
     writeFileSync(join(repoPath, 'topics/keep.md'), [
@@ -90,15 +130,16 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
 
   afterEach(() => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+    if (brainHome) rmSync(brainHome, { recursive: true, force: true });
   });
 
   test('genuinely-deleted pages reconcile; never-committed pages are kept and re-exported', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
 
     // Full sync #1: both file-backed pages land.
-    const first = await performSync(engine, {
+    const first = await withEnv({ GBRAIN_HOME: brainHome }, () => performSync(engine, {
       repoPath, full: true, sourceId: 'default', noPull: true, noEmbed: true,
-    });
+    }));
     expect(['first_sync', 'synced']).toContain(first.status);
     expect(await engine.getPage('topics/keep')).not.toBeNull();
     expect(await engine.getPage('topics/gone')).not.toBeNull();
@@ -123,9 +164,9 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
     await engine.setConfig('sync.repo_path', repoPath);
 
     // Full sync #2 runs the delete-reconcile.
-    const second = await performSync(engine, {
+    const second = await withEnv({ GBRAIN_HOME: brainHome }, () => performSync(engine, {
       repoPath, full: true, sourceId: 'default', noPull: true, noEmbed: true,
-    });
+    }));
     expect(['first_sync', 'synced']).toContain(second.status);
 
     // The genuinely-deleted page is reconciled away…
@@ -139,4 +180,93 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
     // …and re-exported to the working tree so it is file-backed again.
     expect(existsSync(join(repoPath, 'memories/lost.md'))).toBe(true);
   }, 120_000);
+
+  test('actual sync_brain handler returns a retryable block and preserves bookmark on mass refusal', async () => {
+    mkdirSync(join(repoPath, 'bulk'), { recursive: true });
+    const bulkPaths: string[] = [];
+    for (let i = 0; i < 19; i++) {
+      const rel = `bulk/page-${String(i).padStart(2, '0')}.md`;
+      bulkPaths.push(rel);
+      writeFileSync(join(repoPath, rel), [
+        '---', 'type: concept', `title: Bulk ${i}`, '---', '', `bulk page ${i}`,
+      ].join('\n'));
+    }
+    execSync('git add -A && git commit -m "add bulk fixture"', { cwd: repoPath, stdio: 'pipe' });
+
+    const first = await fullSyncThroughOperation();
+    expect(first.status).toBe('first_sync');
+    const beforeRefusal = await defaultSourceBookmark();
+    expect(beforeRefusal).not.toBeNull();
+    expect(await activePageCount()).toBe(21);
+
+    // Delete 11/21 (>50%, and population >20) so the safety valve refuses.
+    rmSync(join(repoPath, 'topics/gone.md'));
+    for (const rel of bulkPaths.slice(0, 10)) rmSync(join(repoPath, rel));
+    execSync('git add -A && git commit -m "intentional mass removal"', { cwd: repoPath, stdio: 'pipe' });
+    const deletionHead = execSync('git rev-parse HEAD', { cwd: repoPath, encoding: 'utf8' }).trim();
+
+    const blocked = await withEnv(
+      { GBRAIN_ALLOW_MASS_RECONCILE: undefined },
+      () => fullSyncThroughOperation(),
+    );
+    expect(blocked.status).toBe('blocked_by_reconcile');
+    expect(blocked.reconcile).toMatchObject({
+      reason: 'mass_delete_refused',
+      plannedDeletes: 11,
+      completedDeletes: 0,
+      failedDeletes: 11,
+    });
+    expect(await defaultSourceBookmark()).toBe(beforeRefusal);
+    expect(await activePageCount()).toBe(21);
+
+    // The operator override retries the same convergence step and advances
+    // only after every genuine deletion is verified absent.
+    const retried = await withEnv(
+      { GBRAIN_ALLOW_MASS_RECONCILE: '1' },
+      () => fullSyncThroughOperation(),
+    );
+    expect(retried.status).toBe('first_sync');
+    expect(retried.deleted).toBe(11);
+    expect(await defaultSourceBookmark()).toBe(deletionHead);
+    expect(await activePageCount()).toBe(10);
+  }, 180_000);
+
+  test('delete failure is structured, leaves bookmark unchanged, and succeeds on retry', async () => {
+    const first = await fullSyncThroughOperation();
+    expect(first.status).toBe('first_sync');
+    const beforeFailure = await defaultSourceBookmark();
+
+    rmSync(join(repoPath, 'topics/gone.md'));
+    execSync('git add -A && git commit -m "remove gone"', { cwd: repoPath, stdio: 'pipe' });
+    const deletionHead = execSync('git rev-parse HEAD', { cwd: repoPath, encoding: 'utf8' }).trim();
+
+    const originalDeletePages = engine.deletePages;
+    const originalDeletePage = engine.deletePage;
+    engine.deletePages = async () => { throw new Error('injected batch delete failure'); };
+    engine.deletePage = async () => { throw new Error('injected scalar delete failure'); };
+    const blocked = await (async () => {
+      try {
+        return await fullSyncThroughOperation();
+      } finally {
+        engine.deletePages = originalDeletePages;
+        engine.deletePage = originalDeletePage;
+      }
+    })();
+
+    expect(blocked.status).toBe('blocked_by_reconcile');
+    expect(blocked.reconcile).toMatchObject({
+      reason: 'delete_failed',
+      plannedDeletes: 1,
+      completedDeletes: 0,
+      failedDeletes: 1,
+    });
+    expect(await defaultSourceBookmark()).toBe(beforeFailure);
+    expect(await engine.getPage('topics/gone')).not.toBeNull();
+
+    const retried = await fullSyncThroughOperation();
+    expect(retried.status).toBe('first_sync');
+    expect(retried.deleted).toBe(1);
+    expect(await defaultSourceBookmark()).toBe(deletionHead);
+    expect(await engine.getPage('topics/gone')).toBeNull();
+  }, 180_000);
 });

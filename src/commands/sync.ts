@@ -177,8 +177,8 @@ function resolveSyncYieldEvery(): number {
  * extraction-lag nudge. Fires on every non-error completion — crucially
  * `first_sync` (a fresh / --full import is the BIGGEST un-extracted backlog) and
  * `up_to_date` (a no-op sync over a brain with a pre-existing backlog still
- * warrants the nudge). Excludes `dry_run` (preview) / `blocked_by_failures` /
- * `partial` (inconsistent state). Pure so D5's contract is unit-testable
+ * warrants the nudge). Excludes `dry_run` (preview), both blocked statuses,
+ * and `partial` (inconsistent state). Pure so D5's contract is unit-testable
  * without driving the CLI.
  */
 export function shouldNudgeAfterSync(status: SyncResult['status']): boolean {
@@ -186,7 +186,14 @@ export function shouldNudgeAfterSync(status: SyncResult['status']): boolean {
 }
 
 export interface SyncResult {
-  status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures' | 'partial';
+  status:
+    | 'up_to_date'
+    | 'synced'
+    | 'first_sync'
+    | 'dry_run'
+    | 'blocked_by_failures'
+    | 'blocked_by_reconcile'
+    | 'partial';
   fromCommit: string | null;
   toCommit: string;
   added: number;
@@ -222,6 +229,30 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /**
+   * Present when a full sync imported successfully but could not prove that
+   * its delete reconciliation converged. The bookmark remains unchanged and
+   * the same full sync is safe to retry.
+   */
+  reconcile?: {
+    reason: 'mass_delete_refused' | 'delete_failed' | 'reconcile_failed';
+    plannedDeletes: number;
+    completedDeletes: number;
+    failedDeletes: number;
+    message: string;
+  };
+}
+
+type FullReconcileIssue = NonNullable<SyncResult['reconcile']>;
+
+class FullReconcileBlockedError extends Error {
+  readonly issue: FullReconcileIssue;
+
+  constructor(issue: FullReconcileIssue) {
+    super(issue.message);
+    this.name = 'FullReconcileBlockedError';
+    this.issue = issue;
+  }
 }
 
 /**
@@ -3497,7 +3528,14 @@ async function performFullSync(
   const fullSucceeded = loadSyncFailures()
     .filter(e => e.source_id === fullSourceId && isSkippablePath(e.path) && !fullFailureSet.has(e.path))
     .map(e => e.path);
+  let reconciledDeletes = 0;
+  let plannedReconcileDeletes = 0;
   const advanceFull = async (): Promise<void> => {
+    // Reconciliation is part of convergence, not post-commit cleanup. Run it
+    // inside the failure gate's advance callback so import failures still
+    // block before destructive work, but the bookmark cannot move until every
+    // required delete has either completed or been deliberately preserved.
+    await reconcileBeforeAdvance();
     // Persist sync state so the next sync is incremental. Routed through
     // writeSyncAnchor so --source pins the right sources row.
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot));
@@ -3506,14 +3544,49 @@ async function performFullSync(
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
   };
 
-  const fullGate = await applySyncFailureGate({
-    sourceId: fullSourceId,
-    failedFiles: result.failures,
-    succeededPaths: fullSucceeded,
-    commit: headCommit,
-    skipFailed: opts.skipFailed === true,
-    advance: advanceFull,
-  });
+  let fullGate: Awaited<ReturnType<typeof applySyncFailureGate>>;
+  try {
+    fullGate = await applySyncFailureGate({
+      sourceId: fullSourceId,
+      failedFiles: result.failures,
+      succeededPaths: fullSucceeded,
+      commit: headCommit,
+      skipFailed: opts.skipFailed === true,
+      advance: advanceFull,
+    });
+  } catch (error) {
+    if (!(error instanceof FullReconcileBlockedError)) throw error;
+
+    // Keep non-bookmark operational metadata current for diagnostics, but do
+    // not write last_commit/chunker_version. The next full sync repeats the
+    // same reconciliation against the unchanged anchor.
+    try {
+      await engine.setConfig('sync.last_run', new Date().toISOString());
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    } catch {
+      // Diagnostic metadata is best-effort on a blocked reconcile. Never turn
+      // the structured, retryable result back into an opaque thrown error.
+    }
+    serr(
+      `\nFull sync reconciliation BLOCKED (${error.issue.reason}): ` +
+      `${error.issue.message}\n` +
+      `  Bookmark unchanged; re-run the full sync after correcting the cause.`,
+    );
+    return {
+      status: 'blocked_by_reconcile',
+      fromCommit: null,
+      toCommit: headCommit,
+      added: result.imported,
+      modified: 0,
+      deleted: error.issue.completedDeletes,
+      renamed: 0,
+      chunksCreated: result.chunksCreated,
+      embedded: 0,
+      pagesAffected: [],
+      failedFiles: result.failures.length,
+      reconcile: error.issue,
+    };
+  }
 
   if (!fullGate.advanced) {
     const codeBreakdown = formatCodeBreakdown(result.failures);
@@ -3556,8 +3629,8 @@ async function performFullSync(
   // file was deleted since the last sync. A full re-import is authoritative for
   // the whole tree, so reconcile deletes here too (this is what makes the
   // object-absent fallback at performSyncInner correct for deletes, not just
-  // imports). Runs only on an advancing full sync (we're past the
-  // !fullGate.advanced early-return).
+  // imports). It runs inside advanceFull, after the import failure gate chose
+  // to advance but before the bookmark write or failure acknowledgement.
   //
   // SAFETY — must NOT re-introduce the #1433 stale-page data loss. A page is
   // deleted ONLY when ALL three hold:
@@ -3569,11 +3642,25 @@ async function performFullSync(
   //   3. source_path ∉ current    → the backing file is genuinely gone from the
   //      working tree (collectSyncableFiles == the same enumeration runImport
   //      used, so paths are in the identical relative form as source_path).
-  // Skipped on the legacy no-sourceId path (the batch delete primitives require
-  // a sourceId; matches every other source-scoped feature).
-  let reconciledDeletes = 0;
-  if (opts.sourceId) {
-    const sid = opts.sourceId;
+  // Legacy programmatic callers that omit sourceId reconcile the seeded
+  // default source; operation/CLI callers pass their resolved source explicitly.
+  async function reconcileBeforeAdvance(): Promise<void> {
+    try {
+      await reconcileDeletes(fullSourceId);
+    } catch (error) {
+      if (error instanceof FullReconcileBlockedError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FullReconcileBlockedError({
+        reason: 'reconcile_failed',
+        plannedDeletes: plannedReconcileDeletes,
+        completedDeletes: reconciledDeletes,
+        failedDeletes: Math.max(0, plannedReconcileDeletes - reconciledDeletes),
+        message: `full-sync reconciliation failed: ${detail}`,
+      });
+    }
+  }
+
+  async function reconcileDeletes(sid: string): Promise<void> {
     const reconcileSyncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
     // collectSyncableFiles returns ABSOLUTE paths; source_path is stored
     // repo-relative (importFile uses `relative(dir, filePath)`), so relativize
@@ -3604,6 +3691,7 @@ async function performFullSync(
       currentFiles,
       p => (scopePrefix === '' || p.startsWith(scopePrefix)) && isSyncable(p, reconcileSyncOpts),
     );
+    plannedReconcileDeletes = plan.staleSlugs.length;
     if (plan.staleSlugs.length > 0 && plan.massDelete && !massReconcileAllowed()) {
       // #2828 mass-delete safety valve: a reconcile that would sweep more than
       // half of the pages this strategy manages, on a source with a non-trivial
@@ -3621,6 +3709,15 @@ async function performFullSync(
         `  If this bulk removal is genuinely intended, re-run with ` +
         `GBRAIN_ALLOW_MASS_RECONCILE=1 to restore the old behavior.`,
       );
+      throw new FullReconcileBlockedError({
+        reason: 'mass_delete_refused',
+        plannedDeletes: plan.staleSlugs.length,
+        completedDeletes: 0,
+        failedDeletes: plan.staleSlugs.length,
+        message:
+          `refused to delete ${plan.staleSlugs.length} of ${plan.reconcilableCount} ` +
+          `file-backed pages; set GBRAIN_ALLOW_MASS_RECONCILE=1 only for an intentional bulk removal`,
+      });
     } else if (plan.staleSlugs.length > 0) {
       // #2426: a stale page whose source_path was NEVER committed to git is
       // DB-only write-through (the file was written into the clone but never
@@ -3641,6 +3738,7 @@ async function performFullSync(
           else deletableSlugs.push(slug);
         }
       }
+      plannedReconcileDeletes = deletableSlugs.length;
       if (dbOnlySlugs.length > 0) {
         let reExported = 0;
         try {
@@ -3659,6 +3757,7 @@ async function performFullSync(
         );
       }
       const deleteScopedOpts = { sourceId: sid };
+      const failedDeleteSlugs = new Set<string>();
       for (let i = 0; i < deletableSlugs.length; i += DELETE_BATCH_SIZE) {
         const batch = deletableSlugs.slice(i, i + DELETE_BATCH_SIZE);
         try {
@@ -3666,12 +3765,36 @@ async function performFullSync(
           reconciledDeletes += deleted.length;
         } catch {
           // Per-slug fallback on a batch blip (mirrors the incremental delete
-          // loop). A stale page that won't delete is best-effort, not fatal.
+          // loop). Every unrecoverable slug blocks the bookmark and remains
+          // safe to retry on the next full sync.
           for (const slug of batch) {
             try { await engine.deletePage(slug, deleteScopedOpts); reconciledDeletes++; }
-            catch { /* best-effort */ }
+            catch { failedDeleteSlugs.add(slug); }
           }
         }
+      }
+      // Verify convergence from database state rather than trusting affected
+      // row counts. This catches partial batch behavior and concurrent misses.
+      const activeAfterDelete = deletableSlugs.length === 0
+        ? []
+        : await engine.executeRaw<{ slug: string }>(
+          `SELECT slug FROM pages
+            WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])`,
+          [sid, deletableSlugs],
+        );
+      const activeSlugs = new Set(activeAfterDelete.map(r => r.slug));
+      for (const slug of deletableSlugs) {
+        if (activeSlugs.has(slug)) failedDeleteSlugs.add(slug);
+      }
+      reconciledDeletes = deletableSlugs.length - failedDeleteSlugs.size;
+      if (failedDeleteSlugs.size > 0) {
+        throw new FullReconcileBlockedError({
+          reason: 'delete_failed',
+          plannedDeletes: deletableSlugs.length,
+          completedDeletes: reconciledDeletes,
+          failedDeletes: failedDeleteSlugs.size,
+          message: `${failedDeleteSlugs.size} of ${deletableSlugs.length} stale page delete(s) failed`,
+        });
       }
       if (reconciledDeletes > 0) {
         slog(`  Reconciled ${reconciledDeletes} stale page(s) whose source file was removed.`);
@@ -4399,6 +4522,7 @@ See also:
       if (
         result.status !== 'dry_run' &&
         result.status !== 'blocked_by_failures' &&
+        result.status !== 'blocked_by_reconcile' &&
         result.status !== 'partial'
       ) {
         manageGitignoreAtGitRoot(src.local_path!, engine.kind);
@@ -4416,6 +4540,7 @@ See also:
         !dryRun &&
         result.status !== 'dry_run' &&
         result.status !== 'up_to_date' &&
+        result.status !== 'blocked_by_reconcile' &&
         result.status !== 'partial'
       ) {
         try {
@@ -4670,6 +4795,7 @@ See also:
     if (
       result.status !== 'dry_run' &&
       result.status !== 'blocked_by_failures' &&
+      result.status !== 'blocked_by_reconcile' &&
       result.status !== 'partial'
     ) {
       const effectiveRepoPath = opts.repoPath ?? (await getDefaultSourcePath(engine));
@@ -4684,6 +4810,7 @@ See also:
       singleSourceAutoDefer &&
       result.status !== 'dry_run' &&
       result.status !== 'up_to_date' &&
+      result.status !== 'blocked_by_reconcile' &&
       result.status !== 'partial'
     ) {
       try {
@@ -4719,6 +4846,7 @@ See also:
       if (
         result.status !== 'dry_run' &&
         result.status !== 'blocked_by_failures' &&
+        result.status !== 'blocked_by_reconcile' &&
         result.status !== 'partial'
       ) {
         const effectiveRepoPath = opts.repoPath ?? (await getDefaultSourcePath(engine));
@@ -5358,6 +5486,14 @@ function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed to parse.`);
       write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'gbrain doctor'.`);
       write(`  Fix the files then re-run 'gbrain sync', or 'gbrain sync --skip-failed' to move on.`);
+      break;
+    case 'blocked_by_reconcile':
+      write(
+        `Sync RECONCILIATION BLOCKED at ${result.toCommit.slice(0, 8)}: ` +
+        `${result.reconcile?.reason ?? 'reconcile_failed'}.`,
+      );
+      write(`  ${result.reconcile?.message ?? 'Delete reconciliation did not converge.'}`);
+      write(`  Re-run the full sync after correcting the cause (last_commit unchanged; safe to retry).`);
       break;
     case 'partial':
       // v0.41.13.0 (T7 / D-V3-5): --timeout fired before the bookmark write

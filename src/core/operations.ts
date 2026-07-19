@@ -2586,6 +2586,7 @@ const sync_brain: Operation = {
     const { performSync } = await import('../commands/sync.ts');
     return performSync(ctx.engine, {
       repoPath: p.repo as string | undefined,
+      sourceId: ctx.sourceId,
       dryRun: ctx.dryRun || (p.dry_run as boolean) || false,
       noEmbed: (p.no_embed as boolean) || false,
       noPull: (p.no_pull as boolean) || false,

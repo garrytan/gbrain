@@ -937,7 +937,10 @@ async function runPhaseSync(
     const syncedCount = result.added + result.modified;
     return {
       phase: 'sync',
-      status: result.status === 'blocked_by_failures' ? 'warn' : 'ok',
+      status:
+        result.status === 'blocked_by_failures' || result.status === 'blocked_by_reconcile'
+          ? 'warn'
+          : 'ok',
       duration_ms: 0,
       summary: dryRun
         ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
