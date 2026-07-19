@@ -14,6 +14,11 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+import {
+  beginExternalDreamcycle,
+  finalizeExternalDreamcycle,
+} from '../src/commands/dreamcycle.ts';
 import {
   ALL_PHASES,
   DREAMCYCLE_SOURCE_PHASES,
@@ -227,6 +232,42 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const changed = await handler!({ data, signal: undefined });
     expect(changed.status).toBe('skipped');
     expect(changed.report.reason).toBe('global_deferred');
+  });
+
+  test('external DreamCycle finalizer revalidates its begin batch at handler claim time', async () => {
+    // resetPgliteState intentionally truncates user config; MinionQueue's
+    // existing schema guard reads this normal runtime version key.
+    await engine.setConfig('version', '123');
+    await engine.setConfig('autopilot.global_maintenance.authority', 'external_dreamcycle');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
+      ['external-source', 'external-source', '/tmp/gbrain-external-source'],
+    );
+    const queue = new MinionQueue(engine);
+    const begun = await beginExternalDreamcycle(engine, queue);
+    expect(begun.outcome).toBe('begun');
+    await engine.updateSourceConfig('external-source', {
+      last_source_cycle_at: new Date(Date.now() + 1_000).toISOString(),
+      last_full_cycle_at: new Date(Date.now() + 1_000).toISOString(),
+    });
+    const sealed = await finalizeExternalDreamcycle(engine, queue);
+    expect(sealed.outcome).toBe('sealed');
+    if (sealed.outcome !== 'sealed') throw new Error('fixture did not seal external finalizer');
+    const job = await queue.getJob(sealed.global_job_id);
+    expect(job).not.toBeNull();
+
+    // The queued payload was valid when sealed, but the handler must refuse
+    // it when today's external authority is no longer active.
+    await engine.setConfig('autopilot.global_maintenance.authority', 'daily_finalizer');
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    const result = await handler!({ data: job!.data, signal: undefined });
+    expect(result.status).toBe('skipped');
+    expect(result.report).toMatchObject({
+      reason: 'global_deferred',
+      detail: 'external_batch_mismatch_or_incomplete',
+    });
   });
 
   test('raw invalid global phase is rejected rather than filtered to a default', async () => {

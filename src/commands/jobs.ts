@@ -1847,6 +1847,36 @@ export async function registerBuiltinHandlers(
     };
   });
 
+  // Durable source-membership receipt for the local-only external DreamCycle
+  // CLI. It is intentionally a no-op worker handler: `dreamcycle begin`
+  // writes the trusted payload itself, and finalization re-reads that immutable
+  // minion row before granting any global authority.
+  {
+    const {
+      DREAMCYCLE_BEGIN_JOB_NAME,
+      parseExternalDreamcycleBeginData,
+    } = await import('./dreamcycle.ts');
+    worker.register(DREAMCYCLE_BEGIN_JOB_NAME, async (job) => {
+      const receipt = parseExternalDreamcycleBeginData(job.data);
+      if (!receipt) {
+        return {
+          partial: false,
+          status: 'skipped',
+          report: { reason: 'global_deferred', detail: 'invalid_external_begin_receipt' },
+        };
+      }
+      return {
+        partial: false,
+        status: 'ok',
+        report: {
+          jst_day: receipt.jst_day,
+          source_count: receipt.sources.length,
+          revision: receipt.revision,
+        },
+      };
+    });
+  }
+
   // Server-internal daily finalizer. A generic submitted job cannot reach this
   // handler through either CLI or submit_job, and this handler still verifies
   // the snapshot/revision before granting dreamcycle_global authority.
@@ -1882,8 +1912,30 @@ export async function registerBuiltinHandlers(
       return globalDeferred('source_snapshot_mismatch_or_incomplete');
     }
 
+    // The local-only external finalizer carries an additional begin receipt.
+    // Revalidate it at claim time so a source add/remove, a stale/pre-begin
+    // receipt, a config flip, or a hand-crafted queue row cannot execute
+    // brain-wide work. Missing origin remains the legacy daily-finalizer shape
+    // for jobs queued before this CLI existed.
+    const finalizerOrigin = job.data.finalizer_origin;
+    if (
+      finalizerOrigin !== undefined &&
+      finalizerOrigin !== 'daily_finalizer' &&
+      finalizerOrigin !== 'external_dreamcycle'
+    ) {
+      return globalDeferred('unknown_finalizer_origin');
+    }
+    if (finalizerOrigin === 'external_dreamcycle') {
+      const { externalDreamcycleFinalizerBatchMatches } = await import('./dreamcycle.ts');
+      if (!(await externalDreamcycleFinalizerBatchMatches(engine, job.data, { currentSources }))) {
+        return globalDeferred('external_batch_mismatch_or_incomplete');
+      }
+    }
+
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
+      : job.data.repoPath === null
+        ? null
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
     const rawPhases = job.data.phases;

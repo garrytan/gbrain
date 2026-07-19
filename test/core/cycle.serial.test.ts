@@ -535,6 +535,14 @@ describe('runCycle — capturedSlugs handoff contract (#DreamCycle)', () => {
 
   test('malformed and cross-source capturedSlugs are ignored after source scoping', async () => {
     nextSyncPagesAffected = [];
+    // `pages.source_id` is an FK. Seed both sources explicitly so this
+    // contract test stays independent of earlier suite state.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES
+        ('alpha', 'alpha', '/tmp/captured-alpha'),
+        ('beta', 'beta', '/tmp/captured-beta')
+       ON CONFLICT (id) DO NOTHING`,
+    );
     await sharedEngine.putPage(
       'alpha/page',
       { type: 'note', title: 'Alpha', compiled_truth: 'alpha page' },
@@ -705,6 +713,6 @@ describe('runCycle — executionAuthority validation', () => {
   });
 
   test('manual with --source and global phases emits helpful error', async () => {
-    await expect(runCycle(sharedEngine, { executionAuthority: 'manual', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('manual --source cannot be combined with global phases');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'manual', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('Omit --source and rerun unscoped with `gbrain dream --phase <global-phase>`');
   });
 });

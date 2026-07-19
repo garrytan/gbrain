@@ -47,9 +47,11 @@ function castUndefinedRemoteCtx(): OperationContext {
 }
 
 describe('F7b — trust-boundary contract fail-closed semantics', () => {
-  test('global finalizer is both protected and reserved for server-internal dispatch', () => {
-    expect(isProtectedJobName('autopilot-global-maintenance')).toBe(true);
-    expect(isInternalOnlyJobName(' autopilot-global-maintenance ')).toBe(true);
+  test('DreamCycle begin receipt and global finalizer are protected and server-internal', () => {
+    for (const name of ['autopilot-global-maintenance', 'dreamcycle-begin']) {
+      expect(isProtectedJobName(name)).toBe(true);
+      expect(isInternalOnlyJobName(` ${name} `)).toBe(true);
+    }
   });
 
   test('protected job submission rejected when remote is undefined (cast bypass)', async () => {

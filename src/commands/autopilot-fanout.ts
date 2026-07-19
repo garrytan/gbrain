@@ -566,7 +566,10 @@ export function createGlobalMaintenanceSourceSnapshot(
     receipts.push({ source_id: source.id, receipt_at: receipt.toISOString() });
   }
   receipts.sort((a, b) => a.source_id.localeCompare(b.source_id));
-  const revision = receipts.map((r) => `${r.source_id}\u0000${r.receipt_at}`).join('\u0001');
+  // `revision` travels inside minion_jobs.data (JSONB). Literal NUL
+  // separators make PostgreSQL reject the payload, so use the canonical JSON
+  // representation of the already-sorted entries instead.
+  const revision = JSON.stringify(receipts);
   return { jst_day: jstDay, sources: receipts, revision };
 }
 
@@ -661,6 +664,7 @@ export async function dispatchGlobalMaintenance(
       repoPath: opts.repoPath,
       phases: [...DAILY_GLOBAL_ALLOWLIST],
       execution_authority: 'dreamcycle_global',
+      finalizer_origin: 'daily_finalizer',
       source_snapshot: snapshot.sources,
       source_snapshot_revision: snapshot.revision,
       source_snapshot_jst_day: snapshot.jst_day,

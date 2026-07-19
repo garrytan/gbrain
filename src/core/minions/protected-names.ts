@@ -18,6 +18,11 @@
  * locally trusted; only the named internal dispatcher may enqueue them.
  */
 export const INTERNAL_ONLY_JOB_NAMES: ReadonlySet<string> = new Set([
+  // A durable, no-op receipt written only by `gbrain dreamcycle begin`.
+  // It seals the source membership snapshot that an externally scheduled
+  // daily finalizer must later prove against; generic submitters must never
+  // be able to manufacture that receipt.
+  'dreamcycle-begin',
   'autopilot-global-maintenance',
 ]);
 

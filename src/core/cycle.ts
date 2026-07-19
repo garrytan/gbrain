@@ -873,7 +873,7 @@ function normalizeCapturedSlugs(rawCapturedSlugs: unknown): string[] {
  * pages in `sourceId` are allowed to pass through.
  */
 async function scopeCapturedSlugs(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   sourceId: string | undefined,
   capturedSlugs: string[],
 ): Promise<string[]> {
@@ -1538,7 +1538,11 @@ export async function runCycle(
     if (opts.sourceId) {
       const hasGlobal = phases.some(p => GLOBAL_PHASES.includes(p));
       if (hasGlobal) {
-        throw new Error('[cycle] manual --source cannot be combined with global phases. Run source maintenance or global maintenance separately.');
+        throw new Error(
+          '[cycle] manual --source cannot be combined with global phases. ' +
+          'Omit --source and rerun unscoped with `gbrain dream --phase <global-phase>`. ' +
+          'Run source maintenance separately.',
+        );
       }
     }
   }
