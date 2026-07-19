@@ -9,8 +9,9 @@
  *   - engine CRUD on PGLite: active listing, soft-revoke (audit row kept),
  *     re-dismiss reactivation, prefix ambiguity rejection, reason CHECKs
  *   - runner integration: dismissed findings leave every headline count and
- *     the Wilson-CI denominator, land in per_query.dismissed, and
- *     verdict_breakdown still tallies raw judge behavior
+ *     the Wilson-CI numerator (the query stays in the denominator as a
+ *     clean sample), land in per_query.dismissed, and verdict_breakdown
+ *     still tallies raw judge behavior
  *   - CLI flag parsing for dismiss/undismiss/--include-dismissed
  */
 
@@ -253,7 +254,7 @@ const contradictionJudge: JudgeFn = async (): Promise<JudgeOutput> => ({
 });
 
 describe('runner integration', () => {
-  test('dismissed pair leaves headline counts + CI denominator, lands in per_query.dismissed', async () => {
+  test('dismissed pair leaves headline counts + CI numerator, lands in per_query.dismissed', async () => {
     const idA = await seedPage('companies/acme', 'Acme');
     const idB = await seedPage('openclaw/chat/x', 'Chat');
     await engine.putContradictionDismissal(ledgerRow('cross_slug_chunks', TEXT_A, TEXT_B));
@@ -279,8 +280,11 @@ describe('runner integration', () => {
       .toBe(computePairId('cross_slug_chunks', TEXT_A, TEXT_B));
     // Raw judge behavior stays visible: the verdict was still a contradiction.
     expect(out.report.verdict_breakdown.contradiction).toBe(1);
-    // Wilson CI denominator excludes the dismissed query.
+    // Numerator-only exclusion: the dismissed query contributes k=0 but
+    // remains an evaluated sample in the CI denominator (a human-verified
+    // false positive means the query genuinely has no contradiction).
     expect(out.report.calibration.queries_with_contradiction).toBe(0);
+    expect(out.report.calibration.queries_total).toBe(1);
   });
 
   test('changed text re-flags: stale ledger row stops matching', async () => {

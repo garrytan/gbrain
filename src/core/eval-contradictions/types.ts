@@ -159,8 +159,10 @@ export interface ContradictionFinding extends ContradictionPair {
    * for `gbrain eval suspected-contradictions dismiss <pair_id>`. Distinct
    * from JudgeErrorRow.pair_id, which is a per-run slug#chunk_id key and
    * not content-stable. Optional because report_json rows written before
-   * the ledger existed lack it; such findings can never match a ledger row
-   * and are always surfaced.
+   * the ledger existed lack it — that costs nothing: ledger matching never
+   * reads this field, it recomputes the full pair_key from kind + member
+   * texts (dismissals.ts), so pre-ledger findings project (and are
+   * dismissable) too. This is a display/CLI convenience only.
    */
   pair_id?: string;
 }

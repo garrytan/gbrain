@@ -7001,11 +7001,13 @@ export async function buildChecks(
         } else if (c.severity === 'medium') medium++;
         else low++;
       }
-      // Severity counts above are recomputed post-dismissal; the persisted
-      // Wilson CI is not — flag that its denominator predates read-time
-      // dismissals instead of silently mixing populations.
+      // Severity counts above are recomputed against the CURRENT ledger;
+      // the persisted Wilson CI is not (and cannot be, without re-running
+      // per-query strict counts) — label it probe-time unconditionally so
+      // the two populations are never silently mixed, in either direction
+      // (dismissals added since the run, or undismissals restoring pairs
+      // the run had excluded).
       const dismissedNote = dismissedN > 0 ? ` (${dismissedN} dismissed by manual review)` : '';
-      const ciNote = dismissedN > 0 ? ' (CI computed at probe time, before dismissals)' : '';
       const total = high + medium + low;
       if (total === 0) {
         checks.push({
@@ -7017,7 +7019,7 @@ export async function buildChecks(
         const ciLow = (latest.wilson_ci_lower * 100).toFixed(0);
         const ciHigh = (latest.wilson_ci_upper * 100).toFixed(0);
         const lines = [
-          `${total} suspected contradictions (high=${high} medium=${medium} low=${low})${dismissedNote} detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}%${ciNote}.`,
+          `${total} suspected contradictions (high=${high} medium=${medium} low=${low})${dismissedNote} detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}% (probe-time).`,
         ];
         for (const f of highFindings.slice(0, 3)) {
           lines.push(`  HIGH: ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);

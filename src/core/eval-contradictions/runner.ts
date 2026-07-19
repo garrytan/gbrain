@@ -283,8 +283,9 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   // whose content-derived pair_key is active in the ledger are partitioned
   // into per-query `dismissed` (kept in full for audit /
   // `review --include-dismissed`) and excluded from `contradictions`,
-  // headline counts, and the Wilson-CI denominator. Fail-open (empty set)
-  // so a ledger read error can never take down a paid probe run.
+  // headline counts, and the Wilson-CI numerator (the query stays in the
+  // denominator as a clean evaluated sample). Fail-open (empty set) so a
+  // ledger read error can never take down a paid probe run.
   const dismissedKeys = await loadActivePairKeySetBestEffort(opts.engine);
   let dismissedTotal = 0;
 
