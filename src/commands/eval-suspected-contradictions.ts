@@ -40,6 +40,13 @@ import {
   bucketBySeverity,
   compareSeverityDesc,
 } from '../core/eval-contradictions/severity-classify.ts';
+import {
+  computeFindingPairKey,
+  dismissalHashPair,
+  loadDismissals,
+  pairIdFromKey,
+  projectContradictionFindings,
+} from '../core/eval-contradictions/dismissals.ts';
 import { maybePromptForCostBeforeProbe } from '../core/eval-contradictions/cost-prompt.ts';
 import type {
   ContradictionFinding,
@@ -47,7 +54,7 @@ import type {
 } from '../core/eval-contradictions/types.ts';
 
 interface ParsedFlags {
-  sub: 'run' | 'trend' | 'review';
+  sub: 'run' | 'trend' | 'review' | 'dismiss' | 'undismiss';
   // run flags
   queriesFile?: string;
   query?: string;
@@ -80,21 +87,34 @@ interface ParsedFlags {
   // review flags
   severity?: Severity;
   since?: string;
+  /** v124: review — also render ledger-dismissed findings. */
+  includeDismissed: boolean;
+  // dismiss/undismiss flags
+  /** v124: positional pair_id for dismiss/undismiss. */
+  pairId?: string;
+  /** v124: --reason for dismiss. Required — an unexplained suppression is unreviewable. */
+  reason?: string;
   // help
   help: boolean;
 }
 
 export function parseFlags(args: string[]): ParsedFlags {
   // Sub-subcommand: first positional that doesn't start with --
-  let sub: 'run' | 'trend' | 'review' = 'run';
+  let sub: 'run' | 'trend' | 'review' | 'dismiss' | 'undismiss' = 'run';
+  let pairId: string | undefined;
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (i === 0 && !a.startsWith('--')) {
-      if (a === 'run' || a === 'trend' || a === 'review') {
+      if (a === 'run' || a === 'trend' || a === 'review' || a === 'dismiss' || a === 'undismiss') {
         sub = a;
         continue;
       }
+    }
+    // v124: dismiss/undismiss take one positional pair_id after the sub name.
+    if ((sub === 'dismiss' || sub === 'undismiss') && !a.startsWith('--') && pairId === undefined) {
+      pairId = a;
+      continue;
     }
     rest.push(a);
   }
@@ -113,6 +133,8 @@ export function parseFlags(args: string[]): ParsedFlags {
     json: false,
     yes: false,
     days: 30,
+    includeDismissed: false,
+    pairId,
     help: false,
   };
   for (let i = 0; i < rest.length; i++) {
@@ -153,6 +175,8 @@ export function parseFlags(args: string[]): ParsedFlags {
       f.severity = v;
     }
     else if (arg === '--since') f.since = next();
+    else if (arg === '--include-dismissed') f.includeDismissed = true;
+    else if (arg === '--reason') f.reason = next();
     else {
       throw new Error(`unknown flag: ${arg}`);
     }
@@ -175,6 +199,10 @@ function printHelp(): void {
 
   gbrain eval suspected-contradictions review
     [--severity info|low|medium|high] [--since YYYY-MM-DD]
+    [--include-dismissed]
+
+  gbrain eval suspected-contradictions dismiss <pair_id> --reason "..."
+  gbrain eval suspected-contradictions undismiss <pair_id>
 
 The probe samples top-K retrieval pairs and asks an LLM judge to classify
 each pair as one of: no_contradiction, contradiction, temporal_supersession,
@@ -187,6 +215,13 @@ Cost guardrails:
   - --budget-usd N halts the run when cumulative cost exceeds the cap.
   - --judge MODEL overrides the resolveModel chain; pair with --yes when
     automating.
+
+Manual-review dismissals:
+  When a human review rules a finding a false positive, dismiss it by the
+  pair_id shown in review/doctor output. Dismissed pairs stop surfacing in
+  reports, headline counts, and the doctor warning — until either chunk's
+  text changes, which changes the content hashes and re-flags the pair
+  automatically. --reason is required; the ledger is an audit trail.
 `);
 }
 
@@ -405,9 +440,29 @@ async function runReview(engine: BrainEngine, f: ParsedFlags): Promise<void> {
     return;
   }
   const allFindings: ContradictionFinding[] = report.per_query.flatMap((q) => q.contradictions);
-  const filtered = f.severity ? allFindings.filter((c) => c.severity === f.severity) : allFindings;
-  if (filtered.length === 0) {
-    console.error(`No findings${f.severity ? ` at severity=${f.severity}` : ''}.`);
+  // v124: the runner already partitioned ledger-dismissed findings into
+  // per-query `dismissed`, but the ledger may have grown since that run —
+  // project surfaced findings against the CURRENT ledger too so a dismissal
+  // takes effect without paying for a fresh probe run. pair_keys are
+  // recomputed from finding content, so pre-ledger report rows filter too.
+  let reasonByKey = new Map<string, string>();
+  try {
+    reasonByKey = new Map((await loadDismissals(engine)).map((r) => [r.pair_key, r.reason]));
+  } catch {
+    // Ledger unavailable (pre-migration brain): show everything.
+  }
+  const activeKeys = new Set(reasonByKey.keys());
+  const { surfaced, dismissed: newlyDismissed } = projectContradictionFindings(allFindings, activeKeys);
+  const dismissedFindings = [
+    ...newlyDismissed,
+    ...report.per_query.flatMap((q) => q.dismissed ?? []),
+  ];
+  const filtered = f.severity ? surfaced.filter((c) => c.severity === f.severity) : surfaced;
+  if (filtered.length === 0 && !(f.includeDismissed && dismissedFindings.length > 0)) {
+    const suppressed = dismissedFindings.length > 0
+      ? ` (${dismissedFindings.length} dismissed — see --include-dismissed)`
+      : '';
+    console.error(`No findings${f.severity ? ` at severity=${f.severity}` : ''}${suppressed}.`);
     return;
   }
   filtered.sort((a, b) => compareSeverityDesc(a.severity, b.severity));
@@ -423,9 +478,120 @@ async function runReview(engine: BrainEngine, f: ParsedFlags): Promise<void> {
       // genuine contradictions from temporal classifications at a glance.
       console.error(`  - [${item.verdict}] ${item.a.slug} vs ${item.b.slug}`);
       if (item.axis) console.error(`    axis: ${item.axis}`);
+      // pair_id may be absent on pre-ledger report rows; recompute the
+      // display handle from content so old findings are dismissable too.
+      const key = computeFindingPairKey(item);
+      const displayId = item.pair_id ?? (key ? pairIdFromKey(key) : null);
+      if (displayId) console.error(`    pair_id: ${displayId}  (dismiss: gbrain eval suspected-contradictions dismiss ${displayId} --reason "...")`);
       console.error(`    → ${item.resolution_command}`);
     }
   }
+  if (dismissedFindings.length > 0 && !f.includeDismissed) {
+    console.error(`\n${dismissedFindings.length} dismissed finding(s) hidden — rerun with --include-dismissed to show.`);
+  }
+  if (f.includeDismissed && dismissedFindings.length > 0) {
+    console.error(`\nDISMISSED (${dismissedFindings.length}):`);
+    for (const item of dismissedFindings) {
+      console.error(`  - [${item.verdict}/${item.severity}] ${item.a.slug} vs ${item.b.slug}`);
+      if (item.axis) console.error(`    axis: ${item.axis}`);
+      const key = computeFindingPairKey(item);
+      const reason = key ? reasonByKey.get(key) : undefined;
+      if (reason) console.error(`    reason: ${reason}`);
+      const displayId = item.pair_id ?? (key ? pairIdFromKey(key) : null);
+      if (displayId) console.error(`    pair_id: ${displayId}  (restore: gbrain eval suspected-contradictions undismiss ${displayId})`);
+    }
+  }
+}
+
+/**
+ * v124: record a manual-review dismissal. The given hex prefix must match
+ * exactly one finding pair_key across probe runs from the last 90 days —
+ * that is where the member texts (and therefore the content hashes the
+ * ledger is keyed on) come from. Requiring a recent-run match stops typo'd
+ * ids from creating dead ledger rows; requiring uniqueness stops a short
+ * prefix from silently dismissing the wrong pair.
+ */
+async function runDismiss(engine: BrainEngine, f: ParsedFlags): Promise<void> {
+  if (!f.pairId) {
+    console.error('Usage: gbrain eval suspected-contradictions dismiss <pair_id> --reason "..."');
+    process.exit(2);
+  }
+  const prefix = f.pairId.toLowerCase();
+  if (!/^[0-9a-f]{8,64}$/.test(prefix)) {
+    console.error('pair_id must be 8-64 hex chars (as printed by review/doctor output).');
+    process.exit(2);
+  }
+  const reason = (f.reason ?? '').trim();
+  if (!reason) {
+    console.error('--reason is required: the ledger is an audit trail, and an unexplained suppression cannot be reviewed later.');
+    process.exit(2);
+  }
+  if (reason.length > 1000) {
+    console.error('--reason must be at most 1000 characters.');
+    process.exit(2);
+  }
+  const rows = await loadTrend(engine, 90);
+  // Collect every distinct pair_key matching the prefix (a pair can appear
+  // in many runs/queries — same key each time; that is not ambiguity).
+  const matchesByKey = new Map<string, ContradictionFinding>();
+  for (const row of rows) {
+    const report = row.report_json;
+    if (!report?.per_query) continue;
+    for (const q of report.per_query) {
+      for (const finding of [...q.contradictions, ...(q.dismissed ?? [])]) {
+        const key = computeFindingPairKey(finding);
+        if (key && key.startsWith(prefix)) matchesByKey.set(key, finding);
+      }
+    }
+  }
+  if (matchesByKey.size === 0) {
+    console.error(`pair_id ${f.pairId} not found in any probe run from the last 90 days.`);
+    console.error('Run `gbrain eval suspected-contradictions review` to list current pair_ids.');
+    process.exit(1);
+  }
+  if (matchesByKey.size > 1) {
+    console.error(`pair_id prefix ${f.pairId} is ambiguous — matches ${matchesByKey.size} pairs:`);
+    for (const [key, finding] of matchesByKey) {
+      console.error(`  ${pairIdFromKey(key)}  ${finding.a.slug} vs ${finding.b.slug}`);
+    }
+    console.error('Re-run with a longer prefix.');
+    process.exit(1);
+  }
+  const [pairKey, match] = [...matchesByKey.entries()][0];
+  await engine.putContradictionDismissal({
+    pair_key: pairKey,
+    kind: match.kind,
+    ...dismissalHashPair(match.a.text, match.b.text),
+    reason,
+    dismissed_by: null,
+  });
+  console.error(`Dismissed ${pairIdFromKey(pairKey)} (${match.a.slug} vs ${match.b.slug}).`);
+  console.error('It stops surfacing in review/doctor/MCP/synthesize until either chunk\'s text changes (which re-flags it automatically). Restore with `undismiss`.');
+}
+
+/** v124: soft-revoke a dismissal so the pair surfaces again (audit row kept). */
+async function runUndismiss(engine: BrainEngine, f: ParsedFlags): Promise<void> {
+  if (!f.pairId) {
+    console.error('Usage: gbrain eval suspected-contradictions undismiss <pair_id>');
+    process.exit(2);
+  }
+  const prefix = f.pairId.toLowerCase();
+  if (!/^[0-9a-f]{8,64}$/.test(prefix)) {
+    console.error('pair_id must be 8-64 hex chars (as printed by review output).');
+    process.exit(2);
+  }
+  const result = await engine.revokeContradictionDismissal(prefix);
+  if (result.status === 'not_found') {
+    console.error(`No active dismissal found for pair_id ${f.pairId}.`);
+    process.exit(1);
+  }
+  if (result.status === 'ambiguous') {
+    console.error(`pair_id prefix ${f.pairId} is ambiguous — matches:`);
+    for (const key of result.matches) console.error(`  ${pairIdFromKey(key)}`);
+    console.error('Re-run with a longer prefix.');
+    process.exit(1);
+  }
+  console.error(`Restored ${pairIdFromKey(result.matches[0])} — it will surface again in review/doctor.`);
 }
 
 export async function runEvalSuspectedContradictions(
@@ -447,4 +613,6 @@ export async function runEvalSuspectedContradictions(
   if (flags.sub === 'run') return runRun(engine, flags);
   if (flags.sub === 'trend') return runTrend(engine, flags);
   if (flags.sub === 'review') return runReview(engine, flags);
+  if (flags.sub === 'dismiss') return runDismiss(engine, flags);
+  if (flags.sub === 'undismiss') return runUndismiss(engine, flags);
 }

@@ -720,6 +720,28 @@ CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
   ON eval_contradictions_runs (ran_at DESC);
 
 -- ============================================================
+-- eval_contradictions_dismissals (v124): manual-review dismissal ledger for
+-- the contradiction probe. One row per human "not a real contradiction"
+-- decision. pair_key = sha256 over a versioned domain tag + pair kind + the
+-- sorted content-hash pair — deliberately WITHOUT model/prompt components,
+-- so a human verdict survives judge changes; it auto-invalidates when
+-- either chunk's text (and therefore hash) changes. No TTL by design.
+-- undismiss is soft-state (undismissed_at) so the ledger stays an audit
+-- trail; active rows are undismissed_at IS NULL.
+-- See src/core/eval-contradictions/dismissals.ts for full design notes.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS eval_contradictions_dismissals (
+  pair_key        TEXT         PRIMARY KEY,
+  kind            TEXT         NOT NULL,
+  chunk_a_hash    TEXT         NOT NULL,
+  chunk_b_hash    TEXT         NOT NULL,
+  reason          TEXT         NOT NULL CHECK (btrim(reason) <> '' AND length(reason) <= 1000),
+  dismissed_by    TEXT,
+  dismissed_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  undismissed_at  TIMESTAMPTZ
+);
+
+-- ============================================================
 -- v0.36.1.0 Hindsight calibration wave (PGLite parity)
 -- See src/core/migrate.ts v67-v71 for full design notes.
 -- ============================================================

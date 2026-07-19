@@ -119,6 +119,37 @@ Each finding ships with a `resolution_command` field — paste-ready:
 Run `gbrain eval suspected-contradictions review --severity high` to
 inspect findings without re-running the probe.
 
+## Dismissing reviewed false positives (v124)
+
+When a manual review rules a finding NOT a real contradiction, record the
+outcome so it stops resurfacing on every run:
+
+```
+gbrain eval suspected-contradictions dismiss <pair_id> --reason "same-device apps, not a conflict"
+gbrain eval suspected-contradictions undismiss <pair_id>       # restore
+gbrain eval suspected-contradictions review --include-dismissed
+```
+
+`pair_id` is printed next to each finding in `review` and in the doctor
+HIGH lines (a hex prefix works; ambiguous prefixes are rejected).
+
+Semantics:
+
+- The identity is the CONTENT of the two statements (plus pair kind) — not
+  the judge model or prompt. A dismissal survives judge upgrades; to force
+  re-evaluation after one, `undismiss` explicitly.
+- When either statement's text changes, the identity changes with it and
+  the pair re-flags automatically. There is no TTL.
+- One dismissal covers every occurrence of the same two texts, regardless
+  of slug/source — the review judged the statements, not their location.
+- Dismissals take effect immediately on every read surface (doctor,
+  `review`, MCP `find_contradictions`, the synthesize prior block) without
+  re-running the probe. New runs additionally exclude dismissed pairs from
+  headline counts and the Wilson-CI denominator, keeping full details under
+  `per_query[].dismissed` for audit.
+- `--reason` is required and `undismiss` is soft-state (the row is kept,
+  stamped `undismissed_at`) — the ledger doubles as an audit trail.
+
 ## Cost model
 
 Default judge is `claude-haiku-4-5` at ~$1/Mtok in, $5/Mtok out. With
@@ -135,7 +166,8 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
 ## Trust posture
 
 - Probe never mutates the brain. Runs only read pages/takes/chunks.
-  Writes go only to `eval_contradictions_runs` and `eval_contradictions_cache`.
+  Writes go only to `eval_contradictions_runs` and `eval_contradictions_cache`
+  (plus `eval_contradictions_dismissals` on explicit operator `dismiss`).
 - MCP `find_contradictions` is read-scope. NOT in the subagent allowlist —
   user-initiated only, not autonomous-action surface.
 - Build-fixture script is local-only. The redactor + `isCleanForCommit`

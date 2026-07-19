@@ -4926,6 +4926,78 @@ export class PostgresEngine implements BrainEngine {
     return result.count ?? 0;
   }
 
+  /** v124 — manual-review dismissal ledger: active rows only (small table). */
+  async listContradictionDismissals(): Promise<Array<{
+    pair_key: string;
+    kind: string;
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    reason: string;
+    dismissed_by: string | null;
+    dismissed_at: string;
+  }>> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT pair_key, kind, chunk_a_hash, chunk_b_hash, reason, dismissed_by,
+             dismissed_at::text AS dismissed_at
+      FROM eval_contradictions_dismissals
+      WHERE undismissed_at IS NULL
+      ORDER BY dismissed_at DESC
+    `;
+    return rows as unknown as Array<{
+      pair_key: string;
+      kind: string;
+      chunk_a_hash: string;
+      chunk_b_hash: string;
+      reason: string;
+      dismissed_by: string | null;
+      dismissed_at: string;
+    }>;
+  }
+
+  /** v124 — dismissal upsert; conflict on pair_key reactivates + refreshes. */
+  async putContradictionDismissal(opts: {
+    pair_key: string;
+    kind: string;
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    reason: string;
+    dismissed_by?: string | null;
+  }): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      INSERT INTO eval_contradictions_dismissals
+        (pair_key, kind, chunk_a_hash, chunk_b_hash, reason, dismissed_by)
+      VALUES (${opts.pair_key}, ${opts.kind}, ${opts.chunk_a_hash}, ${opts.chunk_b_hash},
+              ${opts.reason}, ${opts.dismissed_by ?? null})
+      ON CONFLICT (pair_key)
+      DO UPDATE SET reason = EXCLUDED.reason,
+                    dismissed_by = EXCLUDED.dismissed_by,
+                    dismissed_at = now(),
+                    undismissed_at = NULL
+    `;
+  }
+
+  /** v124 — soft-revoke by pair_key prefix with ambiguity rejection. */
+  async revokeContradictionDismissal(pairKeyPrefix: string): Promise<{
+    status: 'revoked' | 'not_found' | 'ambiguous';
+    matches: string[];
+  }> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT pair_key FROM eval_contradictions_dismissals
+      WHERE undismissed_at IS NULL AND pair_key LIKE ${`${pairKeyPrefix}%`}
+      ORDER BY pair_key
+    `;
+    const matches = (rows as unknown as Array<{ pair_key: string }>).map((r) => r.pair_key);
+    if (matches.length === 0) return { status: 'not_found', matches: [] };
+    if (matches.length > 1) return { status: 'ambiguous', matches };
+    await sql`
+      UPDATE eval_contradictions_dismissals SET undismissed_at = now() WHERE pair_key = ${matches[0]}
+    `;
+    return { status: 'revoked', matches };
+  }
+
   async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 100, 500);

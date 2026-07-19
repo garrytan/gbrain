@@ -5724,6 +5724,44 @@ export const MIGRATIONS: Migration[] = [
         ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
     `,
   },
+  {
+    version: 126,
+    name: 'eval_contradictions_dismissals',
+    // Manual-review dismissal ledger for the contradiction probe.
+    //
+    // One row per human decision "this flagged pair is not a real
+    // contradiction". pair_key = sha256 over a versioned domain tag
+    // ('gbrain:contradiction-pair:v1') + the pair kind + the sorted
+    // content-hash pair of both member texts — deliberately WITHOUT
+    // model_id / prompt_version / truncation_policy: a human verdict about
+    // two statements survives judge model and prompt changes (to force
+    // re-evaluation after a judge upgrade, `undismiss` explicitly). The
+    // identity expires exactly when either statement's text changes — the
+    // hashes change with it, the ledger row stops matching, and the pair
+    // re-flags. That hash drift is the invalidation policy, so there is no
+    // TTL column.
+    //
+    // The CLI accepts a hex prefix of pair_key (12 shown in review/doctor
+    // output) and rejects ambiguous prefixes; no separate handle column.
+    //
+    // undismiss is soft-state: it stamps undismissed_at instead of deleting
+    // so the ledger stays an audit trail. Active rows are
+    // undismissed_at IS NULL; re-dismissing reactivates the row.
+    //
+    // Idempotent across PGLite and Postgres; engine-agnostic DDL.
+    sql: `
+      CREATE TABLE IF NOT EXISTS eval_contradictions_dismissals (
+        pair_key        TEXT         PRIMARY KEY,
+        kind            TEXT         NOT NULL,
+        chunk_a_hash    TEXT         NOT NULL,
+        chunk_b_hash    TEXT         NOT NULL,
+        reason          TEXT         NOT NULL CHECK (btrim(reason) <> '' AND length(reason) <= 1000),
+        dismissed_by    TEXT,
+        dismissed_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        undismissed_at  TIMESTAMPTZ
+      );
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -30,6 +30,7 @@ import type {
   ResolutionKind,
   Verdict,
 } from './types.ts';
+import { computePairId } from './dismissals.ts';
 
 export interface ResolutionProposal {
   resolution_kind: ResolutionKind;
@@ -184,6 +185,10 @@ export function proposeResolution(
  *
  * v0.34 / Lane A2: threads the new `verdict: Verdict` enum into the finding
  * shape and the resolution classifier so the new verdicts route correctly.
+ *
+ * v124: also stamps `pair_id`, the content-stable dismissal-ledger handle
+ * (see dismissals.ts), so report consumers can match findings against the
+ * manual-review ledger.
  */
 export function pairToFinding(
   pair: ContradictionPair,
@@ -198,5 +203,6 @@ export function pairToFinding(
     confidence: verdict.confidence,
     resolution_kind: prop.resolution_kind,
     resolution_command: prop.resolution_command,
+    pair_id: computePairId(pair.kind, pair.a.text, pair.b.text),
   };
 }

@@ -1129,11 +1129,17 @@ async function loadPriorContradictionsBlock(engine: BrainEngine): Promise<string
         b: { slug: string };
       }>;
     }> | undefined) ?? [];
+    // v124: shared dismissal projection — a manual review's outcome must
+    // keep the pair out of the synthesis prompt too, or dream keeps trying
+    // to "reconcile" a contradiction a human already rejected. Fail-open
+    // inside the surrounding try: ledger errors degrade to no suppression.
+    const { loadActivePairKeySetBestEffort, projectContradictionFindings } =
+      await import('../eval-contradictions/dismissals.ts');
+    const activeKeys = await loadActivePairKeySetBestEffort(engine);
+    const { surfaced } = projectContradictionFindings(perQuery.flatMap((q) => q.contradictions), activeKeys);
     const findings: Array<{ severity: string; axis: string; a: string; b: string }> = [];
-    for (const q of perQuery) {
-      for (const c of q.contradictions) {
-        findings.push({ severity: c.severity, axis: c.axis, a: c.a.slug, b: c.b.slug });
-      }
+    for (const c of surfaced) {
+      findings.push({ severity: c.severity, axis: c.axis, a: c.a.slug, b: c.b.slug });
     }
     if (findings.length === 0) return '';
     // Sort by severity DESC (high first); take top 5 to keep prompt bounded.
