@@ -1,14 +1,15 @@
 /**
- * Local-only external DreamCycle handoff.
- *
- * An external scheduler may own the source-cycle cadence, but it must never
- * choose global phases, manufacture authority, or supply a source receipt.
- * `begin` records the exact source membership in minion_jobs; `finalize`
- * requires each member to have a newer same-JST-day source receipt before it
- * seals the one protected global-maintenance job.
- *
- * This is deliberately a CLI command, not an operation: no HTTP/MCP surface,
- * OAuth scope, migration, config mutation, or destructive phase is added.
+ * [2026-07-19][feat]
+ * User intent:
+ * - Let the Hermes external DreamCycle scheduler request the one safe,
+ *   once-per-JST-day global finalizer after its source passes complete.
+ * Invariant:
+ * - External callers never choose phases, source membership, authority, or
+ *   receipts. A missing, changed, or unreadable authority fails closed as
+ *   `global_deferred`, and the worker rechecks the sealed batch at claim time.
+ * Rejected alternative:
+ * - A generic jobs/MCP endpoint or caller-supplied snapshot could manufacture
+ *   global-maintenance authority, so this remains a narrow local CLI only.
  */
 
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
@@ -181,6 +182,20 @@ function deferred(detail: string): ExternalDreamcycleResult {
   return { outcome: 'global_deferred', detail };
 }
 
+/**
+ * Authority reads are an execution gate, not an advisory status lookup. Keep
+ * the defensive catch here as well as inside readGlobalMaintenanceAuthority:
+ * a database adapter, test double, or future implementation may throw before
+ * that helper can turn the failure into its normal read_failure sentinel.
+ */
+async function hasExternalDreamcycleAuthority(engine: BrainEngine): Promise<boolean> {
+  try {
+    return (await readGlobalMaintenanceAuthority(engine)) === EXTERNAL_DREAMCYCLE_AUTHORITY;
+  } catch {
+    return false;
+  }
+}
+
 function hasNewSameDayReceipts(
   receiptSnapshot: { sources: Array<{ receipt_at: string }> },
   begunAt: string,
@@ -223,7 +238,7 @@ export async function beginExternalDreamcycle(
 ): Promise<ExternalDreamcycleResult> {
   const now = opts.now ?? new Date();
   const jstDay = getJSTDaySlot(now);
-  if (await readGlobalMaintenanceAuthority(engine) !== EXTERNAL_DREAMCYCLE_AUTHORITY) {
+  if (!(await hasExternalDreamcycleAuthority(engine))) {
     return deferred('external_dreamcycle_not_enabled');
   }
 
@@ -383,7 +398,7 @@ export async function finalizeExternalDreamcycle(
 ): Promise<ExternalDreamcycleResult> {
   const now = opts.now ?? new Date();
   const jstDay = getJSTDaySlot(now);
-  if (await readGlobalMaintenanceAuthority(engine) !== EXTERNAL_DREAMCYCLE_AUTHORITY) {
+  if (!(await hasExternalDreamcycleAuthority(engine))) {
     return deferred('external_dreamcycle_not_enabled');
   }
 
@@ -402,7 +417,7 @@ export async function finalizeExternalDreamcycle(
   try {
     // The authority can change while a competing caller holds the lock. Read
     // it again immediately before checking and sealing the batch.
-    if (await readGlobalMaintenanceAuthority(engine) !== EXTERNAL_DREAMCYCLE_AUTHORITY) {
+    if (!(await hasExternalDreamcycleAuthority(engine))) {
       return deferred('external_dreamcycle_not_enabled');
     }
     return await finalizeExternalDreamcycleLocked(engine, queue, now, jstDay);
@@ -427,7 +442,7 @@ export async function externalDreamcycleFinalizerBatchMatches(
   opts: { now?: Date; currentSources?: SourceRow[] } = {},
 ): Promise<boolean> {
   try {
-    if (await readGlobalMaintenanceAuthority(engine) !== EXTERNAL_DREAMCYCLE_AUTHORITY) return false;
+    if (!(await hasExternalDreamcycleAuthority(engine))) return false;
     const now = opts.now ?? new Date();
     const jstDay = getJSTDaySlot(now);
     const begin = await loadExternalDreamcycleBegin(engine, jstDay);

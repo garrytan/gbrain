@@ -169,7 +169,12 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
   let engine: PGLiteEngine;
   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 30000);
   afterAll(async () => { await engine.disconnect(); });
-  beforeEach(async () => { await resetPgliteState(engine); });
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+    // Legacy/global handler fixtures model the built-in daily finalizer unless
+    // a test deliberately switches authority to exercise the external gate.
+    await engine.setConfig('autopilot.global_maintenance.authority', 'daily_finalizer');
+  });
 
   async function captureHandlers() {
     const handlers = new Map<string, (job: any) => Promise<any>>();
@@ -218,7 +223,7 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     expect(Number.isFinite(new Date(stamped!).getTime())).toBe(true);
   });
 
-  test('missing authority/snapshot and a changed receipt defer without global execution', async () => {
+  test('missing internal authority/snapshot and a changed receipt defer without global execution', async () => {
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-global-maintenance');
     expect(handler).toBeTruthy();
@@ -257,17 +262,87 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const job = await queue.getJob(sealed.global_job_id);
     expect(job).not.toBeNull();
 
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    // The sealed external flow remains valid while its authority and receipt
+    // proof are intact.
+    const approved = await handler!({ data: job!.data, signal: undefined });
+    expect(approved.status).not.toBe('skipped');
+
     // The queued payload was valid when sealed, but the handler must refuse
     // it when today's external authority is no longer active.
     await engine.setConfig('autopilot.global_maintenance.authority', 'daily_finalizer');
-    const handlers = await captureHandlers();
-    const handler = handlers.get('autopilot-global-maintenance');
     const result = await handler!({ data: job!.data, signal: undefined });
     expect(result.status).toBe('skipped');
     expect(result.report).toMatchObject({
       reason: 'global_deferred',
       detail: 'external_batch_mismatch_or_incomplete',
     });
+  });
+
+  test('queued daily and legacy finalizers defer when authority flips to external_dreamcycle before claim', async () => {
+    await engine.setConfig('version', '123');
+    await engine.setConfig('autopilot.global_maintenance.authority', 'daily_finalizer');
+    const queue = new MinionQueue(engine);
+    const queuedJobs = [];
+    for (const [label, finalizerOrigin] of [
+      ['daily', 'daily_finalizer'],
+      ['legacy', undefined],
+    ] as const) {
+      queuedJobs.push(await queue.add(
+        'autopilot-global-maintenance',
+        {
+          ...await makeVerifiedFinalizerData(['orphans']),
+          ...(finalizerOrigin === undefined ? {} : { finalizer_origin: finalizerOrigin }),
+        },
+        {
+          queue: 'default',
+          idempotency_key: `test:${label}-finalizer-authority-flip`,
+          max_attempts: 1,
+        },
+        { allowProtectedSubmit: true },
+      ));
+    }
+
+    await engine.setConfig('autopilot.global_maintenance.authority', 'external_dreamcycle');
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    for (const queued of queuedJobs) {
+      const result = await handler!({ data: queued.data, signal: undefined });
+      expect(result).toMatchObject({
+        status: 'skipped',
+        report: { reason: 'global_deferred', detail: 'daily_finalizer_not_enabled' },
+      });
+      expect(result.report.phases).toBeUndefined();
+    }
+    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
+  });
+
+  test('authority config-read failure defers a global job at claim time', async () => {
+    await engine.setConfig('autopilot.global_maintenance.authority', 'daily_finalizer');
+    const data = {
+      ...await makeVerifiedFinalizerData(['orphans']),
+      finalizer_origin: 'daily_finalizer',
+    };
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    const originalGetConfig = engine.getConfig;
+    engine.getConfig = async (key: string) => {
+      if (key === 'autopilot.global_maintenance.authority') {
+        throw new Error('configuration database unavailable');
+      }
+      return originalGetConfig.call(engine, key);
+    };
+    try {
+      const result = await handler!({ data, signal: undefined });
+      expect(result).toMatchObject({
+        status: 'skipped',
+        report: { reason: 'global_deferred', detail: 'daily_finalizer_not_enabled' },
+      });
+      expect(result.report.phases).toBeUndefined();
+    } finally {
+      engine.getConfig = originalGetConfig;
+    }
   });
 
   test('raw invalid global phase is rejected rather than filtered to a default', async () => {

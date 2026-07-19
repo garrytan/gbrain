@@ -70,6 +70,18 @@ describe('external DreamCycle begin/finalize', () => {
     expect(jobs[0]?.count).toBe('0');
   });
 
+  test('authority config-read failures fail closed at every external entry point', async () => {
+    const unavailable = {
+      getConfig: async () => { throw new Error('configuration database unavailable'); },
+    } as unknown as PGLiteEngine;
+
+    expect(await beginExternalDreamcycle(unavailable, queue, { now: NOW }))
+      .toEqual({ outcome: 'global_deferred', detail: 'external_dreamcycle_not_enabled' });
+    expect(await finalizeExternalDreamcycle(unavailable, queue, { now: NOW }))
+      .toEqual({ outcome: 'global_deferred', detail: 'external_dreamcycle_not_enabled' });
+    expect(await externalDreamcycleFinalizerBatchMatches(unavailable, {}, { now: NOW })).toBe(false);
+  });
+
   test('begin persists a source-id snapshot, then finalize seals one fixed protected global job', async () => {
     await seedSource('alpha');
     await seedSource('beta');

@@ -1885,6 +1885,7 @@ export async function registerBuiltinHandlers(
     const {
       DAILY_GLOBAL_ALLOWLIST,
       globalMaintenanceSnapshotMatches,
+      readGlobalMaintenanceAuthority,
     } = await import('./autopilot-fanout.ts');
 
     const globalDeferred = (detail: string) => ({
@@ -1895,6 +1896,37 @@ export async function registerBuiltinHandlers(
 
     if (job.data.execution_authority !== 'dreamcycle_global') {
       return globalDeferred('missing_or_invalid_internal_authority');
+    }
+
+    // Every global job is bound to the authority that sealed it. A queued
+    // daily/legacy row must not cross an operator's switch to the external
+    // scheduler, and an external row must replay its begin/receipt proof.
+    const finalizerOrigin = job.data.finalizer_origin;
+    if (
+      finalizerOrigin !== undefined &&
+      finalizerOrigin !== 'daily_finalizer' &&
+      finalizerOrigin !== 'external_dreamcycle'
+    ) {
+      return globalDeferred('unknown_finalizer_origin');
+    }
+
+    // Fail closed even if a future authority reader (or a database adapter)
+    // throws instead of returning its read_failure sentinel.
+    let currentAuthority: string;
+    try {
+      currentAuthority = await readGlobalMaintenanceAuthority(engine);
+    } catch {
+      return globalDeferred('global_authority_unavailable');
+    }
+
+    if (finalizerOrigin === 'external_dreamcycle') {
+      if (currentAuthority !== 'external_dreamcycle') {
+        return globalDeferred('external_batch_mismatch_or_incomplete');
+      }
+    } else if (currentAuthority !== 'daily_finalizer') {
+      // Legacy rows (no origin) are daily-finalizer rows. They cannot execute
+      // while external_dreamcycle owns the global-maintenance authority.
+      return globalDeferred('daily_finalizer_not_enabled');
     }
 
     let currentSources;
@@ -1915,21 +1947,18 @@ export async function registerBuiltinHandlers(
     // The local-only external finalizer carries an additional begin receipt.
     // Revalidate it at claim time so a source add/remove, a stale/pre-begin
     // receipt, a config flip, or a hand-crafted queue row cannot execute
-    // brain-wide work. Missing origin remains the legacy daily-finalizer shape
-    // for jobs queued before this CLI existed.
-    const finalizerOrigin = job.data.finalizer_origin;
-    if (
-      finalizerOrigin !== undefined &&
-      finalizerOrigin !== 'daily_finalizer' &&
-      finalizerOrigin !== 'external_dreamcycle'
-    ) {
-      return globalDeferred('unknown_finalizer_origin');
-    }
+    // brain-wide work.
     if (finalizerOrigin === 'external_dreamcycle') {
-      const { externalDreamcycleFinalizerBatchMatches } = await import('./dreamcycle.ts');
-      if (!(await externalDreamcycleFinalizerBatchMatches(engine, job.data, { currentSources }))) {
-        return globalDeferred('external_batch_mismatch_or_incomplete');
+      let externalBatchMatches = false;
+      try {
+        const { externalDreamcycleFinalizerBatchMatches } = await import('./dreamcycle.ts');
+        externalBatchMatches = await externalDreamcycleFinalizerBatchMatches(engine, job.data, { currentSources });
+      } catch {
+        // The external proof includes a second authority read. Any failure is
+        // indistinguishable from an incomplete batch at this safety boundary.
+        externalBatchMatches = false;
       }
+      if (!externalBatchMatches) return globalDeferred('external_batch_mismatch_or_incomplete');
     }
 
     const repoPath: string | null = typeof job.data.repoPath === 'string'
