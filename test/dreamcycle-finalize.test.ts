@@ -200,6 +200,37 @@ describe('external DreamCycle begin/finalize', () => {
     expect(await externalDreamcycleFinalizerBatchMatches(engine, job!.data, { now: NOW })).toBe(false);
   });
 
+  test('sealed external batch remains valid across JST midnight only for its sealed day', async () => {
+    const begunAt = new Date('2026-07-19T14:59:00.000Z'); // JST 2026-07-19 23:59
+    const receiptAt = new Date('2026-07-19T14:59:30.000Z');
+    const claimedAt = new Date('2026-07-19T15:01:00.000Z'); // JST 2026-07-20 00:01
+    await seedSource('alpha');
+
+    const begun = await beginExternalDreamcycle(engine, queue, { now: begunAt });
+    expect(begun.outcome).toBe('begun');
+    await markSourceComplete('alpha', receiptAt);
+    const sealed = await finalizeExternalDreamcycle(engine, queue, { now: receiptAt });
+    expect(sealed.outcome).toBe('sealed');
+    if (sealed.outcome !== 'sealed') throw new Error('expected sealed finalizer');
+    const job = await queue.getJob(sealed.global_job_id);
+    expect(job).not.toBeNull();
+
+    // The next-day worker clock must not select a new begin record or require
+    // next-day source receipts. The sealed job owns its original JST day.
+    expect(await externalDreamcycleFinalizerBatchMatches(engine, job!.data, { now: claimedAt })).toBe(true);
+
+    // Both sealed day fields are independent integrity gates. A malformed or
+    // mismatched day must never turn this into a cross-day replay.
+    expect(await externalDreamcycleFinalizerBatchMatches(engine, {
+      ...job!.data,
+      source_snapshot_jst_day: '2026-07-20',
+    }, { now: claimedAt })).toBe(false);
+    expect(await externalDreamcycleFinalizerBatchMatches(engine, {
+      ...job!.data,
+      external_dreamcycle_begin_jst_day: 'not-a-jst-day',
+    }, { now: claimedAt })).toBe(false);
+  });
+
   test('CLI parser accepts no phase/source/authority/snapshot override', () => {
     expect(parseDreamcycleArgs(['begin', '--json'])).toEqual({ action: 'begin', json: true, help: false });
     expect(() => parseDreamcycleArgs(['finalize', '--phase', 'orphans']))

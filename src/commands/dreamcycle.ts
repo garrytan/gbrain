@@ -196,6 +196,29 @@ async function hasExternalDreamcycleAuthority(engine: BrainEngine): Promise<bool
   }
 }
 
+/**
+ * The sealed global row, not the worker's wall clock, owns its JST batch day.
+ * Require both independent day fields so a hand-crafted or corrupted row
+ * cannot replay a begin receipt from one day against receipts from another.
+ */
+function sealedExternalDreamcycleBatchDay(data: Record<string, unknown>): string | null {
+  const beginJstDay = data.external_dreamcycle_begin_jst_day;
+  const snapshotJstDay = data.source_snapshot_jst_day;
+  if (!isJstDay(beginJstDay) || !isJstDay(snapshotJstDay) || beginJstDay !== snapshotJstDay) {
+    return null;
+  }
+  return beginJstDay;
+}
+
+/**
+ * `globalMaintenanceSnapshotMatches` accepts a clock so daily jobs can use
+ * today. External jobs must instead compare against their sealed JST slot;
+ * this UTC instant deterministically maps back to that same JST date.
+ */
+function referenceInstantForJstDay(jstDay: string): Date {
+  return new Date(`${jstDay}T00:00:00.000Z`);
+}
+
 function hasNewSameDayReceipts(
   receiptSnapshot: { sources: Array<{ receipt_at: string }> },
   begunAt: string,
@@ -439,19 +462,25 @@ export async function finalizeExternalDreamcycle(
 export async function externalDreamcycleFinalizerBatchMatches(
   engine: BrainEngine,
   data: Record<string, unknown>,
-  opts: { now?: Date; currentSources?: SourceRow[] } = {},
+  opts: {
+    /** Test-only compatibility clock; never selects the sealed batch slot. */
+    now?: Date;
+    currentSources?: SourceRow[];
+  } = {},
 ): Promise<boolean> {
   try {
     if (!(await hasExternalDreamcycleAuthority(engine))) return false;
-    const now = opts.now ?? new Date();
-    const jstDay = getJSTDaySlot(now);
-    const begin = await loadExternalDreamcycleBegin(engine, jstDay);
+    // A global job can be claimed after JST midnight. Its sealed batch day is
+    // authoritative; never derive this from the worker clock or an option.
+    const batchJstDay = sealedExternalDreamcycleBatchDay(data);
+    if (!batchJstDay) return false;
+    const begin = await loadExternalDreamcycleBegin(engine, batchJstDay);
     if (!begin) return false;
     if (
       data.finalizer_origin !== EXTERNAL_DREAMCYCLE_AUTHORITY ||
       data.external_dreamcycle_begin_job_id !== begin.job_id ||
       data.external_dreamcycle_begin_revision !== begin.revision ||
-      data.external_dreamcycle_begin_jst_day !== begin.jst_day ||
+      begin.jst_day !== batchJstDay ||
       data.external_dreamcycle_begin_at !== begin.begun_at
     ) {
       return false;
@@ -461,15 +490,15 @@ export async function externalDreamcycleFinalizerBatchMatches(
     const membership = createExternalDreamcycleSourceSnapshot(sources);
     if (!membership || membership.revision !== begin.revision) return false;
 
-    const receipts = createGlobalMaintenanceSourceSnapshot(sources, jstDay);
+    const receipts = createGlobalMaintenanceSourceSnapshot(sources, batchJstDay);
     if (!receipts || !hasNewSameDayReceipts(receipts, begin.begun_at)) return false;
 
     return globalMaintenanceSnapshotMatches(
       data.source_snapshot,
       data.source_snapshot_revision,
-      data.source_snapshot_jst_day,
+      batchJstDay,
       sources,
-      now,
+      referenceInstantForJstDay(batchJstDay),
     );
   } catch {
     return false;

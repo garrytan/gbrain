@@ -1935,7 +1935,11 @@ export async function registerBuiltinHandlers(
     } catch {
       return globalDeferred('source_listing_unavailable');
     }
-    if (!globalMaintenanceSnapshotMatches(
+    // Daily/legacy finalizers are bound to today's slot. The external CLI
+    // finalizer is different: its authoritative slot is sealed in the job and
+    // is verified below, so it remains valid when a worker claims it after
+    // JST midnight instead of being compared to the worker's current day.
+    if (finalizerOrigin !== 'external_dreamcycle' && !globalMaintenanceSnapshotMatches(
       job.data.source_snapshot,
       job.data.source_snapshot_revision,
       job.data.source_snapshot_jst_day,
