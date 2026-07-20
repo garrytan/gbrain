@@ -6,7 +6,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, StaleTakesOpts,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactKind, FactVisibility, FactInsertStatus,
@@ -4088,6 +4088,7 @@ export class PostgresEngine implements BrainEngine {
    * type exactly. Initialized lazily in `insertFacts`.
    */
   private _factsEmbeddingCastSuffix: '::vector' | '::halfvec' | null = null;
+  private _takesEmbeddingCastSuffix: '::vector' | '::halfvec' | null = null;
 
   /** Test seam: clear the cached cast suffix so tests can re-probe. */
   __resetFactsEmbeddingCastCacheForTest(): void {
@@ -4128,6 +4129,30 @@ export class PostgresEngine implements BrainEngine {
       this._factsEmbeddingCastSuffix = '::vector';
     }
     return this._factsEmbeddingCastSuffix;
+  }
+
+  private async resolveTakesEmbeddingCast(): Promise<'::vector' | '::halfvec'> {
+    if (this._takesEmbeddingCastSuffix !== null) return this._takesEmbeddingCastSuffix;
+    const sql = this.sql;
+    try {
+      const rows = await sql<Array<{ formatted: string | null }>>`
+        SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname = 'takes'
+           AND a.attname = 'embedding'
+           AND NOT a.attisdropped
+      `;
+      const formatted = rows?.[0]?.formatted ?? null;
+      this._takesEmbeddingCastSuffix = formatted && /halfvec\(\d+\)/i.test(formatted)
+        ? '::halfvec'
+        : '::vector';
+    } catch {
+      this._takesEmbeddingCastSuffix = '::vector';
+    }
+    return this._takesEmbeddingCastSuffix;
   }
 
   async insertFacts(
@@ -4822,23 +4847,48 @@ export class PostgresEngine implements BrainEngine {
     return out;
   }
 
-  async countStaleTakes(): Promise<number> {
+  async setTakeEmbedding(takeId: number, embedding: Float32Array): Promise<boolean> {
+    const sql = this.sql;
+    const embedLit = toPgVectorLiteral(embedding);
+    const castSuffix = await this.resolveTakesEmbeddingCast();
+    const result = await sql`
+      UPDATE takes SET
+        embedding = ${sql.unsafe(`'${embedLit}'${castSuffix}`)},
+        embedded_at = now(),
+        updated_at = now()
+      WHERE id = ${takeId}
+      RETURNING 1
+    `;
+    return result.length > 0;
+  }
+
+  async countStaleTakes(opts: { sourceId?: string } = {}): Promise<number> {
     const sql = this.sql;
     const [row] = await sql`
-      SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL
+      SELECT count(*)::int AS count
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active
+        AND t.embedding IS NULL
+        AND (${opts.sourceId ?? null}::text IS NULL OR p.source_id = ${opts.sourceId ?? null})
     `;
     return Number((row as { count?: number } | undefined)?.count ?? 0);
   }
 
-  async listStaleTakes(): Promise<StaleTakeRow[]> {
+  async listStaleTakes(opts: StaleTakesOpts = {}): Promise<StaleTakeRow[]> {
     const sql = this.sql;
+    const limit = Math.max(1, Math.min(10_000, opts.batchSize ?? 2000));
+    const afterTakeId = opts.afterTakeId ?? 0;
     const rows = await sql`
-      SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim
+      SELECT t.id AS take_id, p.source_id, p.slug AS page_slug, t.row_num, t.claim
       FROM takes t
       JOIN pages p ON p.id = t.page_id
-      WHERE t.active AND t.embedding IS NULL
+      WHERE t.active
+        AND t.embedding IS NULL
+        AND t.id > ${afterTakeId}
+        AND (${opts.sourceId ?? null}::text IS NULL OR p.source_id = ${opts.sourceId ?? null})
       ORDER BY t.id
-      LIMIT 100000
+      LIMIT ${limit}
     `;
     return rows as unknown as StaleTakeRow[];
   }

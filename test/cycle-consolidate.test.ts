@@ -152,6 +152,84 @@ describe('runPhaseConsolidate', () => {
     }
   });
 
+  test('display-name entity_slug resolves to an existing entity page', async () => {
+    const pageId = await engine.putPage('wiki/people/brad-mills', {
+      title: 'Brad Mills',
+      type: 'person' as const,
+      compiled_truth: '# Brad Mills\n',
+    });
+    for (let i = 0; i < 3; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
+         VALUES ('default', 'Brad Mills', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
+        [`brad display-name fact ${i}`, oldDate(), unitVec()],
+      );
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.facts_consolidated).toBe(3);
+    expect(r.details.takes_written).toBe(1);
+    expect((r.details.resolved_by as Record<string, number>).exact).toBeGreaterThanOrEqual(1);
+    const takes = await engine.executeRaw<{ page_id: number }>(`SELECT page_id FROM takes`);
+    expect(takes[0]?.page_id).toBe(pageId.id);
+  });
+
+  test('fuzzy entity resolution is audited and counted in the phase result', async () => {
+    const pageId = await engine.putPage('wiki/companies/beyond-the-checkout', {
+      title: 'Beyond the Checkout',
+      type: 'company' as const,
+      compiled_truth: '# Beyond the Checkout\n',
+    });
+    for (let i = 0; i < 3; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
+         VALUES ('default', 'Beyond Checkout', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
+        [`beyond checkout fuzzy fact ${i}`, oldDate(), unitVec()],
+      );
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.facts_consolidated).toBe(3);
+    expect(r.details.takes_written).toBe(1);
+    expect(r.summary).toContain('fuzzy');
+    expect((r.details.resolved_by as Record<string, number>).fuzzy).toBeGreaterThanOrEqual(1);
+    const samples = r.details.fuzzy_resolution_samples as Array<{ entity_slug: string; page_slug: string; score: number }>;
+    expect(samples.length).toBeGreaterThanOrEqual(1);
+    expect(samples[0].entity_slug).toBe('Beyond Checkout');
+    expect(samples[0].page_slug).toBe('wiki/companies/beyond-the-checkout');
+    expect(samples[0].score).toBeGreaterThanOrEqual(0.55);
+
+    const takes = await engine.executeRaw<{ page_id: number }>(`SELECT page_id FROM takes`);
+    expect(takes[0]?.page_id).toBe(pageId.id);
+  });
+
+  test('cycle.consolidate.fuzzy_resolve_min_score can disable loose fuzzy matches', async () => {
+    await engine.setConfig('cycle.consolidate.fuzzy_resolve_min_score', '0.99');
+    try {
+      await engine.putPage('wiki/companies/beyond-the-checkout', {
+        title: 'Beyond the Checkout',
+        type: 'company' as const,
+        compiled_truth: '# Beyond the Checkout\n',
+      });
+      for (let i = 0; i < 3; i++) {
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
+           VALUES ('default', 'Beyond Checkout', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
+          [`beyond checkout gated fact ${i}`, oldDate(), unitVec()],
+        );
+      }
+
+      const r = await runPhaseConsolidate(engine, {});
+      expect(r.details.facts_consolidated).toBe(0);
+      expect(r.details.takes_written).toBe(0);
+      expect(r.details.fuzzy_resolve_min_score).toBe(0.99);
+      expect((r.details.resolved_by as Record<string, number>).fuzzy).toBe(0);
+      expect(r.details.buckets_missing_page).toBeGreaterThanOrEqual(1);
+    } finally {
+      await engine.unsetConfig('cycle.consolidate.fuzzy_resolve_min_score');
+    }
+  });
+
   test('skips bucket when no matching page exists in source', async () => {
     // Don't seed a page — entity_slug 'no-page' won't resolve.
     for (let i = 0; i < 4; i++) {

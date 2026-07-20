@@ -9,7 +9,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, StaleTakesOpts,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactKind, FactVisibility, FactInsertStatus,
@@ -4712,21 +4712,47 @@ export class PGLiteEngine implements BrainEngine {
     return out;
   }
 
-  async countStaleTakes(): Promise<number> {
+  async setTakeEmbedding(takeId: number, embedding: Float32Array): Promise<boolean> {
+    const embedStr = toPgVectorLiteral(embedding);
+    const result = await this.db.query(
+      `UPDATE takes SET
+         embedding = $2::vector,
+         embedded_at = now(),
+         updated_at = now()
+       WHERE id = $1
+       RETURNING 1`,
+      [takeId, embedStr],
+    );
+    return result.rows.length > 0;
+  }
+
+  async countStaleTakes(opts: { sourceId?: string } = {}): Promise<number> {
     const { rows } = await this.db.query(
-      `SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL`
+      `SELECT count(*)::int AS count
+       FROM takes t
+       JOIN pages p ON p.id = t.page_id
+       WHERE t.active
+         AND t.embedding IS NULL
+         AND ($1::text IS NULL OR p.source_id = $1)`,
+      [opts.sourceId ?? null],
     );
     return Number((rows[0] as { count?: number } | undefined)?.count ?? 0);
   }
 
-  async listStaleTakes(): Promise<StaleTakeRow[]> {
+  async listStaleTakes(opts: StaleTakesOpts = {}): Promise<StaleTakeRow[]> {
+    const limit = Math.max(1, Math.min(10_000, opts.batchSize ?? 2000));
+    const afterTakeId = opts.afterTakeId ?? 0;
     const { rows } = await this.db.query(
-      `SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim
+      `SELECT t.id AS take_id, p.source_id, p.slug AS page_slug, t.row_num, t.claim
        FROM takes t
        JOIN pages p ON p.id = t.page_id
-       WHERE t.active AND t.embedding IS NULL
+       WHERE t.active
+         AND t.embedding IS NULL
+         AND t.id > $1
+         AND ($2::text IS NULL OR p.source_id = $2)
        ORDER BY t.id
-       LIMIT 100000`
+       LIMIT $3`,
+      [afterTakeId, opts.sourceId ?? null, limit],
     );
     return rows as unknown as StaleTakeRow[];
   }
