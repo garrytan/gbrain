@@ -407,6 +407,28 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(data.error).toBe('invalid_grant');
   });
 
+  test('confidential client can revoke its token only with its valid secret', async () => {
+    const { access_token } = await mintToken('read');
+    const wrongSecret = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=gbrain_cs_wrong_secret`,
+    });
+    expect(wrongSecret.status).toBe(401);
+    expect((await wrongSecret.json() as any).error).toBe('invalid_client');
+
+    // A rejected revoke request must leave the token usable.
+    expect((await mcpCall(access_token, 'tools/list')).status).not.toBe(401);
+
+    const revoke = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(revoke.status).toBe(200);
+    expect((await mcpCall(access_token, 'tools/list')).status).toBeGreaterThanOrEqual(400);
+  }, 15_000);
+
   // =========================================================================
   // v0.26.2: DCR /register response shape (RFC 7591 §3.2.1 number contract)
   // =========================================================================

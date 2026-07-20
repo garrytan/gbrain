@@ -745,6 +745,46 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // The SDK's /revoke handler compares the presented secret with
+  // client.client_secret as plaintext. GBrain stores only a SHA-256 hash, so
+  // confidential clients need the same hash-aware validation used above for
+  // authorization_code and refresh_token exchanges. Public clients present no
+  // secret and continue through to the SDK's PKCE-compatible handler.
+  app.post('/revoke', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
+    const token = req.body?.token;
+    const bodySecret: string | undefined = req.body?.client_secret;
+    let clientId: string | undefined = req.body?.client_id;
+    let presentedSecret: string | undefined = bodySecret;
+    const authHeader = (req.headers.authorization ?? '').toString();
+    if (!presentedSecret && authHeader.startsWith('Basic ')) {
+      try {
+        const decoded = Buffer.from(authHeader.slice('Basic '.length), 'base64').toString('utf8');
+        const idx = decoded.indexOf(':');
+        if (idx > -1) {
+          clientId ||= decodeURIComponent(decoded.slice(0, idx));
+          presentedSecret = decodeURIComponent(decoded.slice(idx + 1));
+        }
+      } catch {
+        // Let the SDK return its canonical response for malformed Basic auth.
+      }
+    }
+    if (!clientId || !presentedSecret) return next();
+
+    try {
+      const client = await oauthProvider.verifyConfidentialClientSecret(clientId, presentedSecret);
+      if (!token) {
+        res.status(400).json({ error: 'invalid_request', error_description: 'token required' });
+        return;
+      }
+      await oauthProvider.revokeToken(client, { token });
+      // RFC 7009 §2.2: successful revocation, including an unknown token, is 200.
+      res.status(200).end();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Invalid client';
+      res.status(401).json({ error: 'invalid_client', error_description: msg });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
