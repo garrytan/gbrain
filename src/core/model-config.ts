@@ -8,9 +8,16 @@
  *   2. New-key config (e.g. models.dream.synthesize)
  *   3. Old-key config (deprecated dream.synthesize.model, dream.patterns.model)
  *      — read with stderr deprecation warning, one-per-process
- *   4. Global default (models.default)
- *   5. Env var (process.env[envVar] or GBRAIN_MODEL)
- *   6. Hardcoded fallback (caller-supplied)
+ *   4. Tier override (models.tier.<tier>) — when a `tier` is supplied
+ *   5. Global default (models.default)
+ *   6. Env var (process.env[envVar] or GBRAIN_MODEL)
+ *   7. Tier default (TIER_DEFAULTS[tier]) — when a `tier` is supplied
+ *   8. Hardcoded fallback (caller-supplied)
+ *
+ * The tier override sits ABOVE the global default: a caller that names a
+ * tier AND has `models.tier.<tier>` configured routes to that model even
+ * when a broad `models.default` is also set. (Pre-fix the order was flipped
+ * and `models.default` swallowed every tier override.)
  *
  * Aliases (`opus`, `sonnet`, `haiku`, `gemini`, `gpt`) resolve at the end so any
  * tier can use a short name. Unknown alias passes through unchanged so users can
@@ -35,13 +42,15 @@ export interface ResolveModelOpts {
   /** Env var to consult after global default. Defaults to `GBRAIN_MODEL`. */
   envVar?: string;
   /**
-   * Tier classification (v0.31.12). Looked up after `models.default` and
-   * before the env var. Routing groups: `utility` (haiku-class, classification
-   * + expansion + verdict), `reasoning` (sonnet-class, default chat +
-   * synthesis + fact extraction), `deep` (opus-class, expensive reasoning),
-   * `subagent` (Anthropic-only multi-turn tool loop — never inherits a
-   * non-Anthropic `models.default`; falls back to TIER_DEFAULTS.subagent
-   * with a one-shot stderr warn instead).
+   * Tier classification (v0.31.12). The `models.tier.<tier>` override is
+   * looked up BEFORE `models.default` and the env var, so a tier caller's
+   * configured model wins over the broad default. Routing groups: `utility`
+   * (haiku-class, classification + expansion + verdict), `reasoning`
+   * (sonnet-class, default chat + synthesis + fact extraction), `deep`
+   * (opus-class, expensive reasoning), `subagent` (Anthropic-only multi-turn
+   * tool loop — when it falls through to a non-Anthropic `models.default`,
+   * the capability gate falls back to TIER_DEFAULTS.subagent with a one-shot
+   * stderr warn instead).
    */
   tier?: ModelTier;
   /** Hardcoded last-resort fallback. */
@@ -166,20 +175,27 @@ export async function resolveModel(
       }
     }
 
-    // 4. Global default
-    const def = await engine.getConfig('models.default');
-    if (def && def.trim()) {
-      const resolved = await resolveAlias(engine, def.trim());
-      return enforceSubagentCapable(resolved, opts.tier, 'models.default');
-    }
-
-    // 5. Tier override (v0.31.12)
+    // 4. Tier override (v0.31.12). Checked BEFORE the global default so a
+    //    `tier:'reasoning'` (or any tier) caller with an explicit
+    //    `models.tier.<tier>` config wins over a broad `models.default`.
+    //    Pre-fix this lived below `models.default`, which made a set
+    //    `models.default` swallow every tier override — a tier caller could
+    //    never route to its own configured model. The explicit-configKey
+    //    (steps 2–3) and CLI flag (step 1) still outrank the tier override,
+    //    and the subagent capability gate still runs on the resolved value.
     if (opts.tier) {
       const tierVal = await engine.getConfig(`models.tier.${opts.tier}`);
       if (tierVal && tierVal.trim()) {
         const resolved = await resolveAlias(engine, tierVal.trim());
         return enforceSubagentCapable(resolved, opts.tier, `models.tier.${opts.tier}`);
       }
+    }
+
+    // 5. Global default
+    const def = await engine.getConfig('models.default');
+    if (def && def.trim()) {
+      const resolved = await resolveAlias(engine, def.trim());
+      return enforceSubagentCapable(resolved, opts.tier, 'models.default');
     }
   }
 

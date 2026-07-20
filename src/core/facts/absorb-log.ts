@@ -141,6 +141,16 @@ export function classifyFactsAbsorbError(err: unknown): FactsAbsorbReason {
   if (name === 'QueueOverflowError' || /queue.*overflow|cap.*hit/i.test(msg)) return 'queue_overflow';
   if (name === 'QueueShutdownError' || /queue.*shutdown|shutting down/i.test(msg)) return 'queue_shutdown';
 
+  // Abort race (RC2): when the facts queue shuts down on CLI exit it fires
+  // `internalAbort.abort()`, which cancels an in-flight chat() mid-synthesis.
+  // The provider surfaces this as an AbortError / "The operation was aborted"
+  // string with none of the queue-shutdown wording above, so it used to fall
+  // through to the catch-all `pipeline_error` — misattributing a benign
+  // shutdown race to a genuine synthesis failure. Bucket it as `queue_shutdown`
+  // (it IS a shutdown-driven cancellation) so doctor + dashboard categorize it
+  // correctly and don't inflate the pipeline-error rate.
+  if (name === 'AbortError' || /operation was aborted|AbortError/i.test(msg)) return 'queue_shutdown';
+
   // Embed-specific: extract.ts catches embedOne errors and stores NULL embedding.
   // If a caller surfaces it explicitly, route to embed_failure.
   if (/embed/i.test(msg) && /(fail|error)/i.test(msg)) return 'embed_failure';

@@ -59,6 +59,25 @@ describe('classifyFactsAbsorbError — reason routing', () => {
     expect(classifyFactsAbsorbError(new Error('queue is shutting down'))).toBe('queue_shutdown');
   });
 
+  test('abort race (RC2) → queue_shutdown, not pipeline_error', () => {
+    // The facts queue's shutdown() fires internalAbort.abort() on CLI exit,
+    // cancelling an in-flight chat() mid-synthesis. Providers surface this as
+    // an AbortError / "The operation was aborted" with none of the
+    // queue-shutdown wording, so it used to fall through to pipeline_error.
+    // It's a shutdown-driven cancellation → categorize it as queue_shutdown.
+    const aborted = new Error('The operation was aborted');
+    expect(classifyFactsAbsorbError(aborted)).toBe('queue_shutdown');
+    const named = new Error('aborted');
+    named.name = 'AbortError';
+    expect(classifyFactsAbsorbError(named)).toBe('queue_shutdown');
+    // The live-log shape that motivated the fix.
+    expect(
+      classifyFactsAbsorbError(
+        new Error('[chat(openrouter:deepseek/deepseek-v4-flash)] The operation was aborted'),
+      ),
+    ).toBe('queue_shutdown');
+  });
+
   test('embed-specific failure → embed_failure', () => {
     expect(classifyFactsAbsorbError(new Error('embedOne failed: dim mismatch'))).toBe('embed_failure');
   });
