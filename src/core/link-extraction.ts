@@ -28,7 +28,10 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+// Issue #1493: bumped for the any-dir exact-path wikilink pass so
+// already-stamped pages re-extract on the next `extract --stale` sweep
+// and gain their newly-resolvable path-shaped edges.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-18T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -60,6 +63,16 @@ export interface EntityRef {
    * LinkCandidate per resolved match.
    */
   needsResolution?: boolean;
+  /**
+   * Issue #1493 (generalized path resolution): set when the ref came from
+   * the path-shaped any-directory wikilink passes (2a'/2b') — the target
+   * is `dir/.../name` in canonical slug form but the top-level dir is NOT
+   * in the DIR_PATTERN whitelist. The `slug` field IS the literal slug the
+   * author wrote; extractPageLinks verifies it exists (exact match, via
+   * `SlugResolver.slugExists`) before emitting a candidate, and records a
+   * miss in the unresolved report instead of dropping it silently.
+   */
+  exactPath?: boolean;
 }
 
 /**
@@ -114,6 +127,39 @@ const WIKILINK_RE = new RegExp(
 );
 
 /**
+ * Issue #1493 (generalized path resolution): one path segment in canonical
+ * slug form. Conservative ASCII subset of sync.ts's SLUG_SEGMENT_PATTERN:
+ * must START with [a-z0-9] (so `..`/`.hidden` relative-path segments never
+ * match) and may continue with dots, underscores and hyphens (`janus-ui`,
+ * `v1.0.0`, `foo_bar`). CJK slugs are deliberately NOT covered here — they
+ * keep the pre-existing behavior (generic pass 2c / basename resolution).
+ */
+const SLUG_PATH_SEGMENT = '[a-z0-9][a-z0-9._-]*';
+
+/**
+ * Issue #1493: path-shaped wikilink `[[dir/name]]` / `[[dir/sub/name]]`
+ * (>= 2 segments) with ANY directory prefix — NOT gated by DIR_PATTERN.
+ * The whitelist silently dropped every wikilink whose target lives outside
+ * the recognized entity dirs (`[[janus/agents/drift-check]]`), losing the
+ * authored graph with no candidate and no unresolved report.
+ *
+ * Unlike the #972 bare-name pass (fuzzy by design, opt-in), a path-shaped
+ * target is already an exact slug: it resolves by exact match against
+ * existing pages, so it is safe to run by default
+ * (`link_resolution.any_dir_exact_path`, default on).
+ *
+ * Runs AFTER WIKILINK_RE with its spans masked, so whitelisted dirs keep
+ * their existing pass (2b) untouched; anything this matches has a
+ * non-whitelisted top dir. Same alias/anchor tail shape as WIKILINK_RE.
+ * The strict slug grammar means targets with uppercase or spaces do NOT
+ * match — they fall through to the generic pass 2c as before.
+ */
+const WIKILINK_ANY_PATH_RE = new RegExp(
+  `\\[\\[(${SLUG_PATH_SEGMENT}(?:\\/${SLUG_PATH_SEGMENT})+)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  'g',
+);
+
+/**
  * v0.17.0: qualified wikilink `[[source-id:dir/slug]]` or
  * `[[source-id:dir/slug|Display Text]]`. The source-id segment pins the
  * target to a specific sources(id) row, overriding the local-first
@@ -127,6 +173,18 @@ const WIKILINK_RE = new RegExp(
  */
 const QUALIFIED_WIKILINK_RE = new RegExp(
   `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  'g',
+);
+
+/**
+ * Issue #1493: qualified variant of WIKILINK_ANY_PATH_RE —
+ * `[[source-id:dir/name]]` with a non-whitelisted dir. Previously these
+ * were dropped by ALL passes: QUALIFIED_WIKILINK_RE requires DIR_PATTERN
+ * and the generic pass 2c skips any token containing `:`. Runs after
+ * QUALIFIED_WIKILINK_RE with its spans masked, same source-id grammar.
+ */
+const QUALIFIED_WIKILINK_ANY_PATH_RE = new RegExp(
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${SLUG_PATH_SEGMENT}(?:\\/${SLUG_PATH_SEGMENT})+)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -318,6 +376,16 @@ export function extractEntityRefs(content: string): EntityRef[] {
     markdownRanges.push([match.index, match.index + match[0].length]);
   }
 
+  // Issue #972 (codex [P2]) / #1493: markdown-link labels containing a
+  // wikilink — `[see [[acme]]](companies/acme.md)` — are masked out of the
+  // generalized (2a'/2b') and generic (2c) scans so the inner `[[...]]`
+  // stays inert. Computed once up front; consumed by those passes below.
+  const labelWikilinkRanges: Array<[number, number]> = [];
+  const labelWlPattern = new RegExp(MARKDOWN_LABEL_WIKILINK_RE.source, MARKDOWN_LABEL_WIKILINK_RE.flags);
+  while ((match = labelWlPattern.exec(stripped)) !== null) {
+    labelWikilinkRanges.push([match.index, match.index + match[0].length]);
+  }
+
   // 2a. v0.17.0 qualified wikilinks: [[source-id:path]] or [[source-id:path|Display]]
   //     Must run BEFORE the unqualified pass or we'd double-emit. We also
   //     mask out the matched spans so pass 2b can't grab them.
@@ -335,10 +403,31 @@ export function extractEntityRefs(content: string): EntityRef[] {
     qualifiedRanges.push([match.index, match.index + match[0].length]);
   }
 
+  // 2a'. Issue #1493: qualified path-shaped wikilinks outside DIR_PATTERN
+  //      ([[src:janus/foo]]). Masked by 2a's spans so whitelisted qualified
+  //      links are never re-emitted. Tagged `exactPath: true`; the target
+  //      may live in a different source, so existence is left to the
+  //      caller's cross-source resolution (same as whitelisted qualified
+  //      refs) — extractPageLinks does NOT slugExists-check qualified refs.
+  const qualifiedPathRanges: Array<[number, number]> = [];
+  const qualAnyMasked = maskRanges(stripped, [...qualifiedRanges, ...labelWikilinkRanges]);
+  const qualAnyPattern = new RegExp(QUALIFIED_WIKILINK_ANY_PATH_RE.source, QUALIFIED_WIKILINK_ANY_PATH_RE.flags);
+  while ((match = qualAnyPattern.exec(qualAnyMasked)) !== null) {
+    const sourceId = match[1];
+    let slug = match[2].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[3] || slug).trim();
+    const dir = slug.split('/')[0];
+    refs.push({ name: displayName, slug, dir, sourceId, exactPath: true });
+    qualifiedPathRanges.push([match.index, match.index + match[0].length]);
+  }
+
   // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
   //     Same shape rule: omit sourceId when unqualified.
   const unqualifiedRanges: Array<[number, number]> = [];
-  const unmasked = maskRanges(stripped, qualifiedRanges);
+  const unmasked = maskRanges(stripped, [...qualifiedRanges, ...qualifiedPathRanges]);
   const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
   while ((match = wikiPattern.exec(unmasked)) !== null) {
     let slug = match[1].trim();
@@ -351,24 +440,45 @@ export function extractEntityRefs(content: string): EntityRef[] {
     unqualifiedRanges.push([match.index, match.index + match[0].length]);
   }
 
+  // 2b'. Issue #1493: path-shaped wikilinks with ANY directory prefix
+  //      ([[janus/agents/drift-check]], [[janus-ui/docs/tier2-agent-plan]]).
+  //      Masked by 2b's spans so whitelisted dirs keep their existing pass
+  //      untouched — anything matched here has a non-whitelisted top dir.
+  //      Tagged `exactPath: true` so extractPageLinks verifies the slug
+  //      exists (exact match) before emitting, and records misses in the
+  //      unresolved report instead of silently dropping them.
+  const pathRanges: Array<[number, number]> = [];
+  const anyPathMasked = maskRanges(
+    stripped,
+    [...markdownRanges, ...qualifiedRanges, ...qualifiedPathRanges, ...unqualifiedRanges, ...labelWikilinkRanges],
+  );
+  const anyPathPattern = new RegExp(WIKILINK_ANY_PATH_RE.source, WIKILINK_ANY_PATH_RE.flags);
+  while ((match = anyPathPattern.exec(anyPathMasked)) !== null) {
+    let slug = match[1].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[2] || slug).trim();
+    const dir = slug.split('/')[0];
+    refs.push({ name: displayName, slug, dir, exactPath: true });
+    pathRanges.push([match.index, match.index + match[0].length]);
+  }
+
   // 2c. Issue #972: generic `[[bare-name]]` wikilinks not gated by
   //     DIR_PATTERN. Wiki/topic/learning content frequently uses these
   //     where the bare text isn't a canonical brain slug. Tagged
   //     `needsResolution: true` so the caller routes them through a
   //     SlugResolver's `resolveBasenameMatches` before persisting.
-  //     Mask out 2a/2b ranges so we don't double-emit; skip qualified-
-  //     syntax tokens (contain `:`) that would be 2a's job. Issue #972
-  //     (codex [P2]): ALSO mask pass-1 markdown-link ranges so a wikilink
-  //     inside a markdown label — `[see [[acme]]](companies/acme.md)` —
-  //     doesn't spawn a stray generic basename ref from inside the label.
-  const labelWikilinkRanges: Array<[number, number]> = [];
-  const labelWlPattern = new RegExp(MARKDOWN_LABEL_WIKILINK_RE.source, MARKDOWN_LABEL_WIKILINK_RE.flags);
-  while ((match = labelWlPattern.exec(stripped)) !== null) {
-    labelWikilinkRanges.push([match.index, match.index + match[0].length]);
-  }
+  //     Mask out 2a/2a'/2b/2b' ranges so we don't double-emit; skip
+  //     qualified-syntax tokens (contain `:`) that would be 2a's job.
+  //     Issue #972 (codex [P2]): ALSO mask pass-1 markdown-link ranges
+  //     (via labelWikilinkRanges, computed above 2a) so a wikilink inside
+  //     a markdown label — `[see [[acme]]](companies/acme.md)` — doesn't
+  //     spawn a stray generic basename ref from inside the label.
   const genericMasked = maskRanges(
     stripped,
-    [...markdownRanges, ...qualifiedRanges, ...unqualifiedRanges, ...labelWikilinkRanges],
+    [...markdownRanges, ...qualifiedRanges, ...qualifiedPathRanges,
+     ...unqualifiedRanges, ...pathRanges, ...labelWikilinkRanges],
   );
   const genericPattern = new RegExp(WIKILINK_GENERIC_RE.source, WIKILINK_GENERIC_RE.flags);
   while ((match = genericPattern.exec(genericMasked)) !== null) {
@@ -431,6 +541,18 @@ export interface LinkCandidate {
   originSlug?: string;
   /** Frontmatter field name (e.g. 'key_people'), for debug + unresolved report. */
   originField?: string;
+  /**
+   * Issue #1493 (codex P1): source pin from a qualified wikilink
+   * `[[source-id:slug]]`, threaded from EntityRef.sourceId. Callers doing
+   * cross-source resolution (resolveCandidateSources) must honor it — the
+   * target must exist in THIS source — instead of applying the
+   * local-first/default fallback used by unqualified refs. Absent =
+   * unqualified. Pre-#1493 the pin was dropped at this layer for EVERY
+   * qualified wikilink (whitelisted dirs included), so `[[b:slug]]`
+   * written in source `a` either linked to a same-slug page in `a`/default
+   * (misdirected) or vanished; now the pinned source wins.
+   */
+  targetSourceId?: string;
 }
 
 /**
@@ -468,9 +590,19 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; anyDirExactPath?: boolean } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
+  // Issue #1493: path-shaped wikilink targets that failed the exact-match
+  // existence check. Surfaced through the same unresolved report as
+  // frontmatter misses (field='wikilink') so the gap is visible in the
+  // put_page auto_links response and the extract summary — never silently
+  // dropped, never written as a ghost edge. Deduped by target within page.
+  const wikilinkUnresolved: UnresolvedFrontmatterRef[] = [];
+  const wikilinkUnresolvedSeen = new Set<string>();
+  // Default ON: exact slug match can't false-positive the way basename
+  // matching can, so unlike global_basename this needs no opt-in.
+  const anyDirExactPath = opts.anyDirExactPath !== false;
 
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
@@ -506,6 +638,30 @@ export async function extractPageLinks(
       }
       continue;
     }
+    // Issue #1493: path-shaped wikilink outside the DIR_PATTERN whitelist.
+    // The written target IS a canonical slug — verify it exists (exact
+    // match, no fuzzing) and then treat it exactly like a whitelisted
+    // wikilink (verb-inferred type, linkSource 'markdown', reconcilable).
+    if (ref.exactPath) {
+      if (!anyDirExactPath) continue; // gated off → legacy silent drop
+      // Qualified refs ([[src:janus/foo]]) pin a target in a possibly
+      // different source; the resolver's snapshot is scoped to THIS source,
+      // so existence is left to the caller's cross-source endpoint check —
+      // the same dead-link protection whitelisted qualified refs get.
+      if (ref.sourceId == null && typeof resolver.slugExists === 'function') {
+        if (!(await resolver.slugExists(ref.slug))) {
+          if (!wikilinkUnresolvedSeen.has(ref.slug)) {
+            wikilinkUnresolvedSeen.add(ref.slug);
+            wikilinkUnresolved.push({ field: 'wikilink', name: ref.slug });
+          }
+          continue;
+        }
+      }
+      // Falls through to the shared emission below. When the resolver
+      // lacks slugExists (nullResolver in extract --stale, synthetic test
+      // resolvers), the candidate goes out unverified and the caller's
+      // existing dead-link filter drops misses.
+    }
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -517,6 +673,10 @@ export async function extractPageLinks(
       linkType: inferLinkType(pageType, context, content, ref.slug),
       context,
       linkSource: 'markdown',
+      // Issue #1493 (codex P1): carry the qualified-wikilink source pin
+      // ([[src:slug]] → EntityRef.sourceId) so resolveCandidateSources can
+      // honor it. Applies to whitelisted AND any-dir qualified refs alike.
+      ...(ref.sourceId ? { targetSourceId: ref.sourceId } : {}),
     });
   }
 
@@ -524,14 +684,30 @@ export async function extractPageLinks(
   // Limited to the same entity directories ENTITY_REF_RE covers.
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
+  // Issue #1493 (codex P1, tightened in round 2): mask qualified-wikilink
+  // spans out of the bare-slug scan. The slug tail inside
+  // `[[src:people/alice]]` double-matches here; pass 2a/2a' already emitted
+  // it WITH its source pin, and since the pin is part of the dedup key the
+  // unpinned duplicate would persist a second edge. Masking the exact
+  // wikilink spans (instead of skipping any `:`-preceded match) keeps
+  // legitimate prose like `Owner:people/alice` extracting as before.
+  const qualifiedSpans: Array<[number, number]> = [];
+  for (const re of [QUALIFIED_WIKILINK_RE, QUALIFIED_WIKILINK_ANY_PATH_RE]) {
+    const p = new RegExp(re.source, re.flags);
+    let qm: RegExpExecArray | null;
+    while ((qm = p.exec(strippedContent)) !== null) {
+      qualifiedSpans.push([qm.index, qm.index + qm[0].length]);
+    }
+  }
+  const bareScan = maskRanges(strippedContent, qualifiedSpans);
   const bareRe = new RegExp(
     `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
     'g',
   );
   let m: RegExpExecArray | null;
-  while ((m = bareRe.exec(strippedContent)) !== null) {
+  while ((m = bareRe.exec(bareScan)) !== null) {
     // Skip matches that are part of a markdown link (already handled above).
-    const charBefore = m.index > 0 ? strippedContent[m.index - 1] : '';
+    const charBefore = m.index > 0 ? bareScan[m.index - 1] : '';
     if (charBefore === '/' || charBefore === '(') continue;
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
@@ -568,12 +744,17 @@ export async function extractPageLinks(
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {
-    const key = `${c.fromSlug ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}`;
+    // Issue #1493 (codex P1): targetSourceId participates in the key — a
+    // pinned `[[b:slug]]` and an unqualified `[[slug]]` can resolve to
+    // different (to_slug, to_source_id) rows, so they must not collapse.
+    const key = `${c.fromSlug ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}\u0000${c.targetSourceId ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(c);
   }
-  return { candidates: result, unresolved: fmUnresolved };
+  // Issue #1493: wikilink misses ride alongside frontmatter misses in the
+  // one unresolved report.
+  return { candidates: result, unresolved: [...fmUnresolved, ...wikilinkUnresolved] };
 }
 
 /**
@@ -819,6 +1000,20 @@ export interface SlugResolver {
    * a single extract run (build the index once, reuse it).
    */
   resolveBasenameMatches?(name: string): Promise<string[]>;
+  /**
+   * Issue #1493 (generalized path resolution): exact-match existence check
+   * for a canonical slug. Used by extractPageLinks to verify path-shaped
+   * wikilink targets outside the DIR_PATTERN whitelist before emitting a
+   * candidate — a miss goes into the unresolved report, never a ghost edge.
+   *
+   * Optional like resolveBasenameMatches. When absent, extractPageLinks
+   * emits the candidate unverified and relies on the caller's existing
+   * dead-link protection (runAutoLink's allSlugs filter /
+   * resolveCandidateSources' endpoint check) — same treatment whitelisted
+   * refs get. Implementations should share the per-run slug snapshot with
+   * the basename index (one getAllSlugs call, reused).
+   */
+  slugExists?(slug: string): Promise<boolean>;
 }
 
 /**
@@ -899,30 +1094,63 @@ export function makeResolver(
   // index keys BOTH the raw tail and the slugified-tail so a wikilink
   // `[[Fast-Weigh]]` matches a page slugged `companies/fast-weigh` as
   // well as `notes/Fast-Weigh`.
-  let basenameIndex: Map<string, string[]> | null = null;
-  async function ensureBasenameIndex(): Promise<Map<string, string[]>> {
-    if (basenameIndex !== null) return basenameIndex;
-    const idx = new Map<string, string[]>();
+  // Issue #1493: the raw slug snapshot backing BOTH the basename index and
+  // the exact-match slugExists check. One getAllSlugs call per resolver
+  // instance, shared by both consumers. Load failure (or an engine without
+  // getAllSlugs) degrades to an empty set — resolveBasenameMatches finds
+  // nothing and slugExists returns false. Never throws.
+  let allSlugsSet: Set<string> | null = null;
+  async function ensureAllSlugsSet(): Promise<Set<string>> {
+    if (allSlugsSet !== null) return allSlugsSet;
     if (typeof engine.getAllSlugs !== 'function') {
-      basenameIndex = idx;
-      return idx;
+      allSlugsSet = new Set();
+      return allSlugsSet;
     }
     try {
-      // Issue #972 (codex [P1]): scope the basename index to the resolver's
+      // Issue #972 (codex [P1]): scope the slug snapshot to the resolver's
       // source. getAllSlugs({sourceId}) keeps wikilink resolution from
       // spanning unrelated sources — a bare [[name]] must NOT resolve to a
       // same-tail page in a DIFFERENT source and create a cross-source edge.
       // #972 is "global basename across folders," not "cross-source federation."
       const all = await engine.getAllSlugs(opts.sourceId ? { sourceId: opts.sourceId } : undefined);
-      // Issue #972 (codex [P2] DRY): one shared index builder for all surfaces.
-      basenameIndex = buildBasenameIndex(all);
-      return basenameIndex;
+      allSlugsSet = all instanceof Set ? all : new Set(all);
     } catch {
-      // Index build failed — empty map → resolveBasenameMatches finds
-      // nothing, resolver continues as if the flag was off. Never throw.
+      allSlugsSet = new Set();
     }
-    basenameIndex = idx;
-    return idx;
+    return allSlugsSet;
+  }
+
+  let basenameIndex: Map<string, string[]> | null = null;
+  async function ensureBasenameIndex(): Promise<Map<string, string[]>> {
+    if (basenameIndex !== null) return basenameIndex;
+    // Issue #972 (codex [P2] DRY): one shared index builder for all surfaces.
+    basenameIndex = buildBasenameIndex(await ensureAllSlugsSet());
+    return basenameIndex;
+  }
+
+  // Issue #1493 (codex P1): slugExists domain = scoped source ∪ 'default'.
+  // resolveCandidateSources resolves an unqualified target local-first,
+  // THEN falls back to the default source — so a source-scoped extract of
+  // source `a` must not pre-discard a candidate whose target lives only in
+  // `default` (whitelisted refs bypass slugExists and survive to that
+  // fallback; any-dir refs must survive the SAME resolution domain). The
+  // basename index deliberately stays scoped (#972 [P1]: no cross-source
+  // basename edges) — only exact-match existence gets the default overlay.
+  let slugExistsDomain: Set<string> | null = null;
+  async function ensureSlugExistsDomain(): Promise<Set<string>> {
+    if (slugExistsDomain !== null) return slugExistsDomain;
+    const scoped = await ensureAllSlugsSet();
+    if (!opts.sourceId || opts.sourceId === 'default' || typeof engine.getAllSlugs !== 'function') {
+      slugExistsDomain = scoped;
+      return slugExistsDomain;
+    }
+    try {
+      const def = await engine.getAllSlugs({ sourceId: 'default' });
+      slugExistsDomain = new Set([...scoped, ...def]);
+    } catch {
+      slugExistsDomain = scoped;
+    }
+    return slugExistsDomain;
   }
 
   return {
@@ -930,6 +1158,14 @@ export function makeResolver(
       // Issue #972 (codex [P2] DRY): shared query so resolver + FS + doctor
       // return the same matches in the same stable order.
       return queryBasenameIndex(await ensureBasenameIndex(), name);
+    },
+
+    async slugExists(slug: string): Promise<boolean> {
+      // Issue #1493: exact-match existence for path-shaped wikilink targets.
+      // Scoped-source snapshot plus the default-source fallback overlay
+      // (mirrors resolveCandidateSources' resolution domain); no fuzzing.
+      if (!slug || typeof slug !== 'string') return false;
+      return (await ensureSlugExistsDomain()).has(slug);
     },
 
     async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
@@ -1251,4 +1487,36 @@ export async function isGlobalBasenameEnabled(engine: BrainEngine): Promise<bool
   if (val == null) return false;
   const normalized = val.trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+
+/**
+ * Issue #1493: read the `link_resolution.any_dir_exact_path` config flag.
+ * Defaults to TRUE — unlike global_basename, exact-path resolution matches
+ * the literal written slug against existing pages only, so it cannot
+ * false-positive and needs no opt-in. The flag exists as an escape hatch
+ * for brains that intentionally author `[[dir/name]]` prose that must
+ * never link.
+ *
+ * When TRUE: path-shaped wikilinks like `[[janus/agents/drift-check]]`
+ * whose top-level dir is NOT in the DIR_PATTERN whitelist emit a link
+ * candidate when a page with that exact slug exists; misses are recorded
+ * in the unresolved report (field='wikilink').
+ *
+ * Resolution order (highest → lowest), mirroring isGlobalBasenameEnabled:
+ *   1. Env var `GBRAIN_LINK_RESOLUTION_ANY_DIR_EXACT_PATH=0` (operator override)
+ *   2. DB plane via `engine.getConfig('link_resolution.any_dir_exact_path')`
+ *   3. Default true
+ *
+ * Falsy spellings match isAutoLinkEnabled (default-on flags): 'false',
+ * '0', 'no', 'off' — anything else stays on.
+ */
+export async function isAnyDirExactPathEnabled(engine: BrainEngine): Promise<boolean> {
+  const OFF = ['false', '0', 'no', 'off'];
+  const envVal = process.env.GBRAIN_LINK_RESOLUTION_ANY_DIR_EXACT_PATH;
+  if (envVal != null) {
+    return !OFF.includes(envVal.trim().toLowerCase());
+  }
+  const val = await engine.getConfig('link_resolution.any_dir_exact_path');
+  if (val == null) return true;
+  return !OFF.includes(val.trim().toLowerCase());
 }

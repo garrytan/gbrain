@@ -16,7 +16,7 @@ import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAnyDirExactPathEnabled, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
@@ -1157,9 +1157,12 @@ async function runAutoLink(
   const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
   // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
+  // whitelist. On by default (escape hatch: link_resolution.any_dir_exact_path).
+  const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-    { globalBasename },
+    { globalBasename, anyDirExactPath },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
@@ -1167,9 +1170,32 @@ async function runAutoLink(
   // v0.31.8 (D12): scoped to the source when opts.sourceId is set so wikilink
   // resolution doesn't span unrelated sources.
   const allSlugs = await engine.getAllSlugs(sourceOpts);
-  const valid = candidates.filter(c =>
-    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug))
+  // Issue #1493 (codex P1): put_page auto-link writes are single-source
+  // (linkSourceOpts pins from/to to the page's own source), so a qualified
+  // wikilink pinned to a DIFFERENT source cannot be honored here — skip it
+  // rather than misdirect the edge to a same-slug page in this source.
+  // Cross-source pinned edges are the extract paths' job
+  // (resolveCandidateSources honors targetSourceId).
+  const effectiveSourceId = opts?.sourceId ?? 'default';
+  const accepted = candidates.filter(c =>
+    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug)) &&
+    (!c.targetSourceId || c.targetSourceId === effectiveSourceId)
   );
+  // Issue #1493 (codex P2, round 2): within put_page's single-source write
+  // scope, a pinned `[[alpha:people/alice]]` and an unpinned
+  // `[[people/alice]]` on an alpha page resolve to the SAME edge row — the
+  // pin survived extractPageLinks' within-page dedup (it's part of that
+  // key) and the guard above (pin === this source). Re-dedupe by the
+  // RESOLVED single-source edge key so addLink isn't called twice and
+  // `created` isn't double-counted (the second insert hits ON CONFLICT,
+  // leaving one row but two counts).
+  const seenEdgeKeys = new Set<string>();
+  const valid = accepted.filter(c => {
+    const key = `${c.fromSlug ?? slug}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
+    if (seenEdgeKeys.has(key)) return false;
+    seenEdgeKeys.add(key);
+    return true;
+  });
 
   // Split candidates by direction. Outgoing (fromSlug === slug or unset) are
   // this page's own edges, reconciled against getLinks(slug). Incoming

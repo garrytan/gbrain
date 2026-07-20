@@ -264,4 +264,13 @@ describe('KNOWN_CONFIG_KEYS — documented enable commands must be registered', 
     // chronicle.tz (chronicleTz) + future chronicle.* knobs.
     expect(KNOWN_CONFIG_KEY_PREFIXES.some(p => 'chronicle.tz'.startsWith(p))).toBe(true);
   });
+
+  test('link_resolution keys are registered (#972 opt-in + #1493 escape hatch)', async () => {
+    const { KNOWN_CONFIG_KEYS } = await import('../src/core/config.ts');
+    expect(KNOWN_CONFIG_KEYS).toContain('link_resolution.global_basename');
+    // Issue #1493 (codex P2): the documented disable command is
+    // `gbrain config set link_resolution.any_dir_exact_path false` — it
+    // must work without --force.
+    expect(KNOWN_CONFIG_KEYS).toContain('link_resolution.any_dir_exact_path');
+  });
 });

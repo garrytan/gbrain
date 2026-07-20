@@ -123,3 +123,94 @@ describe('extract --source-id flag (#1204)', () => {
     expect(Number(linkRows[0]?.n ?? 0)).toBe(0);
   });
 });
+
+// ─── Issue #1493 (codex P1): qualified pin + scoped default fallback ──
+
+describe('extract --source db: any-dir wikilinks across sources (#1493)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('alpha', 'alpha'), ('beta', 'beta')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+  });
+
+  async function runLinksDb(extra: string[] = []): Promise<void> {
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await runExtract(engine, ['links', '--source', 'db', ...extra, '--json']);
+    } finally {
+      console.log = origLog;
+    }
+  }
+
+  test('qualified [[beta:janus/target]] links to the PINNED source', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[beta:janus/target]].', ''),
+         ('janus/target', 'beta', 'concept', 'Target', 'The target.', '')`,
+    );
+    await runLinksDb();
+    const rows = await engine.executeRaw<{ to_slug: string; to_source: string }>(
+      `SELECT t.slug AS to_slug, t.source_id AS to_source
+         FROM links l JOIN pages t ON l.to_page_id = t.id`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].to_slug).toBe('janus/target');
+    expect(rows[0].to_source).toBe('beta');
+  });
+
+  test('pin miss is NOT misdirected to a same-slug page in origin/default', async () => {
+    // janus/dup exists in alpha AND default — but the wikilink pins beta,
+    // where it does not exist. No edge at all (skip beats misdirect).
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[beta:janus/dup]].', ''),
+         ('janus/dup', 'alpha', 'concept', 'Dup A', 'x', ''),
+         ('janus/dup', 'default', 'concept', 'Dup D', 'x', '')`,
+    );
+    await runLinksDb();
+    const rows = await engine.executeRaw<{ n: string }>(`SELECT COUNT(*)::text AS n FROM links`);
+    expect(Number(rows[0]?.n ?? 0)).toBe(0);
+  });
+
+  test('scoped --source-id run keeps the default-source fallback for unqualified any-dir links', async () => {
+    // The target lives ONLY in the default source; the scoped slugExists
+    // snapshot must include the default overlay so the candidate survives
+    // to resolveCandidateSources' documented fallback (parity with
+    // whitelisted refs, which bypass slugExists).
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[janus/shared-doc]].', ''),
+         ('janus/shared-doc', 'default', 'concept', 'Shared', 'The doc.', '')`,
+    );
+    await runLinksDb(['--source-id', 'alpha']);
+    const rows = await engine.executeRaw<{ to_slug: string; to_source: string; from_source: string }>(
+      `SELECT t.slug AS to_slug, t.source_id AS to_source, f.source_id AS from_source
+         FROM links l JOIN pages t ON l.to_page_id = t.id JOIN pages f ON l.from_page_id = f.id`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].from_source).toBe('alpha');
+    expect(rows[0].to_slug).toBe('janus/shared-doc');
+    expect(rows[0].to_source).toBe('default');
+  });
+
+  test('scoped run still refuses cross-source (non-default) any-dir resolution', async () => {
+    // Target exists only in beta. Scoped alpha run: slugExists domain is
+    // alpha ∪ default → miss → recorded unresolved, no edge (a bare
+    // unqualified link must not silently span unrelated sources).
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[janus/foreign]].', ''),
+         ('janus/foreign', 'beta', 'concept', 'Foreign', 'x', '')`,
+    );
+    await runLinksDb(['--source-id', 'alpha']);
+    const rows = await engine.executeRaw<{ n: string }>(`SELECT COUNT(*)::text AS n FROM links`);
+    expect(Number(rows[0]?.n ?? 0)).toBe(0);
+  });
+});
