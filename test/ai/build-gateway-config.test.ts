@@ -84,6 +84,39 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       },
     );
   });
+
+  test('provider_chat_options passes through unchanged', async () => {
+    await withEnv(envFor(null), async () => {
+      const options = {
+        anthropic: { thinking: { type: 'disabled' } },
+        'anthropic:claude-sonnet-4-6': { thinking: { budget_tokens: 256 } },
+      };
+      const cfg = buildGatewayConfig({
+        provider_chat_options: options,
+      } as unknown as GBrainConfig);
+      expect(cfg.provider_chat_options).toBe(options);
+    });
+  });
+});
+
+describe('buildGatewayConfig config-plane API-key folding', () => {
+  test('openrouter_api_key folds into gateway env as OPENROUTER_API_KEY', async () => {
+    await withEnv({ OPENROUTER_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        openrouter_api_key: 'sk-or-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.OPENROUTER_API_KEY).toBe('sk-or-config-plane');
+    });
+  });
+
+  test('a real OPENROUTER_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ OPENROUTER_API_KEY: 'sk-or-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        openrouter_api_key: 'sk-or-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.OPENROUTER_API_KEY).toBe('sk-or-env-plane');
+    });
+  });
 });
 
 describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {

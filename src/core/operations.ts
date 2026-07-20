@@ -194,6 +194,39 @@ export function matchesSlugAllowList(slug: string, prefixes: readonly string[]):
 }
 
 /**
+ * Subagent slug-fence enforcement, shared by every mutating op a subagent
+ * can reach (put_page, add_timeline_entry). FAIL-CLOSED: `viaSubagent=true`
+ * enforces the check even if the dispatcher forgot to populate `subagentId`.
+ *
+ *   - Trusted-workspace path (ctx.allowedSlugPrefixes set by cycle.ts under
+ *     PROTECTED_JOB_NAMES \u2014 MCP cannot reach it): slug must match the
+ *     allow-list globs.
+ *   - Legacy default: slug must live under `wiki/agents/<subagentId>/...`
+ *     (anchored, slash-boundary \u2014 `wiki/agents/12evil/*` can't impersonate
+ *     subagent 12).
+ */
+function enforceSubagentSlugFence(ctx: OperationContext, slug: string, opName: string): void {
+  if (ctx.viaSubagent !== true) return;
+  if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
+    throw new OperationError('permission_denied', `${opName} via subagent requires ctx.subagentId`);
+  }
+  const allowList = ctx.allowedSlugPrefixes;
+  if (allowList && allowList.length > 0) {
+    if (!matchesSlugAllowList(slug, allowList)) {
+      throw new OperationError(
+        'permission_denied',
+        `${opName} slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
+      );
+    }
+  } else {
+    const prefix = `wiki/agents/${ctx.subagentId}/`;
+    if (!slug.startsWith(prefix) || slug.length === prefix.length) {
+      throw new OperationError('permission_denied', `${opName} via subagent must write under '${prefix}...'`);
+    }
+  }
+}
+
+/**
  * Allowlist validator for uploaded file basenames. Rejects control chars, backslashes,
  * RTL overrides (\u202E), leading dot (hidden files) and leading dash (CLI flag confusion).
  * Allows extension dots and underscores. Max 255 chars.
@@ -423,6 +456,19 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   if (allowed && allowed.length > 0) return { sourceIds: allowed };
   if (ctx.sourceId) return { sourceId: ctx.sourceId };
   return {};
+}
+
+/** Map the operation-layer scope names onto runThink's public options. */
+export function thinkSourceScopeOpts(ctx: OperationContext): {
+  sourceId?: string;
+  allowedSources?: string[];
+} {
+  const scope = sourceScopeOpts(ctx);
+  return scope.sourceIds !== undefined
+    ? { allowedSources: scope.sourceIds }
+    : scope.sourceId !== undefined
+      ? { sourceId: scope.sourceId }
+      : {};
 }
 
 /**
@@ -771,37 +817,9 @@ const put_page: Operation = {
     }
 
     // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
-    // short-circuit so preview calls surface the same rejection. Confines
-    // LLM-driven writes to wiki/agents/<subagentId>/... — no leading slash
-    // (slug grammar rejects that), anchored, slash-boundary to defeat prefix
-    // collisions like `wiki/agents/12evil/*` impersonating subagent 12.
-    //
-    // FAIL-CLOSED: `viaSubagent=true` enforces the check even if the
-    // dispatcher forgot to populate `subagentId`. Agent-originated writes
-    // without an owning subagent id are rejected outright.
-    if (ctx.viaSubagent === true) {
-      if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
-        throw new OperationError('permission_denied', 'put_page via subagent requires ctx.subagentId');
-      }
-      const allowList = ctx.allowedSlugPrefixes;
-      if (allowList && allowList.length > 0) {
-        // Trusted-workspace path: explicit allow-list bounds writes.
-        // Set only by cycle.ts (synthesize/patterns) which submits subagent
-        // jobs under PROTECTED_JOB_NAMES — MCP cannot reach this branch.
-        if (!matchesSlugAllowList(slug, allowList)) {
-          throw new OperationError(
-            'permission_denied',
-            `put_page slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
-          );
-        }
-      } else {
-        // Legacy default: agent-namespace confinement.
-        const prefix = `wiki/agents/${ctx.subagentId}/`;
-        if (!slug.startsWith(prefix) || slug.length === prefix.length) {
-          throw new OperationError('permission_denied', `put_page via subagent must write under '${prefix}...'`);
-        }
-      }
-    }
+    // short-circuit so preview calls surface the same rejection. See
+    // enforceSubagentSlugFence for the fail-closed policy.
+    enforceSubagentSlugFence(ctx, slug, 'put_page');
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     // Skip embedding when the AI gateway has no embedding provider configured.
@@ -1728,6 +1746,8 @@ const takes_list: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.listTakes({
+      // #2200-class: honor federated/source scope (via the take's page.source_id).
+      ...sourceScopeOpts(ctx),
       page_slug: p.page_slug as string | undefined,
       holder: p.holder as string | undefined,
       kind: p.kind as never,
@@ -1754,6 +1774,7 @@ const takes_search: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.searchTakes(p.query as string, {
+      ...sourceScopeOpts(ctx),
       limit: p.limit as number | undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
     });
@@ -1782,6 +1803,7 @@ const takes_scorecard: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.getScorecard(
       {
+        ...sourceScopeOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
         since: p.since as string | undefined,
@@ -1808,6 +1830,7 @@ const takes_calibration: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.getCalibrationCurve(
       {
+        ...sourceScopeOpts(ctx),
         holder: p.holder as string | undefined,
         bucketSize: p.bucket_size as number | undefined,
       },
@@ -1842,7 +1865,7 @@ const think: Operation = {
     // present) OR the scalar; we pass both through to runThink which
     // forwards to findTrajectory. CLI callers don't go through this op
     // and get default scope + remote=false from runThink's CLI path.
-    const scope = sourceScopeOpts(ctx);
+    const thinkScope = thinkSourceScopeOpts(ctx);
     const { runThink, persistSynthesis } = await import('./think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
@@ -1859,8 +1882,7 @@ const think: Operation = {
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-      ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
-      ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
+      ...thinkScope,
       remote: ctx.remote === true,
     });
 
@@ -2132,6 +2154,11 @@ const add_timeline_entry: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    // #2778: same fail-closed slug fence as put_page. add_timeline_entry is
+    // subagent-allowlisted (brain-allowlist.ts), so timeline writes must be
+    // confined to the same namespace/allow-list as page writes. Runs before
+    // the dry-run short-circuit so preview calls surface the same rejection.
+    enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     // Reject anything that isn't a strict YYYY-MM-DD with year 1900-2199 and
@@ -2164,14 +2191,27 @@ const add_timeline_entry: Operation = {
 
 const get_timeline: Operation = {
   name: 'get_timeline',
-  description: 'Get timeline entries for a page',
+  description: 'Get timeline entries for a page, optionally filtered by date window',
   params: {
     slug: { type: 'string', required: true },
+    after: { type: 'string', description: 'Return entries on or after this date (YYYY-MM-DD)' },
+    before: { type: 'string', description: 'Return entries on or before this date (YYYY-MM-DD)' },
+    since: { type: 'string', description: 'Alias for after; accepted for agent callers' },
+    until: { type: 'string', description: 'Alias for before; accepted for agent callers' },
+    limit: { type: 'number', description: 'Maximum number of timeline entries to return' },
   },
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
-    return ctx.engine.getTimeline(p.slug as string, sourceScopeOpts(ctx));
+    const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
+    const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
+    const limit = typeof p.limit === 'number' ? p.limit : undefined;
+    return ctx.engine.getTimeline(p.slug as string, {
+      ...sourceScopeOpts(ctx),
+      ...(after ? { after } : {}),
+      ...(before ? { before } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },
@@ -2674,10 +2714,16 @@ const file_list: Operation = {
   handler: async (_ctx, p) => {
     const sql = db.getConnection();
     const slug = p.slug as string | undefined;
-    if (slug) {
-      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`;
-    }
-    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    const rows = slug
+      ? await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`
+      : await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
+    // throws on those, breaking MCP callers. PGLite returns Number already.
+    // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
+    return rows.map((r: Record<string, unknown>) => ({
+      ...r,
+      size_bytes: r.size_bytes == null ? null : Number(r.size_bytes),
+    }));
   },
 };
 

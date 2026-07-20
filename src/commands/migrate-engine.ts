@@ -12,6 +12,8 @@ import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabas
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import { createHash } from 'crypto';
+import { resolve } from 'path';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -49,10 +51,25 @@ function getManifestPath(): string {
   return gbrainPath('migrate-manifest.json');
 }
 
-interface MigrateManifest {
+export interface MigrateManifest {
   completed_slugs: string[];
   target_engine: string;
+  target_id?: string;
+  schema_version?: number;
   started_at: string;
+}
+
+export function migrationTargetId(config: EngineConfig): string {
+  const locator = config.engine === 'postgres'
+    ? config.database_url ?? ''
+    : resolve(config.database_path ?? gbrainPath('brain.pglite'));
+  return createHash('sha256')
+    .update(JSON.stringify([config.engine, locator]))
+    .digest('hex');
+}
+
+export function manifestMatchesTarget(manifest: MigrateManifest, targetId: string): boolean {
+  return manifest.schema_version === 2 && manifest.target_id === targetId;
 }
 
 function loadManifest(): MigrateManifest | null {
@@ -72,6 +89,58 @@ function saveManifest(manifest: MigrateManifest): void {
 function clearManifest(): void {
   const path = getManifestPath();
   if (existsSync(path)) unlinkSync(path);
+}
+
+interface MigratedSourceRow {
+  id: string;
+  name: string;
+  local_path: string | null;
+  last_commit: string | null;
+  last_sync_at: Date | string | null;
+  config_json: string;
+  archived: boolean;
+  archived_at: Date | string | null;
+  archive_expires_at: Date | string | null;
+  contextual_retrieval_mode: string | null;
+  trust_frontmatter_overrides: boolean;
+  newest_content_at: Date | string | null;
+  created_at: Date | string;
+}
+
+export async function copyMigrationSources(source: BrainEngine, target: BrainEngine): Promise<void> {
+  const sources = await source.executeRaw<MigratedSourceRow>(`
+    SELECT id, name, local_path, last_commit, last_sync_at, config::text AS config_json, archived,
+           archived_at, archive_expires_at, contextual_retrieval_mode,
+           trust_frontmatter_overrides, newest_content_at, created_at
+      FROM sources
+     ORDER BY (id = 'default') DESC, id`);
+
+  for (const row of sources) {
+    await target.executeRaw(`
+      INSERT INTO sources
+        (id, name, local_path, last_commit, last_sync_at, config, archived,
+         archived_at, archive_expires_at, contextual_retrieval_mode,
+         trust_frontmatter_overrides, newest_content_at, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11, $12, $13)
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        local_path = EXCLUDED.local_path,
+        last_commit = EXCLUDED.last_commit,
+        last_sync_at = EXCLUDED.last_sync_at,
+        config = EXCLUDED.config,
+        archived = EXCLUDED.archived,
+        archived_at = EXCLUDED.archived_at,
+        archive_expires_at = EXCLUDED.archive_expires_at,
+        contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
+        trust_frontmatter_overrides = EXCLUDED.trust_frontmatter_overrides,
+        newest_content_at = EXCLUDED.newest_content_at,
+        created_at = EXCLUDED.created_at`, [
+      row.id, row.name, row.local_path, row.last_commit, row.last_sync_at,
+      row.config_json, row.archived, row.archived_at, row.archive_expires_at,
+      row.contextual_retrieval_mode, row.trust_frontmatter_overrides,
+      row.newest_content_at, row.created_at,
+    ]);
+  }
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
@@ -100,6 +169,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   } else {
     targetConfig.database_path = opts.targetPath || gbrainPath('brain.pglite');
   }
+  const targetId = migrationTargetId(targetConfig);
 
   // Connect to target
   console.log(`Connecting to target (${opts.targetEngine})...`);
@@ -129,7 +199,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   // Load or create manifest for resume
   let manifest = loadManifest();
-  if (manifest && manifest.target_engine !== opts.targetEngine) {
+  if (manifest && !manifestMatchesTarget(manifest, targetId)) {
     console.log('Previous migration was to a different target. Starting fresh.');
     manifest = null;
   }
@@ -144,9 +214,16 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     manifest = {
       completed_slugs: [],
       target_engine: opts.targetEngine,
+      target_id: targetId,
+      schema_version: 2,
       started_at: new Date().toISOString(),
     };
   }
+
+  // Pages.source_id is a foreign key. Copy the complete source catalog first,
+  // including archived rows and sync/routing metadata, so every page write has
+  // a valid parent and the target preserves source behavior.
+  await copyMigrationSources(sourceEngine, targetEngine);
 
   // Get all source pages
   const sourceStats = await sourceEngine.getStats();

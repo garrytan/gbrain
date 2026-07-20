@@ -90,6 +90,26 @@ export function resolveBootstrapToken(
   return { kind: 'ok', token: trimmed, fromEnv: true };
 }
 
+/**
+ * #2624: decide whether the generated admin bootstrap token is hidden from
+ * the startup banner. Fail-safe default: a generated token is NOT printed
+ * unless stderr is an interactive TTY, so containerized (non-TTY) deploys
+ * never ship the secret to centralized log storage. Env-sourced tokens are
+ * always hidden (operator already holds them). Explicit --suppress hides
+ * everything; --print-admin-token forces the raw value even on a non-TTY.
+ */
+export function shouldSuppressBootstrapPrint(opts: {
+  suppress: boolean;
+  fromEnv: boolean;
+  forcePrint: boolean;
+  isTty: boolean;
+}): boolean {
+  if (opts.suppress) return true;
+  if (opts.fromEnv) return true;
+  if (opts.forcePrint) return false;
+  return !opts.isTty;
+}
+
 export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
@@ -304,6 +324,14 @@ interface ServeHttpOptions {
    * tracking the regenerated value through other means.
    */
   suppressBootstrapToken?: boolean;
+  /**
+   * #2624: force-print the generated admin bootstrap token even on a
+   * non-TTY (containerized) start. By default the raw token is only printed
+   * when stderr is an interactive TTY, so it never lands in centralized log
+   * storage for headless deploys. Set this when you genuinely need the value
+   * captured to a non-interactive log and accept the leak.
+   */
+  printAdminToken?: boolean;
 }
 
 /**
@@ -530,7 +558,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   let bootstrapToken: string = resolved.token;
   let bootstrapFromEnv: boolean = resolved.fromEnv;
   const bootstrapHash = createHash('sha256').update(bootstrapToken).digest('hex');
-  const suppressBootstrapPrint = options.suppressBootstrapToken === true;
+  const suppressBootstrapPrint = shouldSuppressBootstrapPrint({
+    suppress: options.suppressBootstrapToken === true,
+    fromEnv: bootstrapFromEnv,
+    forcePrint: options.printAdminToken === true,
+    isTty: process.stderr.isTTY === true,
+  });
   const adminSessions = new Map<string, number>(); // sessionId → expiresAt
 
   // SSE clients for live activity feed
@@ -1075,7 +1108,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
       const takes = await engine.executeRaw<{
-        id: number;
+        id: string;
         page_slug: string;
         row_num: number;
         claim: string;
@@ -1083,10 +1116,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         resolved_quality: string | null;
         since_date: string | null;
       }>(
-        `SELECT id, page_slug, row_num, claim, weight, resolved_quality, since_date
-           FROM takes
-           WHERE holder = $1 AND active = true AND resolved_at IS NOT NULL
-           ORDER BY weight DESC, since_date DESC
+        // `takes` has no page_slug column — it comes from the joined page.
+        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
+        // raw bigint ("cannot serialize BigInt"), so project it as a string.
+        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC
            LIMIT 25`,
         [holder],
       );
@@ -1134,7 +1170,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // proper 90-day time series will read from calibration_profiles
         // generated_at history in v0.37 once we have multiple snapshots.
         const series = profile?.brier !== null && profile?.brier !== undefined
-          ? [{ date: profile.generated_at.slice(0, 10), brier: profile.brier }]
+          // generated_at comes back from the engine as a Date (TIMESTAMPTZ), not
+          // a string — `.slice` would throw. Normalize to a YYYY-MM-DD string.
+          ? [{ date: new Date(profile.generated_at).toISOString().slice(0, 10), brier: profile.brier }]
           : [];
         return res.send(renderBrierTrend({ series }));
       }
@@ -1161,12 +1199,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           weight: number;
           since_date: string;
         }>(
-          `SELECT id, page_slug, claim, weight, since_date
-             FROM takes
-             WHERE active = true AND resolved_at IS NULL AND superseded_by IS NULL
-               AND weight >= 0.7
-               AND since_date::date < (now() - INTERVAL '12 months')
-             ORDER BY since_date ASC
+          // `takes` has no page_slug column — it comes from the joined page.
+          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
+          // throws "invalid input syntax for type date", so normalize to the 1st
+          // before casting.
+          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC
              LIMIT 5`,
         );
         const now = new Date();
@@ -2166,10 +2209,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  MCP:       http://localhost:${port}/mcp${' '.repeat(Math.max(0, 21 - String(port).length))}║
 ║  Health:    http://localhost:${port}/health${' '.repeat(Math.max(0, 18 - String(port).length))}║
 ╠══════════════════════════════════════════════════════╣
-${suppressBootstrapPrint
-  ? '║  Admin Token: suppressed (--suppress-bootstrap-token) ║\n╚══════════════════════════════════════════════════════╝'
-  : bootstrapFromEnv
-    ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+${bootstrapFromEnv
+  ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+  : suppressBootstrapPrint
+    ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });

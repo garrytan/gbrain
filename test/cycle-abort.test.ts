@@ -175,7 +175,7 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     const src = fs.readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf8');
     const body = src.slice(src.indexOf('export async function runCycle'));
     // Each long phase receives the signal.
-    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal)');
+    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal, cycleSourceId)');
     expect(body).toMatch(/runPhaseExtractFacts\([^)]*opts\.signal\)/);
     expect(body).toContain('signal: opts.signal'); // consolidate opts
     expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, opts.signal)');

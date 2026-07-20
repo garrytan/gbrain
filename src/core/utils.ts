@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
-import type { Take, TakeKind } from './engine.ts';
+import type { Take, TakeKind, TakeHit } from './engine.ts';
 
 /**
  * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
@@ -428,5 +428,26 @@ export function takeRowToTake(row: Record<string, unknown>): Take {
     resolved_by: row.resolved_by == null ? null : String(row.resolved_by),
     created_at: isoOrNull(row.created_at) ?? '',
     updated_at: isoOrNull(row.updated_at) ?? '',
+  };
+}
+
+/**
+ * Convert a takes search-hit SQL row to the `TakeHit` shape. The Postgres
+ * driver returns int8 columns (`take_id`/`page_id` are BIGSERIAL-backed) as
+ * native BigInt, which crashes JSON.stringify at the MCP/CLI serialization
+ * boundary (#2450-class). Number() is the same 2^53 envelope takeRowToTake
+ * already accepts for these ids.
+ */
+export function takeHitRowToHit(row: Record<string, unknown>): TakeHit {
+  return {
+    take_id: Number(row.take_id),
+    page_id: Number(row.page_id),
+    page_slug: String(row.page_slug ?? ''),
+    row_num: Number(row.row_num),
+    claim: String(row.claim),
+    kind: row.kind as TakeKind,
+    holder: String(row.holder),
+    weight: Number(row.weight),
+    score: Number(row.score),
   };
 }

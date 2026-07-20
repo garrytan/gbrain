@@ -27,6 +27,7 @@ import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { isWriteTargetContained } from './path-confine.ts';
+import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -36,6 +37,13 @@ export interface WriteThroughLogger {
 export interface WriteThroughResult {
   written: boolean;
   path?: string;
+  /**
+   * True when the write was also committed to git (#2426). Only attempted on
+   * repos hardened via `gbrain sources harden` (durability hook installed);
+   * the hook then background-pushes the commit. Best-effort — a false/absent
+   * value never blocks the write.
+   */
+  committed?: boolean;
   /**
    * Non-error reasons the file was not written:
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
@@ -157,7 +165,20 @@ export async function writePageThrough(
       throw writeErr;
     }
 
-    return { written: true, path: filePath };
+    // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
+    // commit the artifact so it reaches git — pre-fix, write-through content
+    // stayed uncommitted forever: never pushed, `last_sync_at` frozen, and
+    // silently deleted by a later `sync --full` delete-reconcile. The local
+    // post-commit hook background-pushes the commit. Best-effort: a commit
+    // failure never fails the write (the DB row + file are the durable sinks).
+    let committed = false;
+    try {
+      if (isDurabilityHardened(writeRoot)) {
+        committed = commitWriteThroughFile(writeRoot, filePath, slug);
+      }
+    } catch { /* best-effort */ }
+
+    return { written: true, path: filePath, ...(committed ? { committed } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);

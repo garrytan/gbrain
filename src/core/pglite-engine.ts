@@ -24,6 +24,7 @@ import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+import { getFtsLanguage } from './fts-language.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow,
@@ -45,7 +46,7 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
@@ -150,8 +151,8 @@ export function computeSnapshotSchemaHash(
  * `macos-26-3` — the pre-existing #223 hint signature (early macOS
  *   26.3 builds shipped a broken WASM runtime).
  *
- * `unknown` — falls through to a generic hint that still names the
- *   doctor command and the most-common-cause link.
+ * `unknown` — falls through to a generic hint that names the doctor
+ *   command; the macOS 26.3 link is offered only on darwin (#2674).
  *
  * Regex tightened per Codex eng-review finding #9: don't match
  * generic `pglite.data` substring (could fire on unrelated PGLite
@@ -159,6 +160,12 @@ export function computeSnapshotSchemaHash(
  * co-occurrence.
  */
 export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'corrupt' | 'unknown';
+
+// #2674: non-Error rejections (Emscripten aborts can throw plain objects)
+// used to stringify as "[object Object]" — prefer .message when present.
+export function stringifyPgliteInitError(err: unknown): string {
+  return String((err as { message?: unknown })?.message ?? err);
+}
 
 export function classifyPgliteInitError(message: string): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
@@ -179,6 +186,9 @@ export function classifyPgliteInitError(message: string): PgliteInitFailure {
 export function buildPgliteInitErrorMessage(
   verdict: PgliteInitFailure,
   original: string,
+  // #2674: threaded (defaulted) so tests can exercise both branches without
+  // monkey-patching process.platform.
+  platform: NodeJS.Platform = process.platform,
 ): string {
   const header = 'PGLite failed to initialize its WASM runtime.';
   let hint: string;
@@ -210,10 +220,16 @@ export function buildPgliteInitErrorMessage(
       break;
     case 'unknown':
     default:
-      hint =
-        '  Most common cause: the macOS 26.3 WASM bug\n' +
-        '  (https://github.com/garrytan/gbrain/issues/223).\n' +
-        '  Run `gbrain doctor` for a full diagnosis.';
+      // #2674: only blame the macOS 26.3 WASM bug on macOS. On other
+      // platforms, point at the causes that are actually plausible there.
+      hint = platform === 'darwin'
+        ? '  Possible cause: the macOS 26.3 WASM bug\n' +
+          '  (https://github.com/garrytan/gbrain/issues/223).\n' +
+          '  Run `gbrain doctor` for a full diagnosis.'
+        : '  Possible causes: another gbrain process holding the database\n' +
+          '  (lock contention), or a damaged PGLite data directory.\n' +
+          '  Run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
+          '  damaged, `gbrain reinit-pglite` rebuilds it from your brain repo.';
       break;
   }
   return `${header}\n${hint}\n  Original error: ${original}`;
@@ -309,7 +325,7 @@ export class PGLiteEngine implements BrainEngine {
       // read-only on older macOS + Bun 1.3.x, so PGLite can't extract its
       // pglite.data WASM payload). Route the hint by failure shape so
       // users get the right next step.
-      const original = err instanceof Error ? err.message : String(err);
+      const original = stringifyPgliteInitError(err); // #2674
       const verdict = classifyPgliteInitError(original);
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
       // Release the lock so a fresh process can try again; leaking the lock
@@ -518,7 +534,11 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='pages' AND column_name='embedding_signature') AS pages_embedding_signature_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='pages' AND column_name='links_extracted_at') AS pages_links_extracted_at_exists
+                WHERE table_schema='public' AND table_name='pages' AND column_name='links_extracted_at') AS pages_links_extracted_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='timeline_entries') AS timeline_entries_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='timeline_entries' AND column_name='event_page_id') AS timeline_event_page_id_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -561,6 +581,8 @@ export class PGLiteEngine implements BrainEngine {
       pages_generation_exists: boolean;
       pages_embedding_signature_exists: boolean;
       pages_links_extracted_at_exists: boolean;
+      timeline_entries_exists: boolean;
+      timeline_event_page_id_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -637,6 +659,8 @@ export class PGLiteEngine implements BrainEngine {
     // it; pre-v112 brains crash without the column, so bootstrap adds it before
     // the CREATE INDEX runs. v112 runs later via runMigrations and is idempotent.
     const needsPagesLinksExtractedAt = probe.pages_exists && !probe.pages_links_extracted_at_exists;
+    // v121: schema-blob indexes reference event_page_id before migrations run.
+    const needsTimelineEventPageId = probe.timeline_entries_exists && !probe.timeline_event_page_id_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
@@ -648,7 +672,8 @@ export class PGLiteEngine implements BrainEngine {
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
         && !needsPagesEmbeddingSignature
-        && !needsPagesLinksExtractedAt) return;
+        && !needsPagesLinksExtractedAt
+        && !needsTimelineEventPageId) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -893,6 +918,14 @@ export class PGLiteEngine implements BrainEngine {
       // v112 runs later via runMigrations and is idempotent.
       await this.db.exec(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS links_extracted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsTimelineEventPageId) {
+      // Add only the forward-referenced column. Migration v121 remains the
+      // source of truth for the FK and indexes and runs idempotently afterward.
+      await this.db.exec(`
+        ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
       `);
     }
   }
@@ -1599,20 +1632,24 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = getFtsLanguage();
+
     const { rows } = await this.db.query(
       `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
            ) THEN true ELSE false END AS stale
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
            -- v0.27.1: hide image rows from default text-keyword search so
            -- OCR text doesn't drown text-page hits. Image-similarity queries
            -- run a separate vector path on embedding_image.
@@ -1831,20 +1868,23 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     // visibilityClause already declared above (v0.32.7: hoisted so CJK branch can reuse).
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = getFtsLanguage();
 
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
          p.effective_date, p.effective_date_source,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-         ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
+         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
          ) THEN true ELSE false END AS stale
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        JOIN sources s ON s.id = p.source_id
-       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
        ORDER BY score DESC
        LIMIT $2 OFFSET $3`,
       params
@@ -4569,6 +4609,8 @@ export class PGLiteEngine implements BrainEngine {
            OR ($6::boolean = false AND t.resolved_at IS NULL)
          )
          AND ($7::text[] IS NULL OR t.holder = ANY($7::text[]))
+         AND ($11::text[] IS NULL OR p.source_id = ANY($11::text[]))
+         AND ($12::text   IS NULL OR p.source_id = $12::text)
        ORDER BY
          CASE WHEN $8 = 'weight'      THEN t.weight     END DESC NULLS LAST,
          CASE WHEN $8 = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -4585,6 +4627,9 @@ export class PGLiteEngine implements BrainEngine {
         sortBy,
         limit,
         offset,
+        // #2200-class: source scope via the take's page.source_id (array wins over scalar).
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
@@ -4592,7 +4637,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async searchTakes(
     query: string,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const { rows } = await this.db.query(
@@ -4604,16 +4649,26 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.claim % $1
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
+         AND ($5::text IS NULL OR p.source_id = $5::text)
        ORDER BY score DESC, t.weight DESC
        LIMIT $3`,
-      [query, opts.takesHoldersAllowList ?? null, limit]
+      [
+        query,
+        opts.takesHoldersAllowList ?? null,
+        limit,
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
+      ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
@@ -4626,11 +4681,21 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.embedding IS NOT NULL
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
+         AND ($5::text IS NULL OR p.source_id = $5::text)
        ORDER BY t.embedding <=> $1::vector
        LIMIT $3`,
-      [vec, opts.takesHoldersAllowList ?? null, limit]
+      [
+        vec,
+        opts.takesHoldersAllowList ?? null,
+        limit,
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
+      ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
@@ -4799,6 +4864,10 @@ export class PGLiteEngine implements BrainEngine {
     if (opts.since !== undefined) { params.push(opts.since); clauses.push(`AND since_date >= $${params.length}`); }
     if (opts.until !== undefined) { params.push(opts.until); clauses.push(`AND since_date <= $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).
+    const srcIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
+    if (srcIds) { params.push(srcIds); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`); }
+    else if (opts.sourceId) { params.push(opts.sourceId); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`); }
     const where = clauses.join(' ');
     // v0.36.1.1 T1c: `resolved` deliberately filters to the 3-state subset
     // (correct|incorrect|partial) — NOT `resolved_quality IS NOT NULL` — so
@@ -4835,6 +4904,10 @@ export class PGLiteEngine implements BrainEngine {
     const clauses: string[] = [];
     if (opts.holder !== undefined) { params.push(opts.holder); clauses.push(`AND holder = $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).
+    const srcIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
+    if (srcIds) { params.push(srcIds); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`); }
+    else if (opts.sourceId) { params.push(opts.sourceId); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`); }
     const where = clauses.join(' ');
     // NUMERIC casts for exact decimal arithmetic — keeps PGLite + Postgres
     // bucket boundaries identical at FP-edge weights (e.g. 0.7/0.1).
@@ -4970,7 +5043,7 @@ export class PGLiteEngine implements BrainEngine {
     `);
 
     const { rows: types } = await this.db.query(
-      `SELECT type, count(*)::int as count FROM pages GROUP BY type ORDER BY count DESC`
+      `SELECT type, count(*)::int as count FROM pages WHERE deleted_at IS NULL GROUP BY type ORDER BY count DESC`
     );
     const pages_by_type: Record<string, number> = {};
     for (const t of types as { type: string; count: number }[]) {

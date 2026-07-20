@@ -97,3 +97,19 @@ describe('WARN-6 — main `gbrain --help` lists capture/brainstorm/lsd', () => {
     expect(stdout).toContain('embed');
   });
 });
+
+describe('#1175 — main `gbrain --help` SOURCES block matches the real subcommand set', () => {
+  test('archive and its lifecycle siblings are listed', () => {
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    // Pre-fix the SOURCES block listed only list/add/remove; the soft-delete
+    // alternative that `sources remove` itself recommends was undiscoverable.
+    expect(stdout).toMatch(/^\s*sources archive <id>\s/m);
+    expect(stdout).toMatch(/^\s*sources restore <id>\s/m);
+    expect(stdout).toMatch(/^\s*sources archived\s/m);
+    expect(stdout).toMatch(/^\s*sources purge/m);
+    expect(stdout).toMatch(/^\s*sources status\s/m);
+    // Pointer at the full per-subcommand help for the long tail.
+    expect(stdout).toMatch(/^\s*sources --help\s/m);
+  });
+});

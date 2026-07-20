@@ -43,8 +43,18 @@ for (const op of operations) {
   }
 }
 
+/**
+ * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
+ * comes back as a string on the routed path). Lets the local-engine output
+ * normalizer round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of
+ * throwing `TypeError: Do not know how to serialize a BigInt`.
+ */
+export function bigintToStringReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -233,6 +243,17 @@ async function main() {
   // DX alias: `ask` is a natural-language alias for `query`
   if (command === 'ask') {
     command = 'query';
+  }
+
+  // Local patch 2026-06-11 — mark one-shot CLI processes so the facts
+  // backstop routes absorb work to the durable jobs worker instead of the
+  // in-process queue that the exit teardown drains-then-aborts after ~1-2s
+  // (the `pipeline_error: [chat(...)] The operation was aborted.` class in
+  // ingest_log). Daemons keep the in-process queue: their event loop
+  // outlives the work. See src/core/facts/cli-process-mode.ts.
+  if (!['serve', 'jobs', 'autopilot'].includes(command)) {
+    const { markShortLivedCliProcess } = await import('./core/facts/cli-process-mode.ts');
+    markShortLivedCliProcess();
   }
 
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
@@ -442,7 +463,7 @@ async function main() {
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const result = JSON.parse(JSON.stringify(rawResult));
+    const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
@@ -1980,6 +2001,15 @@ async function handleCliOnly(command: string, args: string[]) {
         await runReindexCodeCli(engine, args);
         break;
       }
+      case 'reindex-search-vector': {
+        // Explicit recreate of FTS trigger functions + batched backfill,
+        // honoring GBRAIN_FTS_LANGUAGE. Use after changing the language
+        // env var on a brain that already ran the configurable_fts_language
+        // migration.
+        const { runReindexSearchVectorCli } = await import('./commands/reindex-search-vector.ts');
+        await runReindexSearchVectorCli(engine, args);
+        break;
+      }
       case 'reindex-frontmatter': {
         // v0.29.1: recovery / explicit-rebuild path for pages.effective_date.
         // Mirror of reindex-code shape. Wraps the shared library function in
@@ -2294,7 +2324,14 @@ BRAIN (capture / ideate / explore — v0.37/v0.38)
 SOURCES (multi-repo / multi-brain)
   sources list                       Show registered sources
   sources add <id> --path <p>        Register a source (id = short name, e.g. 'wiki')
-  sources remove <id>                Remove a source + its pages
+  sources remove <id>                Remove a source + its pages (--confirm-destructive)
+  sources archive <id>               Soft-delete: hide from search, recoverable for 72h
+  sources restore <id>               Un-archive a soft-deleted source
+  sources archived                   List soft-deleted sources and their purge expiry
+  sources purge [<id>]               Permanently delete archived sources
+  sources status                     Per-source dashboard (sync lag, embed coverage)
+  sources --help                     Full subcommand list (rename, default, attach,
+                                     current, federate, set-cr-mode, webhook, harden, ...)
   sync --all                         Sync all sources with a local_path
   sync --source <id>                 Sync one specific source
   repos ...                          DEPRECATED alias for 'sources' (v0.19.0)
@@ -2308,6 +2345,9 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
   reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
+  reindex-search-vector [--dry-run] [--yes] [--json]
+                                Recreate FTS triggers + backfill under
+                                $GBRAIN_FTS_LANGUAGE (default 'english')
   sync --strategy code               Sync code files into the brain
 
 JOBS (Minions)

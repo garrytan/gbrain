@@ -169,6 +169,7 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
 
   test('raw segment is excluded', () => {
     expect(shouldExclude('media/x/raw/post')).toBe(true);
+    expect(shouldExclude('raw/chats/claude-code/session')).toBe(true);
   });
 
   test('deny-prefixes are excluded', () => {
@@ -183,6 +184,8 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('thoughts/today')).toBe(true);
     expect(shouldExclude('catalog/movies')).toBe(true);
     expect(shouldExclude('entities/anonymous')).toBe(true);
+    expect(shouldExclude('atoms/fact-123')).toBe(true);
+    expect(shouldExclude('skills/gbrain-operations')).toBe(true);
   });
 
   test('regular slugs are NOT excluded', () => {

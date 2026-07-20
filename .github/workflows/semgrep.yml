@@ -1,0 +1,36 @@
+name: Semgrep
+
+# Static analysis (SAST) with Semgrep Community Edition (#2272). Tokenless:
+# uses the public registry rulesets, needs zero secrets. Findings print in
+# the job log; no code-scanning/SARIF upload by design (keeps permissions
+# read-only, no security-events: write).
+
+on:
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '30 7 * * 1'  # weekly, Monday 07:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      # Non-blocking initially (continue-on-error): the first runs establish a
+      # baseline without failing unrelated PRs. Graduation path: once the
+      # baseline findings are triaged (fixed or `# nosemgrep`'d), remove
+      # continue-on-error so new findings block PRs.
+      - name: Semgrep scan (report-only)
+        run: semgrep scan --config p/default --config p/typescript --error
+        continue-on-error: true

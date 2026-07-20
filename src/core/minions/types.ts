@@ -412,6 +412,12 @@ export interface SubagentHandlerData {
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
   /**
+   * Per-turn max output tokens (#2778). Resolution: this field →
+   * `agent.max_output_tokens` config → 8192 default. The pre-#2778
+   * hardcoded 4096 made pages >~12KB unwritable via put_page.
+   */
+  max_tokens?: number;
+  /**
    * Whitelist of tool names the agent may call. MUST be a subset of the
    * derived registry names — invalid entries are rejected at tool-dispatch
    * time, not silently ignored. Empty array = no tools.
@@ -449,6 +455,17 @@ export interface SubagentHandlerData {
    * and direct CLI submitters set it.
    */
   allowed_slug_prefixes?: string[];
+  /**
+   * Brain source the subagent's tool calls are scoped to (#1586).
+   *
+   * When set, every tool-call `OperationContext.sourceId` uses this value
+   * instead of the legacy 'default', so put_page writes land in the cycle's
+   * resolved source. Same trust story as `allowed_slug_prefixes`:
+   * PROTECTED_JOB_NAMES gates subagent submission, so only cycle.ts and
+   * direct CLI submitters can set it. Validated via `validateSourceId` at
+   * tool-registry build time.
+   */
+  source_id?: string;
   /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
@@ -562,6 +579,7 @@ export type ContentBlock =
 export type SubagentStopReason =
   | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
   | 'max_turns'   // hit max_turns budget before end_turn
+  | 'max_tokens'  // final turn hit the output-token cap — result text is TRUNCATED (#2778)
   | 'refusal'     // detected via stop_reason + content shape
   | 'error';      // unrecoverable (empty response retry exhausted, etc.)
 
