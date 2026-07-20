@@ -632,7 +632,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   if (!dryRun && !skipConfirm) {
     process.stderr.write(
-      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to Haiku.\n` +
+      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to the configured facts.extraction_model (Haiku if unset).\n` +
       `Pass --yes to proceed (or --dry-run to preview).\n`,
     );
     process.exit(1);

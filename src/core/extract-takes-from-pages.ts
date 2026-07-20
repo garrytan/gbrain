@@ -133,6 +133,15 @@ export async function extractTakesFromPages(
   const dryRun = opts.dryRun ?? false;
   const maxPages = opts.maxPages ?? 50;
   const holder = opts.holder ?? 'system';
+  // Honor facts.extraction_model (the documented default per the `model?`
+  // JSDoc above) instead of a hardcoded Anthropic id, so a brain configured
+  // for OpenAI doesn't silently require an Anthropic key just for takes
+  // bootstrap. The hardcoded Haiku stays only as the last-resort fallback for
+  // brains that never set facts.extraction_model (backward compatibility).
+  const model =
+    opts.model ??
+    (await engine.getConfig('facts.extraction_model')) ??
+    'anthropic:claude-haiku-4-5';
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const params = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
 
@@ -190,7 +199,7 @@ export async function extractTakesFromPages(
     let response: { text: string };
     try {
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        model,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {
