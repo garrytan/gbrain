@@ -33,6 +33,7 @@
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { isAutopilotCycleEnabled } from '../core/sources-load.ts';
 
 const FULL_CYCLE_FLOOR_MIN = 60;
 
@@ -77,6 +78,10 @@ export interface FanoutResult {
   skipped_cap: string[];
   /** Source ids skipped because they're in failure cooldown (#2194 fix #2). */
   skipped_cooldown: string[];
+  /** Source ids skipped because the operator excluded them from the autopilot
+   *  cycle (`config.autopilot_cycle === false`) — e.g. a code source maintained
+   *  by a dedicated external sync pipeline rather than the knowledge cycle. */
+  skipped_cycle_disabled: string[];
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
@@ -330,11 +335,17 @@ export function selectSourcesForDispatch(
   floorMin = FULL_CYCLE_FLOOR_MIN,
   recentFailures: Map<string, SourceFailure> = new Map(),
   cooldownOpts: CooldownOpts = { baseMin: FAILURE_COOLDOWN_BASE_MIN, capMin: FAILURE_COOLDOWN_CAP_MIN },
-): { dispatch: SourceRow[]; skippedFresh: SourceRow[]; skippedCap: SourceRow[]; skippedCooldown: SourceRow[] } {
+): { dispatch: SourceRow[]; skippedFresh: SourceRow[]; skippedCap: SourceRow[]; skippedCooldown: SourceRow[]; skippedCycleDisabled: SourceRow[] } {
   const stale: SourceRow[] = [];
   const fresh: SourceRow[] = [];
   const cooldown: SourceRow[] = [];
+  const cycleDisabled: SourceRow[] = [];
   for (const s of sources) {
+    // Operator opt-out: a source with `config.autopilot_cycle === false` is
+    // excluded from the knowledge cycle entirely (it's maintained by a dedicated
+    // external sync pipeline). Checked before freshness so it never dispatches,
+    // regardless of staleness.
+    if (!isAutopilotCycleEnabled(s.config)) { cycleDisabled.push(s); continue; }
     if (!isSourceStale(s, now, floorMin)) { fresh.push(s); continue; }
     // #2194 fix #2: a stale source that recently failed is held in cooldown so
     // it can't re-dispatch every tick (the storm). Success clears it.
@@ -353,7 +364,7 @@ export function selectSourcesForDispatch(
   });
   const dispatch = stale.slice(0, fanoutMax);
   const skippedCap = stale.slice(fanoutMax);
-  return { dispatch, skippedFresh: fresh, skippedCap, skippedCooldown: cooldown };
+  return { dispatch, skippedFresh: fresh, skippedCap, skippedCooldown: cooldown, skippedCycleDisabled: cycleDisabled };
 }
 
 /**
@@ -405,7 +416,7 @@ export async function dispatchPerSource(
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
-    return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], legacy_fallback: true };
+    return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], skipped_cycle_disabled: [], legacy_fallback: true };
   }
 
   // #2194 fix #2: load recent per-source failures + cooldown knobs so a
@@ -424,7 +435,7 @@ export async function dispatchPerSource(
     cooldownOpts = { baseMin: 0, capMin: FAILURE_COOLDOWN_CAP_MIN };
   }
 
-  const { dispatch, skippedFresh, skippedCap, skippedCooldown } =
+  const { dispatch, skippedFresh, skippedCap, skippedCooldown, skippedCycleDisabled } =
     selectSourcesForDispatch(sources, opts.fanoutMax, Date.now(), FULL_CYCLE_FLOOR_MIN, recentFailures, cooldownOpts);
 
   const dispatched: string[] = [];
@@ -502,11 +513,19 @@ export async function dispatchPerSource(
     }));
   }
 
+  if (skippedCycleDisabled.length > 0 && opts.jsonMode) {
+    emit(JSON.stringify({
+      event: 'fanout_cycle_disabled_skipped',
+      sources: skippedCycleDisabled.map(s => s.id),
+    }));
+  }
+
   return {
     dispatched,
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
+    skipped_cycle_disabled: skippedCycleDisabled.map(s => s.id),
     legacy_fallback: false,
   };
 }

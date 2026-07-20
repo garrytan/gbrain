@@ -678,12 +678,16 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         try {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
-            const { loadAllSources } = await import('../core/sources-load.ts');
+            const { loadAllSources, isAutopilotCycleEnabled } = await import('../core/sources-load.ts');
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
             for (const src of sources) {
               if (!src.local_path) continue;
+              // Operator opt-out: sources excluded from the autopilot cycle
+              // (`config.autopilot_cycle === false`) are synced by a dedicated
+              // external pipeline, not by autopilot freshness.
+              if (!isAutopilotCycleEnabled(src.config)) continue;
               const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
               const ageMs = now - lastSyncMs;
               if (ageMs < intervalMs) continue; // fresh enough
@@ -770,12 +774,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                 }
 
                 if (submittedToday < maxJobsToday) {
-                  const { loadAllSources } = await import('../core/sources-load.ts');
+                  const { loadAllSources, isAutopilotCycleEnabled } = await import('../core/sources-load.ts');
                   const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
                   const sources = await loadAllSources(engine);
                   for (const src of sources) {
                     if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
                     if (!src.local_path) continue;
+                    // Operator opt-out: sources excluded from the autopilot cycle
+                    // (`config.autopilot_cycle === false`) don't get per-source atom drains.
+                    if (!isAutopilotCycleEnabled(src.config)) continue;
                     const backlog = await countExtractAtomsBacklog(engine, src.id);
                     if (backlog === null || backlog <= threshold) continue;
                     // Time-sloted key (CODEX #2): a static key would block the
@@ -936,6 +943,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               skipped_fresh: result.skipped_fresh,
               skipped_cap: result.skipped_cap,
               skipped_cooldown: result.skipped_cooldown,
+              skipped_cycle_disabled: result.skipped_cycle_disabled,
               legacy_fallback: result.legacy_fallback,
               fanout_max: fanoutMax,
               score,
@@ -944,7 +952,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             console.log(
               `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
               `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
-              `${result.skipped_cooldown.length} cooldown ` +
+              `${result.skipped_cooldown.length} cooldown, ` +
+              `${result.skipped_cycle_disabled.length} cycle-disabled ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }

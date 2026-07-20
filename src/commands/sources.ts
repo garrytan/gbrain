@@ -16,6 +16,8 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources no-cycle <id>   — sources.config.autopilot_cycle = false
+ *   gbrain sources cycle <id>      — removes sources.config.autopilot_cycle (re-enables)
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -742,6 +744,34 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   }
 }
 
+// ── Subcommand: cycle / no-cycle (autopilot cycle opt-out) ──
+
+async function runAutopilotCycle(engine: BrainEngine, args: string[], value: boolean): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error(`Usage: gbrain sources ${value ? 'cycle' : 'no-cycle'} <id>`);
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(4);
+  }
+  const config = parseConfig(src.config);
+  if (value) {
+    // Re-enable = back to the default (unset). Remove the key rather than
+    // writing `true` so the persisted config matches a never-opted-out source.
+    delete config.autopilot_cycle;
+  } else {
+    config.autopilot_cycle = false;
+  }
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    [JSON.stringify(config), id],
+  );
+  console.log(`Source "${id}" now ${value ? 'participates in the autopilot knowledge cycle (per-source sync + extract + full cycle)' : 'is excluded from the autopilot knowledge cycle (maintain it via its own external sync pipeline)'}.`);
+}
+
 // ── v0.40 sources status (D12) ──────────────────────────────
 async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
@@ -1331,6 +1361,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'detach':     runDetach(); return;
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
+    case 'cycle':      return runAutopilotCycle(engine, rest, true);
+    case 'no-cycle':   return runAutopilotCycle(engine, rest, false);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -1398,6 +1430,11 @@ Subcommands:
                                     targeting the brain you think you are.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
+  no-cycle <id>                     Exclude source from the autopilot knowledge
+                                    cycle (per-source sync + extract + full
+                                    cycle). For a source kept current by its own
+                                    external sync pipeline.
+  cycle <id>                        Re-enable the autopilot cycle (the default).
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or
