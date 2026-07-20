@@ -5671,43 +5671,53 @@ export class PostgresEngine implements BrainEngine {
     const unresolved = edges.filter(e => e.to_chunk_id == null);
 
     if (resolved.length > 0) {
-      const fromIds = resolved.map(e => e.from_chunk_id);
-      const toIds = resolved.map(e => e.to_chunk_id as number);
-      const fromQual = resolved.map(e => e.from_symbol_qualified);
-      const toQual = resolved.map(e => e.to_symbol_qualified);
-      const edgeTypes = resolved.map(e => e.edge_type);
-      const metas = resolved.map(e => JSON.stringify(e.edge_metadata ?? {}));
-      const sources = resolved.map(e => e.source_id ?? 'default');
-      const res = await sql`
-        INSERT INTO code_edges_chunk (from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
-        SELECT * FROM unnest(
-          ${fromIds}::int[], ${toIds}::int[],
-          ${fromQual}::text[], ${toQual}::text[],
-          ${edgeTypes}::text[], ${metas}::jsonb[],
-          ${sources}::text[]
-        )
-        ON CONFLICT (from_chunk_id, to_chunk_id, edge_type) DO NOTHING
-      `;
+      // Per-row placeholders with $n::text::jsonb for edge_metadata. Bun SQL
+      // mis-encodes jsonb[] array binds (double-encoded strings landed in
+      // edge_metadata — the resolver then read `"{}"` scalars and 0 edges ever
+      // resolved). ::text::jsonb per row is the codebase-wide safe shape
+      // (executeRawJsonb, PGLite's addCodeEdges).
+      const rowParts: string[] = [];
+      const params: unknown[] = [];
+      let p = 1;
+      for (const e of resolved) {
+        rowParts.push(`($${p++}::int, $${p++}::int, $${p++}, $${p++}, $${p++}, $${p++}::text::jsonb, $${p++})`);
+        params.push(
+          e.from_chunk_id, e.to_chunk_id as number,
+          e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type,
+          JSON.stringify(e.edge_metadata ?? {}),
+          e.source_id ?? 'default',
+        );
+      }
+      const res = await sql.unsafe(
+        `INSERT INTO code_edges_chunk
+           (from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
+         VALUES ${rowParts.join(', ')}
+         ON CONFLICT (from_chunk_id, to_chunk_id, edge_type) DO NOTHING`,
+        params as never[],
+      );
       inserted += (res as unknown as { count: number }).count ?? 0;
     }
 
     if (unresolved.length > 0) {
-      const fromIds = unresolved.map(e => e.from_chunk_id);
-      const fromQual = unresolved.map(e => e.from_symbol_qualified);
-      const toQual = unresolved.map(e => e.to_symbol_qualified);
-      const edgeTypes = unresolved.map(e => e.edge_type);
-      const metas = unresolved.map(e => JSON.stringify(e.edge_metadata ?? {}));
-      const sources = unresolved.map(e => e.source_id ?? 'default');
-      const res = await sql`
-        INSERT INTO code_edges_symbol (from_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
-        SELECT * FROM unnest(
-          ${fromIds}::int[],
-          ${fromQual}::text[], ${toQual}::text[],
-          ${edgeTypes}::text[], ${metas}::jsonb[],
-          ${sources}::text[]
-        )
-        ON CONFLICT (from_chunk_id, to_symbol_qualified, edge_type) DO NOTHING
-      `;
+      const rowParts: string[] = [];
+      const params: unknown[] = [];
+      let p = 1;
+      for (const e of unresolved) {
+        rowParts.push(`($${p++}::int, $${p++}, $${p++}, $${p++}, $${p++}::text::jsonb, $${p++})`);
+        params.push(
+          e.from_chunk_id,
+          e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type,
+          JSON.stringify(e.edge_metadata ?? {}),
+          e.source_id ?? 'default',
+        );
+      }
+      const res = await sql.unsafe(
+        `INSERT INTO code_edges_symbol
+           (from_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
+         VALUES ${rowParts.join(', ')}
+         ON CONFLICT (from_chunk_id, to_symbol_qualified, edge_type) DO NOTHING`,
+        params as never[],
+      );
       inserted += (res as unknown as { count: number }).count ?? 0;
     }
 
