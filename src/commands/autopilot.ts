@@ -955,6 +955,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // gap the prior implementation had for targeted submits).
           for (const step of plan) {
             try {
+              // Targeted remediation is a generic planner path. It must never
+              // manufacture the server-internal global-finalizer job.
+              const { isInternalOnlyJobName } = await import('../core/minions/protected-names.ts');
+              if (isInternalOnlyJobName(step.job)) {
+                process.stderr.write(`[autopilot] skipped internal-only remediation job: ${step.job}\n`);
+                continue;
+              }
               const isProtected = !!step.protected;
               const submitOpts = {
                 queue: 'default',
@@ -981,18 +988,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         }
       } catch (e) { logError('dispatch', e); cycleOk = false; }
     } else {
-      // Inline fallback — delegate to runCycle so lint + backlinks +
-      // orphan sweep run too (previously this path only did sync +
-      // extract + embed, which didn't match the Minions-dispatch
-      // path's phase set). Now both converge on the same primitive.
+      // Inline fallback has no queue-backed receipt/idempotency contract, so
+      // it may run only the source receipt phases. The global finalizer stays
+      // deferred rather than smuggling ALL_PHASES through `manual` authority.
       try {
-        const { runCycle } = await import('../core/cycle.ts');
+        const { runCycle, DREAMCYCLE_SOURCE_PHASES } = await import('../core/cycle.ts');
         const report = await runCycle(engine, {
           brainDir: repoPath,
-          // Autopilot daemon path: pulls by default (matches
-          // pre-v0.17 autopilot behavior). CLI dream defaults false
-          // for cron safety; that choice is scoped to dream only.
           pull: true,
+          executionAuthority: 'dreamcycle_source',
+          sourceId: 'default',
+          phases: [...DREAMCYCLE_SOURCE_PHASES],
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
           },

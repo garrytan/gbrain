@@ -21,6 +21,7 @@ import {
   type OperationContext,
 } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { isInternalOnlyJobName, isProtectedJobName } from '../src/core/minions/protected-names.ts';
 
 const submit_job = operations.find(o => o.name === 'submit_job') as Operation;
 if (!submit_job) throw new Error('submit_job operation missing');
@@ -46,6 +47,13 @@ function castUndefinedRemoteCtx(): OperationContext {
 }
 
 describe('F7b — trust-boundary contract fail-closed semantics', () => {
+  test('DreamCycle begin receipt and global finalizer are protected and server-internal', () => {
+    for (const name of ['autopilot-global-maintenance', 'dreamcycle-begin']) {
+      expect(isProtectedJobName(name)).toBe(true);
+      expect(isInternalOnlyJobName(` ${name} `)).toBe(true);
+    }
+  });
+
   test('protected job submission rejected when remote is undefined (cast bypass)', async () => {
     const ctx = castUndefinedRemoteCtx();
     await expect(

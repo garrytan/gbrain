@@ -146,6 +146,7 @@ describe('E2E full cycle phase order', () => {
     try {
       await withoutAnthropicKey(async () => {
         const report = await runCycle(rig.engine, {
+          executionAuthority: 'manual',
           brainDir: rig.brainDir,
           dryRun: true,
         });
@@ -178,6 +179,7 @@ describe('E2E full cycle phase order', () => {
     try {
       await withoutAnthropicKey(async () => {
         const report = await runCycle(rig.engine, {
+          executionAuthority: 'manual',
           brainDir: rig.brainDir,
           dryRun: false,
           phases: ['synthesize'],
@@ -196,6 +198,7 @@ describe('E2E full cycle phase order', () => {
     try {
       await withoutAnthropicKey(async () => {
         const report = await runCycle(rig.engine, {
+          executionAuthority: 'manual',
           brainDir: rig.brainDir,
           dryRun: false,
           phases: ['patterns'],
@@ -218,6 +221,7 @@ describe('E2E full cycle phase order', () => {
       try {
         await withoutAnthropicKey(async () => {
           const report = await runCycle(rig.engine, {
+            executionAuthority: 'manual',
             brainDir: rig.brainDir,
             dryRun: false,
             phases: ['synthesize'],

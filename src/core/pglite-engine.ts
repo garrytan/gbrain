@@ -5077,6 +5077,13 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+        ) as islanded_pages,
+        (SELECT count(*) FROM pages p
+         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+        ) as pages_without_inbound_links,
+        (SELECT count(*) FROM pages p
+         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
@@ -5105,7 +5112,9 @@ export class PGLiteEngine implements BrainEngine {
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);
     const embedCoverage = Number(r.embed_coverage);
-    const orphanPages = Number(r.orphan_pages);
+    const islandedPages = Number(r.islanded_pages ?? r.orphan_pages ?? 0);
+    const pagesWithoutInboundLinks = Number(r.pages_without_inbound_links ?? 0);
+    const orphanPages = islandedPages;
     const deadLinks = Number(r.dead_links);
     const linkCount = Number(r.link_count);
     const pagesWithTimeline = Number(r.pages_with_timeline);
@@ -5135,6 +5144,8 @@ export class PGLiteEngine implements BrainEngine {
       embed_coverage: embedCoverage,
       stale_pages: Number(r.stale_pages),
       orphan_pages: orphanPages,
+      islanded_pages: islandedPages,
+      pages_without_inbound_links: pagesWithoutInboundLinks,
       missing_embeddings: Number(r.missing_embeddings),
       brain_score: brainScore,
       dead_links: deadLinks,

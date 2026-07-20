@@ -33,6 +33,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM minion_jobs').catch(() => {});
   await engine.executeRaw('DELETE FROM gbrain_cycle_locks').catch(() => {});
   await engine.executeRaw(`DELETE FROM sources WHERE id <> 'default'`).catch(() => {});
+  await engine.executeRaw('DELETE FROM pages').catch(() => {});
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-handler-'));
 });
 
@@ -43,6 +44,10 @@ async function seedSource(id: string, opts: { archived?: boolean } = {}): Promis
      ON CONFLICT (id) DO UPDATE SET archived = EXCLUDED.archived`,
     [id, id, brainDir, opts.archived === true],
   );
+}
+
+async function seedPage(sourceId: string, slug: string, title = 'Captured'): Promise<void> {
+  await engine.putPage(slug, { type: 'note', title, compiled_truth: `${slug} content` }, { sourceId });
 }
 
 /**
@@ -66,47 +71,70 @@ async function runHandlerOnce(jobData: Record<string, unknown>): Promise<{ parti
 
 describe('autopilot-cycle handler source_id validation + archive recheck', () => {
   test('missing source_id (legacy caller) runs cycle normally', async () => {
-    const result = await runHandlerOnce({ repoPath: brainDir, phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, phases: ['extract_facts'] });
     // status is whatever runCycle decided; just ensure handler didn't reject
     expect(['ok', 'clean', 'partial', 'failed', 'skipped']).toContain(result.status);
   });
 
   test('valid source_id + existing source runs cycle', async () => {
     await seedSource('alpha');
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'alpha', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'alpha', phases: ['extract_facts'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
 
   test('source_id pointing at non-existent source returns skipped', async () => {
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'no-such-source', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'no-such-source', phases: ['extract_facts'] });
     expect(result.status).toBe('skipped');
     expect(result.report.reason).toBe('source_not_found');
   });
 
   test('source_id pointing at archived source returns skipped (codex P1-5)', async () => {
     await seedSource('archived-src', { archived: true });
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'archived-src', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'archived-src', phases: ['extract_facts'] });
     expect(result.status).toBe('skipped');
     expect(result.report.reason).toBe('source_archived');
   });
 
   test('malformed source_id (regex fail) throws (codex P1-B)', async () => {
     await expect(
-      runHandlerOnce({ repoPath: brainDir, source_id: 'BAD ID', phases: ['lint'] }),
+      runHandlerOnce({ repoPath: brainDir, source_id: 'BAD ID', phases: ['extract_facts'] }),
     ).rejects.toThrow(/invalid source_id/);
   });
 
   test('non-string source_id throws', async () => {
     await expect(
-      runHandlerOnce({ repoPath: brainDir, source_id: 42, phases: ['lint'] }),
+      runHandlerOnce({ repoPath: brainDir, source_id: 42, phases: ['extract_facts'] }),
     ).rejects.toThrow(/not a string/);
   });
 
   test('explicit pull: false overrides default pull: true', async () => {
     // Behavior check via lack-of-throw + return shape — no actual pull
-    // is invoked because the phase set is just ['lint'].
+    // is invoked because the phase set is just ['extract_facts'].
     await seedSource('echo');
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['extract_facts'] });
     expect(['ok', 'clean']).toContain(result.status);
+  });
+
+  test('raw unsupported phase is rejected instead of filtered into the source default', async () => {
+    await expect(
+      runHandlerOnce({ repoPath: brainDir, phases: ['embed'] }),
+    ).rejects.toThrow('unsupported DreamCycle source phase(s): embed');
+  });
+
+  test('capturedSlugs are source-scoped and malformed entries are ignored', async () => {
+    await seedSource('alpha');
+    await seedSource('beta');
+    await seedPage('alpha', 'alpha/page');
+    await seedPage('beta', 'beta/page');
+
+    const result = await runHandlerOnce({
+      repoPath: brainDir,
+      source_id: 'alpha',
+      phases: ['extract_facts'],
+      capturedSlugs: ['alpha/page', '', '  ', 'beta/page', 7, 'alpha/page'],
+    });
+    const extractFacts = result.report.phases.find((p: any) => p.phase === 'extract_facts');
+    expect(extractFacts?.status).toBe('ok');
+    expect(extractFacts?.details.pagesScanned).toBe(1);
   });
 });

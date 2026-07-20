@@ -19,8 +19,10 @@ let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined
 let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undefined }> = [];
 let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
+let extractFactsCalls: Array<{ slugs: string[] | undefined; sourceId: string; dryRun: boolean | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
+let nextSyncPagesAffected: string[] | undefined = ['a', 'b'];
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
@@ -60,13 +62,41 @@ mock.module('../../src/commands/sync.ts', () => ({
       renamed: 0,
       chunksCreated: opts.dryRun ? 0 : 10,
       embedded: 0,
-      pagesAffected: opts.dryRun ? [] : ['a', 'b'],
+      pagesAffected: opts.dryRun ? [] : nextSyncPagesAffected,
     };
   },
   runSync: async () => {},
   buildSyncManifest: () => ({ added: [], modified: [], deleted: [], renamed: [] }),
   isSyncable: () => true,
   pathToSlug: (s: string) => s,
+}));
+
+// Mock extract_facts so cycle-level merge/scope behavior can be asserted
+// without running full SQL-backed fence reconciliation.
+mock.module('../../src/core/cycle/extract-facts.ts', () => ({
+  runExtractFacts: async (_engine: any, opts: any) => {
+    extractFactsCalls.push({
+      slugs: opts.slugs,
+      sourceId: opts.sourceId,
+      dryRun: opts.dryRun,
+    });
+    const pagesScanned = Array.isArray(opts?.slugs) ? opts.slugs.length : 0;
+    return {
+      pagesScanned,
+      pagesWithFacts: pagesScanned,
+      factsInserted: 0,
+      factsDeleted: 0,
+      legacyRowsPending: 0,
+      guardTriggered: false,
+      warnings: [],
+      phantomsScanned: 0,
+      phantomsRedirected: 0,
+      phantomsAmbiguous: 0,
+      phantomsSkippedDrift: 0,
+      phantomsLockBusy: false,
+      phantomsMorePending: false,
+    };
+  },
 }));
 
 // Mock extract
@@ -146,6 +176,8 @@ beforeEach(() => {
   backlinksCalls = [];
   syncCalls = [];
   extractCalls = [];
+  extractFactsCalls = [];
+  nextSyncPagesAffected = ['a', 'b'];
   embedCalls = [];
   orphansCalls = 0;
 });
@@ -158,7 +190,7 @@ describe('runCycle — dryRun propagates to every phase', () => {
   });
 
   test('dryRun:true reaches lint, backlinks, sync, embed', async () => {
-    await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: true });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', dryRun: true });
 
     expect(lintCalls.at(-1)?.dryRun).toBe(true);
     expect(backlinksCalls.at(-1)?.dryRun).toBe(true);
@@ -167,7 +199,7 @@ describe('runCycle — dryRun propagates to every phase', () => {
   });
 
   test('dryRun:false does not let maintenance append generated backlinks to tracked pages', async () => {
-    await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: false });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', dryRun: false });
 
     expect(lintCalls.at(-1)?.dryRun).toBe(false);
     // Maintenance should audit backlink gaps but not run the legacy fixer that
@@ -182,7 +214,7 @@ describe('runCycle — dryRun propagates to every phase', () => {
   });
 
   test('dryRun skips extract phase (no dry-run support)', async () => {
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: true });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', dryRun: true });
     expect(extractCalls.length).toBe(0);
     const extractPhase = report.phases.find(p => p.phase === 'extract');
     expect(extractPhase?.status).toBe('skipped');
@@ -198,12 +230,12 @@ describe('runCycle — phase selection', () => {
   });
 
   test('default: all 6 phases run in order', async () => {
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
     expect(report.phases.map(p => p.phase)).toEqual(ALL_PHASES);
   });
 
   test('--phase lint only runs lint', async () => {
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['lint'] });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['lint'] });
     expect(report.phases.map(p => p.phase)).toEqual(['lint']);
     expect(lintCalls.length).toBe(1);
     expect(backlinksCalls.length).toBe(0);
@@ -211,7 +243,7 @@ describe('runCycle — phase selection', () => {
   });
 
   test('--phase orphans only runs orphans', async () => {
-    await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['orphans'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['orphans'] });
     expect(orphansCalls).toBe(1);
     expect(syncCalls.length).toBe(0);
   });
@@ -229,20 +261,20 @@ describe('runCycle — cycle lock acquire/release semantics', () => {
     // never written to. Seeding a stale holder and verifying it survives
     // the run would also work, but a simpler assertion: no rows ever
     // existed for a read-only-only selection.
-    await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['orphans'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['orphans'] });
     const { rows } = await (sharedEngine as any).db.query('SELECT COUNT(*)::int AS n FROM gbrain_cycle_locks');
     expect(rows[0].n).toBe(0);
   });
 
   test('phases including lint DOES acquire + release (table empty after run)', async () => {
-    await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['lint'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['lint'] });
     // Lock is released in finally, so no rows survive the run.
     const { rows } = await (sharedEngine as any).db.query('SELECT COUNT(*)::int AS n FROM gbrain_cycle_locks');
     expect(rows[0].n).toBe(0);
   });
 
   test('phases including sync DOES acquire + release the lock', async () => {
-    await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['sync'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['sync'] });
     const { rows } = await (sharedEngine as any).db.query('SELECT COUNT(*)::int AS n FROM gbrain_cycle_locks');
     expect(rows[0].n).toBe(0);
   });
@@ -262,7 +294,7 @@ describe('runCycle — cycle_already_running skip', () => {
        VALUES ('gbrain-cycle', 99999, 'other-host', NOW(), NOW() + INTERVAL '1 hour')`
     );
 
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
 
     expect(report.status).toBe('skipped');
     expect(report.reason).toBe('cycle_already_running');
@@ -279,7 +311,7 @@ describe('runCycle — cycle_already_running skip', () => {
        VALUES ('gbrain-cycle', 99999, 'crashed-host', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour')`
     );
 
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
 
     expect(report.status).not.toBe('skipped');
     expect(syncCalls.length).toBe(1); // cycle ran
@@ -296,7 +328,7 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
   });
 
   test('filesystem phases still run when engine is null', async () => {
-    const report = await runCycle(null, { brainDir: '/tmp/brain' });
+    const report = await runCycle(null, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
 
     // Lint and backlinks ran.
     expect(lintCalls.length).toBe(1);
@@ -323,7 +355,7 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
     mkdirSync(path.dirname(lockFile), { recursive: true });
     writeFileSync(lockFile, `1\n${new Date().toISOString()}\n`);
 
-    const report = await runCycle(null, { brainDir: '/tmp/brain' });
+    const report = await runCycle(null, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
     expect(report.status).toBe('skipped');
     expect(report.reason).toBe('cycle_already_running');
     // None of the filesystem phases ran because the lock blocked entry.
@@ -340,7 +372,7 @@ describe('runCycle — status derivation', () => {
   });
 
   test('ok when work was done (non-dry-run)', async () => {
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
     expect(['ok', 'partial']).toContain(report.status);
     // Non-dry-run fixtures produce work (fixes:2, added:4 etc.), so:
     expect(report.status).toBe('ok');
@@ -352,12 +384,12 @@ describe('runCycle — status derivation', () => {
   });
 
   test('schema_version is stable at "1"', async () => {
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
     expect(report.schema_version).toBe('1');
   });
 
   test('CycleReport shape includes all required top-level fields', async () => {
-    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
     expect(report).toHaveProperty('schema_version');
     expect(report).toHaveProperty('timestamp');
     expect(report).toHaveProperty('duration_ms');
@@ -377,7 +409,7 @@ describe('runCycle — yieldBetweenPhases hook', () => {
 
   test('hook is called between every phase', async () => {
     let hookCalls = 0;
-    await runCycle(sharedEngine,{
+    await runCycle(sharedEngine, { executionAuthority: "manual", 
       brainDir: '/tmp/brain',
       yieldBetweenPhases: async () => {
         hookCalls++;
@@ -398,7 +430,7 @@ describe('runCycle — yieldBetweenPhases hook', () => {
   });
 
   test('hook exceptions do not abort the cycle', async () => {
-    const report = await runCycle(sharedEngine,{
+    const report = await runCycle(sharedEngine, { executionAuthority: "manual", 
       brainDir: '/tmp/brain',
       yieldBetweenPhases: async () => {
         throw new Error('synthetic hook error');
@@ -427,7 +459,7 @@ describe('runCycle — incremental extract slug propagation (#417)', () => {
   test('cycle threads sync.pagesAffected into extract phase as the slugs argument', async () => {
     // performSync mock returns pagesAffected = ['a', 'b']. The extract phase
     // must receive those exact slugs, not undefined (which would trigger a full walk).
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain' });
 
     // Sync ran once
     expect(syncCalls.length).toBe(1);
@@ -439,11 +471,110 @@ describe('runCycle — incremental extract slug propagation (#417)', () => {
   test('extract phase falls back to full walk when sync was skipped (slugs undefined)', async () => {
     // Run only the extract phase — sync didn't run, so syncPagesAffected
     // is undefined and extract should walk the full directory (slugs:undefined).
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['extract'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['extract'] });
 
     expect(syncCalls.length).toBe(0);
     expect(extractCalls.length).toBe(1);
     expect(extractCalls[0].slugs).toBeUndefined();
+  });
+});
+
+describe('runCycle — capturedSlugs handoff contract (#DreamCycle)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    syncCalls = [];
+    extractCalls = [];
+    extractFactsCalls = [];
+  });
+
+  test('sync delta 0 + capturedSlugs still scans the captured page in extract_facts', async () => {
+    nextSyncPagesAffected = [];
+    await sharedEngine.putPage(
+      'captured/page',
+      { type: 'note', title: 'Captured', compiled_truth: 'captured page' },
+      { sourceId: 'default' },
+    );
+
+    const report = await runCycle(sharedEngine, {
+      executionAuthority: 'dreamcycle_source',
+      brainDir: '/tmp/brain',
+      sourceId: 'default',
+      capturedSlugs: ['captured/page'],
+      phases: ['sync', 'extract_facts'],
+    });
+
+    expect(extractFactsCalls.at(-1)?.slugs).toEqual(['captured/page']);
+    const extractFactsPhase = report.phases.find(p => p.phase === 'extract_facts');
+    expect(extractFactsPhase?.details.pagesScanned).toBe(1);
+    expect(extractFactsCalls.at(-1)?.sourceId).toBe('default');
+  });
+
+  test('capturedSlugs + syncPagesAffected duplicates are deduped deterministically before extract_facts', async () => {
+    nextSyncPagesAffected = ['dup/page', 'dup/page', 'alpha/page'];
+    await sharedEngine.putPage(
+      'dup/page',
+      { type: 'note', title: 'Dup', compiled_truth: 'dup page' },
+      { sourceId: 'default' },
+    );
+    await sharedEngine.putPage(
+      'alpha/page',
+      { type: 'note', title: 'Alpha', compiled_truth: 'alpha page' },
+      { sourceId: 'default' },
+    );
+
+    await runCycle(sharedEngine, {
+      executionAuthority: 'dreamcycle_source',
+      brainDir: '/tmp/brain',
+      sourceId: 'default',
+      capturedSlugs: ['alpha/page', 'dup/page', 'alpha/page', 'dup/page'],
+      phases: ['sync', 'extract_facts'],
+    });
+
+    expect(extractFactsCalls.at(-1)?.slugs).toEqual(['dup/page', 'alpha/page']);
+  });
+
+  test('malformed and cross-source capturedSlugs are ignored after source scoping', async () => {
+    nextSyncPagesAffected = [];
+    // `pages.source_id` is an FK. Seed both sources explicitly so this
+    // contract test stays independent of earlier suite state.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES
+        ('alpha', 'alpha', '/tmp/captured-alpha'),
+        ('beta', 'beta', '/tmp/captured-beta')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await sharedEngine.putPage(
+      'alpha/page',
+      { type: 'note', title: 'Alpha', compiled_truth: 'alpha page' },
+      { sourceId: 'alpha' },
+    );
+    await sharedEngine.putPage(
+      'beta/page',
+      { type: 'note', title: 'Beta', compiled_truth: 'beta page' },
+      { sourceId: 'beta' },
+    );
+
+    await runCycle(sharedEngine, {
+      executionAuthority: 'dreamcycle_source',
+      brainDir: '/tmp/brain',
+      sourceId: 'alpha',
+      capturedSlugs: ['alpha/page', '', '  ', 'beta/page', 42 as unknown as string],
+      phases: ['extract_facts'],
+    });
+
+    expect(extractFactsCalls.at(-1)?.slugs).toEqual(['alpha/page']);
+  });
+
+  test('existing no-capturedSlugs path remains unchanged for full reconcile', async () => {
+    const report = await runCycle(sharedEngine, {
+      executionAuthority: 'manual',
+      brainDir: '/tmp/brain',
+      phases: ['extract_facts'],
+    });
+
+    const extractFactsPhase = report.phases.find((p) => p.phase === 'extract_facts');
+    expect(extractFactsPhase).not.toBeUndefined();
+    expect(extractFactsCalls.at(-1)?.slugs).toBeUndefined();
   });
 });
 
@@ -455,7 +586,7 @@ describe('runCycle — Codex F2: noExtract is gated on whether extract phase run
   });
 
   test('full cycle (sync + extract): noExtract=true so sync skips inline extraction (extract phase handles it)', async () => {
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['sync', 'extract'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['sync', 'extract'] });
 
     expect(syncCalls.length).toBe(1);
     expect(syncCalls[0].noExtract).toBe(true);  // dedupe enabled
@@ -463,7 +594,7 @@ describe('runCycle — Codex F2: noExtract is gated on whether extract phase run
   });
 
   test('phases:[sync] only: noExtract=false so sync runs inline extraction (no silent extract drop)', async () => {
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['sync'] });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain', phases: ['sync'] });
 
     expect(syncCalls.length).toBe(1);
     // Critical: noExtract must be false here. If it were true, the user just lost
@@ -495,12 +626,12 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
       `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
       ['default', 'default', '/tmp/brain-475-a'],
     );
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-a' });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain-475-a' });
     expect(syncCalls.at(-1)?.sourceId).toBe('default');
   });
 
   test('no matching sources row → performSync receives sourceId=undefined', async () => {
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-b' });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain-475-b' });
     expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
   });
 
@@ -509,7 +640,7 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
       `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
       ['other', 'other', '/some/other/brain'],
     );
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-c' });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain-475-c' });
     expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
   });
 
@@ -524,7 +655,7 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
     await fresh.initSchema();
     await (fresh as any).db.query('DROP TABLE IF EXISTS sources CASCADE');
     try {
-      await runCycle(fresh, { brainDir: '/tmp/brain-475-d' });
+      await runCycle(fresh, { executionAuthority: "manual",  brainDir: '/tmp/brain-475-d' });
       expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
     } finally {
       await fresh.disconnect();
@@ -541,7 +672,7 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
         ('first', 'first', '/tmp/brain-475-e'),
         ('second', 'second', '/tmp/brain-475-e')`,
     );
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-e' });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain-475-e' });
     const sourceId = syncCalls.at(-1)?.sourceId;
     expect(sourceId).toBeDefined();
     expect(['first', 'second']).toContain(sourceId as string);
@@ -556,7 +687,32 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
     await (sharedEngine as any).db.query(
       `INSERT INTO sources (id, name, local_path) VALUES ('', 'empty', '/tmp/brain-475-f')`,
     );
-    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-f' });
+    await runCycle(sharedEngine, { executionAuthority: "manual",  brainDir: '/tmp/brain-475-f' });
     expect(syncCalls.at(-1)?.sourceId).toBe('');
+  });
+});
+
+describe('runCycle — executionAuthority validation', () => {
+  test('missing or invalid executionAuthority throws error', async () => {
+    await expect(runCycle(sharedEngine, { brainDir: '/tmp/brain' } as any)).rejects.toThrow('missing or invalid executionAuthority');
+    await expect(runCycle(sharedEngine, { executionAuthority: 'fake_auth' as any, brainDir: '/tmp/brain' })).rejects.toThrow('missing or invalid executionAuthority');
+  });
+
+  test('dreamcycle_source requires sourceId and allows only sync/extract/extract_facts', async () => {
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_source', brainDir: '/tmp/brain', phases: ['sync'] })).rejects.toThrow('dreamcycle_source requires sourceId');
+
+    // Attempting global phase (embed) on dreamcycle_source throws
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_source', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['sync', 'embed'] })).rejects.toThrow('dreamcycle_source does not allow phase(s): embed');
+  });
+
+  test('dreamcycle_global rejects sourceId and non-allowlisted phases', async () => {
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_global', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('dreamcycle_global cannot be scoped to a single sourceId');
+
+    // Attempting non-allowlisted phase (sync/purge) on dreamcycle_global throws
+    await expect(runCycle(sharedEngine, { executionAuthority: 'dreamcycle_global', brainDir: '/tmp/brain', phases: ['sync', 'embed'] })).rejects.toThrow('dreamcycle_global does not allow phase(s): sync');
+  });
+
+  test('manual with --source and global phases emits helpful error', async () => {
+    await expect(runCycle(sharedEngine, { executionAuthority: 'manual', sourceId: 'src1', brainDir: '/tmp/brain', phases: ['embed'] })).rejects.toThrow('Omit --source and rerun unscoped with `gbrain dream --phase <global-phase>`');
   });
 });

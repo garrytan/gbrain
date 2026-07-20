@@ -93,6 +93,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     );
 
     const report = await runCycle(getEngine(), {
+      executionAuthority: 'manual',
       brainDir: repo,
       dryRun: true,
       pull: false,
@@ -126,6 +127,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     const conn = getConn();
 
     const report = await runCycle(getEngine(), {
+      executionAuthority: 'manual',
       brainDir: repo,
       dryRun: false,
       pull: false,
@@ -166,6 +168,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
 
     try {
       const report = await runCycle(getEngine(), {
+        executionAuthority: 'manual',
         brainDir: repo,
         dryRun: true,
         pull: false,
@@ -189,6 +192,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     );
 
     const report = await runCycle(getEngine(), {
+      executionAuthority: 'manual',
       brainDir: repo,
       dryRun: true,
       pull: false,
@@ -213,6 +217,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
 
     try {
       const report = await runCycle(getEngine(), {
+        executionAuthority: 'manual',
         brainDir: repo,
         phases: ['orphans'],
         pull: false,

@@ -12,6 +12,20 @@
  * pay them at module load.
  */
 
+/**
+ * Jobs reserved for server-internal dispatch. They are also protected at the
+ * queue boundary, but generic CLI/MCP submitters must reject them even when
+ * locally trusted; only the named internal dispatcher may enqueue them.
+ */
+export const INTERNAL_ONLY_JOB_NAMES: ReadonlySet<string> = new Set([
+  // A durable, no-op receipt written only by `gbrain dreamcycle begin`.
+  // It seals the source membership snapshot that an externally scheduled
+  // daily finalizer must later prove against; generic submitters must never
+  // be able to manufacture that receipt.
+  'dreamcycle-begin',
+  'autopilot-global-maintenance',
+]);
+
 export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   'shell',
   // v0.15: subagent + aggregator are protected because they call the
@@ -63,9 +77,15 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain
   // --allow-protected`) can insert it.
   'extract-atoms-drain',
+  ...INTERNAL_ONLY_JOB_NAMES,
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */
 export function isProtectedJobName(name: string): boolean {
   return PROTECTED_JOB_NAMES.has(name.trim());
+}
+
+/** Check whether a name is reserved for a server-internal dispatcher. */
+export function isInternalOnlyJobName(name: string): boolean {
+  return INTERNAL_ONLY_JOB_NAMES.has(name.trim());
 }

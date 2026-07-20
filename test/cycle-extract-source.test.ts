@@ -70,6 +70,7 @@ describe('cycle extract phase on a federated brain (#1503)', () => {
   test('extract phase resolves the source from brainDir and writes links + timeline there', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const report = await runCycle(engine, {
+        executionAuthority: 'manual',
         brainDir,
         phases: ['extract'],
       });
@@ -102,6 +103,7 @@ describe('cycle extract phase on a federated brain (#1503)', () => {
   test('explicit opts.sourceId wins (checkout-less --source shape)', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const report = await runCycle(engine, {
+        executionAuthority: 'manual',
         brainDir,
         sourceId: 'wiki',
         phases: ['extract'],

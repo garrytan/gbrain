@@ -4,6 +4,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import type { CyclePhase } from '../core/cycle.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
@@ -20,6 +21,33 @@ function parseFlag(args: string[], flag: string): string | undefined {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+/**
+ * Internal captured-slug contract for autopilot-cycle jobs.
+ *
+ * Accept only an array of non-empty strings, trim whitespace, and perform
+ * deterministic first-seen deduplication. This is a strict no-op for
+ * non-arrays/malformed values; malformed entries cannot widen scope or
+ * bypass source-authority guards.
+ */
+function parseCapturedSlugs(rawCapturedSlugs: unknown): string[] {
+  if (!Array.isArray(rawCapturedSlugs)) return [];
+  const candidate: string[] = [];
+  for (const value of rawCapturedSlugs) {
+    if (typeof value !== 'string') continue;
+    const slug = value.trim();
+    if (!slug) continue;
+    candidate.push(slug);
+  }
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const slug of candidate) {
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    deduped.push(slug);
+  }
+  return deduped;
 }
 
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
@@ -225,6 +253,16 @@ HANDLER TYPES (built in)
       if (!name) {
         console.error('Error: job name required. Usage: gbrain jobs submit <name>');
         process.exit(1);
+      }
+
+      // This job has a server-internal source-snapshot contract. Generic CLI
+      // submission must not manufacture a DreamCycle global authority, even
+      // though this is a trusted local process.
+      const { isInternalOnlyJobName } = await import('../core/minions/protected-names.ts');
+      if (isInternalOnlyJobName(name)) {
+        console.error(`Error: '${name.trim()}' is reserved for server-internal DreamCycle finalization`);
+        process.exit(1);
+        return;
       }
 
       const paramsStr = parseFlag(args, '--params');
@@ -1676,7 +1714,7 @@ export async function registerBuiltinHandlers(
   // `gbrain jobs get <id>` shows the full structured report. Does NOT
   // throw on partial: a flaky phase must not block every future cycle.
   worker.register('autopilot-cycle', async (job) => {
-    const { runCycle } = await import('../core/cycle.ts');
+    const { runCycle, DREAMCYCLE_SOURCE_PHASES } = await import('../core/cycle.ts');
     // v0.41.30 (T2): fall back to null (NOT cwd '.') when no repo is configured.
     // The queued cycle is the same primitive `gbrain dream` uses; a checkout-less
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
@@ -1750,13 +1788,25 @@ export async function registerBuiltinHandlers(
     // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
     const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
 
-    // Allow callers to select phases via job data (e.g. skip embed for
-    // fast cycles). Validates against ALL_PHASES to prevent injection.
-    const { ALL_PHASES } = await import('../core/cycle.ts');
-    const validPhases = new Set(ALL_PHASES);
-    const requestedPhases = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
-      : undefined;
+    // DreamCycle source jobs may select only the fixed receipt phases. Raw
+    // invalid data is rejected, never filtered into an accidental fallback;
+    // absence alone receives the safe default.
+    const rawPhases = job.data.phases;
+    const capturedSlugs = parseCapturedSlugs(job.data.capturedSlugs);
+    let phases: CyclePhase[];
+    if (rawPhases === undefined) {
+      phases = [...DREAMCYCLE_SOURCE_PHASES];
+    } else {
+      if (!Array.isArray(rawPhases) || rawPhases.length === 0) {
+        throw new Error('autopilot-cycle: phases must be a non-empty DreamCycle source phase array');
+      }
+      const allowed = new Set<string>(DREAMCYCLE_SOURCE_PHASES);
+      const invalid = rawPhases.filter((phase) => typeof phase !== 'string' || !allowed.has(phase));
+      if (invalid.length > 0) {
+        throw new Error(`autopilot-cycle: unsupported DreamCycle source phase(s): ${invalid.map(String).join(', ')}`);
+      }
+      phases = rawPhases as CyclePhase[];
+    }
 
     // Pull default: legacy `true` for back-compat; explicit boolean wins.
     const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
@@ -1780,8 +1830,10 @@ export async function registerBuiltinHandlers(
       brainDir: effectiveBrainDir,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
-      ...(sourceId ? { sourceId } : {}),
-      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
+      executionAuthority: 'dreamcycle_source',
+      sourceId: sourceId ?? 'default',
+      capturedSlugs,
+      phases,
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));
@@ -1795,27 +1847,150 @@ export async function registerBuiltinHandlers(
     };
   });
 
-  // #2194 fix #3 / #2227 bug #3 — brain-wide maintenance. Runs the `global`
-  // cycle phases (embed, orphans, purge, resolve_symbol_edges, grade_takes,
-  // calibration_profile, synthesize_concepts, skillopt) ONCE per window instead
-  // of N times concurrently across per-source cycles (the 4→10GB RSS blowout).
-  // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
-  // on success so the dispatch gate backs off.
+  // Durable source-membership receipt for the local-only external DreamCycle
+  // CLI. It is intentionally a no-op worker handler: `dreamcycle begin`
+  // writes the trusted payload itself, and finalization re-reads that immutable
+  // minion row before granting any global authority.
+  {
+    const {
+      DREAMCYCLE_BEGIN_JOB_NAME,
+      parseExternalDreamcycleBeginData,
+    } = await import('./dreamcycle.ts');
+    worker.register(DREAMCYCLE_BEGIN_JOB_NAME, async (job) => {
+      const receipt = parseExternalDreamcycleBeginData(job.data);
+      if (!receipt) {
+        return {
+          partial: false,
+          status: 'skipped',
+          report: { reason: 'global_deferred', detail: 'invalid_external_begin_receipt' },
+        };
+      }
+      return {
+        partial: false,
+        status: 'ok',
+        report: {
+          jst_day: receipt.jst_day,
+          source_count: receipt.sources.length,
+          revision: receipt.revision,
+        },
+      };
+    });
+  }
+
+  // Server-internal daily finalizer. A generic submitted job cannot reach this
+  // handler through either CLI or submit_job, and this handler still verifies
+  // the snapshot/revision before granting dreamcycle_global authority.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const { runCycle, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
+    const {
+      DAILY_GLOBAL_ALLOWLIST,
+      globalMaintenanceSnapshotMatches,
+      readGlobalMaintenanceAuthority,
+    } = await import('./autopilot-fanout.ts');
+
+    const globalDeferred = (detail: string) => ({
+      partial: false,
+      status: 'skipped',
+      report: { reason: 'global_deferred', detail },
+    });
+
+    if (job.data.execution_authority !== 'dreamcycle_global') {
+      return globalDeferred('missing_or_invalid_internal_authority');
+    }
+
+    // Every global job is bound to the authority that sealed it. A queued
+    // daily/legacy row must not cross an operator's switch to the external
+    // scheduler, and an external row must replay its begin/receipt proof.
+    const finalizerOrigin = job.data.finalizer_origin;
+    if (
+      finalizerOrigin !== undefined &&
+      finalizerOrigin !== 'daily_finalizer' &&
+      finalizerOrigin !== 'external_dreamcycle'
+    ) {
+      return globalDeferred('unknown_finalizer_origin');
+    }
+
+    // Fail closed even if a future authority reader (or a database adapter)
+    // throws instead of returning its read_failure sentinel.
+    let currentAuthority: string;
+    try {
+      currentAuthority = await readGlobalMaintenanceAuthority(engine);
+    } catch {
+      return globalDeferred('global_authority_unavailable');
+    }
+
+    if (finalizerOrigin === 'external_dreamcycle') {
+      if (currentAuthority !== 'external_dreamcycle') {
+        return globalDeferred('external_batch_mismatch_or_incomplete');
+      }
+    } else if (currentAuthority !== 'daily_finalizer') {
+      // Legacy rows (no origin) are daily-finalizer rows. They cannot execute
+      // while external_dreamcycle owns the global-maintenance authority.
+      return globalDeferred('daily_finalizer_not_enabled');
+    }
+
+    let currentSources;
+    try {
+      currentSources = await engine.listAllSources({ localPathOnly: true });
+    } catch {
+      return globalDeferred('source_listing_unavailable');
+    }
+    // Daily/legacy finalizers are bound to today's slot. The external CLI
+    // finalizer is different: its authoritative slot is sealed in the job and
+    // is verified below, so it remains valid when a worker claims it after
+    // JST midnight instead of being compared to the worker's current day.
+    if (finalizerOrigin !== 'external_dreamcycle' && !globalMaintenanceSnapshotMatches(
+      job.data.source_snapshot,
+      job.data.source_snapshot_revision,
+      job.data.source_snapshot_jst_day,
+      currentSources,
+    )) {
+      return globalDeferred('source_snapshot_mismatch_or_incomplete');
+    }
+
+    // The local-only external finalizer carries an additional begin receipt.
+    // Revalidate it at claim time so a source add/remove, a stale/pre-begin
+    // receipt, a config flip, or a hand-crafted queue row cannot execute
+    // brain-wide work.
+    if (finalizerOrigin === 'external_dreamcycle') {
+      let externalBatchMatches = false;
+      try {
+        const { externalDreamcycleFinalizerBatchMatches } = await import('./dreamcycle.ts');
+        externalBatchMatches = await externalDreamcycleFinalizerBatchMatches(engine, job.data, { currentSources });
+      } catch {
+        // The external proof includes a second authority read. Any failure is
+        // indistinguishable from an incomplete batch at this safety boundary.
+        externalBatchMatches = false;
+      }
+      if (!externalBatchMatches) return globalDeferred('external_batch_mismatch_or_incomplete');
+    }
+
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
+      : job.data.repoPath === null
+        ? null
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
-    const validPhases = new Set(ALL_PHASES);
-    const requested = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
-      : GLOBAL_PHASES;
-    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+    const rawPhases = job.data.phases;
+    let phases: CyclePhase[];
+    if (rawPhases === undefined) {
+      phases = [...DAILY_GLOBAL_ALLOWLIST];
+    } else {
+      if (!Array.isArray(rawPhases) || rawPhases.length === 0) {
+        throw new Error('autopilot-global-maintenance: phases must be a non-empty daily finalizer phase array');
+      }
+      const allowed = new Set<string>(DAILY_GLOBAL_ALLOWLIST);
+      const invalid = rawPhases.filter((phase) => typeof phase !== 'string' || !allowed.has(phase));
+      if (invalid.length > 0) {
+        throw new Error(`autopilot-global-maintenance: unsupported finalizer phase(s): ${invalid.map(String).join(', ')}`);
+      }
+      phases = rawPhases as CyclePhase[];
+    }
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull: false, // brain-wide DB/maintenance work never git-pulls
+      executionAuthority: 'dreamcycle_global',
       signal: job.signal,
       phases,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
@@ -1961,6 +2136,7 @@ export async function registerBuiltinHandlers(
     const report = await runCycle(engine, {
       brainDir: repoPath,
       phases: [phase as any],
+      executionAuthority: 'manual',
       signal: job.signal,
     });
     return { phase, status: report.status, report };

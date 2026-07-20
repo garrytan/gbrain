@@ -247,6 +247,19 @@ describe('handler invocation — historically-broken trust-boundary classes', ()
     expect(result).toMatchObject({ dry_run: true, action: 'submit_job', name: 'shell' });
   });
 
+  test('submit_job rejects server-internal DreamCycle records even for local trusted callers', async () => {
+    // `remote=false` is deliberately not enough here. Neither the global
+    // finalizer nor the external begin receipt may be manufactured through
+    // the generic operation surface (including dry-run).
+    const submitJob = operations.find(op => op.name === 'submit_job');
+    const ctx = makeContext({ remote: false, dryRun: true });
+    for (const name of ['autopilot-global-maintenance', 'dreamcycle-begin']) {
+      await expect(
+        submitJob!.handler(ctx, { name, data: {} }),
+      ).rejects.toMatchObject({ code: 'permission_denied' });
+    }
+  });
+
   test('search_by_image rejects image_path with ctx.remote=true (D18 P0)', async () => {
     const searchByImage = operations.find(op => op.name === 'search_by_image');
     expect(searchByImage).toBeDefined();

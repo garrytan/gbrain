@@ -1413,6 +1413,18 @@ export interface BrainHealth {
    * semantics after Bug 11 doc-drift fix.
    */
   orphan_pages: number;
+  /**
+   * Islanded pages — zero inbound AND zero outbound links.
+   *
+   * Additive JSON field. Engines always return it, while older callers that
+   * construct a BrainHealth fixture remain compatible during rollout.
+   */
+  islanded_pages?: number;
+  /**
+   * Pages with zero inbound links (regardless of outbound links).
+   * Additive JSON field; see islanded_pages for compatibility semantics.
+   */
+  pages_without_inbound_links?: number;
   missing_embeddings: number;
   /**
    * Composite quality score, 0-100. Weighted sum of five components: embed

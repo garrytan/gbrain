@@ -35,6 +35,7 @@ describe('CycleOpts.signal contract (v0.20.5)', () => {
     // Call with null engine + minimal opts — should return a report
     // (phases that need engine will be skipped)
     const report = await runCycle(null, {
+      executionAuthority: 'manual',
       brainDir: '/nonexistent-for-test',
       phases: [], // empty phases = no work
       signal: abort.signal,
@@ -53,6 +54,7 @@ describe('CycleOpts.signal contract (v0.20.5)', () => {
     // throw or return failed (depending on which phase catches it first)
     try {
       const report = await runCycle(null, {
+        executionAuthority: 'manual',
         brainDir: '/nonexistent-for-test',
         phases: ['lint'], // lint doesn't need engine, would normally run
         signal: abort.signal,
@@ -75,6 +77,7 @@ describe('CycleOpts.signal contract (v0.20.5)', () => {
 
     try {
       const report = await runCycle(null, {
+        executionAuthority: 'manual',
         brainDir: '/nonexistent-for-test',
         phases: ['lint', 'backlinks', 'orphans'],
         signal: abort.signal,
@@ -162,6 +165,7 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     const abort = new AbortController();
     abort.abort(new Error('timeout'));
     const report = await runCycle(null, {
+      executionAuthority: 'manual',
       brainDir: '/nonexistent-for-test',
       phases: [],
       signal: abort.signal,
