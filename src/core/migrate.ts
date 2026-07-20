@@ -509,7 +509,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'idx_pages_updated_at_desc' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc';
+               EXECUTE 'DROP INDEX IF EXISTS idx_pages_updated_at_desc';
              END IF;
            END $$;`
         );
@@ -1626,7 +1626,7 @@ export const MIGRATIONS: Migration[] = [
               JOIN pg_class c ON c.oid = i.indexrelid
               WHERE c.relname = 'pages_deleted_at_purge_idx' AND NOT i.indisvalid
             ) THEN
-              EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_deleted_at_purge_idx';
+              EXECUTE 'DROP INDEX IF EXISTS pages_deleted_at_purge_idx';
             END IF;
           END $$;
         `);
@@ -1974,7 +1974,7 @@ export const MIGRATIONS: Migration[] = [
               JOIN pg_class c ON c.oid = i.indexrelid
               WHERE c.relname = 'pages_coalesce_date_idx' AND NOT i.indisvalid
             ) THEN
-              EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_coalesce_date_idx';
+              EXECUTE 'DROP INDEX IF EXISTS pages_coalesce_date_idx';
             END IF;
           END $$;
         `);
@@ -3275,7 +3275,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'idx_chunks_embedding_null' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null';
+               EXECUTE 'DROP INDEX IF EXISTS idx_chunks_embedding_null';
              END IF;
            END $$;`
         );
@@ -3547,7 +3547,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'takes_resolved_at_idx' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS takes_resolved_at_idx';
+               EXECUTE 'DROP INDEX IF EXISTS takes_resolved_at_idx';
              END IF;
            END $$;`
         );
@@ -4220,7 +4220,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'pages_generation_idx' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_generation_idx';
+               EXECUTE 'DROP INDEX IF EXISTS pages_generation_idx';
              END IF;
            END $$;`
         );
@@ -4485,7 +4485,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'idx_facts_extract_conversation_session' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_facts_extract_conversation_session';
+               EXECUTE 'DROP INDEX IF EXISTS idx_facts_extract_conversation_session';
              END IF;
            END $$;`
         );
@@ -4538,7 +4538,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'pages_dedup_idx' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_dedup_idx';
+               EXECUTE 'DROP INDEX IF EXISTS pages_dedup_idx';
              END IF;
            END $$;`
         );
@@ -4717,7 +4717,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'content_chunks_stale_idx' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS content_chunks_stale_idx';
+               EXECUTE 'DROP INDEX IF EXISTS content_chunks_stale_idx';
              END IF;
            END $$;`
         );
@@ -4762,7 +4762,7 @@ export const MIGRATIONS: Migration[] = [
                JOIN pg_class c ON c.oid = i.indexrelid
                WHERE c.relname = 'pages_atom_source_hash_idx' AND NOT i.indisvalid
              ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_atom_source_hash_idx';
+               EXECUTE 'DROP INDEX IF EXISTS pages_atom_source_hash_idx';
              END IF;
            END $$;`
         );
