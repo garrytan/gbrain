@@ -1045,6 +1045,30 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
  * float[] (not base64), so the Layer 2 cap compares against the JSON
  * payload size of each embedding rather than a base64 string length.
  */
+/**
+ * NVIDIA NIM compatibility shim. NVIDIA uses the OpenAI embeddings wire
+ * shape but requires asymmetric input_type values: query for retrieval and
+ * passage for indexed documents. The generic gateway store carries
+ * query/document across the AI SDK boundary; map document to passage here.
+ */
+const nvidiaCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = __embedInputTypeStore.getStore() === 'query' ? 'query' : 'passage';
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Preserve the provider response when the SDK body is unexpectedly non-JSON.
+    }
+  }
+  return fetch(input as any, baseInit);
+}) as unknown as typeof fetch;
+
 const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
   // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
@@ -1305,6 +1329,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
+          : recipe.id === 'nvidia'
+          ? nvidiaCompatFetch
           : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
