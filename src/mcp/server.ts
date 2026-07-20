@@ -14,12 +14,29 @@ import {
   cleanupStaleSocket,
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
+import { resolveLocalFederatedReadScope } from '../core/sources-load.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
   );
+
+  // Local federated read fan-out for stdio: GBRAIN_SOURCE is process-constant,
+  // so resolve the federated set ONCE at startup (zero per-request cost).
+  // A source federated/unfederated while `serve` is running is picked up on
+  // the next server start — restart `gbrain serve` after `sources federate`.
+  // Startup lines make the resolved state observable: a transient DB error
+  // here would otherwise silently disable the fan-out for the whole process.
+  const stdioSourceId = process.env.GBRAIN_SOURCE || 'default';
+  const stdioSourceIds = await resolveLocalFederatedReadScope(engine, stdioSourceId, {
+    onError: (e) => process.stderr.write(
+      `[gbrain-serve] federated read fan-out DISABLED (resolution failed at startup: ${e instanceof Error ? e.message : String(e)}) — reads stay scoped to '${stdioSourceId}'; restart to retry\n`,
+    ),
+  });
+  if (stdioSourceIds) {
+    process.stderr.write(`[gbrain-serve] federated read fan-out: ${stdioSourceIds.join(', ')} (active: ${stdioSourceId})\n`);
+  }
 
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
@@ -46,7 +63,11 @@ export async function startMcpServer(engine: BrainEngine) {
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
       // Operators who want a different source on stdio MCP should set
       // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
-      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      sourceId: stdioSourceId,
+      // Federated active source → reads span the federated set (resolved
+      // once at startup above). sourceScopeOpts ignores this for any
+      // authenticated caller; writes keep the scalar sourceId.
+      sourceIds: stdioSourceIds,
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
@@ -130,7 +151,7 @@ export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
-  opts?: { sourceId?: string },
+  opts?: { sourceId?: string; sourceIds?: string[] },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
@@ -142,6 +163,9 @@ export async function handleToolCall(
     remote: false,
     logger: { info: console.log, warn: console.warn, error: console.error },
     ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    // Local federated read scope (call.ts resolves it; never set on explicit
+    // --source). sourceScopeOpts ignores it for authenticated callers.
+    ...(opts?.sourceIds?.length ? { sourceIds: opts.sourceIds } : {}),
   });
 
   return op.handler(ctx, params);
