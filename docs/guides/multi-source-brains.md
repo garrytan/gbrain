@@ -57,10 +57,13 @@ Result: searching from neither directory returns the `default` source
 media hits. Searching from inside `~/writing` returns only garrys-list.
 Federation is opt-in, not leaked.
 
-To search across them explicitly on demand:
+To search across them explicitly on demand, run once per source — the
+`--source` flag takes a single id (a comma-joined list is treated as one
+literal, unregistered id):
 
 ```bash
-gbrain search "tech layoffs" --source yc-media,garrys-list
+gbrain search "tech layoffs" --source yc-media
+gbrain search "tech layoffs" --source garrys-list
 ```
 
 ### 3. Mixed (wiki federated + sessions isolated)
@@ -154,6 +157,44 @@ cd ~/.gstack && gbrain put-page plans/multi-repo ...
 Reads span federated sources by default. Writes require a resolved
 source (explicit, inferred, or default). The resolver never picks a
 source silently when ambiguous — it errors with a clear fix.
+
+How the default read fan-out works for local callers (CLI, `gbrain call`,
+stdio MCP): after the 6-tier source resolution, when the ACTIVE source is
+federated and no explicit source was named, reads span the union of all
+federated, non-archived sources. Details worth knowing:
+
+- Explicit naming pins: `--source <id>` (or an op-level `source_id`
+  param) always scopes to exactly that source — including isolated ones.
+- Isolated active source → reads stay scoped to it (purpose separation).
+- Writes and facts `recall` always target the single active source; the
+  fan-out is read-only by construction.
+- OAuth/HTTP clients are unaffected — their `federated_read` grant is
+  authoritative and is never widened by this path.
+- The stdio MCP server resolves the fan-out set once at startup: after
+  `gbrain sources federate <id>` / `unfederate <id>`, restart `gbrain
+  serve` (and MCP clients using it) to pick up the change.
+
+## Pinning dream output to one source
+
+The corpus-global dream phases (synthesize, patterns) run inside a
+per-source cycle, so by default whichever source's cycle first hits the
+expired cooldown carries that run — and its source receives the output.
+On a federated brain that is a lottery, and the winner can be an
+isolated source, hiding reflections from default recall.
+
+```bash
+# Pin both phases to one source's cycle. Validated at set time: the
+# source must exist and not be archived; a warning fires if it is not
+# federated (output there would be invisible to default search).
+gbrain config set dream.home_source wiki
+```
+
+With the pin set, every other source's cycle skips the two phases with
+an explicit `not_home_source` reason, and `gbrain doctor` gains a
+`dream_home_source` check that warns if the configured home later
+disappears, gets archived, or is unfederated. Explicit operator runs
+(`gbrain dream --input/--date/--from/--to`) bypass the pin. Unset the
+key to return to first-come behavior.
 
 ## Durability: keep a brain repo in sync (auto-harden)
 
