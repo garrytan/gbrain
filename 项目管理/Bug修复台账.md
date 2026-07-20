@@ -973,5 +973,5 @@
 - 描述：Release 运行 29709692566 中 Windows 桌面打包成功，但 macOS/Linux CLI 构建重复执行通用 `bun run test`，运行约 21 分钟后收到 SIGTERM，导致 Release 失败。
 - 根因：Release workflow 使用 4-shard 的通用测试脚本，重复了 master Test workflow 已完成的 10-shard 全量测试，并且矩阵默认 fail-fast；同时 macOS 没有 `timeout/gtimeout` 时，备用计时分支错误地把计时器退出码 143 当成了检查失败。
 - 解决方案：Release 跨平台构建改为执行 `bun run verify`，矩阵关闭 fail-fast，并为 CLI 与 Windows 构建增加 30 分钟超时；修复两个并行脚本在 macOS 备用计时分支的退出码保存；不改变桌面端业务代码和用户数据。
-- 是否完成：否
-- 最终结果：待推送后验证主干 CI；下一次 `v*` 标签发布需确认 Release 的 Windows、macOS、Linux 构建和发布 job 全部通过。
+- 是否完成：是
+- 最终结果：最终提交 `4725c7e` 的 Test 运行 29711880666、E2E 运行 29711880674、Heavy Tests 运行 29712007203 均通过；Release build-only 验证运行 29711888459 的 Windows、macOS、Linux 构建全部通过，发布 job 按手动验证设计跳过。
