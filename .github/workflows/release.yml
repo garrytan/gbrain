@@ -10,6 +10,9 @@ permissions:
 jobs:
   build:
     strategy:
+      # Let both platform artifacts report their own result instead of
+      # cancelling the other build when one preflight or compile step fails.
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -19,6 +22,7 @@ jobs:
             target: bun-linux-x64
             artifact: gbrain-linux-x64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -28,7 +32,12 @@ jobs:
       - name: Install Admin dependencies
         working-directory: admin
         run: bun install --frozen-lockfile
-      - run: bun run test
+      # The full suite is already enforced by the master Test workflow with
+      # the optimized 10-shard layout. Re-running the generic 4-shard suite
+      # here made release jobs run for 20+ minutes and get cancelled before
+      # the CLI artifacts were built. Keep release preflight fast and stable.
+      - name: Run release preflight checks
+        run: bun run verify
       - run: bun build --compile --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
@@ -37,6 +46,7 @@ jobs:
 
   desktop:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2

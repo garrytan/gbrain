@@ -964,3 +964,14 @@
 - 解决方案：将断言更新为当前导航项的完整结构；不修改生产业务逻辑、用户配置或知识库数据。
 - 是否完成：是
 - 最终结果：本地 `admin-dream-gui` 定向测试 14/14 通过；主干 Test 运行 29708988934、E2E 运行 29708988928 和 Heavy Tests 运行 29709131019 均通过，确认该测试契约问题已修复。
+
+## 2026-07-20 GitHub Actions Release 跨平台构建取消修复
+
+- 时间：2026-07-20
+- 版本号：PMBrain 1.1.40
+- 标题：避免 Release 重复执行完整测试导致构建被取消
+- 描述：Release 运行 29709692566 中 Windows 桌面打包成功，但 macOS/Linux CLI 构建重复执行通用 `bun run test`，运行约 21 分钟后收到 SIGTERM，导致 Release 失败。
+- 根因：Release workflow 使用 4-shard 的通用测试脚本，重复了 master Test workflow 已完成的 10-shard 全量测试，并且矩阵默认 fail-fast，发布构建没有稳定的快速预检边界。
+- 解决方案：Release 跨平台构建改为执行 `bun run verify`，矩阵关闭 fail-fast，并为 CLI 与 Windows 构建增加 30 分钟超时；不改变桌面端业务代码和用户数据。
+- 是否完成：否
+- 最终结果：待推送后验证主干 CI；下一次 `v*` 标签发布需确认 Release 的 Windows、macOS、Linux 构建和发布 job 全部通过。
