@@ -740,6 +740,21 @@ export interface HybridSearchOpts extends SearchOpts {
    * a fresh per-call deadline. Not part of the public contract.
    */
   _queryEmbedDeadline?: QueryEmbedDeadline;
+
+  /**
+   * INTERNAL — cache-consult outcome threaded from `hybridSearchCached` into
+   * the inner `hybridSearch` so the ONE telemetry record per search (emitted
+   * by the inner function) carries the cache classification: 'miss' when the
+   * semantic cache was consulted and had no row, 'disabled' when the consult
+   * was skipped (cache off, walk/near-symbol/non-default-column/adaptive
+   * skip, or the lookup embed failed). Folded into the RECORDED meta only —
+   * `onMeta` payloads are unchanged. Direct `hybridSearch` callers leave it
+   * undefined and keep recording with no cache field (they never consulted
+   * the cache). The cache-HIT record is emitted by `hybridSearchCached`
+   * itself, since the inner function never runs on a hit. Not part of the
+   * public contract.
+   */
+  _telemetryCacheStatus?: 'miss' | 'disabled';
 }
 
 /**
@@ -943,7 +958,15 @@ export async function hybridSearch(
       // swallow — capture telemetry is best-effort
     }
     try {
-      recordSearchTelemetry(engine, meta, { results_count: lastResultsCount, rank1_score: lastRank1Score });
+      // #2952 — fold the cache-consult outcome (threaded by hybridSearchCached)
+      // into the RECORDED meta only. None of the inner return paths set a
+      // `cache` field themselves, so this is the sole source of the miss /
+      // disabled classification; `onMeta` consumers above still receive the
+      // meta unchanged (the cached wrapper emits its own merged meta to them).
+      const recordedMeta = opts?._telemetryCacheStatus
+        ? { ...meta, cache: { status: opts._telemetryCacheStatus } }
+        : meta;
+      recordSearchTelemetry(engine, recordedMeta, { results_count: lastResultsCount, rank1_score: lastRank1Score });
     } catch {
       // swallow — telemetry must never break the search hot path.
     }
@@ -1753,6 +1776,21 @@ export async function hybridSearchCached(
       } catch {
         // swallow — telemetry is best-effort
       }
+      // #2952 — a cache hit never reaches the inner hybridSearch (the only
+      // other telemetry site), so record the search HERE or it vanishes from
+      // stats entirely (count, results, tokens, rank-1 — not just the hit
+      // counter). Same rank-1 rule as the inner return paths. Tokens are
+      // gated on the MODE-resolved budget, mirroring the inner paths' `if
+      // (resolvedMode.tokenBudget > 0)` meta condition — otherwise a
+      // tokenmax (budget-off) brain would record real tokens on hits but 0
+      // on misses, skewing avg-tokens upward as the hit rate rises (codex).
+      recordSearchTelemetry(engine, cachedMeta, {
+        results_count: budgeted.length,
+        ...(resolvedForCache.tokenBudget && resolvedForCache.tokenBudget > 0
+          ? { tokens_estimate: budgetMeta.used }
+          : {}),
+        rank1_score: budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined,
+      });
       return budgeted;
     }
   }
@@ -1768,6 +1806,10 @@ export async function hybridSearchCached(
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,
+    // #2952 — classify this search's telemetry record (emitted by the inner
+    // function) with the cache-consult outcome. 'hit' already returned above,
+    // so only miss/disabled reach this call.
+    _telemetryCacheStatus: cacheStatus === 'disabled' ? 'disabled' : 'miss',
     onMeta: (m) => {
       innerMetaBox.current = m;
       // Do NOT call userOnMeta here — we'll emit a merged meta below
