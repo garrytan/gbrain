@@ -306,7 +306,7 @@ describe('runExtractConversationFactsCore', () => {
     // truncation semantics than the canonical reset helper.
     await engine.executeRaw(`DELETE FROM facts WHERE source LIKE 'cli:extract-conversation-facts%'`);
     await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
-    await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
+    await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%' OR slug LIKE 'gbrain-inbox/%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
     await engine.setConfig('sync.repo_path', repoDir);
@@ -374,6 +374,25 @@ describe('runExtractConversationFactsCore', () => {
     });
     // pages_considered counts only pages whose type matches the allowlist.
     expect(result.pages_considered).toBe(0);
+  });
+
+  test('transcript note pages under inbox prefixes are eligible', async () => {
+    await engine.putPage('gbrain-inbox/transcripts/session-example', {
+      type: 'note',
+      title: 'Session transcript',
+      compiled_truth: SAMPLE_BODY,
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'gbrain-inbox/transcripts/session-example',
+      dryRun: true,
+      sleepMs: 0,
+    });
+    expect(result.pages_considered).toBe(1);
+    expect(result.pages_processed).toBe(1);
+    expect(result.segments_processed).toBeGreaterThanOrEqual(1);
   });
 
   test('sinceIso filters already-processed history', async () => {

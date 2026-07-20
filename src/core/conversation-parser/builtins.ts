@@ -281,6 +281,34 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   },
 
   {
+    id: 'gbrain-role-heading',
+    origin: 'builtin',
+    regex: /^###[ \t]+(User|Assistant|System|Tool)\s*$/,
+    captures: {
+      speaker_group: 1,
+      text_group: 0,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: true,
+    quick_reject: /^###[ \t]/,
+    score_full_body: true,
+    test_positive: [
+      '### User',
+      '### Assistant',
+      '### System',
+      '### Tool',
+    ],
+    test_negative: [
+      '#### User',
+      '### Userland notes',
+      '**Alice:** plain bold-name',
+    ],
+    source_doc: 'gbrain session transcript `### <Role>` heading-delimited blocks',
+  },
+
+  {
     id: 'telegram-text-export',
     origin: 'builtin',
     // Telegram Desktop's text-export shape: `Alice Doe, [Mar 15, 2024 at 6:37:00 PM]`
