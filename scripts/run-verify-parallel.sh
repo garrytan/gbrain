@@ -124,6 +124,7 @@ for c in "${CHECKS[@]}"; do
   (
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
+      rc=$?
     else
       bun run "$c" > "$LOG_FILE" 2>&1 &
       pid=$!

@@ -56,6 +56,7 @@ describe("run-verify-parallel.sh — CLI contract", () => {
     const source = readFileSync(SCRIPT, "utf8");
     const unitSource = readFileSync(UNIT_SCRIPT, "utf8");
     for (const script of [source, unitSource]) {
+      expect(script).toContain('rc=$?\n    else');
       expect(script).toContain('rc=$?\n      kill "$cap_pid"');
       expect(script).toContain('wait "$cap_pid" 2>/dev/null || true');
     }
