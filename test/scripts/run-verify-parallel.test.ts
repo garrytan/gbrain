@@ -15,11 +15,12 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SCRIPT = "scripts/run-verify-parallel.sh";
+const UNIT_SCRIPT = "scripts/run-unit-parallel.sh";
 
 describe("run-verify-parallel.sh — CLI contract", () => {
   it("--dry-list emits one line per check, exit 0", () => {
@@ -49,6 +50,15 @@ describe("run-verify-parallel.sh — CLI contract", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown arg");
     expect(r.stderr).toContain("usage:");
+  });
+
+  it("preserves the check exit code when the macOS fallback timer is stopped", () => {
+    const source = readFileSync(SCRIPT, "utf8");
+    const unitSource = readFileSync(UNIT_SCRIPT, "utf8");
+    for (const script of [source, unitSource]) {
+      expect(script).toContain('rc=$?\n      kill "$cap_pid"');
+      expect(script).toContain('wait "$cap_pid" 2>/dev/null || true');
+    }
   });
 });
 
