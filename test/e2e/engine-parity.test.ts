@@ -76,6 +76,23 @@ const SEED_PAGES: SeedPage[] = [
     body: 'example founder unrelated content for distraction',
     embeddingDim: 50,
   },
+  // v0.32.7 CJK branch (Postgres parity) fixtures — synthetic Korean text
+  // about a fictional "그리팅 서비스". Multi-hit page (3× 그리팅) must
+  // outrank the one-hit page under occurrence-count ranking on BOTH engines.
+  {
+    slug: 'concepts/greeting-service',
+    type: 'concept',
+    title: '그리팅 서비스 개요',
+    body: '그리팅 서비스는 가상의 인사 자동화 플랫폼입니다. 그리팅 봇이 아침마다 인사를 보냅니다. 오늘도 그리팅 팀은 새로운 인사말을 준비했습니다.',
+    embeddingDim: 33,
+  },
+  {
+    slug: 'notes/greeting-one-hit',
+    type: 'note',
+    title: '가상 메모',
+    body: '어제 회의에서 그리팅 이야기가 잠깐 나왔다. 나머지는 다른 주제였다.',
+    embeddingDim: 34,
+  },
 ];
 
 async function seedEngine(eng: BrainEngine) {
@@ -140,6 +157,48 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       expect(new Set(pgSlugs)).toEqual(new Set(pgliteSlugs));
     });
   }
+
+  // v0.32.7 CJK branch (Postgres parity): websearch_to_tsquery('english')
+  // can't tokenize CJK, so both engines route CJK queries to the ILIKE +
+  // occurrence-count fallback. These pin the fallback's cross-engine
+  // contract with purely synthetic Korean fixtures.
+  test('CJK parity: searchKeyword("그리팅") finds the same pages, same top rank', async () => {
+    const pgResults = await pgEngine.searchKeyword('그리팅', { limit: 5 });
+    const pgliteResults = await pgliteEngine.searchKeyword('그리팅', { limit: 5 });
+
+    // Without the fallback the Postgres engine returned [] here (empty
+    // english tsquery) while PGLite matched — the exact drift this pins.
+    expect(pgResults.length).toBeGreaterThan(0);
+    expect(pgliteResults.length).toBeGreaterThan(0);
+
+    // Occurrence-count ranking: 3-hit page outranks 1-hit page on BOTH.
+    expect(pgResults[0].slug).toBe('concepts/greeting-service');
+    expect(pgliteResults[0].slug).toBe('concepts/greeting-service');
+
+    const pgSlugs = pgResults.map((r: SearchResult) => r.slug);
+    const pgliteSlugs = pgliteResults.map((r: SearchResult) => r.slug);
+    expect(pgSlugs).toContain('notes/greeting-one-hit');
+    expect(new Set(pgSlugs)).toEqual(new Set(pgliteSlugs));
+  });
+
+  test('CJK parity: chunk-grain searchKeywordChunks matches across engines', async () => {
+    const pgResults = await pgEngine.searchKeywordChunks('그리팅', { limit: 5 });
+    const pgliteResults = await pgliteEngine.searchKeywordChunks('그리팅', { limit: 5 });
+
+    expect(pgResults.length).toBeGreaterThan(0);
+    expect(pgliteResults.length).toBeGreaterThan(0);
+    expect(pgResults[0].slug).toBe(pgliteResults[0].slug);
+  });
+
+  test('CJK parity: LIKE-meta-char escape — literal % query does not wildcard-match', async () => {
+    // After escapeLikePattern, ILIKE looks for a literal `%` character,
+    // which no seeded fixture contains. Both engines must return empty
+    // rather than treating % as a wildcard.
+    const pgResults = await pgEngine.searchKeyword('100% 그리팅');
+    const pgliteResults = await pgliteEngine.searchKeyword('100% 그리팅');
+    expect(pgResults.length).toBe(0);
+    expect(pgliteResults.length).toBe(0);
+  });
 
   test('searchVector: top result matches between engines', async () => {
     const queryVec = basisEmbedding(7); // article direction
