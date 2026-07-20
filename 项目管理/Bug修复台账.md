@@ -953,3 +953,14 @@
 - 解决方案：增加 `afterAll(() => resetGateway())`，测试结束后恢复 Gateway 状态；不改变生产代码、用户配置或知识库数据。
 - 是否完成：是
 - 最终结果：本地 Rerank 与 capture 定向测试通过；PR #14 的 Test 运行 29628581923、E2E 运行 29628581901 和 Heavy Tests 运行 29628713377 均通过。E2E 的 `xlsx` tarball 解压失败未再复现，确认是瞬时依赖下载故障。
+
+## 2026-07-20 GitHub Actions Admin GUI 测试契约同步
+
+- 时间：2026-07-20
+- 版本号：PMBrain 1.1.39
+- 标题：同步 Admin Console 导航测试与最新图标结构
+- 描述：主干 Test 运行 29708350347 的 `test (1)` 因 Admin Dream GUI 测试仍断言旧导航对象文本而失败；当前导航项已按界面改版增加 `icon: 'organize'`。
+- 根因：测试契约未随已提交的 Admin Console 导航结构更新，导致字符串断言过期。
+- 解决方案：将断言更新为当前导航项的完整结构；不修改生产业务逻辑、用户配置或知识库数据。
+- 是否完成：否
+- 最终结果：待本地验证并重新运行主干 Test、E2E 与 Heavy Tests。

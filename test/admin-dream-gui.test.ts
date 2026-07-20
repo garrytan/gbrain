@@ -27,7 +27,7 @@ function completedRun(report: Record<string, unknown>, stderr = ''): ConsoleRun 
 
 describe('Dream GUI product contract', () => {
   test('ordinary navigation exposes one beginner-friendly Dream entry', () => {
-    expect(app).toContain("{ page: 'dream', label: '知识整理' }");
+    expect(app).toContain("{ page: 'dream', label: '知识整理', icon: 'organize' }");
     expect(app).not.toContain("{ page: 'dream-execute', label: '阶段执行' }");
     expect(app).not.toContain("{ page: 'dream-insights', label: '项目洞察' }");
   });
