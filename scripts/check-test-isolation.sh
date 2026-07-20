@@ -5,7 +5,7 @@
 # engines, mock.module overrides) leaks across files in that process and
 # silently flakes other tests.
 #
-# Rules enforced (non-serial unit test files only):
+# Rules enforced (R0 globally; R1-R4 for non-serial unit test files only):
 #  R1: no `process.env.X = ...`, `process.env['X'] = ...`,
 #      `delete process.env.X`, `Object.assign(process.env, ...)`,
 #      `Reflect.set(process.env, ...)` mutations. Use withEnv() helper or
@@ -42,6 +42,36 @@ cd "$ROOT"
 
 TARGET_DIR="${1:-test}"
 ALLOWLIST_FILE="$ROOT/scripts/check-test-isolation.allowlist"
+HOME_PRELOAD='./test/helpers/home-isolation-preload.ts'
+
+# R0: the home-isolation preload is a repository process-safety boundary. It
+# must be the unique first entry in the unique [test] preload declaration so no
+# GBrain application preload can observe inherited production state first.
+# Fixture callers may point this script at a standalone, non-repository test
+# tree to exercise R1-R4; there is no repository bunfig contract to enforce in
+# that case. The dedicated R0 regression initializes a repository explicitly.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  preload_declarations=$(grep -cE '^[[:space:]]*preload[[:space:]]*=' "$ROOT/bunfig.toml" 2>/dev/null || true)
+  home_preload_occurrences=$( (grep -oF "$HOME_PRELOAD" "$ROOT/bunfig.toml" 2>/dev/null || true) | wc -l | tr -d '[:space:]' )
+  test_preload_lines=$(awk '
+    /^[[:space:]]*\[/ {
+      section = $0
+      gsub(/[[:space:]]/, "", section)
+      in_test = (section == "[test]")
+    }
+    in_test && /^[[:space:]]*preload[[:space:]]*=/ { print }
+  ' "$ROOT/bunfig.toml" 2>/dev/null || true)
+  test_preload_declarations=$(printf '%s\n' "$test_preload_lines" | grep -cE '^[[:space:]]*preload[[:space:]]*=' || true)
+  preload_compact=$(printf '%s' "$test_preload_lines" | tr -d '[:space:]')
+  if [ "$preload_declarations" -ne 1 ] \
+     || [ "$test_preload_declarations" -ne 1 ] \
+     || [ "$home_preload_occurrences" -ne 1 ] \
+     || ! printf '%s' "$preload_compact" | grep -qF 'preload=["./test/helpers/home-isolation-preload.ts"'; then
+    echo "ERROR: bunfig.toml"
+    echo "       rule R0: $HOME_PRELOAD must be the unique first [test] preload"
+    exit 1
+  fi
+fi
 
 # Read allowlist (one filename per line, # comments allowed). Empty file
 # is fine — every violation will fail. Cached into ALLOWLIST so the

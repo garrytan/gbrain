@@ -46,6 +46,8 @@ If a shard wedges (per-shard `GBRAIN_TEST_SHARD_TIMEOUT` cap, default 600s), the
 
 ### Test-isolation lint and helpers
 
+Every `bun test` process first loads `test/helpers/home-isolation-preload.ts`. The preload replaces any inherited `GBRAIN_HOME` and `GBRAIN_AUDIT_DIR` before application imports, using a unique owned child beneath the OS temporary directory by default. `GBRAIN_TEST_HOME` is the only optional parent override: blank behaves like unset, while a nonblank override must name an existing, empty, plain directory outside profile defaults, repositories, worktrees, and source trees. The caller-owned parent remains in place; normal-exit cleanup removes only the nonce-marked child created by that process. `HOME` and `USERPROFILE` are never changed, and CLI subprocesses inherit the isolated GBrain and audit paths. `scripts/check-test-isolation.sh` fails when this preload is missing, duplicated, or not first in `bunfig.toml`.
+
 The cross-file flake class is enforced statically by `scripts/check-test-isolation.sh`, wired into `bun run verify` and `bun run check:all`. Rules (non-serial unit files only; `*.serial.test.ts` and `test/e2e/*` are skipped):
 
 | Rule | What it bans | Fix |

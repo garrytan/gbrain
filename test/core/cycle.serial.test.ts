@@ -117,6 +117,7 @@ mock.module('../../src/commands/orphans.ts', () => ({
 // Import after mocks.
 const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
 const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
+const { gbrainPath } = await import('../../src/core/config.ts');
 
 // Shared PGLite engine per describe block. Each block does its own
 // beforeAll/afterAll (below). `truncateCycleLocks` clears the cycle
@@ -289,7 +290,7 @@ describe('runCycle — cycle_already_running skip', () => {
 // ─── Engine null path ─────────────────────────────────────────────
 
 describe('runCycle — engine = null (filesystem-only mode)', () => {
-  const lockFile = require('path').join(require('os').homedir(), '.gbrain', 'cycle.lock');
+  const lockFile = gbrainPath('cycle.lock');
 
   afterEach(() => {
     if (existsSync(lockFile)) { try { unlinkSync(lockFile); } catch { /* */ } }
@@ -313,15 +314,15 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
   });
 
   test('file lock blocks concurrent engine=null cycles', async () => {
-    // Seed a lock file pointing at PID 1 (init/launchd — always alive on
-    // unix, and never equals our test PID). Fresh mtime means "live holder".
+    // Seed a lock file pointing at the live parent process (never this test
+    // PID). Fresh mtime means "live holder" on Windows and Unix alike.
     // With engine=null + the default phases selection, lint + backlinks
     // trigger NEEDS_LOCK_PHASES → acquireFileLock sees the live holder and
     // returns null → runCycle returns skipped/cycle_already_running.
     const { writeFileSync, mkdirSync } = require('fs');
     const path = require('path');
     mkdirSync(path.dirname(lockFile), { recursive: true });
-    writeFileSync(lockFile, `1\n${new Date().toISOString()}\n`);
+    writeFileSync(lockFile, `${process.ppid}\n${new Date().toISOString()}\n`);
 
     const report = await runCycle(null, { brainDir: '/tmp/brain' });
     expect(report.status).toBe('skipped');

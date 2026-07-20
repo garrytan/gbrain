@@ -9,9 +9,10 @@
  *   - --quiet → no stdout, same exit code.
  *   - --help → prints usage, exits 0.
  *
- * Subprocess invocation against temp $HOME so each test sees clean fixture
- * state. DATABASE_URL / GBRAIN_DATABASE_URL stripped so the report runs
- * filesystem-only (the checks we care about live there).
+ * Subprocess invocation against an explicit temporary GBRAIN_HOME and child
+ * audit directory so each test sees clean fixture state. DATABASE_URL /
+ * GBRAIN_DATABASE_URL are stripped so the report runs filesystem-only (the
+ * checks we care about live there).
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -23,10 +24,13 @@ import { execFileSync } from 'child_process';
 const CLI = join(__dirname, '..', 'src', 'cli.ts');
 
 let tmp: string;
-let origHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = {
+    ...process.env,
+    GBRAIN_HOME: join(tmp, '.gbrain'),
+    GBRAIN_AUDIT_DIR: join(tmp, '.gbrain', 'audit'),
+  } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -46,13 +50,10 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
 }
 
 beforeEach(() => {
-  origHome = process.env.HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-skillpack-check-test-'));
 });
 
 afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME;
-  else process.env.HOME = origHome;
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 

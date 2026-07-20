@@ -91,6 +91,18 @@ jobs:
         run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+      - name: Run recovery snapshot Postgres/PGLite parity
+        run: |
+          mkdir -p "$GBRAIN_TEST_HOME"
+          test ! -e "$HOME/.gbrain"
+          result=0
+          bun test --timeout=60000 test/e2e/recovery-snapshot-postgres.test.ts || result=$?
+          test ! -e "$HOME/.gbrain" || result=1
+          test -z "$(find "$GBRAIN_TEST_HOME" -mindepth 1 -maxdepth 1 -print -quit)" || result=1
+          exit "$result"
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_TEST_HOME: ${{ runner.temp }}/gbrain-recovery-isolation
 
   tier2:
     name: Tier 2 (LLM Skills)

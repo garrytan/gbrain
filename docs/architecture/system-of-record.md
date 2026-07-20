@@ -12,18 +12,19 @@ enforces it programmatically.
 ## Why this matters
 
 The DB is a derived index over the markdown content. It exists to make
-search fast, to dedup embedding-similar claims, to materialize the
-cross-page graph. None of that data is irreplaceable — as long as the
-markdown is intact, `gbrain sync && gbrain extract all` rebuilds the
-entire DB from scratch.
+search fast, to dedup embedding-similar claims, and to materialize the
+cross-page graph. Source-backed knowledge is recoverable from clean,
+versioned markdown, but recovery is a phased reconciliation: importing pages
+alone does not prove facts, takes, links, timeline, embeddings, or reader
+readiness.
 
 This means:
 
-- **Disaster recovery is one command.** If your DB volume corrupts, if
-  Postgres eats itself, if PGLite's WASM lock wedges — you don't need
-  a backup. You wipe the DB, re-import from your brain repo, and the
-  derived state regenerates. v0.32.3 ships `gbrain rebuild
-  --confirm-destructive` as the documented one-liner.
+- **Disaster recovery is a disposable-target drill.** If a DB volume
+  corrupts, rebuild into an isolated target, reconcile every FS-canonical
+  category, converge retrieval state, and compare strict snapshots before
+  any separately authorized cutover. This head intentionally has no
+  destructive `gbrain rebuild` one-liner.
 - **Multi-machine sync is git.** Your brain is a repo. Push from one
   machine, pull from another, and the second machine's DB rebuilds on
   its next sync. No "back up the database" step.
@@ -140,28 +141,27 @@ remove the row. The next `extract_facts` cycle wipes the DB row.
 
 ## Disaster recovery
 
-The promise the rule makes:
+Recovery at this head is deliberately not a destructive command and not raw
+SQL. The supported sequence uses an isolated GBrain home and a dedicated
+disposable target, registers the clean markdown source, syncs pages, reconciles
+links/timeline and facts/takes, converges embedding/backfill state, and then
+compares strict `gbrain recovery snapshot --brain <id> --source <id> --json`
+artifacts. The target stays isolated until disposable CLI/MCP reader checks and
+an independently authorized cutover.
 
-```bash
-# Snapshot what's there
-gbrain stats > /tmp/before.txt
+`recovery snapshot` is all-or-nothing and read-only. It reports FS-canonical
+knowledge separately from runtime DB-only categories, binds schema/pack/source
+and retrieval identities, and refuses stale schema or incomplete reads. It is
+not the tolerant operational `status` command and does not repair anything.
 
-# Wipe and rebuild
-gbrain rebuild --confirm-destructive   # v0.32.3 — deletes derived tables
-                                       # (pages + content_chunks survive
-                                       # the CASCADE-safe design)
-                                       # OR manually for v0.32.2:
-psql -c 'DELETE FROM facts; DELETE FROM takes; DELETE FROM links; DELETE FROM timeline_entries;'
-gbrain sync
-gbrain extract all
-
-# Counts match
-gbrain stats > /tmp/after.txt
-diff /tmp/before.txt /tmp/after.txt
-```
+See [`docs/guides/rebuild-from-markdown.md`](../guides/rebuild-from-markdown.md)
+for the exact phased runbook and its veto conditions. `gbrain migrate`,
+`export --restore-only`, direct SQL, and a nonexistent `gbrain rebuild` are not
+recovery inputs.
 
 The invariant E2E test at `test/e2e/system-of-record-invariant.test.ts`
-exercises this exact flow on every CI run.
+continues to prove the FS-canonical category contract. The recovery snapshot
+parity tests separately prove strict PGLite/Postgres snapshot behavior.
 
 ## Rule for new code
 

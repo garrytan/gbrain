@@ -27,16 +27,14 @@ bun install -g github:garrytan/gbrain
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`** (Bun
-> occasionally blocks the top-level postinstall hook on global installs, so schema
-> migrations don't run automatically), the CLI prints a recovery hint pointing at
-> [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes`
-> to recover. If that doesn't work, fall back to the deterministic install path:
->
-> ```bash
-> git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
-> bun install && bun link
-> ```
+**Package installation is non-stateful.** `bun install` and `bun install -g` install
+code and dependencies only. They never discover an existing `gbrain` executable,
+initialize a brain, apply migrations, run an upgrade, or write GBrain home/audit
+state. Continue explicitly:
+
+- New brain: run `gbrain init` (or the explicit engine form below).
+- Updated source checkout: run `gbrain apply-migrations --yes` after `bun install`.
+- Managed/global installation: use `gbrain upgrade` for the full upgrade flow.
 
 ## Step 2: API Keys
 
