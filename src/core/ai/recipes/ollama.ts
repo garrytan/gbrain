@@ -33,6 +33,32 @@ export const ollama: Recipe = {
       // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,
     },
+    chat: {
+      // Ollama serves whatever model the user has pulled. The openai-compat
+      // tier does NOT enforce this list at runtime — users pass any local
+      // model id (e.g. `ollama:qwen2.5:14b`, `ollama:llama3.1:8b`). The list
+      // below is a curated entry point for the wizard, not an allow-list.
+      // Matches openrouter.ts pattern (catalog spans many models).
+      models: [],
+      // Tool calling is per-model on Ollama. Qwen2.5, Llama 3.1+, Mistral
+      // (recent), and Granite all support /v1 tool calls via Ollama's
+      // OpenAI-compat layer. Conservative true; gateway surfaces upstream
+      // 4xx if the chosen model lacks tool support.
+      supports_tools: true,
+      // Same gate as openrouter: the real subagent-loop gate is
+      // isAnthropicProvider() in src/core/model-config.ts which hard-pins
+      // gbrain's subagent infra to Anthropic-direct (stable tool_use_id
+      // across crashes/replays). Informational only.
+      supports_subagent_loop: false,
+      // Ollama has no Anthropic-style ephemeral prompt cache.
+      supports_prompt_cache: false,
+      // No max_context_tokens: catalog spans 4K (tiny models) to 1M+
+      // (Llama 3.1 / Qwen2.5 long-context variants). Per-model rather than
+      // recipe-wide. Let upstream errors surface per-model.
+      cost_per_1m_input_usd: 0,
+      cost_per_1m_output_usd: 0,
+      price_last_verified: '2026-06-08',
+    },
   },
-  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',
+  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull <model>` and `ollama serve`. For chat: `ollama:qwen2.5:14b` or any pulled model. For embeddings: `ollama:nomic-embed-text` (768d).',
 };
