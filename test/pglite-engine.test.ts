@@ -88,6 +88,39 @@ describe('PGLiteEngine: Pages', () => {
     expect(matches.length).toBe(1);
   });
 
+  // tasks-41o — content_created_at is a new putPage input (migration v120).
+  // getPage's SELECT deliberately doesn't project it (matches the existing
+  // effective_date/import_filename gap on both engines), so these tests read
+  // it back via listPages (`SELECT p.*`), same as migrate-engine.ts does.
+  test('putPage persists content_created_at (round trip via listPages)', async () => {
+    const contentCreatedAt = new Date('2026-05-14T00:00:00Z');
+    await engine.putPage('test/content-created-at', { ...testPage, content_created_at: contentCreatedAt });
+
+    const rows = await engine.listPages({ slugPrefix: 'test/content-created-at', limit: 10 });
+    expect(rows.length).toBe(1);
+    expect(rows[0].content_created_at?.toISOString()).toBe(contentCreatedAt.toISOString());
+  });
+
+  test('putPage without content_created_at leaves the column NULL on insert', async () => {
+    await engine.putPage('test/no-content-created-at', testPage);
+    const rows = await engine.listPages({ slugPrefix: 'test/no-content-created-at', limit: 10 });
+    expect(rows.length).toBe(1);
+    expect(rows[0].content_created_at ?? null).toBeNull();
+  });
+
+  test('putPage COALESCE-preserves content_created_at across a re-put that omits it', async () => {
+    const contentCreatedAt = new Date('2026-05-14T00:00:00Z');
+    await engine.putPage('test/preserve-content-created-at', { ...testPage, content_created_at: contentCreatedAt });
+    // Re-put without content_created_at — must NOT blank out the prior value
+    // (matches the effective_date / import_filename COALESCE-preserve shape).
+    await engine.putPage('test/preserve-content-created-at', { ...testPage, title: 'Retitled' });
+
+    const rows = await engine.listPages({ slugPrefix: 'test/preserve-content-created-at', limit: 10 });
+    expect(rows.length).toBe(1);
+    expect(rows[0].title).toBe('Retitled');
+    expect(rows[0].content_created_at?.toISOString()).toBe(contentCreatedAt.toISOString());
+  });
+
   test('getPage returns null for missing slug', async () => {
     const result = await engine.getPage('nonexistent/slug');
     expect(result).toBeNull();

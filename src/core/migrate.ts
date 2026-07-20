@@ -5602,6 +5602,38 @@ export const MIGRATIONS: Migration[] = [
       process.stderr.write(`  v123: trigger functions recreated with language='${lang}' + backfilled existing rows\n`);
     },
   },
+  {
+    version: 124,
+    name: 'pages_content_created_at',
+    // tasks-41o — the pglite→Postgres re-ingest (Jul 7-8) exposed a latent
+    // gap: putPage()'s INSERT never set created_at (DB default now()) and
+    // hardcoded updated_at=now(), so every re-ingested row's ROW timestamps
+    // read as "just now" regardless of when the underlying content was
+    // actually authored. created_at is correctly the row-insert time (never
+    // touched by this migration — that IS its semantics); the gap is that
+    // nothing captured the CONTENT's own creation date when frontmatter
+    // supplied one (e.g. `created: 2026-05-14` on a wiki/entities/ page with
+    // no event_date/date/published to feed the existing effective_date
+    // chain). Additive + idempotent, modeled on the PR #2533 / migration
+    // v121 (facts.dimension) precedent: a single nullable column, no
+    // backfill inside the migration itself (see scripts/backfill-content-
+    // created-at.ts — a separate, re-runnable, idempotent pass so a bad
+    // backfill can be re-run without a schema round-trip). Consulted by
+    // computeEffectiveDate (src/core/effective-date.ts) as the
+    // highest-priority precedence candidate, and settable via
+    // PageInput.content_created_at on putPage. Mirrored in src/schema.sql,
+    // src/core/pglite-schema.ts, and the generated src/core/schema-embedded.ts
+    // so fresh installs carry the same column.
+    //
+    // Renumbered to v124 on merge with master: master claimed v123 for
+    // configurable_fts_language (#2941). Keeping master's version avoids
+    // schema-version drift on brains that already applied FTS v123.
+    idempotent: true,
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS content_created_at TIMESTAMPTZ;
+    `,
+
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { MIGRATIONS, LATEST_VERSION } from '../src/core/migrate.ts';
+import { MIGRATIONS } from '../src/core/migrate.ts';
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 
 const ENV_KEY = 'GBRAIN_FTS_LANGUAGE';
@@ -24,8 +24,11 @@ describe('configurable_fts_language migration', () => {
     expect(ftsMig?.version).toBeGreaterThan(115);
   });
 
-  test('fts migration is the latest migration', () => {
-    expect(MIGRATIONS.find(m => m.name === 'configurable_fts_language')?.version).toBe(LATEST_VERSION);
+  test('fts migration is registered at version 123', () => {
+    // Was "is the latest" when #2941 landed as tip. Subsequent migrations
+    // (e.g. pages_content_created_at v124) sit after it; pin the number so
+    // renumbering during master merges is an intentional, visible change.
+    expect(MIGRATIONS.find(m => m.name === 'configurable_fts_language')?.version).toBe(123);
   });
 
   test('ftsMig uses handler (not static SQL) because language interpolation is dynamic', () => {
