@@ -306,6 +306,7 @@ describe('runExtractConversationFactsCore', () => {
     // truncation semantics than the canonical reset helper.
     await engine.executeRaw(`DELETE FROM facts WHERE source LIKE 'cli:extract-conversation-facts%'`);
     await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
+    await engine.executeRaw(`DELETE FROM extract_rollup_7d`);
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
@@ -363,6 +364,21 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_processed).toBe(1);
     expect(result.facts_inserted).toBe(0);
     expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+  });
+
+  test('dry-run does not write the extract_rollup_7d cache row', async () => {
+    // Regression: --dry-run promises "no DB writes" but writeRunReceiptAndRollup
+    // upsert-ed extract_rollup_7d unconditionally. A preview must not mutate the DB.
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      dryRun: true,
+      sleepMs: 0,
+    });
+    const rows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM extract_rollup_7d WHERE kind = 'facts.conversation' AND source_id = 'default'`,
+    );
+    expect(Number(rows[0]?.count ?? 0)).toBe(0);
   });
 
   test('non-conversation pages are skipped', async () => {
