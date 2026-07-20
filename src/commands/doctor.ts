@@ -2466,6 +2466,48 @@ export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise
  * different brain's lock. Hint includes PID + a `ps -p` check so
  * the user verifies before deleting.
  */
+/**
+ * dream_home_source — when `dream.home_source` is configured, the
+ * corpus-global dream phases (synthesize/patterns) run ONLY in that
+ * source's cycle and fail closed everywhere else. A home source that no
+ * longer exists (renamed brain, typo'd via a raw SQL write) or was
+ * archived therefore silences those phases on EVERY cycle, and the only
+ * symptom is a skip summary buried in per-cycle reports. Surface it here
+ * with a paste-ready fix. Unset key → ok (legacy first-come behavior).
+ */
+export async function checkDreamHomeSource(engine: BrainEngine): Promise<Check> {
+  const name = 'dream_home_source';
+  try {
+    const home = await engine.getConfig('dream.home_source');
+    if (!home || !home.trim()) {
+      return { name, status: 'ok', message: 'dream.home_source unset (corpus-global dream phases run in the first eligible cycle)' };
+    }
+    const { fetchSource, isSourceFederated } = await import('../core/sources-load.ts');
+    const row = await fetchSource(engine, home.trim());
+    if (!row) {
+      return {
+        name, status: 'warn',
+        message: `dream.home_source '${home.trim()}' is not a registered source — synthesize/patterns skip on EVERY cycle. Fix: gbrain config set dream.home_source <existing-source-id> (see: gbrain sources list)`,
+      };
+    }
+    if (row.archived === true) {
+      return {
+        name, status: 'warn',
+        message: `dream.home_source '${home.trim()}' is archived — its cycle never runs, so synthesize/patterns never fire. Fix: gbrain sources restore ${home.trim()} (or point home_source elsewhere)`,
+      };
+    }
+    if (!isSourceFederated(row.config)) {
+      return {
+        name, status: 'warn',
+        message: `dream.home_source '${home.trim()}' is not federated — dream output written there is invisible to cross-source default search. Fix: gbrain sources federate ${home.trim()}`,
+      };
+    }
+    return { name, status: 'ok', message: `dream.home_source '${home.trim()}' (registered, active, federated)` };
+  } catch (e) {
+    return { name, status: 'warn', message: `dream_home_source check failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export function checkAutopilotLockScope(): Check {
   try {
     const canonical = gbrainPath('autopilot.lock');
@@ -7316,6 +7358,11 @@ export async function buildChecks(
     // 5M — autopilot_lock_scope (PID-safe hint per codex CF11)
     progress.heartbeat('autopilot_lock_scope');
     checks.push(checkAutopilotLockScope());
+    // dream_home_source — configured home must exist, be active, and be
+    // federated (else corpus-global dream phases silently skip forever /
+    // write recall-invisible output).
+    progress.heartbeat('dream_home_source');
+    checks.push(await checkDreamHomeSource(engine));
     // v0.41.6.0 D3 — stale_locks (gbrain_cycle_locks rows with ttl_expires_at < NOW())
     progress.heartbeat('stale_locks');
     checks.push(await checkStaleLocks(engine, { fix: doFix, dryRun }));

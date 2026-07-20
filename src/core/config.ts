@@ -909,6 +909,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
   // Dream cycle config
+  // Pins the corpus-global dream phases (synthesize/patterns) to one
+  // source's cycle; validated at `config set` time (source must exist and
+  // not be archived). Unset → legacy first-come behavior.
+  'dream.home_source',
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',
   'dream.synthesize.last_completion_ts',

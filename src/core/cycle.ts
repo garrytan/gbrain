@@ -1676,7 +1676,12 @@ export async function runCycle(
         const { result, duration_ms } = await timePhase(() => runPhaseSynthesize(engine, {
           brainDir,
           dryRun,
-          yieldDuringPhase: opts.yieldDuringPhase,
+          // Keep the cycle lock alive through subagent waits (up to 35min,
+          // far past the lock TTL) — same T3 closure the extract_atoms /
+          // synthesize_concepts call sites already use. Without it, the lock
+          // expires mid-phase and a concurrent run can pass the non-atomic
+          // cooldown check and duplicate the corpus-global work.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
           inputFile: opts.synthInputFile,
           date: opts.synthDate,
           from: opts.synthFrom,
@@ -1887,7 +1892,13 @@ export async function runCycle(
         const { result, duration_ms } = await timePhase(() => runPhasePatterns(engine, {
           brainDir,
           dryRun,
-          yieldDuringPhase: opts.yieldDuringPhase,
+          // Keep the cycle lock alive through the subagent wait (see the
+          // synthesize call site above for the rationale).
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // dream.home_source gate + output routing: patterns is
+          // corpus-global, so it needs the cycle's source both to decide
+          // whether this cycle owns the phase and to tag its writes.
+          sourceId: cycleSourceId,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
