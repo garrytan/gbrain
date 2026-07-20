@@ -541,16 +541,33 @@ HANDLER TYPES (built in)
     case 'prune': {
       const olderThanStr = parseFlag(args, '--older-than') ?? '30d';
       const days = parseInt(olderThanStr, 10);
-      if (isNaN(days) || days <= 0) {
-        console.error('Error: --older-than must be a positive number (days). Example: --older-than 30d');
+      if (isNaN(days) || days < 0) {
+        console.error('Error: --older-than must be a non-negative number (days). Example: --older-than 30d, or --older-than 0d to prune by status with no age filter.');
         process.exit(1);
+      }
+      const statusFlag = parseFlag(args, '--status');
+      const allowedStatuses = ['completed', 'failed', 'dead', 'cancelled'] as const;
+      type PruneStatus = (typeof allowedStatuses)[number];
+      let statuses: PruneStatus[] | undefined;
+      if (statusFlag !== undefined) {
+        const requested = statusFlag.split(',').map(s => s.trim()).filter(Boolean);
+        const invalid = requested.filter(s => !(allowedStatuses as readonly string[]).includes(s));
+        if (invalid.length > 0) {
+          console.error(`Error: --status accepts a comma-separated subset of [${allowedStatuses.join(', ')}]. Invalid: ${invalid.join(', ')}`);
+          process.exit(1);
+        }
+        statuses = requested as PruneStatus[];
       }
 
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
-      const count = await queue.prune({ olderThan: new Date(Date.now() - days * 86400000) });
-      console.log(`Pruned ${count} jobs older than ${days} days.`);
+      const count = await queue.prune({
+        olderThan: new Date(Date.now() - days * 86400000),
+        ...(statuses ? { status: statuses } : {}),
+      });
+      const statusLabel = statuses ? statuses.join('+') : 'completed+dead+cancelled';
+      console.log(`Pruned ${count} ${statusLabel} jobs older than ${days} days.`);
       break;
     }
 
