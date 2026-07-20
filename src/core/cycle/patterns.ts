@@ -30,6 +30,11 @@ import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
 // phase — both phases must agree on the configured namespace.
 import { loadAllowedSlugPrefixes, loadOutputRoot } from './synthesize.ts';
+import {
+  clampSubagentBudgets,
+  CYCLE_DEADLINE_RESERVE_MS,
+  MIN_SUBAGENT_START_BUDGET_MS,
+} from './deadline-budget.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -46,48 +51,6 @@ export interface PatternsPhaseOpts {
    * mid-phase and starves every tail phase (#2781).
    */
   deadlineAtMs?: number | null;
-}
-
-/**
- * Stop-margin reserved under the parent deadline when clamping subagent
- * budgets. NOT a promise that tail phases complete — the cycle is allowed
- * to go partial and resume next tick. This only guarantees the phase's
- * wait returns and the handler unwinds cleanly before the worker's abort
- * fires: wait poll interval (5s) + worker force-evict grace (30s) + lock
- * and DB cleanup headroom.
- */
-export const CYCLE_DEADLINE_RESERVE_MS = 60 * 1000;
-
-/**
- * Smallest remaining budget worth submitting a subagent for. Below this,
- * the LLM call is near-certain to be killed mid-flight — wasted spend and
- * a guaranteed-timeout child — so the phase skips honestly instead
- * (`insufficient_cycle_budget`) and the next cycle retries with a fresh
- * budget.
- */
-export const MIN_PATTERNS_SUBAGENT_BUDGET_MS = 2 * 60 * 1000;
-
-/**
- * Clamp the configured subagent budgets to the remaining parent-job time.
- * Both timeouts derive from the SAME absolute child deadline
- * (`deadlineAtMs - reserve`) so the child job's kill switch and our wait
- * agree. Returns null when the remaining budget is below the minimum —
- * caller should skip the phase without submitting.
- */
-export function clampSubagentBudgets(
-  config: { subagentTimeoutMs: number; subagentWaitTimeoutMs: number },
-  deadlineAtMs: number | null | undefined,
-  nowMs: number,
-): { timeoutMs: number; waitTimeoutMs: number } | null {
-  if (deadlineAtMs == null) {
-    return { timeoutMs: config.subagentTimeoutMs, waitTimeoutMs: config.subagentWaitTimeoutMs };
-  }
-  const childBudgetMs = deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - nowMs;
-  if (childBudgetMs < MIN_PATTERNS_SUBAGENT_BUDGET_MS) return null;
-  return {
-    timeoutMs: Math.min(config.subagentTimeoutMs, childBudgetMs),
-    waitTimeoutMs: Math.min(config.subagentWaitTimeoutMs, childBudgetMs),
-  };
 }
 
 export async function runPhasePatterns(
@@ -149,7 +112,7 @@ export async function runPhasePatterns(
     if (budgets === null) {
       return skipped(
         'insufficient_cycle_budget',
-        `remaining cycle budget under ${Math.round(MIN_PATTERNS_SUBAGENT_BUDGET_MS / 1000)}s ` +
+        `remaining cycle budget under ${Math.round(MIN_SUBAGENT_START_BUDGET_MS / 1000)}s ` +
         `(reserve ${Math.round(CYCLE_DEADLINE_RESERVE_MS / 1000)}s); next cycle retries with a fresh budget`,
       );
     }
