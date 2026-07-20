@@ -36,7 +36,13 @@ function gbrain(
   // bun's spawnSync does NOT inherit env mutations done via process.env = ...,
   // so pass env explicitly. CLAUDE.md flags this pattern as load-bearing for
   // any subprocess test that needs GBRAIN_HOME isolation.
-  const env = { ...process.env, GBRAIN_HOME: DEFAULT_GBRAIN_HOME, ...extraEnv };
+  const env = {
+    ...process.env,
+    GBRAIN_DATABASE_URL: '',
+    DATABASE_URL: '',
+    GBRAIN_HOME: DEFAULT_GBRAIN_HOME,
+    ...extraEnv,
+  };
   const result = spawnSync('bun', ['run', 'src/cli.ts', ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
