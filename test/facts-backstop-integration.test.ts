@@ -19,6 +19,9 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runFactsBackstop, runFactsPipeline } from '../src/core/facts/backstop.ts';
 import {
@@ -109,6 +112,88 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     expect(r.duplicate).toBe(0);
     expect(r.superseded).toBe(0);
     expect(r.fact_ids).toEqual([]);
+  });
+
+  test('fallback-slugified MCP entities do not create guard-triggering DB-only rows', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-mcp-facts-'));
+    const sessionId = 'mcp-fallback-guard-' + Math.random().toString(36).slice(2, 8);
+    const prior = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'default'`,
+    );
+    try {
+      await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [brainDir]);
+      chatStub([
+        { fact: 'Synthetic Guard Person prefers blue widgets.', kind: 'preference', notability: 'medium', entity: 'Synthetic Guard Person' },
+      ]);
+
+      const r = await runFactsPipeline('synthetic guard turn', {
+        engine,
+        sourceId: 'default',
+        sessionId,
+        source: 'mcp:extract_facts',
+      });
+
+      expect(r.inserted).toBe(1);
+      expect(existsSync(join(brainDir, 'synthetic-guard-person.md'))).toBe(false);
+
+      const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+        `SELECT entity_slug FROM facts WHERE source_session = $1`,
+        [sessionId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].entity_slug).toBeNull();
+
+      const guardRows = await engine.executeRaw<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NOT NULL`,
+      );
+      expect(Number(guardRows[0]?.n ?? 0)).toBe(0);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [prior[0]?.local_path ?? null]);
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  });
+
+  test('thin-client MCP fallback drops entity link instead of tripping extract_facts guard', async () => {
+    const sessionId = 'mcp-thin-guard-' + Math.random().toString(36).slice(2, 8);
+    const prior = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'default'`,
+    );
+    await engine.putPage('people/thin-client-alice', {
+      title: 'Thin Client Alice',
+      type: 'person',
+      compiled_truth: '# Thin Client Alice\n',
+      frontmatter: {},
+      timeline: '',
+    });
+    try {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      chatStub([
+        { fact: 'Thin Client Alice prefers async updates.', kind: 'preference', notability: 'medium', entity: 'people/thin-client-alice' },
+      ]);
+
+      const r = await runFactsPipeline('synthetic thin-client turn', {
+        engine,
+        sourceId: 'default',
+        sessionId,
+        source: 'mcp:extract_facts',
+      });
+
+      expect(r.inserted).toBe(1);
+      const rows = await engine.executeRaw<{ entity_slug: string | null; row_num: number | null }>(
+        `SELECT entity_slug, row_num FROM facts WHERE source_session = $1`,
+        [sessionId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].entity_slug).toBeNull();
+      expect(rows[0].row_num).toBeNull();
+
+      const guardRows = await engine.executeRaw<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NOT NULL`,
+      );
+      expect(Number(guardRows[0]?.n ?? 0)).toBe(0);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [prior[0]?.local_path ?? null]);
+    }
   });
 });
 
