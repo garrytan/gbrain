@@ -105,13 +105,19 @@ function printHelp(): void {
 async function runRemotePing(config: NonNullable<ReturnType<typeof loadConfig>>, args: string[]): Promise<void> {
   const { json, timeoutMs } = parseFlags(args);
 
-  let submitted: { id: number; name: string; state: string };
+  // submit_job / get_job return the MinionJob row verbatim — the lifecycle
+  // field is `status` (src/core/minions/types.ts), not `state`. Reading
+  // `state` here made every poll see `undefined`, so the terminal check
+  // never matched and ping always exhausted its timeout (exit 1) even when
+  // the cycle completed. The ping's own JSON *output* keys (`state`,
+  // `last_state`) are kept as-is for consumers.
+  let submitted: { id: number; name: string; status: string };
   try {
     const res = await callRemoteTool(config, 'submit_job', {
       name: 'autopilot-cycle',
       data: { phases: ['sync', 'extract', 'embed'] },
     });
-    submitted = unpackToolResult<{ id: number; name: string; state: string }>(res);
+    submitted = unpackToolResult<{ id: number; name: string; status: string }>(res);
   } catch (e) {
     return failPing(e, json);
   }
@@ -122,43 +128,43 @@ async function runRemotePing(config: NonNullable<ReturnType<typeof loadConfig>>,
 
   const startMs = Date.now();
   let attempt = 0;
-  let lastState = submitted.state;
+  let lastState = submitted.status;
   while (Date.now() - startMs < timeoutMs) {
     const elapsed = Date.now() - startMs;
     const intervalMs = elapsed < 30_000 ? 1_000 : elapsed < 5 * 60_000 + 30_000 ? 5_000 : 10_000;
     await sleep(intervalMs);
     attempt++;
 
-    let job: { id: number; state: string; failed_reason?: string };
+    let job: { id: number; status: string; failed_reason?: string };
     try {
       const res = await callRemoteTool(config, 'get_job', { id: submitted.id });
-      job = unpackToolResult<{ id: number; state: string; failed_reason?: string }>(res);
+      job = unpackToolResult<{ id: number; status: string; failed_reason?: string }>(res);
     } catch (e) {
       // Network blip mid-poll: log and keep going. Surface only if persistent.
       if (!json) console.error(`  poll #${attempt} failed (${e instanceof Error ? e.message : String(e)}); continuing...`);
       continue;
     }
 
-    if (job.state !== lastState) {
-      lastState = job.state;
-      if (!json) console.error(`  job #${submitted.id} → ${job.state}`);
+    if (job.status !== lastState) {
+      lastState = job.status;
+      if (!json) console.error(`  job #${submitted.id} → ${job.status}`);
     }
 
     const terminal = ['completed', 'failed', 'dead', 'cancelled'];
-    if (terminal.includes(job.state)) {
-      const ok = job.state === 'completed';
+    if (terminal.includes(job.status)) {
+      const ok = job.status === 'completed';
       if (json) {
         console.log(JSON.stringify({
           status: ok ? 'success' : 'error',
           job_id: submitted.id,
-          state: job.state,
+          state: job.status,
           ...(job.failed_reason ? { failed_reason: job.failed_reason } : {}),
           elapsed_ms: Date.now() - startMs,
         }));
       } else {
         console.log(ok
           ? `\nautopilot-cycle complete (${Math.round((Date.now() - startMs) / 1000)}s).`
-          : `\nautopilot-cycle ended ${job.state}${job.failed_reason ? `: ${job.failed_reason}` : ''}.`);
+          : `\nautopilot-cycle ended ${job.status}${job.failed_reason ? `: ${job.failed_reason}` : ''}.`);
       }
       process.exit(ok ? 0 : 1);
     }
