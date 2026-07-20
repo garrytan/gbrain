@@ -26,27 +26,35 @@ describe('IPv6 detection', () => {
 });
 
 describe('defaultWorkers auto-tuning', () => {
-  // Mirrors logic from import.ts
-  function defaultWorkers(cpuCount: number, memGB: number): number {
+  // Mirrors logic from import.ts. Cgroup-aware variant: when running in a
+  // memory-constrained container, byMem must be sized from the cgroup limit
+  // (process.constrainedMemory()), not the host's total RAM (os.totalmem()).
+  // Pre-fix bug: on a 32 GB container with a 322 GB host, byMem = 644 →
+  // Math.min clamped to 8 workers which each buffered file contents and
+  // OOM-killed the import. Post-fix: byMem is computed against the
+  // constrained limit, which still clamps to 8 on real hosts but stays
+  // bounded in containers.
+  function defaultWorkers(cpuCount: number, hostMemGB: number, constrainedMemGB?: number): number {
+    const effectiveMemGB = constrainedMemGB && constrainedMemGB > 0 ? constrainedMemGB : hostMemGB;
     const byPool = 8;
     const byCpu = Math.max(2, cpuCount);
-    const byMem = Math.floor(memGB * 2);
+    const byMem = Math.floor(effectiveMemGB * 2);
     return Math.min(byPool, byCpu, byMem);
   }
 
-  test('returns 2 for 1-core 1GB machine', () => {
+  test('returns 2 for 1-core 1GB machine (unconstrained)', () => {
     expect(defaultWorkers(1, 1)).toBe(2);
   });
 
-  test('returns 4 for 4-core 4GB machine', () => {
+  test('returns 4 for 4-core 4GB machine (unconstrained)', () => {
     expect(defaultWorkers(4, 4)).toBe(4);
   });
 
-  test('returns 8 for 16-core 32GB machine', () => {
+  test('returns 8 for 16-core 32GB machine (unconstrained)', () => {
     expect(defaultWorkers(16, 32)).toBe(8); // capped by pool
   });
 
-  test('caps at 8 regardless of hardware', () => {
+  test('caps at 8 regardless of hardware (unconstrained)', () => {
     expect(defaultWorkers(64, 128)).toBe(8);
   });
 
@@ -57,6 +65,25 @@ describe('defaultWorkers auto-tuning', () => {
   test('returns at least 2 for any CPU count', () => {
     const result = defaultWorkers(1, 8);
     expect(result).toBeGreaterThanOrEqual(2);
+  });
+
+  test('cgroup-constrained: 16-core 322GB host capped at 32GB container → 8 (pool-bound, but byMem now sized off cgroup)', () => {
+    // Repro of the Railway/Fly.io/Docker-with-limits scenario. Pre-fix this
+    // returned 8 too, but byMem was 644 → 8 workers each free to buffer many
+    // GB of file content and trigger OOM. Post-fix byMem is 64 (32 * 2),
+    // still clamped by byPool but with a true sense of available memory if
+    // a future caller widens byPool.
+    expect(defaultWorkers(16, 322, 32)).toBe(8);
+  });
+
+  test('cgroup-constrained: 64-core 322GB host capped at 1GB container → 2 (memory-bound)', () => {
+    // A tight container picks workers from byMem (1 * 2 = 2), not host RAM.
+    expect(defaultWorkers(64, 322, 1)).toBe(2);
+  });
+
+  test('cgroup-constrained: undefined/0 constraint falls back to host memory', () => {
+    expect(defaultWorkers(16, 32, undefined)).toBe(8);
+    expect(defaultWorkers(16, 32, 0)).toBe(8);
   });
 });
 
