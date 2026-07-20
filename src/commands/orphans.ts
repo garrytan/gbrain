@@ -15,6 +15,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { shouldExcludeFromOrphanReporting } from '../core/orphan-policy.ts';
 
 // --- Types ---
 
@@ -32,37 +33,6 @@ export interface OrphanResult {
   excluded: number;
 }
 
-// --- Filter constants ---
-
-/** Slug suffixes that are always auto-generated root files */
-const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
-
-/** Page slugs that are pseudo-pages by convention */
-const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
-
-/** Slug segment that marks raw sources */
-const RAW_SEGMENT = '/raw/';
-
-/** Slug prefixes where no inbound links is expected */
-const DENY_PREFIXES = [
-  'output/',
-  'dashboards/',
-  'scripts/',
-  'templates/',
-  'openclaw/config/',
-];
-
-/** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set([
-  'scratch',
-  'thoughts',
-  'catalog',
-  'entities',
-  'raw',
-  'atoms',
-  'skills',
-]);
-
 // --- Filter logic ---
 
 /**
@@ -70,27 +40,7 @@ const FIRST_SEGMENT_EXCLUSIONS = new Set([
  * These are pages where having no inbound links is expected / not a content problem.
  */
 export function shouldExclude(slug: string): boolean {
-  // Pseudo-pages (exact match)
-  if (PSEUDO_SLUGS.has(slug)) return true;
-
-  // Auto-generated suffix patterns
-  for (const suffix of AUTO_SUFFIX_PATTERNS) {
-    if (slug.endsWith(suffix)) return true;
-  }
-
-  // Raw source slugs
-  if (slug.includes(RAW_SEGMENT)) return true;
-
-  // Deny-prefix slugs
-  for (const prefix of DENY_PREFIXES) {
-    if (slug.startsWith(prefix)) return true;
-  }
-
-  // First-segment exclusions
-  const firstSegment = slug.split('/')[0];
-  if (FIRST_SEGMENT_EXCLUSIONS.has(firstSegment)) return true;
-
-  return false;
+  return shouldExcludeFromOrphanReporting(slug);
 }
 
 /**
