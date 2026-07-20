@@ -20,8 +20,8 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
   clampSubagentBudgets,
   CYCLE_DEADLINE_RESERVE_MS,
-  MIN_PATTERNS_SUBAGENT_BUDGET_MS,
-} from '../src/core/cycle/patterns.ts';
+  MIN_SUBAGENT_START_BUDGET_MS,
+} from '../src/core/cycle/deadline-budget.ts';
 
 const CONFIG = {
   subagentTimeoutMs: 30 * 60 * 1000,
@@ -60,15 +60,15 @@ describe('clampSubagentBudgets', () => {
   });
 
   test('remaining budget below minimum → null (caller skips, no submit)', () => {
-    const deadline = now + CYCLE_DEADLINE_RESERVE_MS + MIN_PATTERNS_SUBAGENT_BUDGET_MS - 1;
+    const deadline = now + CYCLE_DEADLINE_RESERVE_MS + MIN_SUBAGENT_START_BUDGET_MS - 1;
     expect(clampSubagentBudgets(CONFIG, deadline, now)).toBeNull();
   });
 
   test('boundary: exactly the minimum budget → submit allowed', () => {
-    const deadline = now + CYCLE_DEADLINE_RESERVE_MS + MIN_PATTERNS_SUBAGENT_BUDGET_MS;
+    const deadline = now + CYCLE_DEADLINE_RESERVE_MS + MIN_SUBAGENT_START_BUDGET_MS;
     expect(clampSubagentBudgets(CONFIG, deadline, now)).toEqual({
-      timeoutMs: MIN_PATTERNS_SUBAGENT_BUDGET_MS,
-      waitTimeoutMs: MIN_PATTERNS_SUBAGENT_BUDGET_MS,
+      timeoutMs: MIN_SUBAGENT_START_BUDGET_MS,
+      waitTimeoutMs: MIN_SUBAGENT_START_BUDGET_MS,
     });
   });
 
@@ -159,7 +159,7 @@ describe('deadline plumbing wiring (structural)', () => {
     // Budget gate sits AFTER the provider probe so a no-provider brain
     // still reports no_provider (cheaper, more actionable reason).
     const probeIdx = patternsSrc.indexOf("skipped('no_provider'");
-    // lastIndexOf: the doc comment on MIN_PATTERNS_SUBAGENT_BUDGET_MS
+    // lastIndexOf: the doc comment on MIN_SUBAGENT_START_BUDGET_MS
     // mentions the reason string too; the CALL SITE is the later hit.
     const budgetIdx = patternsSrc.lastIndexOf('insufficient_cycle_budget');
     expect(probeIdx).toBeGreaterThan(0);
