@@ -542,6 +542,7 @@ export async function runThink(
 export async function persistSynthesis(
   engine: BrainEngine,
   result: ThinkResult,
+  opts: { sourceId?: string } = {},
 ): Promise<{ slug: string; evidenceInserted: number; warnings: string[] }> {
   // #1698: never persist an empty synthesis. Returned signal (NOT a throw, F3) so
   // the MCP `think` op can return the gather result + warning instead of a bare error
@@ -581,7 +582,10 @@ export async function persistSynthesis(
       pages_gathered: result.pagesGathered,
       takes_gathered: result.takesGathered,
     },
-  });
+    // Callers thread the ACTIVE source (op layer: ctx.sourceId) so the
+    // synthesis lands there instead of the engine default — a caller whose
+    // READ scope was federated still writes to its single active source.
+  }, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
 
   const persisted = await persistCitations(engine, page.id, result.citations);
   return { slug, evidenceInserted: persisted.inserted, warnings: persisted.warnings };

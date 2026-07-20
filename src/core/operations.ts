@@ -424,6 +424,22 @@ export interface OperationContext {
    * satisfied even on single-source brains.
    */
   sourceId: string;
+  /**
+   * Local federated READ scope. Populated only by trusted local transports
+   * (CLI `makeContext`, `gbrain call`, stdio serve) when the active source
+   * is federated and the caller gave no explicit source: the set of all
+   * federated source ids, so default search spans the federated union as
+   * documented in docs/guides/multi-source-brains.md ("Unified knowledge
+   * recall") and src/schema.sql's sources.config comment.
+   *
+   * READ-ONLY scope: write paths (put_page, delete_page, tags, links,
+   * timeline, facts) keep reading the scalar `sourceId` directly — this
+   * field never widens write authority. Authenticated callers never use it:
+   * `sourceScopeOpts` ignores it whenever `ctx.auth` is present, so an
+   * OAuth/legacy-token grant can neither widen through it nor be widened
+   * by it.
+   */
+  sourceIds?: string[];
 }
 
 /**
@@ -434,8 +450,12 @@ export interface OperationContext {
  * Precedence:
  *  1. `ctx.auth?.allowedSources` (federated read, #876) → emits
  *     `{sourceIds: [...]}`. Federated semantics subsume the scalar case.
- *  2. `ctx.sourceId` (scalar) → emits `{sourceId: '...'}`.
- *  3. Neither set → emits `{}`. Local CLI callers (and tests that don't
+ *  2. `ctx.sourceIds` (local federated read scope) → emits
+ *     `{sourceIds: [...]}`, but ONLY for unauthenticated callers
+ *     (`!ctx.auth`) — an authed caller's grant is authoritative and must
+ *     not be widened by a transport-populated field.
+ *  3. `ctx.sourceId` (scalar) → emits `{sourceId: '...'}`.
+ *  4. Neither set → emits `{}`. Local CLI callers (and tests that don't
  *     populate ctx) keep the pre-v0.34 unscoped behavior.
  *
  * Both fields default to the engine's "no filter" behavior individually,
@@ -454,21 +474,37 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   // value of `[]` MUST NOT widen scope to "all sources" by being interpreted
   // as "no filter."
   if (allowed && allowed.length > 0) return { sourceIds: allowed };
+  // Local federated read scope (see OperationContext.sourceIds). Gated on
+  // `!ctx.auth`: any authenticated caller — including legacy tokens with no
+  // allowedSources — keeps its grant exactly; an empty array never widens.
+  if (!ctx.auth && ctx.sourceIds && ctx.sourceIds.length > 0) {
+    return { sourceIds: ctx.sourceIds };
+  }
   if (ctx.sourceId) return { sourceId: ctx.sourceId };
   return {};
 }
 
-/** Map the operation-layer scope names onto runThink's public options. */
+/**
+ * Map the operation-layer scope names onto runThink's public options.
+ *
+ * Local federated read scope (ctx.sourceIds) emits BOTH the array (gather
+ * spans the federated set) AND the active scalar — runThink anchors
+ * trajectory-injection entity resolution and any persistence on
+ * `opts.sourceId`, so dropping the scalar here would silently degrade
+ * those to 'default'. An authenticated grant keeps its array-only shape
+ * (unchanged semantics: the grant is the whole scope).
+ */
 export function thinkSourceScopeOpts(ctx: OperationContext): {
   sourceId?: string;
   allowedSources?: string[];
 } {
   const scope = sourceScopeOpts(ctx);
-  return scope.sourceIds !== undefined
-    ? { allowedSources: scope.sourceIds }
-    : scope.sourceId !== undefined
-      ? { sourceId: scope.sourceId }
-      : {};
+  if (scope.sourceIds !== undefined) {
+    return !ctx.auth && ctx.sourceId
+      ? { allowedSources: scope.sourceIds, sourceId: ctx.sourceId }
+      : { allowedSources: scope.sourceIds };
+  }
+  return scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {};
 }
 
 /**
@@ -487,6 +523,14 @@ export function thinkSourceScopeOpts(ctx: OperationContext): {
  * cross-source view, and a federated array passes through unchanged.
  */
 export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  // Trusted local CLI keeps the scalar CROSS-SOURCE view even under the
+  // local federated read fan-out: the engine's scalar branch scopes only
+  // the near endpoint by design, so links whose far/origin endpoint lives
+  // in an isolated source stay visible to the machine owner. Routing the
+  // local array through the all-endpoint branch would silently hide them.
+  if (ctx.remote === false && !ctx.auth && ctx.sourceId) {
+    return { sourceId: ctx.sourceId };
+  }
   const scope = sourceScopeOpts(ctx);
   if (ctx.remote !== false && scope.sourceId && !scope.sourceIds) {
     return { sourceIds: [scope.sourceId] };
@@ -563,6 +607,17 @@ export function resolveCodeIntelScope(
     return { allSources: false, sourceId: scope.sourceIds[0] };
   }
   if (scope.sourceIds && scope.sourceIds.length > 1) {
+    // Local federated read scope (ctx.sourceIds) reaches here as a
+    // multi-element array; collapse back to the active scalar source so
+    // code traversal keeps its pre-fan-out single-source behavior instead
+    // of throwing at callers who never asked for federation. Gated on
+    // `!ctx.auth` (not `remote === false`): the stdio transport is
+    // remote=true yet carries the local scope, while every authenticated
+    // multi-source GRANT (auth.allowedSources) must still be told to pick
+    // one source explicitly.
+    if (!ctx.auth) {
+      return { allSources: false, sourceId: ctx.sourceId };
+    }
     throw new OperationError(
       'invalid_params',
       'Code traversal runs against a single source. Specify source_id (one of your granted sources).',
@@ -1886,11 +1941,13 @@ const think: Operation = {
       remote: ctx.remote === true,
     });
 
-    // Persist if --save was passed locally
+    // Persist if --save was passed locally. Thread the ACTIVE scalar source
+    // so the write lands there — the federated read scope above widens only
+    // the gather, never the write target.
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
     if (safeSave) {
-      const persisted = await persistSynthesis(ctx.engine, result);
+      const persisted = await persistSynthesis(ctx.engine, result, { sourceId: ctx.sourceId });
       savedSlug = persisted.slug;
       evidenceInserted = persisted.evidenceInserted;
       for (const w of persisted.warnings) result.warnings.push(w);
@@ -5327,7 +5384,14 @@ const chronicle_backfill: Operation = {
     const limit = typeof p.limit === 'number' ? p.limit : 1000;
     const updated_after = typeof p.since === 'string' ? p.since : undefined;
     const dryRun = p.dry_run === true;
-    const scope = sourceScopeOpts(ctx);
+    // Enumeration pinned to the active scalar source: the enqueue below
+    // tags every job with `ctx.sourceId`, so any array scope (the local
+    // federated fan-out introduced alongside this pin) would enqueue
+    // chronicle_extract for foreign sources' pages mis-tagged with the
+    // active source id. This op is localOnly+admin, so no authenticated
+    // federated grant reaches it — the pin only affects local callers,
+    // whose enumeration must match the scalar job tag.
+    const scope = { sourceId: ctx.sourceId };
     type QueueLike = { add: (n: string, d: Record<string, unknown>) => Promise<unknown> };
     let queue: QueueLike | null = null;
     if (!dryRun) {
