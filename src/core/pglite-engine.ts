@@ -56,6 +56,8 @@ import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
+import { shouldExcludeFromOrphanReporting } from './orphan-policy.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -5069,15 +5071,10 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
-        (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
-        ) as stale_pages,
-        -- Bug 11 — orphan = islanded (no inbound AND no outbound).
-        -- See BrainHealth.orphan_pages docstring; docs updated to match this.
-        (SELECT count(*) FROM pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
-           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
-        ) as orphan_pages,
+        0 as stale_pages,
+        -- Bug 11 — orphan = islanded (no inbound AND no outbound). The raw
+        -- list is filtered in TS using the shared orphan-reporting policy.
+        0 as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
@@ -5102,10 +5099,19 @@ export class PGLiteEngine implements BrainEngine {
       LIMIT 5
     `);
 
+    const { rows: islandedRows } = await this.db.query(`
+      SELECT p.slug
+      FROM pages p
+      WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+    `);
+
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);
     const embedCoverage = Number(r.embed_coverage);
-    const orphanPages = Number(r.orphan_pages);
+    const stalePages = await this.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const orphanPages = (islandedRows as { slug: string }[])
+      .filter(row => !shouldExcludeFromOrphanReporting(row.slug)).length;
     const deadLinks = Number(r.dead_links);
     const linkCount = Number(r.link_count);
     const pagesWithTimeline = Number(r.pages_with_timeline);
@@ -5133,7 +5139,7 @@ export class PGLiteEngine implements BrainEngine {
     return {
       page_count: pageCount,
       embed_coverage: embedCoverage,
-      stale_pages: Number(r.stale_pages),
+      stale_pages: stalePages,
       orphan_pages: orphanPages,
       missing_embeddings: Number(r.missing_embeddings),
       brain_score: brainScore,
