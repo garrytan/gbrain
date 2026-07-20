@@ -42,8 +42,9 @@ import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { fingerprint, loadOpCheckpoint, recordCompleted, type OpCheckpointKey } from '../op-checkpoint.ts';
 import { GBrainError } from '../types.ts';
-import type { Page, PageFilters } from '../types.ts';
+import type { Page } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -158,6 +159,14 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   requireChunks?: boolean;
   /** Optional upper bound on text chunk count; skips unusually large pages. */
   maxChunks?: number;
+  /** Slugs changed by the sync phase in this cycle. They are processed first. */
+  prioritySlugs?: string[];
+  /** Continue through bounded page batches until drained or the wallclock window expires. */
+  drain?: boolean;
+  /** Wallclock budget for drain mode. Default: 60 minutes. */
+  windowMs?: number;
+  /** Injectable clock for deterministic drain tests. */
+  now?: () => number;
 }
 
 export interface ProposeTakesResult {
@@ -168,6 +177,13 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
+  pages_processed: number;
+  pages_failed: number;
+  pages_eligible: number;
+  priority_pages: number;
+  batches: number;
+  remaining: number;
+  stopped: 'drained' | 'batch_limit' | 'window' | 'budget' | 'no_progress' | 'preview';
   dry_run_no_llm?: boolean;
   budget_exhausted: boolean;
   warnings: string[];
@@ -192,34 +208,92 @@ async function loadTextChunkCounts(engine: BrainEngine, pages: Page[]): Promise<
     .map((page) => page.id)
     .filter((id): id is number => Number.isInteger(id));
   if (ids.length === 0) return new Map();
-
-  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-  let rows: Array<{ page_id: number; chunk_count: number }>;
-  try {
-    rows = await engine.executeRaw<{ page_id: number; chunk_count: number }>(
-      `SELECT page_id, COUNT(*)::int AS chunk_count
-         FROM content_chunks
-        WHERE page_id IN (${placeholders})
-          AND COALESCE(modality, 'text') = 'text'
-        GROUP BY page_id`,
-      ids,
-    );
-  } catch (err) {
-    if (!(err instanceof Error) || !/modality/i.test(err.message)) throw err;
-    rows = await engine.executeRaw<{ page_id: number; chunk_count: number }>(
-      `SELECT page_id, COUNT(*)::int AS chunk_count
-         FROM content_chunks
-        WHERE page_id IN (${placeholders})
-        GROUP BY page_id`,
-      ids,
-    );
-  }
-
   const out = new Map<number, number>();
-  for (const row of rows) {
-    out.set(Number(row.page_id), Number(row.chunk_count));
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const batch = ids.slice(offset, offset + 500);
+    const placeholders = batch.map((_, i) => `$${i + 1}`).join(', ');
+    let rows: Array<{ page_id: number; chunk_count: number }>;
+    try {
+      rows = await engine.executeRaw<{ page_id: number; chunk_count: number }>(
+        `SELECT page_id, COUNT(*)::int AS chunk_count
+           FROM content_chunks
+          WHERE page_id IN (${placeholders})
+            AND COALESCE(modality, 'text') = 'text'
+          GROUP BY page_id`,
+        batch,
+      );
+    } catch (err) {
+      if (!(err instanceof Error) || !/modality/i.test(err.message)) throw err;
+      rows = await engine.executeRaw<{ page_id: number; chunk_count: number }>(
+        `SELECT page_id, COUNT(*)::int AS chunk_count
+           FROM content_chunks
+          WHERE page_id IN (${placeholders})
+          GROUP BY page_id`,
+        batch,
+      );
+    }
+    for (const row of rows) {
+      out.set(Number(row.page_id), Number(row.chunk_count));
+    }
   }
   return out;
+}
+
+const PAGE_SCAN_BATCH_SIZE = 500;
+const DEFAULT_DRAIN_WINDOW_MS = 60 * 60 * 1000;
+
+async function loadCandidatePages(engine: BrainEngine, scope: ScopedReadOpts): Promise<Page[]> {
+  const pages: Page[] = [];
+  for (let offset = 0; ; offset += PAGE_SCAN_BATCH_SIZE) {
+    const batch = await engine.listPages({
+      ...scope,
+      limit: PAGE_SCAN_BATCH_SIZE,
+      offset,
+      sort: 'updated_desc',
+    });
+    pages.push(...batch);
+    if (batch.length < PAGE_SCAN_BATCH_SIZE) return pages;
+  }
+}
+
+function proposalPageKey(page: Page, body = page.compiled_truth ?? ''): string {
+  return `${page.source_id ?? 'default'}|${page.slug}|${contentHash(body)}`;
+}
+
+function checkpointFor(scope: ScopedReadOpts, promptVersion: string, requireChunks: boolean, maxChunks?: number): OpCheckpointKey {
+  return {
+    op: 'propose_takes',
+    fingerprint: fingerprint({
+      source_id: scope.sourceId ?? null,
+      source_ids: scope.sourceIds ? [...scope.sourceIds].sort() : null,
+      prompt_version: promptVersion,
+      require_chunks: requireChunks,
+      max_chunks: maxChunks ?? null,
+    }),
+  };
+}
+
+async function loadProposalCacheKeys(
+  engine: BrainEngine,
+  scope: ScopedReadOpts,
+  promptVersion: string,
+): Promise<Set<string>> {
+  const params: unknown[] = [promptVersion];
+  let sourceSql = '';
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    params.push(scope.sourceIds);
+    sourceSql = ` AND source_id = ANY($${params.length}::text[])`;
+  } else if (scope.sourceId) {
+    params.push(scope.sourceId);
+    sourceSql = ` AND source_id = $${params.length}`;
+  }
+  const rows = await engine.executeRaw<{ source_id: string; page_slug: string; content_hash: string }>(
+    `SELECT source_id, page_slug, content_hash
+       FROM take_proposals
+      WHERE prompt_version = $1${sourceSql}`,
+    params,
+  );
+  return new Set(rows.map((row) => `${row.source_id}|${row.page_slug}|${row.content_hash}`));
 }
 
 /**
@@ -374,27 +448,34 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
+      pages_processed: 0,
+      pages_failed: 0,
+      pages_eligible: 0,
+      priority_pages: 0,
+      batches: 0,
+      remaining: 0,
+      stopped: opts.dryRun ? 'preview' : 'drained',
       budget_exhausted: false,
       warnings: [],
     };
 
-    // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
+    // Load the complete source-scoped candidate set before applying the batch
+    // cap. The upstream implementation capped first and checked idempotency
+    // second, which could let the newest cached pages starve older pending
+    // work forever. PMBrain keeps the upstream 100-page batch but selects it
+    // from genuinely unprocessed content.
     const requireChunks = opts.requireChunks ?? true;
     const maxChunks = opts.maxChunks;
     const needsChunkFilter = requireChunks || maxChunks !== undefined;
-    const pageFilters: PageFilters = {
-      ...scope,
-      limit: needsChunkFilter ? pageLimit * 5 : pageLimit,
-      sort: 'updated_desc',
-    };
-    const candidatePages: Page[] = await engine.listPages(pageFilters);
+    const candidatePages = await loadCandidatePages(engine, scope);
     result.pages_considered = candidatePages.length;
 
-    let pages: Page[] = candidatePages.slice(0, pageLimit);
+    let eligiblePages = candidatePages.filter((page) => (page.compiled_truth ?? '').trim().length > 0);
     if (needsChunkFilter) {
       const chunkCounts = await loadTextChunkCounts(engine, candidatePages);
-      pages = [];
+      eligiblePages = [];
       for (const page of candidatePages) {
+        if (!(page.compiled_truth ?? '').trim()) continue;
         const chunkCount = chunkCounts.get(page.id) ?? 0;
         if (requireChunks && chunkCount === 0) {
           result.skipped_no_chunks += 1;
@@ -404,117 +485,165 @@ class ProposeTakesPhase extends BaseCyclePhase {
           result.skipped_too_many_chunks += 1;
           continue;
         }
-        pages.push(page);
-        if (pages.length >= pageLimit) break;
+        eligiblePages.push(page);
       }
     }
+    result.pages_eligible = eligiblePages.length;
+
+    const checkpointKey = checkpointFor(scope, promptVersion, requireChunks, maxChunks);
+    const currentKeys = new Set(eligiblePages.map((page) => proposalPageKey(page)));
+    const completedKeys = new Set(
+      (await loadOpCheckpoint(engine, checkpointKey)).filter((key) => currentKeys.has(key)),
+    );
+    const proposalCacheKeys = await loadProposalCacheKeys(engine, scope, promptVersion);
+    const pendingPages: Page[] = [];
+    for (const page of eligiblePages) {
+      const key = proposalPageKey(page);
+      if (completedKeys.has(key) || proposalCacheKeys.has(key)) {
+        result.cache_hits += 1;
+        completedKeys.add(key);
+      } else {
+        pendingPages.push(page);
+      }
+    }
+    result.cache_misses = pendingPages.length;
+
+    const priorityOrder = new Map((opts.prioritySlugs ?? []).map((slug, index) => [slug, index]));
+    pendingPages.sort((a, b) => {
+      const aPriority = priorityOrder.get(a.slug);
+      const bPriority = priorityOrder.get(b.slug);
+      if (aPriority !== undefined && bPriority !== undefined) return aPriority - bPriority;
+      if (aPriority !== undefined) return -1;
+      if (bPriority !== undefined) return 1;
+      return 0;
+    });
+    result.priority_pages = pendingPages.filter((page) => priorityOrder.has(page.slug)).length;
+
+    const pages = opts.drain ? pendingPages : pendingPages.slice(0, pageLimit);
+    const now = opts.now ?? Date.now;
+    const deadline = opts.drain ? now() + (opts.windowMs ?? DEFAULT_DRAIN_WINDOW_MS) : Number.POSITIVE_INFINITY;
+    const completedThisRun = new Set<string>();
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages', pages.length);
     }
 
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i]!;
-      const pageNo = i + 1;
-      result.pages_scanned += 1;
-      opts.reporter?.heartbeat(progressNote(pageNo, pages.length, 'processing', page.slug));
-
-      // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
-      const body = page.compiled_truth ?? '';
-      if (body.trim().length === 0) {
-        this.tick(opts, progressNote(pageNo, pages.length, 'skipped empty', page.slug));
-        continue;
-      }
-      if (skipPagesWithFence && hasCompleteFence(body)) {
-        this.tick(opts, progressNote(pageNo, pages.length, 'skipped fence', page.slug));
-        continue;
-      }
-
-      const ch = contentHash(body);
-      const existingTakes = extractExistingTakesForDedup(body);
-
-      // Idempotency check. If a row exists for (source_id, page_slug, content_hash,
-      // prompt_version), this page was already processed — skip and count as cache hit.
-      const sourceId = page.source_id ?? scope.sourceId ?? 'default';
-      const cached = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM take_proposals
-         WHERE source_id = $1 AND page_slug = $2 AND content_hash = $3 AND prompt_version = $4
-         LIMIT 1`,
-        [sourceId, page.slug, ch, promptVersion],
-      );
-      if (cached.length > 0) {
-        result.cache_hits += 1;
-        this.tick(opts, progressNote(pageNo, pages.length, 'cache hit', page.slug));
-        continue;
-      }
-      result.cache_misses += 1;
-
-      if (opts.dryRun) {
-        result.dry_run_no_llm = true;
-        this.tick(opts, progressNote(pageNo, pages.length, 'dry-run no-llm', page.slug));
-        continue;
-      }
-
-      // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
-      const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
-        estimatedInputTokens: 1500,
-        maxOutputTokens: 500,
-      });
-      if (!budget.allowed) {
-        result.budget_exhausted = true;
-        result.warnings.push(
-          `budget exhausted at page ${result.pages_scanned}/${pages.length} (cumulative $${budget.cumulativeCostUsd.toFixed(4)} / cap $${budget.budgetUsd.toFixed(2)})`,
-        );
-        this.tick(opts, progressNote(pageNo, pages.length, 'budget exhausted', page.slug));
+    batchLoop: for (let batchStart = 0; batchStart < pages.length; batchStart += pageLimit) {
+      if (now() >= deadline) {
+        result.stopped = 'window';
         break;
       }
+      const batch = pages.slice(batchStart, batchStart + pageLimit);
+      result.batches += 1;
+      let batchProgress = 0;
+      for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+        const page = batch[batchIndex]!;
+        const pageNo = batchStart + batchIndex + 1;
+        if (now() >= deadline) {
+          result.stopped = 'window';
+          break batchLoop;
+        }
+        result.pages_scanned += 1;
+        opts.reporter?.heartbeat(progressNote(pageNo, pages.length, 'processing', page.slug));
 
-      // Call the extractor. Errors on a single page log a warning but do not abort.
-      let proposals: ProposedTake[];
-      try {
-        proposals = await extractor({
-          pagePath: page.slug,
-          pageBody: body,
-          existingTakes,
-          modelHint: opts.model,
+        const body = page.compiled_truth ?? '';
+        const key = proposalPageKey(page, body);
+        if (skipPagesWithFence && hasCompleteFence(body)) {
+          completedKeys.add(key);
+          completedThisRun.add(key);
+          result.pages_processed += 1;
+          batchProgress += 1;
+          this.tick(opts, progressNote(pageNo, pages.length, 'skipped fence', page.slug));
+          continue;
+        }
+
+        if (opts.dryRun) {
+          result.dry_run_no_llm = true;
+          this.tick(opts, progressNote(pageNo, pages.length, 'dry-run no-llm', page.slug));
+          continue;
+        }
+
+        const budget = this.checkBudget({
+          modelId: opts.model ?? 'claude-sonnet-4-6',
+          estimatedInputTokens: 1500,
+          maxOutputTokens: 500,
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
-        this.tick(opts, progressNote(pageNo, pages.length, 'failed', page.slug));
-        continue;
+        if (!budget.allowed) {
+          result.budget_exhausted = true;
+          result.stopped = 'budget';
+          result.warnings.push(
+            `budget exhausted at page ${result.pages_scanned}/${pages.length} (cumulative $${budget.cumulativeCostUsd.toFixed(4)} / cap $${budget.budgetUsd.toFixed(2)})`,
+          );
+          this.tick(opts, progressNote(pageNo, pages.length, 'budget exhausted', page.slug));
+          break batchLoop;
+        }
+
+        const existingTakes = extractExistingTakesForDedup(body);
+        let proposals: ProposedTake[];
+        try {
+          proposals = await extractor({
+            pagePath: page.slug,
+            pageBody: body,
+            existingTakes,
+            modelHint: opts.model,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          result.pages_failed += 1;
+          result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+          this.tick(opts, progressNote(pageNo, pages.length, 'failed', page.slug));
+          continue;
+        }
+
+        const sourceId = page.source_id ?? scope.sourceId ?? 'default';
+        for (const p of proposals) {
+          const inserted = await engine.executeRaw<{ id: number }>(
+            `INSERT INTO take_proposals
+               (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+                claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING
+             RETURNING id`,
+            [
+              sourceId,
+              page.slug,
+              contentHash(body),
+              promptVersion,
+              proposalRunId,
+              p.claim_text,
+              p.kind,
+              p.holder,
+              p.weight,
+              p.domain ?? null,
+              JSON.stringify(existingTakes),
+              opts.model ?? 'claude-sonnet-4-6',
+            ],
+          );
+          result.proposals_inserted += inserted.length;
+        }
+        completedKeys.add(key);
+        completedThisRun.add(key);
+        result.pages_processed += 1;
+        batchProgress += 1;
+        this.tick(opts, progressNote(pageNo, pages.length, `done +${proposals.length}`, page.slug));
       }
 
-      // Write proposals to take_proposals. Each row is a separate INSERT
-      // because the composite idempotency key is on the per-page tuple — a
-      // bulk UPSERT would collapse a same-page-multi-claim run into one row.
-      for (const p of proposals) {
-        await engine.executeRaw(
-          `INSERT INTO take_proposals
-             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
-              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
-          [
-            sourceId,
-            page.slug,
-            ch,
-            promptVersion,
-            proposalRunId,
-            p.claim_text,
-            p.kind,
-            p.holder,
-            p.weight,
-            p.domain ?? null,
-            JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
-          ],
-        );
-        result.proposals_inserted += 1;
+      if (!opts.dryRun) await recordCompleted(engine, checkpointKey, [...completedKeys]);
+      if (opts.drain && batchProgress === 0 && result.pages_failed > 0) {
+        result.stopped = 'no_progress';
+        break;
       }
-      this.tick(opts, progressNote(pageNo, pages.length, `done +${proposals.length}`, page.slug));
     }
+
+    result.remaining = Math.max(0, pendingPages.length - completedThisRun.size);
+    if (opts.dryRun) {
+      result.stopped = 'preview';
+    } else if (result.remaining === 0) {
+      result.stopped = 'drained';
+    } else if (!opts.drain && result.stopped === 'drained') {
+      result.stopped = 'batch_limit';
+    }
+    if (!opts.dryRun) await recordCompleted(engine, checkpointKey, [...completedKeys]);
 
     if (opts.reporter) opts.reporter.finish();
 
@@ -542,14 +671,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
-      round_completed_delta: result.budget_exhausted ? 0 : 1,
-      halt_delta: result.budget_exhausted ? 1 : 0,
+      round_completed_delta: result.remaining === 0 ? 1 : 0,
+      halt_delta: result.remaining > 0 && result.stopped !== 'batch_limit' ? 1 : 0,
     });
 
     return {
       summary: opts.dryRun
-        ? `propose_takes: dry-run scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.cache_misses} would need LLM, 0 proposals written (run ${proposalRunId})`
-        : `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
+        ? `propose_takes: dry-run found ${result.cache_misses} pending pages, ${result.cache_hits} cached, 0 proposals written (run ${proposalRunId})`
+        : `propose_takes: processed ${result.pages_processed} pages in ${result.batches} batch(es), ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.remaining} remaining (run ${proposalRunId})`,
       details: {
         ...result,
         chunk_filter: {
@@ -559,7 +688,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
         proposal_run_id: proposalRunId,
         prompt_version: promptVersion,
       },
-      status: result.budget_exhausted ? 'warn' : 'ok',
+      status: result.budget_exhausted || result.pages_failed > 0 || (opts.drain && result.remaining > 0) ? 'warn' : 'ok',
     };
   }
 }

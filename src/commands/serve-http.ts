@@ -1949,6 +1949,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         preset: ['full', 'meeting', 'quick'].includes(req.body?.preset) ? req.body.preset : undefined,
         sourceId: typeof req.body?.sourceId === 'string' ? req.body.sourceId : undefined,
         maxPages,
+        drainProposals: req.body?.drainProposals === true,
+        windowSeconds: typeof req.body?.windowSeconds === 'number' ? req.body.windowSeconds : undefined,
         dryRun: req.body?.dryRun === true,
         input: typeof req.body?.input === 'string' ? req.body.input : undefined,
         date: typeof req.body?.date === 'string' ? req.body.date : undefined,

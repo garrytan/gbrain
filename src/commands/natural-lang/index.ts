@@ -9,7 +9,7 @@ export { INTENTS, INTENT_SLOT_KEYS, MAX_NATURAL_TASK_CHARACTERS } from './types.
 export { INTENT_SYSTEM_PROMPT, PMBRAIN_ACTION_TOOL } from './prompt.ts';
 
 // LLM
-export { callIntentModel, getAdminLlmStatus, buildAdminGatewayConfig, parseJsonObject } from './llm.ts';
+export { callIntentModel, getAdminLlmStatus, getProviderStatus, buildAdminGatewayConfig, parseJsonObject } from './llm.ts';
 
 // Normalize
 export { normalizeIntentPreview, validateSlots, describeAction } from './normalize.ts';

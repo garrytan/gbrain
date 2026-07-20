@@ -37,6 +37,12 @@ describe('Dream GUI product contract', () => {
     expect(api).toContain("cmd.push('--preset', input.preset)");
   });
 
+  test('one-click Dream uses the main source and leaves the 25-page override in advanced settings', () => {
+    expect(dream).toContain("sourceId: runMode === 'advanced' ? sourceId.trim() || undefined : defaultSourceId");
+    expect(dream).toContain("maxPages: runMode === 'advanced' && maxPages.trim() ? Number(maxPages) : undefined");
+    expect(dream).toContain("drainProposals: runMode === 'cycle'");
+  });
+
   test('phase ordering comes from the backend catalog', () => {
     expect(dream).toContain('phaseCatalog.map(item => <option');
     expect(dream).toContain('phaseCatalog={data.phase_catalog}');
@@ -130,6 +136,28 @@ describe('Dream GUI product contract', () => {
     expect(dream).toContain('<b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span><small>本次 +{latestDeltas.pages}</small>');
     expect(dream).toContain('<b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span><small>本次 +{latestDeltas.links}</small>');
     expect(dream).not.toContain('这些数字来自当前知识库，不会因为刷新页面而丢失。');
+  });
+
+  test('proposal drain statistics are shown from the structured phase report', () => {
+    const run = completedRun({
+      status: 'partial',
+      phases: [{
+        phase: 'propose_takes',
+        status: 'warn',
+        details: {
+          pages_processed: 100,
+          proposals_inserted: 12,
+          cache_hits: 40,
+          pages_failed: 2,
+          remaining: 33,
+          batches: 1,
+          stopped: 'window',
+        },
+      }],
+      totals: {},
+    });
+    const summary = describeDreamRun(run);
+    expect(summary.outputs).toContain('观点整理：处理 100 页，生成 12 条候选观点，跳过 40 页已处理内容，失败 2 页，剩余 33 页。');
   });
 
   test('Dream settings explain relative paths with a resolved directory preview', () => {

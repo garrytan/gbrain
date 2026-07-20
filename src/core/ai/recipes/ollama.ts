@@ -25,7 +25,11 @@ export const ollama: Recipe = {
       // desktop app, so the recipe intentionally does not hard-code models.
       models: [],
       supports_tools: true,
-      supports_subagent_loop: false,
+      // PMBrain routes non-Anthropic subagents through the canonical gateway
+      // tool loop, which generates and persists its own stable execution ids.
+      // Verified against the local Ollama OpenAI/tool-call surface; individual
+      // models that do not implement tools still fail with their native error.
+      supports_subagent_loop: true,
       supports_prompt_cache: false,
       cost_per_1m_input_usd: 0,
       cost_per_1m_output_usd: 0,

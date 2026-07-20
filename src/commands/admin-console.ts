@@ -13,7 +13,7 @@ import { isSensitiveConfigKey, redactConfigValue } from './config.ts';
 import { loadAllSources, isSourceFederated } from '../core/sources-load.ts';
 import { resolveMainSourceId } from '../core/source-resolver.ts';
 import { ALL_PHASES } from '../core/cycle.ts';
-import { listRuns } from './natural-lang/index.ts';
+import { getProviderStatus, listRuns } from './natural-lang/index.ts';
 
 async function getSupervisorStatus(): Promise<{
   running: boolean;
@@ -156,7 +156,6 @@ export async function getAdminBrainOverview(engine: BrainEngine, config: GBrainC
     config: redactedConfig(config),
   };
 }
-
 export async function listAdminBrainPages(
   engine: BrainEngine,
   query: { source?: string; type?: string; view?: string; q?: string; embedded?: string; page?: string; limit?: string },
@@ -592,51 +591,5 @@ export async function getAdminDreamOverview(engine: BrainEngine, config: GBrainC
       takes_quality_runs: qualityRuns,
       contradiction_runs: contradictionRuns,
     },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Provider status (used by getAdminBrainOverview; also re-exported via natural-lang)
-// ---------------------------------------------------------------------------
-
-function getProviderStatus(config: GBrainConfig | null) {
-  const chatModel = config?.chat_model ?? null;
-  const provider = chatModel?.split(':')[0] ?? null;
-  const providers = {
-    mimo: !!config?.mimo_api_key,
-    zhipu: !!config?.zhipu_api_key,
-    deepseek: !!config?.deepseek_api_key,
-    openai: !!config?.openai_api_key,
-    anthropic: !!config?.anthropic_api_key,
-    zeroentropy: !!config?.zeroentropy_api_key,
-  };
-  const providerKeyMap: Record<string, keyof typeof providers> = {
-    mimo: 'mimo',
-    zhipu: 'zhipu',
-    deepseek: 'deepseek',
-    openai: 'openai',
-    anthropic: 'anthropic',
-    zeroentropyai: 'zeroentropy',
-  };
-  const required = provider ? providerKeyMap[provider] : null;
-  const customOpenAiBaseUrl = config?.provider_touchpoint_base_urls?.['custom-openai']?.chat
-    ?? config?.provider_base_urls?.['custom-openai'];
-  const hasRequired = provider === 'custom-openai'
-    ? !!customOpenAiBaseUrl
-    : required ? providers[required] : false;
-  return {
-    chat: {
-      enabled: !!chatModel && hasRequired,
-      chat_model: chatModel,
-      provider,
-      missing: !chatModel
-        ? ['chat_model']
-        : hasRequired
-          ? []
-          : provider === 'custom-openai'
-            ? ['provider_touchpoint_base_urls.custom-openai.chat']
-            : [`${provider}_api_key`],
-    },
-    providers,
   };
 }

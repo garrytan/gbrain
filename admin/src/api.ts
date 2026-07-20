@@ -98,7 +98,7 @@ export const api = {
   dreamSettings: () => apiFetch('/admin/api/dream/settings'),
   saveDreamSettings: (body: { outputDir: string; dualWrite: boolean }) =>
     apiFetch('/admin/api/dream/settings', { method: 'POST', body: JSON.stringify(body) }),
-  startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
+  startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; drainProposals?: boolean; windowSeconds?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
     apiFetch('/admin/api/dream-runs', { method: 'POST', body: JSON.stringify(body) }),
   breakDreamLock: (id: string, holderPid: number) =>
     apiFetch(`/admin/api/dream/locks/${encodeURIComponent(id)}/break`, { method: 'POST', body: JSON.stringify({ holderPid }) }),

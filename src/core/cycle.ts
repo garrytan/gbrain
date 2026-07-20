@@ -295,6 +295,10 @@ export interface CycleReport {
   brain_dir: string | null;
   phases: PhaseResult[];
   totals: {
+    /** Actual new knowledge pages reported by sync + synthesis in this cycle. */
+    pages_added: number;
+    /** Actual relation rows created/resolved by link-producing phases. */
+    links_created: number;
     lint_fixes: number;
     backlinks_added: number;
     pages_synced: number;
@@ -341,6 +345,12 @@ export interface CycleReport {
      * records the specific reason.
      */
     phantoms_skipped_drift: number;
+    /** Pages successfully classified by propose_takes, including zero-output pages. */
+    propose_pages_processed: number;
+    /** Candidate proposals actually reported by the phase. */
+    proposals_inserted: number;
+    /** Eligible proposal pages still pending after this cycle. */
+    propose_pages_remaining: number;
   };
 }
 
@@ -395,6 +405,10 @@ export interface CycleOpts {
   proposeTakesRequireChunks?: boolean;
   /** Optional upper bound on existing text chunk count for propose_takes. */
   proposeTakesMaxChunks?: number;
+  /** Drain propose_takes in repeated bounded batches. Used by the full UI preset. */
+  proposeTakesDrain?: boolean;
+  /** Wallclock budget for propose_takes drain mode. */
+  proposeTakesWindowMs?: number;
   /**
    * v0.23.2: explicit opt-in to disable the synthesize self-consumption guard.
    * Wired from `gbrain dream --unsafe-bypass-dream-guard`. Never auto-applied
@@ -1905,6 +1919,9 @@ export async function runCycle(
             pageLimit: opts.proposeTakesPageLimit,
             requireChunks: opts.proposeTakesRequireChunks,
             maxChunks: opts.proposeTakesMaxChunks,
+            prioritySlugs: syncPagesAffected,
+            drain: opts.proposeTakesDrain,
+            windowMs: opts.proposeTakesWindowMs,
           }) as Promise<PhaseResult>);
           result.details = {
             ...result.details,
@@ -2161,6 +2178,8 @@ export async function runCycle(
 
 function emptyTotals(): CycleReport['totals'] {
   return {
+    pages_added: 0,
+    links_created: 0,
     lint_fixes: 0,
     backlinks_added: 0,
     pages_synced: 0,
@@ -2180,6 +2199,9 @@ function emptyTotals(): CycleReport['totals'] {
     phantoms_redirected: 0,
     phantoms_ambiguous: 0,
     phantoms_skipped_drift: 0,
+    propose_pages_processed: 0,
+    proposals_inserted: 0,
+    propose_pages_remaining: 0,
   };
 }
 
@@ -2190,10 +2212,13 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
       t.lint_fixes = Number(p.details.fixed ?? 0);
     } else if (p.phase === 'backlinks' && p.details) {
       t.backlinks_added = Number(p.details.added ?? 0);
+      t.links_created += t.backlinks_added;
     } else if (p.phase === 'sync' && p.details) {
       t.pages_synced = Number(p.details.added ?? 0) + Number(p.details.modified ?? 0);
+      t.pages_added += Number(p.details.added ?? 0);
     } else if (p.phase === 'extract' && p.details) {
       t.pages_extracted = Number(p.details.linksCreated ?? 0);
+      t.links_created += Number(p.details.linksCreated ?? 0);
     } else if (p.phase === 'embed' && p.details) {
       // In dry-run, use would_embed as the "activity" measure; else embedded.
       const dryRun = p.details.dryRun === true;
@@ -2205,6 +2230,7 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
     } else if (p.phase === 'synthesize' && p.details) {
       t.transcripts_processed = Number(p.details.transcripts_processed ?? 0);
       t.synth_pages_written = Number(p.details.pages_written ?? 0);
+      t.pages_added += t.synth_pages_written;
     } else if (p.phase === 'patterns' && p.details) {
       t.patterns_written = Number(p.details.patterns_written ?? 0);
     } else if (p.phase === 'recompute_emotional_weight' && p.details) {
@@ -2212,6 +2238,7 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
     } else if (p.phase === 'resolve_symbol_edges' && p.details) {
       t.edges_resolved = Number(p.details.edges_resolved ?? 0);
       t.edges_ambiguous = Number(p.details.edges_ambiguous ?? 0);
+      t.links_created += t.edges_resolved;
     } else if (p.phase === 'purge' && p.details) {
       t.purged_sources_count = Number(p.details.purged_sources_count ?? 0);
       t.purged_pages_count = Number(p.details.purged_pages_count ?? 0);
@@ -2225,6 +2252,10 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
       t.phantoms_redirected = Number(p.details.phantoms_redirected ?? 0);
       t.phantoms_ambiguous = Number(p.details.phantoms_ambiguous ?? 0);
       t.phantoms_skipped_drift = Number(p.details.phantoms_skipped_drift ?? 0);
+    } else if (p.phase === 'propose_takes' && p.details) {
+      t.propose_pages_processed = Number(p.details.pages_processed ?? 0);
+      t.proposals_inserted = Number(p.details.proposals_inserted ?? 0);
+      t.propose_pages_remaining = Number(p.details.remaining ?? 0);
     }
   }
   return t;
@@ -2244,6 +2275,8 @@ function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): Cyc
     totals.pages_synced > 0 ||
     totals.pages_extracted > 0 ||
     totals.pages_embedded > 0 ||
-    totals.pages_emotional_weight_recomputed > 0;
+    totals.pages_emotional_weight_recomputed > 0 ||
+    totals.propose_pages_processed > 0 ||
+    totals.proposals_inserted > 0;
   return anyWork ? 'ok' : 'clean';
 }
