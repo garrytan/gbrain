@@ -78,6 +78,7 @@ if [ "$has_clone" = "1" ]; then
   exit 0
 fi
 if [ "$has_remote_get_url" = "1" ]; then
+  if [ "$mode" = "remote-get-url-fail" ]; then exit 1; fi
   echo "https://github.com/example/repo"
   exit 0
 fi
@@ -88,7 +89,7 @@ exit 0
   chmodSync(path, 0o755);
 }
 
-function setMode(mode: 'ok' | 'clone-fail'): void {
+function setMode(mode: 'ok' | 'clone-fail' | 'remote-get-url-fail'): void {
   writeFileSync(join(FAKE_GIT_DIR, 'mode'), mode);
 }
 
@@ -482,16 +483,27 @@ describe('getSourceStatus', () => {
     await withEnv2(async () => {
       const userPath = join(GBRAIN_HOME, 'na-fixture');
       mkdirSync(userPath, { recursive: true });
-      // path-only source still gets validateRepoState — but with no expected
-      // URL, it just probes existence + .git. Path exists with no .git → 'no-git'.
-      // To match contract docstring we'd want 'not-applicable' only when
-      // local_path is null. Test the truthful behavior:
+      // Path-only sources are user-supplied working trees, not gbrain-managed
+      // clones. Even if the path has no .git/origin, sources_status should not
+      // call that a clone failure.
       await addSource(engine, { id: 'status-no-url', localPath: userPath });
       const s = await getSourceStatus(engine, 'status-no-url');
-      // local_path set but no .git: returns 'no-git'
-      expect(s.clone_state).toBe('no-git');
+      expect(s.clone_state).toBe('not-applicable');
       expect(s.remote_url).toBeNull();
       rmSync(userPath, { recursive: true, force: true });
+    });
+  });
+
+  test('clone_state still reports "corrupted" for remote-managed clone when origin probe fails', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, {
+        id: 'status-corrupted',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+      setMode('remote-get-url-fail');
+      const s = await getSourceStatus(engine, 'status-corrupted');
+      expect(s.clone_state).toBe('corrupted');
+      expect(s.remote_url).toBe('https://github.com/example/repo');
     });
   });
 
