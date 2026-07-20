@@ -15,7 +15,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { TakeBatchInput, TakeKind } from './engine.ts';
-import { chat, isAvailable } from './ai/gateway.ts';
+import { chat, getChatModel, isAvailable } from './ai/gateway.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -190,7 +190,11 @@ export async function extractTakesFromPages(
     let response: { text: string };
     try {
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        // #2997 — default to the configured chat model (file-plane gateway
+        // config, same idiom as enrich.ts) instead of hardcoded cloud Haiku.
+        // On OAuth/local-only installs the hardcoded model made every takes
+        // extraction die with llm_unavailable despite a working chat_model.
+        model: opts.model || getChatModel(),
         system: CLASSIFIER_SYSTEM,
         messages: [
           {
