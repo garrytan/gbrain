@@ -32,6 +32,7 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
@@ -194,6 +195,14 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
   }
+  // Non-Anthropic chat models (openai:, openrouter:, google:, etc.) live in
+  // the canonical pricing table, not the Anthropic-only ANTHROPIC_PRICING
+  // view. Without this fall-through, every non-Anthropic chat model returns
+  // null -> under the always-present default cost cap, reserve() throws
+  // BudgetExhausted (no_pricing) BEFORE the provider call, silently zeroing
+  // extraction for those providers.
+  const canonical = canonicalLookup(modelId);
+  if (canonical) return canonical;
   // v0.40.6.1: zero-price local-inference rerank providers so the budget
   // tracker's TX2 hard-fail doesn't trip on `llama-server-reranker:<model>`
   // under `--max-cost`. Only the rerank kind — chat/embed already have
