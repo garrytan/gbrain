@@ -1510,6 +1510,12 @@ const query: Operation = {
     image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    types: {
+      type: 'array',
+      description:
+        "Filter to page types, e.g. ['source','conversation'] for evidence-only temporal retrieval. " +
+        "Threads to the existing SearchOpts.types SQL filter.",
+    },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
@@ -1611,6 +1617,9 @@ const query: Operation = {
     // hybridSearch path below, so both honor the same grant.
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
     const querySourceScope = resolveRequestedScope(ctx, sourceIdParam);
+    const typesParam = Array.isArray(p.types)
+      ? (p.types.filter((t): t is PageType => typeof t === 'string' && t.length > 0) as PageType[])
+      : undefined;
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -1628,6 +1637,7 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        types: typesParam,
         ...querySourceScope,
       });
       return results;
@@ -1660,6 +1670,7 @@ const query: Operation = {
       detail,
       language: (p.lang as string) || undefined,
       symbolKind: (p.symbol_kind as string) || undefined,
+      types: typesParam,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
       ...querySourceScope,
