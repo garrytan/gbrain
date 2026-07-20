@@ -225,6 +225,66 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgChanged || pgliteChanged).toBe(true);
   });
 
+  // fix/title-retrieval-arm (Reviewer F2): the title arm must behave
+  // identically on both engines — including the D1 case where the title
+  // tokens never appear in any chunk. Without this case the Postgres
+  // implementation would only ever execute behind hybridSearch's fail-open
+  // catch and a break could ship dark on the production brain. Runs in CI
+  // via scripts/run-e2e.sh (docker-provisioned Postgres); skips gracefully
+  // when DATABASE_URL is not configured.
+  test('searchTitles parity: exact-title hit with title tokens absent from body', async () => {
+    const seed = async (eng: BrainEngine) => {
+      await eng.putPage('wiki/title-arm-parity', {
+        type: 'note',
+        title: 'Vermilion Icebreaker Compendium',
+        compiled_truth: 'A document body that never mentions those words.',
+        timeline: '',
+      });
+      await eng.upsertChunks('wiki/title-arm-parity', [{
+        chunk_index: 0,
+        chunk_text: 'A document body that never mentions those words.',
+        chunk_source: 'compiled_truth',
+        embedding: basisEmbedding(33),
+        token_count: 9,
+      }] satisfies ChunkInput[]);
+    };
+    await seed(pgEngine);
+    await seed(pgliteEngine);
+
+    const q = 'Vermilion Icebreaker Compendium';
+    // Premise on both engines: chunk-grain keyword cannot see the page
+    // (also pins the F1 contract — no orFallback flag means strict AND).
+    expect((await pgEngine.searchKeyword(q, { limit: 5 })).map((r: SearchResult) => r.slug))
+      .not.toContain('wiki/title-arm-parity');
+    expect((await pgliteEngine.searchKeyword(q, { limit: 5 })).map((r: SearchResult) => r.slug))
+      .not.toContain('wiki/title-arm-parity');
+
+    const pg = await pgEngine.searchTitles(q, { limit: 5 });
+    const pglite = await pgliteEngine.searchTitles(q, { limit: 5 });
+    expect(pg.map((r: SearchResult) => r.slug)).toContain('wiki/title-arm-parity');
+    expect(pglite.map((r: SearchResult) => r.slug)).toContain('wiki/title-arm-parity');
+
+    // Row-shape parity: identical representative chunk on both engines.
+    const pgHit = pg.find((r: SearchResult) => r.slug === 'wiki/title-arm-parity')!;
+    const pgliteHit = pglite.find((r: SearchResult) => r.slug === 'wiki/title-arm-parity')!;
+    expect(pgHit.chunk_source).toBe('compiled_truth');
+    expect(pgliteHit.chunk_source).toBe(pgHit.chunk_source);
+    expect(pgliteHit.chunk_text).toBe(pgHit.chunk_text);
+  });
+
+  // fix/title-retrieval-arm (Reviewer F1): the AND→OR fallback is opt-in.
+  // Default searchKeyword stays strict on BOTH engines; orFallback: true
+  // rescues the one-bad-token query identically.
+  test('searchKeyword orFallback parity: default strict, opt-in rescues', async () => {
+    const q = 'fat code thin harness zzzabsenttoken';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const strict = await eng.searchKeyword(q, { limit: 5 });
+      expect(strict.length).toBe(0);
+      const relaxed = await eng.searchKeyword(q, { limit: 5, orFallback: true });
+      expect(relaxed.map((r: SearchResult) => r.slug)).toContain('concepts/fat-code-thin-harness');
+    }
+  });
+
   // v0.39.3.0 T3 — provenance write+read parity (WARN-8 + CV5).
   // Both engines must write the same 4 provenance columns (source_kind,
   // source_uri, ingested_via, ingested_at) on putPage AND surface them
