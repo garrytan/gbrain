@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expo App Clip"
+  short_description: "Add an iOS App Clip target to an Expo app with AASA, associated domains, and TestFlight setup (needs an Apple Developer account)"
+  default_prompt: "Use $expo-app-clip when adding or reviewing an iOS App Clip target for an Expo app, including bundle IDs, associated domains, AASA files, smart app banners, App Store Connect setup, and TestFlight verification."

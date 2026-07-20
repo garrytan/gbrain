@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -33,6 +33,11 @@
       "name": "migrate",
       "path": "migrate/SKILL.md",
       "description": "Universal migration from Obsidian, Notion, Logseq, markdown, CSV, JSON, Roam"
+    },
+    {
+      "name": "obsidian-gbrain-safe-index",
+      "path": "obsidian-gbrain-safe-index/SKILL.md",
+      "description": "Connect and sync an Obsidian-style Markdown vault with gbrain using a cost-controlled import-first workflow, explicit embedding gates, and durable skill/workflow capture."
     },
     {
       "name": "setup",
@@ -263,6 +268,251 @@
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
       "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "skill-vault-capture-policy",
+      "path": "skill-vault-capture-policy/SKILL.md",
+      "description": "Capture durable operational learnings, new agent skills, and environment/setup changes into the Obsidian vault instead of transient chat memory."
+    },
+    {
+      "name": "caveman",
+      "path": "caveman/SKILL.md",
+      "description": "Ultra-compressed communication mode that cuts output tokens ~65% while keeping full technical accuracy. Levels: lite/full/ultra/wenyan."
+    },
+    {
+      "name": "context-mode",
+      "path": "context-mode/SKILL.md",
+      "description": "Route large/uncertain command, file, and API output through context-mode sandbox tools (ctx_execute, ctx_search) to keep raw data out of the context window."
+    },
+    {
+      "name": "shadcn",
+      "path": "shadcn/SKILL.md",
+      "description": "Manage shadcn/ui components and projects: add/search/fix/style/compose UI and component registries. Triggers on shadcn/ui, presets, --preset, components.json."
+    },
+    {
+      "name": "impeccable",
+      "path": "impeccable/SKILL.md",
+      "description": "Frontend design critique, audit, polish, and live browser iteration. Covers UX, accessibility, typography, color, layout, motion, and design-system tokens."
+    },
+    {
+      "name": "awesome-design-md",
+      "path": "awesome-design-md/SKILL.md",
+      "description": "Read-only corpus of 70+ real product DESIGN.md specs (Stripe, Linear, Vercel, Apple, Supabase...) for reference-driven, brand-matched frontend design."
+    },
+    {
+      "name": "frontend-design",
+      "path": "frontend-design/SKILL.md",
+      "description": "Guidance for distinctive, intentional visual design of new or reshaped UI — aesthetic direction, typography, and non-templated choices."
+    },
+    {
+      "name": "banner-design",
+      "path": "banner-design/SKILL.md",
+      "description": "\"Design banners for social media, ads, website heroes, creative assets, and print. Multiple art direction options with AI-generated visuals."
+    },
+    {
+      "name": "brand",
+      "path": "brand/SKILL.md",
+      "description": "Brand voice, visual identity, messaging frameworks, asset management, brand consistency. Activate for branded content, tone of voice, market"
+    },
+    {
+      "name": "design",
+      "path": "design/SKILL.md",
+      "description": "\"Comprehensive design skill: brand identity, design tokens, UI styling, logo generation (55 styles, Gemini AI), corporate identity program ("
+    },
+    {
+      "name": "design-system",
+      "path": "design-system/SKILL.md",
+      "description": "Token architecture, component specifications, and slide generation. Three-layer tokens (primitive→semantic→component), CSS variables, spacin"
+    },
+    {
+      "name": "slides",
+      "path": "slides/SKILL.md",
+      "description": "Create strategic HTML presentations with Chart.js, design tokens, responsive layouts, copywriting formulas, and contextual slide strategies."
+    },
+    {
+      "name": "ui-styling",
+      "path": "ui-styling/SKILL.md",
+      "description": "Create beautiful, accessible user interfaces with shadcn/ui components (built on Radix UI + Tailwind), Tailwind CSS utility-first styling, a"
+    },
+    {
+      "name": "ui-ux-pro-max",
+      "path": "ui-ux-pro-max/SKILL.md",
+      "description": "\"UI/UX design intelligence for web and mobile. Includes 50+ styles, 161 color palettes, 57 font pairings, 161 product types, 99 UX guideline"
+    },
+    {
+      "name": "gsap-core",
+      "path": "gsap-core/SKILL.md",
+      "description": "Official GSAP skill for the core API — gsap.to(), from(), fromTo(), easing, duration, stagger, defaults, gsap.matchMedia() (responsive, pref"
+    },
+    {
+      "name": "gsap-frameworks",
+      "path": "gsap-frameworks/SKILL.md",
+      "description": "Official GSAP skill for Vue, Svelte, and other non-React frameworks — lifecycle, scoping selectors, cleanup on unmount. Use when the user wa"
+    },
+    {
+      "name": "gsap-performance",
+      "path": "gsap-performance/SKILL.md",
+      "description": "Official GSAP skill for performance — prefer transforms, avoid layout thrashing, will-change, batching. Use when optimizing GSAP animations,"
+    },
+    {
+      "name": "gsap-plugins",
+      "path": "gsap-plugins/SKILL.md",
+      "description": "Official GSAP skill for GSAP plugins — registration, ScrollToPlugin, ScrollSmoother, Flip, Draggable, Inertia, Observer, SplitText, Scramble"
+    },
+    {
+      "name": "gsap-react",
+      "path": "gsap-react/SKILL.md",
+      "description": "Official GSAP skill for React — useGSAP hook, refs, gsap.context(), cleanup. Use when the user wants animation in React or Next.js, or asks "
+    },
+    {
+      "name": "gsap-scrolltrigger",
+      "path": "gsap-scrolltrigger/SKILL.md",
+      "description": "Official GSAP skill for ScrollTrigger — scroll-linked animations, pinning, scrub, triggers. Use when building or recommending scroll-based a"
+    },
+    {
+      "name": "gsap-timeline",
+      "path": "gsap-timeline/SKILL.md",
+      "description": "Official GSAP skill for timelines — gsap.timeline(), position parameter, nesting, playback. Use when sequencing animations, choreographing k"
+    },
+    {
+      "name": "gsap-utils",
+      "path": "gsap-utils/SKILL.md",
+      "description": "Official GSAP skill for gsap.utils — clamp, mapRange, normalize, interpolate, random, snap, toArray, wrap, pipe. Use when the user asks abou"
+    },
+    {
+      "name": "minimalist-skill",
+      "path": "minimalist-skill/SKILL.md",
+      "description": "Clean editorial-style interfaces. Warm monochrome palette, typographic contrast, flat bento grids, muted pastels. No gradients, no heavy sha"
+    },
+    {
+      "name": "brutalist-skill",
+      "path": "brutalist-skill/SKILL.md",
+      "description": "Raw mechanical interfaces fusing Swiss typographic print with military terminal aesthetics. Rigid grids, extreme type scale contrast, utilit"
+    },
+    {
+      "name": "mobile-app-ui-design",
+      "path": "mobile-app-ui-design/SKILL.md",
+      "description": "Design high-quality mobile app UI/UX screens, flows, and components. Use this skill whenever the user asks to design a mobile app screen, create app mockups, bu"
+    },
+    {
+      "name": "swiftui-expert-skill",
+      "path": "swiftui-expert-skill/SKILL.md",
+      "description": "Use when writing, reviewing, or refactoring SwiftUI code for iOS or macOS, including state management and `@Observable` data flow, view composition and invalida"
+    },
+    {
+      "name": "update-swiftui-apis",
+      "path": "update-swiftui-apis/SKILL.md",
+      "description": "Scan Apple's SwiftUI documentation for deprecated APIs and update the SwiftUI Expert Skill with modern replacements. Use when asked to \"update latest APIs\", \"re"
+    },
+    {
+      "name": "swiftui-skills",
+      "path": "swiftui-skills/SKILL.md",
+      "description": "Apple-authored SwiftUI and platform guidance extracted from Xcode. Helps AI agents write idiomatic, Apple-native SwiftUI with reduced hallucinations."
+    },
+    {
+      "name": "material-3",
+      "path": "material-3/SKILL.md",
+      "description": "> Implement Google's Material Design 3 (Material You) UI system. Primary: Jetpack Compose Material3 (MaterialTheme, components, adaptive layout). Also Flutter a"
+    },
+    {
+      "name": "expo-skill-eval",
+      "path": "expo-skill-eval/SKILL.md",
+      "description": "Evaluate Expo skills in this repo end-to-end - trigger accuracy, generated code quality, and runtime screenshots on iOS simulator and Android emulator via Expo "
+    },
+    {
+      "name": "eas-app-stores",
+      "path": "eas-app-stores/SKILL.md",
+      "description": "EAS service (paid). Deploy Expo apps to the app stores with EAS - build and submit to the iOS App Store, Google Play Store, and TestFlight, configure eas.json b"
+    },
+    {
+      "name": "eas-hosting",
+      "path": "eas-hosting/SKILL.md",
+      "description": "EAS service (paid). Deploy Expo websites and Expo Router API routes to EAS Hosting - export the web bundle, run eas deploy for production and PR preview URLs, m"
+    },
+    {
+      "name": "eas-observe",
+      "path": "eas-observe/SKILL.md",
+      "description": "EAS service (paid). Use for anything related to EAS Observe - adding `expo-observe` to an Expo project (AppMetricsRoot/ObserveRoot HOC, markInteractive, the use"
+    },
+    {
+      "name": "eas-simulator",
+      "path": "eas-simulator/SKILL.md",
+      "description": "\"EAS service (paid). Run and control a user's app on a remote iOS/Android simulator hosted on EAS cloud. Read before running any `eas simulator:*` commands - it"
+    },
+    {
+      "name": "eas-update-insights",
+      "path": "eas-update-insights/SKILL.md",
+      "description": "\"EAS service (paid). Check the health of published EAS Update: crash rates, install/launch counts, unique users, payload size, and the split between embedded an"
+    },
+    {
+      "name": "eas-workflows",
+      "path": "eas-workflows/SKILL.md",
+      "description": "EAS service (paid). Helps understand and write EAS workflow YAML files for Expo projects. Use this skill when the user asks about CI/CD or workflows in an Expo "
+    },
+    {
+      "name": "expo-app-clip",
+      "path": "expo-app-clip/SKILL.md",
+      "description": "Framework (OSS). Add an iOS App Clip target to an Expo app. Use when the user mentions App Clip, AASA, apple-app-site-association, appclips, smart app banner, o"
+    },
+    {
+      "name": "expo-brownfield",
+      "path": "expo-brownfield/SKILL.md",
+      "description": "Framework (OSS). Integrate Expo and React Native into an existing native iOS or Android app. Use when the user mentions brownfield, embedding React Native in a "
+    },
+    {
+      "name": "expo-data-fetching",
+      "path": "expo-data-fetching/SKILL.md",
+      "description": "Framework (OSS). Use when implementing or debugging ANY network request, API call, or data fetching. Covers fetch API, React Query, SWR, error handling, caching"
+    },
+    {
+      "name": "expo-dev-client",
+      "path": "expo-dev-client/SKILL.md",
+      "description": "Framework (OSS). Build and distribute Expo development clients locally or via TestFlight for internal testing. For production TestFlight releases and store subm"
+    },
+    {
+      "name": "expo-dom",
+      "path": "expo-dom/SKILL.md",
+      "description": "Framework (OSS). Use Expo DOM components to run web code in a webview on native and as-is on web. Migrate web code to native incrementally. For the end-to-end m"
+    },
+    {
+      "name": "expo-examples",
+      "path": "expo-examples/SKILL.md",
+      "description": "Framework (OSS). Expo's official example projects - the expo/examples repo of ~70 `with-*` integrations (Stripe, Clerk, Supabase, OpenAI, maps, Reanimated, SQLi"
+    },
+    {
+      "name": "expo-module",
+      "path": "expo-module/SKILL.md",
+      "description": "Framework (OSS). Guide for creating and writing Expo native modules and views using the Expo Modules API (Swift, Kotlin, TypeScript). Covers module definition D"
+    },
+    {
+      "name": "expo-native-ui",
+      "path": "expo-native-ui/SKILL.md",
+      "description": "Framework (OSS). Build beautiful, native-feeling Expo screens. Covers Apple HIG styling, semantic colors, native controls, SF Symbols, media, animations, visual"
+    },
+    {
+      "name": "expo-router",
+      "path": "expo-router/SKILL.md",
+      "description": "Framework (OSS). Navigation and routing for Expo Router. Covers file-based routes, groups and dynamic routes, folder organization, Link with previews and contex"
+    },
+    {
+      "name": "expo-tailwind-setup",
+      "path": "expo-tailwind-setup/SKILL.md",
+      "description": "Framework (OSS). Set up Tailwind CSS v4 in Expo with react-native-css and NativeWind v5 for universal styling"
+    },
+    {
+      "name": "expo-ui",
+      "path": "expo-ui/SKILL.md",
+      "description": "\"Framework (OSS). Build native UI with the @expo/ui package: real SwiftUI on iOS and Jetpack Compose on Android rendered from React in an Expo or React Native a"
+    },
+    {
+      "name": "expo-upgrade",
+      "path": "expo-upgrade/SKILL.md",
+      "description": "Framework (OSS). Guidelines for upgrading Expo SDK versions and fixing dependency issues"
+    },
+    {
+      "name": "expo-web-to-native",
+      "path": "expo-web-to-native/SKILL.md",
+      "description": "Framework (OSS). Migrate an existing web React app to a native iOS/Android app with Expo. Use when the user wants to turn a website into a mobile app, port a Ne"
     }
   ],
   "dependencies": {

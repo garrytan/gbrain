@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expo Data Fetching"
+  short_description: "Implement and debug Expo network requests, caching, auth, offline support, and Expo Router data loaders"
+  default_prompt: "Use $expo-data-fetching for Expo data fetching work: fetch wrappers, React Query or SWR setup, error handling, retry/cancellation, authenticated requests, environment-based API URLs, offline behavior, and Expo Router loaders."

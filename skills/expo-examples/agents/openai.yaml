@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expo Examples"
+  short_description: "Adapt or scaffold from the expo/examples repo of with-* integrations (Stripe, Clerk, Supabase, maps, SQLite, and more)"
+  default_prompt: "Use $expo-examples when integrating a third-party library or service into an Expo app to find the canonical with-* example to adapt, or to scaffold a new project with npx create-expo --example."

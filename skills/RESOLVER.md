@@ -60,7 +60,56 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "get more out of gbrain", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "gbrain advisor" | `skills/gbrain-advisor/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
-| "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
+| "talk like caveman", "use caveman", "less tokens", "be brief", "caveman mode" | `skills/caveman/SKILL.md` |
+| "analyze logs", "summarize output", "process data", "large file analysis", "page snapshot", "run tests", "git log", "fetch docs", "context mode" | `skills/context-mode/SKILL.md` |
+| "shadcn component", "add shadcn", "components.json", "--preset", "shadcn registry" | `skills/shadcn/SKILL.md` |
+| "design critique", "audit this UI", "polish this page", "impeccable", "frontend redesign", "live browser edit" | `skills/impeccable/SKILL.md` |
+| "match stripe design", "linear DESIGN.md", "bootstrap a DESIGN.md", "brand design tokens", "awesome design md" | `skills/awesome-design-md/SKILL.md` |
+| "distinctive UI", "visual design direction", "typography for this page", "avoid templated design", "frontend design" | `skills/frontend-design/SKILL.md` |
+| "banner design", "ad creative", "hero banner" | `skills/banner-design/SKILL.md` |
+| "brand guidelines", "brand tokens", "brand system" | `skills/brand/SKILL.md` |
+| "UI/UX design", "product design", "interface design" | `skills/design/SKILL.md` |
+| "design system", "component library", "tokens" | `skills/design-system/SKILL.md` |
+| "presentation slides", "deck design", "slide layout" | `skills/slides/SKILL.md` |
+| "UI styling", "CSS", "visual polish", "component styling" | `skills/ui-styling/SKILL.md` |
+| "pro max UI/UX", "full design workflow" | `skills/ui-ux-pro-max/SKILL.md` |
+| "GSAP core", "tween", "animation basics" | `skills/gsap-core/SKILL.md` |
+| "GSAP with frameworks", "integration" | `skills/gsap-frameworks/SKILL.md` |
+| "GSAP performance", "optimization" | `skills/gsap-performance/SKILL.md` |
+| "GSAP plugins", "extra eases" | `skills/gsap-plugins/SKILL.md` |
+| "GSAP in React", "useGSAP" | `skills/gsap-react/SKILL.md` |
+| "GSAP ScrollTrigger", "scroll animation" | `skills/gsap-scrolltrigger/SKILL.md` |
+| "GSAP timeline", "sequenced animation" | `skills/gsap-timeline/SKILL.md` |
+| "GSAP utils", "helpers" | `skills/gsap-utils/SKILL.md` |
+| "minimalist design", "clean UI" | `skills/minimalist-skill/SKILL.md` |
+| "brutalist design", "raw UI" | `skills/brutalist-skill/SKILL.md` |
+| "mobile app UI", "mobile app design", "iOS Android app UI" | `skills/mobile-app-ui-design/SKILL.md` |
+| "SwiftUI expert", "SwiftUI layout", "SwiftUI performance" | `skills/swiftui-expert-skill/SKILL.md` |
+| "update SwiftUI APIs", "latest SwiftUI", "SwiftUI migration" | `skills/update-swiftui-apis/SKILL.md` |
+| "SwiftUI skills", "SwiftUI review", "SwiftUI generation" | `skills/swiftui-skills/SKILL.md` |
+| "Material 3", "Material Design 3", "M3 tokens" | `skills/material-3/SKILL.md` |
+| "Expo skill eval", "Expo app evaluation", "Expo design rubric" | `skills/expo-skill-eval/SKILL.md` |
+| "EAS app stores", "App Store metadata", "TestFlight", "Play Store" | `skills/eas-app-stores/SKILL.md` |
+| "EAS hosting", "Expo hosting" | `skills/eas-hosting/SKILL.md` |
+| "EAS observe", "Expo metrics", "Expo observability" | `skills/eas-observe/SKILL.md` |
+| "EAS simulator", "Expo simulator" | `skills/eas-simulator/SKILL.md` |
+| "EAS update insights", "Expo update analytics" | `skills/eas-update-insights/SKILL.md` |
+| "EAS workflows", "Expo workflows" | `skills/eas-workflows/SKILL.md` |
+| "Expo App Clip", "app clip" | `skills/expo-app-clip/SKILL.md` |
+| "Expo brownfield", "existing native app Expo" | `skills/expo-brownfield/SKILL.md` |
+| "Expo data fetching", "React Native data fetching" | `skills/expo-data-fetching/SKILL.md` |
+| "Expo dev client", "development build" | `skills/expo-dev-client/SKILL.md` |
+| "Expo DOM components", "DOM in Expo" | `skills/expo-dom/SKILL.md` |
+| "Expo examples", "sample Expo app" | `skills/expo-examples/SKILL.md` |
+| "Expo module", "native module" | `skills/expo-module/SKILL.md` |
+| "Expo native UI", "native views" | `skills/expo-native-ui/SKILL.md` |
+| "Expo Router", "file-based routing" | `skills/expo-router/SKILL.md` |
+| "Expo Tailwind", "NativeWind setup" | `skills/expo-tailwind-setup/SKILL.md` |
+| "Expo UI", "Expo components" | `skills/expo-ui/SKILL.md` |
+| "Expo upgrade", "SDK upgrade" | `skills/expo-upgrade/SKILL.md` |
+| "Expo web to native", "migrate web app to Expo" | `skills/expo-web-to-native/SKILL.md` |
+| "save this learning to the vault", "capture this skill in Obsidian", "record this workflow in my notes", "put this setup change in the knowledge base" | `skills/skill-vault-capture-policy/SKILL.md` |
+| "Skillify this", "is this a skill?", "make this proper", "add tests and evals for this" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
@@ -78,6 +127,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Set up GBrain", first boot | `skills/setup/SKILL.md` |
 | "Now what?", "fill my brain", "cold start", "bootstrap", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
+| "Connect Obsidian to gbrain", "sync vault and gbrain", "safe/free gbrain index", "embed gbrain after vault update", "is gbrain synced with my vault" | `skills/obsidian-gbrain-safe-index/SKILL.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
