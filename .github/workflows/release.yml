@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual runs validate every platform without publishing a release.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -52,7 +54,10 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.14
+      # A manual run is a pre-release validation on a branch/commit, so it
+      # has no release tag to compare. Tag pushes keep the strict check.
       - name: Verify desktop version matches tag
+        if: github.event_name == 'push'
         shell: pwsh
         run: |
           $version = (Get-Content desktop/package.json | ConvertFrom-Json).version
@@ -86,6 +91,9 @@ jobs:
             desktop/dist/latest.yml
 
   release:
+    # workflow_dispatch is intentionally a build-only dry run. Publishing is
+    # reserved for an explicit v* tag push.
+    if: github.event_name == 'push'
     needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
