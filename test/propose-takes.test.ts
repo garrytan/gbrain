@@ -39,6 +39,7 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
@@ -59,6 +60,9 @@ function buildMockEngine(opts: {
       }
       // INSERT — return nothing
       return [];
+    },
+    async getConfig(key: string) {
+      return opts.config?.[key] ?? (key === 'cycle.propose_takes.enabled' ? 'true' : null);
     },
   } as unknown as BrainEngine;
 
@@ -383,5 +387,57 @@ New prose appended here.`;
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);
+  });
+
+  test('default circuit breaker aborts after 3 consecutive empty extractor results', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a' }),
+      buildPage({ slug: 'wiki/b', body: 'page b' }),
+      buildPage({ slug: 'wiki/c', body: 'page c' }),
+      buildPage({ slug: 'wiki/d', body: 'page d' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(result.status).toBe('skipped');
+    expect(extractorCalls).toBe(3);
+    const details = result.details as Record<string, unknown>;
+    expect(details.aborted).toBe(true);
+    expect(details.abort_reason).toBe('consecutive_empty_or_failed_extractor_results:3');
+    expect(details.pages_scanned).toBe(3);
+  });
+
+  test('circuit breaker counts failed extractor results and reads DB config override', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a' }),
+      buildPage({ slug: 'wiki/b', body: 'page b' }),
+      buildPage({ slug: 'wiki/c', body: 'page c' }),
+    ];
+    const { engine } = buildMockEngine({
+      pages,
+      config: {
+        'cycle.propose_takes.enabled': 'true',
+        'cycle.propose_takes.max_consecutive_empty_or_failed': '2',
+      },
+    });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      throw new Error('gateway failed');
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(result.status).toBe('skipped');
+    expect(extractorCalls).toBe(2);
+    const details = result.details as Record<string, unknown>;
+    expect(details.max_consecutive_empty_or_failed).toBe(2);
+    expect(details.abort_reason).toBe('consecutive_empty_or_failed_extractor_results:2');
   });
 });

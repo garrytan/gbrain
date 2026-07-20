@@ -46,6 +46,9 @@ function buildMockEngine(opts: { scorecard: TakesScorecard }): {
       captured.push({ sql, params: params ?? [] });
       return [];
     },
+    async getConfig(key: string) {
+      return key === 'cycle.calibration_profile.enabled' ? 'true' : null;
+    },
   } as unknown as BrainEngine;
   return { engine, captured };
 }

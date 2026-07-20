@@ -69,6 +69,9 @@ function buildMockEngine(opts: {
     async resolveTake(pageId: number, rowNum: number, resolution: TakeResolution): Promise<void> {
       resolves.push({ pageId, rowNum, resolution });
     },
+    async getConfig(key: string) {
+      return key === 'cycle.grade_takes.enabled' ? 'true' : null;
+    },
   } as unknown as BrainEngine;
 
   return { engine, captured, resolves };

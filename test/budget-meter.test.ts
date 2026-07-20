@@ -44,10 +44,19 @@ describe('BudgetMeter', () => {
     expect(r2.reason).toContain('BUDGET_EXHAUSTED');
   });
 
-  test('budget=0 disables the gate (cycle runs unbounded)', () => {
+  test('budget=0 hard-skips the submit', () => {
     const meter = new BudgetMeter({ budgetUsd: 0, phase: 'drift', auditPath });
     const r = meter.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 100_000, maxOutputTokens: 100_000, label: 'huge' });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain('$0.00');
+    expect(meter.totalSpent).toBe(0);
+  });
+
+  test('negative budget is the explicit unlimited sentinel', () => {
+    const meter = new BudgetMeter({ budgetUsd: -1, phase: 'drift', auditPath });
+    const r = meter.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 100_000, maxOutputTokens: 100_000, label: 'huge' });
     expect(r.allowed).toBe(true);
+    expect(meter.totalSpent).toBeGreaterThan(0);
   });
 
   test('non-Anthropic model bypasses gate with warn-once + ledger entry', () => {

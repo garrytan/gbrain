@@ -413,6 +413,47 @@ describe('runCycle — yieldBetweenPhases hook', () => {
   });
 });
 
+describe('runCycle — paid calibration phase enabled gates', () => {
+  async function disablePaidCalibrationPhases() {
+    await sharedEngine.setConfig('cycle.propose_takes.enabled', 'false');
+    await sharedEngine.setConfig('cycle.grade_takes.enabled', 'false');
+    await sharedEngine.setConfig('cycle.calibration_profile.enabled', 'false');
+  }
+
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    await disablePaidCalibrationPhases();
+  });
+
+  afterEach(async () => {
+    await disablePaidCalibrationPhases();
+  });
+
+  test('propose_takes is skipped by default unless DB config enables it', async () => {
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['propose_takes'] });
+    expect(report.phases).toHaveLength(1);
+    expect(report.phases[0].phase).toBe('propose_takes');
+    expect(report.phases[0].status).toBe('skipped');
+    expect(report.phases[0].details.reason).toBe('disabled');
+
+    await sharedEngine.setConfig('cycle.propose_takes.enabled', 'true');
+    const enabledReport = await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['propose_takes'] });
+    expect(enabledReport.phases[0].phase).toBe('propose_takes');
+    expect(enabledReport.phases[0].details.reason).not.toBe('disabled');
+  });
+
+  test('grade_takes and calibration_profile carry default-off skip receipts', async () => {
+    const report = await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain',
+      phases: ['grade_takes', 'calibration_profile'],
+    });
+    expect(report.phases.map((p: any) => [p.phase, p.status, p.details.reason])).toEqual([
+      ['grade_takes', 'skipped', 'disabled'],
+      ['calibration_profile', 'skipped', 'disabled'],
+    ]);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // Wave regression guards (#417 + Codex F2)
 // ─────────────────────────────────────────────────────────────────

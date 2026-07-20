@@ -26,7 +26,7 @@ import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 import { estimateMaxCostUsd, ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
 
 export interface BudgetMeterOpts {
-  /** USD cap for the whole cycle. 0 or negative disables the gate. */
+  /** USD cap for the whole cycle. 0 hard-skips; negative is explicit unlimited. */
   budgetUsd: number;
   /** Phase label for telemetry: 'auto_think' | 'drift'. */
   phase: string;
@@ -87,6 +87,27 @@ export class BudgetMeter {
    * Caller is responsible for skipping the actual LLM call when allowed=false.
    */
   check(estimate: SubmitEstimate): BudgetCheckResult {
+    if (this.opts.budgetUsd === 0) {
+      writeLedgerLine(this.auditPath, {
+        schema_version: 1,
+        phase: this.opts.phase,
+        ts: new Date().toISOString(),
+        event: 'submit_denied',
+        model: estimate.modelId,
+        label: estimate.label,
+        estimated_cost_usd: 0,
+        cumulative_cost_usd: this.cumulativeUsd,
+        budget_usd: this.opts.budgetUsd,
+      });
+      return {
+        allowed: false,
+        estimatedCostUsd: 0,
+        cumulativeCostUsd: this.cumulativeUsd,
+        budgetUsd: this.opts.budgetUsd,
+        reason: 'BUDGET_EXHAUSTED: budget cap is $0.00; submit skipped',
+      };
+    }
+
     const cost = estimateMaxCostUsd(estimate.modelId, estimate.estimatedInputTokens, estimate.maxOutputTokens);
 
     // Codex P1 #10: non-Anthropic / unpriced models bypass the gate.
@@ -118,8 +139,8 @@ export class BudgetMeter {
       };
     }
 
-    // Budget disabled (<= 0)
-    if (this.opts.budgetUsd <= 0) {
+    // Explicit unlimited sentinel: negative budget disables the cap.
+    if (this.opts.budgetUsd < 0) {
       this.cumulativeUsd += cost;
       writeLedgerLine(this.auditPath, {
         schema_version: 1,
