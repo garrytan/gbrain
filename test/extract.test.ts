@@ -130,6 +130,18 @@ describe('extractTimelineFromContent', () => {
     expect(entries).toHaveLength(2);
   });
 
+  it('extracts simple timeline bullet entries', () => {
+    const content = `## Timeline\n- 2025-03-18: Discussed partnership\n- 2025-03-19: Sent follow-up`;
+    const entries = extractTimelineFromContent(content, 'people/test');
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      slug: 'people/test',
+      date: '2025-03-18',
+      source: 'markdown',
+      summary: 'Discussed partnership',
+    });
+  });
+
   it('handles em dash and en dash in bullet format', () => {
     const content = `- **2025-03-18** | Meeting – Discussed partnership`;
     const entries = extractTimelineFromContent(content, 'test');
