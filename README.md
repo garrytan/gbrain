@@ -366,7 +366,10 @@ else in the same process. Same release: `gbrain capture` no longer trails
 a `'No database connection'` stderr line from a background facts:absorb
 worker firing after CLI exit — the op-dispatch finally block awaits
 `getFactsQueue().drainPending({timeout: 1000})` before
-`engine.disconnect()`. To find which code path is still calling
+`engine.disconnect()`. Current capture paths persist the page first and submit
+fact enrichment as a durable Minion job, so the page stays searchable while
+enrichment is queued. `realtime_absorb_recovery` then retries unresolved older
+or interrupted `facts:absorb` failures in bounded batches. To find which code path is still calling
 disconnect mid-process, run `gbrain doctor --json | jq '.checks[] |
 select(.id=="batch_retry_health")'`; the extended check now surfaces
 24h disconnect-call count and the most-recent caller frame from a new

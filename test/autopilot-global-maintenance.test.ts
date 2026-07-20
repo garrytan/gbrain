@@ -43,9 +43,11 @@ describe('cycle phase partition (#2194 fix #3)', () => {
     expect(GLOBAL_PHASES).toContain('embed');
     expect(GLOBAL_PHASES).toContain('orphans');
     expect(GLOBAL_PHASES).toContain('purge');
+    expect(GLOBAL_PHASES).toContain('realtime_absorb_recovery');
     expect(NON_GLOBAL_PHASES).toContain('lint');
     expect(NON_GLOBAL_PHASES).toContain('sync');
     expect(NON_GLOBAL_PHASES).not.toContain('embed');
+    expect(NON_GLOBAL_PHASES).not.toContain('realtime_absorb_recovery');
   });
 });
 

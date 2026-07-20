@@ -43,6 +43,11 @@ server are both generated from this single source. Engine factory (`src/core/eng
 dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills are fat
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
 
+Postgres autopilot supports checkoutless operation for database-only sources. A
+database-backed `sync.repo_path` is host-local metadata, not a portable requirement:
+if it does not exist on the current host, autopilot warns and continues with DB-only
+phases. An explicit `--repo` remains fail-closed, and PGLite still requires a checkout.
+
 **Trust boundary:** `OperationContext.remote` distinguishes trusted local CLI callers
 (`remote: false` set by `src/cli.ts`) from untrusted agent-facing callers
 (`remote: true` set by `src/mcp/server.ts`). Security-sensitive operations like
@@ -464,7 +469,7 @@ ms, max waiters) for `--json`; a one-line summary prints to stderr.
 
 ## Version locations (single source of truth: `VERSION` file)
 
-Every release advances the version in **five files at once**. Keep these in
+Every release advances the version in **three files at once**. Keep these in
 sync. `/ship` enforces this via Step 12's idempotency check (VERSION vs
 package.json drift), but the canonical list lives here so future runs and
 the auto-update agent know where to look.
@@ -480,15 +485,18 @@ four numeric segments are required first. Historical 3-segment versions
 (`0.31.3`, `0.22.1`) remain valid in `git log` and migration filenames
 (`skills/migrations/v0.21.0.md`); do NOT rewrite them. Going forward only.
 
-**Required (every release must update all five):**
+**Required (every release must update all three):**
 
 | File | What lives there | Format |
 |---|---|---|
 | `VERSION` | The single source of truth. Read first by `/ship`, the binary, and CI version-gate. | Bare 4-segment string `MAJOR.MINOR.PATCH.MICRO` (e.g. `0.31.4.1`), no leading `v`. |
 | `package.json` | Bun/npm package version. `gbrain --version` reads it via the compiled binary's bundled package metadata. CI version-gate cross-checks this against `VERSION` and fails if they drift. | `"version": "0.31.4.1"` |
 | `CHANGELOG.md` | Top entry header `## [0.31.4.1] - YYYY-MM-DD` plus the "To take advantage of v0.31.4.1" block. | Standard Keep-a-Changelog header. |
-| `TODOS.md` | Any TODO entries that mention "follow-up from vX.Y.Z.W" use the version of the release that filed them. Update only when filing NEW follow-up TODOs. | Inline `vX.Y.Z.W` references in TODO bodies. |
-| `CLAUDE.md` | The Key Files section's per-file annotations carry `vX.Y.Z.W (#NNN)` tags noting which release introduced a behavior. Update whenever a wave's annotations get folded in. | Inline `vX.Y.Z.W (#NNN, contributed by @user)` references. |
+
+**Conditional current-behavior documentation:** update `TODOS.md` only when
+closing or filing relevant work, and update `CLAUDE.md` only when its durable
+architecture or operator guidance changes. Do not add per-release annotations
+to current-state reference text.
 
 **Auto-derived (no manual edit; refreshed by their own commands):**
 
@@ -657,7 +665,7 @@ vX" self-repair block, version migrations, the GitHub Actions SHA refresh, PR co
 and the community-PR-wave process. **Use `/ship` — never hand-roll a release.**
 
 The ship-critical IRON RULES stay inline in this file (do NOT relocate them): the
-Version-locations table above (the 5-file sync + the 3-line VERSION/package.json/CHANGELOG
+Version-locations table above (the 3-file VERSION/package.json/CHANGELOG
 audit), the Conductor branch=workspace rule (above), Post-ship `/document-release` (below),
 the Privacy + Responsible-disclosure rules (below), and the PR-title-version-first rule
 (below).

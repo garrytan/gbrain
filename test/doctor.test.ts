@@ -135,9 +135,12 @@ describe('doctor command', () => {
       source.indexOf('// 11a-2. effective_date_health'),
     );
     expect(block.length).toBeGreaterThan(0);
-    expect(block).toContain('GROUP BY source_id');
+    expect(block).toContain('GROUP BY f.source_id');
     expect(block).toContain("source_type = 'facts:absorb'");
     expect(block).toContain('facts.absorb_warn_threshold');
+    expect(block).toContain('facts:absorb-recovered');
+    expect(block).toContain('NOT EXISTS');
+    expect(block).toContain('COUNT(DISTINCT f.source_ref)');
     // 24h window
     expect(block).toMatch(/INTERVAL\s+'24\s*hours?'/i);
     // Pre-v47 fallback (column missing) reports skipped not warn

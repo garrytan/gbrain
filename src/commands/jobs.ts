@@ -7,7 +7,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
-import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import type { MinionJob, MinionJobContext, MinionJobStatus } from '../core/minions/types.ts';
+import type { ProgressReporter } from '../core/progress.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -1297,6 +1298,43 @@ HANDLER TYPES (built in)
   }
 }
 
+/** Persist cycle phase transitions without making progress writes fatal. */
+export function createMinionCycleProgress(
+  job: Pick<MinionJobContext, 'updateProgress'> | { updateProgress?: MinionJobContext['updateProgress'] },
+): ProgressReporter {
+  let currentPhase = 'cycle.pending';
+  // Preserve transition order. updateProgress replaces the full JSON value,
+  // so unconstrained fire-and-forget writes can finish out of order and leave
+  // a stale phase behind for timeout reporting.
+  let writeChain = Promise.resolve();
+  const write = (payload: Record<string, unknown>): void => {
+    if (typeof job.updateProgress !== 'function') return;
+    writeChain = writeChain
+      .then(() => job.updateProgress?.(payload))
+      .then(() => undefined, () => undefined);
+  };
+  const reporter: ProgressReporter = {
+    start(phase, total) {
+      currentPhase = phase;
+      write({ phase, state: 'running', ...(total === undefined ? {} : { total }) });
+    },
+    tick(n = 1, note) {
+      write({ phase: currentPhase, state: 'running', increment: n, ...(note ? { note } : {}) });
+    },
+    heartbeat(note) {
+      write({ phase: currentPhase, state: 'running', note });
+    },
+    finish(note) {
+      write({ phase: currentPhase, state: 'completed', ...(note ? { note } : {}) });
+    },
+    child(phase, total) {
+      reporter.start(phase, total);
+      return reporter;
+    },
+  };
+  return reporter;
+}
+
 /**
  * Register built-in job handlers.
  *
@@ -1682,8 +1720,8 @@ export async function registerBuiltinHandlers(
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
     // DB-only phases (resolve_symbol_edges, embed, ...) — not silently lint/sync
     // against whatever directory the worker happens to be running in.
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
-      ? job.data.repoPath
+    const repoPath: string | null = Object.prototype.hasOwnProperty.call(job.data, 'repoPath')
+      ? (typeof job.data.repoPath === 'string' && job.data.repoPath.length > 0 ? job.data.repoPath : null)
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
     // v0.38 (codex r1 P1-2 + P1-5): per-source dispatch threading.
@@ -1778,6 +1816,7 @@ export async function registerBuiltinHandlers(
 
     const report = await runCycle(engine, {
       brainDir: effectiveBrainDir,
+      progressReporter: createMinionCycleProgress(job),
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       ...(sourceId ? { sourceId } : {}),
@@ -1803,8 +1842,8 @@ export async function registerBuiltinHandlers(
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
     const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
-      ? job.data.repoPath
+    const repoPath: string | null = Object.prototype.hasOwnProperty.call(job.data, 'repoPath')
+      ? (typeof job.data.repoPath === 'string' && job.data.repoPath.length > 0 ? job.data.repoPath : null)
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
     const validPhases = new Set(ALL_PHASES);
@@ -1815,6 +1854,7 @@ export async function registerBuiltinHandlers(
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
+      progressReporter: createMinionCycleProgress(job),
       pull: false, // brain-wide DB/maintenance work never git-pulls
       signal: job.signal,
       phases,

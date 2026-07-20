@@ -141,8 +141,15 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     enabled: enabledFlag,
     maxCostUsd: parseFloatOrDefault(maxCost, 1.0),
     maxTotalCostUsd: parseFloatOrDefault(maxTotalCost, 5.0),
-    maxWalltimeMin: parseFloatOrDefault(maxWall, 20),
-    maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
+    // Defaults aligned to the autopilot job window: the cycle job times out
+    // at max(interval*2, 300s) = ~600s (autopilot.ts), so a single source's
+    // walltime must sit well under that AND leave room for the other phases.
+    // The per-source value is now ENFORCED as an intra-source deadline (see
+    // the core call below) — previously it was dead config (read, never
+    // passed), and the brain-wide check only fires between sources, so a
+    // single-source brain had no wall-clock ceiling.
+    maxWalltimeMin: parseFloatOrDefault(maxWall, 4),
+    maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 6),
     types,
     workers: parsedWorkers,
   };
@@ -217,6 +224,9 @@ export async function runPhaseConversationFactsBackfill(
             dryRun: opts.dryRun,
             // Pass brain-wide tracker so core skips its own auto-wrap.
             budgetTracker: brainTracker,
+            // Enforce the per-source walltime as an intra-source deadline so
+            // a single long source can't blow the autopilot job timeout.
+            deadlineMs: cfg.maxWalltimeMin * 60_000,
             // v0.41.15.0 (D9 cycle context): cycle config controls
             // per-source worker count. Default 1 — opt-in concurrency
             // for cycle paths.

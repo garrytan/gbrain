@@ -6717,10 +6717,13 @@ export async function buildChecks(
 
   // 11a-bis-2. facts_extraction_health (v0.31.2 — codex P1 #3).
   //
-  // Mirrors the eval_capture check shape but reads facts:absorb rows
+  // Mirrors the eval_capture check shape but reads unresolved facts:absorb rows
   // (written by writeFactsAbsorbLog from src/core/facts/absorb-log.ts).
   // Iterates over EVERY source so multi-source brains see per-source
-  // failure rates instead of only 'default'. Threshold configurable via
+  // failure rates instead of only 'default'. A later
+  // facts:absorb-recovered row tombstones the corresponding failed attempt,
+  // so successfully replayed history does not keep health yellow forever.
+  // Threshold configurable via
   // `facts.absorb_warn_threshold` (default 10 over the last 24h, per
   // source, per reason). When the threshold is exceeded for any
   // (source, reason) pair, status flips to warn and the message names
@@ -6739,23 +6742,33 @@ export async function buildChecks(
       source_id: string;
       reason: string;
       n: string | number;
+      failure_rows: string | number;
     }>(
       `SELECT
-         source_id,
-         split_part(summary, ':', 1) AS reason,
-         COUNT(*)::text AS n
-       FROM ingest_log
-       WHERE source_type = 'facts:absorb'
-         AND created_at >= now() - INTERVAL '24 hours'
-       GROUP BY source_id, split_part(summary, ':', 1)
-       ORDER BY source_id, COUNT(*) DESC`,
+         f.source_id,
+         split_part(f.summary, ':', 1) AS reason,
+         COUNT(DISTINCT f.source_ref)::text AS n,
+         COUNT(*)::text AS failure_rows
+       FROM ingest_log f
+       WHERE f.source_type = 'facts:absorb'
+         AND f.created_at >= now() - INTERVAL '24 hours'
+         AND NOT EXISTS (
+           SELECT 1
+             FROM ingest_log r
+            WHERE r.source_type = 'facts:absorb-recovered'
+              AND r.source_id = f.source_id
+              AND r.source_ref = f.source_ref
+              AND r.created_at >= f.created_at
+         )
+       GROUP BY f.source_id, split_part(f.summary, ':', 1)
+       ORDER BY f.source_id, COUNT(DISTINCT f.source_ref) DESC`,
     );
 
     if (rows.length === 0) {
       checks.push({
         name: 'facts_extraction_health',
         status: 'ok',
-        message: 'No facts:absorb failures in the last 24h.',
+        message: 'No unresolved facts extraction failures in the last 24h.',
       });
     } else {
       // Group per source so the breakdown is operator-friendly.
@@ -6777,10 +6790,10 @@ export async function buildChecks(
         name: 'facts_extraction_health',
         status: anyOverThreshold ? 'warn' : 'ok',
         message: anyOverThreshold
-          ? `Facts:absorb failures over the threshold (${threshold}) in the last 24h: ${summary}. ` +
+          ? `Unresolved facts extraction pages over the threshold (${threshold}) in the last 24h: ${summary}. ` +
             `Run \`gbrain recall --since 24h --json\` to inspect what landed; ` +
             `tune the gate via \`gbrain config set facts.absorb_warn_threshold N\`.`
-          : `Facts:absorb activity in last 24h (under threshold ${threshold}): ${summary}.`,
+          : `Unresolved facts extraction pages in last 24h (under threshold ${threshold}): ${summary}.`,
       });
     }
   } catch (err) {

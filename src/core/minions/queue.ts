@@ -657,7 +657,11 @@ export class MinionQueue {
         // excludes the row from the later sweeps.
         `UPDATE minion_jobs SET
           status = 'dead',
-          error_text = 'timeout exceeded',
+          error_text = CASE
+            WHEN NULLIF(progress->>'phase', '') IS NOT NULL
+              THEN 'timeout exceeded during phase ' || (progress->>'phase')
+            ELSE 'timeout exceeded'
+          END,
           attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
@@ -680,13 +684,14 @@ export class MinionQueue {
         const parentJobId = r.parent_job_id as number | null;
         if (parentJobId == null) continue;
         parentIds.add(parentJobId);
+        const timeoutError = (r.error_text as string | null) ?? 'timeout exceeded';
         const childDone: ChildDoneMessage = {
           type: 'child_done',
           child_id: r.id as number,
           job_name: r.name as string,
           result: null,
           outcome: 'timeout',
-          error: 'timeout exceeded',
+          error: timeoutError,
         };
         await tx.executeRaw(
           `INSERT INTO minion_inbox (job_id, sender, payload)
@@ -731,7 +736,11 @@ export class MinionQueue {
       const rows = await tx.executeRaw<Record<string, unknown>>(
         `UPDATE minion_jobs SET
           status = 'dead',
-          error_text = 'wall-clock timeout exceeded',
+          error_text = CASE
+            WHEN NULLIF(progress->>'phase', '') IS NOT NULL
+              THEN 'wall-clock timeout exceeded during phase ' || (progress->>'phase')
+            ELSE 'wall-clock timeout exceeded'
+          END,
           attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
@@ -753,13 +762,14 @@ export class MinionQueue {
         const parentJobId = r.parent_job_id as number | null;
         if (parentJobId == null) continue;
         parentIds.add(parentJobId);
+        const timeoutError = (r.error_text as string | null) ?? 'wall-clock timeout exceeded';
         const childDone: ChildDoneMessage = {
           type: 'child_done',
           child_id: r.id as number,
           job_name: r.name as string,
           result: null,
           outcome: 'timeout',
-          error: 'wall-clock timeout exceeded',
+          error: timeoutError,
         };
         await tx.executeRaw(
           `INSERT INTO minion_inbox (job_id, sender, payload)

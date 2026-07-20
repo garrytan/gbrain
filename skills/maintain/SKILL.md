@@ -197,8 +197,16 @@ gbrain autopilot --status
 ```
 If not running, install it:
 ```bash
+# Postgres/Supabase with database-only sources (no checkout required):
+gbrain autopilot --install
+
+# File-backed brain (or an explicit checkout):
 gbrain autopilot --install --repo ~/brain
 ```
+An explicit `--repo` is fail-closed if that path does not exist. PGLite still
+requires a checkout. For older or interrupted facts failures, run the bounded
+recovery phase with `gbrain dream --phase realtime_absorb_recovery`; tune it
+with `cycle.realtime_absorb_recovery.{enabled,max_pages,max_cost_usd,deadline_seconds}`.
 Autopilot runs sync, extract, and embed in a continuous loop with adaptive scheduling.
 In v0.11.1+, autopilot dispatches each cycle as a single `autopilot-cycle`
 Minion job and supervises the worker child — one install step gives you

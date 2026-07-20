@@ -177,7 +177,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const events: string[] = [];
     const logs: string[] = [];
     const fanoutOpts = {
-      repoPath: '/tmp/brain',
+      repoPath: '/tmp/brain' as string | null,
       slot: '2026-05-22T12:00:00.000Z',
       timeoutMs: 600_000,
       fanoutMax: 4,
@@ -220,6 +220,21 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     // source_id threaded through job data
     const sourceIds = added.map(j => (j.data as Record<string, unknown>).source_id).sort();
     expect(sourceIds).toEqual(['alpha', 'beta']);
+  });
+
+  test('database-only sources are enumerated and receive a checkoutless job', async () => {
+    const databaseOnly = { ...src('database-only'), local_path: null };
+    let observedOpts: unknown;
+    const { engine, queue, added, fanoutOpts } = makeStubs([databaseOnly]);
+    (engine as any).listAllSources = async (opts?: unknown) => {
+      observedOpts = opts;
+      return [databaseOnly];
+    };
+    fanoutOpts.repoPath = null;
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(observedOpts).toBeUndefined();
+    expect(result.dispatched).toEqual(['database-only']);
+    expect((added[0].data as Record<string, unknown>).repoPath).toBeNull();
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {

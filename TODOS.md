@@ -899,9 +899,10 @@ Documented tradeoffs, not blockers — the shipped bug fixes are complete and te
 - [ ] **P3 — Sibling source-scoped commands don't honor the pin.** `blast`/`flow`/
   `clusters`/`wiki` still call `resolveDefaultSource` directly. Route them through
   `resolveScopedSourceOrThrow` for consistency with code-callers/code-callees.
-- [ ] **P3 — `gbrain autopilot` CLI daemon pre-guard.** `autopilot.ts:~152`
-  `if (!repoPath) exit 1` still blocks the daemon on a checkout-less postgres brain.
-  Relax to the same null-brainDir contract so the daemon can run DB phases.
+- [x] **P3 — `gbrain autopilot` CLI daemon pre-guard.** Postgres autopilot now
+  runs checkoutless when no local checkout exists, including when a shared
+  `sync.repo_path` names a path from another host. Explicit `--repo` remains
+  fail-closed, and PGLite still requires a local checkout.
 
 ## v0.41.37.0 critical-fix-wave follow-ups (v0.42+)
 

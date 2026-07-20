@@ -6,6 +6,7 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import { calculateBackoff } from '../src/core/minions/backoff.ts';
 import { UnrecoverableError } from '../src/core/minions/types.ts';
 import type { MinionJob } from '../src/core/minions/types.ts';
+import { createMinionCycleProgress } from '../src/commands/jobs.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -1308,6 +1309,19 @@ describe('MinionQueue: handleTimeouts', () => {
     expect(dead!.attempts_made).toBe(1);
   });
 
+  test('handleTimeouts names the persisted phase', async () => {
+    const job = await queue.add('slow', {}, { timeout_ms: 50 });
+    await queue.claim('phase-timeout', 30000, 'default', ['slow']);
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+          SET progress = $1::jsonb, timeout_at = now() - interval '1 second'
+        WHERE id = $2`,
+      [{ phase: 'cycle.extract_facts', state: 'running' }, job.id],
+    );
+    const timedOut = await queue.handleTimeouts();
+    expect(timedOut[0].error_text).toBe('timeout exceeded during phase cycle.extract_facts');
+  });
+
   test('handleTimeouts ignores stalled jobs (lock_until > now guard)', async () => {
     // Force a stalled job: timeout_at expired AND lock_until expired
     await queue.add('slow', {}, { timeout_ms: 50 });
@@ -1758,6 +1772,26 @@ describe('MinionQueue: Attachments', () => {
 // --- v0.19.1 — queue-resilience (wall-clock sweep, maxWaiting race, concurrency clamp) ---
 
 describe('MinionQueue: v0.19.1 handleWallClockTimeouts (Layer 3 kill shot)', () => {
+  test('cycle progress writes remain ordered when an earlier DB update is slow', async () => {
+    const calls: string[] = [];
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const progress = createMinionCycleProgress({
+      updateProgress: async (payload) => {
+        calls.push(String((payload as Record<string, unknown>).phase));
+        if (calls.length === 1) await firstBlocked;
+      },
+    });
+
+    progress.start('cycle.sync');
+    progress.start('cycle.extract');
+    await Promise.resolve();
+    expect(calls).toEqual(['cycle.sync']);
+    releaseFirst();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toEqual(['cycle.sync', 'cycle.extract']);
+  });
+
   test('evicts active job past 2× timeout_ms — sets dead + wall-clock error_text', async () => {
     const job = await queue.add('noop', {}, { timeout_ms: 100 });
     await engine.executeRaw(
@@ -1777,6 +1811,22 @@ describe('MinionQueue: v0.19.1 handleWallClockTimeouts (Layer 3 kill shot)', () 
     const after = await queue.getJob(job.id);
     expect(after?.status).toBe('dead');
     expect(after?.error_text).toBe('wall-clock timeout exceeded');
+  });
+
+  test('wall-clock timeout names the persisted phase', async () => {
+    const job = await queue.add('noop', {}, { timeout_ms: 100 });
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+          SET status='active', lock_token='wc-phase', lock_until=now() - interval '1 second',
+              started_at=now() - interval '1 second', timeout_at=now() - interval '0.9 second',
+              attempts_started = attempts_started + 1,
+              progress=$1::jsonb
+        WHERE id=$2`,
+      [{ phase: 'cycle.realtime_absorb_recovery', state: 'running' }, job.id],
+    );
+    const killed = await queue.handleWallClockTimeouts(30_000);
+    expect(killed[0].error_text)
+      .toBe('wall-clock timeout exceeded during phase cycle.realtime_absorb_recovery');
   });
 
   test('timeout_ms NULL fallback uses 2 × lockDuration × max_stalled threshold', async () => {

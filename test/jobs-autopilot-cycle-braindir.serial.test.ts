@@ -65,4 +65,17 @@ describe('jobs autopilot-cycle handler — no repo configured', () => {
     expect(rse?.details?.reason).not.toBe('no_brain_dir');
     expect(rse?.status).not.toBe('fail');
   });
+
+  test('explicit null job payload does not inherit another host sync.repo_path', async () => {
+    await engine.setConfig('sync.repo_path', '/Users/example/brain');
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle');
+    const result = await handler!({
+      data: { repoPath: null, phases: ['lint', 'resolve_symbol_edges'] },
+      signal: undefined,
+    });
+    expect(result.report.brain_dir).toBeNull();
+    expect(result.report.phases.find((p: any) => p.phase === 'lint')?.details?.reason)
+      .toBe('no_brain_dir');
+  });
 });

@@ -179,6 +179,11 @@ extract, import, backlinks) calls `job.updateProgress({done, total,
 The `jobs work` daemon itself emits coarse one-line-per-job stderr output
 for liveness only. Per-page detail lives in the DB.
 
+Autopilot cycle jobs also persist ordered `{phase, state}` transitions. If a
+cycle is dead-lettered by its per-job or wall-clock timeout, the error names
+the last persisted `cycle.<phase>` when available, which identifies the phase
+that consumed the runtime budget.
+
 ## Compatibility
 
 - **Added**: only. A new event type, a new field, a new phase name — all

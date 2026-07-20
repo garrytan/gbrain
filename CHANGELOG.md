@@ -2,6 +2,28 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.63.0] - 2026-07-19
+
+**Always-on Postgres brains can now keep their maintenance worker on the server that owns it, even when shared configuration still names a checkout from another machine. Autopilot continues in checkoutless mode for database-only work, queued jobs preserve that decision instead of silently inheriting the stale path, and database-only sources participate in fan-out. Fact extraction also gains a bounded recovery phase for failures left by older or interrupted runs, so the backlog advances without an unbounded catch-up job. Health output now distinguishes unresolved failures from historical failures that were already recovered, while timed-out jobs report the phase that was active when they exceeded their limit.**
+
+## To take advantage of v0.42.63.0
+
+`gbrain upgrade`. No new schema migrations.
+
+1. Restart the autopilot and Minion worker on an always-on Postgres host so they load the checkoutless path and phase-progress reporting.
+2. Leave `cycle.realtime_absorb_recovery.enabled` unset (the default is on), or run one bounded pass immediately with `gbrain dream --phase realtime_absorb_recovery --json`.
+3. Verify that `gbrain doctor` reports only unresolved fact-extraction failures. If a job later times out, inspect `gbrain jobs list --status dead` for the named phase.
+4. An explicit `gbrain autopilot --repo <path>` still fails when that path is absent. Remove the explicit flag only when database-only operation is intended.
+
+### Itemized changes
+
+#### Fixed
+- **Checkoutless Postgres autopilot.** A missing shared `sync.repo_path` is treated as host-local stale configuration: autopilot warns and continues with database-only phases. Explicit `--repo` remains fail-closed, and PGLite still requires a checkout.
+- **Database-only fan-out and null-path preservation.** Autopilot enumerates sources without requiring `local_path`, and Minion handlers preserve an explicit `repoPath: null` rather than falling back to a path stored by another host.
+- **Fact-extraction backlog recovery.** A default-on cycle phase retries unresolved `facts:absorb` failures within page, cost, and wall-clock caps; successful work receives an append-only recovery tombstone, while failed work remains retryable. Conversation extraction checkpoints also resume within a large page and stop at a caller-supplied deadline.
+- **Accurate extraction health.** Doctor counts distinct unresolved pages and excludes failures with a later recovery tombstone, so historical rows no longer keep a healthy pipeline red.
+- **Actionable cycle timeouts.** Minion-backed cycles persist their active phase, and both ordinary and wall-clock timeout errors include that phase when available.
+
 ## [0.42.62.0] - 2026-07-17
 
 **If your brain holds more than one source, everything now lands in the right one. Link extraction, timeline extraction, background cycles, and webhook captures used to quietly file some of their output under the default source; all of those paths now carry the correct source identity. Background agent jobs got tougher too: a failed database reconnect can no longer wedge the engine, and workers recover from dropped connections instead of crash-looping. If you run the admin dashboard behind a reverse proxy, the live activity panel finally connects. Long agent conversations cost less because repeated context is reused between turns on Anthropic calls. Local LiteLLM proxies work out of the box. Nested sources scan correctly again instead of reporting zero files. And the project's automated checks now include dependency vulnerability scanning, static code-security analysis, and signed provenance for release builds. Thirty merged changes in all, the largest batch to date, each one reviewed and verified against the live codebase before landing.**

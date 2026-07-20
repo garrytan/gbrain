@@ -82,7 +82,8 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
-| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
+| "Set up autopilot", "run brain maintenance", "keep brain updated" | Postgres database-only: `gbrain autopilot --install`; file-backed/PGLite: `gbrain autopilot --install --repo ~/brain` (explicit missing paths fail closed) |
+| "Retry failed facts", "drain fact backlog", "recover facts extraction" | Run `gbrain dream --phase realtime_absorb_recovery`; bounded by `cycle.realtime_absorb_recovery.{max_pages,max_cost_usd,deadline_seconds}` |
 | "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |
