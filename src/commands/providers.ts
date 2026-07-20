@@ -10,6 +10,7 @@ import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwCha
 import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
@@ -34,16 +35,19 @@ interface ProviderOption {
 
 function configureFromEnv(): void {
   const config = loadConfig();
-  configureGateway({
-    embedding_model: config?.embedding_model,
-    embedding_dimensions: config?.embedding_dimensions,
-    expansion_model: config?.expansion_model,
-    chat_model: config?.chat_model,
-    chat_fallback_chain: config?.chat_fallback_chain,
-    base_urls: config?.provider_base_urls,
-    provider_chat_options: config?.provider_chat_options,
-    env: { ...process.env },
-  });
+  // Route through buildGatewayConfig — the single ownership seam that folds
+  // file-plane API keys (openrouter_api_key, zeroentropy_api_key, ...) into
+  // the gateway env — instead of hand-assembling AIGatewayConfig field by
+  // field. Hand-building it here let this diagnostic report a provider as
+  // missing env even when ~/.gbrain/config.json had it and the real gateway
+  // path resolved it fine (#2728). Pre-init (no file-plane config yet) falls
+  // back to a bare env passthrough so the command still works before
+  // `gbrain init`.
+  if (config) {
+    configureGateway(buildGatewayConfig(config));
+    return;
+  }
+  configureGateway({ env: { ...process.env } });
 }
 
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -138,7 +142,12 @@ EXAMPLES
 }
 
 function runList(_args: string[]): void {
-  console.log(formatRecipeTable(listRecipes()));
+  // Same env the gateway actually sees (file-plane keys folded in), not bare
+  // process.env — keeps this table's STATUS column honest with what
+  // `providers test` (and the real init/gateway path) would report.
+  const cfg = loadConfig();
+  const env = cfg ? buildGatewayConfig(cfg).env : process.env;
+  console.log(formatRecipeTable(listRecipes(), env));
 }
 
 async function runTest(args: string[]): Promise<void> {

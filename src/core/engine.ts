@@ -936,6 +936,27 @@ export interface BrainEngine {
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
+  /**
+   * fix/title-retrieval-arm (D1): page-grain title candidate arm.
+   *
+   * content_chunks.search_vector never includes the page TITLE (it is
+   * doc_comment + symbol_name_qualified + chunk_text), so a page whose
+   * title tokens are absent from its body is unreachable by searchKeyword.
+   * This arm queries the PAGE-GRAIN DOCUMENT vector pages.search_vector —
+   * NOT titles alone: per trg_pages_search_vector it is title (weight 'A')
+   * + compiled_truth ('B') + timeline text ('C'). Ranked by ts_rank_cd,
+   * the 'A'-weighted title dominates, but body/timeline matches also
+   * produce (lower-ranked) candidates. Returns page-grain hits joined to
+   * ONE representative chunk per page (compiled_truth preferred, else
+   * lowest chunk_index) so rows are shaped like searchKeyword's output and
+   * can enter RRF fusion in hybridSearch.
+   *
+   * Deliberately NO query-length gating — unlike the alias hop (≤6-token
+   * guard) and the title-phrase re-rank boost, this arm must GENERATE
+   * candidates for long exact-title queries, which is exactly where
+   * chunk-grain AND FTS is weakest.
+   */
+  searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
   /**
    * Hydrate embeddings for chunks already known by id. v0.36 (D9):

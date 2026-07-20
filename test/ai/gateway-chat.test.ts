@@ -297,6 +297,14 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
   });
 
   test('anthropic cacheControl survives provider_chat_options merging', async () => {
+    // gbrain#2490: this call-level cacheControl is real (not a no-op) —
+    // @ai-sdk/anthropic serializes it as the Anthropic API's documented
+    // top-level "auto-cache the last cacheable block" shorthand. It's kept
+    // alongside the fix (an explicit breakpoint on the system message's own
+    // providerOptions — see test/ai/gateway-cache-breakpoint.test.ts) because
+    // it's what gives toolLoop()'s growing multi-turn conversation a rolling
+    // cache breakpoint on each turn's tail. See gateway.ts's `useCache` block
+    // for the full explanation of why both markers are needed.
     const providerOptions = await captureProviderOptions({
       chat_model: 'anthropic:claude-sonnet-4-6',
       provider_chat_options: {

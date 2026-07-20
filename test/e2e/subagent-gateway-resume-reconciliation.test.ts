@@ -68,7 +68,7 @@ async function makeJob(prompt: string, model: string): Promise<{ jobId: number; 
   const jobId = rows[0].id;
   const ctx: MinionJobContext = {
     id: jobId, name: 'subagent', data: { prompt, model }, attempts_made: 1,
-    signal: new AbortController().signal, shutdownSignal: new AbortController().signal,
+    signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal,
     updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {},
     isActive: async () => true, readInbox: async () => [],
   };

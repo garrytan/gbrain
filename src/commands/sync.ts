@@ -919,10 +919,10 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
  * 100 MiB is generous but still bounded — a 100K-file diff with long
  * paths tops out around 10–20 MiB in practice.
  */
-function git(repoPath: string, args: string[], configs: string[] = []): string {
+function git(repoPath: string, args: string[], configs: string[] = [], timeoutMs = 30000): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
-    timeout: 30000,
+    timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
   }).trim();
 }
@@ -941,6 +941,171 @@ export function discoverGitRoot(inputPath: string): string {
       `Not inside a git repository: ${inputPath}. GBrain sync requires a git-initialized repo (or a subdirectory of one).`,
     );
   }
+}
+
+/**
+ * #2964: snapshot the CURRENT on-disk state of a gbrain-owned brain dir as
+ * a baseline commit — used both right after a self-healing `git init` (no
+ * `.git` at all) and to recover a repo left with `.git` but zero commits
+ * (an interrupted prior self-heal, or a `git init` from some other source
+ * that never got a first commit). Respects `.gitignore` (written first) so
+ * future incremental syncs diff against what's actually here rather than
+ * an empty tree — an empty initial commit would make every existing file
+ * look "added" again on the next sync, even though the full-sync pass that
+ * follows already imported them from disk directly.
+ *
+ * `--no-gpg-sign` + explicit `-c user.name/user.email`: this runs from a
+ * headless nightly cron/launchd invocation, which has no reason to have
+ * git signing/identity configured, and must not block on an unavailable
+ * signing agent or pinentry prompt.
+ *
+ * db_only exclusion is recomputed directly and passed to `git add` as
+ * negative pathspecs, rather than relying solely on `manageGitignore`
+ * having written `.gitignore` successfully: that helper is deliberately
+ * best-effort (a broken gbrain.yml parse, or an unwritable .gitignore,
+ * only warns and returns — the right default for its OTHER callers, where
+ * .gitignore management is a side effect that must never kill the sync
+ * job). For a commit we are about to create ourselves, "fail open" there
+ * would mean silently committing db_only content into git history. Fail
+ * closed instead: db_only exclusion doesn't depend on the .gitignore
+ * write having succeeded. `loadStorageConfig` throwing (unreadable
+ * gbrain.yml, or a semantic overlap) propagates — better to leave this
+ * self-heal wedged with a clear error than commit unknown content.
+ */
+function createSyncBaselineCommit(repoPath: string): void {
+  // #2964: db_only exclusion is computed directly from loadStorageConfig
+  // and passed to `git add` as pathspecs — deliberately NOT via
+  // manageGitignore/.gitignore, for two independent reasons:
+  //
+  // 1. Ordering (Codex review round 6, P1): `collectSyncableFiles` — the
+  //    file enumeration `performFullSync` runs right after this function
+  //    returns — honors `.gitignore` via `git ls-files --exclude-standard`.
+  //    Writing db_only entries into `.gitignore` BEFORE that first import
+  //    would silently exclude those pages from the database entirely.
+  //    That's the exact bug class `runSync`'s existing "manage .gitignore
+  //    ONLY on successful sync" ordering (this file, `manageGitignoreAtGitRoot`
+  //    callers below — itself a prior Codex P1 fix) exists to prevent. Leave
+  //    `.gitignore` untouched here; the existing post-sync flow writes it
+  //    once this sync completes, same as it does for every other sync.
+  // 2. Fail-closed (rounds 5-6): `manageGitignore`'s "warn and return" on a
+  //    broken gbrain.yml/unwritable .gitignore is the right default for its
+  //    OTHER callers (a side effect that must never kill the sync job), but
+  //    wrong for a commit we are creating ourselves — silently committing
+  //    db_only content into git history.
+  const storageConfig = loadStorageConfig(repoPath);
+  const dbOnlyDirs = storageConfig?.db_only ?? [];
+  // Sniff-test fail-closed (round 6, P2): `loadStorageConfig` warns-and-
+  // returns an EMPTY config for syntactically-valid-but-unsupported YAML
+  // (e.g. flow-style `db_only: [dir/]` — the narrow custom parser only
+  // handles block-style lists), which would silently resolve zero
+  // exclusions from a file that clearly intended some. If gbrain.yml
+  // exists and mentions db_only (or its deprecated pre-v0.22.11 alias
+  // `supabase_only` — same keep-out-of-git semantics, still a supported
+  // backward-compat key per storage-config.ts) but nothing resolved from
+  // it, refuse rather than guess "genuinely empty" vs "syntax ignored".
+  //
+  // Known false-positive (round 8 review): a genuinely, intentionally
+  // empty `db_only: []` mentioning the word also refuses, and can't be
+  // told apart from the unsupported-syntax case — `loadStorageConfig`
+  // returns the IDENTICAL `{db_tracked:[],db_only:[]}` for both (verified
+  // directly: flow-style `[dir/]` and literal `[]` both collapse to that
+  // same shape). Distinguishing them would mean teaching this function
+  // about the parser's internal line-recognition rules, which belongs in
+  // storage-config.ts, not here. Accepted trade-off: the false-positive
+  // cost is low and self-resolving (the brain stays wedged with a clear,
+  // actionable error until the user drops the pointless empty stanza or
+  // fixes their syntax; retried on every subsequent sync); the
+  // false-negative this guards against — silently committing db_only
+  // content into permanent git history — is high-cost and hard to undo.
+  if (dbOnlyDirs.length === 0) {
+    const yamlPath = join(repoPath, 'gbrain.yml');
+    const yamlContent = existsSync(yamlPath) ? readFileSync(yamlPath, 'utf-8') : '';
+    // A YAML KEY line (`db_only:` / `supabase_only:`, ignoring leading
+    // whitespace and `#` comments), not a bare substring search — round 9,
+    // P2: a comment or unrelated prose value that happens to mention the
+    // word (e.g. `# db_only handling TBD`) must not trip this guard on an
+    // otherwise-genuinely-config-free gbrain.yml.
+    const mentionsUnresolvedKey = yamlContent.split('\n').some((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('#') && /^(db_only|supabase_only)\s*:/.test(trimmed);
+    });
+    if (mentionsUnresolvedKey) {
+      throw new Error(
+        `${yamlPath} mentions db_only but no directories resolved from it — refusing to ` +
+          `auto-commit (cannot tell "genuinely empty" from "unsupported syntax silently ignored"). ` +
+          `Fix gbrain.yml's storage.db_only syntax, or git-init this directory manually.`,
+      );
+    }
+  }
+  // #2964 (round 9, P1): every db_only dir is ALWAYS pathspec-excluded,
+  // unconditionally — never pre-filtered against what an existing
+  // `.gitignore` claims to already cover. An earlier version checked
+  // `git check-ignore -q dir` first and skipped the pathspec when it
+  // already reported "ignored" (to dodge the advisory error below), but
+  // `check-ignore` on a directory can say "ignored" even when a
+  // pre-existing `.gitignore` re-includes a child via negation (e.g.
+  // `private-cache/*` + `!private-cache/index.md`) — the filter would
+  // then skip excluding it via pathspec, and `git add -A` would stage
+  // that re-included child despite the whole directory being declared
+  // db_only. Our OWN pathspec exclusion is unconditional and doesn't
+  // consult `.gitignore` at all, so it can't be defeated by ANY
+  // .gitignore content, negated or not. `:(exclude,literal)dir` (not the
+  // `:!dir` shorthand) so a db_only dir name that itself starts with a
+  // pathspec magic character like `:` is excluded literally rather than
+  // reinterpreted (round 9, P2).
+  const excludePathspecs = dbOnlyDirs.map((dir) => `:(exclude,literal)${dir}`);
+  // Clear the index before staging (round 6, P1): the unborn-HEAD
+  // recovery site can reach this function with a repo whose index
+  // already has entries staged from some OTHER prior operation (a manual
+  // `git add`, an interrupted workflow) before gbrain ever touched it.
+  // `add -A` only adds/updates — it does not drop an already-staged path
+  // that our exclusion pathspecs above now want excluded. `read-tree
+  // --empty` resets the index without touching the working tree; a
+  // no-op on a freshly-`git init`-ed repo, whose index is already empty.
+  git(repoPath, ['read-tree', '--empty']);
+  try {
+    // #2964: 10 minutes, not the shared git() helper's 30s default — this
+    // full-tree `git add -A` walks a legacy brain that may hold years of
+    // accumulated content. A 30s timeout would abort staging after `git
+    // init` already created `.git`, leaving an unborn repo that every
+    // subsequent sync would retry (and time out identically) forever;
+    // the unborn-HEAD recovery path exists for OTHER causes of that
+    // state, not to be this one's normal first outcome.
+    git(repoPath, ['add', '-A', '--', '.', ...excludePathspecs], [], 600_000);
+  } catch (err) {
+    // Now that exclusion is always applied (never pre-filtered), an
+    // explicit pathspec exclusion for a path a pre-existing `.gitignore`
+    // ALSO happens to cover trips git's advice.addIgnoredFile: nonzero
+    // exit + "paths ignored by one of your .gitignore files, use -f",
+    // even though the add otherwise fully succeeded (verified directly:
+    // `git status --short` right after this exact error shows every
+    // non-excluded path staged correctly). Recognize and swallow ONLY
+    // this exact advisory; anything else (timeout, permission denied,
+    // real corruption) rethrows.
+    const stderr = err && typeof err === 'object' && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : '';
+    if (!stderr.includes('ignored by one of your .gitignore files')) throw err;
+  }
+  git(
+    repoPath,
+    // --no-verify only skips pre-commit/commit-msg — prepare-commit-msg
+    // and (worse, since it runs AFTER the commit object already exists,
+    // synchronously inside this same git invocation) post-commit are
+    // NOT covered by it. An operator's global core.hooksPath or
+    // init.templateDir can wire either, expecting project tooling,
+    // prompting interactively, or hanging — none of which a headless
+    // self-heal commit can satisfy, and a hanging post-commit hook would
+    // burn the 600s budget above without even being the slow step.
+    // `-c core.hooksPath=/dev/null` (in configs, below) makes git look
+    // for hook scripts inside a location that can't contain any,
+    // disabling the entire hooks path for this one invocation — the
+    // complete form of what --no-verify only partially covers, kept for
+    // explicitness on the two hooks it does name.
+    [
+      'commit', '--quiet', '--allow-empty', '--no-gpg-sign', '--no-verify',
+      '-m', 'gbrain: initial commit (auto-init by sync)',
+    ],
+    ['user.name=gbrain', 'user.email=gbrain@localhost', 'core.hooksPath=/dev/null'],
+  );
 }
 
 /**
@@ -1007,6 +1172,65 @@ async function readSyncAnchor(
     return rows[0]?.value ?? null;
   }
   return await engine.getConfig(`sync.${which}`);
+}
+
+/**
+ * #2964: is `repoPath` gbrain's own default-brain anchor, as opposed to a
+ * path some caller merely happened to pass through unchanged?
+ *
+ * `!opts.sourceId` alone is NOT sufficient — and neither is rejecting
+ * `opts.sourceId` outright: migration `sources_table_additive` (v20)
+ * seeds a `'default'` source row whose `local_path` is copied FROM
+ * `config.sync.repo_path` on every brain that has ever run it (i.e.
+ * effectively all of them by now), and `writeSyncAnchor` keeps that row's
+ * `local_path` current on every sync thereafter. So on a real installed
+ * brain, `resolveSourceForDir` (dream cycle) and the CLI's bare `gbrain
+ * sync` both resolve `sourceId: 'default'`, NOT `undefined` — rejecting
+ * all non-empty `sourceId` (an earlier, insufficiently-reviewed version
+ * of this check) made self-heal never fire on that real path either,
+ * masked in tests only because a freshly-`initSchema()`'d test brain's
+ * `'default'` row has a null `local_path` (Codex review round 5).
+ *
+ * The actual boundary: `'default'` is gbrain's own bootstrap identity,
+ * not something a caller names — a DIFFERENT, non-default `sourceId` is
+ * what an explicit `sources add <id> --path <dir>` registration (a
+ * user's own external directory) looks like, and that's what must keep
+ * failing loudly. So: permit `sourceId` when it's exactly `undefined` or
+ * `'default'`, reject any other id, and for BOTH permitted cases prove
+ * ownership by VALUE — reread the live anchor for that same identity
+ * (`sources.default.local_path` when sourceId='default', else
+ * `config.sync.repo_path`) and require the resolved `repoPath` to
+ * REALPATH-equal it (not raw string equality: `dream`'s `resolveBrainDir`
+ * normalizes via `path.resolve`, so a trailing slash or `..` in the
+ * stored anchor must not defeat the match — Codex review round 5, P2).
+ * An arbitrary caller-supplied path (e.g. an admin-scope
+ * `submit_job({name:'sync', data:{repoPath}})`) only passes this check
+ * if it already equals gbrain's own anchor by realpath identity — at
+ * which point self-healing it is exactly the legitimate case, not an
+ * escalation.
+ *
+ * `opts.srcSubpath` disqualifies unconditionally: a subpath-scoped sync
+ * only wants THAT subdirectory captured, but the self-heal baseline
+ * commit runs `git add -A` at the git root (there's no file list yet to
+ * scope it to — collection happens after this point) — see the P2 review
+ * finding on `createSyncBaselineCommit`'s callers.
+ */
+async function isAnchorOwnedSyncPath(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  repoPath: string,
+): Promise<boolean> {
+  if (opts.srcSubpath) return false;
+  if (opts.sourceId && opts.sourceId !== 'default') return false;
+  const anchor = await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (anchor === null) return false;
+  try {
+    return realpathSync(anchor) === realpathSync(repoPath);
+  } catch {
+    // Anchor or repoPath doesn't realpath-resolve (dangling/nonexistent) —
+    // can't prove identity, so don't self-heal.
+    return false;
+  }
 }
 
 async function writeSyncAnchor(
@@ -1628,7 +1852,33 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //   - syncScopeRoot:  file walking, imports, deletes, renames
   // In the common case (repoPath == git root, no subpath) they are identical.
   serr(`[gbrain phase] sync.discover_git_root`);
-  const gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  // #2964: a legacy `sync.repo_path`-anchored default brain can reach here
+  // having never been `git init`-ed — e.g. a brain-pages dir that predates
+  // git-backed sync, or one rsync'd from another machine without its
+  // `.git`. gbrain owns that directory outright, so self-heal by
+  // initializing it in place instead of failing the sync phase every
+  // single run. Mirrors the recloneIfMissing self-recovery above for
+  // owned remote clones. Ownership is proven by VALUE (resolved repoPath
+  // equals gbrain's persisted anchor) via `isAnchorOwnedSyncPath`, not by
+  // the mere absence of `opts.sourceId`/`opts.repoPath` — see that
+  // function's docstring. `!opts.dryRun`: a preview must never write.
+  let gitContextRoot: string;
+  try {
+    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  } catch (err) {
+    if (
+      opts.dryRun ||
+      opts.signal?.aborted ||
+      !existsSync(repoPath) ||
+      !(await isAnchorOwnedSyncPath(engine, opts, repoPath))
+    ) {
+      throw err;
+    }
+    serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
+    git(repoPath, ['init', '--quiet']);
+    createSyncBaselineCommit(repoPath);
+    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
   if (!existsSync(rawScopeRoot)) {
     throw new Error(`Sync scope does not exist: ${rawScopeRoot}`);
@@ -1753,8 +2003,53 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   try {
     headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
   } catch {
-    throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
+    // #2964: unborn-HEAD recovery. `.git` exists (discoverGitRoot succeeded
+    // above) but there are zero commits — e.g. a prior self-heal `git init`
+    // ran but the process died before the baseline commit landed, leaving
+    // this brain permanently wedged on "No commits in repo" every night
+    // thereafter. Finish the same baseline-commit self-heal the
+    // discoverGitRoot catch above would have done, gated the same way
+    // (ownership proven by value, never on a dry-run preview) PLUS a scope
+    // check: `discoverGitRoot` walks UP from `repoPath`, so it can resolve
+    // to an ANCESTOR repo, not `repoPath` itself (most plausible for a
+    // `--src-subpath` sync, but `isAnchorOwnedSyncPath` already refuses
+    // that case — kept here too as defense in depth against any other path
+    // where gitContextRoot could diverge from repoPath). Committing at an
+    // ancestor (`git add -A` at gitContextRoot) would capture sibling
+    // files well outside the sync scope — refuse instead of guessing.
+    if (
+      opts.dryRun ||
+      opts.signal?.aborted ||
+      gitContextRoot !== realpathSync(repoPath) ||
+      !(await isAnchorOwnedSyncPath(engine, opts, repoPath))
+    ) {
+      throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
+    }
+    serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
+    createSyncBaselineCommit(gitContextRoot);
+    headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
   }
+
+  // #2964: self-heal deliberately does NOT special-case db_only/.gitignore
+  // interaction beyond the COMMIT itself (createSyncBaselineCommit's
+  // pathspec exclusion, which stands on its own regardless of what
+  // .gitignore says). db_only content is documented as DB-sourced ("bulk
+  // machine-generated content... written to disk as a local cache", see
+  // docs/storage-tiering.md) — it reaches the database via ingest-specific
+  // paths, never via gbrain sync's git-diff-based file collection, and
+  // `.gitignore` management there is entirely about keeping db_only out of
+  // git history, not about what sync imports. An earlier version of this
+  // fix (Codex review rounds 6-7) tried to also guarantee db_only markdown
+  // gets imported on this first sync and that .gitignore gets written
+  // post-success even when called outside runSync — solving a problem
+  // that, per the docs above, isn't actually in scope for what sync is
+  // for. Reverted in round 8 review discussion in favor of this simpler
+  // design: after self-heal, the import + any subsequent .gitignore
+  // management behave EXACTLY the same as for any other brain, self-healed
+  // or not (runSync's existing post-success manageGitignoreAtGitRoot call
+  // covers the CLI path identically either way; the dream cycle not
+  // calling it is a separate, pre-existing characteristic of the dream
+  // cycle in general, not something this fix introduces or worsens).
 
   // #1970: bookmark reachability. The ONLY thing that should force a full
   // reconcile is a truly-absent object; a present-but-non-ancestor bookmark
