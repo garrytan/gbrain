@@ -2,6 +2,14 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.64.0] - 2026-07-20
+
+### Fixed
+
+- Confidential OAuth clients can now revoke access tokens through the standard revocation endpoint when client secrets are stored as hashes. Invalid credentials fail closed, malformed or mixed authentication is rejected, backend failures remain retryable, and discovery metadata accurately advertises supported authentication methods.
+
+No schema migrations.
+
 ## [0.42.62.0] - 2026-07-17
 
 **If your brain holds more than one source, everything now lands in the right one. Link extraction, timeline extraction, background cycles, and webhook captures used to quietly file some of their output under the default source; all of those paths now carry the correct source identity. Background agent jobs got tougher too: a failed database reconnect can no longer wedge the engine, and workers recover from dropped connections instead of crash-looping. If you run the admin dashboard behind a reverse proxy, the live activity panel finally connects. Long agent conversations cost less because repeated context is reused between turns on Anthropic calls. Local LiteLLM proxies work out of the box. Nested sources scan correctly again instead of reporting zero files. And the project's automated checks now include dependency vulnerability scanning, static code-security analysis, and signed provenance for release builds. Thirty merged changes in all, the largest batch to date, each one reviewed and verified against the live codebase before landing.**
