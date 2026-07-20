@@ -279,14 +279,35 @@ const PRUNE_DIR_NAMES = new Set<string>([
  * existing callers stay back-compat; new callers (sync walker, extract
  * walker) thread it through.
  */
+/**
+ * Names to NOT prune even though they're in PRUNE_DIR_NAMES (or match the
+ * `.raw` sidecar rule) — an escape hatch for brains that legitimately use one
+ * of these names as a content directory (e.g. an `ops/` knowledge base instead
+ * of throwaway operational files). Set `GBRAIN_NO_PRUNE_DIRS` to a comma-
+ * separated list (e.g. `ops`). Empty/unset = default pruning. Dot-prefixed dirs
+ * and git submodules are ALWAYS pruned regardless (genuine non-content).
+ */
+export function parseNoPruneDirs(raw: string | undefined = process.env.GBRAIN_NO_PRUNE_DIRS): Set<string> {
+  if (!raw) return new Set<string>();
+  const out = new Set<string>();
+  for (const part of raw.split(',')) {
+    const t = part.trim();
+    if (t) out.add(t);
+  }
+  return out;
+}
+
 export function pruneDir(name: string, parentDir?: string): boolean {
   if (!name) return true;
   if (name.startsWith('.')) return false;
-  if (PRUNE_DIR_NAMES.has(name)) return false;
+  // GBRAIN_NO_PRUNE_DIRS un-prunes named dirs so a brain can use e.g. `ops/`
+  // as a real content tree. Dot-dirs + submodules stay pruned regardless.
+  const noPrune = parseNoPruneDirs();
+  if (PRUNE_DIR_NAMES.has(name) && !noPrune.has(name)) return false;
   // `.raw` is the literal directory name; `*.raw` is the gbrain sidecar
   // convention (e.g. `people/pedro.raw/` holds raw source for pedro.md).
   // Both forms should be skipped at descent time.
-  if (name.endsWith('.raw')) return false;
+  if (name.endsWith('.raw') && !noPrune.has(name)) return false;
   // Submodule detection: a git submodule directory contains `.git` as
   // a FILE (a "gitfile" pointing into the parent's .git/modules/...),
   // not a directory. Best-effort: if we can't stat (e.g. cross-platform
