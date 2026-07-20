@@ -48,11 +48,21 @@ describe('contentHash', () => {
 });
 
 describe('rowToPage', () => {
-  test('parses string frontmatter', () => {
+  test('rejects encoded-string frontmatter instead of double-decoding it', () => {
     const page = rowToPage({
       id: 1, slug: 'test', type: 'concept', title: 'Test',
       compiled_truth: 'body', timeline: '',
       frontmatter: '{"key":"val"}',
+      content_hash: 'abc', created_at: '2024-01-01', updated_at: '2024-01-01',
+    });
+    expect(page.frontmatter).toEqual({});
+  });
+
+  test('preserves object-shaped JSONB frontmatter', () => {
+    const page = rowToPage({
+      id: 1, slug: 'test', type: 'concept', title: 'Test',
+      compiled_truth: 'body', timeline: '',
+      frontmatter: { key: 'val' },
       content_hash: 'abc', created_at: '2024-01-01', updated_at: '2024-01-01',
     });
     expect(page.frontmatter.key).toBe('val');
@@ -182,5 +192,43 @@ describe('rowToSearchResult', () => {
     });
     expect(typeof r.score).toBe('number');
     expect(r.score).toBe(0.95);
+  });
+
+  test('projects allowlisted email identifiers when present', () => {
+    const r = rowToSearchResult({
+      slug: 'mail/example', page_id: 2, title: 'Example email', type: 'note',
+      chunk_text: 'text', chunk_source: 'compiled_truth', chunk_id: 3, chunk_index: 0,
+      score: 0.9, stale: false,
+      message_id: '<message@example.com>', thread_id: 'abc123',
+      source_subject: 'Example launch subject',
+    });
+    expect(r.message_id).toBe('<message@example.com>');
+    expect(r.thread_id).toBe('abc123');
+    expect(r.source_subject).toBe('Example launch subject');
+  });
+
+  test('does not invent email identifiers when projections are absent', () => {
+    const r = rowToSearchResult({
+      slug: 'concept/example', page_id: 3, title: 'Example', type: 'concept',
+      chunk_text: 'text', chunk_source: 'compiled_truth', chunk_id: 4, chunk_index: 0,
+      score: 0.8, stale: false,
+      source_subject: 'Generated title must not become an email subject',
+    });
+    expect(r.message_id).toBeUndefined();
+    expect(r.thread_id).toBeUndefined();
+    expect(r.source_subject).toBeUndefined();
+  });
+
+  test('whitespace-only message_id does not project or authorize source_subject', () => {
+    const r = rowToSearchResult({
+      slug: 'mail/whitespace-id', page_id: 4, title: 'Whitespace ID', type: 'note',
+      chunk_text: 'text', chunk_source: 'compiled_truth', chunk_id: 5, chunk_index: 0,
+      score: 0.7, stale: false,
+      message_id: ' \t\n ', thread_id: 'thread-whitespace',
+      source_subject: 'Must remain gated',
+    });
+    expect(r.message_id).toBeUndefined();
+    expect(r.thread_id).toBe('thread-whitespace');
+    expect(r.source_subject).toBeUndefined();
   });
 });

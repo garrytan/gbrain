@@ -2,6 +2,38 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.63.0] - 2026-07-18
+
+**Email-backed search results now carry the exact message identity needed to open original evidence. Keyword, vector, graph, alias, and structural-search paths return the same Message-ID, thread ID, and subject when those fields are present in trusted email frontmatter. This release also tightens authorization and visibility enforcement throughout retrieval and caching.**
+
+## To take advantage of v0.42.63.0
+
+`gbrain upgrade` should install the binary, apply schema migration v123, and run post-upgrade checks automatically. If it did not, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the migration orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Restart long-running MCP, HTTP, and worker processes** so they load the expanded search-result contract. No email re-import or host-specific migration is required.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** file an issue at https://github.com/garrytan/gbrain/issues with the `gbrain doctor` output, `~/.gbrain/upgrade-errors.jsonl` if present, and the failing step.
+
+### Itemized changes
+
+#### Added
+- **Search results expose exact email provenance.** `SearchResult` can include `message_id`, `thread_id`, and `source_subject`, projected consistently by PGLite and Postgres keyword, vector, chunk, relational, alias, and two-pass paths. Subjects are emitted only when a non-blank Message-ID establishes email identity; page titles and generated summaries are never promoted into source metadata.
+
+#### Security
+- **Search authorization hardening.** Retrieval, structural traversal, hydration, and semantic-cache responses consistently enforce the requested source scope and canonical visibility policy.
+- **Citation metadata validation.** Search results publish only typed, allowlisted source metadata and fail closed when inputs do not satisfy that contract.
+
+#### Internal
+- Search cache contract v13 forces a one-time cold miss so cached pre-provenance rows cannot hide newly available citation fields. Cache scopes now use collision-proof typed identities. The citation contract itself adds no schema; this merged release includes upstream migration v123 for configurable FTS, applied by the normal upgrade path.
+
 ## [0.42.62.0] - 2026-07-17
 
 **If your brain holds more than one source, everything now lands in the right one. Link extraction, timeline extraction, background cycles, and webhook captures used to quietly file some of their output under the default source; all of those paths now carry the correct source identity. Background agent jobs got tougher too: a failed database reconnect can no longer wedge the engine, and workers recover from dropped connections instead of crash-looping. If you run the admin dashboard behind a reverse proxy, the live activity panel finally connects. Long agent conversations cost less because repeated context is reused between turns on Anthropic calls. Local LiteLLM proxies work out of the box. Nested sources scan correctly again instead of reporting zero files. And the project's automated checks now include dependency vulnerability scanning, static code-security analysis, and signed provenance for release builds. Thirty merged changes in all, the largest batch to date, each one reviewed and verified against the live codebase before landing.**

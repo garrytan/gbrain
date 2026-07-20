@@ -22,6 +22,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { SearchResult, HybridSearchMeta } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
+let visiblePageId: number;
 
 // Build a stable, normalized embedding. PGLite ships pgvector with 1536-dim
 // support (the default); a smaller test dim won't match the column. We
@@ -60,7 +61,7 @@ function makeOrthogonalEmbedding(seed: number, dim = DIM): Float32Array {
 function makeResult(slug: string): SearchResult {
   return {
     slug,
-    page_id: 1,
+    page_id: visiblePageId,
     title: `Title for ${slug}`,
     type: 'concept',
     chunk_text: `chunk text for ${slug}`,
@@ -79,6 +80,26 @@ const META: HybridSearchMeta = {
   intent: 'general',
 };
 
+type StoreOpts = NonNullable<Parameters<SemanticQueryCache['store']>[4]>;
+
+async function storeCurrent(
+  cache: SemanticQueryCache,
+  queryText: string,
+  queryEmbedding: Float32Array,
+  results: SearchResult[],
+  meta: HybridSearchMeta,
+  opts: StoreOpts = {},
+): Promise<void> {
+  const rows = await engine.executeRaw<{ v: number }>(
+    `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
+  );
+  await cache.store(queryText, queryEmbedding, results, meta, {
+    ...opts,
+    maxGenerationAtSearchStart:
+      opts.maxGenerationAtSearchStart ?? Number(rows[0]?.v ?? 0),
+  });
+}
+
 beforeAll(async () => {
   // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
   // This test hardcodes DIM=1536 in its embeddings. If another test file in
@@ -95,6 +116,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  const page = await engine.putPage('cache/visible-fixture', {
+    type: 'note',
+    title: 'Visible cache fixture',
+    compiled_truth: 'visible cache fixture',
+    timeline: '',
+    frontmatter: {},
+  });
+  visiblePageId = page.id;
 });
 
 afterAll(async () => {
@@ -141,7 +170,7 @@ describe('SemanticQueryCache \u2014 store + lookup', () => {
     const emb = makeEmbedding(1);
     const results = [makeResult('a'), makeResult('b')];
 
-    await cache.store('what is foo', emb, results, META);
+    await storeCurrent(cache, 'what is foo', emb, results, META);
     const hit = await cache.lookup(emb);
 
     expect(hit.hit).toBe(true);
@@ -163,7 +192,7 @@ describe('SemanticQueryCache \u2014 store + lookup', () => {
     mag = Math.sqrt(mag);
     for (let i = 0; i < DIM; i++) near[i] /= mag;
 
-    await cache.store('what is foo', base, [makeResult('a')], META);
+    await storeCurrent(cache, 'what is foo', base, [makeResult('a')], META);
     const hit = await cache.lookup(near);
 
     expect(hit.hit).toBe(true);
@@ -174,7 +203,7 @@ describe('SemanticQueryCache \u2014 store + lookup', () => {
     const cache = new SemanticQueryCache(engine);
     const a = makeEmbedding(1);
     const b = makeOrthogonalEmbedding(2);
-    await cache.store('q1', a, [makeResult('a')], META);
+    await storeCurrent(cache, 'q1', a, [makeResult('a')], META);
     const hit = await cache.lookup(b);
     expect(hit.hit).toBe(false);
   });
@@ -184,7 +213,7 @@ describe('SemanticQueryCache \u2014 TTL', () => {
   test('stale row (past TTL) is not returned', async () => {
     const cache = new SemanticQueryCache(engine, { ttlSeconds: 1 });
     const emb = makeEmbedding(42);
-    await cache.store('q', emb, [makeResult('a')], META, { ttlSeconds: 1 });
+    await storeCurrent(cache, 'q', emb, [makeResult('a')], META, { ttlSeconds: 1 });
 
     // Manually rewind created_at to simulate expiration.
     await engine.executeRaw(
@@ -195,15 +224,97 @@ describe('SemanticQueryCache \u2014 TTL', () => {
   });
 });
 
-describe('SemanticQueryCache \u2014 source isolation', () => {
-  test('different source_id cannot read each other\u2019s rows', async () => {
+describe('SemanticQueryCache — source isolation', () => {
+  test('different source_id cannot read each other’s rows', async () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(7);
-    await cache.store('q', emb, [makeResult('a')], META, { sourceId: 'src-A' });
+    await storeCurrent(cache, 'q', emb, [makeResult('a')], META, { sourceId: 'src-A' });
     const hitB = await cache.lookup(emb, { sourceId: 'src-B' });
     expect(hitB.hit).toBe(false);
     const hitA = await cache.lookup(emb, { sourceId: 'src-A' });
     expect(hitA.hit).toBe(true);
+  });
+
+  test('archiving a source invalidates its cached result without a page write', async () => {
+    const sourceId = 'cache-archive-src';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived)
+       VALUES ($1, $1, false)
+       ON CONFLICT (id) DO UPDATE SET archived = false`,
+      [sourceId],
+    );
+    const page = await engine.putPage(
+      'cache/archive-visibility',
+      {
+        type: 'note',
+        title: 'Archive visibility',
+        compiled_truth: 'archive visibility cache canary',
+        timeline: '',
+        frontmatter: {},
+      },
+      { sourceId },
+    );
+    const result = { ...makeResult(page.slug), page_id: page.id, source_id: sourceId };
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(71);
+
+    await storeCurrent(cache, 'archive visibility', emb, [result], META, { sourceId });
+    expect((await cache.lookup(emb, { sourceId })).hit).toBe(true);
+
+    await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = $1`, [sourceId]);
+    try {
+      expect((await cache.lookup(emb, { sourceId })).hit).toBe(false);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET archived = false WHERE id = $1`, [sourceId]);
+    }
+  });
+
+  test('a result hard-deleted before cache snapshot cannot be served', async () => {
+    const page = await engine.putPage('cache/deleted-before-store', {
+      type: 'note',
+      title: 'Deleted before store',
+      compiled_truth: 'private cache race canary',
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = { ...makeResult(page.slug), page_id: page.id, source_id: 'default' };
+    await engine.executeRaw(`DELETE FROM pages WHERE id = $1`, [page.id]);
+
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(72);
+    await storeCurrent(cache, 'deleted before store', emb, [result], META);
+
+    expect((await cache.lookup(emb)).hit).toBe(false);
+  });
+
+  test('writeback without a pre-search generation fails closed', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(77);
+
+    await cache.store('missing generation', emb, [makeResult('a')], META);
+
+    expect((await cache.lookup(emb)).hit).toBe(false);
+    expect((await cache.stats()).total_rows).toBe(0);
+  });
+
+  test('a concurrent page mutation prevents stale result writeback', async () => {
+    const clock = await engine.executeRaw<{ v: number }>(
+      `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
+    );
+    const generationAtSearchStart = Number(clock[0]?.v ?? 0);
+    const staleResult = { ...makeResult('cache/visible-fixture'), page_id: visiblePageId };
+    await engine.executeRaw(
+      `UPDATE pages SET compiled_truth = 'redacted after search' WHERE id = $1`,
+      [visiblePageId],
+    );
+
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(73);
+    await storeCurrent(cache, 'concurrent mutation', emb, [staleResult], META, {
+      maxGenerationAtSearchStart: generationAtSearchStart,
+    });
+
+    expect((await cache.lookup(emb)).hit).toBe(false);
   });
 });
 
@@ -211,18 +322,30 @@ describe('SemanticQueryCache \u2014 management', () => {
   test('clear() wipes all rows', async () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(9);
-    await cache.store('q1', emb, [makeResult('a')], META);
-    await cache.store('q2', makeEmbedding(10), [makeResult('b')], META);
+    await storeCurrent(cache, 'q1', emb, [makeResult('a')], META);
+    await storeCurrent(cache, 'q2', makeEmbedding(10), [makeResult('b')], META);
     const removed = await cache.clear();
     expect(removed).toBeGreaterThanOrEqual(2);
     const stats = await cache.stats();
     expect(stats.total_rows).toBe(0);
   });
 
+  test('source-scoped clear removes typed scalar and federated scopes containing the source', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(74);
+    await storeCurrent(cache, 'scalar-a', emb, [makeResult('a')], META, { sourceId: '["scalar","source-a"]' });
+    await storeCurrent(cache, 'set-ab', makeEmbedding(75), [makeResult('ab')], META, { sourceId: '["set","source-a","source-b"]' });
+    await storeCurrent(cache, 'scalar-b', makeEmbedding(76), [makeResult('b')], META, { sourceId: '["scalar","source-b"]' });
+
+    expect(await cache.clear({ sourceId: 'source-a' })).toBe(2);
+    const rows = await engine.executeRaw<{ source_id: string }>(`SELECT source_id FROM query_cache ORDER BY source_id`);
+    expect(rows.map(r => r.source_id)).toEqual(['["scalar","source-b"]']);
+  });
+
   test('prune() deletes only stale rows', async () => {
     const cache = new SemanticQueryCache(engine);
-    await cache.store('fresh', makeEmbedding(11), [makeResult('a')], META);
-    await cache.store('stale', makeEmbedding(12), [makeResult('b')], META, { ttlSeconds: 1 });
+    await storeCurrent(cache, 'fresh', makeEmbedding(11), [makeResult('a')], META);
+    await storeCurrent(cache, 'stale', makeEmbedding(12), [makeResult('b')], META, { ttlSeconds: 1 });
     await engine.executeRaw(
       `UPDATE query_cache SET created_at = now() - interval '10 seconds' WHERE query_text = 'stale'`,
     );
@@ -236,7 +359,7 @@ describe('SemanticQueryCache \u2014 management', () => {
   test('stats() reports fresh / stale / total / hit counters', async () => {
     const cache = new SemanticQueryCache(engine);
     const emb = makeEmbedding(13);
-    await cache.store('q', emb, [makeResult('a')], META);
+    await storeCurrent(cache, 'q', emb, [makeResult('a')], META);
     await cache.lookup(emb);  // bump hit
     // Hit bump is async/fire-and-forget; give it a moment to land.
     await new Promise(r => setTimeout(r, 50));
@@ -252,7 +375,7 @@ describe('SemanticQueryCache \u2014 disabled', () => {
   test('disabled cache is a pure no-op on lookup', async () => {
     const cache = new SemanticQueryCache(engine, { enabled: false });
     const emb = makeEmbedding(99);
-    await cache.store('q', emb, [makeResult('a')], META);
+    await storeCurrent(cache, 'q', emb, [makeResult('a')], META);
     // Even after a store call, lookup must miss because enabled=false.
     const hit = await cache.lookup(emb);
     expect(hit.hit).toBe(false);

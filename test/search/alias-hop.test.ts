@@ -27,7 +27,18 @@ function res(slug: string, score: number, title = slug): SearchResult {
 
 describe('applyAliasHop', () => {
   test('injects an absent canonical when the query matches its alias', async () => {
-    await engine.putPage('projects/mingtang', { type: 'note', title: 'The Mingtang', compiled_truth: 'Indoor Greek amphitheater.' });
+    await engine.putPage('projects/mingtang', {
+      type: 'note',
+      title: 'The Mingtang',
+      compiled_truth: 'Indoor Greek amphitheater.',
+      frontmatter: {
+        message_id: '<mingtang@example.com>',
+        thread_id: 'thread-mingtang',
+        subject: 'Mingtang project update',
+        // Internal SQL projection aliases are not trusted frontmatter fields.
+        source_subject: 'Spoofed projection alias',
+      },
+    });
     await engine.setPageAliases('projects/mingtang', 'default', ['hall of light', '明堂']);
 
     const organic = [res('notes/unrelated', 0.5)];
@@ -38,6 +49,85 @@ describe('applyAliasHop', () => {
     expect(hit!.alias_hit).toBe(true);
     expect(out[0].slug).toBe('projects/mingtang'); // injected at top-of-organic + ε
     expect(hit!.score).toBeGreaterThan(0.5);
+    expect(hit!.message_id).toBe('<mingtang@example.com>');
+    expect(hit!.thread_id).toBe('thread-mingtang');
+    expect(hit!.source_subject).toBe('Mingtang project update');
+  });
+
+  test('raw frontmatter cannot forge source_subject without allowlisted subject', async () => {
+    await engine.putPage('mail/forged-subject', {
+      type: 'note',
+      title: 'Forged subject',
+      compiled_truth: 'Evidence.',
+      frontmatter: {
+        message_id: '<forged@example.com>',
+        source_subject: 'Forged projection alias',
+      },
+    });
+    await engine.setPageAliases('mail/forged-subject', 'default', ['forged mail']);
+
+    const out = await applyAliasHop(engine, [], 'forged mail', { sourceId: 'default' });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.message_id).toBe('<forged@example.com>');
+    expect(out[0]!.source_subject).toBeUndefined();
+  });
+
+  test('does not inject quarantined alias pages', async () => {
+    await engine.putPage('notes/quarantined-alias', {
+      type: 'note', title: 'Quarantined alias', compiled_truth: 'Hidden.',
+      frontmatter: { quarantine: true, message_id: '<hidden@example.com>', subject: 'Hidden' },
+    });
+    await engine.setPageAliases('notes/quarantined-alias', 'default', ['hidden alias']);
+
+    const out = await applyAliasHop(engine, [], 'hidden alias', { sourceId: 'default' });
+    expect(out).toEqual([]);
+  });
+
+  test('does not inject aliases whose top-level frontmatter is an encoded JSON string', async () => {
+    const encoded = JSON.stringify({
+      message_id: '<encoded@example.com>',
+      thread_id: 'encoded-thread',
+      subject: 'Encoded subject',
+    });
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, title, type, compiled_truth, frontmatter, created_at, updated_at)
+       VALUES ('mail/encoded-frontmatter', 'default', 'Encoded frontmatter', 'note', 'Hidden.', to_jsonb($1::text), NOW(), NOW())`,
+      [encoded],
+    );
+    await engine.setPageAliases('mail/encoded-frontmatter', 'default', ['encoded mail']);
+
+    const out = await applyAliasHop(engine, [], 'encoded mail', { sourceId: 'default' });
+    expect(out).toEqual([]);
+  });
+
+  test('encoded-string quarantine markers remain hidden from alias retrieval', async () => {
+    const encoded = JSON.stringify({ quarantine: true });
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, title, type, compiled_truth, frontmatter, created_at, updated_at)
+       VALUES ('notes/encoded-quarantine', 'default', 'Encoded quarantine', 'note', 'Hidden.', to_jsonb($1::text), NOW(), NOW())`,
+      [encoded],
+    );
+    await engine.setPageAliases('notes/encoded-quarantine', 'default', ['encoded hidden']);
+
+    const out = await applyAliasHop(engine, [], 'encoded hidden', { sourceId: 'default' });
+    expect(out).toEqual([]);
+  });
+
+  test('does not inject aliases from archived sources', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived, created_at)
+       VALUES ('archived-alias', 'archived-alias', true, NOW())`,
+      [],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, title, type, compiled_truth, frontmatter, created_at, updated_at)
+       VALUES ('notes/archived-alias', 'archived-alias', 'Archived alias', 'note', 'Hidden.', '{}', NOW(), NOW())`,
+      [],
+    );
+    await engine.setPageAliases('notes/archived-alias', 'archived-alias', ['archived alias']);
+
+    const out = await applyAliasHop(engine, [], 'archived alias', { sourceId: 'archived-alias' });
+    expect(out).toEqual([]);
   });
 
   test('romanization/CJK alias also resolves', async () => {
@@ -61,6 +151,17 @@ describe('applyAliasHop', () => {
   test('P0 source-isolation: alias hop boosts only the aliased source, not the same slug in another source', async () => {
     // The alias belongs to the src-b page only. Two same-slug results, different
     // sources, both in the organic set. The hop must boost ONLY src-b's row.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, created_at) VALUES
+       ('src-a', 'src-a', NOW()), ('src-b', 'src-b', NOW())`,
+      [],
+    );
+    await engine.putPage(
+      'shared/page', { type: 'note', title: 'Shared A', compiled_truth: 'A' }, { sourceId: 'src-a' },
+    );
+    await engine.putPage(
+      'shared/page', { type: 'note', title: 'Shared B', compiled_truth: 'B' }, { sourceId: 'src-b' },
+    );
     await engine.setPageAliases('shared/page', 'src-b', ['only in b']);
     const organic = [
       { slug: 'shared/page', source_id: 'src-a', score: 0.5 } as unknown as SearchResult,

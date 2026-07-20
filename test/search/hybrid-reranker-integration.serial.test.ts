@@ -19,7 +19,11 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { hybridSearch } from '../../src/core/search/hybrid.ts';
+import {
+  awaitPendingSearchCacheWrites,
+  hybridSearch,
+  hybridSearchCached,
+} from '../../src/core/search/hybrid.ts';
 import {
   configureGateway,
   resetGateway,
@@ -69,16 +73,31 @@ beforeAll(async () => {
   // early-returns BEFORE applyReranker, so a setup that lacks embedding
   // would never exercise the reranker integration.
   //
-  // searchVector returns empty lists because chunks have NULL embeddings;
-  // that's fine — vectorLists is `[[]]` (length 1, not 0), so the
-  // keyword-only branch is skipped and the main path runs RRF + dedup +
-  // reranker + budget.
+  // Most chunks have NULL embeddings; the email fixture below carries one so
+  // the main path runs vector fusion + RRF + dedup + reranker + budget.
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: DIMS,
     env: { OPENAI_API_KEY: 'sk-test' },
   });
   stubEmbeddings();
+
+  await engine.putPage('mail/vector-first', {
+    type: 'note',
+    title: 'Vector-first email',
+    compiled_truth: 'vector first duplicate metadata evidence',
+    frontmatter: {
+      message_id: '<vector-first@example.com>',
+      thread_id: 'thread-vector-first',
+      subject: 'Vector-first exact subject',
+    },
+  });
+  await engine.upsertChunks('mail/vector-first', [{
+    chunk_index: 0,
+    chunk_text: 'vector first duplicate metadata evidence',
+    chunk_source: 'compiled_truth',
+    embedding: Float32Array.from(FAKE_EMB),
+  }]);
 });
 
 afterAll(async () => {
@@ -102,6 +121,45 @@ describe('hybridSearch — reranker disabled (pass-through)', () => {
     const out = await hybridSearch(engine, 'alpha', opts);
     expect(out.length).toBeGreaterThan(0);
     expect(called).toBe(0);
+  });
+});
+
+describe('hybridSearchCached — email metadata through vector-first fusion', () => {
+  test('fresh cache miss preserves metadata through vector-first RRF duplicate handling', async () => {
+    await engine.executeRaw(`DELETE FROM query_cache`);
+    const cacheStatuses: string[] = [];
+    const out = await hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
+      limit: 10,
+      useCache: true,
+      autocut: false,
+      graph_signals: false,
+      onMeta: (meta) => {
+        if (meta.cache?.status) cacheStatuses.push(meta.cache.status);
+      },
+    });
+
+    expect(cacheStatuses.at(-1)).toBe('miss');
+    const matches = out.filter(r => r.slug === 'mail/vector-first');
+    expect(matches).toHaveLength(1);
+    expect(matches[0].message_id).toBe('<vector-first@example.com>');
+    expect(matches[0].thread_id).toBe('thread-vector-first');
+    expect(matches[0].source_subject).toBe('Vector-first exact subject');
+    await awaitPendingSearchCacheWrites();
+
+    const cached = await hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
+      limit: 10,
+      useCache: true,
+      autocut: false,
+      graph_signals: false,
+      onMeta: (meta) => {
+        if (meta.cache?.status) cacheStatuses.push(meta.cache.status);
+      },
+    });
+    expect(cacheStatuses.at(-1)).toBe('hit');
+    const cachedMatch = cached.find(r => r.slug === 'mail/vector-first');
+    expect(cachedMatch?.message_id).toBe('<vector-first@example.com>');
+    expect(cachedMatch?.thread_id).toBe('thread-vector-first');
+    expect(cachedMatch?.source_subject).toBe('Vector-first exact subject');
   });
 });
 
