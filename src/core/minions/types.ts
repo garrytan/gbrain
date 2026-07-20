@@ -200,6 +200,12 @@ export interface MinionJobContext {
   attempts_made: number;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
+  /** Absolute wall-clock deadline (epoch ms) from the claim-time `timeout_at` stamp,
+   *  or null when the job has no per-job timeout. This is the DB's ground truth —
+   *  the same instant handleTimeouts() dead-letters against — so handlers that
+   *  spawn bounded sub-work (e.g. autopilot-cycle's subagent phases) can budget
+   *  from the REMAINING time instead of a fixed constant that may exceed it. */
+  deadlineAtMs: number | null;
   /** AbortSignal that fires only on worker process SIGTERM/SIGINT. Handlers sensitive
    *  to deploy restarts (e.g. the shell handler, which must run a SIGTERM → 5s → SIGKILL
    *  sequence on its child) listen to this in addition to `signal`. Most handlers can

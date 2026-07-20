@@ -135,7 +135,10 @@ export const MIGRATIONS: Migration[] = [
           }
         }
       }
-      if (renamed > 0) console.log(`  Renamed ${renamed} slugs`);
+      // Migration progress goes to stderr — stdout must stay clean for
+      // callers parsing JSON (e.g. `gbrain doctor --json | jq`); migrations
+      // can run lazily inside ANY command's first DB connect.
+      if (renamed > 0) process.stderr.write(`  Renamed ${renamed} slugs\n`);
     },
   },
   {
@@ -5572,7 +5575,10 @@ export const MIGRATIONS: Migration[] = [
       await engine.executeRaw(recreateChunksFn);
 
       if (lang === 'english') {
-        console.log(`  v123: trigger functions recreated with language='english' (default — no backfill needed)`);
+        // stderr, NOT stdout: migrations run lazily inside any command's
+        // first DB connect — a console.log here polluted `doctor --json`
+        // stdout and broke jq consumers (heavy-tests fm_wallclock).
+        process.stderr.write(`  v123: trigger functions recreated with language='english' (default — no backfill needed)\n`);
         return;
       }
 
@@ -5593,7 +5599,7 @@ export const MIGRATIONS: Migration[] = [
         WHERE search_vector IS NOT NULL;
       `);
 
-      console.log(`  v123: trigger functions recreated with language='${lang}' + backfilled existing rows`);
+      process.stderr.write(`  v123: trigger functions recreated with language='${lang}' + backfilled existing rows\n`);
     },
   },
 ];

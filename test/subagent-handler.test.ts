@@ -90,6 +90,7 @@ async function makeCtx(input: unknown): Promise<MinionJobContext> {
     data: (input as Record<string, unknown>) ?? {},
     attempts_made: 0,
     signal: ac.signal,
+    deadlineAtMs: null,
     shutdownSignal: shutdown.signal,
     async updateProgress() {},
     async updateTokens() {},
