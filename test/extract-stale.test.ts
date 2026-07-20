@@ -135,6 +135,28 @@ describe('gbrain extract --stale', () => {
     expect(stamp1).not.toBeNull();
   });
 
+  test('version invalidation clears pages whose content predates the extractor version', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.executeRaw(
+      `UPDATE pages
+          SET updated_at = '2020-01-01T00:00:00Z',
+              links_extracted_at = NULL
+        WHERE slug = 'people/alice'`,
+    );
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(1);
+
+    await runExtract(engine, ['--stale']);
+
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+    const rows = await engine.executeRaw<{ version_cleared: boolean; edit_cleared: boolean }>(
+      `SELECT links_extracted_at >= $1::timestamptz AS version_cleared,
+              links_extracted_at >= updated_at AS edit_cleared
+         FROM pages WHERE slug = 'people/alice'`,
+      [LINK_EXTRACTOR_VERSION_TS],
+    );
+    expect(rows[0]).toEqual({ version_cleared: true, edit_cleared: true });
+  });
+
   test('--dry-run reports count and writes nothing', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) joined [Acme](companies/acme).'));
