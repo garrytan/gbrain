@@ -277,6 +277,15 @@ export async function runPhaseSynthesize(
     opts.brainDir = resolve(opts.brainDir);
   }
   try {
+    // Home-source gate BEFORE any config/corpus work. Explicit operator
+    // targets (--input, --date, --from/--to) bypass the gate — the SAME
+    // predicate the cooldown bypass below uses, so backfills behave
+    // uniformly across both gates.
+    if (!opts.inputFile && !opts.date && !opts.from && !opts.to) {
+      const gate = await resolveDreamHomeGate(engine, opts.sourceId);
+      if (gate.skip) return skipped(gate.reason, gate.summary);
+    }
+
     const config = await loadSynthConfig(engine);
 
     // Allow ad-hoc --input to run even when config is disabled.
@@ -1327,6 +1336,66 @@ function loadAdHocTranscript(
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Dream home-source gate, shared by the synthesize + patterns phases.
+ *
+ * The per-source cycle fan-out runs these CORPUS-GLOBAL phases inside
+ * whatever source's cycle happens to hit the expired cooldown first, so
+ * their output (reflections / ideas / patterns) lands in a lottery-chosen
+ * source — on federated brains that can be an ISOLATED source, hiding the
+ * pages from default recall, and concurrent cycles racing the
+ * check-then-stamp cooldown can each run their own pass (duplicate,
+ * divergently-routed output).
+ *
+ * When `dream.home_source` is set, ONLY that source's cycle runs these
+ * phases; every other cycle skips fast with a loud reason. A typo'd home
+ * source therefore fails CLOSED (every cycle skips, reason names the
+ * value) instead of silently misrouting — `gbrain config set` validation
+ * and the `dream_home_source` doctor check surface that state. Unset →
+ * legacy first-come behavior. A cycle whose sourceId could not be derived
+ * is treated as 'default', so on brains with a non-default home the
+ * legacy source-less `gbrain dream` invocation skips too (use an explicit
+ * target — --input/--date/--from/--to — to bypass, same posture as the
+ * cooldown). Residual race: two concurrent cycles for the SAME home
+ * source could still double-run; the dispatcher's per-source freshness
+ * dedupe plus the cycle-lock keepalive make that shape rare.
+ *
+ * Returns {skip:false} (phase may proceed) or {skip:true, reason, summary}
+ * for the caller to wrap in its local skipped() — the `phase` field is
+ * stamped by each caller; this helper only decides.
+ */
+export async function resolveDreamHomeGate(
+  engine: BrainEngine,
+  cycleSourceId: string | undefined,
+): Promise<{ skip: false } | { skip: true; reason: string; summary: string }> {
+  let home: string | null = null;
+  try {
+    home = await engine.getConfig('dream.home_source');
+  } catch (e) {
+    // Fail CLOSED: without the config we cannot establish ownership, and
+    // running anyway would reproduce exactly the wrong-source/duplicate
+    // behavior the gate exists to prevent. Skipping is cheap — the next
+    // cycle retries. (Brains that never set home_source only hit this on
+    // a transient DB blip, and one skipped phase beats a misrouted run.)
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      skip: true,
+      reason: 'home_source_unknown',
+      summary: `could not read dream.home_source (${msg}) — skipping corpus-global dream phase rather than risk a misrouted run`,
+    };
+  }
+  if (!home || !home.trim()) return { skip: false };
+  const effective = cycleSourceId ?? 'default';
+  if (effective === home.trim()) return { skip: false };
+  return {
+    skip: true,
+    reason: 'not_home_source',
+    summary:
+      `dream.home_source='${home.trim()}' — corpus-global dream phases run only in that ` +
+      `source's cycle (this cycle: '${effective}')`,
+  };
 }
 
 function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult {

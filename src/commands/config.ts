@@ -197,6 +197,35 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const coverageOverride =
       args.includes('--coverage-override') || args.includes('--yes');
 
+    // Validate dream.home_source at set time: a typo'd or archived source
+    // makes the corpus-global dream phases (synthesize/patterns) skip on
+    // EVERY cycle — fail-closed by design, but the failure would otherwise
+    // only surface as buried per-cycle skip summaries. Mirror of the
+    // spend.posture set-time validation below.
+    if (key === 'dream.home_source') {
+      const { fetchSource, isSourceFederated } = await import('../core/sources-load.ts');
+      const row = await fetchSource(engine, value);
+      if (!row) {
+        console.error(
+          `[config] dream.home_source: source '${value}' is not registered.\n` +
+          `[config]   gbrain sources list   # see registered source ids`,
+        );
+        process.exit(1);
+      }
+      if (row.archived === true) {
+        console.error(
+          `[config] dream.home_source: source '${value}' is archived — its cycle never runs, so dream phases would skip forever.\n` +
+          `[config]   gbrain sources restore ${value}   # or pick another home source`,
+        );
+        process.exit(1);
+      }
+      if (!isSourceFederated(row.config)) {
+        console.error(
+          `[config] warning: dream.home_source '${value}' is not federated — dream output written there stays invisible to cross-source default search. Proceeding anyway.`,
+        );
+      }
+    }
+
     // v0.42.42.0 (#2139): validate spend.posture at set time so a typo
     // ('tokenMax', 'max') doesn't silently fall back to gated.
     if (key === 'spend.posture') {

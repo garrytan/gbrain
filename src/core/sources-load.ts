@@ -129,6 +129,51 @@ export async function fetchSource(
   }
 }
 
+/**
+ * Local federated READ scope for trusted local transports (CLI, `gbrain
+ * call`, stdio serve). When the caller's ACTIVE source is federated
+ * (`config.federated === true`) and no explicit source was requested,
+ * default reads should span the union of all federated sources — the
+ * "Unified knowledge recall" scenario in docs/guides/multi-source-brains.md
+ * and the `sources.config` comment in src/schema.sql. Isolated sources stay
+ * reachable only via an explicit `--source <id>`.
+ *
+ * Returns the federated source-id set, or `undefined` whenever the caller
+ * should keep its scalar scope:
+ *   - active source missing, archived, or not federated → undefined
+ *   - fewer than 2 federated sources (fan-out would be a no-op) → undefined
+ *   - any lookup error (pre-init brain, missing table) → undefined
+ *
+ * Callers that received an EXPLICIT source (flag / per-call param) must not
+ * call this at all — explicit naming pins the scalar scope by contract.
+ * The result feeds `OperationContext.sourceIds`, which `sourceScopeOpts`
+ * only honors for unauthenticated callers; writes never read it.
+ */
+export async function resolveLocalFederatedReadScope(
+  engine: BrainEngine,
+  activeSourceId: string,
+  opts: { onError?: (e: unknown) => void } = {},
+): Promise<string[] | undefined> {
+  try {
+    const active = await fetchSource(engine, activeSourceId);
+    if (!active || active.archived === true) return undefined;
+    if (!isSourceFederated(active.config)) return undefined;
+    const federated = await loadAllSources(engine, { federatedOnly: true });
+    const ids = federated.map((r) => r.id);
+    if (!ids.includes(activeSourceId)) ids.push(activeSourceId);
+    if (ids.length <= 1) return undefined;
+    return ids;
+  } catch (e) {
+    // Pre-init brain / missing sources table / transient DB error: stay on
+    // the scalar path rather than failing the whole op. Long-lived callers
+    // (stdio serve resolves ONCE at startup) pass onError so a transient
+    // blip doesn't silently disable the fan-out for the process lifetime
+    // with zero trace.
+    opts.onError?.(e);
+    return undefined;
+  }
+}
+
 /** Driver-tolerant 42703 detector. Mirrors src/core/utils.ts pattern. */
 function isUndefinedColumnError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;

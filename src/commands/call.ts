@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
+import { resolveLocalFederatedReadScope } from '../core/sources-load.ts';
 import { bigintToStringReplacer } from '../cli.ts';
 
 /**
@@ -49,7 +50,13 @@ export async function runCall(engine: BrainEngine, args: string[]) {
   // Resolve through the canonical 6-tier chain. resolveSourceId() throws if
   // an explicit/env/dotfile id refers to a non-registered source.
   const sourceId = await resolveSourceId(engine, explicitSource);
-  const result = await handleToolCall(engine, tool, params, { sourceId });
+  // Local federated read fan-out (parity with the CLI op surface): only when
+  // no explicit --source was given AND the active source is federated.
+  const sourceIds =
+    !explicitSource && sourceId
+      ? await resolveLocalFederatedReadScope(engine, sourceId)
+      : undefined;
+  const result = await handleToolCall(engine, tool, params, { sourceId, sourceIds });
   // `gbrain call` bypasses cli.ts's op-output normalizer entirely, so this
   // exit needs its own bigint-safe replacer — any op returning an int8 column
   // (BIGSERIAL id) would otherwise crash plain JSON.stringify (#2450).

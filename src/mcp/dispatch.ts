@@ -49,6 +49,14 @@ export interface DispatchOpts {
    */
   sourceId?: string;
   /**
+   * Local federated READ scope (see OperationContext.sourceIds). Set by
+   * trusted local transports (stdio serve / `gbrain call`) when the active
+   * source is federated and no explicit source was requested. The HTTP
+   * transport never sets it, and `sourceScopeOpts` ignores it whenever
+   * `ctx.auth` is present, so authenticated grants are unaffected.
+   */
+  sourceIds?: string[];
+  /**
    * v0.31 (eD3): hook called by the dispatcher AFTER op.handler succeeds
    * to compute `_meta.brain_hot_memory` for the response. Wrapped in its
    * own try/catch (eE4) so a DB blip in the helper degrades to no _meta
@@ -209,6 +217,7 @@ export function buildOperationContext(
     // CLI / HTTP / stdio transports SHOULD pass an explicit sourceId via opts;
     // this fallback covers code paths that historically passed undefined.
     sourceId: opts.sourceId ?? 'default',
+    sourceIds: opts.sourceIds,
     auth: opts.auth,
   };
 }

@@ -808,12 +808,21 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
   // never set up sources still returns 'default' silently.
   let sourceId: string | undefined;
+  let sourceIds: string[] | undefined;
   try {
     const { resolveSourceId } = await import('./core/source-resolver.ts');
     // params.source is set when a CLI flag was parsed for the op (rare; most
     // CLI ops don't take --source). Falls through to env/dotfile/path-match.
     const explicit = (params.source as string | undefined) ?? null;
     sourceId = await resolveSourceId(engine, explicit);
+    // Local federated read fan-out: with no explicit --source, a federated
+    // active source reads across the whole federated set (never on explicit
+    // naming — that pins the scalar scope by contract). The resolver returns
+    // undefined (stay scalar) for isolated/missing sources and on any error.
+    if (explicit == null && sourceId) {
+      const { resolveLocalFederatedReadScope } = await import('./core/sources-load.ts');
+      sourceIds = await resolveLocalFederatedReadScope(engine, sourceId);
+    }
   } catch {
     // Source resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
@@ -834,6 +843,7 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // table). Matches dispatch.ts's auto-fill so the contract holds across
     // every transport.
     sourceId: sourceId ?? 'default',
+    sourceIds,
   };
 }
 

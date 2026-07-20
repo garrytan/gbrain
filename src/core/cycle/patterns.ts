@@ -29,7 +29,7 @@ import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
 // phase — both phases must agree on the configured namespace.
-import { loadAllowedSlugPrefixes, loadOutputRoot } from './synthesize.ts';
+import { loadAllowedSlugPrefixes, loadOutputRoot, resolveDreamHomeGate } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -37,6 +37,12 @@ export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
   yieldDuringPhase?: () => Promise<void>;
+  /**
+   * The cycle's resolved source id, threaded so the `dream.home_source`
+   * gate can pin this corpus-global phase to one source's cycle (see
+   * resolveDreamHomeGate in synthesize.ts). Unset → treated as 'default'.
+   */
+  sourceId?: string;
 }
 
 export async function runPhasePatterns(
@@ -45,6 +51,12 @@ export async function runPhasePatterns(
 ): Promise<PhaseResult> {
   const start = Date.now();
   try {
+    // Home-source gate BEFORE config/reflection gathering — patterns is
+    // corpus-global; running it once per source-cycle produced near-duplicate
+    // pattern pages scattered across source repos.
+    const gate = await resolveDreamHomeGate(engine, opts.sourceId);
+    if (gate.skip) return skipped(gate.reason, gate.summary);
+
     const config = await loadPatternsConfig(engine);
 
     if (!config.enabled) {
@@ -96,6 +108,11 @@ export async function runPhasePatterns(
       model: config.model,
       max_turns: 30,
       allowed_slug_prefixes: allowedSlugPrefixes,
+      // Scope the child's put_page writes to the cycle's resolved source —
+      // the same #1586 threading runPhaseSynthesize does. Without it the
+      // subagent writes land in the hardcoded 'default' source regardless
+      // of which cycle ran the phase.
+      ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     };
     const submitOpts: Partial<MinionJobInput> = {
       max_stalled: 3,
@@ -122,9 +139,9 @@ export async function runPhasePatterns(
     }
 
     // Collect refs the subagent wrote (codex finding #2 — query tool exec rows).
-    // v0.32.8: refs carry source_id so reverseWriteRefs targets the right
+    // Refs carry the cycle's source_id so reverseWriteRefs targets the right
     // (source, slug) row instead of the first DB match.
-    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
+    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], opts.sourceId ?? 'default');
 
     // Reverse-write to fs.
     const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
@@ -300,13 +317,15 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
 async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
+  sourceId = 'default',
 ): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
-  // v0.32.8: subagent put_page tool schema doesn't expose source_id (subagents
-  // are scoped to a single source). Default to 'default' here; multi-source
-  // dream cycles are a v0.33 follow-up. The point of threading source_id is
-  // so reverseWriteRefs can pass it through getPage and pick the correct
-  // (source_id, slug) row instead of whatever the DB happens to return.
+  // The subagent put_page tool schema doesn't expose source_id (subagents
+  // are scoped to a single source), so the child's writes all landed in the
+  // cycle's resolved source (threaded via SubagentHandlerData.source_id at
+  // submit time). Stamp the SAME source here so reverseWriteRefs reads the
+  // correct (source_id, slug) row instead of whatever the DB happens to
+  // return — mirrors runPhaseSynthesize's collection.
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT DISTINCT
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
@@ -320,7 +339,7 @@ async function collectChildPutPageSlugs(
   return rows
     .map(r => r.slug)
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
-    .map(slug => ({ slug, source_id: 'default' }));
+    .map(slug => ({ slug, source_id: sourceId }));
 }
 
 // ── Reverse-write ────────────────────────────────────────────────────

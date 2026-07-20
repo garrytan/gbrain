@@ -41,8 +41,17 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // v0.32.8 multi-source bug class regression suite — fires on any cycle
   // phase, extract, integrity, embed, or migrate-engine change.
   "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
-  "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts"],
-  "src/core/cycle/synthesize.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  // Local federated read fan-out + dream.home_source gate regression suite —
+  // fires on source-scope policy, transports, and the dream phase gates.
+  "src/core/cycle/patterns.ts": [
+    "test/e2e/multi-source-bug-class.test.ts",
+    "test/e2e/local-federated-scope-pglite.test.ts",
+  ],
+  "src/core/cycle/synthesize.ts": [
+    "test/e2e/multi-source-bug-class.test.ts",
+    "test/e2e/local-federated-scope-pglite.test.ts",
+  ],
+  "src/core/sources-load.ts": ["test/e2e/local-federated-scope-pglite.test.ts"],
   "src/commands/embed.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/migrate-engine.ts": ["test/e2e/multi-source-bug-class.test.ts"],
@@ -73,7 +82,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts"],
   "src/core/migrate.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/migrate-chain.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
-  "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
+  "src/mcp/**": [
+    "test/e2e/mcp.test.ts",
+    "test/e2e/http-transport.test.ts",
+    "test/e2e/local-federated-scope-pglite.test.ts",
+  ],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
   // gbrain connect — raw-bearer MCP smoke probe exercised end-to-end against
