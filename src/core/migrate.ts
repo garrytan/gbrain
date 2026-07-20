@@ -5667,7 +5667,8 @@ export const MIGRATIONS: Migration[] = [
         END;
         $fn$ LANGUAGE plpgsql;
       `);
-      console.log(`  v124: update_page_search_vector() no longer indexes compiled_truth (was overflowing tsvector on large pages, #2704)`);
+      process.stderr.write(`  v124: update_page_search_vector() no longer indexes compiled_truth (was overflowing tsvector on large pages, #2704)
+`);
     },
   },
 ];
