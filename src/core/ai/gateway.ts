@@ -53,6 +53,8 @@ import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+import { loadConfig } from '../config.ts';
+import { buildGatewayConfig } from './build-gateway-config.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -116,6 +118,18 @@ const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
+
+/**
+ * Recover the process-global gateway for foreground command entrypoints that
+ * were reached without cli.ts's normal engine-connect initialization (#2590).
+ * Existing configured gateways, including their DB-resolved model overrides,
+ * are deliberately left unchanged.
+ */
+export function configureGatewayIfUninitialized(): void {
+  if (_config) return;
+  const config = loadConfig();
+  if (config) configureGateway(buildGatewayConfig(config));
+}
 
 /**
  * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the

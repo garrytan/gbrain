@@ -71,7 +71,7 @@ import {
   extractFactsFromTurn,
   isFactsExtractionEnabled,
 } from '../core/facts/extract.ts';
-import { isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
+import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -81,7 +81,6 @@ import {
 } from '../core/op-checkpoint.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions, maybeBackground } from '../core/cli-options.ts';
-import { loadConfig } from '../core/config.ts';
 import { createHash } from 'crypto';
 // v0.41.15.0 (T5): worker-pool primitive + per-source-clamp wrapper +
 // per-page advisory lock + delete-orphans-first replay safety. See plan
@@ -1351,7 +1350,9 @@ export async function runExtractConversationFacts(
     process.exit(1);
   }
 
-  // Chat gateway is required for non-dry-run.
+  // Chat gateway is required for non-dry-run. Recover a cold singleton before
+  // reporting an availability error (#2590).
+  if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
     console.error('Chat gateway unavailable. Configure an Anthropic or compatible chat model, or pass --dry-run to preview segmentation.');
     process.exit(1);
