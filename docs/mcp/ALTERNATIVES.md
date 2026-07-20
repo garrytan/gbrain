@@ -45,7 +45,7 @@ tailscale funnel 8787
 For production deployments that need to run 24/7 without your machine:
 
 - **Fly.io:** $5-10/mo, global edge, `fly deploy`
-- **Railway:** $5/mo, git push deploy
+- **Railway:** $5-10/mo. [Full Railway deployment guide →](RAILWAY.md)
 
 Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 
