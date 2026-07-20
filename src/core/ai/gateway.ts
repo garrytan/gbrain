@@ -2982,6 +2982,26 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const providerOptions: Record<string, any> = {};
   if (useCache) {
+    // Call-level `providerOptions.anthropic.cacheControl` is NOT a no-op:
+    // @ai-sdk/anthropic 3.0.47+ passes it through as a top-level
+    // `cache_control` field on the Anthropic request body, which the
+    // Messages API resolves as its documented "auto-cache the last
+    // cacheable block in the request" shorthand (see Anthropic's
+    // prompt-caching docs — "top-level auto-caching ... is the simplest
+    // option when you don't need fine-grained placement"). Keep it: it's
+    // what gives a growing multi-turn conversation (toolLoop()) a rolling
+    // cache breakpoint on each turn's tail for free, without us having to
+    // hand-roll the marker-walking logic subagent.ts's raw-SDK path uses.
+    //
+    // But "last cacheable block" is the wrong block for gbrain#2490's
+    // actual callers (page-summary, skillopt, enrich): those are
+    // single-turn calls with a STABLE system prompt and a DIFFERENT user
+    // message every time, so the auto-marker lands on the ever-varying
+    // tail — every call WRITES a fresh cache entry and never READS a prior
+    // one (cache_read_input_tokens stays 0 forever). Caching the stable
+    // prefix needs an EXPLICIT breakpoint on the system block itself,
+    // which is applied below via a `SystemModelMessage` (round-trips its
+    // own `providerOptions`) instead of a bare string.
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
   // OpenAI prompt_cache_key (native-openai only): a stable per-prefix routing
@@ -3000,6 +3020,30 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
 
+  // Derive ONE canonical cache-control value AFTER config merging and reuse
+  // it for every breakpoint (system block, last tool def, call-level). If
+  // `provider_chat_options.anthropic.cacheControl` overrides the TTL (e.g.
+  // `{ type: 'ephemeral', ttl: '1h' }`), that override lands in
+  // `providerOptions.anthropic.cacheControl` via the deep-merge above —
+  // reusing it here (instead of hardcoding `{ type: 'ephemeral' }` per
+  // breakpoint) keeps every marker in the request on the same TTL.
+  const cacheControlValue: { type: 'ephemeral'; ttl?: '5m' | '1h' } | undefined = useCache
+    ? (providerOptions.anthropic?.cacheControl ?? { type: 'ephemeral' })
+    : undefined;
+
+  // Anthropic-only secondary breakpoint: mark the LAST tool def too (mirrors
+  // subagent.ts's raw-SDK path — Anthropic caches everything up to and
+  // including the last `cache_control` block it sees in the request, so
+  // marking the last tool extends the cached prefix through the whole tool
+  // list). `tool.providerOptions.anthropic.cacheControl` is the shape
+  // @ai-sdk/anthropic 3.x reads for tool-def breakpoints.
+  if (cacheControlValue && opts.tools && opts.tools.length > 0 && tools) {
+    const lastTool = tools[opts.tools[opts.tools.length - 1]!.name];
+    if (lastTool) {
+      lastTool.providerOptions = { anthropic: { cacheControl: cacheControlValue } };
+    }
+  }
+
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
     if (!tracker || _budgetRecorded) return;
@@ -3016,10 +3060,28 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   };
 
+  // The actual Anthropic system-prompt cache breakpoint. A bare string
+  // `system` produces `{ role: 'system', content }` with no `providerOptions`
+  // field (ai@6's convertToLanguageModelPrompt), so @ai-sdk/anthropic's
+  // getCacheControl(providerOptions) on that block always resolves to
+  // nothing. Passing a `SystemModelMessage` object instead — the shape `ai`
+  // documents specifically for "additional provider options (e.g. for
+  // caching)" — round-trips `providerOptions` onto that block. Byte-identical
+  // to the old bare-string form when useCache is false. Reuses
+  // `cacheControlValue` (the config-merged value) so this breakpoint's TTL
+  // always matches the last-tool and call-level breakpoints.
+  const systemParam = cacheControlValue && opts.system
+    ? {
+        role: 'system' as const,
+        content: opts.system,
+        providerOptions: { anthropic: { cacheControl: cacheControlValue } },
+      }
+    : opts.system;
+
   try {
     const result = await _generateTextTransport({
       model,
-      system: opts.system,
+      system: systemParam,
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),

@@ -48,7 +48,7 @@ import {
 } from '../core/schema-pack/index.ts';
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
-import { gbrainPath, loadConfig, configPath } from '../core/config.ts';
+import { gbrainPath, loadConfig, configPath, toEngineConfig } from '../core/config.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
   const sub = args[0];
@@ -434,16 +434,12 @@ function parseFlags(args: string[]): ParsedFlags {
 
 async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').BrainEngine) => Promise<T>): Promise<T> {
   const { createEngine } = await import('../core/engine-factory.ts');
-  const cfg = loadConfig() ?? {};
-  const engineKind = (cfg as { engine?: string }).engine === 'postgres' ? 'postgres' : 'pglite';
+  const cfg = loadConfig() ?? { engine: 'pglite' as const };
   // PR #1321 (closed) defensive fix retained: build the EngineConfig once and
   // pass it to BOTH createEngine and engine.connect. The factory captures
   // config at construction; explicit re-pass at connect() is defense in depth
   // against future engine implementations that read URL from connect-time.
-  const connectConfig: import('../core/types.ts').EngineConfig = {
-    engine: engineKind,
-    database_url: (cfg as { database_url?: string }).database_url,
-  };
+  const connectConfig = toEngineConfig(cfg);
   const engine = await createEngine(connectConfig);
   await engine.connect(connectConfig);
   try {

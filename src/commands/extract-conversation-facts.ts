@@ -1069,7 +1069,8 @@ export async function runExtractConversationFactsCore(
       }
       // Fall through to receipt+rollup write so the partial run is
       // still observable in extract_health doctor + extracts/ pages.
-      await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
+      // ...but not under --dry-run: a preview must not persist cache state.
+      if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
       // Return partial result — caller (CLI / Minion) decides how to
       // surface. NOT a thrown failure.
       return result;
@@ -1081,7 +1082,9 @@ export async function runExtractConversationFactsCore(
   // (queryable + citable per D-EXTRACT-17/19) AND UPSERTs the per-day
   // rollup row (best-effort cache per F-OUT-19). Both are best-effort —
   // failures stderr-warn but never fail the parent operation.
-  await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
+  // --dry-run must not persist cache/knowledge state: skip the rollup UPSERT +
+  // receipt-page write so a preview leaves no extract cache row behind.
+  if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
 
   return result;
 }

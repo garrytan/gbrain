@@ -900,15 +900,22 @@ export class MinionWorker extends EventEmitter {
 
     // Per-job wall-clock timeout (timer-armed only if `timeout_ms` was
     // set on the job; the grace-evict pattern above now lives outside
-    // this branch).
+    // this branch). The delay derives from the claim-time `timeout_at`
+    // stamp when present so this timer, the DB sweeper (handleTimeouts),
+    // and the handler-visible `deadlineAtMs` all agree on ONE absolute
+    // deadline instead of three clocks started at slightly different
+    // instants.
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     if (job.timeout_ms != null) {
+      const delayMs = job.timeout_at != null
+        ? Math.max(0, job.timeout_at.getTime() - Date.now())
+        : job.timeout_ms;
       timeoutTimer = setTimeout(() => {
         if (!abort.signal.aborted) {
           console.warn(`Job ${job.id} (${job.name}) hit per-job timeout (${job.timeout_ms}ms), aborting`);
           abort.abort(new Error('timeout'));
         }
-      }, job.timeout_ms);
+      }, delayMs);
     }
 
     const promise = this.executeJob(job, lockToken, abort, lockTimer)
@@ -964,6 +971,7 @@ export class MinionWorker extends EventEmitter {
       data: job.data,
       attempts_made: job.attempts_made,
       signal: abort.signal,
+      deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,
       shutdownSignal: this.shutdownAbort.signal,
       updateProgress: async (progress: unknown) => {
         await this.queue.updateProgress(job.id, lockToken, progress);

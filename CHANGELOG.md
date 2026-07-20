@@ -9,6 +9,28 @@ All notable changes to GBrain will be documented in this file.
 - Confidential OAuth clients can now revoke access tokens through the standard revocation endpoint when client secrets are stored as hashes. Invalid credentials fail closed, malformed or mixed authentication is rejected, backend failures remain retryable, and discovery metadata accurately advertises supported authentication methods.
 
 No schema migrations.
+## [0.42.63.0] - 2026-07-20
+
+**Schema commands now open the local brain you actually configured.**
+
+If your PGLite brain lives at a custom path, commands such as `gbrain schema stats` previously ignored that path and could inspect the default brain instead. That made a healthy configured brain look empty or report the wrong schema counts. Schema commands now use the same complete database configuration as the rest of GBrain. PostgreSQL behavior is unchanged, and no migration is required.
+
+### How to use it
+
+Upgrade, then run the schema command normally:
+
+```bash
+gbrain upgrade
+gbrain schema stats --json
+```
+
+The reported page and type counts now come from the `database_path` in `~/.gbrain/config.json` when the engine is PGLite.
+
+### Itemized changes
+
+#### Fixed
+- **Schema CLI commands preserve configured PGLite paths.** Engine construction and connection now receive the canonical complete engine configuration, including both `database_path` and `database_url` where applicable.
+- **CLI tests are isolated from ambient database URLs.** Schema subprocess tests explicitly clear inherited PostgreSQL URL variables, and a persistent-PGLite regression test proves `schema stats` reads the configured database rather than the default brain.
 
 ## [0.42.62.0] - 2026-07-17
 
