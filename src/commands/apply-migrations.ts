@@ -438,6 +438,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       const result = await m.orchestrator(orchestratorOptsFrom(cli));
       if (result.status === 'failed') {
         console.error(`Migration v${m.version} reported status=failed.`);
+        // Surface each failed phase's detail — the ledger records it, but
+        // the operator needs it on stderr to act (#921).
+        for (const p of result.phases) {
+          if (p.status === 'failed') {
+            console.error(`  phase ${p.name}: ${p.detail ?? '(no detail)'}`);
+          }
+        }
         // Record the attempt as 'partial' (not 'complete') so the cap counts
         // it. Don't let a failed orchestrator look like it never ran.
         try {

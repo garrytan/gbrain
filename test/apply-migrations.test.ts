@@ -180,3 +180,16 @@ describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
     expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
   });
 });
+
+// #921: a failed orchestrator must print each failed phase's detail to
+// stderr — not just "reported status=failed" — so the operator can act
+// without digging through the ledger.
+describe('failed migration prints phase detail (#921)', () => {
+  test('runner loops result.phases and console.errors failed phase details', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
+    expect(src).toMatch(
+      /reported status=failed[\s\S]{0,400}for \(const p of result\.phases\)[\s\S]{0,200}p\.status === 'failed'[\s\S]{0,200}console\.error\([\s\S]{0,80}p\.name[\s\S]{0,80}p\.detail/,
+    );
+  });
+});
