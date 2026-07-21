@@ -248,6 +248,28 @@ describe('getPage / listPages includeDeleted contract (Q3 IRON RULE)', () => {
     const mia = pages.find((p) => p.slug === 'people/mia')!;
     expect(mia.deleted_at).toBeInstanceOf(Date);
   });
+
+  test('#2345: re-putting a soft-deleted slug revives the page (no silent write-swallow)', async () => {
+    await seedPage(engine, 'people/nadia');
+    await engine.softDeletePage('people/nadia');
+    expect(await engine.getPage('people/nadia')).toBeNull();
+
+    // Re-create via putPage: the upsert lands on the tombstone row (the
+    // unique index is non-partial). Pre-fix the SET list never cleared
+    // deleted_at, so this returned success while the page stayed invisible.
+    await engine.putPage('people/nadia', {
+      type: 'note' as any,
+      title: 'Nadia (recreated)',
+      compiled_truth: 'Recreated content',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    const revived = await engine.getPage('people/nadia');
+    expect(revived).not.toBeNull();
+    expect(revived!.deleted_at).toBeFalsy();
+    expect(revived!.compiled_truth).toBe('Recreated content');
+  });
 });
 
 describe('search visibility (soft-deleted pages hidden from searchKeyword)', () => {

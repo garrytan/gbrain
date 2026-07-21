@@ -1116,7 +1116,11 @@ export class PostgresEngine implements BrainEngine {
         source_kind           = COALESCE(EXCLUDED.source_kind,           pages.source_kind),
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
-        ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
+        ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at),
+        -- #2345: revive on re-put. The unique index is non-partial, so a put
+        -- on a soft-deleted slug lands on the tombstone row; without this the
+        -- write is swallowed (page stays invisible but returns success).
+        deleted_at            = NULL
       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
     return rowToPage(rows[0]);
@@ -1441,10 +1445,19 @@ export class PostgresEngine implements BrainEngine {
                  ELSE '{}'::jsonb
                END
              WHEN jsonb_typeof(config) = 'array'
+               -- Array branch guard (#2251): jsonb_each raises "cannot call
+               -- jsonb_each on a non-object" if ANY array element is a non-object
+               -- scalar. A bare WHERE jsonb_typeof(elem)=object does NOT help --
+               -- the lateral set-returning function is evaluated per elem row
+               -- before the WHERE filters, so it still throws. Wrap each element
+               -- in a CASE so jsonb_each only ever receives an object; non-object
+               -- elements contribute no keys instead of aborting the whole UPDATE
+               -- (which otherwise blocked every cycle last_full_cycle_at write).
                THEN COALESCE(
                  (SELECT jsonb_object_agg(kv.key, kv.value)
                     FROM jsonb_array_elements(config) elem,
-                         jsonb_each(elem) kv),
+                         jsonb_each(CASE WHEN jsonb_typeof(elem) = 'object'
+                                         THEN elem ELSE '{}'::jsonb END) kv),
                  '{}'::jsonb
                )
              ELSE '{}'::jsonb
@@ -5318,19 +5331,27 @@ export class PostgresEngine implements BrainEngine {
     // SQL required both — docs now match code so users can trust the
     // number. A hub page that links out to many but has no back-references
     // is working as intended, not an orphan.
+    // #2330: exclude soft-deleted pages from EVERY page-based metric, matching
+    // getStats (`page_count`) and the "soft-deleted is hidden everywhere the
+    // user looks" posture. Previously getHealth counted all pages while getStats
+    // excluded deleted, so `get_health.page_count` and `get_stats.page_count`
+    // disagreed (and brain_score ratios were diluted by tombstones). Filtering
+    // numerator AND denominator keeps the ratios well-formed.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('person', 'company') AND deleted_at IS NULL
       )
       SELECT
-        (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM pages WHERE deleted_at IS NULL) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
         (SELECT count(*) FROM pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
         (SELECT count(*) FROM links l
@@ -5338,7 +5359,8 @@ export class PostgresEngine implements BrainEngine {
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
+           JOIN pages p ON p.id = te.page_id WHERE p.deleted_at IS NULL) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -5351,7 +5373,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('person', 'company') AND p.deleted_at IS NULL
       ORDER BY link_count DESC
       LIMIT 5
     `;

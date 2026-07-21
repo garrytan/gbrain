@@ -83,3 +83,75 @@ describe('embedQueryBounded — query-embed deadline', () => {
     expect(out.length).toBe(1024);
   });
 });
+
+/**
+ * #2028 — a degraded hybrid search must NAME why the vector arm didn't run.
+ * Pre-fix the embed catch was bare, so an embed timeout/error emitted only
+ * `vector_enabled: false` — indistinguishable from "no provider configured",
+ * which let a dead vector arm go unnoticed (empty results for CJK content).
+ */
+describe('hybridSearch meta.degraded_reason (#2028)', () => {
+  let engine: import('../../src/core/pglite-engine.ts').PGLiteEngine;
+
+  beforeEach(async () => {
+    resetGateway();
+    if (!engine) {
+      const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
+      engine = new PGLiteEngine();
+      await engine.connect({});
+      await engine.initSchema();
+      await engine.putPage('notes/hello', {
+        type: 'note' as any,
+        title: 'hello',
+        compiled_truth: 'hello world content',
+        timeline: '',
+        frontmatter: {},
+      });
+    }
+  });
+  afterEach(async () => {
+    __setEmbedTransportForTests(null);
+    resetGateway();
+  });
+
+  test('embed timeout → degraded_reason: embed_timeout', async () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-small',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-fake' },
+    });
+    __setEmbedTransportForTests(() => new Promise(() => { /* hang forever */ }));
+    const { hybridSearch } = await import('../../src/core/search/hybrid.ts');
+    let meta: import('../../src/core/types.ts').HybridSearchMeta | undefined;
+    await hybridSearch(engine, 'hello world', {
+      onMeta: (m) => { meta = m; },
+      // Already-elapsed shared deadline → the floored ~2s bound fires fast.
+      _queryEmbedDeadline: { signal: AbortSignal.timeout(1), deadlineAt: Date.now() - 5 },
+    });
+    expect(meta?.vector_enabled).toBe(false);
+    expect(meta?.degraded_reason).toBe('embed_timeout');
+  }, 15000);
+
+  test('embed error → degraded_reason: embed_error', async () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-small',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-fake' },
+    });
+    __setEmbedTransportForTests(() => Promise.reject(new Error('provider 500')));
+    const { hybridSearch } = await import('../../src/core/search/hybrid.ts');
+    let meta: import('../../src/core/types.ts').HybridSearchMeta | undefined;
+    await hybridSearch(engine, 'hello world', { onMeta: (m) => { meta = m; } });
+    expect(meta?.vector_enabled).toBe(false);
+    expect(meta?.degraded_reason).toBe('embed_error');
+  }, 15000);
+
+  test('no embedding provider → degraded_reason: no_embedding_provider', async () => {
+    // resetGateway in beforeEach left the gateway unconfigured.
+    const { hybridSearch } = await import('../../src/core/search/hybrid.ts');
+    let meta: import('../../src/core/types.ts').HybridSearchMeta | undefined;
+    await hybridSearch(engine, 'hello world', { onMeta: (m) => { meta = m; } });
+    expect(meta?.vector_enabled).toBe(false);
+    expect(meta?.degraded_reason).toBe('no_embedding_provider');
+  }, 15000);
+});

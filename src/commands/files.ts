@@ -86,7 +86,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       console.error(`Usage: gbrain files <command> [args]`);
       console.error(`  list [slug]               List files for a page (or all)`);
       console.error(`  upload <file> --page <slug>  Upload file linked to page`);
-      console.error(`  upload-raw <file> --page <slug> [--type <type>]  Smart upload with .redirect.yaml pointer`);
+      console.error(`  upload-raw <file> --page <slug> [--source <id>] [--type <type>]  Smart upload with .redirect.yaml pointer`);
       console.error(`  signed-url <path>         Generate signed URL for stored file`);
       console.error(`  sync <dir>                Upload directory to storage`);
       console.error(`  verify                    Verify all uploads match local`);
@@ -170,22 +170,125 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
 }
 
 /**
+ * Resolve the on-disk brain repo root for a source (#2297). Multi-source: a
+ * source's `local_path` is its checkout; the legacy/default source falls back
+ * to the `sync.repo_path` config anchor written by `gbrain sync`. Returns null
+ * when no repo is resolvable (pure-DB brain) — callers must fail loud rather
+ * than silently claim a git write succeeded.
+ */
+export async function resolveRepoRoot(engine: BrainEngine, sourceId: string | null): Promise<string | null> {
+  if (sourceId && sourceId !== 'default') {
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    if (rows[0]?.local_path) return rows[0].local_path;
+  }
+  return await engine.getConfig('sync.repo_path');
+}
+
+/**
+ * Look up a page by slug to link the file row to a real page + source (#2297).
+ * Slug uniqueness is (source_id, slug); with only `--page <slug>` we take the
+ * first live match. Returns null for a slug with no page (file row still records
+ * the slug + the default source).
+ */
+export async function lookupPageBySlug(
+  engine: BrainEngine,
+  pageSlug: string,
+  sourceHint?: string | null,
+): Promise<{ id: number; source_id: string } | null> {
+  // Slug uniqueness is (source_id, slug), so a bare slug can match multiple
+  // sources (#2297). An explicit --source is honored STRICTLY: a scoped miss
+  // returns null (never falls back to an unscoped match, which could silently
+  // attach the file to the wrong source). Only a bare slug (no hint) takes the
+  // first live match deterministically (id ASC).
+  if (sourceHint) {
+    const scoped = await engine.executeRaw<{ id: number; source_id: string }>(
+      `SELECT id, source_id FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL ORDER BY id LIMIT 1`,
+      [pageSlug, sourceHint],
+    );
+    return scoped[0] ?? null;
+  }
+  const rows = await engine.executeRaw<{ id: number; source_id: string }>(
+    `SELECT id, source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY id LIMIT 1`,
+    [pageSlug],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Build the globally-unique `files.storage_path` key (#2297). The schema's
+ * UNIQUE is on storage_path alone, but slugs only disambiguate within a source,
+ * so a bare `<page>/<file>` collides across sources. Prefix non-default sources
+ * with the source id so two sources can hold the same slug+filename without one
+ * ON CONFLICT-clobbering the other. Default-source paths stay byte-identical
+ * (back-compat). NOTE: this is the DB key, not the on-disk path — the physical
+ * copy lives at repoRelPath under the source's own repo root.
+ */
+export function namespacedStoragePath(sourceId: string | null, repoRelPath: string): string {
+  return sourceId && sourceId !== 'default' ? `${sourceId}/${repoRelPath}` : repoRelPath;
+}
+
+/**
+ * Single canonical `files` row writer shared by BOTH the git (small-file) and
+ * cloud (large/media) branches of upload-raw (#2297, DRY). `storage_path` is
+ * UNIQUE in the schema, so it MUST be page-namespaced by the caller to avoid one
+ * page's attachment clobbering another's. metadata goes through executeRawJsonb
+ * (raw object, never JSON.stringify into a ::jsonb cast — the double-encode trap).
+ */
+export async function insertFileRow(
+  engine: BrainEngine,
+  row: {
+    sourceId: string | null;
+    pageId: number | null;
+    pageSlug: string | null;
+    filename: string;
+    storagePath: string;
+    mimeType: string | null;
+    size: number;
+    contentHash: string;
+    metadata: Record<string, unknown>;
+  },
+): Promise<void> {
+  await executeRawJsonb(
+    engine,
+    `INSERT INTO files (source_id, page_id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+     VALUES (COALESCE($1, 'default'), $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+     ON CONFLICT (storage_path) DO UPDATE SET
+       content_hash = EXCLUDED.content_hash,
+       size_bytes = EXCLUDED.size_bytes,
+       mime_type = EXCLUDED.mime_type,
+       page_id = EXCLUDED.page_id,
+       page_slug = EXCLUDED.page_slug`,
+    [row.sourceId, row.pageId, row.pageSlug, row.filename, row.storagePath, row.mimeType, row.size, row.contentHash],
+    [row.metadata],
+  );
+}
+
+/**
  * Smart upload with size routing and .redirect.yaml pointer creation.
  *
  * Size routing:
- *   < 100 MB text/PDF  → stays in git (brain repo), no cloud upload
+ *   < 100 MB text/PDF  → copied into the brain repo under <page>/.raw/, recorded
+ *                        in the files table (storage = 'git')
  *   >= 100 MB OR media  → upload to cloud storage, create .redirect.yaml pointer
+ *                        in the repo, recorded in the files table (storage = cloud)
  *
- * The .redirect.yaml pointer stays in the brain repo so git tracks what was stored.
+ * Both branches persist a files row AND write into the brain repo so git tracks
+ * what was stored. Neither silently returns success without persisting (#2297).
  */
 async function uploadRaw(engine: BrainEngine, args: string[]) {
   const filePath = args.find(a => !a.startsWith('--'));
   const pageSlug = args.find((a, i) => args[i - 1] === '--page') || null;
   const fileType = args.find((a, i) => args[i - 1] === '--type') || null;
+  // --source disambiguates a slug that exists in more than one source (#2297);
+  // without it, a bare slug resolves to the first matching source.
+  const sourceHint = args.find((a, i) => args[i - 1] === '--source') || null;
   const noPointer = args.includes('--no-pointer');
 
   if (!filePath || !existsSync(filePath)) {
-    console.error('Usage: gbrain files upload-raw <file> --page <slug> [--type <type>] [--no-pointer]');
+    console.error('Usage: gbrain files upload-raw <file> --page <slug> [--source <id>] [--type <type>] [--no-pointer]');
     process.exit(1);
   }
 
@@ -196,13 +299,56 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const needsCloud = stat.size >= SIZE_THRESHOLD || isMedia;
 
   if (!needsCloud) {
-    // Small text/PDF files stay in git
+    // Small text/PDF files are copied INTO the brain repo and recorded in the
+    // files table (#2297). Previously this branch printed success and returned
+    // without copying anything or inserting a row — every small "raw" was
+    // silently lost. Resolve the page + source so the row links correctly and
+    // the destination is page-namespaced (storage_path is UNIQUE).
+    const page = pageSlug ? await lookupPageBySlug(engine, pageSlug, sourceHint) : null;
+    const sourceId = page?.source_id ?? sourceHint ?? 'default';
+    const repoRoot = await resolveRepoRoot(engine, sourceId);
+    if (!repoRoot) {
+      console.error(JSON.stringify({
+        success: false,
+        reason: 'no_repo_path',
+        message: 'No brain repo on disk (sources.local_path / sync.repo_path unset). '
+          + 'Run `gbrain sync` to anchor a repo, or configure cloud storage for raw uploads.',
+      }));
+      process.exit(1);
+    }
+    const content = readFileSync(filePath);
+    const hash = createHash('sha256').update(content).digest('hex');
+    // Physical copy lives at the repo-relative path UNDER the source's own repo
+    // root; the DB storage_path key is additionally source-namespaced so it stays
+    // globally unique across sources (#2297).
+    const repoRelPath = pageSlug
+      ? `${pageSlug}/.raw/${filename}`
+      : `unsorted/.raw/${hash.slice(0, 8)}-${filename}`;
+    const storagePath = namespacedStoragePath(sourceId, repoRelPath);
+    const destAbs = join(repoRoot, repoRelPath);
+    mkdirSync(dirname(destAbs), { recursive: true });
+    writeFileSync(destAbs, content);
+
+    await insertFileRow(engine, {
+      sourceId,
+      pageId: page?.id ?? null,
+      pageSlug,
+      filename,
+      storagePath,
+      mimeType,
+      size: stat.size,
+      contentHash: 'sha256:' + hash,
+      metadata: { ...(fileType ? { type: fileType } : {}), upload_method: 'git' },
+    });
+
     console.log(JSON.stringify({
       success: true,
       storage: 'git',
-      path: filePath,
+      path: storagePath,
+      abs_path: destAbs,
       size: stat.size,
       size_human: humanSize(stat.size),
+      hash: `sha256:${hash}`,
     }));
     return;
   }
@@ -220,48 +366,61 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const storage = await createStorage(config.storage as any);
   const content = readFileSync(filePath);
   const hash = createHash('sha256').update(content).digest('hex');
-  const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const bucket = (config.storage as any).bucket || 'brain-files';
+
+  const page = pageSlug ? await lookupPageBySlug(engine, pageSlug, sourceHint) : null;
+  const sourceId = page?.source_id ?? sourceHint ?? 'default';
+  // Source-namespace the cloud storage key so the same slug+filename in two
+  // sources doesn't collide on the UNIQUE storage_path (#2297). Default source
+  // keeps its historical path.
+  const cloudRelPath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+  const storagePath = namespacedStoragePath(sourceId, cloudRelPath);
 
   const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
   console.error(`Uploading ${humanSize(stat.size)} via ${method}...`);
   await storage.upload(storagePath, content, mimeType || undefined);
 
-  // Create .redirect.yaml pointer in the brain repo
+  // Create .redirect.yaml pointer IN THE BRAIN REPO, page-namespaced (#2297).
+  // Previously this was written next to the *input* file (filePath +
+  // '.redirect.yaml'), so the pointer never landed in the repo the comment
+  // claimed — git tracked nothing. Resolve the repo root and write it under
+  // the page's .raw/ sidecar so it travels with the page.
   let pointerPath: string | null = null;
   if (!noPointer && pageSlug) {
-    const { stringify } = await import('../core/yaml-lite.ts');
-    const pointer = stringify({
-      target: `supabase://${bucket}/${storagePath}`,
-      bucket,
-      storage_path: storagePath,
-      size: stat.size,
-      size_human: humanSize(stat.size),
-      hash: `sha256:${hash}`,
-      mime: mimeType || 'application/octet-stream',
-      uploaded: new Date().toISOString(),
-      ...(fileType ? { type: fileType } : {}),
-    });
-    // Write pointer next to the original file
-    pointerPath = filePath + '.redirect.yaml';
-    writeFileSync(pointerPath, pointer);
-    console.error(`Pointer written: ${pointerPath}`);
+    const repoRoot = await resolveRepoRoot(engine, sourceId);
+    if (repoRoot) {
+      const { stringify } = await import('../core/yaml-lite.ts');
+      const pointer = stringify({
+        target: `supabase://${bucket}/${storagePath}`,
+        bucket,
+        storage_path: storagePath,
+        size: stat.size,
+        size_human: humanSize(stat.size),
+        hash: `sha256:${hash}`,
+        mime: mimeType || 'application/octet-stream',
+        uploaded: new Date().toISOString(),
+        ...(fileType ? { type: fileType } : {}),
+      });
+      pointerPath = join(repoRoot, pageSlug, '.raw', `${filename}.redirect.yaml`);
+      mkdirSync(dirname(pointerPath), { recursive: true });
+      writeFileSync(pointerPath, pointer);
+      console.error(`Pointer written: ${pointerPath}`);
+    } else {
+      console.error('No brain repo on disk — skipping .redirect.yaml pointer (cloud upload + DB row still recorded).');
+    }
   }
 
-  // Record in DB. files.metadata is JSONB — pass the object via
-  // executeRawJsonb with an explicit ::jsonb cast so post-v0.31 reads see
-  // an actual object, not a JSON-encoded string (D1 wave).
-  await executeRawJsonb(
-    engine,
-    `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-     ON CONFLICT (storage_path) DO UPDATE SET
-       content_hash = EXCLUDED.content_hash,
-       size_bytes = EXCLUDED.size_bytes,
-       mime_type = EXCLUDED.mime_type`,
-    [pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
-    [{ type: fileType, upload_method: method }],
-  );
+  await insertFileRow(engine, {
+    sourceId,
+    pageId: page?.id ?? null,
+    pageSlug,
+    filename,
+    storagePath,
+    mimeType,
+    size: stat.size,
+    contentHash: 'sha256:' + hash,
+    metadata: { ...(fileType ? { type: fileType } : {}), upload_method: method },
+  });
 
   // Output JSON for scripting
   console.log(JSON.stringify({
