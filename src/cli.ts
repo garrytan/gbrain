@@ -464,7 +464,11 @@ async function main() {
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
-    const output = formatResult(op.name, result);
+    // #380 pass-through: `--json` (undeclared on most ops, promised by docs)
+    // emits the raw op result instead of the human formatter.
+    const output = params.json === true
+      ? JSON.stringify(result, null, 2) + '\n'
+      : formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -547,7 +551,10 @@ async function runThinClientRouted(
       signal: sigintController.signal,
     });
     const result = unpackToolResult(raw);
-    const output = formatResult(op.name, result);
+    // #380: same --json seam as the local-engine path (renderer parity).
+    const output = params.json === true
+      ? JSON.stringify(result, null, 2) + '\n'
+      : formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -757,10 +764,28 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
+/**
+ * #380: undeclared flags that are honored DOWNSTREAM of parseOpArgs and must
+ * keep passing through when unknown flags become hard errors:
+ *   - source     → makeContext's resolveSourceId (the --source axis)
+ *   - brain      → the mount/brain routing axis (docs promise the flag)
+ *   - dry_run    → makeContext's ctx.dryRun (ops without a declared dry_run)
+ *   - json       → raw-JSON output seam (local + thin-client paths)
+ */
+const PASSTHROUGH_VALUE_FLAGS = new Set(['source', 'brain']);
+const PASSTHROUGH_BOOL_FLAGS = new Set(['dry_run', 'json']);
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
+  const cliName = op.cliHints?.name || op.name;
+  const MAX_STDIN = 5_000_000; // 5MB cap, shared by stdin and --file
+  // #380: `--file <path>` fills the op's declared stdin param (put's `content`)
+  // from a file. Driven by cliHints.stdin — no per-op hard-coding — and
+  // disabled when the op declares a real `file` param of its own.
+  const fileParam = op.cliHints?.stdin && !op.params.file ? op.cliHints.stdin : undefined;
+  let filePath: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -774,12 +799,42 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         }
       }
       const key = arg.slice(2).replace(/-/g, '_');
+      if (fileParam && key === 'file') {
+        if (i + 1 >= args.length) {
+          console.error(`Error: ${arg} requires a value.`);
+          process.exit(1);
+        }
+        filePath = args[++i];
+        continue;
+      }
       const paramDef = op.params[key];
-      if (paramDef?.type === 'boolean') {
+      if (!paramDef) {
+        if (PASSTHROUGH_BOOL_FLAGS.has(key)) {
+          params[key] = true;
+          continue;
+        }
+        if (PASSTHROUGH_VALUE_FLAGS.has(key)) {
+          if (i + 1 >= args.length) {
+            console.error(`Error: ${arg} requires a value.`);
+            process.exit(1);
+          }
+          params[key] = args[++i];
+          continue;
+        }
+        // #380: unknown flags were silently swallowed into params, so typos
+        // like `put --file` created empty pages instead of erroring.
+        console.error(`Unknown option for gbrain ${cliName}: ${arg}`);
+        console.error(`Run 'gbrain ${cliName} --help' for valid flags.`);
+        process.exit(1);
+      }
+      if (paramDef.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
         params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        if (paramDef.type === 'number') params[key] = Number(params[key]);
+      } else {
+        console.error(`Error: ${arg} requires a value.`);
+        process.exit(1);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
@@ -788,10 +843,30 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
     }
   }
 
+  // #380: resolve --file AFTER the loop so --file/--content conflicts are
+  // caught in either order.
+  if (filePath !== undefined && fileParam) {
+    if (params[fileParam] !== undefined) {
+      console.error(`Error: use only one of --file, --${fileParam}, or stdin for gbrain ${cliName}.`);
+      process.exit(1);
+    }
+    let fileContent: string;
+    try {
+      fileContent = readFileSync(filePath, 'utf-8');
+    } catch (e) {
+      console.error(`Error: cannot read --file ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
+    if (Buffer.byteLength(fileContent, 'utf-8') > MAX_STDIN) {
+      console.error(`Error: file content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
+      process.exit(1);
+    }
+    params[fileParam] = fileContent;
+  }
+
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
     const stdinContent = readFileSync(0, 'utf-8');
-    const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
       process.exit(1);
@@ -2252,6 +2327,10 @@ export function printOpHelp(op: Operation, invokedName?: string) {
       const req = def.required ? ' (required)' : '';
       const prefix = isPos ? `  <${key}>` : `  --${key.replace(/_/g, '-')}`;
       console.log(`${prefix.padEnd(28)} ${def.description || ''}${req}`);
+    }
+    // #380: ops that read stdin also accept --file <path> (parseOpArgs).
+    if (op.cliHints?.stdin && !op.params.file) {
+      console.log(`${'  --file <path>'.padEnd(28)} Read ${op.cliHints.stdin} from a file (alternative to --${op.cliHints.stdin} or stdin)`);
     }
   }
 }
