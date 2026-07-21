@@ -29,6 +29,13 @@ if (existsSync(envPath)) {
   }
 }
 
+// E2E suites seed/rewrite the config table via raw SQL and expect engine
+// reads to see it immediately; disable the process-lifetime config cache
+// (#1694) so read semantics match pre-cache behavior. Spawned CLI
+// subprocesses inherit this. Cache semantics are pinned by
+// test/postgres-engine-config-cache.test.ts.
+process.env.GBRAIN_CONFIG_CACHE_TTL_MS ??= '0';
+
 const DATABASE_URL = process.env.DATABASE_URL;
 const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 

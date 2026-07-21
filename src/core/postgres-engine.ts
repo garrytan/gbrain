@@ -5565,30 +5565,78 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
+  /**
+   * perf (#1694 by @Omerbahari): process-lifetime config cache. A single
+   * search fires ~85 getConfig() reads (loadConfigWithEngine x2, plus
+   * mode/cache/intent/rerank/graph-signals resolvers). On a remote pooler
+   * each read is a round-trip; serial they dominate query latency and can
+   * push the op handler past cli.ts's 10s disconnect force-exit, truncating
+   * stdout. First read batch-loads the whole `config` table into this Map
+   * (inside the same connRetry posture as the per-key read — #1603/#1891);
+   * setConfig/unsetConfig write through. TTL bounds staleness for
+   * multi-writer processes; GBRAIN_CONFIG_CACHE_TTL_MS=0 disables.
+   * Only present keys are stored — Map.has() distinguishes known-absent.
+   */
+  private _configCache: Map<string, string> | null = null;
+  private _configCacheLoadedAt = 0;
+  private _configCacheLoad: Promise<void> | null = null;
+  private get _configCacheTtlMs(): number {
+    const raw = process.env.GBRAIN_CONFIG_CACHE_TTL_MS;
+    if (raw !== undefined) {
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return 30_000;
+  }
+
   async getConfig(key: string): Promise<string | null> {
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
-    // search mode/knobs and empty-stdout queries.
-    return this.connRetry(async () => {
-      const rows = await this.sql`SELECT value FROM config WHERE key = ${key}`;
-      return rows.length > 0 ? (rows[0].value as string) : null;
-    });
+    // search mode/knobs and empty-stdout queries. Both the batch load and the
+    // cache-off per-key read keep the connRetry reconnect posture.
+    const ttl = this._configCacheTtlMs;
+    if (ttl === 0) {
+      return this.connRetry(async () => {
+        const rows = await this.sql`SELECT value FROM config WHERE key = ${key}`;
+        return rows.length > 0 ? (rows[0].value as string) : null;
+      });
+    }
+    if (this._configCache === null || Date.now() - this._configCacheLoadedAt >= ttl) {
+      // Single-flight: concurrent cold reads share one batch load.
+      this._configCacheLoad ??= this.connRetry(async () => {
+        const rows = await this.sql`SELECT key, value FROM config` as unknown as
+          Array<{ key: string; value: string | null }>;
+        const map = new Map<string, string>();
+        for (const r of rows) if (r.value != null) map.set(r.key, r.value);
+        this._configCache = map;
+        this._configCacheLoadedAt = Date.now();
+      }).finally(() => {
+        this._configCacheLoad = null;
+      });
+      await this._configCacheLoad;
+    }
+    return this._configCache!.has(key) ? this._configCache!.get(key)! : null;
   }
 
   async setConfig(key: string, value: string): Promise<void> {
-    return this.connRetry(async () => {
+    await this.connRetry(async () => {
       await this.sql`
         INSERT INTO config (key, value) VALUES (${key}, ${value})
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
       `;
     });
+    // Write-through so a long-lived process never serves stale config.
+    this._configCache?.set(key, value);
   }
 
   async unsetConfig(key: string): Promise<number> {
-    return this.connRetry(async () => {
+    const count = await this.connRetry(async () => {
       const result = await this.sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
       return result.count ?? 0;
     });
+    // Write-through: known-absent, so the cache doesn't serve a stale value.
+    this._configCache?.delete(key);
+    return count;
   }
 
   async listConfigKeys(prefix: string): Promise<string[]> {
