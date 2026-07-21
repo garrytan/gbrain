@@ -69,6 +69,55 @@ interface ResolvedConfig {
   model?: string;
 }
 
+export type EnrichThinResultStatus =
+  | 'completed'
+  | 'disabled'
+  | 'no_chat_gateway'
+  | 'no_sources'
+  | 'no_candidates'
+  | 'insufficient_evidence'
+  | 'zero_budget_cap'
+  | 'budget_blocked'
+  | 'budget_exhausted'
+  | 'walltime_exhausted'
+  | 'partial_errors';
+
+export interface EnrichThinOutcomeInput {
+  sourcesCount: number;
+  candidatesConsidered: number;
+  pagesEnriched: number;
+  pagesSkippedInsufficient: number;
+  anyBudgetFlag: boolean;
+  anyError: boolean;
+  skippedByBrainWideWalltime: number;
+  spentUsd: number;
+  maxCostUsd: number;
+  maxTotalCostUsd: number;
+}
+
+export function classifyEnrichThinOutcome(input: EnrichThinOutcomeInput): {
+  result_status: EnrichThinResultStatus;
+  budget_exhausted: boolean;
+} {
+  if (input.maxCostUsd === 0 || input.maxTotalCostUsd === 0) {
+    return { result_status: 'zero_budget_cap', budget_exhausted: true };
+  }
+  if (input.anyError) return { result_status: 'partial_errors', budget_exhausted: false };
+  if (input.sourcesCount === 0) return { result_status: 'no_sources', budget_exhausted: false };
+  if (input.candidatesConsidered === 0) return { result_status: 'no_candidates', budget_exhausted: false };
+  if (input.anyBudgetFlag && input.spentUsd > 0) {
+    return { result_status: 'budget_exhausted', budget_exhausted: true };
+  }
+  if (input.anyBudgetFlag) return { result_status: 'budget_blocked', budget_exhausted: false };
+  if (input.skippedByBrainWideWalltime > 0) {
+    return { result_status: 'walltime_exhausted', budget_exhausted: false };
+  }
+  if (input.pagesEnriched === 0 && input.pagesSkippedInsufficient > 0) {
+    return { result_status: 'insufficient_evidence', budget_exhausted: false };
+  }
+  return { result_status: 'completed', budget_exhausted: false };
+}
+
 async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   const get = (k: string) => engine.getConfig(`${CFG_PREFIX}.${k}`);
   const [enabled, maxCost, maxTotalCost, maxTotalWall, maxPages, typesRaw, orderRaw, workersRaw, model] =
@@ -94,6 +143,11 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     if (raw == null) return fallback;
     const n = parseFloat(raw);
     return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  const parseNonNegativeFloatOrDefault = (raw: string | null, fallback: number): number => {
+    if (raw == null) return fallback;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
   const parseIntOrDefault = (raw: string | null, fallback: number): number => {
     if (raw == null) return fallback;
@@ -121,8 +175,8 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
 
   return {
     enabled: enabledFlag,
-    maxCostUsd: parseFloatOrDefault(maxCost, 1.0),
-    maxTotalCostUsd: parseFloatOrDefault(maxTotalCost, 5.0),
+    maxCostUsd: parseNonNegativeFloatOrDefault(maxCost, 1.0),
+    maxTotalCostUsd: parseNonNegativeFloatOrDefault(maxTotalCost, 5.0),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
     maxPagesPerTick: parseIntOrDefault(maxPages, 3),
     types,
@@ -146,12 +200,30 @@ export async function runPhaseEnrichThin(
       summary: 'cycle.enrich_thin.enabled=false (default OFF)',
       details: {
         reason: 'disabled',
+        result_status: 'disabled',
+        budget_exhausted: false,
         enable_hint: 'gbrain config set cycle.enrich_thin.enabled true',
       },
     };
   }
 
   const startedAt = Date.now();
+
+  if (cfg.maxCostUsd === 0 || cfg.maxTotalCostUsd === 0) {
+    return {
+      phase: 'enrich_thin',
+      status: 'skipped',
+      duration_ms: Date.now() - startedAt,
+      summary: 'enrich_thin budget cap is zero; no enrichment attempted',
+      details: {
+        result_status: 'zero_budget_cap',
+        budget_exhausted: true,
+        spent_usd: 0,
+        max_cost_usd: cfg.maxCostUsd,
+        max_total_cost_usd: cfg.maxTotalCostUsd,
+      },
+    };
+  }
 
   // Chat gateway required for synthesis (dry-run skips the LLM but still needs
   // the candidate query; allow dry-run without a gateway).
@@ -161,7 +233,7 @@ export async function runPhaseEnrichThin(
       status: 'skipped',
       duration_ms: Date.now() - startedAt,
       summary: 'no chat gateway configured',
-      details: { reason: 'no_chat_gateway' },
+      details: { reason: 'no_chat_gateway', result_status: 'no_chat_gateway', budget_exhausted: false },
     };
   }
 
@@ -173,7 +245,7 @@ export async function runPhaseEnrichThin(
       status: 'ok',
       duration_ms: Date.now() - startedAt,
       summary: 'no sources to process',
-      details: { sources_count: 0 },
+      details: { sources_count: 0, result_status: 'no_sources', budget_exhausted: false },
     };
   }
 
@@ -231,16 +303,36 @@ export async function runPhaseEnrichThin(
     }
   }
 
-  const totals = { enriched: 0, skipped_insufficient: 0, sources_processed: 0 };
+  const totals = { enriched: 0, skipped_insufficient: 0, sources_processed: 0, candidates_considered: 0 };
   for (const r of Object.values(perSourceResults)) {
     if (!r.error) totals.sources_processed++;
+    totals.candidates_considered = (totals.candidates_considered ?? 0) + r.candidates_considered;
     totals.enriched += r.pages_enriched;
     totals.skipped_insufficient += r.pages_skipped_insufficient;
   }
 
   const anyError = Object.values(perSourceResults).some((r) => r.error);
-  const status = anyError ? 'warn' : 'ok';
-  const summary = `${totals.enriched} page(s) enriched across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent`;
+  const anyBudgetFlag = Object.values(perSourceResults).some((r) => r.budget_exhausted === true);
+  const outcome = classifyEnrichThinOutcome({
+    sourcesCount: sources.length,
+    candidatesConsidered: totals.candidates_considered ?? 0,
+    pagesEnriched: totals.enriched,
+    pagesSkippedInsufficient: totals.skipped_insufficient,
+    anyBudgetFlag,
+    anyError,
+    skippedByBrainWideWalltime,
+    spentUsd: totalSpent,
+    maxCostUsd: cfg.maxCostUsd,
+    maxTotalCostUsd: cfg.maxTotalCostUsd,
+  });
+  const status =
+    outcome.result_status === 'partial_errors' ||
+    outcome.result_status === 'budget_blocked' ||
+    outcome.result_status === 'budget_exhausted' ||
+    outcome.result_status === 'walltime_exhausted'
+      ? 'warn'
+      : 'ok';
+  const summary = `${totals.enriched} page(s) enriched across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent (${outcome.result_status})`;
 
   return {
     phase: 'enrich_thin',
@@ -250,6 +342,9 @@ export async function runPhaseEnrichThin(
     details: {
       sources_count: sources.length,
       sources_processed: totals.sources_processed,
+      result_status: outcome.result_status,
+      budget_exhausted: outcome.budget_exhausted,
+      candidates_considered: totals.candidates_considered ?? 0,
       pages_enriched: totals.enriched,
       pages_skipped_insufficient: totals.skipped_insufficient,
       spent_usd: totalSpent,
