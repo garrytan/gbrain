@@ -249,3 +249,57 @@ describe('gbrain extract all --source db', () => {
     expect(entries.length).toBe(1);
   });
 });
+
+// ─── Issue #1493 (codex P2): unresolved refs in the --json result ────
+
+describe('extract links --source db --json: unresolved refs (#1493)', () => {
+  beforeEach(truncateAll);
+
+  const conceptPage = (title: string, body = ''): PageInput => ({
+    type: 'concept', title, compiled_truth: body, timeline: '',
+  });
+
+  test('any-dir wikilink miss appears in the final JSON result', async () => {
+    await engine.putPage('concepts/note', conceptPage('Note', 'See [[janus/never-existed]].'));
+
+    const logged: string[] = [];
+    const origLog = console.log;
+    console.log = (m: unknown) => { logged.push(String(m)); };
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+
+    const result = logged
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l))
+      .find(o => 'links_created' in o);
+    expect(result).toBeDefined();
+    expect(result.unresolved_refs).toContainEqual({ field: 'wikilink', name: 'janus/never-existed' });
+    expect((await engine.getLinks('concepts/note')).length).toBe(0);
+  });
+
+  test('clean run has no unresolved_refs key (shape back-compat)', async () => {
+    await engine.putPage('janus/real', conceptPage('Real', 'target'));
+    await engine.putPage('concepts/note', conceptPage('Note', 'See [[janus/real]].'));
+
+    const logged: string[] = [];
+    const origLog = console.log;
+    console.log = (m: unknown) => { logged.push(String(m)); };
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+
+    const result = logged
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l))
+      .find(o => 'links_created' in o);
+    expect(result).toBeDefined();
+    expect(result.unresolved_refs).toBeUndefined();
+    // The any-dir link itself landed.
+    expect((await engine.getLinks('concepts/note')).some((l: any) => l.to_slug === 'janus/real')).toBe(true);
+  });
+});
