@@ -1119,6 +1119,16 @@ export class PostgresEngine implements BrainEngine {
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
+    // #2189: an INSERT … ON CONFLICT DO UPDATE … RETURNING that yields 0 rows
+    // (e.g. a BEFORE trigger suppressing the write) previously crashed in
+    // rowToPage with an opaque "undefined is not an object (row.deleted_at)".
+    // Throw a diagnosable error naming the row instead. Mirrors pglite-engine.ts.
+    if (!rows[0]) {
+      throw new Error(
+        `putPage: INSERT … RETURNING produced no row for slug='${slug}' source_id='${sourceId}'. ` +
+        `A trigger or rule on the pages table may be suppressing the write.`
+      );
+    }
     return rowToPage(rows[0]);
   }
 
