@@ -32,6 +32,14 @@ describe('lintContent', () => {
     expect(issues.some(i => i.rule === 'code-fence-wrap')).toBe(true);
   });
 
+  test('does not flag a mid-document markdown code block as a page wrap', () => {
+    // Regression: a note that merely CONTAINS a ```markdown block (e.g. a
+    // Notion export fencing a config snippet) is not a whole-page wrap.
+    const content = '---\ntitle: Notes\ntype: note\ncreated: 2026-05-25\n---\n\nIntro paragraph.\n\n```markdown\nKEY=value\nPORT=3002\n```\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'code-fence-wrap')).toBe(false);
+  });
+
   test('detects placeholder dates', () => {
     const content = '---\ntitle: Test\ntype: person\ncreated: YYYY-MM-DD\n---\n\n# Test';
     const issues = lintContent(content, 'test.md');
@@ -95,6 +103,17 @@ describe('fixContent', () => {
     const fixed = fixContent(input);
     expect(fixed).not.toContain('```');
     expect(fixed).toContain('# Title');
+  });
+
+  test('leaves a mid-document markdown code block intact (keeps its closing fence)', () => {
+    // Regression for the autopilot churn: fixContent used to strip only the
+    // trailing ```, leaving the fence open and the note re-corrupted each cycle.
+    const input = '---\ntitle: Notes\ntype: note\ncreated: 2026-05-25\n---\n\nIntro paragraph.\n\n```markdown\nKEY=value\nPORT=3002\n```\n';
+    const fixed = fixContent(input);
+    const fenceLines = (fixed.match(/^```/gm) ?? []).length;
+    expect(fenceLines).toBe(2);
+    expect(fixed).toContain('```markdown');
+    expect(fixed.trimEnd().endsWith('```')).toBe(true);
   });
 
   test('cleans up excessive blank lines after fix', () => {
