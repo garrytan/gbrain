@@ -163,6 +163,8 @@ export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
     compiled_truth: (row.compiled_truth as string | null) ?? '',
     timeline: (row.timeline as string | null) ?? '',
     frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
+    effective_date: row.effective_date == null ? null : new Date(row.effective_date as string),
+    effective_date_source: (row.effective_date_source as StalePageRow['effective_date_source'] | null) ?? null,
     updated_at: new Date(row.updated_at as string),
     // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
     // Fallback derives an ISO string from the Date — NEVER String(Date), which

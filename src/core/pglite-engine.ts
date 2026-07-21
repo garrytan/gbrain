@@ -974,6 +974,7 @@ export class PGLiteEngine implements BrainEngine {
     }
     const { rows } = await this.db.query(
       `SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
+              effective_date, effective_date_source, import_filename,
               source_kind, source_uri, ingested_via, ingested_at
        FROM pages WHERE ${where.join(' AND ')} LIMIT 1`,
       params
@@ -2628,7 +2629,8 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(
       // #1768: engine parity — project the same deterministic full-µs UTC string
       // as postgres-engine.ts so extractStaleFromDB stamps the exact updated_at.
-      `SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at,
+      `SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter,
+              effective_date, effective_date_source, updated_at,
               to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
          FROM pages
          WHERE ${where}${afterClause}
