@@ -47,6 +47,10 @@ import type {
   TouchpointKind,
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
+import {
+  OPENROUTER_CACHE_HEADER,
+  openrouterRequiresExplicitPromptCache,
+} from './recipes/openrouter.ts';
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -2709,6 +2713,17 @@ export function probeChatModel(modelStr: string): ChatModelProbe {
   return { ok: true };
 }
 
+/**
+ * Per-model prompt-cache capability: `supports_prompt_cache` may be a static
+ * boolean (native providers) or a per-model-id predicate (OpenRouter's
+ * family-scoped caching).
+ */
+function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
+  const support = recipe.touchpoints.chat?.supports_prompt_cache;
+  if (typeof support === 'function') return support(modelId);
+  return support === true;
+}
+
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -3030,8 +3045,18 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
   const cfg = requireConfig();
 
-  const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
+  const supportsCache = chatSupportsPromptCache(recipe, modelId);
   const useCache = !!opts.cacheSystem && supportsCache;
+
+  // OpenRouter Claude routes need an explicit `cache_control` on the system
+  // content block, but the openai-compatible adapter drops anthropic-namespace
+  // providerOptions before building the wire body. Signal intent via a private
+  // header; the recipe's compat fetch shim rewrites the body and strips the
+  // header before the request leaves the process. OpenAI routes through
+  // OpenRouter cache automatically — no marker needed.
+  const requestHeaders = useCache && recipe.id === 'openrouter' && openrouterRequiresExplicitPromptCache(modelId)
+    ? { [OPENROUTER_CACHE_HEADER]: '1' }
+    : undefined;
 
   const tools = toAISDKTools(opts.tools);
 
@@ -3144,6 +3169,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
+      ...(requestHeaders ? { headers: requestHeaders } : {}),
     });
 
     // Normalize blocks. Vercel SDK gives us `result.content` (an array of typed
@@ -3192,7 +3218,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       usage: {
         input_tokens: inTok,
         output_tokens: outTok,
-        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? 0),
+        // `usage.cachedInputTokens` is the AI SDK's provider-neutral cache-read
+        // count — it's how OpenAI-compatible routes (OpenRouter's
+        // prompt_tokens_details.cached_tokens) surface cache hits.
+        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? usage.cachedInputTokens ?? 0),
         cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
       },
       model: `${recipe.id}:${modelId}`,

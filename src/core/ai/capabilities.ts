@@ -88,9 +88,13 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
   // boundary; this function returns capabilities for whatever the user asked
   // for, on the assumption it'll be validated elsewhere.
 
+  const promptCache = chat.supports_prompt_cache;
+
   return {
     supportsToolCalling: chat.supports_tools === true,
-    supportsPromptCaching: chat.supports_prompt_cache === true,
+    supportsPromptCaching: typeof promptCache === 'function'
+      ? promptCache(parsed.modelId)
+      : promptCache === true,
     // No recipe exposes parallel-tools-specifically yet; gate on supports_tools.
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
@@ -101,11 +105,6 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     supportsThinking: false,
     maxContext: chat.max_context_tokens ?? 128_000,
   };
-
-  // The `parsed` binding is intentionally unused — `resolveRecipe` is called
-  // here for its validation side-effects (throws on unknown provider). Keeping
-  // the destructure makes future per-model capability overrides cheap.
-  void parsed;
 }
 
 /**
