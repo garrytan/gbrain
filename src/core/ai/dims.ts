@@ -263,6 +263,19 @@ export function dimsProviderOptions(
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
+      // Google gemini-embedding-2 (and -embedding-001) on openai-compat
+      // proxies (OpenRouter etc.) accept `dimensions` for Matryoshka-style
+      // output truncation. Per Google's docs the supported range is
+      // 128..3072 with recommended values 768 / 1536 / 3072. Without this,
+      // a user who picks e.g. 1536 silently gets back 3072-dim vectors and
+      // the gateway dim-mismatch validator at gateway.ts:1981 hard-fails
+      // on first embed. Symmetric retrieval — inputType ignored.
+      if (
+        modelId.startsWith('google/gemini-embedding') ||
+        modelId === 'text-embedding-004'
+      ) {
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
       // retrieval. Today still hardcoded to 'db' for back-compat — opting
       // into the new inputType seam is a follow-up (see plan's deferred
