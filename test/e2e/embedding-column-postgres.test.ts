@@ -224,4 +224,54 @@ if (!dbUrl) {
       await engine.executeRaw(`UPDATE content_chunks SET embedding_voyage = '${v}'::vector WHERE id = ${dogId}`);
     });
   });
+
+  describe('Postgres: upsertChunks write-side ResolvedColumn descriptor (#1262)', () => {
+    const descriptor: ResolvedColumn = {
+      name: 'embedding_ze',
+      type: 'halfvec',
+      dimensions: 2560,
+      embeddingModel: 'zeroentropyai:zembed-1',
+    };
+
+    test('halfvec descriptor writes the text embedding to the alternate column, not legacy embedding', async () => {
+      await engine.putPage('docs/write-alt-postgres', {
+        type: 'concept',
+        title: 'Write alt column Postgres',
+        compiled_truth: 'Postgres write-side alternate embedding column test.',
+      });
+      await engine.upsertChunks('docs/write-alt-postgres', [
+        {
+          chunk_index: 0,
+          chunk_text: 'Postgres write-side alternate embedding column test.',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(2560).fill(0.25),
+        },
+      ], { embeddingColumn: descriptor });
+
+      const rows = await engine.executeRaw<{
+        has_default: boolean;
+        has_ze: boolean;
+      }>(
+        `SELECT embedding IS NOT NULL AS has_default,
+                embedding_ze IS NOT NULL AS has_ze
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = 'docs/write-alt-postgres'`,
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0].has_default).toBe(false);
+      expect(rows[0].has_ze).toBe(true);
+    }, 30_000);
+
+    test('stale scan follows the write-side column (count + list parity with the write target)', async () => {
+      // Legacy predicate: cat/dog/write-alt rows all have embedding NULL.
+      expect(await engine.countStaleChunks()).toBeGreaterThan(0);
+      // Alt-column predicate: every chunk has embedding_ze populated.
+      expect(await engine.countStaleChunks({ embeddingColumn: descriptor })).toBe(0);
+      expect(await engine.listStaleChunks({ embeddingColumn: descriptor, batchSize: 100 })).toHaveLength(0);
+      expect((await engine.listStaleChunks({ batchSize: 100 })).length).toBeGreaterThan(0);
+      // updated_desc arm uses the same predicate.
+      expect(await engine.listStaleChunks({ embeddingColumn: descriptor, orderBy: 'updated_desc', batchSize: 100 })).toHaveLength(0);
+    }, 30_000);
+  });
 }

@@ -241,3 +241,133 @@ describe('buildVectorCastFragment — engine SQL composer (D3)', () => {
     expect(castSql).toBe('$1::halfvec(2560)');
   });
 });
+
+describe('PGLite engine: upsertChunks write-side ResolvedColumn descriptor (#1262)', () => {
+  test('halfvec descriptor writes the text embedding to the alternate column, not legacy embedding', async () => {
+    await engine.putPage('docs/write-alt-pglite', {
+      type: 'concept',
+      title: 'Write alt column PGLite',
+      compiled_truth: 'PGLite write-side alternate embedding column test.',
+    });
+
+    const descriptor: ResolvedColumn = {
+      name: 'embedding_ze',
+      type: 'halfvec',
+      dimensions: 2560,
+      embeddingModel: 'zeroentropyai:zembed-1',
+    };
+    await engine.upsertChunks('docs/write-alt-pglite', [
+      {
+        chunk_index: 0,
+        chunk_text: 'PGLite write-side alternate embedding column test.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array(2560).fill(0.25),
+      },
+    ], { embeddingColumn: descriptor });
+
+    const rows = await engine.executeRaw<{
+      has_default: boolean;
+      has_ze: boolean;
+      has_embedded_at: boolean;
+    }>(
+      `SELECT embedding IS NOT NULL AS has_default,
+              embedding_ze IS NOT NULL AS has_ze,
+              embedded_at IS NOT NULL AS has_embedded_at
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = 'docs/write-alt-pglite'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].has_default).toBe(false);
+    expect(rows[0].has_ze).toBe(true);
+    expect(rows[0].has_embedded_at).toBe(true);
+  });
+
+  test('text-unchanged re-upsert without a vector preserves the alternate-column embedding', async () => {
+    const descriptor: ResolvedColumn = {
+      name: 'embedding_ze',
+      type: 'halfvec',
+      dimensions: 2560,
+      embeddingModel: 'zeroentropyai:zembed-1',
+    };
+    // Same chunk_text, no embedding: the ON CONFLICT CASE must keep the
+    // existing alternate-column vector (D24 semantics follow the column).
+    await engine.upsertChunks('docs/write-alt-pglite', [
+      {
+        chunk_index: 0,
+        chunk_text: 'PGLite write-side alternate embedding column test.',
+        chunk_source: 'compiled_truth',
+      },
+    ], { embeddingColumn: descriptor });
+    const rows = await engine.executeRaw<{ has_ze: boolean }>(
+      `SELECT embedding_ze IS NOT NULL AS has_ze
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = 'docs/write-alt-pglite'`,
+    );
+    expect(rows).toEqual([{ has_ze: true }]);
+  });
+});
+
+describe('PGLite: embed --stale converges on an alt-column brain (#1262)', () => {
+  test('boundary resolves the write column; stale scan does not re-select embedded rows', async () => {
+    const { runEmbedCore } = await import('../../src/commands/embed.ts');
+    const local = new PGLiteEngine();
+    const previousHome = process.env.GBRAIN_HOME;
+    process.env.GBRAIN_HOME = `/tmp/gbrain-write-col-stale-${Date.now()}`;
+    try {
+      await local.connect({});
+      await local.initSchema();
+      await (local as any).db.exec(
+        `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_ze halfvec(2560)`,
+      );
+
+      const descriptor: ResolvedColumn = {
+        name: 'embedding_ze',
+        type: 'halfvec',
+        dimensions: 2560,
+        embeddingModel: 'zeroentropyai:zembed-1',
+      };
+      await local.setConfig('embedding_columns', JSON.stringify({
+        embedding_ze: { provider: 'zeroentropyai:zembed-1', dimensions: 2560, type: 'halfvec' },
+      }));
+      configureGateway({
+        embedding_model: 'zeroentropyai:zembed-1',
+        embedding_dimensions: 2560,
+        env: {},
+      });
+
+      await local.putPage('docs/stale-alt-pglite', {
+        type: 'concept',
+        title: 'Dynamic stale column',
+        compiled_truth: 'A chunk that is embedded only in the dynamic column.',
+      });
+      await local.upsertChunks('docs/stale-alt-pglite', [
+        {
+          chunk_index: 0,
+          chunk_text: 'A chunk that is embedded only in the dynamic column.',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(2560).fill(0.25),
+        },
+      ], { embeddingColumn: descriptor });
+
+      // Engine-level contrast: legacy predicate still sees the row as stale;
+      // the alt-column predicate does not.
+      expect(await local.countStaleChunks()).toBe(1);
+      expect(await local.countStaleChunks({ embeddingColumn: descriptor })).toBe(0);
+      expect(await local.listStaleChunks({ embeddingColumn: descriptor, batchSize: 100 })).toHaveLength(0);
+      expect(await local.listStaleChunks({ batchSize: 100 })).toHaveLength(1);
+
+      // Boundary-level: `embed --stale --dry-run` resolves the write column
+      // from merged config + gateway and reports NOTHING to embed. Without
+      // the fix this reports 1 (perpetual re-embed loop).
+      const result = await runEmbedCore(local, { stale: true, dryRun: true });
+      expect(result.would_embed).toBe(0);
+    } finally {
+      await local.disconnect();
+      if (previousHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = previousHome;
+      resetGateway();
+    }
+  });
+});

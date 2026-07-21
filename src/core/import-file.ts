@@ -10,7 +10,8 @@ import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
-import type { ChunkInput, PageInput, PageType } from './types.ts';
+import type { ChunkInput, PageInput, PageType, ResolvedColumn } from './types.ts';
+import { resolveWriteColumnForEngine } from './search/embedding-column.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
@@ -740,6 +741,14 @@ export async function importFromContent(
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
   const txOpts = sourceId ? { sourceId } : undefined;
+  // #1262: resolve the write-side embedding column once (merged config +
+  // gateway model) BEFORE the transaction; the descriptor rides only on
+  // upsertChunks so text embeddings land in the registered column.
+  const chunkWriteColumn = await resolveWriteColumnForEngine(engine);
+  const chunkOpts: { sourceId?: string; embeddingColumn?: ResolvedColumn } | undefined =
+    (sourceId || chunkWriteColumn)
+      ? { ...(sourceId && { sourceId }), ...(chunkWriteColumn && { embeddingColumn: chunkWriteColumn }) }
+      : undefined;
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -824,7 +833,7 @@ export async function importFromContent(
     }
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks, txOpts);
+      await tx.upsertChunks(slug, chunks, chunkOpts);
       // v0.41.31: stamp embedding provenance when this import actually
       // embedded (not --no-embed), so a later model/dims swap is detectable
       // as stale via embed --stale. The deferred/backfill + per-slug embed
@@ -1064,6 +1073,12 @@ export async function importCodeFile(
   const title = `${relativePath} (${lang})`;
   const sourceId = opts.sourceId;
   const txOpts = sourceId ? { sourceId } : undefined;
+  // #1262: write-side embedding column descriptor (rides only on upsertChunks).
+  const chunkWriteColumn = await resolveWriteColumnForEngine(engine);
+  const chunkOpts: { sourceId?: string; embeddingColumn?: ResolvedColumn } | undefined =
+    (sourceId || chunkWriteColumn)
+      ? { ...(sourceId && { sourceId }), ...(chunkWriteColumn && { embeddingColumn: chunkWriteColumn }) }
+      : undefined;
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -1183,7 +1198,7 @@ export async function importCodeFile(
     await tx.addTag(slug, lang, txOpts);
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks, txOpts);
+      await tx.upsertChunks(slug, chunks, chunkOpts);
       // v0.41.31: stamp embedding provenance ONLY when every chunk was
       // freshly embedded with the current model this call (no reuse-by-hash
       // carrying old-model vectors). Mixed pages stay unstamped rather than
@@ -1332,6 +1347,12 @@ export async function withImportTransaction(
 ): Promise<void> {
   const sourceId = spec.sourceId ?? 'default';
   const txOpts = spec.sourceId ? { sourceId: spec.sourceId } : undefined;
+  // #1262: write-side embedding column descriptor (rides only on upsertChunks).
+  const chunkWriteColumn = await resolveWriteColumnForEngine(engine);
+  const chunkOpts: { sourceId?: string; embeddingColumn?: ResolvedColumn } | undefined =
+    (spec.sourceId || chunkWriteColumn)
+      ? { ...(spec.sourceId && { sourceId: spec.sourceId }), ...(chunkWriteColumn && { embeddingColumn: chunkWriteColumn }) }
+      : undefined;
   await engine.transaction(async (tx) => {
     if (spec.hadExisting) await tx.createVersion(spec.slug, txOpts);
     await tx.putPage(spec.slug, spec.page, txOpts);
@@ -1347,7 +1368,7 @@ export async function withImportTransaction(
     }
     if (spec.chunks !== undefined) {
       if (spec.chunks.length > 0) {
-        await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
+        await tx.upsertChunks(spec.slug, spec.chunks, chunkOpts);
       } else {
         await tx.deleteChunks(spec.slug, txOpts);
       }

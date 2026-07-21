@@ -61,6 +61,7 @@ import {
   type SynopsisFailureKind,
 } from './audit-synopsis.ts';
 import type { BrainEngine } from './engine.ts';
+import { resolveWriteColumnForEngine } from './search/embedding-column.ts';
 import type { ChunkInput, CRMode, Page } from './types.ts';
 import type { SourceRow } from './sources-ops.ts';
 
@@ -286,9 +287,13 @@ export async function reembedPageWithContextualRetrieval(
 
       // ── PHASE 2: single DB transaction ───────────────────────────
       try {
+        // #1262: contextual re-embeds write TEXT embeddings — thread the
+        // caller-resolved write column like every other embed path.
+        const embeddingColumn = await resolveWriteColumnForEngine(args.engine);
         await args.engine.transaction(async (tx) => {
           await tx.upsertChunks(args.pageSlug, phase1.embeddedChunks, {
             sourceId: args.sourceId,
+            ...(embeddingColumn && { embeddingColumn }),
           });
           await tx.updatePageContextualRetrievalState(
             args.pageSlug,

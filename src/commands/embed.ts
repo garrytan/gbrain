@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
-import type { ChunkInput } from '../core/types.ts';
+import type { ChunkInput, ResolvedColumn } from '../core/types.ts';
+import { resolveWriteColumnForEngine } from '../core/search/embedding-column.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -183,8 +184,13 @@ export class EmbeddingDimMismatchError extends Error {
  * fresh-install bug class at the very first invocation instead of letting
  * the worker pool hammer N pages with raw 22000 errors.
  */
-async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promise<void> {
+async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean, embeddingColumn?: ResolvedColumn): Promise<void> {
   if (dryRun) return; // dry-run never embeds, no risk
+  // #1262: an alt-column brain writes to `embeddingColumn`, not the legacy
+  // `embedding` column — the legacy column's dims are irrelevant, and the
+  // registry entry (validated at resolve time) pins the target's dims. Only
+  // the legacy default path needs the schema-vs-gateway dim comparison.
+  if (embeddingColumn && embeddingColumn.name !== 'embedding') return;
   const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
   const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
   let existing;
@@ -238,7 +244,12 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // v0.37.11.0 (Lane D.2): pre-flight dim-mismatch check. Catches the headline
   // fresh-install bug class before the worker pool spends 20 parallel calls
   // hitting raw Postgres dimension errors.
-  await preflightDimMismatch(engine, !!opts.dryRun);
+  // #1262: resolve the write-side embedding column ONCE at the boundary
+  // (merged config + gateway model) and thread the descriptor through every
+  // upsertChunks / stale-scan below. undefined => legacy `embedding` column.
+  const embeddingColumn = await resolveWriteColumnForEngine(engine);
+
+  await preflightDimMismatch(engine, !!opts.dryRun, embeddingColumn);
 
   const result: EmbedResult = {
     embedded: 0,
@@ -253,7 +264,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     for (const s of opts.slugs) {
       if (isAborted(opts.signal)) break; // #1737: stop the per-slug loop on abort
       try {
-        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal, embeddingColumn);
       } catch (e: unknown) {
         serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -347,7 +358,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
         catchUp: opts.catchUp,
         pacer,
         paceMaxConcurrency,
-      }, opts.signal);
+      }, opts.signal, embeddingColumn);
     } finally {
       // E1: surface pacing telemetry (human + structured) when pacing was on.
       const snap = pacer.snapshot();
@@ -376,7 +387,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal, embeddingColumn);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -521,8 +532,13 @@ async function embedPage(
   result: EmbedResult,
   sourceId?: string,
   signal?: AbortSignal,
+  embeddingColumn?: ResolvedColumn,
 ) {
   const opts = sourceId ? { sourceId } : undefined;
+  // #1262: write-side descriptor rides only on WRITE calls (upsertChunks).
+  const chunkOpts = (sourceId || embeddingColumn)
+    ? { ...(sourceId && { sourceId }), ...(embeddingColumn && { embeddingColumn }) }
+    : undefined;
   const page = await engine.getPage(slug, opts);
   if (!page) {
     throw new Error(`Page not found: ${slug}`);
@@ -554,7 +570,7 @@ async function embedPage(
     }
 
     if (inputs.length > 0) {
-      await engine.upsertChunks(slug, inputs, opts);
+      await engine.upsertChunks(slug, inputs, chunkOpts);
       chunks = await engine.getChunks(slug, opts);
     }
   }
@@ -589,7 +605,7 @@ async function embedPage(
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
-  await engine.upsertChunks(slug, updated, opts);
+  await engine.upsertChunks(slug, updated, chunkOpts);
   // v0.41.31: stamp provenance so a later model/dims swap is detectable as
   // stale. embedPage is the per-slug path used by `gbrain embed <slug>` AND
   // by `gbrain sync`'s post-import embed step (runEmbedCore({slugs})).
@@ -622,6 +638,7 @@ async function embedAll(
     paceMaxConcurrency?: number;
   },
   signal?: AbortSignal,
+  embeddingColumn?: ResolvedColumn,
 ) {
   // v0.41.31: current embedding provenance signature. Stamped onto pages
   // when their chunks are (re)embedded so a later model/dimension swap is
@@ -644,7 +661,7 @@ async function embedAll(
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
     // #1737: thread the external abort signal so the cycle embed phase bails.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
+    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal, embeddingColumn);
   }
 
   // --all path: pacer (no-op when off). E-1: lower the worker count to the
@@ -725,7 +742,10 @@ async function embedAll(
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await observed(pacer, () => engine.upsertChunks(page.slug, updated, pageOpts));
+      await observed(pacer, () => engine.upsertChunks(page.slug, updated, {
+        ...(pageSourceId && { sourceId: pageSourceId }),
+        ...(embeddingColumn && { embeddingColumn }),
+      }));
       // v0.41.31: stamp embedding provenance so a later model swap is
       // detectable as stale.
       await observed(pacer, () =>
@@ -805,10 +825,16 @@ async function embedAllStale(
   },
   signature?: string,
   externalSignal?: AbortSignal,
+  embeddingColumn?: ResolvedColumn,
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
-  const sourceOpt = sourceId ? { sourceId } : undefined;
+  // #1262: the stale predicate follows the write-side column — without it an
+  // alt-column brain would perpetually re-select (and re-pay for) chunks whose
+  // target column is already populated.
+  const sourceOpt = (sourceId || embeddingColumn)
+    ? { ...(sourceId && { sourceId }), ...(embeddingColumn && { embeddingColumn }) }
+    : undefined;
 
   // v0.41.31: re-embed pages whose embedding_signature drifted (model/dims
   // swap). dry-run must NOT mutate, so it counts signature-stale via the
@@ -967,6 +993,7 @@ async function embedAllStale(
             afterUpdatedAt,
           }),
           ...(sourceId && { sourceId }),
+          ...(embeddingColumn && { embeddingColumn }),
         }),
       );
       if (batch.length === 0) {
@@ -1019,7 +1046,10 @@ async function embedAllStale(
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
-          await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
+          await observed(pacer, () => engine.upsertChunks(slug, merged, {
+            sourceId: keySourceId,
+            ...(embeddingColumn && { embeddingColumn }),
+          }));
           // v0.41.31: stamp provenance after the page's chunks are embedded —
           // but only when EVERY chunk was stale (fully re-embedded this pass).
           // A partially-stale page keeps preserved chunks of unknown/old
@@ -1090,7 +1120,7 @@ async function embedAllStale(
   // as a clean run — re-running won't help until the underlying failure is fixed.
   if (staleOpts?.catchUp && !effectiveSignal.aborted && embedFailures > 0) {
     const remaining = await engine.countStaleChunks(
-      signature ? { signature, ...(sourceId ? { sourceId } : {}) } : (sourceId ? { sourceId } : undefined),
+      signature ? { signature, ...sourceOpt } : sourceOpt,
     );
     if (remaining > 0) {
       serr(`\n  [embed] catch-up finished but ${remaining} chunk(s) remain stale after ${embedFailures} embed failure(s). These are not embeddable as-is; re-running won't clear them until the underlying error is resolved.`);

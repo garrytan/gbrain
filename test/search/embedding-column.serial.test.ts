@@ -13,9 +13,10 @@
  *     throw on unknown string.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterAll, afterEach } from 'bun:test';
 import {
   resolveEmbeddingColumn,
+  resolveWriteColumn,
   getEmbeddingColumnRegistry,
   buildVectorCastFragment,
   quoteIdentifier,
@@ -34,6 +35,28 @@ import {
 } from '../../src/core/search/embedding-column.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import type { ResolvedColumn } from '../../src/core/types.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+
+/**
+ * Teardown: reset AND re-apply the legacy preload config
+ * (test/helpers/legacy-embedding-preload.ts). A bare resetGateway() would
+ * leave the slot empty for the NEXT file's beforeAll (the preload's
+ * per-test beforeEach only fires before tests, not before beforeAll), which
+ * would make sibling PGLite fixtures initSchema at the 1280 default instead
+ * of the legacy 1536 their seed vectors assume.
+ */
+function restorePreloadGateway() {
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
+}
+
+afterAll(() => {
+  restorePreloadGateway();
+});
 
 function cfg(overrides: Partial<GBrainConfig> = {}): GBrainConfig {
   return { engine: 'pglite', ...overrides };
@@ -520,5 +543,91 @@ describe('codex /ship #4 — isCacheSafe (embedding-space-based skip)', () => {
       embeddingModel: 'openai:text-embedding-3-large',
     };
     expect(isCacheSafe(r, cfg())).toBe(true);
+  });
+});
+
+describe('resolveWriteColumn — write-side boundary resolution (#1262)', () => {
+  afterEach(() => {
+    restorePreloadGateway();
+  });
+
+  test('no registry / empty registry returns undefined (legacy single-column brain)', () => {
+    expect(resolveWriteColumn(cfg())).toBeUndefined();
+    expect(resolveWriteColumn(cfg({ embedding_columns: {} }))).toBeUndefined();
+  });
+
+  test('provider match via cfg.embedding_model returns the descriptor', () => {
+    const r = resolveWriteColumn(cfg({
+      embedding_model: 'voyage:voyage-3-large',
+      embedding_dimensions: 1024,
+      embedding_columns: {
+        embedding_voyage: { provider: 'voyage:voyage-3-large', dimensions: 1024, type: 'vector' },
+      },
+    }));
+    expect(r).toEqual({
+      name: 'embedding_voyage',
+      type: 'vector',
+      dimensions: 1024,
+      embeddingModel: 'voyage:voyage-3-large',
+    });
+  });
+
+  test('provider match via gateway state (cfg.embedding_model unset) returns descriptor', () => {
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 2560,
+      env: {},
+    });
+    const r = resolveWriteColumn(cfg({
+      embedding_columns: {
+        embedding_ze: { provider: 'zeroentropyai:zembed-1', dimensions: 2560, type: 'halfvec' },
+      },
+    }));
+    expect(r).toEqual({
+      name: 'embedding_ze',
+      type: 'halfvec',
+      dimensions: 2560,
+      embeddingModel: 'zeroentropyai:zembed-1',
+    });
+  });
+
+  test('no provider match returns undefined instead of guessing a column', () => {
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 2560,
+      env: {},
+    });
+    const r = resolveWriteColumn(cfg({
+      embedding_columns: {
+        embedding_voyage: { provider: 'voyage:voyage-3-large', dimensions: 1024, type: 'vector' },
+      },
+    }));
+    expect(r).toBeUndefined();
+  });
+
+  test('only USER-declared columns are consulted — multimodal builtin never captures text writes', () => {
+    // Current model equals the embedding_image BUILTIN's provider; a registry
+    // walk that consulted builtins would misroute text writes into the image
+    // column. resolveWriteColumn must return undefined here.
+    configureGateway({
+      embedding_model: 'voyage:voyage-multimodal-3',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+    const r = resolveWriteColumn(cfg({
+      embedding_columns: {
+        embedding_other: { provider: 'openai:text-embedding-3-large', dimensions: 1536, type: 'vector' },
+      },
+    }));
+    expect(r).toBeUndefined();
+  });
+
+  test('malformed registry entry throws loud (same validation as the read side)', () => {
+    expect(() => resolveWriteColumn(cfg({
+      embedding_model: 'voyage:voyage-3-large',
+      embedding_columns: {
+        'bad"col': { provider: 'voyage:voyage-3-large', dimensions: 1024, type: 'vector' },
+      } as never,
+    }))).toThrow(EmbeddingColumnConfigError);
   });
 });
