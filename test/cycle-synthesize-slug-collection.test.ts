@@ -152,3 +152,75 @@ describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', 
     await stampDreamProvenance(engine as any, refs, '2026-07-17'); // idempotent
   });
 });
+
+describe('#2285: orchestrator-owned deterministic transcript frontmatter', () => {
+  const meta = {
+    idx: 1,
+    hash6: 'abc123',
+    chunkTotal: 3,
+    transcriptSource: 'claude-code',
+    transcriptId: 'session-uuid',
+    inferredDate: '2026-05-15',
+  };
+
+  test('collectChildPutPageSlugs pairs each ref back to the writing job', async () => {
+    const refs = await collectChildPutPageSlugs(
+      engine as any, [1001], new Map([[1001, { ...meta, chunkTotal: 1 }]]), 'mybrain',
+    );
+    expect(refs.length).toBeGreaterThan(0);
+    for (const r of refs) {
+      expect(r.jobId).toBe(1001);
+      expect(r.source_id).toBe('mybrain'); // #1586: cycle source, never hardcoded 'default'
+    }
+  });
+
+  test('stampDreamProvenance merges the transcript metadata into DB frontmatter', async () => {
+    const slug = 'wiki/originals/ideas/2026-07-17-transcript-meta-abc123';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Meta stamp',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: { keep_me: 'yes', transcript_id: 'subagent-drift' },
+    });
+    await stampDreamProvenance(
+      engine as any,
+      [{ slug, source_id: 'default', jobId: 42 }],
+      '2026-07-17',
+      new Map([[42, meta]]),
+    );
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = $1`, [slug],
+    );
+    const fm = rows[0].fm as Record<string, unknown>;
+    expect(fm.dream_generated).toBe(true);
+    expect(fm.dream_cycle_date).toBe('2026-07-17');
+    expect(fm.transcript_id).toBe('session-uuid'); // orchestrator wins over subagent drift
+    expect(fm.transcript_hash).toBe('abc123');
+    expect(fm.transcript_source).toBe('claude-code');
+    expect(fm.chunk).toBe('2/3');
+    expect(fm.date).toBe('2026-05-15');
+    expect(fm.keep_me).toBe('yes'); // subagent-owned keys survive
+  });
+
+  test('single-chunk children with no inferredDate stamp only the applicable fields', async () => {
+    const slug = 'wiki/originals/ideas/2026-07-17-minimal-meta-abc123';
+    await engine.putPage(slug, {
+      type: 'note', title: 'Minimal', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await stampDreamProvenance(
+      engine as any,
+      [{ slug, source_id: 'default', jobId: 43 }],
+      '2026-07-17',
+      new Map([[43, { ...meta, chunkTotal: 1, transcriptSource: null, inferredDate: null }]]),
+    );
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = $1`, [slug],
+    );
+    const fm = rows[0].fm as Record<string, unknown>;
+    expect(fm.transcript_id).toBe('session-uuid');
+    expect(fm.chunk).toBeUndefined();
+    expect(fm.transcript_source).toBeUndefined();
+    expect(fm.date).toBeUndefined();
+  });
+});

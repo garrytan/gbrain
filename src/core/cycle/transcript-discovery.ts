@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pruneDir } from '../sync.ts';
 
@@ -23,8 +23,22 @@ export interface DiscoveredTranscript {
   content: string;
   /** Filename basename without extension; used as a topic-slug seed. */
   basename: string;
-  /** Inferred date if the basename matches `YYYY-MM-DD...` (or null). */
+  /**
+   * Inferred conversation date (YYYY-MM-DD) or null. Precedence: the
+   * `| First message | <ISO> |` row in the transcript's `## Metadata`
+   * table (stable across mtime-restamping re-syncs) wins; a leading
+   * `YYYY-MM-DD` in the basename is the fallback.
+   */
   inferredDate: string | null;
+  /**
+   * Transcript source archive name, derived from the path's grandparent
+   * directory (the immediate parent of the date directory). For the
+   * canonical layout `<corpus>/<source>/<date>/<id>.md` this yields the
+   * source-name segment — e.g. `claude-code` for the claude-code-archive
+   * output, `meetings` for meeting recordings. Null when the file does
+   * not live under a `<source>/<date>/` pair (ad-hoc inputs).
+   */
+  transcriptSource: string | null;
 }
 
 export interface DiscoverOpts {
@@ -161,6 +175,36 @@ function matchesAnyExclude(text: string, patterns: RegExp[]): boolean {
   return false;
 }
 
+/**
+ * Content-based conversation date: the `| First message | <ISO timestamp> |`
+ * row claude-code-archive writes into the transcript's `## Metadata` table.
+ * Stable across rsync/Dropbox/Syncthing/B2 re-syncs that re-stamp mtime,
+ * unlike anything derived from file metadata. Returns YYYY-MM-DD or null.
+ */
+const FIRST_MESSAGE_RE = /^\|\s*First message\s*\|\s*(\d{4}-\d{2}-\d{2})/im;
+
+export function inferContentDate(content: string): string | null {
+  const m = FIRST_MESSAGE_RE.exec(content);
+  return m ? m[1] : null;
+}
+
+/**
+ * Derive the archive source name from a transcript path. Returns the basename
+ * of the directory two levels above the file when the immediate parent is a
+ * date directory and the grandparent looks like a source-name slug (lowercase
+ * alphanumeric segments separated by hyphens); otherwise null. This pins the
+ * canonical claude-code-archive layout `<corpus>/<source>/<date>/<id>.md`
+ * without claiming a source for ad-hoc inputs that don't match.
+ */
+export function deriveTranscriptSource(filePath: string): string | null {
+  const parentName = basename(dirname(filePath));
+  if (!/^\d{4}-\d{2}-\d{2}/.test(parentName)) return null;
+  const grandparentName = basename(dirname(dirname(filePath)));
+  if (!grandparentName) return null;
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(grandparentName)) return null;
+  return grandparentName;
+}
+
 function listTextFiles(dir: string): string[] {
   // Recursive walk with descent-time pruning (closes codex C12/C13 spec gap).
   // Accepts BOTH .txt and .md per transcript-discovery's domain rules — does
@@ -225,8 +269,11 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
       const ext = filePath.endsWith('.md') ? '.md' : '.txt';
       const baseName = basename(filePath, ext);
       const dateMatch = DATE_RE.exec(baseName);
-      const inferredDate = dateMatch ? dateMatch[1] : null;
-      if (!isInDateRange(inferredDate, opts)) continue;
+      const filenameDate = dateMatch ? dateMatch[1] : null;
+      // Fast path: date-named files outside the window skip before the read.
+      // ponytail: a date-named file whose content date differs is filtered on
+      // its filename date — acceptable; archive layouts use UUID basenames.
+      if (filenameDate && !isInDateRange(filenameDate, opts)) continue;
 
       let content: string;
       try {
@@ -241,12 +288,17 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
       }
       if (matchesAnyExclude(content, excludeRes)) continue;
 
+      // Content-metadata date wins (survives mtime restamps); filename next.
+      const inferredDate = inferContentDate(content) ?? filenameDate;
+      if (!isInDateRange(inferredDate, opts)) continue;
+
       results.push({
         filePath,
         contentHash: hashContent(content),
         content,
         basename: baseName,
         inferredDate,
+        transcriptSource: deriveTranscriptSource(filePath),
       });
     }
   }
@@ -290,6 +342,7 @@ export function readSingleTranscript(
     contentHash: hashContent(content),
     content,
     basename: baseName,
-    inferredDate: dateMatch ? dateMatch[1] : null,
+    inferredDate: inferContentDate(content) ?? (dateMatch ? dateMatch[1] : null),
+    transcriptSource: deriveTranscriptSource(filePath),
   };
 }
