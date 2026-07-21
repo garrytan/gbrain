@@ -26,12 +26,7 @@ name: gbrain-recommended
 version: 1.0.0
 gbrain_min_version: 0.39.0
 extends: gbrain-base
-description: |
-  The recommended starter pack for an operational personal brain.
-  Based on docs/GBRAIN_RECOMMENDED_SCHEMA.md — Karpathy's LLM wiki
-  pattern extended into a full operational knowledge base. Use this
-  when you want the documented behavior immediately instead of
-  authoring your own pack from scratch.
+description: "The recommended starter pack for an operational personal brain. Based on docs/GBRAIN_RECOMMENDED_SCHEMA.md — Karpathy's LLM wiki pattern extended into a full operational knowledge base. Use this when you want the documented behavior immediately instead of authoring your own pack from scratch."
 
 # Pack-specific page_types (extend gbrain-base's seed types).
 # Each maps a path prefix to a primitive + opt-in flags. Most types
