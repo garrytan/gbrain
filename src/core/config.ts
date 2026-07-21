@@ -1006,6 +1006,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'chronicle.',         // chronicle.tz + future Life Chronicle knobs (#2390)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'think.',             // think.excerpt_length, think.trajectory_enabled, etc.
 ];
 
 export function saveConfig(config: GBrainConfig): void {

@@ -192,7 +192,7 @@ export async function runGather(
  * Pages are rendered as `<page slug="..." score="...">excerpt</page>`;
  * takes are rendered via the renderTakesBlock helper from sanitize.ts.
  */
-export function renderPagesBlock(pages: SearchResult[], excerptLen = 600): string {
+export function renderPagesBlock(pages: SearchResult[], excerptLen = 3000): string {
   return pages.map((p, idx) => {
     const slug = String((p as unknown as { slug?: string }).slug ?? '');
     const excerpt = String(
