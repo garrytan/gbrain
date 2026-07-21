@@ -518,6 +518,14 @@ export interface LockHandle {
 }
 
 /**
+ * Canonical (lowercase) RFC 4122 UUID. A 36-char UUID breaks the 32-char
+ * slug rule at the lock id, but hyphen-stripped it is slug-legal by
+ * construction (32 lowercase hex chars, alnum edges). Uppercase or
+ * otherwise non-canonical UUIDs deliberately stay invalid.
+ */
+const UUID_SOURCE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
  * Compute the cycle lock ID for a given source.
  *
  * - `undefined` returns the legacy `'gbrain-cycle'` ID, preserving
@@ -530,11 +538,22 @@ export interface LockHandle {
  * - Valid IDs return `'gbrain-cycle:<source_id>'` so per-source cycles
  *   acquire distinct rows in `gbrain_cycle_locks` and don't serialize
  *   through one global lock.
+ * - A canonical (lowercase) RFC 4122 UUID — the common tenant-key shape
+ *   when gbrain is embedded as a library — derives a slug-legal lock token
+ *   by stripping hyphens: exactly 32 lowercase hex chars, stable, and still
+ *   recognizable next to the raw id in logs. The raw sourceId stays the
+ *   data key everywhere else; only the lock id (and, on PGLite, the lock
+ *   file path component) uses the derived token.
  *
- * @throws if `sourceId` is provided but invalid per `source-id.ts`.
+ * @throws if `sourceId` is provided but is neither a valid slug per
+ *   `source-id.ts` nor a canonical UUID (codex r2 P1-B defense-in-depth
+ *   unchanged for every other shape).
  */
 export function cycleLockIdFor(sourceId?: string): string {
   if (sourceId === undefined) return LEGACY_CYCLE_LOCK_ID;
+  if (UUID_SOURCE_ID_RE.test(sourceId)) {
+    return `${LEGACY_CYCLE_LOCK_ID}:${sourceId.replaceAll('-', '')}`;
+  }
   assertValidSourceId(sourceId);
   return `${LEGACY_CYCLE_LOCK_ID}:${sourceId}`;
 }
