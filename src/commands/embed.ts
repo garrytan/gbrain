@@ -131,6 +131,13 @@ export interface EmbedResult {
   /** True if this run was a dry-run. */
   dryRun: boolean;
   /**
+   * #2089: take claims newly embedded in this run (the `--stale` path also
+   * backfills `takes.embedding` so the vector takes arm — think takes_vec —
+   * has data to search). Present only when > 0. In dryRun mode stale takes
+   * are counted into `would_embed` instead.
+   */
+  takes_embedded?: number;
+  /**
    * E1 (paced-backfill): end-of-run pacing telemetry. Present ONLY when pacing
    * was active (enabled bundle). The number the operator could not get from an
    * external wrapper ("zero pauses" ≠ "queue safe").
@@ -644,7 +651,17 @@ async function embedAll(
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
     // #1737: thread the external abort signal so the cycle embed phase bails.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
+    await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
+    // #2089: backfill takes.embedding — before this pass nothing ever wrote
+    // it, so the vector takes arm (searchTakesVector / think takes_vec) was
+    // structurally dead. Runs on every --stale caller (CLI, cycle embed
+    // phase, sync auto-embed). listStaleTakes is brain-wide (not
+    // source-scoped) — embedding another source's takes is a harmless
+    // idempotent write, not a read-side leak.
+    if (!isAborted(signal)) {
+      await embedStaleTakes(engine, dryRun, result, signal);
+    }
+    return;
   }
 
   // --all path: pacer (no-op when off). E-1: lower the worker count to the
@@ -767,6 +784,67 @@ async function embedAll(
     slog(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
   } else {
     slog(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
+  }
+}
+
+/**
+ * #2089: embed stale take claims (`active AND embedding IS NULL`) so the
+ * vector takes search arm has data. Mirrors embedAllStale's log-and-skip
+ * semantics: a failure leaves the remaining takes stale (retried next run)
+ * and never throws. Exported with an `embedFn` seam for tests (same pattern
+ * as embedStaleForSource).
+ */
+export async function embedStaleTakes(
+  engine: BrainEngine,
+  dryRun: boolean,
+  result: EmbedResult,
+  signal?: AbortSignal,
+  embedFn: (texts: string[], o: { abortSignal?: AbortSignal }) => Promise<Float32Array[]> =
+    (texts, o) => embedBatchWithBackoff(texts, { abortSignal: o.abortSignal }),
+): Promise<void> {
+  let staleCount: number;
+  try {
+    // ?? 0: tolerate partial engines (test mocks) that don't implement takes.
+    staleCount = Number(await engine.countStaleTakes() ?? 0);
+  } catch (e: unknown) {
+    // Pre-takes-table brain (partial upgrade) — nothing to do.
+    serr(`  [embed] takes: stale count failed: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
+  if (!staleCount) return;
+
+  if (dryRun) {
+    result.would_embed += staleCount;
+    slog(`[dry-run] Would embed ${staleCount} stale take claim(s)`);
+    return;
+  }
+
+  const rows = (await engine.listStaleTakes()) ?? [];
+  const BATCH = 100;
+  let embedded = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    if (isAborted(signal)) break;
+    const batch = rows.slice(i, i + BATCH);
+    try {
+      const embeddings = await embedFn(batch.map((r) => r.claim), { abortSignal: signal });
+      embedded += await engine.updateTakeEmbeddings(
+        batch.map((r, j) => ({ take_id: r.take_id, embedding: embeddings[j] })),
+      );
+    } catch (e: unknown) {
+      if (isAborted(signal)) break;
+      // ponytail: stop on first failure (dim mismatch against the takes
+      // vector column, provider outage) instead of grinding every batch into
+      // the same error; the remaining takes stay NULL and retry next --stale.
+      serr(
+        `  [embed] takes: failed at ${batch[0].page_slug}#${batch[0].row_num}: ` +
+          `${e instanceof Error ? e.message : e}; remaining stale takes will retry next run`,
+      );
+      break;
+    }
+  }
+  if (embedded > 0) {
+    result.takes_embedded = (result.takes_embedded ?? 0) + embedded;
+    slog(`Embedded ${embedded} take claim(s)`);
   }
 }
 

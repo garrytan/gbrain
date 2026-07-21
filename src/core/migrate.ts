@@ -5671,6 +5671,62 @@ export const MIGRATIONS: Migration[] = [
 `);
     },
   },
+  {
+    version: 125,
+    name: 'takes_embedding_dim_align',
+    // #2089: the takes migration hardcoded `embedding VECTOR(1536)` while
+    // content_chunks/facts resolve dims from config, so brains with a
+    // non-1536 embedder (e.g. Voyage 1024) could never write a take
+    // embedding. Before v0.42.x there was ALSO no writer at all, so the
+    // column is all-NULL on every install — retyping it to the configured
+    // dims loses nothing. DROP/ADD (not ALTER TYPE) so the same path works
+    // on PGLite, which can't ALTER COLUMN TYPE vector(N). Guarded: any
+    // non-NULL embedding present → no-op (the current type demonstrably
+    // works for that brain). All takes access uses explicit column lists,
+    // so column-order change from DROP/ADD is safe.
+    idempotent: true,
+    sql: '',
+    handler: async (engine: BrainEngine) => {
+      let dims = 1536;
+      try {
+        const dimRows = await engine.executeRaw<{ value: string }>(
+          `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+        );
+        const parsed = parseInt(dimRows[0]?.value ?? '', 10);
+        if (Number.isFinite(parsed) && parsed > 0 && parsed <= 16000) dims = parsed;
+      } catch { /* no config row — keep default, which matches the DDL */ }
+
+      const colRows = await engine.executeRaw<{ formatted: string | null }>(
+        `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relname = 'takes'
+            AND a.attname = 'embedding' AND NOT a.attisdropped`,
+      );
+      const m = (colRows[0]?.formatted ?? '').match(/vector\((\d+)\)/i);
+      const colDims = m ? parseInt(m[1], 10) : null;
+      if (colDims === null || colDims === dims) return;
+
+      const dataRows = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM takes WHERE embedding IS NOT NULL`,
+      );
+      if (Number(dataRows[0]?.n ?? 0) > 0) {
+        process.stderr.write(`  v125: takes.embedding is vector(${colDims}) (config says ${dims}) but already holds data; leaving it alone\n`);
+        return;
+      }
+
+      await engine.executeRaw(`DROP INDEX IF EXISTS idx_takes_embedding_hnsw`);
+      await engine.executeRaw(`ALTER TABLE takes DROP COLUMN embedding`);
+      await engine.executeRaw(`ALTER TABLE takes ADD COLUMN embedding VECTOR(${dims})`);
+      await engine.executeRaw(
+        `CREATE INDEX IF NOT EXISTS idx_takes_embedding_hnsw ON takes
+           USING hnsw (embedding vector_cosine_ops)
+           WHERE active AND embedding IS NOT NULL`,
+      );
+      process.stderr.write(`  v125: takes.embedding retyped vector(${colDims}) → vector(${dims}) to match the configured embedder (#2089)\n`);
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

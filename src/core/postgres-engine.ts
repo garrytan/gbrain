@@ -5004,6 +5004,24 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as StaleTakeRow[];
   }
 
+  async updateTakeEmbeddings(rows: Array<{ take_id: number; embedding: Float32Array }>): Promise<number> {
+    if (rows.length === 0) return 0;
+    const sql = this.sql;
+    let updated = 0;
+    // ponytail: per-row UPDATE loop — takes volume is small (hundreds, not
+    // millions); switch to an unnest batch if listStaleTakes ever pages.
+    for (const r of rows) {
+      const vec = `[${Array.from(r.embedding).join(',')}]`;
+      const res = await sql`
+        UPDATE takes SET embedding = ${vec}::vector, embedded_at = now()
+        WHERE id = ${r.take_id} AND active
+        RETURNING 1
+      `;
+      updated += res.length;
+    }
+    return updated;
+  }
+
   async updateTake(
     pageId: number,
     rowNum: number,
