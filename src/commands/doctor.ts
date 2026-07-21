@@ -1551,6 +1551,24 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       };
     }
 
+    // Historical #2059 rows were logged as `unknown` before missing reranker
+    // auth was classified at the gateway. Surface repeated unknowns instead of
+    // reporting "ok" while every rerank fails open.
+    const unknownFails = failures.filter((f) => f.reason === 'unknown');
+    if (unknownFails.length >= 3) {
+      const setupHint = unknownFails.some((f) => {
+        const summary = String(f.error_summary ?? '');
+        return summary.includes('ZEROENTROPY_API_KEY') || summary.toLowerCase().includes('api key');
+      })
+        ? ' Fix: verify ZEROENTROPY_API_KEY and run `gbrain models doctor`.'
+        : '';
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${unknownFails.length} unknown reranker failure(s) in last 7 days.${setupHint}`,
+      };
+    }
+
     return {
       name: 'reranker_health',
       status: 'ok',
