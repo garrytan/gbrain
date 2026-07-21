@@ -68,5 +68,25 @@ export async function loadRecommendationContext(
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
     hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
+    extractionLagPages: await countExtractionLag(engine),
   };
+}
+
+/**
+ * Real extraction-lag count — the SAME staleness `gbrain extract --stale`
+ * processes (engine.countStalePagesForExtraction). Drives the sync→extract
+ * recommendation pipeline; replaces the legacy `health.stale_pages` proxy
+ * that no longer reflected real extraction work after the v10 trigger drop.
+ *
+ * Shared by loadRecommendationContext AND the D7 per-step recheck in
+ * runRemediation — the recheck MUST refresh this gate alongside getHealth,
+ * or a completed extract step keeps re-firing off the frozen initial count.
+ */
+export async function countExtractionLag(engine: BrainEngine): Promise<number> {
+  try {
+    return await engine.countStalePagesForExtraction();
+  } catch {
+    /* counter unavailable (very old brain / mid-migration) — treat as 0 */
+    return 0;
+  }
 }
