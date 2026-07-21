@@ -901,13 +901,27 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const FULL_CYCLE_FLOOR_MIN = 60;
         const minutesSinceLastFull = (Date.now() - lastFullCycleAt) / 60000;
 
+        // #2060: stale per-source cycle freshness is a dispatch input. Without
+        // it, a brain sitting at score 70–94 with a small targeted plan (≤3
+        // steps, <300s) stays in targeted mode indefinitely and no per-source
+        // cycle is ever dispatched — cycle_freshness never advances. A stale
+        // source forces the fanout path; dispatchPerSource's throttles
+        // (skipped_fresh / fanoutMax / failure cooldown) bound the work.
+        // Fail-open to 0: a read failure must not block dispatch.
+        let staleCycleSources = 0;
+        try {
+          const { countStaleSources } = await import('./autopilot-fanout.ts');
+          staleCycleSources = countStaleSources(await engine.listAllSources({ localPathOnly: true }));
+        } catch { /* fail-open: freshness is a dispatch hint, not a gate */ }
+
         const shouldFullCycle =
           (score >= 95 && plan.length === 0 && minutesSinceLastFull >= FULL_CYCLE_FLOOR_MIN) ||
           plan.length > 3 ||
           estTotal >= 300 ||
-          score < 70;
+          score < 70 ||
+          staleCycleSources > 0;
 
-        const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN;
+        const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN && staleCycleSources === 0;
 
         if (shouldSleep) {
           if (jsonMode) {

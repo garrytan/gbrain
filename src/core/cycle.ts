@@ -2365,17 +2365,23 @@ export async function runCycle(
   }
 
   // v0.38 (codex r1 P0-5): persist per-source cycle completion timestamp
-  // when the cycle ran successfully against an explicit source. Read by
-  // autopilot's per-source freshness gate next tick. Skipped when:
-  //   - opts.sourceId is unset (legacy callers — autopilot still here)
-  //   - engine is null (no-DB path)
+  // when the cycle ran successfully against a resolvable source. Read by
+  // autopilot's per-source freshness gate next tick.
+  //
+  // #1993: keyed off `cycleSourceId` (opts.sourceId ?? the source resolved
+  // from brainDir) — the SAME id the cycle locked + scoped its phases to —
+  // NOT raw opts.sourceId. The autopilot's inline cycle sets brainDir but
+  // passes no explicit sourceId, so keying off opts.sourceId alone never
+  // advanced last_full_cycle_at and cycle_freshness stayed stale even while
+  // the autopilot cycled every interval. Skipped when:
+  //   - no source resolves (engine null, or no checkout AND no opts.sourceId)
   //   - status is 'failed' or 'skipped' (don't mark a non-run as fresh)
   //   - dryRun (writes are out of scope)
   //
   // Best-effort: a write failure does NOT change the CycleReport status.
   // The cost of writing the wrong timestamp post-failure is higher than
   // the cost of missing a successful write (next cycle will redo work).
-  if (opts.sourceId && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  if (cycleSourceId && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
       const nowIso = new Date().toISOString();
       // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
@@ -2385,13 +2391,13 @@ export async function runCycle(
       // phases (those gate on autopilot.last_global_at), so writing it on a
       // source-only cycle does not re-introduce the freshness poisoning codex
       // flagged in the rejected skip-based design.
-      await engine.updateSourceConfig(opts.sourceId, {
+      await engine.updateSourceConfig(cycleSourceId, {
         last_source_cycle_at: nowIso,
         last_full_cycle_at: nowIso,
       });
     } catch (e) {
       // Best-effort; cycle already succeeded by the time we get here.
-      console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[cycle] failed to write last_source_cycle_at for source ${cycleSourceId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

@@ -54,6 +54,20 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
   });
 
+  test('stale per-source cycle freshness is a shouldFullCycle input (#2060)', () => {
+    // Targeted mode (score 70–94, plan ≤3, est <300s) must not be able to
+    // starve per-source cycle dispatch: a stale source (per countStaleSources
+    // over listAllSources) forces the fanout path, and the sleep gate must
+    // not fire while stale sources exist. Without these terms, cycle
+    // freshness never advances for a brain that always lands in targeted mode.
+    expect(AUTOPILOT_SRC).toMatch(/countStaleSources/);
+    const fullCycleDeclIdx = AUTOPILOT_SRC.indexOf('const shouldFullCycle');
+    expect(fullCycleDeclIdx).toBeGreaterThan(-1);
+    const decl = AUTOPILOT_SRC.slice(fullCycleDeclIdx, fullCycleDeclIdx + 700);
+    expect(decl).toMatch(/staleCycleSources\s*>\s*0/);
+    expect(decl).toMatch(/const shouldSleep[^;]*staleCycleSources\s*===\s*0/);
+  });
+
   test('does NOT regress to the single-job dispatch on the full-cycle path', () => {
     // Pre-PR: the shouldFullCycle branch did:
     //   const job = await queue.add('autopilot-cycle', { repoPath }, {
