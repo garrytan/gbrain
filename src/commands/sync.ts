@@ -197,7 +197,7 @@ export interface SyncResult {
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
   pagesAffected: string[];
-  failedFiles?: number; // count of parse failures (Bug 9)
+  failedFiles?: number; // count of per-file import/sync failures (Bug 9)
   /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
    *
@@ -3183,7 +3183,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     await clearOpCheckpoint(engine, ckpt.target);
   };
 
-  // issue #1939 adversarial finding #1: a file that failed to parse (open ledger
+  // issue #1939 adversarial finding #1: a file that failed to import (open ledger
   // row) and is then deleted/renamed-away never re-enters failedFiles and never
   // imports, so its row would never clear and would age doctor to a permanent
   // FAIL. Treat removed paths as resolved so the ledger self-heals.
@@ -3215,9 +3215,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } else {
       const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;
       serr(
-        `\nSync blocked: ${fileFailCount} file(s) failed to parse:\n` +
+        `\nSync blocked: ${fileFailCount} file(s) failed to import:\n` +
         `${codeBreakdown}\n\n` +
-        `Fix the frontmatter and re-run, or use 'gbrain sync --skip-failed' to ` +
+        `Fix the listed file errors and re-run, or use 'gbrain sync --skip-failed' to ` +
         `acknowledge and move on. A file that keeps failing auto-skips after ` +
         `${resolveAutoSkipThreshold()} consecutive syncs.`,
       );
@@ -5355,7 +5355,7 @@ function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.
     case 'dry_run':
       break; // already printed in performSync
     case 'blocked_by_failures':
-      write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed to parse.`);
+      write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed to import.`);
       write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'gbrain doctor'.`);
       write(`  Fix the files then re-run 'gbrain sync', or 'gbrain sync --skip-failed' to move on.`);
       break;
