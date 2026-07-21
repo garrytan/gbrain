@@ -999,14 +999,19 @@ const put_page: Operation = {
         const enabled = await isAutoTimelineEnabled(ctx.engine);
         if (enabled) {
           const fullContent = result.parsedPage.compiled_truth + '\n' + result.parsedPage.timeline;
-          // This path is now reachable by remote/untrusted callers, so bound the
-          // work and align validation with the manual add_timeline_entry op:
-          // cap the batch (bulk-insert amplification) and drop out-of-range years
-          // (PG DATE silently accepts year 5874897).
+          // This path is now reachable by remote/untrusted callers. Bound the
+          // work and drop out-of-range years (PG DATE silently accepts year
+          // 5874897) ONLY for those callers — trusted local writers keep the
+          // prior unbounded behavior, so a legitimate large local import is not
+          // silently truncated.
+          const untrusted = ctx.remote !== false && !trustedWorkspace;
           const MAX_AUTO_TIMELINE_ENTRIES = 500;
-          const entries = parseTimelineEntries(fullContent)
-            .filter(e => { const y = Number(String(e.date).slice(0, 4)); return y >= 1900 && y <= 2199; })
-            .slice(0, MAX_AUTO_TIMELINE_ENTRIES);
+          const parsed = parseTimelineEntries(fullContent);
+          const entries = untrusted
+            ? parsed
+                .filter(e => { const y = Number(String(e.date).slice(0, 4)); return y >= 1900 && y <= 2199; })
+                .slice(0, MAX_AUTO_TIMELINE_ENTRIES)
+            : parsed;
           if (entries.length > 0) {
             const batch = entries.map(e => ({
               slug,
