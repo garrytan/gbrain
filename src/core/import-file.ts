@@ -36,7 +36,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { runGuardrails } from './guardrails.ts';
 
@@ -295,6 +295,12 @@ export async function importFromContent(
     remote?: boolean;
   } = {},
 ): Promise<ImportResult> {
+  // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
+  // upsertChunks used to query by the caller's raw slug, so a mixed-case slug
+  // created the page row then failed the chunk upsert with "Page not found",
+  // rolling back the whole import (#430).
+  slug = validateSlug(slug);
+
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
   // every per-page tx call must carry `sourceId` so writes target the right
   // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and

@@ -2235,6 +2235,9 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
+    // Normalize the same way putPage does — pages.slug is stored lowercased,
+    // so a raw mixed-case slug here would miss the row it just wrote (#430).
+    slug = validateSlug(slug);
     const sourceId = opts?.sourceId ?? 'default';
 
     // Source-scope the page-id lookup so duplicate slugs in different sources
