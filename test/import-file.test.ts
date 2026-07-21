@@ -708,3 +708,89 @@ body unchanged
     expect(shortCircuited).toBe(true);
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// #1035 — type round-trip preservation
+//
+// put_page → importFromContent → parseMarkdown infers type from the file
+// path when frontmatter omits `type:`, and bare slugs infer 'concept'.
+// Pre-fix, a round-trip put (get_page → edit body → put_page WITHOUT a
+// type: line) silently regressed a curated type to 'concept'. Absence of
+// an explicit frontmatter type on an EXISTING page must preserve the
+// stored type; an explicit type stays an override; new pages still infer.
+// ────────────────────────────────────────────────────────────────
+
+describe('importFromContent type round-trip (#1035)', () => {
+  test('re-put without type: preserves the existing page type', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve({
+        slug: 'founder-notes-example',
+        type: 'person',
+        content_hash: 'different-hash',
+        updated_at: new Date(),
+        created_at: new Date(),
+      } as any),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'founder-notes-example', [
+      '---',
+      'title: Notes',
+      '---',
+      '',
+      'Edited body, no type in frontmatter.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('person'); // pre-fix: 'concept' (bare-slug inference default)
+  });
+
+  test('explicit frontmatter type: still overrides the existing type', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve({
+        slug: 'founder-notes-example',
+        type: 'person',
+        content_hash: 'different-hash',
+        updated_at: new Date(),
+        created_at: new Date(),
+      } as any),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'founder-notes-example', [
+      '---',
+      'type: note',
+      'title: Notes',
+      '---',
+      '',
+      'Explicit type wins.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('note');
+  });
+
+  test('new page without type: still infers from path', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'people/alice-example', [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'A new person page.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('person'); // /people/ path-prefix inference intact
+  });
+});

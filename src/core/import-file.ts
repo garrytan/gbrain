@@ -537,6 +537,20 @@ export async function importFromContent(
   // is real, unbounded embedding spend). Same bug class as the captured_at /
   // ingested_at fix above; the gate re-derives the markers deterministically
   // on the next import, so dropping them from the hash is safe.
+  // #1035: fetch the existing page BEFORE the hash compute so (a) the type
+  // preservation below participates in the hash (a no-op re-put stays a
+  // hash-match skip) and (b) the hash short-circuit below reuses this row.
+  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+
+  // #1035: absence of an explicit frontmatter `type:` on an EXISTING page
+  // means "preserve the stored type", not "re-infer". Pre-fix, a round-trip
+  // put (get_page → edit body → put_page without `type:`) silently regressed
+  // a curated type to the path-inferred default ('concept' for bare slugs).
+  // Explicit frontmatter type stays an override; new pages still infer.
+  if (parsed.typeExplicit !== true && existing) {
+    parsed.type = existing.type;
+  }
+
   const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
     'captured_at',
     'ingested_at',
@@ -569,7 +583,6 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }

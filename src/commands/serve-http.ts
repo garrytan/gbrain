@@ -430,6 +430,34 @@ export function skillPublishStatus(publishSkills: boolean): { bannerValue: strin
   };
 }
 
+/**
+ * #1196: startup embedding-width guard for stateless host deployments.
+ *
+ * `embedding_model` / `embedding_dimensions` are file/env-plane only, so a
+ * container booted WITHOUT a config.json (stateless host) resolves the
+ * compiled-in default embedding width. Against an existing brain whose
+ * `content_chunks.embedding` is a different `vector(N)`, every write then
+ * fails with an opaque dim mismatch. Run doctor's existing
+ * embedding_width_consistency check at serve startup and return a loud
+ * banner (with the paste-ready recipe) when it isn't ok. Fail-open: a check
+ * error never blocks serving read traffic.
+ */
+export async function embeddingWidthStartupWarning(engine: BrainEngine): Promise<string | null> {
+  try {
+    const { checkEmbeddingWidthConsistency } = await import('./doctor.ts');
+    const check = await checkEmbeddingWidthConsistency(engine);
+    if (check.status === 'ok') return null;
+    return (
+      `[serve-http] WARNING: embedding width check failed — writes that embed will fail until fixed.\n` +
+      `${check.message}\n` +
+      `Stateless hosts: embedding_model/embedding_dimensions resolve from env/config.json only — ` +
+      `set GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS (or mount config.json) to match the brain's schema.`
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
@@ -452,6 +480,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     console.error(
       '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.1; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
     );
+  }
+
+  // #1196: fail-loud at startup when the resolved embedding width diverges
+  // from the brain's actual vector(N) column (stateless containers falling
+  // through to the compiled-in default). Non-fatal: reads still work.
+  {
+    const widthWarn = await embeddingWidthStartupWarning(engine);
+    if (widthWarn) console.error(widthWarn);
   }
 
   // Skill-publishing status for the banner + nudge. Mirrors readMcpPublishSkills
