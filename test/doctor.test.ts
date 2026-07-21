@@ -1481,3 +1481,174 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
     expect(result.status).toBe('fail');
   });
 });
+
+// ============================================================================
+// sync_freshness — clone-unavailable content-lag fallback (stateless deploys)
+// ============================================================================
+// A container restart (Docker on EB / K8s / Fly) wipes federated clones;
+// each one is only re-materialized when that source's next sync job runs.
+// Until then the LOCAL git short-circuit cannot probe HEAD at all. That is
+// not evidence of pending work, so instead of falling through to raw
+// wall-clock age (which no-op syncs never advance → false stale/FAIL for
+// every quiet source after a restart), the check borrows the REMOTE path's
+// newest_content_at lag (v0.41.32.0). Contracts:
+//   F1: clone unavailable + content at/before last sync → healthy (lag 0).
+//   F2: clone unavailable + content NEWER than last sync → still stale
+//       (wall-clock) — real missed work is never masked.
+//   F3: clone unavailable + NULL newest_content_at → wall-clock fallback
+//       (pre-migration parity with git short-circuit case 5).
+//   F4: chunker mismatch disables the fallback (D7 — a pending re-chunk is
+//       never masked).
+//   F5: a READABLE clone that failed the short-circuit (HEAD moved) keeps
+//       wall-clock even when newest_content_at is old — the fallback is
+//       scoped to 'unavailable' only.
+// ============================================================================
+describe('sync_freshness — clone-unavailable content-lag fallback', () => {
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+  function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
+  const HOURS = 60 * 60 * 1000;
+  let currentChunkerVersion: string;
+
+  beforeEach(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = String(CHUNKER_VERSION);
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  afterAll(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  test('F1: quiet source, clone gone, content predates last sync → ok', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => null);  // clone not re-materialized yet
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'quiet-docs', name: '', local_path: '/tmp/quiet-docs',
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'abc', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(72 * HOURS) },  // content older than last sync
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({
+      unchanged_count: 0, synced_recently_count: 1, stale_count: 0,
+    });
+  });
+
+  test('F2: clone gone but content NEWER than last sync → warn (real work not masked)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => null);
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'missed-work', name: '', local_path: '/tmp/missed-work',
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'abc', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(1 * HOURS) },  // content NEWER than last sync
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/40h ago/);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('F3: clone gone + NULL newest_content_at → wall-clock fallback (warn)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => null);
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'pre-migration', name: '', local_path: '/tmp/pre-migration',
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'abc', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('F4: clone gone + chunker MISMATCH → fallback disabled, wall-clock warn', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => null);
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'needs-rechunk', name: '', local_path: '/tmp/needs-rechunk',
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'abc',
+        chunker_version: '0',  // STALE — re-chunk pending
+        newest_content_at: agoMs(72 * HOURS) },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('F5: readable clone, HEAD moved → wall-clock even with old content', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'NEW-HEAD');  // clone readable, real work
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'has-commits', name: '', local_path: '/tmp/has-commits',
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'OLD-HEAD', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(72 * HOURS) },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/40h ago/);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('F6: three-bucket invariant holds across rescued + unchanged + stale', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests((path) => path === '/tmp/frozen' ? 'frozen-sha' : null);
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'frozen', name: '', local_path: '/tmp/frozen',        // unchanged bucket
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'frozen-sha', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(80 * HOURS) },
+      { id: 'rescued', name: '', local_path: '/tmp/rescued',      // clone gone, quiet → healthy
+        last_sync_at: agoMs(40 * HOURS),
+        last_commit: 'abc', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(80 * HOURS) },
+      { id: 'stale', name: '', local_path: '/tmp/stale',          // clone gone, content newer → stale
+        last_sync_at: agoMs(5 * 24 * HOURS),
+        last_commit: 'def', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(1 * HOURS) },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain(`'stale'`);
+    expect(result.message).not.toContain(`'rescued'`);
+    expect(result.details).toEqual({
+      unchanged_count: 1, synced_recently_count: 1, stale_count: 1,
+    });
+  });
+});
