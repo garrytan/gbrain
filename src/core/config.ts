@@ -46,6 +46,8 @@ export interface GBrainConfig {
     knowledge_source_id?: string;
     last_migrated_version?: string;
     theme?: 'system' | 'light' | 'dark';
+    network_mode?: 'local' | 'shared';
+    shared_ip?: string;
   };
   openai_api_key?: string;
   custom_openai_api_key?: string;

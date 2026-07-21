@@ -20,6 +20,7 @@ import { randomBytes, createHash } from 'crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { isIP } from 'node:net';
 import { extname, join as joinPath } from 'node:path';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -1457,6 +1458,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/theme', requireAdmin, (_req: Request, res: Response) => {
     const source = loadConfig()?.desktop?.theme;
     res.json({ source: source === 'light' || source === 'dark' ? source : 'system' });
+  });
+
+  app.get('/admin/api/desktop-state', requireAdmin, (_req: Request, res: Response) => {
+    const desktop = loadConfig()?.desktop;
+    const networkMode = desktop?.network_mode === 'shared' ? 'shared' : 'local';
+    const configuredSharedIp = typeof desktop?.shared_ip === 'string' ? desktop.shared_ip.trim() : '';
+    const sharedIp = isIP(configuredSharedIp) === 4 ? configuredSharedIp : undefined;
+    res.json({ networkMode, sharedIp });
   });
 
   app.post('/admin/api/sources/default', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {

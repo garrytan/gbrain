@@ -148,6 +148,7 @@ type RawConfig = Record<string, unknown> & {
     shared_resume_required?: boolean;
     docker_container_name?: string;
     custom_openai_display_name?: string;
+    tray_hint_shown?: boolean;
   };
 };
 
@@ -397,6 +398,21 @@ export function markDesktopMigration(version: string): string | null {
   if (config.desktop?.last_migrated_version === version) return null;
   const backup = backupFile(path, 'config');
   config.desktop = { ...config.desktop, last_migrated_version: version };
+  writeJsonConfig(path, config);
+  return backup;
+}
+
+export function isTrayHintShown(): boolean {
+  return readConfig()?.desktop?.tray_hint_shown === true;
+}
+
+export function markTrayHintShown(): string | null {
+  const path = desktopConfigPath();
+  const config = readConfig(path);
+  if (!config) return null;
+  if (config.desktop?.tray_hint_shown === true) return null;
+  const backup = backupFile(path, 'config');
+  config.desktop = { ...config.desktop, tray_hint_shown: true };
   writeJsonConfig(path, config);
   return backup;
 }

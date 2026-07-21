@@ -77,4 +77,45 @@ describe('Admin MCP handoff content', () => {
     expect(agents).toContain("{visibleAgents.filter(a => a.status === 'active').length} 个活跃凭证");
     expect(agents).not.toContain('/ 共 {agents.length} 个');
   });
+
+  test('resets drawer focus before registration and keeps the selected MCP endpoint stable', () => {
+    const agents = readFileSync(join(process.cwd(), 'admin/src/pages/Agents.tsx'), 'utf8');
+    const openRegister = agents.slice(agents.indexOf('const openRegister'), agents.indexOf('const loadOverview'));
+    const credentialsModal = agents.slice(agents.indexOf('function CredentialsModal'), agents.indexOf('function AgentDrawer'));
+
+    expect(openRegister.indexOf('setSelectedAgent(null)')).toBeLessThan(openRegister.indexOf('setShowRegister(true)'));
+    expect(agents).toContain('function useCredentialNameFocus');
+    expect(agents).toContain('input.focus({ preventScroll: true })');
+    expect(agents).toContain("const timers = [0, 60, 200]");
+    expect(agents).toContain("window.addEventListener('focus', focusIfNeeded)");
+    expect(agents.match(/useCredentialNameFocus\(nameInputRef\)/g)?.length).toBe(2);
+    expect(agents.match(/ref=\{nameInputRef\}/g)?.length).toBe(2);
+    expect(agents).toContain("| { usage: 'shared'; sharedIp: string }");
+    expect(credentialsModal).toContain('credentials.sharedIp');
+    expect(credentialsModal).not.toContain('api.desktopState()');
+  });
+
+  test('only exposes a validated desktop IPv4 address to shared MCP configuration', () => {
+    const server = readFileSync(join(process.cwd(), 'src/commands/serve-http.ts'), 'utf8');
+    expect(server).toContain("import { isIP } from 'node:net'");
+    expect(server).toContain('isIP(configuredSharedIp) === 4');
+  });
+
+  test('keeps API Key and OAuth creation controls aligned with equivalent MCP options', () => {
+    const agents = readFileSync(join(process.cwd(), 'admin/src/pages/Agents.tsx'), 'utf8');
+    const api = readFileSync(join(process.cwd(), 'admin/src/api.ts'), 'utf8');
+    const styles = readFileSync(join(process.cwd(), 'admin/src/index.css'), 'utf8');
+    const createActions = agents.slice(agents.indexOf('className="agents-create-actions"'), agents.indexOf('className="agents-create-actions"') + 420);
+    const apiKeyModal = agents.slice(agents.indexOf('function ApiKeyCreateModal'), agents.indexOf('function ApiKeyTokenModal'));
+    const apiKeyTokenModal = agents.slice(agents.indexOf('function ApiKeyTokenModal'), agents.indexOf('function RegisterModal'));
+
+    expect(createActions.match(/className="btn btn-primary"/g)?.length).toBe(2);
+    expect(styles).toContain('.agents-create-actions { display: flex; flex-wrap: nowrap; gap: 8px; }');
+    expect(apiKeyModal).toContain('<McpUsageField');
+    expect(apiKeyModal).toContain('<ScopeFields');
+    expect(apiKeyModal).toContain("['admin', 'read', 'write'].includes(scope)");
+    expect(apiKeyModal).toContain('scopes: selectedScopes');
+    expect(api).toContain('scopes?: string[]');
+    expect(apiKeyTokenModal).toContain('token.sharedIp');
+  });
 });

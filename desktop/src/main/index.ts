@@ -29,7 +29,9 @@ import {
   getDatabaseRuntimeConfig,
   getDesktopPreferences,
   getSetupInfo,
+  isTrayHintShown,
   markDesktopMigration,
+  markTrayHintShown,
   needsDesktopMigration,
   normalizeDesktopTheme,
   restoreConfig,
@@ -1121,9 +1123,16 @@ async function createWindow(): Promise<void> {
     if (quitting || getDesktopPreferences().closeBehavior === 'quit') return;
     event.preventDefault();
     mainWindow?.hide();
-    if (!trayHintShown) {
+    if (!trayHintShown && !isTrayHintShown()) {
       trayHintShown = true;
       showNotification('PMBrain 仍在运行', '窗口已最小化到系统托盘，本地服务和局域网共享会继续运行。');
+      try {
+        markTrayHintShown();
+      } catch (error) {
+        console.error('[desktop] 无法保存托盘提示状态：', error);
+      }
+    } else {
+      trayHintShown = true;
     }
   });
   const guardNavigation = (event: Electron.Event, url: string) => {

@@ -12,8 +12,6 @@ import type {
   IntegrationClient,
   IntegrationInfo,
   PMBrainDesktopApi,
-  SharedAccessContext,
-  SharedIntegrationPayload,
   SetupPayload,
   SidecarState,
   StartupProgress,
@@ -644,237 +642,9 @@ function updateSystemSettingsAvailability(): void {
   $('#system-save-note').textContent = latestSystemSettings?.warning || '';
 }
 
-function isSharedGatewayReady(next: DesktopSystemSettingsState | null): boolean {
-  return next?.preferences.networkMode === 'shared'
-    && next.gateway?.running === true
-    && next.selectedAddressAvailable;
-}
-
-function setSharedControlsDisabled(disabled: boolean): void {
-  const controls = document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('.shared-form input, .shared-form select, .shared-form button');
-  controls.forEach((control) => {
-    if (!disabled && control instanceof HTMLButtonElement && control.classList.contains('busy')) return;
-    control.disabled = disabled;
-  });
-  if (!disabled) {
-    $<HTMLSelectElement>('#shared-write-source').disabled = !$<HTMLInputElement>('#shared-can-write').checked;
-  }
-  document.querySelector('.shared-form')?.setAttribute('aria-disabled', String(disabled));
-}
-
-function updateSharedAccessAvailability(): void {
-  const hint = $('#shared-mode-hint');
-  if (state?.setup.needsSetup !== false) {
-    $('#shared-access-form').hidden = true;
-    hint.classList.remove('ready');
-    hint.textContent = '请先完成基础配置并启动本地服务，再开启局域网共享。';
-    return;
-  }
-  if (isSharedGatewayReady(latestSystemSettings)) {
-    if (!$('#shared-access-form').hidden) setSharedControlsDisabled(false);
-    return;
-  }
-  if (!latestSystemSettings?.preferences.sharedIp) {
-    $('#shared-access-form').hidden = true;
-    hint.classList.remove('ready');
-    hint.textContent = '共享模式未开启。请到“系统设置”选择共享模式和固定 IPv4；开启后即可创建和管理成员凭证。';
-    return;
-  }
-  setSharedControlsDisabled(true);
-  hint.classList.remove('ready');
-  const pauseReason = latestSystemSettings?.preferences.networkMode === 'shared'
-    ? latestSystemSettings.warning || latestSystemSettings.gateway?.lastError || '固定网卡或 IPv4 当前不可用，共享操作已暂停；地址恢复后仍需到系统设置重新确认并保存。'
-    : '共享模式未开启。请到“系统设置”选择共享模式和固定 IPv4。';
-  hint.textContent = `${pauseReason} 已有成员凭证仍可查看和撤销，但不能创建新凭证。`;
-}
-
-function applySystemSettingsState(next: DesktopSystemSettingsState, refreshOnRecovery = true): void {
-  const wasReady = isSharedGatewayReady(latestSystemSettings);
+function applySystemSettingsState(next: DesktopSystemSettingsState): void {
   latestSystemSettings = next;
   renderSystemSettings(next);
-  updateSharedAccessAvailability();
-  const integrationsVisible = $('#panel-integrations').classList.contains('active');
-  if (refreshOnRecovery && !wasReady && isSharedGatewayReady(next) && integrationsVisible && state?.setup.needsSetup === false) {
-    void loadSharedAccess();
-  }
-}
-
-function sourceLabel(source: SharedAccessContext['sources'][number]): string {
-  return source.name === source.id ? source.id : `${source.name} · ${source.id}`;
-}
-
-function renderSharedMembers(context: SharedAccessContext): void {
-  const list = $('#shared-member-list');
-  const active = context.credentials.filter((credential) => credential.status === 'active');
-  if (active.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'empty-copy';
-    empty.textContent = '还没有共享成员凭证。';
-    list.replaceChildren(empty);
-    return;
-  }
-  list.replaceChildren(...active.map((credential) => {
-    const article = document.createElement('article');
-    article.className = 'shared-member-row';
-    const copy = document.createElement('div');
-    const title = document.createElement('b');
-    title.textContent = credential.name;
-    const permission = document.createElement('small');
-    const readScope = credential.federatedRead.length > 0 ? credential.federatedRead.join('、') : credential.sourceId || context.mainSourceId;
-    permission.textContent = `${credential.scope.includes('write') ? '读写' : '只读'} · ${readScope} · ${credential.totalRequests} 次请求`;
-    copy.append(title, permission);
-    const revoke = document.createElement('button');
-    revoke.className = 'ghost danger';
-    revoke.textContent = '撤销';
-    revoke.setAttribute('aria-label', `撤销 ${credential.name} 的共享凭证`);
-    revoke.addEventListener('click', () => void revokeSharedMember(credential.credentialName, credential.name, revoke));
-    article.append(copy, revoke);
-    return article;
-  }));
-}
-
-function renderSharedAccess(context: SharedAccessContext): void {
-  const ready = isSharedGatewayReady(latestSystemSettings);
-  $('#shared-mode-hint').textContent = ready
-    ? `共享 MCP：${context.mcpUrl}。凭证只显示一次，请创建后立即复制给对应成员。`
-    : `共享入口当前已停止；你仍可查看和撤销已有成员凭证，但恢复共享前不能创建新凭证。上次地址：${context.mcpUrl}`;
-  $('#shared-mode-hint').classList.toggle('ready', ready);
-  $('#shared-access-form').hidden = false;
-  $('#shared-mcp-url').textContent = context.mcpUrl;
-
-  const readableSources = context.sources.filter((source) => !source.archived);
-  const readList = $('#shared-read-sources');
-  readList.replaceChildren(...readableSources.map((source) => {
-    const label = document.createElement('label');
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.value = source.id;
-    input.checked = source.id === context.mainSourceId;
-    const text = document.createElement('span');
-    text.textContent = sourceLabel(source);
-    label.append(input, text);
-    return label;
-  }));
-
-  const writeSource = $<HTMLSelectElement>('#shared-write-source');
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = '请选择单一写入知识源';
-  writeSource.replaceChildren(placeholder, ...readableSources.map((source) => {
-    const option = document.createElement('option');
-    option.value = source.id;
-    option.textContent = sourceLabel(source);
-    option.selected = source.id === context.mainSourceId;
-    return option;
-  }));
-  writeSource.disabled = !$<HTMLInputElement>('#shared-can-write').checked;
-  renderSharedMembers(context);
-  setSharedControlsDisabled(Boolean(latestSystemSettings) && !isSharedGatewayReady(latestSystemSettings));
-}
-
-async function loadSharedAccess(): Promise<boolean> {
-  const hint = $('#shared-mode-hint');
-  if (state?.setup.needsSetup !== false) {
-    updateSharedAccessAvailability();
-    return false;
-  }
-  if (!latestSystemSettings) {
-    try {
-      applySystemSettingsState(await window.pmbrainDesktop.getSystemSettings(), false);
-    } catch (error) {
-      hint.classList.remove('ready');
-      hint.textContent = error instanceof Error ? error.message : String(error);
-      return false;
-    }
-  }
-  if (!latestSystemSettings?.preferences.sharedIp) {
-    $('#shared-access-form').hidden = true;
-    updateSharedAccessAvailability();
-    return false;
-  }
-  hint.classList.remove('ready');
-  hint.textContent = '正在读取共享入口与成员权限…';
-  try {
-    renderSharedAccess(await window.pmbrainDesktop.getSharedAccess());
-    return true;
-  } catch (error) {
-    setSharedControlsDisabled(true);
-    hint.textContent = `${error instanceof Error ? error.message : String(error)} 共享列表未刷新，请先不要重复创建凭证，稍后重新打开本页重试。`;
-    return false;
-  }
-}
-
-async function createSharedMember(): Promise<void> {
-  clearNotices();
-  const button = $<HTMLButtonElement>('#create-shared-integration');
-  const memberName = $<HTMLInputElement>('#shared-member-name').value.trim();
-  const canWrite = $<HTMLInputElement>('#shared-can-write').checked;
-  const federatedRead = Array.from(document.querySelectorAll<HTMLInputElement>('#shared-read-sources input:checked')).map((input) => input.value);
-  const sourceId = $<HTMLSelectElement>('#shared-write-source').value || undefined;
-  if (!memberName) {
-    setNotice('error', '请填写成员名称。');
-    return;
-  }
-  if (federatedRead.length === 0) {
-    setNotice('error', '请至少选择一个允许读取的知识源。');
-    return;
-  }
-  if (canWrite && !sourceId) {
-    setNotice('error', '开启写入权限后，需要选择一个写入知识源。');
-    return;
-  }
-  const payload: SharedIntegrationPayload = {
-    memberName,
-    client: $<HTMLSelectElement>('#shared-client').value as IntegrationClient,
-    canWrite,
-    ...(canWrite && sourceId ? { sourceId } : {}),
-    federatedRead,
-  };
-  setBusy(button, true, '正在创建…');
-  let result: Awaited<ReturnType<PMBrainDesktopApi['createSharedIntegration']>>;
-  try {
-    result = await window.pmbrainDesktop.createSharedIntegration(payload);
-  } catch (error) {
-    setNotice('error', error instanceof Error ? error.message : String(error));
-    setBusy(button, false, '创建凭证并生成配置');
-    return;
-  }
-  lastResult = result.snippet;
-  $('#result-title').textContent = `${memberName} 的共享 MCP 配置`;
-  $('#result-content').textContent = result.snippet;
-  $('#result-meta').textContent = `${result.scopes.includes('write') ? '读写' : '只读'} · ${result.mcpUrl} · 凭证仅本次显示`;
-  $<HTMLButtonElement>('#copy-result').hidden = false;
-  $('#result-console').hidden = false;
-  $<HTMLInputElement>('#shared-member-name').value = '';
-  $<HTMLInputElement>('#shared-can-write').checked = false;
-  $<HTMLSelectElement>('#shared-write-source').disabled = true;
-  const refreshed = await loadSharedAccess();
-  setNotice('success', refreshed
-    ? `${memberName} 的共享凭证已创建。请立即复制配置并单独发送给该成员。`
-    : `${memberName} 的共享凭证已创建，但成员列表刷新失败。请先复制本次配置，不要重复创建；稍后重新打开本页刷新。`);
-  setBusy(button, false, '创建凭证并生成配置');
-  if (!refreshed) setSharedControlsDisabled(true);
-}
-
-async function revokeSharedMember(credentialName: string, displayName: string, button: HTMLButtonElement): Promise<void> {
-  clearNotices();
-  if (!window.confirm(`确定撤销“${displayName}”的共享凭证吗？撤销后该成员会立即无法连接。`)) return;
-  button.disabled = true;
-  button.textContent = '撤销中…';
-  try {
-    renderSharedAccess(await window.pmbrainDesktop.revokeSharedIntegration(credentialName));
-    lastResult = '';
-    $('#result-title').textContent = `${displayName} 的共享凭证已撤销`;
-    $('#result-content').textContent = '';
-    $('#result-meta').textContent = '先前显示的 Bearer 凭证已失效，配置内容已从当前窗口清除。';
-    $<HTMLButtonElement>('#copy-result').hidden = true;
-    $('#result-console').hidden = false;
-    setNotice('success', `${displayName} 的共享凭证已撤销。`);
-  } catch (error) {
-    setNotice('error', error instanceof Error ? error.message : String(error));
-    button.disabled = false;
-    button.textContent = '撤销';
-  }
 }
 
 function currentSystemSettingsPayload(): DesktopSystemSettingsPayload {
@@ -901,11 +671,10 @@ async function restartSharedGateway(): Promise<void> {
   setBusy(button, true, '正在重启…');
   try {
     const result = await window.pmbrainDesktop.saveSystemSettings(payload);
-    applySystemSettingsState(result.state, false);
+    applySystemSettingsState(result.state);
     if (result.canceled) return;
     if (!result.state.gateway?.running) throw new Error('共享入口仍未启动，请检查固定 IP 与 3131 端口。');
     setNotice('success', `局域网共享已恢复：${result.state.sharedMcpUrl || payload.sharedIp}`);
-    await loadSharedAccess();
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));
   } finally {
@@ -926,13 +695,12 @@ async function saveSystemSettings(): Promise<void> {
   setBusy(button, true, '正在保存…');
   try {
     const result = await window.pmbrainDesktop.saveSystemSettings(payload);
-    applySystemSettingsState(result.state, false);
+    applySystemSettingsState(result.state);
     if (result.canceled) return;
     if (mode === 'local') {
       setNotice('success', '系统设置已保存，当前仅本机连接。');
     } else if (result.state.gateway?.running) {
       setNotice('success', `共享入口已保存：${result.state.sharedMcpUrl || address.address}`);
-      await loadSharedAccess();
     } else {
       setNotice('success', '系统设置已保存；局域网共享仍保持停止，请按页面提示恢复固定网卡或 IPv4 后重新确认。');
     }
@@ -1003,7 +771,6 @@ function populate(next: DesktopSetupState): void {
   renderService(null, next.port);
   $('#save-setup').querySelector('span')!.textContent = saveButtonText();
   updateSystemSettingsAvailability();
-  updateSharedAccessAvailability();
 }
 
 function formatBytes(value: number): string {
@@ -1172,7 +939,6 @@ async function save(): Promise<void> {
         ? `模型配置已保存，剩余向量将在 Dream 中继续处理：${next.reembeddingWarning}`
         : `配置完成，PMBrain 已在 127.0.0.1:${next.port} 启动。`,
     );
-    void loadSharedAccess();
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));
   } finally {
@@ -1232,9 +998,6 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
 document.querySelectorAll<HTMLInputElement>('input[name="engine"]').forEach((input) => input.addEventListener('change', renderEngine));
 document.querySelectorAll<HTMLInputElement>('input[name="network-mode"]').forEach((input) => input.addEventListener('change', renderNetworkMode));
 $<HTMLSelectElement>('#shared-address').addEventListener('change', renderSelectedAddressNote);
-$<HTMLInputElement>('#shared-can-write').addEventListener('change', () => {
-  $<HTMLSelectElement>('#shared-write-source').disabled = !$<HTMLInputElement>('#shared-can-write').checked;
-});
 (['chat', 'embedding'] as const).forEach(kind => {
   $<HTMLSelectElement>(`#${kind}-provider`).addEventListener('change', () => {
     const select = $<HTMLSelectElement>(`#${kind}-provider`);
@@ -1299,7 +1062,6 @@ document.querySelectorAll<HTMLButtonElement>('.rail-item').forEach((button) => b
   if (target === 'models' && ($<HTMLDetailsElement>('#advanced-model-settings')).open) {
     void loadAdvancedModels(true);
   }
-  if (target === 'integrations') void loadSharedAccess();
 }));
 $('#next-models').addEventListener('click', () => switchPanel('models'));
 $('#advanced-model-settings').addEventListener('toggle', () => {
@@ -1331,7 +1093,7 @@ document.querySelectorAll<HTMLButtonElement>('.secret-toggle').forEach((button) 
 $('#save-setup').addEventListener('click', () => void save());
 $('#save-system-settings').addEventListener('click', () => void saveSystemSettings());
 $('#restart-shared-gateway').addEventListener('click', () => void restartSharedGateway());
-$('#create-shared-integration').addEventListener('click', () => void createSharedMember());
+$('#shared-open-admin').addEventListener('click', () => void window.pmbrainDesktop.openAdmin());
 $('#open-logs').addEventListener('click', () => void window.pmbrainDesktop.openLogs());
 $('#open-admin').addEventListener('click', () => void window.pmbrainDesktop.openAdmin());
 $('#finish-open-admin').addEventListener('click', () => void window.pmbrainDesktop.openAdmin());
@@ -1371,7 +1133,6 @@ window.pmbrainDesktop.onStartupProgress(renderStartupProgress);
 void window.pmbrainDesktop.getSetup().then(async (next) => {
   populate(next);
   renderService(await window.pmbrainDesktop.getState(), next.port);
-  if ($('#panel-integrations').classList.contains('active')) void loadSharedAccess();
 }).catch((error) => setNotice('error', String(error)));
 window.pmbrainDesktop.onState((service) => renderService(service, service.port));
 void window.pmbrainDesktop.getUpdateState().then(renderUpdate);
@@ -1382,5 +1143,4 @@ window.pmbrainDesktop.onShowPanel((panel) => {
   if (panel === 'models' && ($<HTMLDetailsElement>('#advanced-model-settings')).open) {
     void loadAdvancedModels(true);
   }
-  if (panel === 'integrations') void loadSharedAccess();
 });

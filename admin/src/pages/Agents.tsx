@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { api } from '../api';
 import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
 import { CopyButton } from '../lib/clipboard';
@@ -12,6 +12,24 @@ import {
 } from '../lib/mcp-config';
 
 type ConfigTab = 'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json';
+type McpUsage = 'local' | 'shared';
+
+type RegisteredCredentials = {
+  clientId: string;
+  clientSecret: string;
+  name: string;
+} & (
+  | { usage: 'local' }
+  | { usage: 'shared'; sharedIp: string }
+);
+
+type ApiKeyCredentials = {
+  name: string;
+  token: string;
+} & (
+  | { usage: 'local' }
+  | { usage: 'shared'; sharedIp: string }
+);
 
 const CONFIG_TABS: ReadonlyArray<{ id: ConfigTab; label: string }> = [
   { id: 'claude-code', label: 'Claude Code' },
@@ -181,6 +199,97 @@ function SourceScopeFields({
   );
 }
 
+function useMcpUsage() {
+  const [usage, setUsage] = useState<McpUsage>('local');
+  const [networkMode, setNetworkMode] = useState<McpUsage | null>(null);
+  const [sharedIp, setSharedIp] = useState('');
+
+  useEffect(() => {
+    api.desktopState().then((state: any) => {
+      const nextMode = state?.networkMode === 'shared' ? 'shared' : 'local';
+      const nextSharedIp = typeof state?.sharedIp === 'string' ? state.sharedIp.trim() : '';
+      setNetworkMode(nextMode);
+      setSharedIp(nextSharedIp);
+      if (nextMode !== 'shared' || !nextSharedIp) setUsage('local');
+    }).catch(() => {
+      setNetworkMode('local');
+      setSharedIp('');
+      setUsage('local');
+    });
+  }, []);
+
+  return { usage, setUsage, networkMode, sharedIp };
+}
+
+function McpUsageField({ usage, setUsage, networkMode, sharedIp }: {
+  usage: McpUsage;
+  setUsage: (usage: McpUsage) => void;
+  networkMode: McpUsage | null;
+  sharedIp: string;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label>MCP 服务</label>
+      <select value={usage} onChange={e => setUsage(e.target.value as McpUsage)}
+        style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}>
+        <option value="local">本地 MCP（本机 127.0.0.1）</option>
+        <option value="shared" disabled={networkMode !== 'shared' || !sharedIp}>共享 MCP（局域网）</option>
+      </select>
+      {networkMode === 'shared' && !sharedIp && (
+        <small style={{ display: 'block', marginTop: 6, color: 'var(--warning)' }}>共享模式尚未配置有效 IPv4，请先回到桌面端保存共享地址。</small>
+      )}
+    </div>
+  );
+}
+
+function ScopeFields({ scopes, setScopes }: {
+  scopes: Record<Scope, boolean>;
+  setScopes: React.Dispatch<React.SetStateAction<Record<Scope, boolean>>>;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label>权限范围</label>
+      <div className="checkbox-group">
+        {ALLOWED_SCOPES_LIST.map(scope => (
+          <label key={scope} className="checkbox-label">
+            <input type="checkbox" checked={scopes[scope]} onChange={e => setScopes(current => ({ ...current, [scope]: e.target.checked }))} />
+            {scope}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function useCredentialNameFocus(inputRef: React.RefObject<HTMLInputElement | null>) {
+  useLayoutEffect(() => {
+    let disposed = false;
+    const focusIfNeeded = () => {
+      if (disposed) return;
+      const input = inputRef.current;
+      if (!input) return;
+      const modal = input.closest('.credential-modal');
+      const active = document.activeElement;
+      if (active && modal?.contains(active)) return;
+      input.focus({ preventScroll: true });
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') focusIfNeeded();
+    };
+    const frame = window.requestAnimationFrame(focusIfNeeded);
+    const timers = [0, 60, 200].map(delay => window.setTimeout(focusIfNeeded, delay));
+    window.addEventListener('focus', focusIfNeeded);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(frame);
+      timers.forEach(timer => window.clearTimeout(timer));
+      window.removeEventListener('focus', focusIfNeeded);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [inputRef]);
+}
+
 export function AgentsPage({
   title = 'Agent 管理',
   description,
@@ -193,9 +302,9 @@ export function AgentsPage({
   const [agents, setAgents] = useState<Agent[]>([]);
   const [hideRevoked, setHideRevoked] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
-  const [showCredentials, setShowCredentials] = useState<{ clientId: string; clientSecret: string; name: string } | null>(null);
+  const [showCredentials, setShowCredentials] = useState<RegisteredCredentials | null>(null);
   const [showApiKeyCreate, setShowApiKeyCreate] = useState(false);
-  const [showApiKeyToken, setShowApiKeyToken] = useState<{ name: string; token: string } | null>(null);
+  const [showApiKeyToken, setShowApiKeyToken] = useState<ApiKeyCredentials | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [sources, setSources] = useState<SourceOption[]>([]);
   const [mainSourceId, setMainSourceId] = useState('default');
@@ -203,6 +312,16 @@ export function AgentsPage({
   useEffect(() => { loadAgents(); loadOverview(); }, []);
 
   const loadAgents = () => { api.agents().then(setAgents).catch(() => {}); };
+  const openRegister = () => {
+    setSelectedAgent(null);
+    setShowApiKeyCreate(false);
+    setShowRegister(true);
+  };
+  const openApiKeyCreate = () => {
+    setSelectedAgent(null);
+    setShowRegister(false);
+    setShowApiKeyCreate(true);
+  };
   const loadOverview = () => {
     api.brainOverview().then((overview: any) => {
       setMainSourceId(typeof overview?.main_source_id === 'string' ? overview.main_source_id : 'default');
@@ -224,11 +343,12 @@ export function AgentsPage({
           <label className="agents-revoked-filter">
             <input type="checkbox" checked={hideRevoked} onChange={e => setHideRevoked(e.target.checked)} /> 隐藏已撤销项
           </label>
-          <button className="btn btn-secondary" onClick={() => setShowApiKeyCreate(true)}>+ API Key</button>
-          <button className="btn btn-primary" onClick={() => setShowRegister(true)}>+ OAuth 客户端</button>
+          <div className="agents-create-actions">
+            <button className="btn btn-primary" onClick={openApiKeyCreate}>+ API Key</button>
+            <button className="btn btn-primary" onClick={openRegister}>+ OAuth 客户端</button>
+          </div>
         </div>
       </div>
-
       {(() => {
         // Filter once and reuse, so the empty-state guard sees the same
         // rows the table renders. Pre-fix: agents.length === 0 used the
@@ -322,7 +442,10 @@ export function AgentsPage({
         <AgentDrawer
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
-          onRevoked={loadAgents}
+          onRevoked={() => {
+            setSelectedAgent(null);
+            loadAgents();
+          }}
           sources={sources}
           mainSourceId={mainSourceId}
           onUpdated={(next) => {
@@ -350,15 +473,21 @@ export function AgentsPage({
 
 function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
   onClose: () => void;
-  onCreated: (result: { name: string; token: string }) => void;
+  onCreated: (result: ApiKeyCredentials) => void;
   sources: SourceOption[];
   mainSourceId: string;
 }) {
   const [name, setName] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [sourceId, setSourceId] = useState(mainSourceId);
   const [readSources, setReadSources] = useState<string[]>([mainSourceId]);
+  const { usage, setUsage, networkMode, sharedIp } = useMcpUsage();
+  const [scopes, setScopes] = useState<Record<Scope, boolean>>(() =>
+    Object.fromEntries(ALLOWED_SCOPES_LIST.map(scope => [scope, ['admin', 'read', 'write'].includes(scope)])) as Record<Scope, boolean>,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  useCredentialNameFocus(nameInputRef);
 
   useEffect(() => {
     setSourceId(mainSourceId);
@@ -368,10 +497,17 @@ function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setError('请输入名称'); return; }
+    if (usage === 'shared' && !sharedIp) { setError('共享 MCP 地址不可用，请先在桌面端保存共享地址'); return; }
+    const selectedScopes = ALLOWED_SCOPES_LIST.filter(scope => scopes[scope]);
+    if (selectedScopes.length === 0) { setError('请至少选择一项权限'); return; }
     setLoading(true);
+    setError('');
     try {
-      const data = await api.createApiKey(name.trim(), { sourceId, federatedRead: readSources });
-      onCreated({ name: data.name, token: data.token });
+      const data = await api.createApiKey(name.trim(), { scopes: selectedScopes, sourceId, federatedRead: readSources });
+      const created = { name: data.name, token: data.token };
+      onCreated(usage === 'shared'
+        ? { ...created, usage: 'shared', sharedIp }
+        : { ...created, usage: 'local' });
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建失败');
     } finally { setLoading(false); }
@@ -383,13 +519,14 @@ function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
         <div className="credential-modal-body">
         <div className="modal-title">创建 API Key</div>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16 }}>
-          API Key 使用简单的 Bearer Token 认证，并授予完整的 read、write、admin 权限。
-          如需限制权限范围，请改用 OAuth 客户端。
+          API Key 使用 Bearer Token 认证，可按 Agent 的用途选择 MCP 地址和最小权限范围。
         </p>
         <div style={{ marginBottom: 16 }}>
           <label>Key 名称</label>
-          <input placeholder="例如 claude-code-local" value={name} onChange={e => setName(e.target.value)} autoFocus />
+          <input ref={nameInputRef} placeholder="例如 claude-code-local" value={name} onChange={e => setName(e.target.value)} autoFocus />
         </div>
+        <McpUsageField usage={usage} setUsage={setUsage} networkMode={networkMode} sharedIp={sharedIp} />
+        <ScopeFields scopes={scopes} setScopes={setScopes} />
         <SourceScopeFields
           sources={sources}
           mainSourceId={mainSourceId}
@@ -412,12 +549,15 @@ function ApiKeyCreateModal({ onClose, onCreated, sources, mainSourceId }: {
 }
 
 function ApiKeyTokenModal({ token, onClose }: {
-  token: { name: string; token: string };
+  token: ApiKeyCredentials;
   onClose: () => void;
 }) {
   const [client, setClient] = useState<McpClientId>('universal');
-  const content = buildApiKeyAgentContent(client, window.location.origin, token.token);
-  const jsonConfig = buildApiKeyJsonConfig(window.location.origin, token.token);
+  const mcpOrigin = token.usage === 'shared'
+    ? `http://${token.sharedIp}:3131`
+    : window.location.origin;
+  const content = buildApiKeyAgentContent(client, mcpOrigin, token.token);
+  const jsonConfig = buildApiKeyJsonConfig(mcpOrigin, token.token);
 
   return (
     <div className="modal-overlay">
@@ -459,13 +599,15 @@ function ApiKeyTokenModal({ token, onClose }: {
 
 function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
   onClose: () => void;
-  onRegistered: (creds: { clientId: string; clientSecret: string; name: string }) => void;
+  onRegistered: (creds: RegisteredCredentials) => void;
   sources: SourceOption[];
   mainSourceId: string;
 }) {
   const [name, setName] = useState('');
   const [sourceId, setSourceId] = useState(mainSourceId);
   const [readSources, setReadSources] = useState<string[]>([mainSourceId]);
+  const { usage, setUsage, networkMode, sharedIp } = useMcpUsage();
+  const nameInputRef = useRef<HTMLInputElement>(null);
   // v0.28: scope set sourced from admin/src/lib/scope-constants.ts (mirror
   // of src/core/scope.ts). CI drift check at scripts/check-admin-scope-drift.sh
   // fails the build if these diverge.
@@ -475,6 +617,7 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
   const [ttl, setTtl] = useState('86400'); // 24h default
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  useCredentialNameFocus(nameInputRef);
 
   useEffect(() => {
     setSourceId(mainSourceId);
@@ -493,18 +636,20 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setError('请输入名称'); return; }
+    if (usage === 'shared' && !sharedIp) { setError('共享 MCP 地址不可用，请先在桌面端保存共享地址'); return; }
+    const selectedScopes = ALLOWED_SCOPES_LIST.filter(scope => scopes[scope]);
+    if (selectedScopes.length === 0) { setError('请至少选择一项权限'); return; }
     setLoading(true);
     setError('');
     try {
       // Use the CLI registration endpoint (POST to admin API)
-      const selectedScopes = Object.entries(scopes).filter(([, v]) => v).map(([k]) => k).join(' ');
       const res = await fetch('/admin/api/register-client', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
-          scopes: selectedScopes,
+          scopes: selectedScopes.join(' '),
           tokenTtl: ttl === '0' ? 315360000 : Number(ttl),
           sourceId,
           federatedRead: readSources,
@@ -512,7 +657,14 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
       });
       if (!res.ok) throw new Error('注册失败');
       const data = await res.json();
-      onRegistered({ clientId: data.clientId, clientSecret: data.clientSecret, name: name.trim() });
+      const registered = {
+        clientId: data.clientId,
+        clientSecret: data.clientSecret,
+        name: name.trim(),
+      };
+      onRegistered(usage === 'shared'
+        ? { ...registered, usage: 'shared', sharedIp }
+        : { ...registered, usage: 'local' });
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册失败');
     } finally {
@@ -527,19 +679,10 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
         <div className="modal-title">注册 Agent</div>
         <div style={{ marginBottom: 16 }}>
           <label>Agent 名称</label>
-          <input placeholder="例如 perplexity-production" value={name} onChange={e => setName(e.target.value)} autoFocus />
+          <input ref={nameInputRef} placeholder="例如 perplexity-production" value={name} onChange={e => setName(e.target.value)} autoFocus />
         </div>
-        <div style={{ marginBottom: 16 }}>
-          <label>权限范围</label>
-          <div className="checkbox-group">
-            {ALLOWED_SCOPES_LIST.map(s => (
-              <label key={s} className="checkbox-label">
-                <input type="checkbox" checked={scopes[s]} onChange={e => setScopes(p => ({ ...p, [s]: e.target.checked }))} />
-                {s}
-              </label>
-            ))}
-          </div>
-        </div>
+        <McpUsageField usage={usage} setUsage={setUsage} networkMode={networkMode} sharedIp={sharedIp} />
+        <ScopeFields scopes={scopes} setScopes={setScopes} />
         <SourceScopeFields
           sources={sources}
           mainSourceId={mainSourceId}
@@ -569,12 +712,15 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
 }
 
 function CredentialsModal({ credentials, onClose }: {
-  credentials: { clientId: string; clientSecret: string; name: string };
+  credentials: RegisteredCredentials;
   onClose: () => void;
 }) {
   const [client, setClient] = useState<McpClientId>('universal');
-  const content = buildOAuthAgentContent(client, window.location.origin, credentials);
-  const jsonConfig = buildOAuthJsonConfig(window.location.origin, credentials);
+  const mcpOrigin = credentials.usage === 'shared'
+    ? `http://${credentials.sharedIp}:3131`
+    : window.location.origin;
+  const content = buildOAuthAgentContent(client, mcpOrigin, credentials);
+  const jsonConfig = buildOAuthJsonConfig(mcpOrigin, credentials);
   const downloadJson = () => {
     downloadJsonFile(jsonConfig, `${credentials.name}-pmbrain.json`);
   };
@@ -912,7 +1058,6 @@ function AgentDrawer({
                   await api.revokeApiKey(agent.name || '');
                 }
                 onRevoked();
-                onClose();
               } catch (e) {
                 alert('撤销失败：' + (e instanceof Error ? e.message : '未知错误'));
               }

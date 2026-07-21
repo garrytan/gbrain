@@ -37,9 +37,11 @@ describe('Dream GUI product contract', () => {
     expect(api).toContain("cmd.push('--preset', input.preset)");
   });
 
-  test('one-click Dream uses the main source and leaves the 25-page override in advanced settings', () => {
+  test('one-click Dream uses the main source and only applies the page limit to proposals', () => {
     expect(dream).toContain("sourceId: runMode === 'advanced' ? sourceId.trim() || undefined : defaultSourceId");
-    expect(dream).toContain("maxPages: runMode === 'advanced' && maxPages.trim() ? Number(maxPages) : undefined");
+    expect(dream).toContain("maxPages: runMode === 'advanced' && phase === 'propose_takes' && maxPages.trim() ? Number(maxPages) : undefined");
+    expect(dream).toContain("showAdvancedControls && phase === 'propose_takes'");
+    expect(dream).toContain('embed 会处理全部待向量分块');
     expect(dream).toContain("drainProposals: runMode === 'cycle'");
   });
 

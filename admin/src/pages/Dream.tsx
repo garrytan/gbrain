@@ -1005,7 +1005,7 @@ function DreamRunPanel({
         preset: runMode === 'meeting' ? 'meeting' : runMode === 'cycle' ? 'full' : undefined,
         phase: runMode === 'advanced' ? phase : undefined,
         sourceId: runMode === 'advanced' ? sourceId.trim() || undefined : defaultSourceId,
-        maxPages: runMode === 'advanced' && maxPages.trim() ? Number(maxPages) : undefined,
+        maxPages: runMode === 'advanced' && phase === 'propose_takes' && maxPages.trim() ? Number(maxPages) : undefined,
         drainProposals: runMode === 'cycle',
         windowSeconds: runMode === 'cycle' && timeoutMs
           ? Math.max(60, Math.floor((timeoutMs * 0.75) / 1000))
@@ -1099,11 +1099,16 @@ function DreamRunPanel({
             </select>
           </label>
         )}
-        {showAdvancedControls && (
+        {showAdvancedControls && phase === 'propose_takes' && (
           <label>
-            <span>最多处理页面</span>
+            <span>提议最多处理页面</span>
             <input value={maxPages} onChange={event => setMaxPages(event.target.value)} placeholder="可选" inputMode="numeric" />
           </label>
+        )}
+        {showAdvancedControls && phase === 'embed' && (
+          <div className="pm-hint">
+            embed 会处理全部待向量分块；本地模型的实际速度取决于模型并发与页面大小。
+          </div>
         )}
         {!compact && showInputControls && (
           <>

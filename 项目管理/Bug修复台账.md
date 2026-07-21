@@ -1,5 +1,38 @@
 # Bug 修复台账
 
+## 2026-07-21 Admin 撤销 Agent 后名称输入再次失焦与 Dream 向量化参数误导修复
+
+- 时间：2026-07-21
+- 版本号：PMBrain 1.1.45；PMBrain Desktop 1.0.75
+- 标题：彻底修复撤销 Agent 后新建凭证名称输入失焦，并纠正 Dream embed 页面上无效的页面上限参数
+- 描述：1.1.44 已在撤销成功后清理 Agent 抽屉并在创建弹窗挂载时聚焦名称输入框，但 Windows 原生确认框关闭后仍可能异步把焦点还给旧按钮或页面，导致第一次打开 API Key/OAuth 创建弹窗时名称框失焦，切换窗口后再次进入才恢复。另经只读排查，Dream 高级设置在 `embed` 阶段仍展示“最多处理页面”，使用户误以为设置 25 会限制或分批完成向量化；实际底层仅在 `propose_takes` 阶段读取该参数，`embed` 会尝试处理全部待向量分块。
+- 根因：名称输入原先只在 React 弹窗挂载时执行一次聚焦，无法覆盖原生确认框稍后发生的焦点恢复竞态；Dream 将仅属于知识提议阶段的 `maxPages` 作为通用高级参数展示和提交。现场 247 个待处理分块实际只分布在 5 个页面，Ollama 日志显示本地模型在 PMBrain 默认并发请求排队时多次于约 5 分钟返回 HTTP 400；底层逐页异常会被捕获但不会令整个 embed 阶段失败，因此用户看到流程完成后仍有待处理项。
+- 解决方案：为 API Key 与 OAuth 创建弹窗共用可清理的名称聚焦恢复逻辑，在首帧、短延迟、窗口重新获得焦点和页面恢复可见时重试；仅当焦点仍在弹窗外时聚焦名称框，避免抢走用户已选择的权限或来源控件。Dream 仅在 `propose_takes` 阶段展示并提交“提议最多处理页面”，在 `embed` 阶段明确提示会处理全部待向量分块，避免继续误用无效参数。本次未改变共用 CLI/数据层的并发策略、异常统计或现有向量数据；这些底层修改需用户确认后另行实施。
+- 是否完成：是
+- 最终结果：Admin 两类凭证弹窗均可在原生确认框焦点恢复竞态后重新获得名称输入焦点，同时不会覆盖弹窗内的后续用户焦点；Dream embed 不再展示或提交无效的页面上限。只读核验确认当前 247 个待处理分块来自 5 个页面（`duwu` 237 个、`luhaixintongdao` 10 个），未改写知识库、原始资料或向量数据。根项目、Admin 与 Desktop TypeScript 检查通过，Admin MCP/Dream 定向测试 26 项和 Desktop 完整测试 119 项通过，Admin 生产资源、Electron 资源与 sidecar 打包前资源已更新；browser-use CLI 已验证 API Key/OAuth 弹窗的延迟焦点恢复、不抢夺弹窗内用户焦点，以及 embed/propose_takes 参数的差异展示。Windows 安装包仍由用户最终执行 `bun run build:win`。
+
+## 2026-07-21 Admin 撤销 Agent 后新建名称输入与共享 MCP 配置修复
+
+- 时间：2026-07-21
+- 版本号：PMBrain 1.1.43；PMBrain Desktop 1.0.75
+- 标题：修复撤销 Agent 后新建弹窗名称输入失焦，并消除共享 MCP 地址竞态与桌面端残留 DOM 引用风险
+- 描述：复核 1.0.73—1.0.75 的 MCP 接入改动时发现：撤销 Agent 后父级抽屉状态与列表刷新由两个回调分开处理，新建弹窗只设置显示状态，缺少对残留抽屉的显式清理和名称输入框焦点恢复；新增的共享 MCP 成功页又会二次异步读取共享 IP，在读取完成前复制或下载会生成本地地址，读取失败时也会静默回退本地地址；同时 Admin 创建凭证的父级状态类型未同步 `usage` 字段，严格 TypeScript 检查失败。桌面端删除共享成员表单后，测试仍要求旧 DOM 和旧刷新函数存在，且 renderer 保留多个空调用，无法通过完整契约验证。
+- 根因：Admin 弹窗状态、凭证类型和共享地址获取没有作为一次完整状态转换处理；Vite 构建未执行 TypeScript 类型检查，掩盖了凭证类型不一致；桌面端只完成了页面 DOM 删除和部分运行时代码清理，没有同步测试契约与全部调用点。
+- 解决方案：新建 OAuth 客户端前显式关闭 Agent 抽屉，并在注册弹窗挂载后恢复名称输入焦点；撤销成功由父级一次性关闭抽屉并刷新列表；使用带本地/共享判别字段的统一凭证类型，在注册弹窗内确认共享模式和有效 IPv4 后把地址随凭证结果传给成功页，取消成功页二次请求和错误本地回退，服务端只向 Admin 返回通过 IPv4 校验的共享地址；补齐核心配置类型中既有的 `desktop.network_mode` 与 `desktop.shared_ip` 声明；删除 desktop renderer 的共享表单空函数、无效刷新调用和旧类型导入，并将契约测试改为断言桌面端只保留“打开管理控制台”入口且旧 DOM 引用不得回归；补充托盘首次提示持久化测试，并避免配置写入异常中断关闭到托盘流程。
+- 是否完成：是
+- 最终结果：根项目、Admin 与 Desktop TypeScript 检查通过，Admin 生产构建和内嵌资源已更新，Electron 与 sidecar 打包前资源已刷新；Admin MCP 9 项定向测试和 Desktop 119 项完整测试通过，打包资源版本契约 3 项通过；使用 browser-use CLI 在真实 3131 Admin 页面模拟“撤销成功 → 新建 OAuth 客户端”状态转换，名称输入可正常聚焦并写入，模拟过程拦截撤销请求，未改动真实 Agent 凭证、知识库或原始资料。最终 Windows 安装包仍由用户执行 `bun run build:win`。
+
+## 2026-07-21 Desktop renderer JS 崩溃导致卡在 FIRST RUN 页面
+
+- 时间：2026-07-21
+- 版本号：PMBrain Desktop 1.0.74
+- 标题：合并共享成员接入到 admin 时漏删 src.ts 事件绑定，renderer 顶层抛 TypeError 导致桌面端所有按钮失效
+- 描述：1.0.73 把桌面端「共享成员接入」创建表单 DOM 从 index.html 删除并换引导卡片，但漏删 `desktop/src/renderer/src.ts` 两处引用已删元素的事件绑定：`src.ts:1104` 的 `$('#shared-can-write').addEventListener('change', ...)`（顶层执行）和 `src.ts:660` 的 `$('#shared-write-source').disabled = ...`（在 setSharedControlsDisabled 函数内）。`#shared-can-write`/`#shared-write-source` 元素已不存在，querySelector 返回 null，`null.addEventListener` 抛 `TypeError: Cannot read properties of null`，renderer JS 在顶层执行到 1104 行时崩溃，**该行之后的所有事件绑定（保存配置、打开日志目录、打开管理控制台等）全部未注册**。用户现象：FIRST RUN 基础配置页 HTML 静态渲染了，但点任何按钮都没反应，"打开日志目录"打不开，"进不去系统"。
+- 根因：删 index.html 创建表单 DOM 时，未同步排查 src.ts 全部 `#shared-can-write`/`#shared-write-source` 引用，只删了 `#create-shared-integration` 事件绑定。typecheck（tsc --noEmit）不报错（querySelector 返回类型断言为 `HTMLInputElement`，null 不是类型错误），build 也通过，runtime 才崩。
+- 解决方案：删 `src.ts:1104-1106` 的 `#shared-can-write` change 事件绑定；删 `src.ts:659-661` setSharedControlsDisabled 里 `if (!disabled) { #shared-write-source.disabled = ... }` 块，aria-disabled 目标从 `.shared-form` 改为 `.shared-guide`（引导卡片存在的 class）。typecheck + electron-vite build 通过。
+- 是否完成：是
+- 最终结果：renderer 不再顶层崩溃，所有事件绑定正常注册，桌面端恢复可用。`desktop/package.json` 1.0.73 → 1.0.74。教训：删 DOM 元素时必须 grep 全部引用（事件绑定 + 函数内引用），typecheck 通过不代表 runtime 安全。打包 `bun run build:win` 产出 1.0.74 安装包，用户卸载坏的 1.0.73 后装新版恢复。
+
 ## 2026-07-17 Desktop 测试误写真实数据库配置修复
 
 - 时间：2026-07-17
