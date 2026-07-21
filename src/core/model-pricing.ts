@@ -78,6 +78,12 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
 
   // ── Google ─────────────────────────────────────────────────────────────
+  // Gemini 2.5 family (verified 2026-07-21). 2.5 Pro rates are the <=200K
+  // prompt tier; long-context surcharge deliberately not modeled (same
+  // convention as the Anthropic entries above).
+  'google:gemini-2.5-pro':                { input:  1.25, output: 10.00 },
+  'google:gemini-2.5-flash':              { input:  0.30, output:  2.50 },
+  'google:gemini-2.5-flash-lite':         { input:  0.10, output:  0.40 },
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },
   // Gemini 2.0 Flash: $0.10 in / $0.40 out (verified 2026-06-03). Reconciled
   // from a stale $0.30/$1.20 entry that had drifted in takes-quality-eval.

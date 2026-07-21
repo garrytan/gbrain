@@ -32,9 +32,43 @@
 
 import { BudgetMeter, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
 import { sourceScopeOpts, type OperationContext } from '../operations.ts';
+import { getChatModel } from '../ai/gateway.ts';
+import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase, PhaseResult, PhaseStatus, PhaseError } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
+
+/**
+ * Resolve the chat model for a dream phase (#2516, takeover — originally by
+ * @ervza). Precedence:
+ *
+ *   explicit opts.model → per-phase config key (`models.dream.<phase>`) →
+ *   `models.default` → GBRAIN_MODEL env → gateway chat model
+ *   (getChatModel — reflects `models.chat` / `models.tier.reasoning` /
+ *   config-file `chat_model` after reconfigureGatewayWithEngine) →
+ *   TIER_DEFAULTS.reasoning.
+ *
+ * This replaces per-phase hardcoded 'claude-sonnet-4-6' defaults so
+ * non-Anthropic stacks (ollama, openrouter, litellm, openai-compat) route the
+ * dream phases through the user's configured provider. The gateway fallback
+ * is wrapped in try/catch so phases running without a configured gateway
+ * (unit tests with injected judges/extractors) still resolve a model id for
+ * budget accounting instead of throwing.
+ */
+export async function resolvePhaseChatModel(
+  engine: BrainEngine,
+  configKey: string,
+  explicit?: string,
+): Promise<string> {
+  if (explicit && explicit.trim()) return explicit;
+  const configured = await resolveModel(engine, { configKey, fallback: '' });
+  if (configured && configured.trim()) return configured;
+  try {
+    return getChatModel();
+  } catch {
+    return TIER_DEFAULTS.reasoning;
+  }
+}
 
 /**
  * Source-scoped read options threaded through every engine call inside a

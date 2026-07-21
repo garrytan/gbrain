@@ -53,6 +53,11 @@ function buildMockEngine(opts: {
 
   const engine = {
     kind: 'pglite',
+    // #2516: resolvePhaseChatModel consults engine config keys; the mock
+    // answers null so the model falls through to the static default.
+    async getConfig() {
+      return null;
+    },
     async listTakes() {
       return opts.takes;
     },
@@ -286,7 +291,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
       return { verdict: 'correct', confidence: 0.9, reasoning: 'x' };
     };
     const evidenceRetriever: EvidenceRetrieverFn = async () => 'mock evidence body';
-    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever });
+    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever, model: 'claude-sonnet-4-6' });
     expect(judgeCalls).toBe(0);
     const details = result.details as Record<string, unknown>;
     expect(details.cache_hits).toBe(1);
@@ -326,5 +331,27 @@ describe('runPhaseGradeTakes — phase integration', () => {
     expect(details.verdicts_written).toBe(1);
     expect((details.warnings as string[]).length).toBeGreaterThan(0);
     expect((details.warnings as string[])[0]).toContain('judge timeout');
+  });
+});
+
+// ─── #2516: per-phase model config key ──────────────────────────────
+
+describe('models.dream.grade_takes config key (#2516)', () => {
+  test('config-selected model reaches the judge AND the cache row', async () => {
+    const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
+    const { engine, captured } = buildMockEngine({ takes });
+    (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
+      async (key: string) => (key === 'models.dream.grade_takes' ? 'openai:gpt-4o-mini' : null);
+    const hints: Array<string | undefined> = [];
+    const judge: JudgeFn = async ({ modelHint }) => {
+      hints.push(modelHint);
+      return { verdict: 'correct', confidence: 0.9, reasoning: 'x' };
+    };
+    await runPhaseGradeTakes(buildCtx(engine), { judge });
+    // Pre-#2516 the judge received modelHint=undefined (silently used the
+    // gateway default) while the cache row recorded a hardcoded Anthropic id.
+    expect(hints).toEqual(['openai:gpt-4o-mini']);
+    const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
+    expect(insert!.params[2]).toBe('openai:gpt-4o-mini');
   });
 });

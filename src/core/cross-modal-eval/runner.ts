@@ -23,6 +23,7 @@ import { parseModelJSON } from './json-repair.ts';
 import { receiptName, sha8 } from './receipt-name.ts';
 import { writeReceipt } from './receipt-write.ts';
 import { canonicalLookup } from '../model-pricing.ts';
+import { resolveAlias } from '../model-config.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 
@@ -36,18 +37,31 @@ export const DEFAULT_DIMENSIONS: string[] = [
 ];
 
 /**
- * Default 3-provider slot configuration. Implementer should refresh the
- * model strings alongside model-family bumps in CLAUDE.md.
+ * Default 3-provider slot configuration.
  *
- * The model strings here resolve through `src/core/ai/recipes/`. Each slot
- * uses a distinct family so blind spots don't correlate. Override via
- * `--slot-a-model`, `--slot-b-model`, `--slot-c-model` on the CLI.
+ * #1270: slots are alias names (`gpt` / `opus` / `gemini`), resolved through
+ * `resolveAlias` (DEFAULT_ALIASES in src/core/model-config.ts) at run time —
+ * ONE maintenance point for model-family bumps instead of hardcoded ids that
+ * rot silently. Each slot uses a distinct family so blind spots don't
+ * correlate. Override via `--slot-a-model`, `--slot-b-model`,
+ * `--slot-c-model` on the CLI (full `provider:model` ids pass through
+ * resolveAlias unchanged).
  */
 export const DEFAULT_SLOTS: SlotConfig[] = [
-  { id: 'A', model: 'openai:gpt-4o' },
-  { id: 'B', model: 'anthropic:claude-opus-4-7' },
-  { id: 'C', model: 'google:gemini-1.5-pro' },
+  { id: 'A', model: 'gpt' },
+  { id: 'B', model: 'opus' },
+  { id: 'C', model: 'gemini' },
 ];
+
+/**
+ * Resolve slot model aliases to full `provider:model` ids. Idempotent for
+ * already-full ids (resolveAlias passes unknown names through unchanged).
+ */
+export async function resolveSlots(slots: SlotConfig[]): Promise<SlotConfig[]> {
+  return Promise.all(
+    slots.map(async s => ({ ...s, model: await resolveAlias(null, s.model) })),
+  );
+}
 
 export interface SlotConfig {
   id: string;
@@ -117,7 +131,7 @@ export interface RunEvalResult {
 /** Run up to `cycles` cycles. Stops early on PASS. */
 export async function runEval(opts: RunEvalOpts): Promise<RunEvalResult> {
   const dimensions = opts.dimensions ?? DEFAULT_DIMENSIONS;
-  const slots = opts.slots ?? DEFAULT_SLOTS;
+  const slots = await resolveSlots(opts.slots ?? DEFAULT_SLOTS);
   const cycles = clampCycles(opts.cycles);
   const slug = opts.slug ?? `eval-${sha8(opts.output).slice(0, 6)}`;
 

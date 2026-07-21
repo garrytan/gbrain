@@ -39,6 +39,11 @@ function buildMockEngine(opts: { scorecard: TakesScorecard }): {
   const captured: CapturedSql[] = [];
   const engine = {
     kind: 'pglite',
+    // #2516: resolvePhaseChatModel consults engine config keys; the mock
+    // answers null so the model falls through to the static default.
+    async getConfig() {
+      return null;
+    },
     async getScorecard() {
       return opts.scorecard;
     },
@@ -329,5 +334,23 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     });
     const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
     expect(insert!.params[0]).toBe('tenant-b');
+  });
+});
+
+// ─── #2516: per-phase model config key ──────────────────────────────
+
+describe('models.dream.calibration_profile config key (#2516)', () => {
+  test('config-selected model is used and persisted to model_id', async () => {
+    const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
+    (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
+      async (key: string) => (key === 'models.dream.calibration_profile' ? 'openai:gpt-4o-mini' : null);
+    await runPhaseCalibrationProfile(buildCtx(engine), {
+      patternsGenerator: async () => ['You call early-stage tactics well — 8 of 10 held up.'],
+      biasTagsGenerator: async () => [],
+      voiceGateJudge: passJudge,
+    });
+    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    expect(insert).toBeDefined();
+    expect(insert!.params).toContain('openai:gpt-4o-mini');
   });
 });
