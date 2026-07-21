@@ -1,20 +1,43 @@
 /**
  * v0.29.1 — Compute a page's effective_date from frontmatter precedence.
+ * tasks-41o — added the content_created_at / frontmatter.created rungs.
  *
  * The "effective date" is the answer to "when was this page about?" It's
  * NOT updated_at (which churns from auto-link) and NOT created_at (which
  * is the row insert time). It's the user's stated content date.
  *
  * Precedence chain (default order):
+ *   0. content_created_at        — explicit, authoritative content-date
+ *                                   override (backfilled or importer-set;
+ *                                   see PageInput.content_created_at).
+ *                                   Ranked above frontmatter.event_date/
+ *                                   date/published because it's the one
+ *                                   signal specifically designed to correct
+ *                                   a wrong row-timestamp fallback — it's
+ *                                   NULL for the vast majority of pages
+ *                                   (those keep their existing behavior
+ *                                   unchanged) and only populated when we
+ *                                   know for certain when the content was
+ *                                   created.
  *   1. frontmatter.event_date    — meeting / event pages
  *   2. frontmatter.date          — dated essays
  *   3. frontmatter.published     — writing/
  *   4. filename-date             — leading YYYY-MM-DD in basename
- *   5. updated_at                — fallback
- *   6. created_at                — last resort (only if updated_at NULL)
+ *   5. frontmatter.created       — generic "content created" signal (e.g.
+ *                                   wiki/entities/ pages with no
+ *                                   event_date/date/published/filename
+ *                                   date). Ranked below the dedicated
+ *                                   content-date fields above because those
+ *                                   are deliberate, page-type-specific
+ *                                   signals; `created` is a broader,
+ *                                   weaker one used as a last resort before
+ *                                   falling back to row bookkeeping.
+ *   6. updated_at                — fallback
+ *   7. created_at                — last resort (only if updated_at NULL)
  *
  * Per-prefix override: for `daily/` and `meetings/` slug prefixes, the
- * filename-date jumps to position 1 — the filename is the user's primary
+ * filename-date jumps ahead of frontmatter.event_date/date/published (but
+ * stays below content_created_at) — the filename is the user's primary
  * signal there ("daily/2024-03-15.md" the FILE date matters more than any
  * frontmatter the user pasted).
  *
@@ -43,6 +66,13 @@ export interface ComputeEffectiveDateOpts {
   filename?: string | null;
   updatedAt: Date;
   createdAt: Date;
+  /**
+   * tasks-41o: the page's `content_created_at` column value (or an
+   * importer-computed override before the row exists). Highest-priority
+   * precedence candidate — see the module doc comment. Optional/undefined
+   * for pre-migration callers; treated the same as null.
+   */
+  contentCreatedAt?: Date | null;
 }
 
 /**
@@ -118,28 +148,42 @@ function hasFilenameFirstPrefix(slug: string): boolean {
  * 'fallback' when nothing in frontmatter or filename parses.
  */
 export function computeEffectiveDate(opts: ComputeEffectiveDateOpts): EffectiveDateResult {
-  const { slug, frontmatter, filename, updatedAt, createdAt } = opts;
+  const { slug, frontmatter, filename, updatedAt, createdAt, contentCreatedAt } = opts;
   const filenameFirst = hasFilenameFirstPrefix(slug);
+
+  // tasks-41o: explicit, authoritative content-date override. Checked FIRST,
+  // ahead of every frontmatter/filename candidate below — see the module doc
+  // comment for why this is safe (NULL for the vast majority of pages).
+  const contentCreated = validateInRange(contentCreatedAt ?? null);
 
   const fmEvent = validateInRange(parseDateLoose(frontmatter.event_date));
   const fmDate = validateInRange(parseDateLoose(frontmatter.date));
   const fmPublished = validateInRange(parseDateLoose(frontmatter.published));
   const filenameDate = extractFilenameDate(filename);
+  // tasks-41o: generic "content created" signal — weaker than the
+  // page-type-specific fields above, so it's ranked last before the
+  // updated_at/created_at fallback tier (see module doc comment).
+  const fmCreated = validateInRange(parseDateLoose(frontmatter.created));
 
   // Build the ordered candidate list. For filename-first prefixes
-  // (daily/, meetings/) the filename moves to the head of the chain.
+  // (daily/, meetings/) the filename moves ahead of the frontmatter date
+  // fields (but stays below content_created_at).
   const candidates: Array<{ date: Date | null; source: EffectiveDateSource }> = filenameFirst
     ? [
+        { date: contentCreated, source: 'content_created_at' },
         { date: filenameDate, source: 'filename' },
         { date: fmEvent, source: 'event_date' },
         { date: fmDate, source: 'date' },
         { date: fmPublished, source: 'published' },
+        { date: fmCreated, source: 'created' },
       ]
     : [
+        { date: contentCreated, source: 'content_created_at' },
         { date: fmEvent, source: 'event_date' },
         { date: fmDate, source: 'date' },
         { date: fmPublished, source: 'published' },
         { date: filenameDate, source: 'filename' },
+        { date: fmCreated, source: 'created' },
       ];
 
   for (const c of candidates) {

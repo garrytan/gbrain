@@ -11,7 +11,7 @@ import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
-import { computeEffectiveDate } from './effective-date.ts';
+import { computeEffectiveDate, parseDateLoose } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
@@ -752,6 +752,23 @@ export async function importFromContent(
     // consults it.
     const filenameForChain = opts.filename ?? slug.split('/').pop() ?? slug;
     const nowDate = new Date();
+    // tasks-41o — thread frontmatter.created forward so it PERSISTS on the
+    // row as content_created_at (distinct from created_at, the row-insert
+    // time; this NEVER touches created_at). Deliberately NOT passed as
+    // computeEffectiveDate's `contentCreatedAt` opt here — that opt is the
+    // top-priority explicit-override slot (reserved for an already-known,
+    // authoritative content date, e.g. a prior backfill), whereas
+    // frontmatter.created on a fresh import is the same generic, lower-
+    // priority signal computeEffectiveDate already reads via the full
+    // `frontmatter` object passed below (see effective-date.ts's 'created'
+    // rung). Passing it as BOTH would wrongly promote it above
+    // event_date/date/published for every import that happens to set
+    // `created`. `existing` doesn't carry content_created_at
+    // (engine.getPage's SELECT doesn't project it, same as effective_date),
+    // so there's nothing to preserve at this layer — putPage's
+    // COALESCE-preserve UPDATE keeps any prior column value when this
+    // frontmatter has no `created` key.
+    const contentCreatedAt = parseDateLoose(parsed.frontmatter.created);
     const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
       slug,
       frontmatter: parsed.frontmatter,
@@ -770,6 +787,7 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
+      content_created_at: contentCreatedAt,
       // v0.32.7 CJK wave: stamp the chunker version so the post-upgrade
       // reindex sweep can find pre-bump pages via `chunker_version < 2`.
       // Also capture the repo-relative source path so sync's delete/rename

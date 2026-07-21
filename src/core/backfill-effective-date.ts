@@ -75,6 +75,8 @@ interface PageRow {
   effective_date_source: EffectiveDateSource | null;
   created_at: string;
   updated_at: string;
+  /** tasks-41o (migration v125). NULL until scripts/backfill-content-created-at.ts runs. */
+  content_created_at: string | null;
 }
 
 function parseFrontmatter(raw: unknown): Record<string, unknown> {
@@ -159,7 +161,7 @@ export async function backfillEffectiveDate(
     const limitParam = `$${params.length}`;
 
     const rows = await engine.executeRaw<PageRow>(
-      `SELECT id, slug, frontmatter, import_filename, effective_date, effective_date_source, created_at, updated_at
+      `SELECT id, slug, frontmatter, import_filename, effective_date, effective_date_source, created_at, updated_at, content_created_at
          FROM pages
          WHERE id > $1 ${slugFilter}
          ORDER BY id
@@ -193,6 +195,11 @@ export async function backfillEffectiveDate(
             filename,
             updatedAt: new Date(r.updated_at),
             createdAt: new Date(r.created_at),
+            // tasks-41o: once scripts/backfill-content-created-at.ts has
+            // populated the column, this re-walk (`gbrain reindex-frontmatter`)
+            // is what actually flips effective_date/effective_date_source for
+            // existing rows — content_created_at is the top-priority candidate.
+            contentCreatedAt: r.content_created_at ? new Date(r.content_created_at) : null,
           });
 
           // No-op-on-equal: skip the UPDATE if existing matches (saves write
@@ -224,6 +231,7 @@ export async function backfillEffectiveDate(
           filename,
           updatedAt: new Date(r.updated_at),
           createdAt: new Date(r.created_at),
+          contentCreatedAt: r.content_created_at ? new Date(r.content_created_at) : null,
         });
         const existingMs = r.effective_date ? new Date(r.effective_date).getTime() : null;
         const computedMs = computed.date ? computed.date.getTime() : null;
