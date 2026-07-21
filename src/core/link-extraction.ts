@@ -28,7 +28,7 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-20T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -92,11 +92,18 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  *
  * Captures: name, slug (dir/name, possibly deeper).
  *
- * The regex permits an optional `../` prefix (any number) and an optional
- * `.md` suffix so the same function works for both filesystem and DB content.
+ * The regex permits optional `../` / `./` prefixes (any number) and an
+ * optional `.md` suffix so the same function works for both filesystem and DB
+ * content.
+ *
+ * #1101: root-level file references (`[Tracker](action-tracker.md)`) are also
+ * matched via the second alternative. The bare branch REQUIRES the `.md`
+ * suffix (kept inside the capture; extractEntityRefs strips it) so anchors
+ * (`#section`), non-markdown assets (`chart.png`), and URLs (`:`/`/` excluded
+ * by the class) don't produce bogus entity refs.
  */
 const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/|\\.\\/)*((?:${DIR_PATTERN}\\/[^)\\s]+?)|(?:[^)\\s\\/:#]+?\\.md))(?:\\.md)?\\)`,
   'g',
 );
 
@@ -311,9 +318,13 @@ export function extractEntityRefs(content: string): EntityRef[] {
   const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
-    const fullPath = match[2];
-    const slug = fullPath;
-    const dir = fullPath.split('/')[0];
+    // #1101: the root-level branch captures the mandatory `.md` suffix
+    // (dir-prefixed captures already exclude it via the trailing optional
+    // group) — strip it so the slug matches the stored page slug.
+    const slug = match[2].endsWith('.md') ? match[2].slice(0, -3) : match[2];
+    // Root-level refs have no entity dir; '' mirrors the generic-wikilink
+    // pass (2c below) rather than misreporting the filename as a dir.
+    const dir = slug.includes('/') ? slug.split('/')[0] : '';
     refs.push({ name, slug, dir });
     markdownRanges.push([match.index, match.index + match[0].length]);
   }

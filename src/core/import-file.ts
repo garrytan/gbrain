@@ -1070,6 +1070,20 @@ export async function importCodeFile(
     return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
   }
 
+  // Skip empty code files (#840). With zero bytes there is nothing to chunk
+  // and no compiled_truth to derive, but without this guard the page row is
+  // still written with empty compiled_truth — which then fails every
+  // subsequent `gbrain reindex-code` pass with `missing compiled_truth`.
+  // Empty files are legitimate in real repos (stub/placeholder files). If a
+  // previously-imported file BECAME empty, delete the stale page (chunks
+  // cascade) so it doesn't ghost in search — mirrors the markdown importer's
+  // empty-content branch, which deletes stale chunks.
+  if (byteLength === 0) {
+    const stale = await engine.getPage(slug, txOpts);
+    if (stale) await engine.deletePage(slug, txOpts);
+    return { slug, status: 'skipped', chunks: 0, error: 'empty code file' };
+  }
+
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the
   // code size guard, BEFORE hash compute, code-chunking, embedding, and DB
   // write. Verdict ignored by design; no-op when no guardrail is registered.

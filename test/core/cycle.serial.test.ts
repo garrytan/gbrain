@@ -625,3 +625,51 @@ describe('runCycle — onceForPhase bypasses only the named phase (issue #2860)'
     expect(await sharedEngine.getConfig('dream.patterns.enabled')).toBe('false');
   });
 });
+
+// ─── multi-source sync (#1079) ─────────────────────────────────────
+//
+// An unscoped autopilot cycle must sync EVERY registered, non-archived,
+// sync-enabled source with a local checkout — not just the single source
+// whose local_path happens to match brainDir. Explicit --source (#1503)
+// keeps the cycle single-source.
+
+describe('runCycle — multi-source sync (#1079)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    await (sharedEngine as any).db.query('DELETE FROM sources');
+    syncCalls = [];
+  });
+
+  test('unscoped cycle syncs every registered, non-archived, sync-enabled source', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path, archived, config) VALUES
+        ('wiki',   'wiki',   '/tmp/brain-1079-a', false, '{}'::jsonb),
+        ('code',   'code',   '/tmp/brain-1079-b', false, '{}'::jsonb),
+        ('old',    'old',    '/tmp/brain-1079-c', true,  '{}'::jsonb),
+        ('paused', 'paused', '/tmp/brain-1079-d', false, '{"syncEnabled": false}'::jsonb),
+        ('remote', 'remote', NULL,                false, '{}'::jsonb)`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-1079-a', phases: ['sync'] });
+    // archived, syncEnabled=false, and checkout-less sources are excluded.
+    expect(syncCalls.map(c => c.sourceId).sort()).toEqual(['code', 'wiki']);
+  });
+
+  test('brainDir not covered by any registered source still syncs (legacy fallback)', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ('wiki', 'wiki', '/tmp/brain-1079-e')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-1079-f', phases: ['sync'] });
+    expect(syncCalls.map(c => c.sourceId)).toEqual(['wiki', undefined]);
+  });
+
+  test('explicit --source keeps the cycle single-source (#1503)', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES
+        ('wiki', 'wiki', '/tmp/brain-1079-g'),
+        ('code', 'code', '/tmp/brain-1079-h')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-1079-g', phases: ['sync'], sourceId: 'code' });
+    expect(syncCalls.length).toBe(1);
+    expect(syncCalls[0].sourceId).toBe('code');
+  });
+});
