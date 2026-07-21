@@ -35,6 +35,11 @@
       "description": "Universal migration from Obsidian, Notion, Logseq, markdown, CSV, JSON, Roam"
     },
     {
+      "name": "obsidian-gbrain-safe-index",
+      "path": "obsidian-gbrain-safe-index/SKILL.md",
+      "description": "Connect and sync an Obsidian-style Markdown vault with gbrain using a cost-controlled import-first workflow, explicit embedding gates, and durable skill/workflow capture."
+    },
+    {
       "name": "setup",
       "path": "setup/SKILL.md",
       "description": "Set up GBrain: auto-provision Supabase or PGLite, AGENTS.md injection, first import"
@@ -227,7 +232,7 @@
     {
       "name": "cold-start",
       "path": "cold-start/SKILL.md",
-      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling — agents never hold raw API keys."
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling \u2014 agents never hold raw API keys."
     },
     {
       "name": "ask-user",
@@ -252,17 +257,622 @@
     {
       "name": "eiirp",
       "path": "eiirp/SKILL.md",
-      "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
+      "description": "Everything In Its Right Place \u2014 post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
     },
     {
       "name": "schema-unify",
       "path": "schema-unify/SKILL.md",
-      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain \u2192 assess \u2192 propose \u2192 apply \u2192 sync \u2192 verify \u2192 commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
     },
     {
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
-      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+      "description": "Self-evolving skill optimization via gbrain skillopt \u2014 SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "skill-vault-capture-policy",
+      "path": "skill-vault-capture-policy/SKILL.md",
+      "description": "Capture durable operational learnings, new agent skills, and environment/setup changes into the Obsidian vault instead of transient chat memory."
+    },
+    {
+      "name": "playwright-cli",
+      "path": "playwright-cli/SKILL.md",
+      "description": "Automate browser interactions, test web pages and work with Playwright tests."
+    },
+    {
+      "name": "webgpu-threejs-tsl",
+      "path": "webgpu-threejs-tsl/SKILL.md",
+      "description": "Comprehensive guide for developing WebGPU-enabled Three.js applications using TSL (Three.js Shading Language). Covers WebGPU renderer setup, TSL syntax and node materials, compute "
+    },
+    {
+      "name": "ai-trader",
+      "path": "ai-trader/SKILL.md",
+      "description": "ai-trader"
+    },
+    {
+      "name": "ai-trader-copytrade",
+      "path": "ai-trader-copytrade/SKILL.md",
+      "description": "ai-trader-copytrade"
+    },
+    {
+      "name": "ai-trader-heartbeat",
+      "path": "ai-trader-heartbeat/SKILL.md",
+      "description": "ai-trader-heartbeat"
+    },
+    {
+      "name": "ai-trader-tradesync",
+      "path": "ai-trader-tradesync/SKILL.md",
+      "description": "ai-trader-tradesync"
+    },
+    {
+      "name": "market-intel",
+      "path": "market-intel/SKILL.md",
+      "description": "market-intel"
+    },
+    {
+      "name": "polymarket-public-data",
+      "path": "polymarket-public-data/SKILL.md",
+      "description": "polymarket-public-data"
+    },
+    {
+      "name": "crypto-12h-market-report",
+      "path": "crypto-12h-market-report/SKILL.md",
+      "description": "crypto-12h-market-report"
+    },
+    {
+      "name": "product-marketing",
+      "path": "product-marketing/SKILL.md",
+      "description": "product-marketing"
+    },
+    {
+      "name": "copywriting",
+      "path": "copywriting/SKILL.md",
+      "description": "copywriting"
+    },
+    {
+      "name": "content-strategy",
+      "path": "content-strategy/SKILL.md",
+      "description": "content-strategy"
+    },
+    {
+      "name": "seo-audit",
+      "path": "seo-audit/SKILL.md",
+      "description": "seo-audit"
+    },
+    {
+      "name": "cro",
+      "path": "cro/SKILL.md",
+      "description": "cro"
+    },
+    {
+      "name": "emails",
+      "path": "emails/SKILL.md",
+      "description": "emails"
+    },
+    {
+      "name": "social",
+      "path": "social/SKILL.md",
+      "description": "social"
+    },
+    {
+      "name": "ads",
+      "path": "ads/SKILL.md",
+      "description": "ads"
+    },
+    {
+      "name": "analytics",
+      "path": "analytics/SKILL.md",
+      "description": "analytics"
+    },
+    {
+      "name": "marketing-plan",
+      "path": "marketing-plan/SKILL.md",
+      "description": "marketing-plan"
+    },
+    {
+      "name": "marketing-psychology",
+      "path": "marketing-psychology/SKILL.md",
+      "description": "marketing-psychology"
+    },
+    {
+      "name": "customer-research",
+      "path": "customer-research/SKILL.md",
+      "description": "customer-research"
+    },
+    {
+      "name": "context-fundamentals",
+      "path": "context-fundamentals/SKILL.md",
+      "description": "context-fundamentals"
+    },
+    {
+      "name": "context-degradation",
+      "path": "context-degradation/SKILL.md",
+      "description": "context-degradation"
+    },
+    {
+      "name": "context-compression",
+      "path": "context-compression/SKILL.md",
+      "description": "context-compression"
+    },
+    {
+      "name": "context-optimization",
+      "path": "context-optimization/SKILL.md",
+      "description": "context-optimization"
+    },
+    {
+      "name": "memory-systems",
+      "path": "memory-systems/SKILL.md",
+      "description": "memory-systems"
+    },
+    {
+      "name": "evaluation",
+      "path": "evaluation/SKILL.md",
+      "description": "evaluation"
+    },
+    {
+      "name": "advanced-evaluation",
+      "path": "advanced-evaluation/SKILL.md",
+      "description": "advanced-evaluation"
+    },
+    {
+      "name": "harness-engineering",
+      "path": "harness-engineering/SKILL.md",
+      "description": "harness-engineering"
+    },
+    {
+      "name": "multi-agent-patterns",
+      "path": "multi-agent-patterns/SKILL.md",
+      "description": "multi-agent-patterns"
+    },
+    {
+      "name": "long-horizon-prompting",
+      "path": "long-horizon-prompting/SKILL.md",
+      "description": "long-horizon-prompting"
+    },
+    {
+      "name": "tool-design",
+      "path": "tool-design/SKILL.md",
+      "description": "tool-design"
+    },
+    {
+      "name": "self-improvement-loops",
+      "path": "self-improvement-loops/SKILL.md",
+      "description": "self-improvement-loops"
+    },
+    {
+      "name": "project-development",
+      "path": "project-development/SKILL.md",
+      "description": "project-development"
+    },
+    {
+      "name": "hosted-agents",
+      "path": "hosted-agents/SKILL.md",
+      "description": "hosted-agents"
+    },
+    {
+      "name": "latent-briefing",
+      "path": "latent-briefing/SKILL.md",
+      "description": "latent-briefing"
+    },
+    {
+      "name": "filesystem-context",
+      "path": "filesystem-context/SKILL.md",
+      "description": "filesystem-context"
+    },
+    {
+      "name": "bdi-mental-states",
+      "path": "bdi-mental-states/SKILL.md",
+      "description": "bdi-mental-states"
+    },
+    {
+      "name": "context-engineering-collection",
+      "path": "context-engineering-collection/SKILL.md",
+      "description": "context-engineering-collection"
+    },
+    {
+      "name": "last30days",
+      "path": "last30days/SKILL.md",
+      "description": "last30days"
+    },
+    {
+      "name": "review",
+      "path": "review/SKILL.md",
+      "description": "review"
+    },
+    {
+      "name": "ship",
+      "path": "ship/SKILL.md",
+      "description": "ship"
+    },
+    {
+      "name": "spec",
+      "path": "spec/SKILL.md",
+      "description": "spec"
+    },
+    {
+      "name": "investigate",
+      "path": "investigate/SKILL.md",
+      "description": "investigate"
+    },
+    {
+      "name": "qa",
+      "path": "qa/SKILL.md",
+      "description": "qa"
+    },
+    {
+      "name": "qa-only",
+      "path": "qa-only/SKILL.md",
+      "description": "qa-only"
+    },
+    {
+      "name": "retro",
+      "path": "retro/SKILL.md",
+      "description": "retro"
+    },
+    {
+      "name": "learn",
+      "path": "learn/SKILL.md",
+      "description": "learn"
+    },
+    {
+      "name": "health",
+      "path": "health/SKILL.md",
+      "description": "health"
+    },
+    {
+      "name": "guard",
+      "path": "guard/SKILL.md",
+      "description": "guard"
+    },
+    {
+      "name": "scrape",
+      "path": "scrape/SKILL.md",
+      "description": "scrape"
+    },
+    {
+      "name": "sync-gbrain",
+      "path": "sync-gbrain/SKILL.md",
+      "description": "sync-gbrain"
+    },
+    {
+      "name": "setup-gbrain",
+      "path": "setup-gbrain/SKILL.md",
+      "description": "setup-gbrain"
+    },
+    {
+      "name": "plan-eng-review",
+      "path": "plan-eng-review/SKILL.md",
+      "description": "plan-eng-review"
+    },
+    {
+      "name": "plan-design-review",
+      "path": "plan-design-review/SKILL.md",
+      "description": "plan-design-review"
+    },
+    {
+      "name": "plan-ceo-review",
+      "path": "plan-ceo-review/SKILL.md",
+      "description": "plan-ceo-review"
+    },
+    {
+      "name": "plan-devex-review",
+      "path": "plan-devex-review/SKILL.md",
+      "description": "plan-devex-review"
+    },
+    {
+      "name": "plan-tune",
+      "path": "plan-tune/SKILL.md",
+      "description": "plan-tune"
+    },
+    {
+      "name": "freeze",
+      "path": "freeze/SKILL.md",
+      "description": "freeze"
+    },
+    {
+      "name": "unfreeze",
+      "path": "unfreeze/SKILL.md",
+      "description": "unfreeze"
+    },
+    {
+      "name": "make-pdf",
+      "path": "make-pdf/SKILL.md",
+      "description": "make-pdf"
+    },
+    {
+      "name": "document-release",
+      "path": "document-release/SKILL.md",
+      "description": "document-release"
+    },
+    {
+      "name": "office-hours",
+      "path": "office-hours/SKILL.md",
+      "description": "office-hours"
+    },
+    {
+      "name": "landing-report",
+      "path": "landing-report/SKILL.md",
+      "description": "landing-report"
+    },
+    {
+      "name": "land-and-deploy",
+      "path": "land-and-deploy/SKILL.md",
+      "description": "land-and-deploy"
+    },
+    {
+      "name": "ios-clean",
+      "path": "ios-clean/SKILL.md",
+      "description": "ios-clean"
+    },
+    {
+      "name": "setup-deploy",
+      "path": "setup-deploy/SKILL.md",
+      "description": "setup-deploy"
+    },
+    {
+      "name": "context-save",
+      "path": "context-save/SKILL.md",
+      "description": "context-save"
+    },
+    {
+      "name": "benchmark",
+      "path": "benchmark/SKILL.md",
+      "description": "benchmark"
+    },
+    {
+      "name": "ios-fix",
+      "path": "ios-fix/SKILL.md",
+      "description": "ios-fix"
+    },
+    {
+      "name": "ios-qa",
+      "path": "ios-qa/SKILL.md",
+      "description": "ios-qa"
+    },
+    {
+      "name": "gstack-openclaw-retro-openclaw",
+      "path": "gstack-openclaw-retro-openclaw/SKILL.md",
+      "description": "gstack-openclaw-retro-openclaw"
+    },
+    {
+      "name": "pair-agent",
+      "path": "pair-agent/SKILL.md",
+      "description": "pair-agent"
+    },
+    {
+      "name": "gstack-upgrade",
+      "path": "gstack-upgrade/SKILL.md",
+      "description": "gstack-upgrade"
+    },
+    {
+      "name": "gstack-openclaw-ceo-review-openclaw",
+      "path": "gstack-openclaw-ceo-review-openclaw/SKILL.md",
+      "description": "gstack-openclaw-ceo-review-openclaw"
+    },
+    {
+      "name": "context-restore",
+      "path": "context-restore/SKILL.md",
+      "description": "context-restore"
+    },
+    {
+      "name": "diagram",
+      "path": "diagram/SKILL.md",
+      "description": "diagram"
+    },
+    {
+      "name": "connect-chrome",
+      "path": "connect-chrome/SKILL.md",
+      "description": "Launch GStack Browser \u2014 AI-controlled Chromium"
+    },
+    {
+      "name": "devex-review",
+      "path": "devex-review/SKILL.md",
+      "description": "devex-review"
+    },
+    {
+      "name": "benchmark-models",
+      "path": "benchmark-models/SKILL.md",
+      "description": "benchmark-models"
+    },
+    {
+      "name": "autoplan",
+      "path": "autoplan/SKILL.md",
+      "description": "autoplan"
+    },
+    {
+      "name": "gstack-openclaw-office-hours-openclaw",
+      "path": "gstack-openclaw-office-hours-openclaw/SKILL.md",
+      "description": "gstack-openclaw-office-hours-openclaw"
+    },
+    {
+      "name": "open-gstack-browser",
+      "path": "open-gstack-browser/SKILL.md",
+      "description": "open-gstack-browser"
+    },
+    {
+      "name": "design-html",
+      "path": "design-html/SKILL.md",
+      "description": "design-html"
+    },
+    {
+      "name": "design-consultation",
+      "path": "design-consultation/SKILL.md",
+      "description": "design-consultation"
+    },
+    {
+      "name": "ios-design-review",
+      "path": "ios-design-review/SKILL.md",
+      "description": "ios-design-review"
+    },
+    {
+      "name": "design-review",
+      "path": "design-review/SKILL.md",
+      "description": "design-review"
+    },
+    {
+      "name": "careful",
+      "path": "careful/SKILL.md",
+      "description": "careful"
+    },
+    {
+      "name": "ios-sync",
+      "path": "ios-sync/SKILL.md",
+      "description": "ios-sync"
+    },
+    {
+      "name": "gstack-openclaw-investigate-openclaw",
+      "path": "gstack-openclaw-investigate-openclaw/SKILL.md",
+      "description": "gstack-openclaw-investigate-openclaw"
+    },
+    {
+      "name": "setup-browser-cookies",
+      "path": "setup-browser-cookies/SKILL.md",
+      "description": "setup-browser-cookies"
+    },
+    {
+      "name": "canary",
+      "path": "canary/SKILL.md",
+      "description": "canary"
+    },
+    {
+      "name": "document-generate",
+      "path": "document-generate/SKILL.md",
+      "description": "document-generate"
+    },
+    {
+      "name": "cso",
+      "path": "cso/SKILL.md",
+      "description": "cso"
+    },
+    {
+      "name": "codex",
+      "path": "codex/SKILL.md",
+      "description": "codex"
+    },
+    {
+      "name": "design-shotgun",
+      "path": "design-shotgun/SKILL.md",
+      "description": "design-shotgun"
+    },
+    {
+      "name": "browse",
+      "path": "browse/SKILL.md",
+      "description": "browse"
+    },
+    {
+      "name": "n8n:community-pr-readiness-check",
+      "path": "n8n:community-pr-readiness-check/SKILL.md",
+      "description": "n8n:community-pr-readiness-check"
+    },
+    {
+      "name": "n8n:content-design",
+      "path": "n8n:content-design/SKILL.md",
+      "description": "n8n:content-design"
+    },
+    {
+      "name": "n8n:conventions",
+      "path": "n8n:conventions/SKILL.md",
+      "description": "n8n:conventions"
+    },
+    {
+      "name": "n8n:create-community-node-lint-rule",
+      "path": "n8n:create-community-node-lint-rule/SKILL.md",
+      "description": "n8n:create-community-node-lint-rule"
+    },
+    {
+      "name": "n8n:create-instance-ai-eval",
+      "path": "n8n:create-instance-ai-eval/SKILL.md",
+      "description": "n8n:create-instance-ai-eval"
+    },
+    {
+      "name": "n8n:create-issue",
+      "path": "n8n:create-issue/SKILL.md",
+      "description": "n8n:create-issue"
+    },
+    {
+      "name": "n8n:create-pr",
+      "path": "n8n:create-pr/SKILL.md",
+      "description": "n8n:create-pr"
+    },
+    {
+      "name": "n8n:create-skill",
+      "path": "n8n:create-skill/SKILL.md",
+      "description": "n8n:create-skill"
+    },
+    {
+      "name": "n8n:db-migrations",
+      "path": "n8n:db-migrations/SKILL.md",
+      "description": "n8n:db-migrations"
+    },
+    {
+      "name": "n8n:design-system",
+      "path": "n8n:design-system/SKILL.md",
+      "description": "n8n:design-system"
+    },
+    {
+      "name": "n8n:experiments",
+      "path": "n8n:experiments/SKILL.md",
+      "description": "n8n:experiments"
+    },
+    {
+      "name": "n8n:human-like-code-review",
+      "path": "n8n:human-like-code-review/SKILL.md",
+      "description": "n8n:human-like-code-review"
+    },
+    {
+      "name": "n8n:linear-issue",
+      "path": "n8n:linear-issue/SKILL.md",
+      "description": "n8n:linear-issue"
+    },
+    {
+      "name": "n8n:loom-transcript",
+      "path": "n8n:loom-transcript/SKILL.md",
+      "description": "n8n:loom-transcript"
+    },
+    {
+      "name": "n8n:node-add-oauth",
+      "path": "n8n:node-add-oauth/SKILL.md",
+      "description": "n8n:node-add-oauth"
+    },
+    {
+      "name": "n8n:protect-endpoints",
+      "path": "n8n:protect-endpoints/SKILL.md",
+      "description": "n8n:protect-endpoints"
+    },
+    {
+      "name": "n8n:reproduce-bug",
+      "path": "n8n:reproduce-bug/SKILL.md",
+      "description": "n8n:reproduce-bug"
+    },
+    {
+      "name": "n8n:spec-driven-development",
+      "path": "n8n:spec-driven-development/SKILL.md",
+      "description": "n8n:spec-driven-development"
+    },
+    {
+      "name": "browser-use",
+      "path": "browser-use/SKILL.md",
+      "description": "browser-use"
+    },
+    {
+      "name": "cloud",
+      "path": "cloud/SKILL.md",
+      "description": "cloud"
+    },
+    {
+      "name": "open-source",
+      "path": "open-source/SKILL.md",
+      "description": "open-source"
+    },
+    {
+      "name": "remote-browser",
+      "path": "remote-browser/SKILL.md",
+      "description": "remote-browser"
+    },
+    {
+      "name": "x402",
+      "path": "x402/SKILL.md",
+      "description": "x402"
     }
   ],
   "dependencies": {
