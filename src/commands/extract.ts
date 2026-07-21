@@ -43,7 +43,7 @@ import {
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { pathToSlug, pruneDir, isSyncable } from '../core/sync.ts';
+import { pathToSlug, slugifyPath, pruneDir, isSyncable } from '../core/sync.ts';
 // v0.41.18.0: withRetry + isRetryableConnError + WithRetryOpts moved to
 // src/core/retry.ts as the canonical primitive. Engine methods
 // (addLinksBatch/addTimelineEntriesBatch/upsertChunks) now self-retry via
@@ -269,14 +269,24 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
 export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<string>): string | null {
   const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
 
-  const s1 = join(fileDir, targetNoExt);
-  if (allSlugs.has(s1)) return s1;
+  // Issue #1964: wikilinks carry raw Obsidian paths (`[[llm-wiki/entities/AI 3.0]]`)
+  // but allSlugs holds sync-slugified slugs (`llm-wiki/entities/ai-3.0`). Try the
+  // raw candidate first (back-compat), then the sync-consistent slugified form.
+  const hit = (candidate: string): string | null => {
+    if (allSlugs.has(candidate)) return candidate;
+    const slugified = slugifyPath(candidate);
+    if (slugified !== candidate && allSlugs.has(slugified)) return slugified;
+    return null;
+  };
+
+  const s1 = hit(join(fileDir, targetNoExt));
+  if (s1) return s1;
 
   const parts = fileDir.split('/').filter(Boolean);
   for (let strip = 1; strip <= parts.length; strip++) {
     const ancestor = parts.slice(0, parts.length - strip).join('/');
-    const candidate = ancestor ? join(ancestor, targetNoExt) : targetNoExt;
-    if (allSlugs.has(candidate)) return candidate;
+    const candidate = hit(ancestor ? join(ancestor, targetNoExt) : targetNoExt);
+    if (candidate) return candidate;
   }
 
   return null;

@@ -9,6 +9,8 @@ import {
   parseTimelineEntries,
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
+  buildBasenameIndex,
+  queryBasenameIndex,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -422,6 +424,46 @@ describe('extractPageLinks', () => {
     expect(alice!.linkType).not.toBe('wikilink_basename'); // verb-inferred
     expect(strk).toBeDefined();
     expect(strk!.linkType).toBe('wikilink_basename');
+  });
+
+  // ─── issue #1964: dir-qualified wikilinks with raw Obsidian paths ────────
+
+  test('#1964: dir-qualified wikilink resolves via sync-consistent slugification (flag OFF)', async () => {
+    // `[[llm-wiki/entities/AI 3.0]]` is a raw Obsidian path; the page slug
+    // is the sync-slugified `llm-wiki/entities/ai-3.0`. Must resolve WITHOUT
+    // global_basename (it's dir-qualified) and must NOT leak to a same-tail
+    // page in a different directory.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'ai-3.0' ? ['other/ai-3.0', 'llm-wiki/entities/ai-3.0'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'llm-wiki/notes/roadmap',
+      'See [[llm-wiki/entities/AI 3.0]] for the model.',
+      {}, 'concept', resolver,
+      // opts.globalBasename omitted (= false) — path is dir-qualified
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['llm-wiki/entities/ai-3.0']);
+    expect(candidates[0].linkType).toBe('wikilink_basename');
+    expect(candidates[0].linkSource).toBe('wikilink-resolved');
+  });
+
+  test('#1964: path-suffix match resolves wiki-root-relative paths against a real index', async () => {
+    // Author writes `[[llm-wiki/entities/AI 3.0]]` but the brain nests the
+    // wiki under a vault dir. Suffix match rescues it; queried through the
+    // REAL basename index so the tail-key lookup is exercised end to end.
+    const idx = buildBasenameIndex(['vault/llm-wiki/entities/ai-3.0', 'people/ai-3.0']);
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => queryBasenameIndex(idx, name),
+    };
+    const { candidates } = await extractPageLinks(
+      'vault/llm-wiki/notes/roadmap',
+      'See [[llm-wiki/entities/AI 3.0]].',
+      {}, 'concept', resolver,
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['vault/llm-wiki/entities/ai-3.0']);
   });
 
   test('opts.skipFrontmatter suppresses the frontmatter pass', async () => {
