@@ -5,13 +5,14 @@ import { AgentsPage } from './pages/Agents';
 import { RequestLogPage } from './pages/RequestLog';
 import { CalibrationPage } from './pages/Calibration';
 import { JobsWatchPage } from './pages/JobsWatch';
+import { SourcesPage } from './pages/Sources';
 import { api } from './api';
 
-type Page = 'login' | 'dashboard' | 'agents' | 'log' | 'calibration' | 'jobs';
+type Page = 'login' | 'dashboard' | 'agents' | 'sources' | 'log' | 'calibration' | 'jobs';
 
 function getPage(): Page {
   const hash = window.location.hash.replace('#', '') || 'dashboard';
-  if (['login', 'dashboard', 'agents', 'log', 'calibration', 'jobs'].includes(hash)) return hash as Page;
+  if (['login', 'dashboard', 'agents', 'sources', 'log', 'calibration', 'jobs'].includes(hash)) return hash as Page;
   return 'dashboard';
 }
 
@@ -54,6 +55,8 @@ export function App() {
              onClick={() => navigate('dashboard')}>Dashboard</a>
           <a className={`nav-item ${page === 'agents' ? 'active' : ''}`}
              onClick={() => navigate('agents')}>Agents</a>
+          <a className={`nav-item ${page === 'sources' ? 'active' : ''}`}
+             onClick={() => navigate('sources')}>Sources</a>
           <a className={`nav-item ${page === 'log' ? 'active' : ''}`}
              onClick={() => navigate('log')}>Request Log</a>
           <a className={`nav-item ${page === 'calibration' ? 'active' : ''}`}
@@ -83,6 +86,7 @@ export function App() {
       <main className="main">
         {page === 'dashboard' && <DashboardPage />}
         {page === 'agents' && <AgentsPage />}
+        {page === 'sources' && <SourcesPage />}
         {page === 'log' && <RequestLogPage />}
         {page === 'calibration' && <CalibrationPage />}
         {page === 'jobs' && <JobsWatchPage />}

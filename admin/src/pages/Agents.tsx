@@ -381,14 +381,46 @@ function CredentialsModal({ credentials, onClose }: {
   );
 }
 
+interface FederationState {
+  source_id: string | null;
+  federated_read: string[];
+}
+
 function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () => void; onRevoked: () => void }) {
   const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
+  const [federation, setFederation] = useState<FederationState | null>(null);
+  const [allSources, setAllSources] = useState<string[]>([]);
+  const [showFederation, setShowFederation] = useState(false);
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
 
   const cid = agent.id || agent.client_id || '';
   const isOAuth = agent.auth_type === 'oauth';
   const agentName = agent.name || agent.client_name || 'unknown';
+
+  // Lazy-load federation state when the drawer opens for an OAuth client.
+  // The /admin/api/agents endpoint doesn't carry source_id / federated_read,
+  // so we fetch /admin/api/agents/federated-read separately and pair by id.
+  useEffect(() => {
+    if (!isOAuth || !cid) return;
+    let cancelled = false;
+    Promise.all([
+      api.agentsFederatedRead().catch(() => ({ clients: [] })),
+      api.sources().catch(() => ({ sources: [] })),
+    ]).then(([feds, srcs]: any) => {
+      if (cancelled) return;
+      const me = (feds.clients || []).find((c: any) => c.client_id === cid);
+      setFederation(me ? { source_id: me.source_id, federated_read: me.federated_read || [] } : null);
+      setAllSources((srcs.sources || []).map((s: any) => s.source_id));
+    });
+    return () => { cancelled = true; };
+  }, [cid, isOAuth]);
+
+  const reloadFederation = async () => {
+    const feds: any = await api.agentsFederatedRead().catch(() => ({ clients: [] }));
+    const me = (feds.clients || []).find((c: any) => c.client_id === cid);
+    setFederation(me ? { source_id: me.source_id, federated_read: me.federated_read || [] } : null);
+  };
 
   // For API keys, we can't show the actual token (it was shown once at creation).
   // For OAuth, we show the client_id and tell them to use their secret.
@@ -553,6 +585,34 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? 'No expiry' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
         </div>
 
+        {isOAuth && federation && (
+          <>
+            <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>Federation</span>
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '4px 10px', fontSize: 12 }}
+                onClick={() => setShowFederation(true)}
+              >
+                Manage reads
+              </button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '6px 12px', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Write source</span>
+              <span className="mono">{federation.source_id || '(none)'}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Federated reads</span>
+              <span style={{ fontSize: 12 }}>
+                {federation.federated_read.length === 0
+                  ? <span style={{ color: 'var(--text-muted)' }}>(empty — no federated reads)</span>
+                  : federation.federated_read.map((s) => (
+                      <span key={s} className="badge badge-read" style={{ marginRight: 4, marginBottom: 2 }}>{s}</span>
+                    ))
+                }
+              </span>
+            </div>
+          </>
+        )}
+
         {/*
           Config Export visible for both auth_type=oauth AND auth_type=api_key.
           Claude Code + Cursor + JSON tabs render real snippets regardless
@@ -628,6 +688,142 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           )}
         </div>
       </div>
+
+      {showFederation && federation && (
+        <FederationModal
+          clientId={cid}
+          clientName={agentName}
+          allSources={allSources}
+          currentReads={federation.federated_read}
+          writeSource={federation.source_id}
+          onClose={() => setShowFederation(false)}
+          onSaved={async () => {
+            await reloadFederation();
+            setShowFederation(false);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * FederationModal — admin counterpart of `gbrain auth set-federated-read`.
+ * Source checkbox list; "Save" submits the full new list via the
+ * race-safe atomic SQL path in setFederatedReadCore. Per the CLI's
+ * documented contract, this is wholesale-replace semantics — concurrent
+ * grant/revoke from a CLI operator would be last-writer-wins against
+ * a Save here.
+ */
+function FederationModal({
+  clientId, clientName, allSources, currentReads, writeSource, onClose, onSaved,
+}: {
+  clientId: string;
+  clientName: string;
+  allSources: string[];
+  currentReads: string[];
+  writeSource: string | null;
+  onClose: () => void;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set(currentReads));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setFederatedRead(clientId, Array.from(selected));
+      await onSaved();
+    } catch (e: any) {
+      setError(e.message || 'save failed');
+      setSaving(false);
+    }
+  };
+
+  // Union: all known sources + any current reads not in the source list
+  // (e.g. orphan entries from before the source was deleted). The latter
+  // surface as "(missing source)" so operators can revoke them.
+  const allKnown = new Set([...allSources, ...currentReads]);
+  const ordered = Array.from(allKnown).sort();
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+        <div className="modal-header">
+          <div style={{ fontSize: 16, fontWeight: 600 }}>Manage federated reads</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+            <strong>{clientName}</strong> — pick which sources this client can read in addition to its
+            {writeSource ? <> write source <code className="mono">{writeSource}</code></> : <> write source</>}.
+          </div>
+        </div>
+        <div className="modal-body" style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+          {ordered.length === 0 && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              No sources registered. Use <code>gbrain sources add &lt;id&gt; --path &lt;dir&gt;</code> from the CLI first.
+            </div>
+          )}
+          {ordered.map((id) => {
+            const isOrphan = !allSources.includes(id);
+            const isWriteSource = id === writeSource;
+            return (
+              <label
+                key={id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 10px',
+                  borderBottom: '1px solid var(--border)',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(id)}
+                  onChange={() => toggle(id)}
+                  style={{ width: 16, height: 16, margin: 0, flexShrink: 0, cursor: 'pointer' }}
+                />
+                <span className="mono" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{id}</span>
+                {isWriteSource && <span className="badge badge-write" style={{ fontSize: 10, flexShrink: 0 }}>write source</span>}
+                {isOrphan && <span className="badge badge-danger" style={{ fontSize: 10, flexShrink: 0 }}>missing source</span>}
+              </label>
+            );
+          })}
+        </div>
+        {error && (
+          <div style={{
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.3)',
+            color: '#ef4444',
+            padding: '10px 12px',
+            borderRadius: 6,
+            margin: '12px 0',
+            fontSize: 12,
+          }}>
+            {error}
+          </div>
+        )}
+        <div className="modal-footer">
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : `Save (${selected.size} source${selected.size === 1 ? '' : 's'})`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
