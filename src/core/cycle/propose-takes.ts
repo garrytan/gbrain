@@ -40,6 +40,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
@@ -330,7 +331,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
     }
 
-    const modelId = opts.model ?? getChatModel();
+    // #1467: model resolution — explicit opts.model > `models.propose_takes`
+    // config (alias-aware via resolveModel, so `sonnet` works) > the gateway
+    // default chat model (pre-#1467 behavior, and the fallback resolveModel
+    // lands on when neither key nor models.default/GBRAIN_MODEL is set).
+    const modelId = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.propose_takes',
+      fallback: getChatModel(),
+    });
 
     for (const page of pages) {
       result.pages_scanned += 1;
@@ -380,7 +388,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          // #1467: pass the RESOLVED model so a `models.propose_takes` config
+          // actually routes the LLM call (pre-fix only the explicit opts.model
+          // reached the extractor; budget check and call could disagree).
+          modelHint: modelId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

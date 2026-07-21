@@ -2907,8 +2907,9 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 # Meeting sync — 10 AM, 4 PM, 9 PM on weekdays
 0 10,16,21 * * 1-5 cd /path/to/meeting-sync && node meeting-sync.mjs >> /tmp/meeting-sync.log 2>&1
 
-# Calendar sync — Sundays at 10 AM
-0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date +%Y-%m-%d)
+# Calendar sync — Sundays at 10 AM. The +7d end keeps upcoming events in the
+# brain — the lookahead window the daily briefing's meeting prep reads from.
+0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date -v+7d +%Y-%m-%d)
 
 # Brain health — weekly Mondays at 6 AM
 0 6 * * 1 gbrain doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain embed --stale

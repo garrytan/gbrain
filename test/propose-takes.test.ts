@@ -41,12 +41,16 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  config?: Record<string, string>; // #1467: models.propose_takes resolution
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string) {
+      return opts.config?.[key] ?? null;
+    },
     async listPages() {
       return opts.pages;
     },
@@ -265,6 +269,28 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+  });
+
+  test('#1467: models.propose_takes config routes the extractor model + model_id column', async () => {
+    const pages = [buildPage({ slug: 'wiki/model-routing', body: 'Configured models should reach the extractor.' })];
+    const { engine, captured } = buildMockEngine({
+      pages,
+      config: { 'models.propose_takes': 'anthropic:claude-sonnet-5' },
+    });
+    let seenModelHint: string | undefined;
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seenModelHint = input.modelHint;
+      return [{ claim_text: 'Config routing works', kind: 'take', holder: 'brain', weight: 0.6 }];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(result.status).toBe('ok');
+    // The RESOLVED model (config key, no explicit opts.model) reaches the
+    // extractor AND lands in the take_proposals.model_id audit column.
+    expect(seenModelHint).toBe('anthropic:claude-sonnet-5');
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]!.params[11]).toBe('anthropic:claude-sonnet-5'); // model_id
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {

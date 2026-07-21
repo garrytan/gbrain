@@ -1840,6 +1840,70 @@ const takes_calibration: Operation = {
   cliHints: { name: 'takes-calibration' },
 };
 
+/**
+ * #1467 — take-proposal review queue. The propose_takes cycle phase writes
+ * candidate claims to `take_proposals`; these ops are the operator review
+ * surface (list pending → accept/reject). Holder allow-list contract matches
+ * takes_list: MCP-bound callers only see permitted holders' proposals.
+ */
+const takes_proposals_list: Operation = {
+  name: 'takes_proposals_list',
+  description: 'List take proposals from the propose_takes review queue (default: pending).',
+  scope: 'read',
+  params: {
+    status: { type: 'string', description: 'pending | accepted | rejected | superseded (default pending)' },
+    page_slug: { type: 'string', description: 'Filter to this page' },
+    limit: { type: 'number', description: 'Max rows (default 50, cap 200)' },
+    offset: { type: 'number', description: 'Skip first N rows' },
+  },
+  handler: async (ctx, p) => {
+    const { listTakeProposals } = await import('./takes-proposals.ts');
+    return listTakeProposals(ctx.engine, {
+      ...sourceScopeOpts(ctx),
+      status: p.status as string | undefined,
+      pageSlug: p.page_slug as string | undefined,
+      limit: p.limit as number | undefined,
+      offset: p.offset as number | undefined,
+      takesHoldersAllowList: ctx.takesHoldersAllowList,
+    });
+  },
+  cliHints: { name: 'takes-proposals-list' },
+};
+
+const takes_proposal_resolve: Operation = {
+  name: 'takes_proposal_resolve',
+  description: 'Accept or reject a pending take proposal. Accept promotes the claim into the page\'s canonical takes fence (markdown + DB mirror).',
+  scope: 'write',
+  mutating: true,
+  // Accept writes markdown into the local brain repo — same trust posture as
+  // the other repo-writing ops. Remote/MCP callers are blocked fail-closed.
+  localOnly: true,
+  params: {
+    id: { type: 'number', required: true, description: 'Proposal id (from takes_proposals_list)' },
+    verdict: { type: 'string', required: true, description: 'accept | reject' },
+    dir: { type: 'string', description: 'Brain repo dir override (default: sync.repo_path config)' },
+  },
+  handler: async (ctx, p) => {
+    const verdict = p.verdict as string;
+    if (verdict !== 'accept' && verdict !== 'reject') {
+      throw new Error(`takes_proposal_resolve: verdict must be "accept" or "reject", got "${verdict}"`);
+    }
+    const { resolveTakeProposal } = await import('./takes-proposals.ts');
+    let brainDir = p.dir as string | undefined;
+    if (!brainDir && verdict === 'accept') {
+      brainDir = (await ctx.engine.getConfig('sync.repo_path')) ?? undefined;
+    }
+    return resolveTakeProposal(ctx.engine, {
+      id: p.id as number,
+      verdict,
+      brainDir,
+      ...sourceScopeOpts(ctx),
+      actedBy: ctx.remote === false ? 'cli' : 'mcp',
+    });
+  },
+  cliHints: { name: 'takes-proposal-resolve' },
+};
+
 const think: Operation = {
   name: 'think',
   description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
@@ -5405,6 +5469,8 @@ export const operations: Operation[] = [
   takes_list, takes_search, think,
   // v0.30: calibration aggregates over takes
   takes_scorecard, takes_calibration,
+  // #1467: take-proposal review queue
+  takes_proposals_list, takes_proposal_resolve,
   // v0.28: whoami + scoped sources management
   whoami, sources_add, sources_list, sources_remove, sources_status,
   // v0.29: Salience + anomalies + recent transcripts
