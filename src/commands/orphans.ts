@@ -53,7 +53,15 @@ const DENY_PREFIXES = [
 ];
 
 /** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities']);
+const FIRST_SEGMENT_EXCLUSIONS = new Set([
+  'scratch',
+  'thoughts',
+  'catalog',
+  'entities',
+  'raw',
+  'atoms',
+  'skills',
+]);
 
 // --- Filter logic ---
 

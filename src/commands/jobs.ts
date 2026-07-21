@@ -7,7 +7,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
-import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import type { MinionHandler, MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
@@ -19,6 +20,49 @@ function parseFlag(args: string[], flag: string): string | undefined {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+/**
+ * Long-lived workers outlive operator config changes. Re-stamp the AI gateway
+ * from DB-backed model config immediately before queued jobs enter gateway-backed
+ * paths, so a stale process-level default cannot route new work to the wrong
+ * provider.
+ */
+async function refreshGatewayForJob(engine: BrainEngine): Promise<void> {
+  const { reconfigureGatewayWithEngine } = await import('../core/ai/gateway.ts');
+  await reconfigureGatewayWithEngine(engine);
+}
+
+const GATEWAY_REFRESH_JOB_NAMES = new Set([
+  'embed',
+  'extract-conversation-facts',
+  'enrich',
+  'contextual_reindex_per_chunk',
+  'autopilot-cycle',
+  'synthesize',
+  'patterns',
+  'consolidate',
+  'extract_facts',
+  'extract-atoms-drain',
+  'embed-backfill',
+  'extract-takes-from-pages',
+  'embed-catch-up',
+]);
+
+function registerBuiltinJob(
+  worker: MinionWorker,
+  engine: BrainEngine,
+  name: string,
+  handler: MinionHandler,
+): void {
+  if (!GATEWAY_REFRESH_JOB_NAMES.has(name)) {
+    worker.register(name, handler);
+    return;
+  }
+  worker.register(name, async (job) => {
+    await refreshGatewayForJob(engine);
+    return await handler(job);
+  });
 }
 
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
@@ -112,7 +156,7 @@ function formatJobDetail(job: MinionJob): string {
   const lines = [
     `Job #${job.id}: ${job.name} (${job.status.toUpperCase()}${job.status === 'dead' ? ` after ${job.attempts_made} attempts` : ''})`,
     `  Queue: ${job.queue} | Priority: ${job.priority}`,
-    `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started})`,
+    `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started}, stalled: ${job.stalled_counter}/${job.max_stalled})`,
     `  Backoff: ${job.backoff_type} ${job.backoff_delay}ms (jitter: ${job.backoff_jitter})`,
   ];
   if (job.started_at) lines.push(`  Started: ${job.started_at.toISOString()}`);
@@ -131,8 +175,22 @@ function formatJobDetail(job: MinionJob): string {
   return lines.join('\n');
 }
 
-export async function runJobs(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
   const sub = args[0];
+
+  // Thin-client dispatch (cli.ts) passes engine=null for the subcommands
+  // with remote MCP routing (`list`, `get`) so no scratch local engine is
+  // ever built. Any other subcommand arriving with a null engine is a
+  // routing bug upstream of this function — refuse instead of crashing
+  // inside MinionQueue.
+  if (!engineOrNull && sub !== 'list' && sub !== 'get') {
+    console.error(`\`gbrain jobs ${sub ?? ''}\` needs a local engine and cannot run on a thin client.`);
+    process.exit(1);
+  }
+  // Null only ever reaches the MCP-routed `list`/`get` branches, which
+  // never touch the engine — narrowed once here so the host-only cases
+  // below typecheck unchanged.
+  const engine = engineOrNull as BrainEngine;
 
   if (!sub || sub === '--help' || sub === '-h') {
     console.log(`gbrain jobs — Minions job queue
@@ -216,6 +274,8 @@ HANDLER TYPES (built in)
     return;
   }
 
+  // The constructor just stores the reference; on the null (thin-client
+  // list/get) paths no queue method is ever reached.
   const queue = new MinionQueue(engine);
 
   switch (sub) {
@@ -1019,10 +1079,38 @@ HANDLER TYPES (built in)
 
         const pidStatus = readSupervisorPid(pidFile);
         const supervisorPid = pidStatus.pid;
-        const running = pidStatus.running;
+        const pidfileRunning = pidStatus.running;
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
+
+        // issue #2227 fix #1/#3: the pidfile is HOME-derived, so a supervisor
+        // started under a different $HOME (keeper=/root vs ops=/data) reads as
+        // "not running" here even when it is healthy — the false signal that
+        // makes an operator spawn a duplicate. Fall back to the queue-scoped DB
+        // singleton lock (#1849), the HOME-independent authority. PID-reuse-safe:
+        // isLockHolderLive keys on lock freshness, never process.kill.
+        const supQueue = parseFlag(args, '--queue') ?? 'default';
+        let detectedViaDbLock = false;
+        let dbLockHolder: { holder_pid: number; holder_host: string } | null = null;
+        if (!pidfileRunning) {
+          try {
+            const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+            const { supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import('../core/minions/supervisor.ts');
+            const snap = await inspectLock(engine, supervisorLockId(supQueue));
+            if (snap && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN)) {
+              detectedViaDbLock = true;
+              dbLockHolder = { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
+            }
+          } catch {
+            // Pre-migration brains / transient DB errors: fall back to pidfile-only.
+          }
+        }
+        const running = pidfileRunning || detectedViaDbLock;
+        // Surface the supervisor's recorded config from the latest `started`
+        // event (concurrency + effective --max-rss) so split-$HOME deployments
+        // see what the live-but-pidfile-invisible supervisor is running.
+        const startedEvt = events.filter(e => e.event === 'started').pop() ?? null;
         // Shared classifier — same code path runs in `gbrain doctor` so the
         // two surfaces cannot drift on what counts as a crash. Supersedes
         // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
@@ -1037,15 +1125,20 @@ HANDLER TYPES (built in)
           nice_requested: w.nice_requested,
           nice: w.nice_now,
         }));
-        const supervisorNice = running && supervisorPid !== null
+        const supervisorNice = pidfileRunning && supervisorPid !== null
           ? getEffectiveNiceness(supervisorPid)
           : null;
 
         const status = {
           running,
-          supervisor_pid: supervisorPid,
+          detected_via: detectedViaDbLock ? 'db_lock' : (pidfileRunning ? 'pidfile' : null),
+          supervisor_pid: supervisorPid ?? dbLockHolder?.holder_pid ?? null,
+          db_lock_holder: dbLockHolder,
           pid_file: pidFile,
+          queue: supQueue,
           last_start: lastStart,
+          concurrency: typeof startedEvt?.concurrency === 'number' ? startedEvt.concurrency : null,
+          max_rss_mb: typeof startedEvt?.max_rss_mb === 'number' ? startedEvt.max_rss_mb : null,
           crashes_24h: summary.total,
           clean_exits_24h: summary.clean_exits,
           crashes_by_cause: summary.by_cause,
@@ -1057,9 +1150,11 @@ HANDLER TYPES (built in)
         if (jsonMode) {
           console.log(JSON.stringify(status, null, 2));
         } else {
-          console.log(`Supervisor: ${running ? 'running' : 'not running'}`);
-          if (supervisorPid) console.log(`  PID:           ${supervisorPid}`);
+          const via = detectedViaDbLock ? ' (detected via DB lock; pidfile not found at the configured path)' : '';
+          console.log(`Supervisor: ${running ? 'running' : 'not running'}${via}`);
+          if (status.supervisor_pid) console.log(`  PID:           ${status.supervisor_pid}${detectedViaDbLock ? ` @ ${dbLockHolder?.holder_host}` : ''}`);
           console.log(`  PID file:      ${pidFile}`);
+          if (detectedViaDbLock && status.concurrency !== null) console.log(`  Concurrency:   ${status.concurrency}${status.max_rss_mb !== null ? ` (max-rss ${status.max_rss_mb}MB)` : ''}`);
           if (lastStart) console.log(`  Last start:    ${lastStart}`);
           console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
           console.log(`  Clean exits (24h): ${summary.clean_exits}`);
@@ -1387,7 +1482,7 @@ export async function registerBuiltinHandlers(
     return { ...result, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason };
   });
 
-  worker.register('embed', async (job) => {
+  registerBuiltinJob(worker, engine, 'embed', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
     // Primary Minion progress channel is job.updateProgress (DB-backed,
     // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
@@ -1398,6 +1493,18 @@ export async function registerBuiltinHandlers(
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
+      // CX1+CX5: pace overrides ride in the job payload as explicit overrides
+      // only; runEmbedCore re-resolves env > config > bundle at execution so
+      // GBRAIN_PACE_* still wins during an incident.
+      ...(job.data.pace && typeof job.data.pace === 'object'
+        ? {
+            pace: job.data.pace as { perCallMode?: string; perCall?: PaceKeyOverrides },
+            // Serialized from the queued payload → config tier so GBRAIN_PACE_*
+            // on the worker still wins at execution (Codex P2 escape hatch).
+            paceFromBackground: true,
+          }
+        : {}),
       onProgress: (done, total, embedded) => {
         // Fire-and-forget: progress updates are best-effort and must not
         // block the worker loop.
@@ -1422,7 +1529,7 @@ export async function registerBuiltinHandlers(
   // BudgetTracker inside its own process. BudgetExhausted is caught at
   // the core level and returned as `result.budget_exhausted: true` (NOT
   // a job failure) so the user can resume with a higher cap.
-  worker.register('extract-conversation-facts', async (job) => {
+  registerBuiltinJob(worker, engine, 'extract-conversation-facts', async (job) => {
     const { runExtractConversationFactsCore } = await import('./extract-conversation-facts.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!sourceId) {
@@ -1433,7 +1540,7 @@ export async function registerBuiltinHandlers(
     }
     const types = Array.isArray(job.data.types)
       ? (job.data.types as string[]).filter((t) =>
-          ['conversation', 'meeting', 'slack', 'email'].includes(t),
+          ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'].includes(t),
         )
       : undefined;
     const result = await runExtractConversationFactsCore(engine, {
@@ -1456,13 +1563,32 @@ export async function registerBuiltinHandlers(
     return result;
   });
 
+  // v0.42.x (#2390) — Life Chronicle event extraction. NOT protected (bounded
+  // LLM spend per page; no shell). Enqueued by the put_page chronicle backstop
+  // and by `gbrain chronicle backfill`. Idempotent (content-addressed event
+  // slugs + projection upsert), so a retry re-runs to the same state.
+  worker.register('chronicle_extract', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : undefined;
+    if (!slug) throw new Error('chronicle_extract job requires data.slug');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    const { runChronicleExtract } = await import('../core/chronicle/extract-events.ts');
+    const { chronicleTz } = await import('../core/chronicle/config.ts');
+    const tz = await chronicleTz(engine);
+    return await runChronicleExtract(engine, {
+      slug,
+      sourceId,
+      tz,
+      signal: (job as { signal?: AbortSignal }).signal,
+    });
+  });
+
   // v0.41.39 (#1700) — enrich. NOT in PROTECTED_JOB_NAMES: per-call cost is
   // bounded by data.maxCostUsd (default DEFAULT_MAX_COST_USD) and the handler
   // re-creates the BudgetTracker in its own process. BudgetExhausted is caught
   // at the core level and returned as result.budget_exhausted (NOT a failure).
   // Strict per-source: the CLI fans out one job per source when --source is
   // omitted, so a job ALWAYS carries data.sourceId.
-  worker.register('enrich', async (job) => {
+  registerBuiltinJob(worker, engine, 'enrich', async (job) => {
     const { runEnrichCore } = await import('./enrich.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!sourceId) {
@@ -1545,6 +1671,43 @@ export async function registerBuiltinHandlers(
     return await runBacklinksCore({ action, dir, dryRun: !!job.data.dryRun });
   });
 
+  // Local patch 2026-06-11: durable facts:absorb. One-shot CLI processes
+  // (capture/put/sync) can't finish the extraction chat before their exit
+  // drain aborts it, so backstop.ts submits this job instead and the
+  // long-lived worker does the LLM work here. Inline mode: errors throw,
+  // so minion retry/backoff handles transient gateway failures and real
+  // failures stay visible in `gbrain jobs list --status failed`.
+  worker.register('facts-absorb', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
+    if (!slug) throw new Error('facts-absorb job requires data.slug');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    const page = await engine.getPage(slug, { sourceId });
+    if (!page) return { skipped: 'page_missing', slug, sourceId };
+    const { runFactsBackstop } = await import('../core/facts/backstop.ts');
+    const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import'] as const;
+    const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
+      ? (job.data.source as typeof KNOWN_SOURCES[number])
+      : 'mcp:put_page';
+    return await runFactsBackstop(
+      {
+        slug: page.slug,
+        type: page.type,
+        compiled_truth: page.compiled_truth,
+        frontmatter: (page.frontmatter ?? {}) as Record<string, unknown>,
+      },
+      {
+        engine,
+        sourceId,
+        sessionId: typeof job.data.sessionId === 'string' ? job.data.sessionId : null,
+        source,
+        mode: 'inline',
+        notabilityFilter: job.data.notabilityFilter === 'high-only' ? 'high-only' : 'all',
+        visibility: job.data.visibility === 'world' ? 'world' : 'private',
+        ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
+      },
+    );
+  });
+
   // Autopilot-cycle handler: delegates to runCycle. Shares the exact same
   // phase set and ordering as `gbrain dream` and autopilot's inline path —
   // one source of truth for what the brain does overnight.
@@ -1565,13 +1728,13 @@ export async function registerBuiltinHandlers(
     const { makeContextualReindexHandler } = await import(
       '../core/minions/handlers/contextual-reindex-per-chunk.ts'
     );
-    worker.register('contextual_reindex_per_chunk', makeContextualReindexHandler({ engine }));
+    registerBuiltinJob(worker, engine, 'contextual_reindex_per_chunk', makeContextualReindexHandler({ engine }));
   }
 
   // derivation); the handler returns { partial, status, report } so
   // `gbrain jobs get <id>` shows the full structured report. Does NOT
   // throw on partial: a flaky phase must not block every future cycle.
-  worker.register('autopilot-cycle', async (job) => {
+  registerBuiltinJob(worker, engine, 'autopilot-cycle', async (job) => {
     const { runCycle } = await import('../core/cycle.ts');
     // v0.41.30 (T2): fall back to null (NOT cwd '.') when no repo is configured.
     // The queued cycle is the same primitive `gbrain dream` uses; a checkout-less
@@ -1594,6 +1757,13 @@ export async function registerBuiltinHandlers(
     //     archived between fan-out and worker claim, skip cleanly.
     const rawSourceId = job.data.source_id;
     let sourceId: string | undefined;
+    // issue #2227/#2194 (TODOS:634, codex #8): a per-source cycle must run its
+    // FILESYSTEM phases (sync/lint/extract) against the SOURCE's own checkout,
+    // not the global brain's. Pre-fix it inherited `repoPath` (the default
+    // checkout) while writing DB freshness for `source_id` — mixed scope that
+    // made cooldown/freshness attribute to the wrong source. We resolve the
+    // source's `local_path` here and use it as the cycle's brainDir below.
+    let sourceLocalPath: string | null = null;
     if (rawSourceId !== undefined && rawSourceId !== null) {
       if (typeof rawSourceId !== 'string') {
         throw new Error(`autopilot-cycle: invalid source_id (not a string): ${JSON.stringify(rawSourceId)}`);
@@ -1607,9 +1777,10 @@ export async function registerBuiltinHandlers(
       }
       // Archive recheck (codex r1 P1-5): cheap pre-cycle lookup. Returns
       // immediately if source is gone or archived; runCycle never even
-      // acquires a lock.
-      const rows = await engine.executeRaw<{ archived: boolean | null }>(
-        `SELECT archived FROM sources WHERE id = $1`,
+      // acquires a lock. Also fetches local_path so FS phases bind to the
+      // source's own checkout (the #2227/#2194 mixed-scope fix).
+      const rows = await engine.executeRaw<{ archived: boolean | null; local_path: string | null }>(
+        `SELECT archived, local_path FROM sources WHERE id = $1`,
         [rawSourceId],
       );
       if (rows.length === 0) {
@@ -1627,7 +1798,16 @@ export async function registerBuiltinHandlers(
         };
       }
       sourceId = rawSourceId;
+      sourceLocalPath = typeof rows[0].local_path === 'string' && rows[0].local_path.length > 0
+        ? rows[0].local_path
+        : null;
     }
+
+    // Effective checkout for FS phases. For a per-source cycle, bind to the
+    // SOURCE's local_path (or null → skip FS phases for a pure-DB source);
+    // NEVER fall through to the global repoPath, which would run sync/lint
+    // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
+    const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
 
     // Allow callers to select phases via job data (e.g. skip embed for
     // fast cycles). Validates against ALL_PHASES to prevent injection.
@@ -1640,10 +1820,26 @@ export async function registerBuiltinHandlers(
     // Pull default: legacy `true` for back-compat; explicit boolean wins.
     const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
 
+    // #2194 fix #2 / codex #5 (D4): claim-time cooldown guard. A job already
+    // queued or retrying (max_attempts:2) can reach the worker after the
+    // dispatch gate decided to back this source off. Skip it here as a NO-OP
+    // (status 'skipped', NOT a failure — a failure would re-arm the cooldown).
+    if (sourceId) {
+      const { isSourceInCooldown } = await import('./autopilot-fanout.ts');
+      if (await isSourceInCooldown(engine, sourceId)) {
+        return {
+          partial: false,
+          status: 'skipped',
+          report: { reason: 'source_in_cooldown', source_id: sourceId },
+        };
+      }
+    }
+
     const report = await runCycle(engine, {
-      brainDir: repoPath,
+      brainDir: effectiveBrainDir,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       ...(sourceId ? { sourceId } : {}),
       ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
       yieldBetweenPhases: async () => {
@@ -1651,6 +1847,50 @@ export async function registerBuiltinHandlers(
         await new Promise<void>(r => setImmediate(r));
       },
     });
+
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
+    };
+  });
+
+  // #2194 fix #3 / #2227 bug #3 — brain-wide maintenance. Runs the `global`
+  // cycle phases (embed, orphans, purge, resolve_symbol_edges, grade_takes,
+  // calibration_profile, synthesize_concepts, skillopt) ONCE per window instead
+  // of N times concurrently across per-source cycles (the 4→10GB RSS blowout).
+  // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
+  // on success so the dispatch gate backs off.
+  worker.register('autopilot-global-maintenance', async (job) => {
+    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const repoPath: string | null = typeof job.data.repoPath === 'string'
+      ? job.data.repoPath
+      : (await engine.getConfig('sync.repo_path')) ?? null;
+
+    const validPhases = new Set(ALL_PHASES);
+    const requested = Array.isArray(job.data.phases)
+      ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
+      : GLOBAL_PHASES;
+    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: false, // brain-wide DB/maintenance work never git-pulls
+      signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
+      phases,
+      yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
+    });
+
+    // Stamp last_global_at only on a non-failed run so a failed pass stays stale
+    // and re-dispatches next tick (self-healing retry).
+    if (report.status === 'ok' || report.status === 'clean' || report.status === 'partial') {
+      try {
+        await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
+      } catch (e) {
+        console.warn(`[autopilot-global-maintenance] failed to stamp last_global_at: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
 
     return {
       partial: report.status === 'partial' || report.status === 'failed',
@@ -1783,17 +2023,18 @@ export async function registerBuiltinHandlers(
       brainDir: repoPath,
       phases: [phase as any],
       signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
     });
     return { phase, status: report.status, report };
   };
 
   // PROTECTED — internally spawn subagent children
-  worker.register('synthesize', makePhaseHandler('synthesize'));
-  worker.register('patterns', makePhaseHandler('patterns'));
-  worker.register('consolidate', makePhaseHandler('consolidate'));
+  registerBuiltinJob(worker, engine, 'synthesize', makePhaseHandler('synthesize'));
+  registerBuiltinJob(worker, engine, 'patterns', makePhaseHandler('patterns'));
+  registerBuiltinJob(worker, engine, 'consolidate', makePhaseHandler('consolidate'));
 
   // Open — DB writes only, no LLM spend
-  worker.register('extract_facts', makePhaseHandler('extract_facts'));
+  registerBuiltinJob(worker, engine, 'extract_facts', makePhaseHandler('extract_facts'));
   worker.register('resolve_symbol_edges', makePhaseHandler('resolve_symbol_edges'));
   worker.register('recompute_emotional_weight', makePhaseHandler('recompute_emotional_weight'));
 
@@ -1803,7 +2044,7 @@ export async function registerBuiltinHandlers(
   // window / defer behavior. On LockUnavailableError (the routine cycle holds
   // the per-source lock) the job completes `{ deferred: true }` and retries
   // next tick instead of failing — cooperative interleave (CODEX accepted).
-  worker.register('extract-atoms-drain', async (job) => {
+  registerBuiltinJob(worker, engine, 'extract-atoms-drain', async (job) => {
     const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
@@ -1831,7 +2072,7 @@ export async function registerBuiltinHandlers(
   // Cost-bounded via D6 ($10/job BudgetTracker) + D19 (source-level cooldown
   // + 24h rolling cap, gated at submit time). NOT in PROTECTED_JOB_NAMES —
   // embedding-only spend, no API-by-the-minute risk like subagent.
-  worker.register('embed-backfill', async (job) => {
+  registerBuiltinJob(worker, engine, 'embed-backfill', async (job) => {
     const { makeEmbedBackfillHandler } = await import('../core/minions/handlers/embed-backfill.ts');
     return await makeEmbedBackfillHandler(engine)(job);
   });
@@ -1852,7 +2093,7 @@ export async function registerBuiltinHandlers(
   // (LLM-bearing). Two-gate consent enforced at the handler boundary:
   // refuses to run unless takes.bootstrap_enabled config is true, even
   // when allowProtectedSubmit was set at queue.add time.
-  worker.register('extract-takes-from-pages', async (job) => {
+  registerBuiltinJob(worker, engine, 'extract-takes-from-pages', async (job) => {
     const { extractTakesFromPages } = await import('../core/extract-takes-from-pages.ts');
     const data = (job.data ?? {}) as { sourceId?: string; maxPages?: number };
     const bootstrapCfg = await engine.getConfig('takes.bootstrap_enabled');
@@ -1879,7 +2120,7 @@ export async function registerBuiltinHandlers(
   // remediation pipeline. Wraps runEmbedCore with stale + catchUp + the
   // priority/batchSize the recommendation supplies. NOT in
   // PROTECTED_JOB_NAMES (embedding spend only).
-  worker.register('embed-catch-up', async (job) => {
+  registerBuiltinJob(worker, engine, 'embed-catch-up', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
     const data = (job.data ?? {}) as {
       sourceId?: string;

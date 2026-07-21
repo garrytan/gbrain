@@ -10,6 +10,7 @@ export type ParseValidationCode =
   | 'SLUG_MISMATCH'
   | 'NULL_BYTES'
   | 'NESTED_QUOTES'
+  | 'NON_STRING_FIELD'
   | 'EMPTY_FRONTMATTER';
 
 export interface ParseValidationError {
@@ -47,6 +48,25 @@ export interface ParsedMarkdown {
   tags: string[];
   /** Present iff opts.validate. Empty array means no errors. */
   errors?: ParseValidationError[];
+}
+
+/**
+ * Coerce a raw YAML frontmatter value into a string.
+ *
+ * js-yaml parses unquoted scalars by type: `title: 2024-06-01` becomes a JS
+ * `Date`, `title: 1458` becomes a `number`. The old `(frontmatter.X as string)`
+ * cast was a compile-time lie — at runtime the value stayed a Date/number, so
+ * any downstream `.toLowerCase()` / `.trim()` threw and (via the importer's
+ * failure gate) could wedge sync indefinitely (issue #1939).
+ *
+ * Dates coerce to their UTC ISO date (`2024-06-01`) — deterministic across
+ * machines and matching the on-disk source token, unlike `String(date)` which
+ * renders a timezone-dependent long form. Everything else uses `String()`.
+ */
+export function coerceFrontmatterString(v: unknown): string {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
 }
 
 /**
@@ -105,12 +125,19 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  const type = (frontmatter.type as string) || (
+  // #1948/#1939: frontmatter values can be non-strings (YAML coerces `title: 123`
+  // → number, a bare date → Date). The `as string` cast used to lie: a truthy
+  // non-string flowed downstream typed as string and crashed the first
+  // `.toLowerCase()` (content-sanity), aborting the whole lint/sync run.
+  // coerceFrontmatterString turns a scalar/date into a usable string (a date slug
+  // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
+  // surfaces the un-quoted field so it can be cleaned up.
+  const type = coerceFrontmatterString(frontmatter.type) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = (frontmatter.title as string) || inferTitle(filePath);
+  const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
   const tags = extractTags(frontmatter);
-  const slug = (frontmatter.slug as string) || inferSlug(filePath);
+  const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
@@ -186,39 +213,39 @@ function collectValidationErrors(
     return;
   }
 
-  // 3. MISSING_CLOSE — find the next `---` after the opener. If a markdown
-  //    heading appears before it, that's a strong signal the closing
-  //    delimiter is missing (the heading was meant to be in the body).
+  // 3. MISSING_CLOSE — find the next `---` after the opener.
   let closeLine = -1;
-  let headingBeforeClose = -1;
   for (let i = firstNonEmpty + 1; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (t === '---') {
+    if (lines[i].trim() === '---') {
       closeLine = i;
       break;
     }
-    if (/^#{1,6}\s/.test(t) && headingBeforeClose === -1) {
-      headingBeforeClose = i;
-    }
   }
   if (closeLine === -1) {
+    // No closing fence found. Surface the first heading-shaped line as a
+    // hint for where the parser thinks the frontmatter went off the rails —
+    // only useful when the close is genuinely missing, since YAML allows
+    // `#` comment lines inside a closed fence (see comment below).
+    let headingHint = -1;
+    for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+      if (/^#{1,6}\s/.test(lines[i].trim())) {
+        headingHint = i;
+        break;
+      }
+    }
     errors.push({
       code: 'MISSING_CLOSE',
       message:
-        headingBeforeClose >= 0
-          ? `No closing --- before heading at line ${headingBeforeClose + 1}`
+        headingHint >= 0
+          ? `No closing --- before heading at line ${headingHint + 1}`
           : 'No closing --- delimiter found',
-      line: headingBeforeClose >= 0 ? headingBeforeClose + 1 : firstNonEmpty + 1,
+      line: headingHint >= 0 ? headingHint + 1 : firstNonEmpty + 1,
     });
     return;
   }
-  if (headingBeforeClose >= 0 && headingBeforeClose < closeLine) {
-    errors.push({
-      code: 'MISSING_CLOSE',
-      message: `Heading at line ${headingBeforeClose + 1} found inside frontmatter zone (closing --- comes after)`,
-      line: headingBeforeClose + 1,
-    });
-  }
+  // Closing fence found. Content between opening and closing is YAML, which
+  // permits `#` comment lines anywhere — those are not markdown headings
+  // and must not raise MISSING_CLOSE.
 
   // 4. EMPTY_FRONTMATTER — open and close present but nothing meaningful between.
   const fmBody = lines.slice(firstNonEmpty + 1, closeLine).join('\n').trim();
@@ -286,6 +313,21 @@ function collectValidationErrors(
       errors.push({
         code: 'SLUG_MISMATCH',
         message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
+      });
+    }
+  }
+
+  // 8. NON_STRING_FIELD (#1948) — title/type/slug declared as a non-string YAML
+  //    scalar (e.g. `title: 123`, `slug: 2024`). The parser coerces title to a
+  //    string and falls back to inference for type/slug, but lint surfaces the
+  //    malformed frontmatter so it gets fixed rather than silently rewritten.
+  //    Pre-fix the slug validator above `typeof`-skipped these, hiding them.
+  for (const field of ['title', 'type', 'slug'] as const) {
+    const v = ctx.parsedFrontmatter[field];
+    if (v != null && typeof v !== 'string') {
+      errors.push({
+        code: 'NON_STRING_FIELD',
+        message: `Frontmatter "${field}" should be a string but is ${typeof v} (${JSON.stringify(v)}); quote the value (e.g. ${field}: "${String(v)}").`,
       });
     }
   }
@@ -424,6 +466,9 @@ const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageT
   { prefixes: ['/cal/', '/calendar/'], type: 'calendar-event' },
   { prefixes: ['/notes/', '/note/'], type: 'note' },
   { prefixes: ['/meetings/', '/meeting/'], type: 'meeting' },
+  // v0.42.x — Life Chronicle (#2390): timeline events + thought diary.
+  { prefixes: ['/life/events/'], type: 'event' },
+  { prefixes: ['/life/diary/'], type: 'diary' },
 ];
 
 function inferType(filePath?: string): PageType {

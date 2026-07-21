@@ -50,6 +50,7 @@ async function runUntilTerminal(
   h: Harness,
   overrides: Partial<{
     maxCrashes: number;
+    hardStopMaxCrashes: number;
     _backoffFloorMs: number;
     cleanRestartBudget: number;
     cleanRestartWindowMs: number;
@@ -71,6 +72,7 @@ async function runUntilTerminal(
     cliPath: h.workerScript,
     args: [],
     maxCrashes: overrides.maxCrashes ?? 3,
+    hardStopMaxCrashes: overrides.hardStopMaxCrashes,
     _backoffFloorMs: overrides._backoffFloorMs ?? 5,
     cleanRestartBudget: overrides.cleanRestartBudget,
     cleanRestartWindowMs: overrides.cleanRestartWindowMs,
@@ -159,12 +161,15 @@ if [ $((NEXT % 2)) -eq 1 ]; then exit 1; else exit 0; fi
       try {
         const res = await runUntilTerminal(h, {
           maxCrashes: 3,
+          // issue #1994: the soft budget no longer gives up; pin the hard
+          // ceiling to 3 so this counting test still fires give-up at 3.
+          hardStopMaxCrashes: 3,
           _backoffFloorMs: 5,
           stopAfterEvents: 200,
         });
 
         expect(res.maxCrashesFired).not.toBeNull();
-        // 3 code!=0 exits → max_crashes=3
+        // 3 code!=0 exits → hard ceiling=3
         expect(res.maxCrashesFired!.count).toBe(3);
 
         const exits = res.events.filter((e) => e.kind === 'worker_exited');
@@ -235,6 +240,7 @@ esac
 
         const res = await runUntilTerminal(h, {
           maxCrashes: 3,
+          hardStopMaxCrashes: 3, // issue #1994: pin give-up to 3 for this counting test
           _backoffFloorMs: 5,
           _now: fakeNow,
           stopAfterEvents: 200,
@@ -465,6 +471,66 @@ esac
           (e) => e.kind === 'backoff' && e.reason === 'rss_watchdog',
         );
         expect(wdBackoffs.length).toBeGreaterThan(0);
+      } finally {
+        h.cleanup();
+      }
+    });
+  });
+
+  // issue #1994 (#2227 tail): crossing the SOFT crash budget no longer
+  // permanently gives up. The supervisor enters degraded mode (capped backoff
+  // + loud warn) so a transient outage self-heals; permanent give-up fires only
+  // at the much-higher hard ceiling.
+  describe('degraded-mode crash backoff (issue #1994)', () => {
+    it('crossing the soft budget does NOT give up; it warns and keeps retrying to the hard ceiling', async () => {
+      const h = makeHarness('degraded-softbudget', 'exit 1');
+      try {
+        const { events, maxCrashesFired } = await runUntilTerminal(h, {
+          maxCrashes: 3,        // soft budget
+          hardStopMaxCrashes: 6, // hard ceiling
+          _backoffFloorMs: 1,
+          stopAfterEvents: 200,
+        });
+        // Permanent give-up fired at the HARD ceiling (6), not the soft budget (3).
+        expect(maxCrashesFired).not.toBeNull();
+        expect(maxCrashesFired!.count).toBe(6);
+        expect(maxCrashesFired!.max).toBe(6);
+
+        // The soft-budget crossing announced degraded mode (at least once).
+        const degraded = events.filter(
+          (e): e is Extract<ChildSupervisorEvent, { kind: 'health_warn' }> =>
+            e.kind === 'health_warn' && e.reason === 'crash_budget_degraded',
+        );
+        expect(degraded.length).toBeGreaterThanOrEqual(1);
+        expect(degraded[0].max).toBe(3);
+        expect(degraded[0].count).toBeGreaterThanOrEqual(3);
+
+        // It kept respawning past the soft budget (more than 3 crash exits).
+        const crashes = events.filter(
+          (e): e is Extract<ChildSupervisorEvent, { kind: 'worker_exited' }> =>
+            e.kind === 'worker_exited' && e.code === 1,
+        );
+        expect(crashes.length).toBe(6);
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it('hardStopMaxCrashes=0 disables permanent give-up (retry-forever-with-backoff)', async () => {
+      const h = makeHarness('degraded-noforever', 'exit 1');
+      try {
+        const { events, maxCrashesFired } = await runUntilTerminal(h, {
+          maxCrashes: 3,
+          hardStopMaxCrashes: 0, // never permanently stop
+          _backoffFloorMs: 1,
+          stopAfterEvents: 40,   // the safety net stops the test, not a give-up
+        });
+        // Never gave up despite many crashes past the soft budget.
+        expect(maxCrashesFired).toBeNull();
+        const crashes = events.filter(
+          (e) => e.kind === 'worker_exited' && (e as any).code === 1,
+        );
+        expect(crashes.length).toBeGreaterThan(3);
       } finally {
         h.cleanup();
       }

@@ -225,6 +225,66 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgChanged || pgliteChanged).toBe(true);
   });
 
+  // fix/title-retrieval-arm (Reviewer F2): the title arm must behave
+  // identically on both engines — including the D1 case where the title
+  // tokens never appear in any chunk. Without this case the Postgres
+  // implementation would only ever execute behind hybridSearch's fail-open
+  // catch and a break could ship dark on the production brain. Runs in CI
+  // via scripts/run-e2e.sh (docker-provisioned Postgres); skips gracefully
+  // when DATABASE_URL is not configured.
+  test('searchTitles parity: exact-title hit with title tokens absent from body', async () => {
+    const seed = async (eng: BrainEngine) => {
+      await eng.putPage('wiki/title-arm-parity', {
+        type: 'note',
+        title: 'Vermilion Icebreaker Compendium',
+        compiled_truth: 'A document body that never mentions those words.',
+        timeline: '',
+      });
+      await eng.upsertChunks('wiki/title-arm-parity', [{
+        chunk_index: 0,
+        chunk_text: 'A document body that never mentions those words.',
+        chunk_source: 'compiled_truth',
+        embedding: basisEmbedding(33),
+        token_count: 9,
+      }] satisfies ChunkInput[]);
+    };
+    await seed(pgEngine);
+    await seed(pgliteEngine);
+
+    const q = 'Vermilion Icebreaker Compendium';
+    // Premise on both engines: chunk-grain keyword cannot see the page
+    // (also pins the F1 contract — no orFallback flag means strict AND).
+    expect((await pgEngine.searchKeyword(q, { limit: 5 })).map((r: SearchResult) => r.slug))
+      .not.toContain('wiki/title-arm-parity');
+    expect((await pgliteEngine.searchKeyword(q, { limit: 5 })).map((r: SearchResult) => r.slug))
+      .not.toContain('wiki/title-arm-parity');
+
+    const pg = await pgEngine.searchTitles(q, { limit: 5 });
+    const pglite = await pgliteEngine.searchTitles(q, { limit: 5 });
+    expect(pg.map((r: SearchResult) => r.slug)).toContain('wiki/title-arm-parity');
+    expect(pglite.map((r: SearchResult) => r.slug)).toContain('wiki/title-arm-parity');
+
+    // Row-shape parity: identical representative chunk on both engines.
+    const pgHit = pg.find((r: SearchResult) => r.slug === 'wiki/title-arm-parity')!;
+    const pgliteHit = pglite.find((r: SearchResult) => r.slug === 'wiki/title-arm-parity')!;
+    expect(pgHit.chunk_source).toBe('compiled_truth');
+    expect(pgliteHit.chunk_source).toBe(pgHit.chunk_source);
+    expect(pgliteHit.chunk_text).toBe(pgHit.chunk_text);
+  });
+
+  // fix/title-retrieval-arm (Reviewer F1): the AND→OR fallback is opt-in.
+  // Default searchKeyword stays strict on BOTH engines; orFallback: true
+  // rescues the one-bad-token query identically.
+  test('searchKeyword orFallback parity: default strict, opt-in rescues', async () => {
+    const q = 'fat code thin harness zzzabsenttoken';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const strict = await eng.searchKeyword(q, { limit: 5 });
+      expect(strict.length).toBe(0);
+      const relaxed = await eng.searchKeyword(q, { limit: 5, orFallback: true });
+      expect(relaxed.map((r: SearchResult) => r.slug)).toContain('concepts/fat-code-thin-harness');
+    }
+  });
+
   // v0.39.3.0 T3 — provenance write+read parity (WARN-8 + CV5).
   // Both engines must write the same 4 provenance columns (source_kind,
   // source_uri, ingested_via, ingested_at) on putPage AND surface them
@@ -337,6 +397,31 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       expect(pg).toBeNull();
       expect(pglite).toBeNull();
     }
+  });
+
+  test('v114 (#1941) listLinkSources parity: same ordered provenance counts on both engines', async () => {
+    const mk = async (eng: BrainEngine) => {
+      for (const s of ['lsp-a', 'lsp-b', 'lsp-c']) {
+        await eng.putPage(s, { type: 'note', title: s, compiled_truth: 'b', timeline: '' });
+      }
+      // citation-graph:2, manual:1 — exercises count DESC + the kebab regex.
+      await eng.addLink('lsp-a', 'lsp-b', '', 'cites', 'citation-graph');
+      await eng.addLink('lsp-a', 'lsp-c', '', 'cites', 'citation-graph');
+      await eng.addLink('lsp-b', 'lsp-c', '', 'rel', 'manual');
+    };
+    await mk(pgEngine);
+    await mk(pgliteEngine);
+
+    const pg = await pgEngine.listLinkSources({ sourceId: 'default' });
+    const pglite = await pgliteEngine.listLinkSources({ sourceId: 'default' });
+
+    const norm = (rows: { link_source: string | null; count: number }[]) =>
+      rows.filter(r => r.link_source === 'citation-graph' || r.link_source === 'manual');
+    expect(norm(pg)).toEqual(norm(pglite));
+    // citation-graph (2) must order before manual (1) on both engines.
+    const cgIdx = pg.findIndex(r => r.link_source === 'citation-graph');
+    const mIdx = pg.findIndex(r => r.link_source === 'manual');
+    expect(cgIdx).toBeLessThan(mIdx);
   });
 
   test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
@@ -517,5 +602,164 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(slugs.indexOf('ep/ec-alice')).toBeLessThan(slugs.indexOf('ep/ec-bob'));
     expect(slugs.indexOf('ep/ec-bob')).toBeLessThan(slugs.indexOf('companies/ec-widget'));
     expect(pg.find((r) => r.slug === 'ep/ec-alice')!.inbound_count).toBe(2);
+  });
+});
+
+// ── relationalFanout parity (v0.43) ─────────────────────────────────────
+async function seedRelational(eng: BrainEngine) {
+  const pages: Array<[string, 'company' | 'person']> = [
+    ['companies/ep-widget', 'company'],
+    ['companies/ep-other', 'company'],
+    ['people/ep-inv-a', 'person'],
+    ['people/ep-inv-b', 'person'],
+    ['people/ep-emp-c', 'person'],
+    ['people/ep-mentioner', 'person'],
+  ];
+  for (const [slug, type] of pages) {
+    await eng.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '' });
+  }
+  await eng.upsertChunks('people/ep-inv-b', [{
+    chunk_index: 0, chunk_text: 'b', chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(2), token_count: 1,
+  }] satisfies ChunkInput[]);
+  await eng.addLink('people/ep-inv-a', 'companies/ep-widget', '', 'invested_in', 'manual');
+  await eng.addLink('people/ep-inv-b', 'companies/ep-widget', '', 'invested_in', 'manual');
+  await eng.addLink('people/ep-emp-c', 'companies/ep-widget', '', 'works_at', 'manual');
+  await eng.addLink('people/ep-mentioner', 'companies/ep-widget', '', 'mentions', 'mentions');
+  await eng.addLink('people/ep-inv-a', 'companies/ep-other', '', 'invested_in', 'manual');
+}
+
+describeBoth('Engine parity — relationalFanout', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedRelational(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedRelational(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  const shape = (rows: Awaited<ReturnType<BrainEngine['relationalFanout']>>) =>
+    // canonical_chunk_id is a serial id — its absolute value diverges between a
+    // fresh PGLite engine and a shared Postgres DB whose content_chunks sequence
+    // advanced earlier (setupDB TRUNCATEs without RESTART IDENTITY). Compare its
+    // PRESENCE, not the exact id, so the parity check verifies graph structure +
+    // canonical-chunk resolution without depending on cross-engine sequence state.
+    rows.map(r => `${r.source_id}:${r.slug}:${r.hop}:${r.edge_count}:${r.via_link_types.join(',')}:${r.path.join('>')}:${r.canonical_chunk_id != null ? 'set' : 'null'}`);
+
+  test('typed-edge fan-out is identical across engines', async () => {
+    const opts = { direction: 'in' as const, linkTypes: ['invested_in'] };
+    const pg = await pgEngine.relationalFanout(['companies/ep-widget'], opts);
+    const pglite = await pgliteEngine.relationalFanout(['companies/ep-widget'], opts);
+    expect(shape(pg)).toEqual(shape(pglite));
+    expect(pg.map(r => r.slug).sort()).toEqual(['people/ep-inv-a', 'people/ep-inv-b']);
+  });
+
+  test('type-agnostic + mentions-exclusion identical across engines', async () => {
+    const pg = await pgEngine.relationalFanout(['companies/ep-widget'], { direction: 'in' });
+    const pglite = await pgliteEngine.relationalFanout(['companies/ep-widget'], { direction: 'in' });
+    expect(shape(pg)).toEqual(shape(pglite));
+    expect(pg.map(r => r.slug)).not.toContain('people/ep-mentioner');
+  });
+
+  test('connects (multi-seed, both) identical across engines', async () => {
+    const seeds = ['companies/ep-widget', 'companies/ep-other'];
+    const pg = await pgEngine.relationalFanout(seeds, { direction: 'both' });
+    const pglite = await pgliteEngine.relationalFanout(seeds, { direction: 'both' });
+    expect(shape(pg)).toEqual(shape(pglite));
+  });
+});
+
+// #2200 — federated sourceIds[] on the secondary-fetch reads must behave
+// identically on both engines (a drift would mean a federated MCP client sees
+// different tags/links/timeline after `gbrain migrate --to supabase`).
+async function seedFederated(eng: BrainEngine) {
+  await eng.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('beta', 'beta', '/tmp/beta') ON CONFLICT (id) DO NOTHING`);
+  await eng.putPage('fed/doc', { type: 'note', title: 'Fed doc', compiled_truth: 'b', timeline: '' }, { sourceId: 'beta' });
+  await eng.putPage('fed/target', { type: 'note', title: 'Fed target', compiled_truth: 'b', timeline: '' }, { sourceId: 'beta' });
+  await eng.putPage('fed/doc', { type: 'note', title: 'Default decoy', compiled_truth: 'd', timeline: '' }, { sourceId: 'default' });
+  await eng.putPage('fed/outside', { type: 'note', title: 'Outside', compiled_truth: 'd', timeline: '' }, { sourceId: 'default' });
+  await eng.addTag('fed/doc', 'beta-tag', { sourceId: 'beta' });
+  await eng.addTag('fed/doc', 'default-decoy-tag', { sourceId: 'default' });
+  await eng.addLink('fed/doc', 'fed/target', 'in', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'beta', toSourceId: 'beta' });
+  await eng.addLink('fed/doc', 'fed/outside', 'leak', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'beta', toSourceId: 'default' });
+  await eng.addLink('fed/target', 'fed/doc', 'inback', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'beta', toSourceId: 'beta' });
+  await eng.addLink('fed/outside', 'fed/doc', 'leakback', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'default', toSourceId: 'beta' });
+  // F1: in-grant edge authored by an out-of-grant origin — origin_slug must null out.
+  await eng.addLink('fed/doc', 'fed/target', 'originleak', 'mentions', 'frontmatter', 'fed/outside', 'related', { fromSourceId: 'beta', toSourceId: 'beta', originSourceId: 'default' });
+  await eng.addTimelineEntry('fed/doc', { date: '2026-02-02', source: 't', summary: 'fed event', detail: 'd' }, { sourceId: 'beta' });
+  // Second-dated entry so the after/before fragment paths (D5A Postgres refactor) are exercised.
+  await eng.addTimelineEntry('fed/doc', { date: '2026-08-08', source: 't', summary: 'late event', detail: 'd' }, { sourceId: 'beta' });
+}
+
+describeBoth('Engine parity — federated sourceIds[] secondary reads (#2200)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+  const grant = { sourceIds: ['beta'] };
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedFederated(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedFederated(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('getTags identical under sourceIds[]', async () => {
+    const pg = (await pgEngine.getTags('fed/doc', grant)).sort();
+    const pglite = (await pgliteEngine.getTags('fed/doc', grant)).sort();
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual(['beta-tag']); // default decoy excluded
+  });
+
+  test('getLinks identical under sourceIds[] (all three endpoints scoped)', async () => {
+    const pg = (await pgEngine.getLinks('fed/doc', grant)).map(l => l.to_slug).sort();
+    const pglite = (await pgliteEngine.getLinks('fed/doc', grant)).map(l => l.to_slug).sort();
+    expect(pg).toEqual(pglite);
+    expect([...new Set(pg)]).toEqual(['fed/target']); // far-endpoint 'fed/outside' excluded
+    // F1: origin_slug nulled identically on both engines when origin is out-of-grant.
+    const pgOrigins = (await pgEngine.getLinks('fed/doc', grant)).map(l => l.origin_slug ?? null);
+    const pgliteOrigins = (await pgliteEngine.getLinks('fed/doc', grant)).map(l => l.origin_slug ?? null);
+    expect(pgOrigins.sort()).toEqual(pgliteOrigins.sort());
+    expect(pgOrigins).not.toContain('fed/outside');
+  });
+
+  test('getBacklinks identical under sourceIds[] (both endpoints scoped)', async () => {
+    const pg = (await pgEngine.getBacklinks('fed/doc', grant)).map(l => l.from_slug).sort();
+    const pglite = (await pgliteEngine.getBacklinks('fed/doc', grant)).map(l => l.from_slug).sort();
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual(['fed/target']);
+  });
+
+  test('getTimeline identical under sourceIds[]', async () => {
+    const pg = (await pgEngine.getTimeline('fed/doc', grant)).map(e => e.summary).sort();
+    const pglite = (await pgliteEngine.getTimeline('fed/doc', grant)).map(e => e.summary).sort();
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual(['fed event', 'late event']);
+  });
+
+  // Pins the D5A Postgres fragment refactor: after/before/both window paths must
+  // match PGLite under a federated grant (the 8-branch→composed-WHERE rewrite).
+  test('getTimeline date-window fragments identical across engines (D5A regression guard)', async () => {
+    for (const win of [{ after: '2026-05-01' }, { before: '2026-05-01' }, { after: '2026-01-01', before: '2026-12-31' }]) {
+      const opts = { ...grant, ...win };
+      const pg = (await pgEngine.getTimeline('fed/doc', opts)).map(e => e.summary).sort();
+      const pglite = (await pgliteEngine.getTimeline('fed/doc', opts)).map(e => e.summary).sort();
+      expect(pg).toEqual(pglite);
+    }
   });
 });

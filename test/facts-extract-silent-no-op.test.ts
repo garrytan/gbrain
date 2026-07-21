@@ -18,7 +18,7 @@
  * `ANTHROPIC_API_KEY`); this test is the structural regression guard that
  * runs in every parallel-test shard.
  */
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { afterAll, describe, test, expect, beforeEach } from 'bun:test';
 import {
   configureGateway,
   isAvailable,
@@ -31,6 +31,25 @@ import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
 beforeEach(() => {
   resetGateway();
   __setChatTransportForTests(null);
+});
+
+// Shard hygiene: this file's tests each configureGateway WITHOUT
+// embedding_dimensions, and the file used to END in that state. The
+// legacy-embedding-preload only re-pins 1536 when the gateway is RESET
+// (it checks by calling getEmbeddingDimensions, which doesn't throw on a
+// configured-but-dimensionless gateway), and the NEXT file's beforeAll
+// (often engine.initSchema, which sizes vector columns from ambient
+// gateway state) runs before any beforeEach — so this file poisoned every
+// later fresh-schema file in its shard down to 1280-d columns under
+// 1536-d fixtures (bit engine-find-trajectory in CI shard 5). Restore the
+// legacy pin on exit.
+afterAll(() => {
+  __setChatTransportForTests(null);
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
 });
 
 describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => {

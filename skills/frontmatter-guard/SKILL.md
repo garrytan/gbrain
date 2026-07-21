@@ -24,7 +24,7 @@ mutating: true
 ## Contract
 
 This skill guarantees:
-- Every brain page is scanned against the seven canonical frontmatter validation classes
+- Every brain page is scanned against the eight canonical frontmatter validation classes
 - Mechanical errors (nested quotes, missing closing `---`, null bytes, slug mismatch) are auto-repairable on demand with `.bak` backups
 - Validation logic is shared with `gbrain doctor`'s `frontmatter_integrity` subcheck — single source of truth
 - Reports per source (gbrain is multi-source since v0.18.0); never silently audits the wrong root
@@ -50,6 +50,7 @@ Without a guard, these accumulate silently until `gbrain sync` chokes or search 
 | `SLUG_MISMATCH` | Frontmatter `slug:` differs from path-derived slug | Yes (removes the field) |
 | `NULL_BYTES` | Binary corruption (`\x00`) | Yes |
 | `NESTED_QUOTES` | `title: "outer "inner" outer"` shape | Yes |
+| `NON_STRING_FIELD` | `title`/`type`/`slug` is an unquoted non-string scalar (e.g. `title: 123`, `slug: 2024-06-01`) | No (quote the value) |
 | `EMPTY_FRONTMATTER` | Open + close present but nothing between | No (needs human) |
 
 ## Phases

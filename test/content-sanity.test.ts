@@ -640,3 +640,28 @@ describe('assessContentSanity — confidence split (Q1=A)', () => {
     expect(r.shouldFlag).toBe(false);
   });
 });
+
+// issue #1939 — assessContentSanity is a pure exported fn; lint.ts and
+// import-file both pass `parsed.title`, which a malformed YAML date/number title
+// could make non-string. It must coerce defensively and never throw.
+describe('issue #1939 — non-string title defensive coercion', () => {
+  const base = { compiled_truth: 'some prose body here', timeline: '' };
+
+  test('Date title does not throw', () => {
+    expect(() =>
+      assessContentSanity({ ...base, title: new Date('2024-06-01') as unknown as string }),
+    ).not.toThrow();
+  });
+
+  test('number title does not throw', () => {
+    expect(() =>
+      assessContentSanity({ ...base, title: 1458 as unknown as string }),
+    ).not.toThrow();
+  });
+
+  test('null/undefined title does not throw and yields a normal result', () => {
+    const r = assessContentSanity({ ...base, title: undefined as unknown as string });
+    expect(r).toBeDefined();
+    expect(typeof r.shouldQuarantine).toBe('boolean');
+  });
+});

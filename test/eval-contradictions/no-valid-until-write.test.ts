@@ -31,9 +31,19 @@ import { join } from 'node:path';
 //   - consolidate.ts (v0.35.4 — chronological writeback)
 //   - facts/forget.ts (v0.32.2 — user-initiated `gbrain forget`; user is
 //     the supersession authority, not the probe)
+//   - postgres-engine.ts + pglite-engine.ts (v0.42.56.0, #2390 — Life
+//     Chronicle ontology: `mergeOntologyFact` forward-supersession closes
+//     the prior OPEN row's valid_until when a NEW value arrives for the
+//     same (entity, dimension). Engine-layer, caller-requested, scoped to
+//     `dimension IS NOT NULL` ontology rows only — plain facts untouched,
+//     and the contradiction probe still never mutates, so the
+//     auto-supersession.ts:4 invariant is preserved. Deliberate design
+//     change per the #2390 eng review (G1: ontology extends facts).
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/cycle/phases/consolidate.ts',
   'src/core/facts/forget.ts',
+  'src/core/postgres-engine.ts',
+  'src/core/pglite-engine.ts',
 ]);
 
 function walkTs(dir: string, acc: string[] = []): string[] {

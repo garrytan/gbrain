@@ -261,6 +261,18 @@ export interface ModeBundle {
    * run. Override: `search.autocut_jump` config → mode bundle.
    */
   autocut_jump: number;
+  /**
+   * v0.43 — relational recall arm. When on, a relational query ("who invested
+   * in widget-co", "what connects fund-a and fund-b") resolves its seed
+   * entity and walks the typed-edge graph, injecting edge-derived candidates
+   * as a fourth RRF arm. Pure no-op for non-relational queries. Default OFF
+   * for conservative; ON for balanced/tokenmax. Override path: per-call
+   * SearchOpts.relationalRetrieval → `search.relational_retrieval` config →
+   * mode bundle. See src/core/search/relational-recall.ts.
+   */
+  relationalRetrieval: boolean;
+  /** v0.43 — max hops for relational traversal. Default 2, hard-capped at 3. */
+  relational_retrieval_depth: number;
 }
 
 /**
@@ -309,6 +321,10 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.42.3.0 — autocut OFF: conservative has no reranker, so no trustworthy
     // cliff signal exists (autocut would no-op). Explicit for clarity.
     autocut: false,
+    // v0.43 — relational recall OFF for conservative (cost-sensitive tier,
+    // matches graph_signals posture). Power users opt in per-call.
+    relationalRetrieval: false,
+    relational_retrieval_depth: 2,
     autocut_jump: 0.2,
   }),
   balanced: Object.freeze({
@@ -363,6 +379,10 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     contextual_retrieval_disabled: false,
     // v0.42.3.0 — autocut ON (reranker fires; cliff signal is trustworthy).
     autocut: true,
+    // v0.43 — relational recall ON (contingent on the no-regression gate;
+    // ships default-false everywhere if the gate flags any regression).
+    relationalRetrieval: true,
+    relational_retrieval_depth: 2,
     autocut_jump: 0.2,
   }),
   tokenmax: Object.freeze({
@@ -411,6 +431,9 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     contextual_retrieval_disabled: false,
     // v0.42.3.0 — autocut ON.
     autocut: true,
+    // v0.43 — relational recall ON for tokenmax (max-recall tier).
+    relationalRetrieval: true,
+    relational_retrieval_depth: 2,
     autocut_jump: 0.2,
   }),
 });
@@ -462,6 +485,9 @@ export interface SearchKeyOverrides {
   contextual_retrieval_disabled?: boolean;
   // v0.42.3.0 — autocut overrides.
   autocut?: boolean;
+  // v0.43 — relational recall overrides.
+  relationalRetrieval?: boolean;
+  relational_retrieval_depth?: number;
   autocut_jump?: number;
 }
 
@@ -509,6 +535,9 @@ export interface SearchPerCallOpts {
   // numeric per-call knob threaded through the bundle.
   autocut?: boolean;
   autocut_jump?: number;
+  // v0.43 — relational recall per-call overrides.
+  relationalRetrieval?: boolean;
+  relational_retrieval_depth?: number;
 }
 
 /**
@@ -601,6 +630,9 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.42.3.0 — autocut resolved via the same pick chain.
     autocut: pick('autocut'),
     autocut_jump: pick('autocut_jump'),
+    // v0.43 — relational recall resolved via the same pick chain.
+    relationalRetrieval: pick('relationalRetrieval'),
+    relational_retrieval_depth: pick('relational_retrieval_depth'),
     resolved_mode,
     mode_valid: valid,
   };
@@ -706,7 +738,25 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to take effect immediately (one-time global cache cold-miss on upgrade; refills
 // within cache.ttl_seconds). Same cache-key-contamination convention as the
 // autocut / title_boost / graph_signals bumps above.
-export const KNOBS_HASH_VERSION = 9;
+//
+// bump 10→11 (#1400 input_type fix): asymmetric embedding models (zembed-1
+// hosted or local, Voyage v3+) had their query-side input_type stripped by
+// the AI SDK before the wire, so every cached row's key embedding AND result
+// set were computed with document-side query vectors. The fix changes what
+// embedQuery() produces for those providers; pre-fix rows must not be served
+// to post-fix lookups. Same one-time global cold-miss pattern as the bumps
+// above (the hash is global, not per-provider); refills within
+// cache.ttl_seconds (3600s default).
+//
+// bump 11→12 (2026-07-16, #2825): the resolved hard-exclude slug-prefix list
+// (defaults ∪ GBRAIN_SEARCH_EXCLUDE ∪ exclude_slug_prefixes, minus
+// include_slug_prefixes) folds into the key via ctx.hardExcludes. It only
+// applied at DB-query build time (cache miss), so a process with
+// GBRAIN_SEARCH_EXCLUDE set could be served cached rows containing excluded
+// slugs written by a process without it, and vice versa. Same one-time
+// global cold-miss pattern as the bumps above; refills within
+// cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 12;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -735,6 +785,16 @@ export interface KnobsHashContext {
    */
   schemaPack?: string;
   schemaPackVersion?: string;
+  /**
+   * v=12 (#2825): the RESOLVED effective hard-exclude prefix list — the same
+   * value resolveHardExcludes() produces at query-build time (defaults ∪
+   * GBRAIN_SEARCH_EXCLUDE ∪ per-call exclude_slug_prefixes, minus
+   * include_slug_prefixes). Folded (sorted, so input order is irrelevant)
+   * into the hash so a cache row written under one exclude policy can never
+   * be served to a lookup under another. Undefined falls back to the literal
+   * 'none' for legacy callers that don't thread excludes.
+   */
+  hardExcludes?: string[];
 }
 
 export function knobsHash(
@@ -814,6 +874,20 @@ export function knobsHash(
     // etc.) so a partial-knobs caller (tests passing a minimal literal) can't
     // crash the hash. Typed callers always carry the field.
     `acj=${(knobs.autocut_jump ?? 0.2).toFixed(2)}`,
+    // v=10 additions (v0.43, append-only): relational recall arm. A
+    // relational-on write (edge-seeded result set) must NOT be served to a
+    // relational-off lookup — same contamination class as graph_signals. The
+    // depth changes the candidate set too, so it folds in as well. ONE-TIME
+    // cold-miss on upgrade as v=9 rows become unreachable; pinned by
+    // test/model-pricing.test.ts-style drift guards and the mode tests.
+    `rel=${knobs.relationalRetrieval ? 1 : 0}`,
+    `reld=${knobs.relational_retrieval_depth ?? 2}`,
+    // v=12 addition (#2825, append-only): resolved hard-exclude prefixes.
+    // Before this, resolveHardExcludes() only ran at DB-query build time
+    // (cache miss), so cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs
+    // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
+    // identically; undefined falls back to 'none' for legacy callers.
+    `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -981,6 +1055,17 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n > 0 && n <= 1) out.autocut_jump = n;
   }
 
+  // v0.43 — relational recall arm.
+  const rel = get('search.relational_retrieval');
+  if (rel !== undefined) {
+    out.relationalRetrieval = rel === '1' || rel.toLowerCase() === 'true';
+  }
+  const reld = get('search.relational_retrieval_depth');
+  if (reld !== undefined) {
+    const n = parseInt(reld, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 3) out.relational_retrieval_depth = n;
+  }
+
   return out;
 }
 
@@ -1019,6 +1104,9 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.contextual_retrieval_disabled',
   // v0.42.3.0 autocut
   'search.autocut',
+  // v0.43 relational recall
+  'search.relational_retrieval',
+  'search.relational_retrieval_depth',
   'search.autocut_jump',
 ]);
 

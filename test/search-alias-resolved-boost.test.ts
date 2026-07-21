@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 9 (8→9 archive-demote invalidates archive-excluded cache rows, #1777)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(9);
+  it('is 12 (11→12 hard-exclude fold invalidates rows written under a different exclude policy, #2825)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(12);
   });
 });

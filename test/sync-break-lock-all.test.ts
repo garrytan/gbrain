@@ -246,3 +246,67 @@ describe('R6 regression: schema bootstrap includes last_refreshed_at column', ()
     expect(rows[0].is_nullable).toBe('YES');
   });
 });
+
+// ============================================================================
+// BUG 5 (v0.42.x) — honest --force-break-lock diagnostic when no lock is held.
+// Previously --force-break-lock emitted the same terse "not held (nothing to
+// break)" line and exited 0, sending operators down a dead end when a sync was
+// wedged for a reason other than a held lock.
+// ============================================================================
+describe('BUG 5 — --force-break-lock honest no-lock diagnostic', () => {
+  const LOCK = 'gbrain-sync:wiki';
+
+  test('force + no lock → wedge_hint in JSON, status absent, rc 0', async () => {
+    const { runBreakLock } = await import('../src/commands/sync.ts');
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { logs.push(a.map(String).join(' ')); };
+    let rc: number;
+    try {
+      rc = await runBreakLock(engine, LOCK, 'wiki', { force: true, json: true });
+    } finally {
+      console.log = orig;
+    }
+    expect(rc).toBe(0);
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.status).toBe('absent');
+    expect(parsed.lock).toBe(LOCK);
+    expect(typeof parsed.wedge_hint).toBe('string');
+    expect(parsed.wedge_hint).toContain('not a held lock');
+  });
+
+  test('force + no lock → human output carries the wedge hint, not the terse line', async () => {
+    const { runBreakLock } = await import('../src/commands/sync.ts');
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { logs.push(a.map(String).join(' ')); };
+    let rc: number;
+    try {
+      rc = await runBreakLock(engine, LOCK, 'wiki', { force: true, json: false });
+    } finally {
+      console.log = orig;
+    }
+    expect(rc).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('nothing to break');
+    expect(out).toContain('gbrain doctor');
+    expect(out).not.toBe(`Lock ${LOCK} is not held (nothing to break).`);
+  });
+
+  test('non-force + no lock → unchanged terse line, no wedge_hint', async () => {
+    const { runBreakLock } = await import('../src/commands/sync.ts');
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { logs.push(a.map(String).join(' ')); };
+    let rc: number;
+    try {
+      rc = await runBreakLock(engine, LOCK, 'wiki', { force: false, json: true });
+    } finally {
+      console.log = orig;
+    }
+    expect(rc).toBe(0);
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.status).toBe('absent');
+    expect(parsed.wedge_hint).toBeUndefined();
+  });
+});

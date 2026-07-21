@@ -46,7 +46,8 @@ import {
   type JudgeConfig,
   type ChatFn,
 } from './judges.ts';
-import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
+import { ensureWellFormed } from '../text-safe.ts';
 
 // ---------------------------------------------------------------------------
 // BudgetExhausted is the canonical typed error (Q2) used by every cost
@@ -264,7 +265,7 @@ export function estimateCost(profile: BrainstormProfile, model: string): number 
   const judgeIn = ideas * 350;
   const judgeOut = ideas * 200;
 
-  const pricing = ANTHROPIC_PRICING[model] ?? { input: 3, output: 15 };
+  const pricing = canonicalLookup(model) ?? { input: 3, output: 15 };
   const inCost = ((inTokens + judgeIn) / 1_000_000) * pricing.input;
   const outCost = ((outTokens + judgeOut) / 1_000_000) * pricing.output;
   return inCost + outCost;
@@ -359,21 +360,6 @@ export async function loadCalibrationContext(
 // Idea generation prompts + response parsing
 // ---------------------------------------------------------------------------
 
-/**
- * Strip lone/orphaned UTF-16 surrogates that would crash JSON encoding
- * downstream. The Anthropic SDK and some gateway transports refuse strings
- * containing unpaired surrogates (U+D800–U+DFFF). Page content that came
- * in via OCR or older imports occasionally has them.
- */
-function sanitizeUnicode(s: string): string {
-  if (!s) return s;
-  // Replace lone high surrogates (D800-DBFF) not followed by a low surrogate.
-  // Replace lone low surrogates (DC00-DFFF) not preceded by a high surrogate.
-  return s
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '�')
-    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1�');
-}
-
 /** Build a single (close × far) cross-generation prompt. */
 function buildCrossPrompt(opts: {
   profile: BrainstormProfile;
@@ -391,14 +377,16 @@ Style rules:
 - Cite BOTH the close and far slug verbatim — these are the user's own notes.
 - Never fabricate facts, figures, or quotes. Stay grounded in the cited pages.${opts.profile.generator_constraint ? `\n- ${opts.profile.generator_constraint}` : ''}`;
 
-  // Sanitize: unicode surrogates in page content (from OCR or older imports)
-  // can crash JSON encoding in the chat transport, which would void the
-  // entire cross. Cheap to fix here.
-  const closeContent = sanitizeUnicode(opts.close.content);
-  const farContent = sanitizeUnicode(opts.far.content);
-  const closeTitle = sanitizeUnicode(opts.close.title ?? '(untitled)');
-  const farTitle = sanitizeUnicode(opts.far.title ?? '(untitled)');
-  const question = sanitizeUnicode(opts.question);
+  // Sanitize: unpaired UTF-16 surrogates in page content (from OCR or older
+  // imports) can crash JSON encoding in the chat transport, which would void
+  // the entire cross. `ensureWellFormed` (shared with the #2011 jsonb path) is
+  // the canonical surrogate cleaner — it handles consecutive lone surrogates
+  // that the prior hand-rolled regex left malformed.
+  const closeContent = ensureWellFormed(opts.close.content);
+  const farContent = ensureWellFormed(opts.far.content);
+  const closeTitle = ensureWellFormed(opts.close.title ?? '(untitled)');
+  const farTitle = ensureWellFormed(opts.far.title ?? '(untitled)');
+  const question = ensureWellFormed(opts.question);
 
   const user = `QUESTION:
 ${question}
@@ -771,7 +759,7 @@ async function _runBrainstormInner(
       crossModel = result.model;
       // Mid-run cost guard: if running spend already exceeds the projected
       // ceiling or the strict-budget multiplier, abort the remaining crosses.
-      const runningPricing = ANTHROPIC_PRICING[result.model] ?? { input: 3, output: 15 };
+      const runningPricing = canonicalLookup(result.model) ?? { input: 3, output: 15 };
       const runningUsd =
         (totalUsage.input_tokens / 1_000_000) * runningPricing.input +
         (totalUsage.output_tokens / 1_000_000) * runningPricing.output;
@@ -897,7 +885,7 @@ async function _runBrainstormInner(
   // Cost actuals (codex r2 #10).
   const totalIn = totalUsage.input_tokens + judgeUsage.input_tokens;
   const totalOut = totalUsage.output_tokens + judgeUsage.output_tokens;
-  const pricing = ANTHROPIC_PRICING[crossModel] ?? { input: 3, output: 15 };
+  const pricing = canonicalLookup(crossModel) ?? { input: 3, output: 15 };
   const actual = (totalIn / 1_000_000) * pricing.input + (totalOut / 1_000_000) * pricing.output;
   stderr(`[${profile.label}] actual cost: ${fmtUsd(actual)} (estimated ${fmtUsd(estimate)}) — in=${totalIn} out=${totalOut} tokens\n`);
 

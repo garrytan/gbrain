@@ -6,7 +6,7 @@ import { homedir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
+import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { runInitEmbedCheck } from '../core/init-embed-check.ts';
@@ -133,7 +133,11 @@ export async function runInit(args: string[]) {
   if (manualUrl) {
     databaseUrl = manualUrl;
   } else if (isNonInteractive) {
-    const envUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+    // effectiveEnvDatabaseUrl applies the #427 guard: a DATABASE_URL that Bun
+    // auto-loaded from a .env in cwd must not seed a brain config — that is
+    // the "init inside a web-app checkout writes the app's DB into
+    // ~/.gbrain/config.json" failure mode.
+    const envUrl = effectiveEnvDatabaseUrl();
     if (envUrl) {
       databaseUrl = envUrl;
     } else {
@@ -1072,9 +1076,8 @@ async function initPostgres(opts: {
     console.warn('');
     console.warn('WARNING: You provided a Supabase direct connection URL (db.*.supabase.co:5432).');
     console.warn('  Direct connections are IPv6 only and fail in many environments.');
-    console.warn('  Use the Session pooler connection string instead (port 6543):');
-    console.warn('  Supabase Dashboard > gear icon (Project Settings) > Database >');
-    console.warn('  Connection string > URI tab > change dropdown to "Session pooler"');
+    console.warn('  Use the Transaction pooler connection string instead (port 6543):');
+    console.warn('  Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler');
     console.warn('');
   }
 
@@ -1087,7 +1090,7 @@ async function initPostgres(opts: {
       const msg = e instanceof Error ? e.message : String(e);
       if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
         console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
-        console.error('Use the Session pooler connection string instead (port 6543).');
+        console.error('Use the Transaction pooler connection string instead (port 6543).');
       }
       throw e;
     }
@@ -1277,7 +1280,7 @@ async function supabaseWizard(): Promise<string> {
 
   console.log('\nEnter your Supabase/Postgres connection URL:');
   console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres'); /* allow-pg-url-literal */
-  console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Session Pooler\n');
+  console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler\n');
 
   const url = await readLine('Connection URL: ');
   if (!url) {
@@ -1453,6 +1456,12 @@ export function reportModStatus(): void {
   }
   console.log('Resolver: skills/RESOLVER.md');
   console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
+  // (no action needed). The policy skill is installed into the HOST repo on
+  // request — we PRINT the command rather than silently mutating the host repo.
+  console.log('Retrieval reflex: on by default (entity pointers injected per turn)');
+  console.log('  Install the policy skill into your agent repo:');
+  console.log('  gbrain integrations install retrieval-reflex --target <host-repo>');
   console.log('');
 }
 

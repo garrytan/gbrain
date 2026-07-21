@@ -25,13 +25,17 @@ import { VENUS } from './venus.mjs';
 
 // ── Shared preamble (tools, rules, time) ─────────────────
 export function buildSharedContext(opts = {}) {
-  const { authenticated = false, identity = '', dateTime = '' } = opts;
+  const { authenticated = false, identity = '', dateTime = '', topicName = '' } = opts;
 
   let ctx = '';
   if (dateTime) ctx += `CURRENT DATE/TIME: ${dateTime}\n\n`;
   if (authenticated && identity) {
     ctx += `The caller is verified as ${identity}. All allow-listed tools are available.\n\n`;
   }
+  // #1851: when summoned from a specific topic, name it up top so the persona
+  // knows the frame of the call. The recent-conversation detail is injected
+  // separately as the `# Topic Context` block (see prompt.mjs).
+  if (topicName) ctx += `CURRENT TOPIC: ${topicName}\n\n`;
   return ctx;
 }
 

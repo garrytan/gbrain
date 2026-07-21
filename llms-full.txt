@@ -117,8 +117,9 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 ## Before shipping
 
 Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
-unit tests with `DATABASE_URL` unset, then all 29 E2E files sequentially against a
-fresh pgvector container) and tears down. Use `bun run ci:local:diff` for the
+guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
+containers plus a transaction-mode PgBouncer; unit phase keeps `DATABASE_URL`
+unset) and tears down. Use `bun run ci:local:diff` for the
 diff-aware subset during fast iteration on a focused branch. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
@@ -186,7 +187,7 @@ mount, CEO-class with multiple team brains) and
 
 ## Architecture
 
-Contract-first: `src/core/operations.ts` defines ~47 shared operations (v0.29 adds `get_recent_salience`, `find_anomalies`, `get_recent_transcripts`). CLI and MCP
+Contract-first: `src/core/operations.ts` defines ~90 shared operations (v0.29 adds `get_recent_salience`, `find_anomalies`, `get_recent_transcripts`; v0.42.43.0 adds `volunteer_context` — push-based context, see `docs/guides/push-context.md`). CLI and MCP
 server are both generated from this single source. Engine factory (`src/core/engine-factory.ts`)
 dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills are fat
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
@@ -207,9 +208,14 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
 - **Source isolation.** Every read-side op routes through `sourceScopeOpts(ctx)`; precedence
   is federated array (`ctx.auth.allowedSources`) > scalar (`ctx.sourceId`) > nothing. Don't
   hand-roll source filtering — a missed thread is a cross-source data leak.
-- **JSONB: never `JSON.stringify` into a `::jsonb` cast.** postgres.js double-encodes it;
-  PGLite hides the bug. Pass raw objects to `engine.executeRaw`, or use `executeRawJsonb`.
-  Guarded by `scripts/check-jsonb-pattern.sh`.
+- **JSONB: never `JSON.stringify` into a `::jsonb` cast.** postgres.js double-encodes it (a jsonb
+  string scalar); PGLite hides the bug. This bites BOTH spellings — the template form
+  (`${JSON.stringify(x)}::jsonb`) AND the positional form (`executeRaw(\`…$N::jsonb\`, [JSON.stringify(x)])`,
+  the #2339 class that aborted every sync). Fix: pass a raw object to `engine.executeRaw` / use
+  `executeRawJsonb` / `sql.json()`; or for the positional path bind through `$N::text::jsonb` (binds as
+  text, the cast parses it). Guarded by `scripts/check-jsonb-pattern.sh` (template grep) +
+  `scripts/check-jsonb-params.mjs` (positional AST scanner); the real backstop is the DATABASE_URL-gated
+  e2e parity tests, since PGLite can't surface the bug. Full rule in `docs/ENGINES.md`.
 - **Engine parity.** `src/core/postgres-engine.ts` and `src/core/pglite-engine.ts` move in
   lockstep — a new method/SQL shape lands in BOTH, pinned by `test/e2e/engine-parity.test.ts`.
   Forward-referenced columns/indexes go in the bootstrap probe set (guarded by
@@ -222,6 +228,15 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   Postgres; plain `CREATE INDEX` on PGLite via `sqlFor.pglite`).
 - **Multi-source.** Slug uniqueness is `(source_id, slug)`, not slug. Key batch ops and
   reverse-writes on the composite key; `validateSourceId` before any `source_id` path join.
+- **One canonical chat-pricing table.** All paid-cloud chat/completion prices live ONCE in
+  `src/core/model-pricing.ts` (`CANONICAL_PRICING` + `canonicalLookup`). Every other table
+  (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, `takes-quality-eval/pricing.ts`'s
+  `MODEL_PRICING`, the contradictions/cross-modal/skillopt cost views) is a DERIVED view, never
+  a hand-copied duplicate — so cross-table price drift is structurally impossible. Update a
+  price in `model-pricing.ts` only; each consumer keeps its own key allowlist + miss policy
+  (fail-closed vs warn-only vs null), not its own numbers. Pinned by `test/model-pricing.test.ts`
+  (drift guard asserts each view equals canonical). Embeddings price separately in
+  `embedding-pricing.ts` (different unit).
 
 
 ## Reference map (load on demand)
@@ -236,6 +251,8 @@ detail on demand.)
 | any file in `src/` (what it does + its invariants) | `docs/architecture/KEY_FILES.md` — find the file's entry |
 | search / ranking / hybrid / retrieval | `docs/architecture/RETRIEVAL.md` + the `search/*` entries in `KEY_FILES.md` |
 | search modes / cost knobs | `docs/guides/search-modes.md` |
+| embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |
+| push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
 | the CLI surface (commands + flags) | `gbrain --help` / `gbrain --tools-json`, plus the relevant `KEY_FILES.md` entry |
@@ -288,6 +305,7 @@ project resolves through `src/core/search/mode.ts`.
 | `intentWeighting`             | true           | true       | true           |
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `relationalRetrieval`         | false          | **true**   | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
 
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
@@ -346,6 +364,19 @@ written against `embedding` (1536d OpenAI). Existing v=2 rows become
 unreachable on first re-query (one-time miss spike on upgrade);
 `mode.ts:KNOBS_HASH_VERSION` is the single source of truth.
 
+**v0.42.34.0 knobs_hash v=9 → v=10.** Folds the `relationalRetrieval` knob +
+depth into the cache key so a relational-on result set can't be served to a
+relational-off lookup (same contamination class as graph_signals). One-time
+miss spike on upgrade.
+
+**Relational retrieval (v0.42.34.0).** `relationalRetrieval` (on for
+balanced/tokenmax) adds a fourth recall arm: a relational query ("who invested
+in X", "what connects A and B") resolves its seed entity and walks the typed-edge
+graph (`src/core/search/relational-recall.ts` + `relational-intent.ts`,
+`engine.relationalFanout`), injecting edge-derived answers into RRF. Within-source,
+deterministic, mentions-excluded by default, pure no-op for non-relational queries.
+The `query` op's `relational` flag forces it on/off per call.
+
 **Three CLI surfaces:**
 
     gbrain search modes              # what is running, with per-knob attribution
@@ -377,7 +408,7 @@ audit trail lives in the source repo's git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
+Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
 organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
 
 **Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
@@ -395,6 +426,17 @@ routing is narrowed to what the skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
+
+**Brain-resident skillpacks + advisor (v0.42.47.0, #2180):** A brain repo can carry its
+own publishable skillpack (`brain_resident: true` in `skillpack.json` + `schema_pack`);
+`gbrain skillpack init-brain-pack` scaffolds one with a 5-section machine-parseable README.
+Connecting harnesses discover it on `gbrain sources add` (Topology A advisory, bounded nag
+via `nag-state.ts`) and over MCP via the source-scoped `list_brain_skillpack` op +
+`get_skill --source_id` (gated by `mcp.publish_skills`). The bundled `gbrain-advisor` skill
++ `gbrain advisor` op compute a ranked, read-only list of high-leverage actions from brain
+state (8 collectors in `src/core/advisor/`); `--json`+exit codes for CI/cron, local-only
+`--apply <id>` behind confirm, exposed over MCP behind `mcp.publish_advisor` (default off,
+read-only on remote). Thin-client binary install stays deferred to PR2 `build_skillpack`.
 
 **Routing-table compression (v0.32.3.0):** `skills/functional-area-resolver/` —
 two-layer dispatch pattern for shrinking large AGENTS.md / RESOLVER.md files
@@ -494,6 +536,76 @@ Apply the same pattern to any long-running command whose exit code matters:
 For background tasks (`run_in_background: true`), the harness captures the exit
 file separately — use it via the bg task's `<id>.exit` file, not the streamed
 output.
+
+## Sync resumability + lock tuning (v0.42.x, #1794)
+
+`gbrain sync` is resumable and converges under pool exhaustion + repeated kills.
+Progress banks into the append-only `op_checkpoint_paths` table (one row per drained
+path, written via the direct session pool so it survives `EMAXCONNSESSION`); a killed
+run resumes from the checkpoint and `last_commit` only advances on true completion. The
+per-source lock heartbeats through the direct pool and refuses to steal a live,
+recently-refreshed holder. Six env knobs tune it (all env-only, incident-time escape
+hatches — no config-dashboard surface by design):
+
+| Env var | Default | What it does |
+|---|---|---|
+| `GBRAIN_SYNC_CHECKPOINT_EVERY` | 1000 | Flush the checkpoint every N drained files. |
+| `GBRAIN_SYNC_CHECKPOINT_SECONDS` | 10 | Also flush every N seconds (whichever comes first) — bounds worst-case loss regardless of throughput. Flush also fires after the first file. |
+| `GBRAIN_SYNC_MAX_CHECKPOINT_FAILURES` | 3 | Consecutive failed flushes (each already retried ~12s) before the run aborts with `reason: 'checkpoint_unavailable'` instead of importing work it can never bank. |
+| `GBRAIN_SYNC_YIELD_EVERY` | 64 | Yield the event loop (`setTimeout(0)`, NOT `setImmediate` — Bun starves the timers phase under a tight setImmediate loop) every N files so the lock-refresh `setInterval` heartbeat fires mid-import. |
+| `GBRAIN_LOCK_STEAL_GRACE_SECONDS` | derived (~600 at 30min TTL) | A holder that refreshed within this window is NOT stolen even if its TTL lapsed (starved-but-alive). Dead holders stop refreshing, age past the grace, and become stealable; TTL stays the backstop. |
+| `GBRAIN_SYNC_STALL_ABORT_SECONDS` | 900 | Progress-aware stall watchdog (#1950): if the import drain makes no forward progress (keyed on file-import progress, NOT the lock heartbeat) for N seconds, abort the run and release the per-source lock so the next `gbrain sync` resumes from the checkpoint. Reports `reason: 'stall_timeout'`. Observed BETWEEN files; a hang inside one file's import isn't interrupted until it returns (the wall-clock hard deadline is that backstop). 0 disables. |
+
+## Pace Mode (DB-contention-aware backfill pacing)
+
+A naive `gbrain embed --stale` / large `sync` can saturate a PgBouncer
+transaction-mode pooler and starve the minion supervisor's lock renewals
+(`lock-renewal-failed` → dead jobs). Pacing is the native, composable fix — it
+replaces external SIGSTOP/SIGCONT wrapper scripts. **Opt-in: default mode `off`.**
+
+The composable primitive is `src/core/db-pacer.ts` (`createDbPacer`):
+- **Concurrency cap is the real lever** (caps simultaneous in-flight DB writes =
+  pooler slots held). Embed paths set their worker count to `maxConcurrency`
+  (single pool, no permit); `sync` uses the shared `acquire()` **permit** because
+  each parallel worker owns a separate engine (one budget must span pools).
+- **In-band signal** (`observe(ms)` EWMA from the work's own queries — never
+  blind the way an out-of-band probe pool was). **No probe loop, no
+  `probeLatency` engine method.**
+- **Cooperative `pace()` sleep** on `setTimeout` (keeps the lock heartbeat
+  firing), jittered to avoid a thundering-herd resume. `acquire()`/`pace()` throw
+  `AbortError` on cancel; everything else is fail-open (a pacer bug never kills a
+  backfill, never throws an unhandledRejection).
+
+Named bundles resolve through `src/core/pace-mode.ts` (`resolvePaceMode`), mirror
+of the search-mode pattern but with **env ABOVE config** (incident escape hatch):
+
+    per-call flag → GBRAIN_PACE_* env → config (pace.*) → PACE_BUNDLES[mode] → off
+
+| Knob | off | gentle | balanced | aggressive |
+|---|---|---|---|---|
+| `maxConcurrency` | (off) | 4 | 8 | 16 |
+| `paceAtMs` (EWMA → sleep) | — | 250 | 500 | 1000 |
+| `maxSleepMs` (jittered cap) | — | 2000 | 1500 | 1000 |
+
+**Surfaces.** `gbrain embed --stale --pace[=mode]` (bare `--pace` = balanced),
+`--pace-max-concurrency=N`. `--background` carries explicit pace OVERRIDES (not
+the resolved bundle) into the `embed` job payload; the handler re-resolves
+env>config>bundle at execution so `GBRAIN_PACE_*` still wins (CX5). Config-level
+`pace.mode` paces EVERY `runEmbedCore` caller (cycle embed, embed-catch-up,
+sync-auto-embed) and the prod `embed-backfill` job automatically. `sync` reads
+env/config. PGLite / mode `off` → no-op pacer.
+
+**Correctness fixes pacing bundles** (longer paced runs widen these): CLI
+`embed --stale` single-flights via the SAME per-source lock key as the
+`embed-backfill` handler (`src/core/embed-backfill-lock.ts`; all-source runs lock
+every source in sorted order) so a hand-run backfill and a queued job can't race
+the NULL→non-NULL upsert (`TODOS:2299`); a **bounded** end-of-run keyset re-entry
+(max 3 + forward-progress, paced runs only) catches rows inserted behind the
+cursor (`TODOS:2301`); and the embed wall-clock budget timer is re-armed around
+`pace()` sleeps so paced time doesn't burn the work budget.
+
+`EmbedResult.pacing` carries the end-of-run telemetry (cap, samples, EWMA, slept
+ms, max waiters) for `--json`; a one-line summary prints to stderr.
 
 ## Build
 
@@ -1296,6 +1408,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Morning prep, meeting context, day planning | `skills/daily-task-prep/SKILL.md` |
 | Daily briefing, "what's happening today" | `skills/briefing/SKILL.md` |
 | Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
+| "get more out of gbrain", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "gbrain advisor" | `skills/gbrain-advisor/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
@@ -1364,6 +1477,7 @@ These apply to ALL brain-writing skills:
 | "enrich this article", "enrich brain pages", "batch enrich", "make brain pages useful" | `skills/article-enrichment/SKILL.md` |
 | "strategic reading", "read this through the lens of", "apply this to my problem", "what can I learn from this about", "extract a playbook from" | `skills/strategic-reading/SKILL.md` |
 | "concept synthesis", "synthesize my concepts", "find patterns across my notes", "build my intellectual map", "trace idea evolution" | `skills/concept-synthesis/SKILL.md` |
+| "idea lineage", "trace the lineage of this idea", "how my thinking about", "how has my thinking about", "what is my current version of", "show reversals in my thinking about", "where did this idea come from" | `skills/idea-lineage/SKILL.md` |
 | "perplexity research", "what's new about", "current state of", "web research", "what changed about" | `skills/perplexity-research/SKILL.md` |
 | "crawl my archive", "find gold in my archive", "archive crawler", "scan my dropbox for", "mine my old files for" | `skills/archive-crawler/SKILL.md` |
 | "verify this academic claim", "check this study", "academic verify", "validate citation", "is this study real" | `skills/academic-verify/SKILL.md` |
@@ -1638,6 +1752,24 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 **Job queue (Minions).** BullMQ-shaped, Postgres-native job queue. Durable subagents (LLM tool loops that survive crashes via two-phase pending→done persistence), shell jobs with audit, child jobs with cascading timeouts, rate leases for outbound providers, attachments via S3/Supabase storage. Replaces "spawn subagent as fire-and-forget Promise" with something that recovers from anything.
 
+**Non-English brains (FTS language config).** The Postgres full-text search tokenizer is configurable via `GBRAIN_FTS_LANGUAGE`. Defaults to `english`. Set it to any text-search configuration that exists in your Postgres instance:
+
+```bash
+export GBRAIN_FTS_LANGUAGE=portuguese     # uses built-in portuguese stemmer
+export GBRAIN_FTS_LANGUAGE=spanish        # built-in spanish stemmer
+export GBRAIN_FTS_LANGUAGE=pt_br          # custom config (e.g. unaccent + portuguese)
+```
+
+List available configs: `psql -c "SELECT cfgname FROM pg_ts_config"`. Both the **query side** (`websearch_to_tsquery`) and the **write side** (the trigger functions that populate `pages.search_vector` and `content_chunks.search_vector`) honor `GBRAIN_FTS_LANGUAGE`. On first install (or upgrade), the `configurable_fts_language` schema migration reads the env var and creates trigger functions in the configured language; subsequent inserts/updates tokenize using that setting. To change language on a brain that has already run the migration, use the dedicated CLI command:
+
+```bash
+export GBRAIN_FTS_LANGUAGE=portuguese
+gbrain reindex-search-vector --dry-run    # preview row counts
+gbrain reindex-search-vector --yes        # recreate triggers + backfill
+```
+
+The command is idempotent (re-running with the same language is a no-op for vector content) and uses the same recreate-and-backfill primitives as the migration. For accent-insensitive Portuguese (`pt_br`), see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md) for the `unaccent` + portuguese stemmer recipe.
+
 **43 curated skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
 
 **Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
@@ -1668,6 +1800,8 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 **Why the graph matters.** Vector search returns chunks that are semantically close. The graph returns chunks that are factually connected. Hybrid search pulls from both; auto-linking on every write keeps the graph fresh. Deep dive: [`docs/architecture/RETRIEVAL.md`](docs/architecture/RETRIEVAL.md).
 
 ## Troubleshooting
+
+**`gbrain init --pglite` crashes on macOS 26.x (Tahoe)?** PGLite's embedded WASM engine is incompatible with macOS 26.x on Apple Silicon. The fix is to use native Homebrew PostgreSQL + pgvector instead. Full step-by-step setup in [`docs/INSTALL.md` — Troubleshooting: PGLite crashes on macOS 26.x](docs/INSTALL.md#pglite-crashes-on-macos-26x-tahoe).
 
 **`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment: set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
 
@@ -1925,7 +2059,7 @@ export interface BrainEngine {
 
 **Slug-based API, not ID-based.** Every method takes slugs, not numeric IDs. The engine resolves slugs to IDs internally. This keeps the interface portable... slugs are strings, IDs are database-specific.
 
-**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that. This is intentional: embedding is an external API call (OpenAI), not a storage concern. All engines share the same embedding service.
+**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that (a thin delegation to the provider-agnostic AI gateway in `src/core/ai/gateway.ts`). This is intentional: embedding is an external API call (OpenAI, Voyage, a local Ollama — whichever provider you configured), not a storage concern. All engines share the same embedding service.
 
 **Chunking is NOT in the engine.** Same logic. `src/core/chunkers/` handles chunking. The engine stores and retrieves chunks. All engines share the same chunkers.
 
@@ -1979,6 +2113,51 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 
 **Why not self-hosted for v0:** The brain should be infrastructure agents use, not something you maintain. Self-hosted Postgres with Docker is a welcome community PR, but v0 optimizes for zero ops.
 
+### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
+
+Defense-in-depth layer for Postgres deployments that want the database itself
+to enforce source isolation, in addition to the mandatory app-layer filters
+(`sourceScopeOpts` — layer 1, always on).
+
+**Mechanism.** With `GBRAIN_RLS_SCOPE_BINDING=1` (or `true`), the engine's
+source-scoped read methods wrap their queries in a transaction that first runs
+`SELECT set_config('app.scopes', $1, true)` — the value is a bound parameter
+(federated `sourceIds` CSV > scalar `sourceId` > `'*'` for unscoped internal
+reads), transaction-local (equivalent to `SET LOCAL`, which itself can't take
+bound params). An RLS policy can then filter rows by
+`current_setting('app.scopes', true)`.
+
+**Default off.** With the env var unset, reads call through on the shared pool
+exactly as before — no per-read transaction, no pool-slot hold (the search
+methods keep the transaction they always had for their `SET LOCAL
+statement_timeout`). Existing operators see zero behavior change.
+
+**Enabling it** (operator-managed SQL; gbrain ships no DDL for this):
+
+```sql
+ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pages_scope_filter ON pages
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+
+-- Required: connections that don't run through the scoped read helper
+-- (admin, autopilot, cycle, writes) must default to unscoped, or they
+-- see zero rows once the policy exists:
+ALTER ROLE <runtime-role> SET app.scopes = '*';
+
+-- If the runtime role OWNS the table, RLS is skipped for it unless forced:
+ALTER TABLE pages FORCE ROW LEVEL SECURITY;
+```
+
+Safe to enable in either order: the env var without a policy is a no-op
+setting; a policy without the env var is enforced only via the role default.
+
+**Honest caveat:** only read paths routed through the scoped helper carry a
+per-request scope binding — unwrapped paths (writes, admin/maintenance reads)
+run under the role default and are not backstopped per caller. This is layer 2;
+the app-layer source filters remain layer 1 and stay mandatory. Behavioral pins
+live in `test/postgres-engine-rls-scope.test.ts`.
+
 ## PGLiteEngine (v0.7, ships)
 
 **Dependencies:** `@electric-sql/pglite` (v0.4.4+)
@@ -2006,6 +2185,39 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 | Backups | Manual (file copy) | Managed by Supabase |
 
 **Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline) and imports into Supabase. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
+
+## JSONB writes: never double-encode (the #2339 trap)
+
+Writing a JS value into a `jsonb` column has exactly two correct forms. Get this
+wrong and the write succeeds on PGLite but stores a **jsonb string scalar** on
+real Postgres — `col ->> 'k'` returns NULL, `jsonb_array_elements` throws, and a
+`jsonb_typeof = 'array'` CHECK rejects the row (this aborted every sync in #2339).
+
+| Form | Verdict |
+|---|---|
+| Template tag: `` sql`... ${sql.json(obj)}` `` (postgres-engine only) | ✅ native jsonb serialization |
+| Positional raw call, raw object: `executeRawJsonb(engine, sql, scalars, [obj])` | ✅ object reaches the wire as jsonb |
+| Positional raw call, stringified: `executeRaw(\`... $N::text::jsonb\`, [JSON.stringify(x)])` | ✅ binds as text, the cast parses it |
+| Positional raw call, BARE cast: `executeRaw(\`... $N::jsonb\`, [JSON.stringify(x)])` | ❌ **double-encodes** under postgres.js `.unsafe()` |
+| Template literal interpolation: `` `... ${JSON.stringify(x)}::jsonb` `` | ❌ double-encodes |
+
+**Why:** postgres.js `.unsafe(sql, params)` (the path behind `executeRaw` /
+`executeRawDirect`) binds a JS **string** as a text param. A bare `$N::jsonb`
+cast then wraps that already-JSON string into a jsonb scalar string instead of
+parsing it. Casting through `$N::text::jsonb` forces a text→jsonb parse.
+**PGLite's `db.query` parses text→jsonb natively, so it hides the bug** — which is
+why a regression only shows up on Postgres (and why the parity test must run there).
+
+**Two CI guards enforce this, both wired into `scripts/check-jsonb-pattern.sh`:**
+- the template-tag grep (`${JSON.stringify(x)}::jsonb`), and
+- `scripts/check-jsonb-params.mjs`, an AST-lite scanner for the positional
+  `$N::jsonb` + `JSON.stringify` form the grep misses. Sanctioned escapes:
+  `$N::text::jsonb`, `$N::text[]`, `executeRawJsonb`, `sql.json`, or an inline
+  `jsonb-guard-ok` comment.
+
+The real backstop is `test/e2e/op-checkpoint-jsonb-parity.test.ts` +
+`test/e2e/jsonb-roundtrip.test.ts`, which round-trip writes through real Postgres
+and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
 ## Adding a new engine
 
@@ -2502,17 +2714,20 @@ with the brain repo automatically. You never have to remember to run sync.
 
 ## Implementation
 
-### Prerequisite: Session Mode Pooler
+### Prerequisite: a reachable direct connection
 
-Sync uses `engine.transaction()` on every import. If `DATABASE_URL` points to
-Supabase's **Transaction mode** pooler, sync will throw `.begin() is not a
-function` and **silently skip most pages**. This is the number one cause of
-"sync ran but nothing happened."
+GBrain is tuned for the Supabase **Transaction pooler** (port 6543): it
+auto-disables prepared statements there and routes `engine.transaction()`
+(migrations, DDL, sync imports) to a derived **direct** connection
+(`db.<ref>.supabase.co:5432`). That direct host is IPv6-only, so on an
+IPv4-only host, reads work but sync **silently skips most pages**. This is the
+number one cause of "sync ran but nothing happened."
 
-Fix: use the **Session mode** pooler string (port 6543, Session mode) or the
-direct connection (port 5432, IPv6-only). Verify by running `gbrain sync` and
-checking that the page count in `gbrain stats` matches the syncable file count
-in the repo.
+Fix: make the direct connection reachable over IPv4. Either set
+`GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port 5432 on the
+`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on. Verify by
+running `gbrain sync` and checking that the page count in `gbrain stats` matches
+the syncable file count in the repo.
 
 ### The Primitives
 
@@ -2545,8 +2760,9 @@ gbrain sync --repo /data/brain && gbrain embed --stale
 Name: gbrain-auto-sync
 Schedule: */15 * * * *
 Prompt: "Run: gbrain sync --repo /data/brain && gbrain embed --stale
-  Log the result. If sync fails with .begin() is not a function,
-  the DATABASE_URL is using Transaction mode pooler."
+  Log the result. If sync errors mention an unreachable host or timeout,
+  the direct connection isn't reachable over IPv4 (set
+  GBRAIN_DIRECT_DATABASE_URL to the Session pooler, or enable the IPv4 add-on)."
 ```
 
 **Hermes:**
@@ -2603,6 +2819,27 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
 
+4. **A single un-parseable file can't wedge all indexing.** When a file fails
+   to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
+   the bookmark and tells you exactly which file broke — a *fresh* failure
+   fails closed so nothing is silently dropped. But a file that fails the same
+   way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0` to
+   disable) is auto-skipped so the rest of the brain keeps indexing past it.
+   Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
+   or delete them, and fixing the file clears it on the next sync. A repository
+   history rewrite still hard-blocks even with `--skip-failed`. Run
+   `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
+
+5. **Import checkpoints name the import target, not the caller's CWD.**
+   Interrupted `gbrain import <dir>` runs may leave
+   `~/.gbrain/import-checkpoint.json` so the next import can resume. The
+   checkpoint `dir` is the absolute, resolved import target captured when
+   import starts. It is not a cleanup instruction and it must not be
+   re-derived from the process working directory. Checkpoints written by
+   gbrain include `schema_version: 1`, `owner: "gbrain"`, and
+   `kind: "import"` so downstream tools can validate the contract before
+   deciding whether to resume.
+
 ## How to Verify
 
 1. **Edit a file and search for the change.** Edit a brain markdown file,
@@ -2612,8 +2849,8 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
 2. **Compare page count to file count.** Run `gbrain stats` and count the
    syncable markdown files in the brain repo. The page count in the database
-   should match. If they diverge, files are being silently skipped (likely
-   a Transaction mode pooler issue).
+   should match. If they diverge, files are being silently skipped (likely an
+   unreachable direct connection on IPv4 — see the prerequisite above).
 
 3. **Check embedded chunk count.** In `gbrain stats`, the embedded chunk
    count should be close to the total chunk count. A large gap means
@@ -3315,6 +3552,92 @@ the bundled resolver lives at [`skills/RESOLVER.md`](../../skills/RESOLVER.md).
 
 ---
 
+## docs/guides/push-context.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/push-context.md
+
+# Push-based context (#2095, v0.42.43.0)
+
+Retrieval used to be pull-only: the agent had to *know to ask* before the brain
+contributed anything. Push-based context inverts that — the brain volunteers
+relevant pages from the recent conversation, confidence-gated so push noise
+never becomes worse than pull silence.
+
+Three channels share one zero-LLM core (`src/core/context/volunteer.ts`):
+
+| Channel | Surface | When to use |
+|---|---|---|
+| `reflex` | automatic, inside the context engine | default-on for plugin hosts; nothing to call |
+| `op` | `gbrain volunteer-context` / MCP `volunteer_context` | agents without the plugin; one call per turn |
+| `watch` | `gbrain watch` | stream a transcript in, volunteered pages stream out |
+
+## How it decides
+
+1. **Extract** entities across the last N turns (capitalized runs, `@handles`),
+   merged with recency / frequency / user-role salience. Assistant-introduced
+   entities and "what did she invest in?" follow-ups whose antecedent was named
+   in the window now resolve.
+2. **Resolve** through the alias table, exact titles, and slug suffixes — each
+   arm carries an honest confidence: alias 0.9, exact title 0.8, slug-suffix 0.6,
+   +0.05 when mentioned in ≥2 turns or the newest turn.
+3. **Gate** at `min_confidence` (default 0.7 — slug-suffix matches need an
+   explicit lower gate), suppress pages already surfaced (slug-presence only),
+   cap at 3 pages (hard cap 5).
+
+## CLI
+
+```bash
+# one-shot: pipe recent turns (oldest → newest)
+printf 'user: ask alice-example about the deal\nassistant: noted\nuser: what did she say?\n' \
+  | gbrain volunteer-context
+
+# streaming: volunteered pages print as the transcript flows
+some-transcript-feed | gbrain watch --json
+
+# the feedback loop: how often were volunteered pages actually opened?
+gbrain volunteer-context --stats
+```
+
+Stats are **approximate** by design: "used" means `pages.last_retrieved_at >
+volunteered_at` — the 5-minute last-retrieved throttle causes false negatives
+and unrelated reads of the same page cause false positives. Use the per-arm
+precision to tune `min_confidence`, not as an exact metric.
+
+**PGLite + `gbrain watch`:** PGLite is single-connection, and watch holds its
+connection for the whole session — a concurrent `gbrain serve` or any write
+path blocks until watch exits. On a PGLite brain, run watch in bursts (piped
+input exits at EOF) or use the ambient reflex channel instead, which routes
+through a running serve's resolve socket rather than taking the lock. Routing
+watch through that same socket is a filed follow-up (TODOS.md). Postgres
+brains are unaffected.
+
+## Config
+
+| Key | Default | What it does |
+|---|---|---|
+| `retrieval_reflex_window_turns` | 4 | turns the ambient reflex extracts from; 1 = legacy current-turn-only (file/env plane: `GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS`) |
+| `retrieval_reflex` | true | the ambient channel's master switch |
+| `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
+
+Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`
+(`--max-pages` / `--min-confidence`, plus `--window-turns` / `--source` on watch);
+on the op only: `prior_context` (text whose already-surfaced slugs are suppressed),
+`session_id` / `turn` attribution params (watch stamps its own per-session id and
+turn numbers in the feedback log), and `days` to size the `--stats` window.
+
+## Storage + privacy
+
+Volunteered pages log to `context_volunteer_events` (migration v117): slug,
+arm, confidence, channel, optional session/turn — the rationale is a
+deterministic template string, never raw conversation text. Event writes are
+best-effort (fire-and-forget, drained at CLI exit) — the log is a tuning signal,
+not an audit trail. Rows are pruned after 90 days by the dream cycle's purge
+phase. Synopses always strip the takes/facts fences — the same strip `get_page`
+applies to untrusted callers, applied unconditionally here so private fence rows
+never reach a prompt regardless of caller trust.
+
+---
+
 ## docs/mcp/DEPLOY.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md
@@ -3395,12 +3718,19 @@ to the HTTP server, so no migration is required.
 gbrain serve --http --port 3131
 ```
 
-On first start, the server prints an **admin bootstrap token** to stderr:
+On first start in an interactive terminal, the server prints an **admin
+bootstrap token** to stderr:
 
 ```
 Admin bootstrap token: 3a1f9c...
 Open http://localhost:3131/admin and paste it to log in.
 ```
+
+On a non-TTY start (systemd, Docker, any piped or captured logs) the generated
+token is hidden so it never lands in log storage. For headless deploys either
+set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` to a value you control before starting, or
+run `gbrain serve --http --print-admin-token` once on a trusted terminal to
+force printing.
 
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
@@ -3704,14 +4034,15 @@ find /data/brain -name '*.md' \
 Some difference is normal (files added since last sync), but if page count is
 less than half the file count, sync is silently skipping pages.
 
-**If page count is way too low:** The #1 cause is the connection pooler bug.
-Check your `DATABASE_URL`:
-- If it contains `pooler.supabase.com:6543`, verify it's using **Session mode**,
-  not Transaction mode.
-- Transaction mode breaks `engine.transaction()` and causes `.begin() is not a
-  function` errors.
-- Fix: switch to Session mode pooler string, then run `gbrain sync --full`
-  to reimport everything.
+**If page count is way too low:** The #1 cause is an unreachable direct
+connection on an IPv4-only host. GBrain uses the Transaction pooler (port 6543)
+for reads, but routes migrations, DDL, and sync transactions to a derived direct
+connection (`db.<ref>.supabase.co:5432`), which is IPv6-only.
+- On an IPv4-only host, reads work but sync transactions fail and silently skip
+  pages.
+- Fix: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port
+  5432 on the `pooler.supabase.com` host, IPv4), or enable Supabase's IPv4
+  add-on. Then run `gbrain sync --full` to reimport everything.
 
 ### 4b. Embed Check
 
@@ -3758,7 +4089,8 @@ gbrain search "<text from the correction>"
 - Is `gbrain sync --watch` still alive (if using watch mode)?
 - Run `gbrain config get sync.last_run` to see when sync last ran.
 - Run `gbrain sync --repo /data/brain` manually and check for errors.
-- If you see `.begin() is not a function`, fix the pooler (see 4a above).
+- If sync errors mention an unreachable host or connection timeout, the direct
+  connection isn't reachable on IPv4 (see 4a above).
 
 ---
 

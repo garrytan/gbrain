@@ -33,7 +33,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { EnrichCandidate, PageType } from '../core/types.ts';
 import { operations } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
-import { isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
+import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
@@ -508,8 +508,13 @@ export async function runEnrichCore(
   // One tracker reference for both the run and the post-hoc overage check.
   // External tracker (cycle phase): used as-is, no withBudgetTracker wrap (that
   // would REPLACE not stack). Internal: capped at maxCostUsd ?? DEFAULT.
+  // v0.42.42.0 (#2139): Infinity = explicit "uncapped" (off / tokenmax) → pass
+  // `undefined` so BudgetTracker runs without a ceiling (NOT raw Infinity, which
+  // would serialize to null in audit rows). undefined-when-unset still → DEFAULT.
+  const resolvedCap =
+    opts.maxCostUsd === Infinity ? undefined : (opts.maxCostUsd ?? DEFAULT_MAX_COST_USD);
   const tracker = opts.budgetTracker ?? new BudgetTracker({
-    maxCostUsd: opts.maxCostUsd ?? DEFAULT_MAX_COST_USD,
+    maxCostUsd: resolvedCap,
     label: `enrich:${sourceId}`,
   });
   try {
@@ -622,8 +627,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       continue;
     }
     if (a === '--max-usd' || a === '--max-cost-usd') {
-      const n = parseFloat(args[++i] ?? '');
-      if (Number.isFinite(n) && n > 0) out.maxCostUsd = n;
+      const raw = args[++i] ?? '';
+      // v0.42.42.0 (#2139): off/unlimited/none → run uncapped (Infinity sentinel;
+      // mapped to "no BudgetTracker ceiling" in runEnrichCore). Spend still ledgered.
+      if (['off', 'unlimited', 'none'].includes(raw.trim().toLowerCase())) {
+        out.maxCostUsd = Infinity;
+      } else {
+        const n = parseFloat(raw);
+        if (Number.isFinite(n) && n > 0) out.maxCostUsd = n;
+      }
       continue;
     }
     if (a === '--min-context') {
@@ -795,15 +807,32 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     process.exit(1);
   }
 
-  // Chat gateway required for non-dry-run.
+  // Chat gateway is required for non-dry-run. Recover a cold singleton before
+  // reporting an availability error (#2590).
+  if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
     console.error('Chat gateway unavailable. Configure a chat model (e.g. `gbrain config set chat_model anthropic:claude-haiku-4-5`), or pass --dry-run to preview candidates.');
     process.exit(1);
   }
 
+  // v0.42.42.0 (#2139, D15A): enrich runs UNCAPPED when the operator says cost
+  // isn't the constraint — either explicit `--max-usd off` (parsed to Infinity)
+  // or `spend.posture=tokenmax` with no per-call cap. Uncapped → the missing-cap
+  // refusals lift AND runEnrichCore passes no ceiling to the BudgetTracker (spend
+  // still ledgered; posture removes the ceiling, not the accounting). An explicit
+  // finite --max-usd always wins (precedence: per-call > posture).
+  const explicitOff = parsed.maxCostUsd === Infinity;
+  const { resolveSpendPosture } = await import('../core/spend-posture.ts');
+  const posture = parsed.dryRun ? 'gated' : await resolveSpendPosture(engine);
+  const uncapped =
+    !parsed.dryRun && (explicitOff || (parsed.maxCostUsd === undefined && posture === 'tokenmax'));
+  if (uncapped) {
+    console.error(`${explicitOff ? '--max-usd off' : 'spend.posture=tokenmax'}: running uncapped, spend ledgered. docs: docs/operations/spend-controls.md`);
+  }
+
   // Non-TTY execute without --max-usd or --yes is refused (cost guardrail).
-  if (!parsed.dryRun && parsed.maxCostUsd === undefined && !parsed.yes && !process.stdout.isTTY) {
-    console.error('Refusing to spend without a cap in a non-interactive context. Pass --max-usd <FLOAT> or --yes.');
+  if (!parsed.dryRun && parsed.maxCostUsd === undefined && !parsed.yes && !process.stdout.isTTY && !uncapped) {
+    console.error('Refusing to spend without a cap in a non-interactive context. Pass --max-usd <FLOAT> (or `off`), --yes, or set spend.posture=tokenmax.');
     process.exit(1);
   }
 
@@ -812,7 +841,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     : (await listSources(engine)).map((s) => s.id);
 
   // Dry-run cost preview (TTY) before spending.
-  if (!parsed.dryRun && process.stdout.isTTY && !parsed.yes && parsed.maxCostUsd === undefined) {
+  if (!parsed.dryRun && process.stdout.isTTY && !parsed.yes && parsed.maxCostUsd === undefined && !uncapped) {
     const limit = parsed.limit ?? DEFAULT_LIMIT;
     const est = (limit * sourceIds.length * COST_ESTIMATE_PER_PAGE_USD).toFixed(2);
     console.error(`About to enrich up to ${limit} page(s) per source across ${sourceIds.length} source(s), est. ~$${est}. Re-run with --max-usd or --yes to confirm.`);
@@ -834,7 +863,9 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
         limit: parsed.limit,
         workers: parsed.workers,
         model: parsed.model,
-        maxCostUsd: parsed.maxCostUsd,
+        // uncapped (off / tokenmax) → Infinity sentinel; runEnrichCore maps it
+        // to "no BudgetTracker ceiling".
+        maxCostUsd: uncapped ? Infinity : parsed.maxCostUsd,
         minContextChars: parsed.minContextChars,
         thinThreshold: parsed.thinThreshold,
         reenrichAfterMs: parsed.reenrichAfterMs,

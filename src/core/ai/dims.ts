@@ -90,6 +90,38 @@ export function isValidOpenAITextEmbedding3Dim(modelId: string, dims: number): b
   return Number.isInteger(dims) && dims >= 1 && dims <= max;
 }
 
+// NVIDIA NIM hosted embedding models use asymmetric input_type values. Most
+// emit fixed natural dimensions, but llama-nemotron-embed-1b-v2 accepts
+// Matryoshka-style dimension overrides (e.g. matching an existing 1280d
+// brain column without re-embedding through another provider).
+const NVIDIA_EMBEDDING_DIMS: Record<string, number> = {
+  'nvidia/nv-embedqa-e5-v5': 1024,
+  'nvidia/llama-nemotron-embed-1b-v2': 2048,
+  'nvidia/nv-embed-v1': 4096,
+  'nvidia/nv-embedcode-7b-v1': 4096,
+};
+
+const NVIDIA_EMBEDDING_DIM_OPTIONS: Record<string, number[]> = {
+  'nvidia/llama-nemotron-embed-1b-v2': [1024, 1280, 1536, 2048],
+};
+
+export function isNvidiaEmbeddingModel(modelId: string): boolean {
+  return modelId in NVIDIA_EMBEDDING_DIMS;
+}
+
+export function nvidiaEmbeddingDim(modelId: string): number | undefined {
+  return NVIDIA_EMBEDDING_DIMS[modelId];
+}
+
+export function nvidiaEmbeddingDimOptions(modelId: string): number[] | undefined {
+  return NVIDIA_EMBEDDING_DIM_OPTIONS[modelId];
+}
+
+export function supportsNvidiaEmbeddingDimension(modelId: string, dims: number): boolean {
+  const options = nvidiaEmbeddingDimOptions(modelId);
+  return !!options && options.includes(dims);
+}
+
 /**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
@@ -193,6 +225,17 @@ export function dimsProviderOptions(
             ...(inputType ? { input_type: inputType } : {}),
           },
         };
+      }
+      // NVIDIA NIM hosted embeddings are OpenAI-compatible but require
+      // asymmetric input_type. Use passage for indexing/document-side vectors
+      // and query for search-side vectors. Only llama-nemotron-embed-1b-v2
+      // supports a dimensions override; fixed-dim models reject it.
+      if (isNvidiaEmbeddingModel(modelId)) {
+        const opts: Record<string, any> = {
+          input_type: inputType === 'query' ? 'query' : 'passage',
+        };
+        if (supportsNvidiaEmbeddingDimension(modelId, dims)) opts.dimensions = dims;
+        return { openaiCompatible: opts };
       }
       // OpenAI text-embedding-3 family on the openai-compatible adapter
       // (Azure OpenAI hosts these via its OpenAI-compatible /embeddings

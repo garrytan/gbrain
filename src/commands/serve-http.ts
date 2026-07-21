@@ -22,6 +22,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -37,6 +38,7 @@ import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import { isRetryableError } from '../core/retry-matcher.ts';
 import {
   computeContentHash,
   validateIngestionEvent,
@@ -88,6 +90,26 @@ export function resolveBootstrapToken(
     };
   }
   return { kind: 'ok', token: trimmed, fromEnv: true };
+}
+
+/**
+ * #2624: decide whether the generated admin bootstrap token is hidden from
+ * the startup banner. Fail-safe default: a generated token is NOT printed
+ * unless stderr is an interactive TTY, so containerized (non-TTY) deploys
+ * never ship the secret to centralized log storage. Env-sourced tokens are
+ * always hidden (operator already holds them). Explicit --suppress hides
+ * everything; --print-admin-token forces the raw value even on a non-TTY.
+ */
+export function shouldSuppressBootstrapPrint(opts: {
+  suppress: boolean;
+  fromEnv: boolean;
+  forcePrint: boolean;
+  isTty: boolean;
+}): boolean {
+  if (opts.suppress) return true;
+  if (opts.fromEnv) return true;
+  if (opts.forcePrint) return false;
+  return !opts.isTty;
 }
 
 export type ProbeHealthResult =
@@ -260,6 +282,11 @@ interface ServeHttpOptions {
   tokenTtl: number;
   enableDcr: boolean;
   /**
+   * #1353: allow the consent-bypassing client_credentials grant on the DCR path.
+   * Off by default; DCR clients default to authorization_code. Implies enableDcr.
+   */
+  enableDcrInsecure?: boolean;
+  /**
    * Public URL the server is reachable at (e.g., https://brain.example.com).
    * Used as the OAuth issuer in discovery metadata. Defaults to
    * http://localhost:{port} when unset. Required for production deployments
@@ -299,6 +326,14 @@ interface ServeHttpOptions {
    * tracking the regenerated value through other means.
    */
   suppressBootstrapToken?: boolean;
+  /**
+   * #2624: force-print the generated admin bootstrap token even on a
+   * non-TTY (containerized) start. By default the raw token is only printed
+   * when stderr is an interactive TTY, so it never lands in centralized log
+   * storage for headless deploys. Set this when you genuinely need the value
+   * captured to a non-interactive log and accept the leak.
+   */
+  printAdminToken?: boolean;
 }
 
 /**
@@ -396,7 +431,7 @@ export function skillPublishStatus(publishSkills: boolean): { bannerValue: strin
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
@@ -434,6 +469,36 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const skillStatus = skillPublishStatus(publishSkills);
   if (skillStatus.nudge) console.error(skillStatus.nudge);
 
+  // Note when this brain ships a brain-resident pack so the operator knows
+  // connecting harnesses will be offered it (only meaningful when publishing
+  // is on — list_brain_skillpack is gated by the same flag). Fail-open.
+  if (publishSkills) {
+    try {
+      const { loadAllSources } = await import('../core/sources-load.ts');
+      const { loadSkillpackManifest } = await import('../core/skillpack/manifest-v1.ts');
+      const { existsSync } = await import('fs');
+      const { join } = await import('path');
+      const srcs = await loadAllSources(engine);
+      let n = 0;
+      for (const s of srcs) {
+        if (!s.local_path || !existsSync(join(s.local_path, 'skillpack.json'))) continue;
+        try {
+          if (loadSkillpackManifest(s.local_path).brain_resident === true) n++;
+        } catch {
+          /* malformed pack → ignore */
+        }
+      }
+      if (n > 0) {
+        console.error(
+          `[serve-http] NOTE: ${n} source${n === 1 ? '' : 's'} ship a brain-resident skillpack — ` +
+            'connecting harnesses can discover it via list_brain_skillpack and will be offered to install it.',
+        );
+      }
+    } catch {
+      /* fail-open: banner is cosmetic */
+    }
+  }
+
   // Engine-aware SQL adapter. Routes through engine.executeRaw on both
   // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
   // a postgres.js singleton, so `gbrain serve --http` works against PGLite
@@ -449,7 +514,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    allowClientCredentialsDcr: enableDcrInsecure === true,
   });
+
+  // #1353: loud stderr security WARN when DCR is enabled. DCR is an
+  // unauthenticated network registration endpoint; surface the posture change
+  // (and the extra blast radius of --enable-dcr-insecure) so it's visible in
+  // logs, not buried in the neutral "DCR: enabled" banner line.
+  if (enableDcr) {
+    console.error(
+      'SECURITY WARNING: Dynamic Client Registration (--enable-dcr) is ON. ' +
+      'Any network caller can self-register an OAuth client. DCR clients default ' +
+      'to the authorization_code (consent-bearing) grant. See SECURITY.md.',
+    );
+    if (enableDcrInsecure) {
+      console.error(
+        'SECURITY WARNING: --enable-dcr-insecure is ON — self-registered DCR ' +
+        'clients may request the client_credentials grant, which BYPASSES the ' +
+        '/authorize consent screen. Only use this on a trusted network.',
+      );
+    }
+  }
 
   // Sweep expired tokens on startup (non-blocking)
   try {
@@ -475,7 +560,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   let bootstrapToken: string = resolved.token;
   let bootstrapFromEnv: boolean = resolved.fromEnv;
   const bootstrapHash = createHash('sha256').update(bootstrapToken).digest('hex');
-  const suppressBootstrapPrint = options.suppressBootstrapToken === true;
+  const suppressBootstrapPrint = shouldSuppressBootstrapPrint({
+    suppress: options.suppressBootstrapToken === true,
+    fromEnv: bootstrapFromEnv,
+    forcePrint: options.printAdminToken === true,
+    isTty: process.stderr.isTTY === true,
+  });
   const adminSessions = new Map<string, number>(); // sessionId → expiresAt
 
   // SSE clients for live activity feed
@@ -657,6 +747,93 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // The SDK's /revoke handler compares the presented secret with
+  // client.client_secret as plaintext. GBrain stores only a SHA-256 hash, so
+  // confidential clients need the same hash-aware validation used above for
+  // authorization_code and refresh_token exchanges. Public clients present no
+  // secret and continue through to the SDK's PKCE-compatible handler.
+  app.post('/revoke', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+
+    const rawClientId: unknown = req.body?.client_id;
+    const rawBodySecret: unknown = req.body?.client_secret;
+    const authHeader = (req.headers.authorization ?? '').toString();
+
+    // RFC 6749 §2.3: one client-authentication method per request. Reject
+    // duplicates/arrays from express.urlencoded rather than letting them reach
+    // hashToken() as non-strings and become a misleading invalid_client error.
+    const hasBasicAuth = /^Basic\b/i.test(authHeader);
+    if (
+      (rawClientId !== undefined && typeof rawClientId !== 'string') ||
+      (rawBodySecret !== undefined && typeof rawBodySecret !== 'string') ||
+      (hasBasicAuth && (rawClientId !== undefined || rawBodySecret !== undefined))
+    ) {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Malformed or mixed client authentication' });
+      return;
+    }
+
+    let clientId = typeof rawClientId === 'string' ? rawClientId : undefined;
+    let presentedSecret = typeof rawBodySecret === 'string' && rawBodySecret.length > 0
+      ? rawBodySecret
+      : undefined;
+    if (hasBasicAuth) {
+      try {
+        const match = authHeader.match(/^Basic\s+([^\s]+)$/i);
+        if (!match) throw new Error('Malformed Basic authentication');
+        const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+        const idx = decoded.indexOf(':');
+        if (idx < 1) throw new Error('Malformed Basic authentication');
+        clientId = decodeURIComponent(decoded.slice(0, idx).replace(/\+/g, ' '));
+        presentedSecret = decodeURIComponent(decoded.slice(idx + 1).replace(/\+/g, ' '));
+        if (!presentedSecret) throw new Error('Malformed Basic authentication');
+      } catch {
+        res.setHeader('WWW-Authenticate', 'Basic realm="gbrain"');
+        res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client' });
+        return;
+      }
+    }
+    if (!clientId || !presentedSecret) return next();
+
+    const parsedRequest = OAuthTokenRevocationRequestSchema.safeParse(req.body);
+    if (!parsedRequest.success || parsedRequest.data.token.length === 0) {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Valid token required' });
+      return;
+    }
+
+    let client;
+    try {
+      client = await oauthProvider.verifyConfidentialClientSecret(clientId, presentedSecret);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'Invalid client' || msg === 'Client has been revoked') {
+        if (hasBasicAuth) res.setHeader('WWW-Authenticate', 'Basic realm="gbrain"');
+        res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client' });
+        return;
+      }
+      console.error('[serve-http] revoke client verification failed:', msg || 'Unknown error');
+      const retryable = isRetryableError(e);
+      res.status(retryable ? 503 : 500).json({
+        error: retryable ? 'temporarily_unavailable' : 'server_error',
+        error_description: retryable ? 'Token revocation temporarily unavailable' : 'Token revocation failed',
+      });
+      return;
+    }
+
+    try {
+      await oauthProvider.revokeToken(client, parsedRequest.data);
+      // RFC 7009 §2.2: successful revocation, including an unknown token, is 200.
+      res.status(200).end();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      console.error('[serve-http] token revocation failed:', msg);
+      const retryable = isRetryableError(e);
+      res.status(retryable ? 503 : 500).json({
+        error: retryable ? 'temporarily_unavailable' : 'server_error',
+        error_description: retryable ? 'Token revocation temporarily unavailable' : 'Token revocation failed',
+      });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
@@ -707,6 +884,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       (res as any).json = (body: any) => {
         if (body?.grant_types_supported && !body.grant_types_supported.includes('client_credentials')) {
           body.grant_types_supported.push('client_credentials');
+        }
+        if (body?.token_endpoint_auth_methods_supported) {
+          for (const method of ['client_secret_basic', 'none']) {
+            if (!body.token_endpoint_auth_methods_supported.includes(method)) {
+              body.token_endpoint_auth_methods_supported.push(method);
+            }
+          }
+        }
+        if (body?.revocation_endpoint_auth_methods_supported && !body.revocation_endpoint_auth_methods_supported.includes('client_secret_basic')) {
+          body.revocation_endpoint_auth_methods_supported.push('client_secret_basic');
         }
         return origJson(body);
       };
@@ -1020,7 +1207,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
       const takes = await engine.executeRaw<{
-        id: number;
+        id: string;
         page_slug: string;
         row_num: number;
         claim: string;
@@ -1028,10 +1215,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         resolved_quality: string | null;
         since_date: string | null;
       }>(
-        `SELECT id, page_slug, row_num, claim, weight, resolved_quality, since_date
-           FROM takes
-           WHERE holder = $1 AND active = true AND resolved_at IS NOT NULL
-           ORDER BY weight DESC, since_date DESC
+        // `takes` has no page_slug column — it comes from the joined page.
+        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
+        // raw bigint ("cannot serialize BigInt"), so project it as a string.
+        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC
            LIMIT 25`,
         [holder],
       );
@@ -1079,7 +1269,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // proper 90-day time series will read from calibration_profiles
         // generated_at history in v0.37 once we have multiple snapshots.
         const series = profile?.brier !== null && profile?.brier !== undefined
-          ? [{ date: profile.generated_at.slice(0, 10), brier: profile.brier }]
+          // generated_at comes back from the engine as a Date (TIMESTAMPTZ), not
+          // a string — `.slice` would throw. Normalize to a YYYY-MM-DD string.
+          ? [{ date: new Date(profile.generated_at).toISOString().slice(0, 10), brier: profile.brier }]
           : [];
         return res.send(renderBrierTrend({ series }));
       }
@@ -1106,12 +1298,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           weight: number;
           since_date: string;
         }>(
-          `SELECT id, page_slug, claim, weight, since_date
-             FROM takes
-             WHERE active = true AND resolved_at IS NULL AND superseded_by IS NULL
-               AND weight >= 0.7
-               AND since_date::date < (now() - INTERVAL '12 months')
-             ORDER BY since_date ASC
+          // `takes` has no page_slug column — it comes from the joined page.
+          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
+          // throws "invalid input syntax for type date", so normalize to the 1st
+          // before casting.
+          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC
              LIMIT 5`,
         );
         const now = new Date();
@@ -2103,7 +2300,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
-║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
+║  DCR:       ${(enableDcr ? (enableDcrInsecure ? 'enabled (INSECURE: client_credentials)' : 'enabled') : 'disabled').padEnd(40)}║
 ║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣
@@ -2111,10 +2308,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  MCP:       http://localhost:${port}/mcp${' '.repeat(Math.max(0, 21 - String(port).length))}║
 ║  Health:    http://localhost:${port}/health${' '.repeat(Math.max(0, 18 - String(port).length))}║
 ╠══════════════════════════════════════════════════════╣
-${suppressBootstrapPrint
-  ? '║  Admin Token: suppressed (--suppress-bootstrap-token) ║\n╚══════════════════════════════════════════════════════╝'
-  : bootstrapFromEnv
-    ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+${bootstrapFromEnv
+  ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+  : suppressBootstrapPrint
+    ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });

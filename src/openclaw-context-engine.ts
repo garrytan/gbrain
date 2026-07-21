@@ -21,6 +21,7 @@
  */
 
 import { createGBrainContextEngine, ENGINE_ID } from './core/context-engine.ts';
+import type { ResolveEntitiesFn } from './core/context/reflex.ts';
 
 /**
  * Plugin-entry shape consumed by the OpenClaw host. The host's plugin loader
@@ -46,6 +47,19 @@ interface PluginApi {
 
 interface PluginCtx {
   workspaceDir: string;
+  /**
+   * Retrieval Reflex (#1981, D1=A): OPTIONAL host-provided resolve capability.
+   * When the OpenClaw host supplies it (backed by the gbrain connection the
+   * gateway already holds), the deterministic pointer layer resolves through it
+   * — works on every engine, including PGLite where a second connection is
+   * impossible. Narrow by contract: candidates in, a pointer block out (no raw
+   * SQL crosses the boundary). Absent → the engine falls to the serve-IPC /
+   * Postgres-direct ladder. Additive + guarded, so older hosts (which don't
+   * provide it) keep working unchanged — no pluginApi floor bump needed.
+   */
+  resolveEntities?: ResolveEntitiesFn;
+  /** Back-compat alias some hosts may use for the same capability. */
+  brainQuery?: ResolveEntitiesFn;
   [key: string]: unknown;
 }
 
@@ -55,11 +69,18 @@ const entry: PluginEntry = {
   description: 'Deterministic temporal/spatial context injection on every turn',
 
   register(api: PluginApi) {
-    api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) =>
-      createGBrainContextEngine({
+    api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) => {
+      const hostResolver =
+        typeof ctx.resolveEntities === 'function'
+          ? ctx.resolveEntities
+          : typeof ctx.brainQuery === 'function'
+            ? ctx.brainQuery
+            : undefined;
+      return createGBrainContextEngine({
         workspaceDir: ctx.workspaceDir,
-      }),
-    );
+        resolveEntities: hostResolver,
+      });
+    });
   },
 };
 

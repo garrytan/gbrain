@@ -13,6 +13,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import { ensureWellFormed } from './text-safe.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -575,12 +576,22 @@ export async function extractPageLinks(
   return { candidates: result, unresolved: fmUnresolved };
 }
 
-/** Excerpt a window of `width` chars around `idx`, collapsed to one line. */
+/**
+ * Excerpt a window of `width` chars around `idx`, collapsed to one line.
+ *
+ * The window is sliced by raw UTF-16 index, so a boundary can land inside a
+ * surrogate pair (any non-BMP char — emoji, math alphanumerics, non-BMP CJK)
+ * and leave a lone surrogate half. That lone half flows into the link `context`
+ * field and, when the batch is serialized for the `jsonb_to_recordset` insert,
+ * makes Postgres reject the WHOLE batch on the `::jsonb` cast — aborting the
+ * entire `extract --stale` run (#2011). `ensureWellFormed` replaces any orphaned
+ * half with U+FFFD before the slice escapes this function.
+ */
 function excerpt(s: string, idx: number, width: number): string {
   const half = Math.floor(width / 2);
   const start = Math.max(0, idx - half);
   const end = Math.min(s.length, idx + half);
-  return s.slice(start, end).replace(/\s+/g, ' ').trim();
+  return ensureWellFormed(s.slice(start, end)).replace(/\s+/g, ' ').trim();
 }
 
 // ─── Relationship type inference (deterministic, zero LLM) ──────
@@ -1144,6 +1155,31 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     }
     result.push({ date, summary, detail: detailLines.join(' ').trim() });
     i = j;
+  }
+
+  // Format 3: inline citation — [Source: <source>, YYYY-MM-DD]. The citation
+  // convention gbrain's own quality rules require on every brain write;
+  // until now this parser (the db-source extract + ingest path) could not
+  // see it, so a page whose dates all live in citations scored zero
+  // timeline coverage. Kept in sync with extractTimelineFromContent's
+  // Format 3 (the fs-source path). Lines already captured by the timeline
+  // bullet pass are skipped (a bullet often carries its own citation).
+  const citationRe = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
+  for (const line of lines) {
+    if (TIMELINE_LINE_RE.test(line)) continue;
+    const matches = [...line.matchAll(citationRe)];
+    if (matches.length === 0) continue;
+    const summary = line
+      .replace(/\[Source:[^\]]*\]/g, '')
+      .replace(/^[-*>#\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
+    if (!summary) continue;
+    for (const m of matches) {
+      if (!isValidDate(m[2])) continue;
+      result.push({ date: m[2], summary, detail: `Source: ${m[1].trim().slice(0, 200)}` });
+    }
   }
   return result;
 }
