@@ -15,6 +15,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { shouldExcludeFromLinkableScope } from '../core/linkable-scope.ts';
 
 // --- Types ---
 
@@ -32,65 +33,19 @@ export interface OrphanResult {
   excluded: number;
 }
 
-// --- Filter constants ---
-
-/** Slug suffixes that are always auto-generated root files */
-const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
-
-/** Page slugs that are pseudo-pages by convention */
-const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
-
-/** Slug segment that marks raw sources */
-const RAW_SEGMENT = '/raw/';
-
-/** Slug prefixes where no inbound links is expected */
-const DENY_PREFIXES = [
-  'output/',
-  'dashboards/',
-  'scripts/',
-  'templates/',
-  'openclaw/config/',
-];
-
-/** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set([
-  'scratch',
-  'thoughts',
-  'catalog',
-  'entities',
-  'raw',
-  'atoms',
-  'skills',
-]);
-
 // --- Filter logic ---
+//
+// The exclusion constants and predicate moved to src/core/linkable-scope.ts
+// so the orphans audit and brain_score's no-orphans / timeline components
+// evaluate the SAME page scope (they previously disagreed inside one doctor
+// report). Re-exported here for the existing public surface.
 
 /**
  * Returns true if a slug should be excluded from orphan reporting by default.
  * These are pages where having no inbound links is expected / not a content problem.
  */
 export function shouldExclude(slug: string): boolean {
-  // Pseudo-pages (exact match)
-  if (PSEUDO_SLUGS.has(slug)) return true;
-
-  // Auto-generated suffix patterns
-  for (const suffix of AUTO_SUFFIX_PATTERNS) {
-    if (slug.endsWith(suffix)) return true;
-  }
-
-  // Raw source slugs
-  if (slug.includes(RAW_SEGMENT)) return true;
-
-  // Deny-prefix slugs
-  for (const prefix of DENY_PREFIXES) {
-    if (slug.startsWith(prefix)) return true;
-  }
-
-  // First-segment exclusions
-  const firstSegment = slug.split('/')[0];
-  if (FIRST_SEGMENT_EXCLUSIONS.has(firstSegment)) return true;
-
-  return false;
+  return shouldExcludeFromLinkableScope(slug);
 }
 
 /**
@@ -128,10 +83,10 @@ export async function queryOrphanPages(
  * v0.42.0.0 (D1 from /plan-eng-review): this is the canonical pure data
  * fn for "what counts as an orphan in this brain." Re-exported as
  * `getOrphansData` for the doctor `orphan_ratio` check and any other
- * consumer that needs the same exclusion logic (AUTO_SUFFIX_PATTERNS,
- * PSEUDO_SLUGS, RAW_SEGMENT, DENY_PREFIXES, FIRST_SEGMENT_EXCLUSIONS).
- * Two consumers sharing one definition = doctor and `gbrain orphans`
- * cannot disagree on the orphan count.
+ * consumer that needs the same exclusion logic (now centralized in
+ * src/core/linkable-scope.ts, which getHealth's brain_score also uses).
+ * All consumers sharing one definition = doctor, `gbrain orphans`, and
+ * brain_score cannot disagree on the orphan count.
  */
 export async function findOrphans(
   engine: BrainEngine,

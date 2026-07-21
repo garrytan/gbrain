@@ -24,6 +24,7 @@ import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { LINKABLE_EXCLUDE_LIKE, LINKABLE_EXCLUDE_EXACT, LINKABLE_EXCLUDE_FIRST_SEGMENTS } from './linkable-scope.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { getFtsLanguage } from './fts-language.ts';
 import type {
@@ -5199,12 +5200,23 @@ export class PGLiteEngine implements BrainEngine {
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
+    // orphan_pages and timeline coverage are computed over LINKABLE pages
+    // (src/core/linkable-scope.ts) — the same scope the orphans audit uses —
+    // so brain_score and `gbrain orphans` / doctor's orphan_ratio cannot
+    // disagree on what counts. Archive (raw/), generated, and daily-log
+    // pages are not expected to participate in the curated graph.
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      ), linkable_pages AS (
+        SELECT id FROM pages
+        WHERE slug NOT LIKE ALL($1)
+          AND NOT (slug = ANY($2))
+          AND NOT (split_part(slug, '/', 1) = ANY($3))
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM linkable_pages) as linkable_page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
@@ -5212,7 +5224,7 @@ export class PGLiteEngine implements BrainEngine {
         ) as stale_pages,
         -- Bug 11 — orphan = islanded (no inbound AND no outbound).
         -- See BrainHealth.orphan_pages docstring; docs updated to match this.
-        (SELECT count(*) FROM pages p
+        (SELECT count(*) FROM linkable_pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
@@ -5222,13 +5234,15 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
+         WHERE te.page_id IN (SELECT id FROM linkable_pages)) as linkable_pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
-    `);
+    `, [LINKABLE_EXCLUDE_LIKE, LINKABLE_EXCLUDE_EXACT, LINKABLE_EXCLUDE_FIRST_SEGMENTS]);
 
     // Top 5 most connected entities by total link count (in + out).
     const { rows: connected } = await this.db.query(`
@@ -5242,15 +5256,18 @@ export class PGLiteEngine implements BrainEngine {
 
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);
+    const linkablePageCount = Number(r.linkable_page_count);
     const embedCoverage = Number(r.embed_coverage);
     const orphanPages = Number(r.orphan_pages);
     const deadLinks = Number(r.dead_links);
     const linkCount = Number(r.link_count);
     const pagesWithTimeline = Number(r.pages_with_timeline);
+    const linkableTimelinePages = Number(r.linkable_pages_with_timeline);
 
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageDensity = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
-    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    const timelineCoverageDensity =
+      linkablePageCount > 0 ? Math.min(linkableTimelinePages / linkablePageCount, 1) : 1;
+    const noOrphans = linkablePageCount > 0 ? 1 - (orphanPages / linkablePageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Bug 11 — per-component points. Sum equals brainScore by construction
     // so `doctor` can render a breakdown that adds up to the total.
@@ -5261,6 +5278,9 @@ export class PGLiteEngine implements BrainEngine {
     // pre-fix "empty = 0" caused fresh-init brains to score as critically
     // unhealthy on `gbrain doctor`, which was a structural surprise to users
     // who'd just successfully run init.
+    // The same rule extends to linkablePageCount === 0 for the orphan /
+    // timeline components: an all-archive brain has no curated graph to
+    // penalize.
     const embedCoverageScore = pageCount === 0 ? 35 : Math.round(embedCoverage * 35);
     const linkDensityScore = pageCount === 0 ? 25 : Math.round(linkDensity * 25);
     const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineCoverageDensity * 15);
@@ -5270,6 +5290,7 @@ export class PGLiteEngine implements BrainEngine {
 
     return {
       page_count: pageCount,
+      linkable_page_count: linkablePageCount,
       embed_coverage: embedCoverage,
       stale_pages: Number(r.stale_pages),
       orphan_pages: orphanPages,

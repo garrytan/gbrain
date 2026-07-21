@@ -67,6 +67,7 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { LINKABLE_EXCLUDE_LIKE, LINKABLE_EXCLUDE_EXACT, LINKABLE_EXCLUDE_FIRST_SEGMENTS } from './linkable-scope.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -5318,18 +5319,30 @@ export class PostgresEngine implements BrainEngine {
     // SQL required both — docs now match code so users can trust the
     // number. A hub page that links out to many but has no back-references
     // is working as intended, not an orphan.
+    //
+    // orphan_pages and timeline coverage are computed over LINKABLE pages
+    // (src/core/linkable-scope.ts) — the same scope the orphans audit uses —
+    // so brain_score and `gbrain orphans` / doctor's orphan_ratio cannot
+    // disagree on what counts. Archive (raw/), generated, and daily-log
+    // pages are not expected to participate in the curated graph.
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      ), linkable_pages AS (
+        SELECT id FROM pages
+        WHERE slug NOT LIKE ALL(${LINKABLE_EXCLUDE_LIKE})
+          AND NOT (slug = ANY(${LINKABLE_EXCLUDE_EXACT}))
+          AND NOT (split_part(slug, '/', 1) = ANY(${LINKABLE_EXCLUDE_FIRST_SEGMENTS}))
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM linkable_pages) as linkable_page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
-        (SELECT count(*) FROM pages p
+        (SELECT count(*) FROM linkable_pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
@@ -5339,6 +5352,8 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
+         WHERE te.page_id IN (SELECT id FROM linkable_pages)) as linkable_pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -5357,16 +5372,19 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     const pageCount = Number(h.page_count);
+    const linkablePageCount = Number(h.linkable_page_count);
     const embedCoverage = Number(h.embed_coverage);
     const orphanPages = Number(h.orphan_pages);
     const deadLinks = Number(h.dead_links);
     const linkCount = Number(h.link_count);
     const pagesWithTimeline = Number(h.pages_with_timeline);
+    const linkableTimelinePages = Number(h.linkable_pages_with_timeline);
 
     // brain_score: 0-100 weighted average
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageWhole = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
-    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    const timelineCoverageWhole =
+      linkablePageCount > 0 ? Math.min(linkableTimelinePages / linkablePageCount, 1) : 1;
+    const noOrphans = linkablePageCount > 0 ? 1 - (orphanPages / linkablePageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Per-component points. Sum equals brainScore by construction.
     //
@@ -5376,6 +5394,9 @@ export class PostgresEngine implements BrainEngine {
     // pre-fix "empty = 0" caused fresh-init brains to score as critically
     // unhealthy on `gbrain doctor`, which was a structural surprise to users
     // who'd just successfully run init. PGLite path has the same fix.
+    // The same rule extends to linkablePageCount === 0 for the orphan /
+    // timeline components: an all-archive brain has no curated graph to
+    // penalize.
     const embedCoverageScore = pageCount === 0 ? 35 : Math.round(embedCoverage * 35);
     const linkDensityScore = pageCount === 0 ? 25 : Math.round(linkDensity * 25);
     const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineCoverageWhole * 15);
@@ -5385,6 +5406,7 @@ export class PostgresEngine implements BrainEngine {
 
     return {
       page_count: pageCount,
+      linkable_page_count: linkablePageCount,
       embed_coverage: embedCoverage,
       stale_pages: Number(h.stale_pages),
       orphan_pages: orphanPages,

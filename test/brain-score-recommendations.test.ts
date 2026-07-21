@@ -77,6 +77,7 @@ describe('embeddingProviderConfigured (recipe-aware helper)', () => {
 function makeHealth(overrides: Partial<BrainHealth> = {}): BrainHealth {
   return {
     page_count: 100,
+    linkable_page_count: 100,
     embed_coverage: 1.0,
     stale_pages: 0,
     orphan_pages: 0,
