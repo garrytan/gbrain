@@ -23,7 +23,8 @@ import matter from 'gray-matter';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
-import { gbrainPath } from '../core/config.ts';
+import { gbrainPath, loadConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { execSync } from 'child_process';
 
 // --- Types ---
@@ -122,9 +123,28 @@ export function isUnsafeHealthCheck(check: string): boolean {
   return /[;&|`$(){}\\<>\n]/.test(check);
 }
 
-/** Expand $VAR references with process.env values */
+/**
+ * #2789: resolve a secret the way the gateway does — process.env first,
+ * then the ~/.gbrain/config.json keys buildGatewayConfig folds into the
+ * gateway env (same seam every runtime provider uses). Without the config
+ * fold, creds stored via `gbrain config set *_api_key` reported [missing]
+ * in show/status even though the integration worked.
+ */
+export function secretValue(name: string): string | undefined {
+  const fromEnv = process.env[name];
+  if (fromEnv) return fromEnv;
+  try {
+    const cfg = loadConfig();
+    if (cfg) return buildGatewayConfig(cfg).env?.[name] || undefined;
+  } catch {
+    // config unreadable → env-only resolution
+  }
+  return undefined;
+}
+
+/** Expand $VAR references with env/config-resolved secret values */
 export function expandVars(s: string): string {
-  return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => process.env[name] || '');
+  return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => secretValue(name) || '');
 }
 
 // --- SSRF Protection ---
@@ -249,7 +269,7 @@ export async function executeHealthCheck(
     }
 
     case 'env_exists': {
-      const val = process.env[check.name];
+      const val = secretValue(check.name);
       return {
         ...base,
         status: val ? 'ok' : 'fail',
@@ -461,7 +481,7 @@ function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: Recipe
   const set: string[] = [];
   const missing: RecipeSecret[] = [];
   for (const s of secrets) {
-    if (process.env[s.name]) {
+    if (secretValue(s.name)) {
       set.push(s.name);
     } else {
       missing.push(s);
@@ -608,7 +628,7 @@ function cmdShow(args: string[]): void {
 
   console.log('\nSecrets needed:');
   for (const s of f.secrets) {
-    const isSet = process.env[s.name] ? '  [set]' : '  [missing]';
+    const isSet = secretValue(s.name) ? '  [set]' : '  [missing]';
     console.log(`  ${s.name}${isSet}`);
     console.log(`    ${s.description}`);
     console.log(`    Get it: ${s.where}`);

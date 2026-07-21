@@ -41,6 +41,8 @@ export interface BrainstormCliArgs {
   maxFarSet?: number;
   /** When true, abort mid-run if running spend exceeds 5× estimate. */
   strictBudget?: boolean;
+  /** #1307: Override the model used for cross-generation (defaults to configured chat_model). */
+  model?: string;
   /** Override the model used for the judge phase. */
   judgeModel?: string;
   /** Max ideas per judge LLM call. Default 100. */
@@ -97,6 +99,13 @@ export function parseBrainstormArgs(args: string[]): BrainstormCliArgs {
       out.maxFarSet = n;
     } else if (arg === '--strict-budget') {
       out.strictBudget = true;
+    } else if (arg === '--model') {
+      const v = args[++i];
+      if (!v || v.startsWith('--')) {
+        out.error = `--model requires a model id (e.g. openai:gpt-4o or anthropic:claude-sonnet-4-6)`;
+        return out;
+      }
+      out.model = v;
     } else if (arg === '--judge-model') {
       const v = args[++i];
       if (!v) {
@@ -153,6 +162,7 @@ Options:
   --max-cost USD                  Abort if estimated cost exceeds USD (default 5)
   --max-far-set N                 Cap domain bank prefix sampling (default 50)
   --strict-budget                 Abort if running cost exceeds 5× the estimate
+  --model MODEL                   Override the cross-generation LLM (default: configured chat_model)
   --judge-model MODEL             Override the judge LLM (larger-context for big runs)
   --max-ideas-per-judge-call N    Max ideas per judge LLM call (default 100)
   --resume RUN_ID                 Resume a previously-crashed run (uses --list-runs ids)
@@ -188,6 +198,7 @@ Options:
   --max-cost USD                  Abort if estimated cost exceeds USD (default 5)
   --max-far-set N                 Cap domain bank prefix sampling (default 50)
   --strict-budget                 Abort if running cost exceeds 5× the estimate
+  --model MODEL                   Override the cross-generation LLM (default: configured chat_model)
   --judge-model MODEL             Override the judge LLM (larger-context for big runs)
   --max-ideas-per-judge-call N    Max ideas per judge LLM call (default 100)
   --resume RUN_ID                 Resume a previously-crashed run (uses --list-runs ids)
@@ -274,6 +285,7 @@ async function runBrainstormCli(
       maxCostUsd: parsed.maxCost,
       maxFarSet: parsed.maxFarSet,
       strictBudget: parsed.strictBudget,
+      modelOverride: parsed.model,
       judgeModel: parsed.judgeModel,
       maxIdeasPerJudgeCall: parsed.maxIdeasPerJudgeCall,
       resumeRunId: parsed.resume,

@@ -35,6 +35,19 @@ export function redactConfigValue(key: string, value: string): string {
   return value;
 }
 
+/**
+ * #2119: provider API keys the runtime only ever reads from the env/file
+ * plane (see src/core/ai/build-gateway-config.ts). `config set` for these
+ * writes ~/.gbrain/config.json instead of the DB plane, which nothing reads
+ * for keys. Exported for tests.
+ */
+export const API_KEY_FILE_PLANE_KEYS = [
+  'openai_api_key',
+  'anthropic_api_key',
+  'zeroentropy_api_key',
+  'openrouter_api_key',
+];
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
 
@@ -83,6 +96,19 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (!key) {
       console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
+    }
+    // #2119: API keys live in the file plane — remove them there (and clear
+    // any stale DB-plane row left by the pre-fix no-op write).
+    if (API_KEY_FILE_PLANE_KEYS.includes(key)) {
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const fileCfg = loadConfigFileOnly() as Record<string, unknown> | null;
+      if (fileCfg && fileCfg[key] !== undefined) {
+        delete fileCfg[key];
+        saveConfig(fileCfg as unknown as Parameters<typeof saveConfig>[0]);
+        await engine.unsetConfig(key).catch(() => 0);
+        console.log(`Unset ${key} (file plane)`);
+        return;
+      }
     }
     const n = await engine.unsetConfig(key);
     if (n > 0) {
@@ -155,6 +181,22 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error(`[config]`);
       console.error(`[config] No --force escape: silently writing a no-op preserves the bug class this rejection closes.`);
       process.exit(1);
+    }
+
+    // #2119: *_api_key fields are file-plane canonical. The gateway resolves
+    // keys from process.env + ~/.gbrain/config.json only (buildGatewayConfig
+    // folds them into the gateway env); reconfigureGatewayWithEngine re-resolves
+    // models, never keys — so a DB-plane write was a silent no-op that the
+    // no-key error hint itself recommended. Redirect the write to the file
+    // plane so `gbrain config set anthropic_api_key ...` actually works.
+    if (API_KEY_FILE_PLANE_KEYS.includes(key)) {
+      const { loadConfigFileOnly, saveConfig, configPath } = await import('../core/config.ts');
+      const fileCfg = (loadConfigFileOnly() ?? {}) as Record<string, unknown>;
+      fileCfg[key] = value;
+      saveConfig(fileCfg as unknown as Parameters<typeof saveConfig>[0]);
+      console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
+      console.error(`[config] API keys live in the file plane — wrote ${configPath()} (the gateway never reads the DB plane for keys). Env vars still win at runtime.`);
+      return;
     }
 
     // v0.37.10.0 (D6): strict unknown-key rejection with --force escape hatch.

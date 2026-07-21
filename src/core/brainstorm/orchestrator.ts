@@ -32,7 +32,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { chat as defaultChat, embedQuery, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
+import { chat as defaultChat, embedQuery, getChatModel, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
 import { hybridSearch, hybridSearchCached } from '../search/hybrid.ts';
 import { fetchFar, type CloseRef, type FarPage } from './domain-bank.ts';
 import { StructuredAgentError } from '../errors.ts';
@@ -527,6 +527,23 @@ async function runBrainstormImpl(
   return withBudgetTracker(_runTracker, () => _runBrainstormInner(engine, config, opts));
 }
 
+/**
+ * #1307: model used for cross-generation (and the cost preview). Explicit
+ * override wins; otherwise the gateway's configured chat_model — NOT a
+ * hardcoded Anthropic id, which made brainstorm/lsd ignore `chat_model` on
+ * non-Anthropic installs. try/catch because tests drive the orchestrator
+ * through the chatFn seam without configureGateway (same pattern as
+ * judges.ts resolveOutputCap). Exported for tests.
+ */
+export function resolveBrainstormModel(override?: string): string {
+  if (override) return override;
+  try {
+    return getChatModel();
+  } catch {
+    return 'anthropic:claude-sonnet-4-6';
+  }
+}
+
 async function _runBrainstormInner(
   engine: BrainEngine,
   config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
@@ -538,7 +555,7 @@ async function _runBrainstormInner(
   const embedFn = opts.embedQueryFn ?? embedQuery;
 
   // ---- Phase 0: cost preview + TTY grace ----
-  const modelStr = opts.modelOverride ?? 'anthropic:claude-sonnet-4-6';
+  const modelStr = resolveBrainstormModel(opts.modelOverride);
   const { aborted, estimate } = await previewCostAndWait({
     profile,
     model: modelStr,
@@ -746,7 +763,7 @@ async function _runBrainstormInner(
       far: cross.far,
     });
     const chatOpts: ChatOpts = {
-      model: opts.modelOverride,
+      model: modelStr,
       system,
       messages: [{ role: 'user', content: user }],
       maxTokens: 1500,

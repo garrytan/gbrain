@@ -350,6 +350,10 @@ function getBearerToken(ctx: ResolverContext): string | null {
   if (typeof fromConfig === 'string' && fromConfig.length > 0) return fromConfig;
   const fromEnv = process.env.X_API_BEARER_TOKEN;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
+  // #2789: the x-to-brain recipe historically instructed users to export
+  // X_BEARER_TOKEN. Accept it so pre-rename setups keep working.
+  const legacy = process.env.X_BEARER_TOKEN;
+  if (legacy && legacy.length > 0) return legacy;
   return null;
 }
 
