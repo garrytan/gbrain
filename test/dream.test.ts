@@ -562,12 +562,22 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
 
   // ─── Back-compat: bare `gbrain dream` does NOT write per-source stamp ─
 
-  test('gbrain dream (no --source) leaves all sources untouched (back-compat regression)', async () => {
-    await seedSource('alpha');
-    await seedSource('beta');
+  test('gbrain dream (no --source) stamps only the source whose local_path matches --dir (#1869)', async () => {
+    // Pre-#1869 this asserted NO source was ever stamped without an explicit
+    // --source — which is exactly the bug: a path-scoped `gbrain dream --dir`
+    // run never landed a freshness stamp and doctor's cycle_freshness stayed
+    // stale forever. New truth: the source whose local_path matches the
+    // resolved brain dir is derived and stamped; unrelated sources stay
+    // untouched (cross-source isolation).
+    await seedSource('alpha'); // local_path = repo → derived + stamped
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
+      ['beta', 'beta', '/somewhere/else'],
+    );
     const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
     expect(report).toBeTruthy();
-    expect(await readLastFullCycleAt('alpha')).toBeNull();
+    expect(await readLastFullCycleAt('alpha')).not.toBeNull();
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 60_000);
 

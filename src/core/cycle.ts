@@ -855,8 +855,16 @@ interface SyncPhaseResult extends PhaseResult {
  * Resolve the source id for a brain directory by looking up the sources
  * table. Returns undefined when no registered source matches (falls back
  * to pre-v0.18 global config.sync.* keys).
+ *
+ * Exported for dream.ts (#1869): a `gbrain dream --dir <path>` run whose
+ * path matches a registered source's local_path is a per-source cycle in
+ * everything but name, so dream derives the source id up front and passes
+ * it as opts.sourceId — landing the freshness stamp without changing
+ * runCycle's stamp/lock semantics for legacy global callers (the
+ * autopilot-global-maintenance handler runs GLOBAL_PHASES with a brainDir
+ * and MUST NOT stamp per-source freshness; see rejected PR #2549).
  */
-async function resolveSourceForDir(
+export async function resolveSourceForDir(
   engine: BrainEngine,
   brainDir: string | null,
 ): Promise<string | undefined> {
