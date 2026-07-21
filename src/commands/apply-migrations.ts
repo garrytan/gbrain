@@ -108,7 +108,7 @@ Flags:
 
 Exit codes:
   0  Success (including "nothing to do").
-  1  An orchestrator failed.
+  1  An orchestrator failed, or schema migrations are pending (re-run with --yes).
   2  Invalid arguments.
 `);
 }
@@ -259,6 +259,41 @@ function printDryRun(plan: Plan, installed: string): void {
   }
 }
 
+/**
+ * #1530: schema-drift pre-flight resolution. When the schema version is
+ * behind, `--yes`/`--non-interactive` runs the schema migrations right there
+ * (the engine is already connected); interactive runs warn and return true so
+ * the caller exits non-zero instead of claiming "All migrations up to date".
+ * All output goes to stderr (migrations never print to stdout).
+ *
+ * Returns true when the schema is STILL behind after this call.
+ */
+async function resolveSchemaBehind(opts: {
+  schemaVer: number;
+  latest: number;
+  autoApply: boolean;
+  run: () => Promise<{ applied: number; current: number }>;
+}): Promise<boolean> {
+  const { schemaVer, latest, autoApply, run } = opts;
+  if (schemaVer >= latest) return false;
+  if (autoApply) {
+    console.error(`Schema version ${schemaVer} is behind latest ${latest}; running schema migrations...`);
+    try {
+      const result = await run();
+      console.error(`Applied ${result.applied} schema migration(s); now at v${result.current}.`);
+      return false;
+    } catch (err) {
+      console.error(`Schema migration failed: ${err instanceof Error ? err.message : String(err)}`);
+      return true;
+    }
+  }
+  console.warn(
+    `\n⚠️  Schema version ${schemaVer} is behind latest ${latest}.\n` +
+    `   Run \`gbrain apply-migrations --yes\` to apply now, or \`gbrain init --migrate-only\`.\n`,
+  );
+  return true;
+}
+
 function orchestratorOptsFrom(cli: ApplyMigrationsArgs): OrchestratorOpts {
   return {
     yes: cli.yes || cli.nonInteractive,
@@ -354,10 +389,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     if (cli.forceAll) return; // both surfaces flushed
   }
 
-  // Pre-flight: warn if schema migrations (migrate.ts) are behind.
-  // apply-migrations runs orchestrator migrations only; schema migrations
-  // run via connectEngine() / initSchema(). Users often expect this CLI
-  // to handle everything (Issue 1 from v0.18.0 field report).
+  // Pre-flight: detect schema migrations (migrate.ts) being behind.
+  // apply-migrations historically ran orchestrator migrations only; schema
+  // migrations run via connectEngine() / initSchema(). Users expect this CLI
+  // to handle everything (Issue 1 from v0.18.0 field report; #1530). With
+  // --yes/--non-interactive we apply them here; otherwise we warn and make
+  // sure the run does NOT report "All migrations up to date" with exit 0.
+  let schemaBehind = false;
   try {
     const { LATEST_VERSION } = await import('../core/migrate.ts');
     const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
@@ -377,14 +415,14 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
         await eng.connect(toEngineConfig(cfg));
         const verStr = await eng.getConfig('version');
         const schemaVer = parseInt(verStr || '1', 10);
+        const { runMigrations } = await import('../core/migrate.ts');
+        schemaBehind = await resolveSchemaBehind({
+          schemaVer,
+          latest: LATEST_VERSION,
+          autoApply: (cli.yes || cli.nonInteractive) && !cli.dryRun,
+          run: () => runMigrations(eng),
+        });
         await eng.disconnect();
-        if (schemaVer < LATEST_VERSION) {
-          console.warn(
-            `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
-            `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
-            `   To run them now: gbrain init --migrate-only\n`,
-          );
-        }
       }
     }
   } catch {
@@ -419,6 +457,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {
+    if (schemaBehind) {
+      console.error(
+        'Orchestrator migrations are up to date, but schema migrations are behind. ' +
+        'Run `gbrain apply-migrations --yes` (or `--force-schema`) to apply them.',
+      );
+      process.exit(1);
+    }
     console.log('All migrations up to date.');
     process.exit(0);
   }
@@ -503,4 +548,5 @@ export const __testing = {
   buildPlan,
   indexCompleted,
   statusForVersion,
+  resolveSchemaBehind,
 };
