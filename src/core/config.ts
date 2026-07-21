@@ -84,6 +84,16 @@ export interface GBrainConfig {
    */
   storage?: unknown;
   /**
+   * v0.42.x — extra slug prefixes excluded from the orphan_ratio "linkable"
+   * denominator, on top of the built-in DENY_PREFIXES in `commands/orphans.ts`.
+   * For brains whose taxonomy includes auto-generated record areas (shopping
+   * orders, imported issue archives, email history) that structurally never
+   * receive inbound links. Brain-local so this taxonomy stays out of the shared
+   * tool defaults. Read via file-plane `loadConfigFileOnly()`. Prefix match
+   * (slug.startsWith). Example: ["personal/shopping/", "wwpf/gitlab/"].
+   */
+  orphan_deny_prefixes?: string[];
+  /**
    * v0.25.0 — session capture settings. Read via file-plane `loadConfig()`
    * at process boot (NOT `gbrain config set` which writes the DB plane —
    * those are different stores). Edit `~/.gbrain/config.json` directly.
