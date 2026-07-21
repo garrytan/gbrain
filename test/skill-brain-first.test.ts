@@ -103,6 +103,36 @@ describe('parseSkillFrontmatter', () => {
     expect(fm!.triggers).toEqual(['foo', 'bar']);
   });
 
+  test('parses frontmatter fences and block arrays with CRLF line endings', () => {
+    const content = [
+      '---',
+      'name: windows-skill',
+      'writes_to:',
+      '  - people/',
+      'tools:',
+      '  - search',
+      'triggers:',
+      '  - windows trigger',
+      '---',
+      '# Windows Skill',
+    ].join('\r\n');
+    const fm = parseSkillFrontmatter(content);
+    expect(fm).not.toBeNull();
+    expect(fm!.name).toBe('windows-skill');
+    expect(fm!.writes_to).toEqual(['people/']);
+    expect(fm!.tools).toEqual(['search']);
+    expect(fm!.triggers).toEqual(['windows trigger']);
+  });
+
+  test('block arrays still tolerate trailing whitespace after the field colon', () => {
+    // Regression guard: the CRLF blockRe must keep `\\s*` as a real
+    // whitespace class inside the template literal (a raw `\s` would turn
+    // it into a literal "s" and silently break `triggers: ` + spaces).
+    const content = '---\nname: x\ntriggers:  \n  - foo\n---\n';
+    const fm = parseSkillFrontmatter(content);
+    expect(fm!.triggers).toEqual(['foo']);
+  });
+
   test('canonical brain_first: exempt populates the typed field', () => {
     const content = '---\nname: x\nbrain_first: exempt\n---\n';
     const fm = parseSkillFrontmatter(content);
