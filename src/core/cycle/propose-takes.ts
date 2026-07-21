@@ -39,11 +39,11 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
-import type { Page, PageFilters } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -154,6 +154,48 @@ export interface ProposeTakesResult {
   proposals_inserted: number;
   budget_exhausted: boolean;
   warnings: string[];
+}
+
+/** Narrow projection of `pages` — the only columns this phase reads. */
+interface ProposeTakesPageRow {
+  slug: string;
+  source_id: string;
+  compiled_truth: string | null;
+}
+
+/**
+ * Load proposal candidates with a narrow projection instead of
+ * `engine.listPages` (`SELECT p.*`). The phase only reads slug, source_id
+ * and compiled_truth — skipping timeline/frontmatter/title keeps large
+ * toasted columns out of the hot path. Scope precedence mirrors
+ * `sourceScopeOpts`: federated array (`sourceIds`) beats scalar
+ * (`sourceId`); ordering matches `PAGE_SORT_SQL.updated_desc` with an id
+ * tiebreak for determinism. (Takeover of PR #1979's projection by
+ * @shawnduggan.)
+ */
+async function listCandidatePages(
+  engine: BrainEngine,
+  scope: ScopedReadOpts,
+  limit: number,
+): Promise<ProposeTakesPageRow[]> {
+  const where = ['deleted_at IS NULL'];
+  const params: unknown[] = [];
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    params.push(scope.sourceIds);
+    where.push(`source_id = ANY($${params.length}::text[])`);
+  } else if (scope.sourceId) {
+    params.push(scope.sourceId);
+    where.push(`source_id = $${params.length}`);
+  }
+  params.push(limit);
+  return engine.executeRaw<ProposeTakesPageRow>(
+    `SELECT slug, source_id, compiled_truth
+       FROM pages
+      WHERE ${where.join(' AND ')}
+      ORDER BY updated_at DESC, id DESC
+      LIMIT $${params.length}`,
+    params,
+  );
 }
 
 /**
@@ -309,6 +351,34 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
+    const modelId = opts.model ?? getChatModel();
+
+    // With the default (gateway) extractor, skip cheaply when the resolved
+    // model's provider can't run — same probe semantics as patterns.ts /
+    // think/index.ts: unknown provider/model or Anthropic-without-key skips;
+    // other providers' auth surfaces lazily at chat() time. An injected
+    // extractor bypasses the gateway, so it is never gated. (Takeover of
+    // PR #1979's intent by @shawnduggan.)
+    if (!opts.extractor) {
+      const probe = probeChatModel(normalizeModelId(modelId));
+      if (!probe.ok) {
+        return {
+          summary: `propose_takes skipped: ${probe.detail}`,
+          details: {
+            reason: 'no_provider',
+            model: modelId,
+            pages_scanned: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            proposals_inserted: 0,
+            budget_exhausted: false,
+            warnings: [],
+          },
+          status: 'skipped',
+        };
+      }
+    }
+
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
@@ -319,18 +389,11 @@ class ProposeTakesPhase extends BaseCyclePhase {
     };
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
-    const pageFilters: PageFilters = {
-      ...scope,
-      limit: pageLimit,
-      sort: 'updated_desc',
-    };
-    const pages: Page[] = await engine.listPages(pageFilters);
+    const pages = await listCandidatePages(engine, scope, pageLimit);
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
     }
-
-    const modelId = opts.model ?? getChatModel();
 
     for (const page of pages) {
       result.pages_scanned += 1;
@@ -473,4 +536,5 @@ export const __testing = {
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
+  listCandidatePages,
 };

@@ -15,6 +15,9 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
@@ -52,6 +55,14 @@ function buildMockEngine(opts: {
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
+      // Narrow candidate-page projection (replaces listPages in the phase).
+      if (sql.includes('SELECT slug, source_id, compiled_truth')) {
+        return opts.pages.map((p) => ({
+          slug: p.slug,
+          source_id: p.source_id,
+          compiled_truth: p.compiled_truth,
+        })) as T[];
+      }
       // SELECT idempotency check
       if (sql.includes('SELECT id FROM take_proposals')) {
         const [sourceId, slug, ch, pv] = params ?? [];
@@ -434,5 +445,89 @@ New prose appended here.`;
     } finally {
       resetGateway();
     }
+  });
+
+  test('default extractor skips cleanly when the Anthropic chat model has no key', async () => {
+    const oldHome = process.env.GBRAIN_HOME;
+    const oldKey = process.env.ANTHROPIC_API_KEY;
+    // Point GBRAIN_HOME at an empty dir so hasAnthropicKey's config-file
+    // fallback can't find the operator's real key.
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-propose-no-key-'));
+    process.env.GBRAIN_HOME = tempHome;
+    delete process.env.ANTHROPIC_API_KEY;
+    configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
+    try {
+      const { engine, captured } = buildMockEngine({
+        pages: [buildPage({ slug: 'wiki/a', body: 'claim-ish prose' })],
+      });
+      const result = await runPhaseProposeTakes(buildCtx(engine));
+
+      expect(result.status).toBe('skipped');
+      expect((result.details as Record<string, unknown>).reason).toBe('no_provider');
+      // Skips BEFORE touching the engine — no page scan, no cache probes.
+      expect(captured).toHaveLength(0);
+    } finally {
+      resetGateway();
+      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldHome;
+      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = oldKey;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('an injected extractor is never gated on provider availability', async () => {
+    const oldHome = process.env.GBRAIN_HOME;
+    const oldKey = process.env.ANTHROPIC_API_KEY;
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-propose-no-key-'));
+    process.env.GBRAIN_HOME = tempHome;
+    delete process.env.ANTHROPIC_API_KEY;
+    configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
+    try {
+      const { engine } = buildMockEngine({
+        pages: [buildPage({ slug: 'wiki/b', body: 'still processed' })],
+      });
+      const extractor: ProposeTakesExtractor = async () => [];
+      const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+      expect(result.status).toBe('ok');
+      expect((result.details as Record<string, unknown>).pages_scanned).toBe(1);
+    } finally {
+      resetGateway();
+      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldHome;
+      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = oldKey;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('loads proposal candidates with a narrow page projection', async () => {
+    const pages = [buildPage({ slug: 'wiki/narrow', body: 'A narrow projection avoids unrelated page columns.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const pageSelect = captured.find(c => c.sql.includes('FROM pages'));
+    expect(pageSelect).toBeDefined();
+    expect(pageSelect!.sql).toContain('SELECT slug, source_id, compiled_truth');
+    expect(pageSelect!.sql).not.toContain('*');
+    // Scalar sourceId scope from ctx binds as a plain equality param.
+    expect(pageSelect!.params[0]).toBe('default');
+  });
+
+  test('narrow projection: federated sourceIds beat scalar sourceId', async () => {
+    const { engine, captured } = buildMockEngine({ pages: [] });
+    const extractor: ProposeTakesExtractor = async () => [];
+    const ctx = {
+      ...buildCtx(engine),
+      auth: { allowedSources: ['team-a', 'team-b'] },
+    } as OperationContext;
+    await runPhaseProposeTakes(ctx, { extractor });
+
+    const pageSelect = captured.find(c => c.sql.includes('FROM pages'));
+    expect(pageSelect).toBeDefined();
+    expect(pageSelect!.sql).toContain('source_id = ANY(');
+    expect(pageSelect!.params[0]).toEqual(['team-a', 'team-b']);
   });
 });
