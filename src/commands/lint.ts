@@ -68,6 +68,12 @@ const LLM_PREAMBLES = [
   /^Absolutely\.?\s*Here[^.\n]*\.?\s*\n*/gim,
 ];
 
+// A whole-document Markdown wrapper: an opening ```markdown fence at the very
+// start AND a closing fence at the very end (trailing newline allowed). Both
+// fences must be present — a closing fence at EOF may belong to a legitimate
+// final code example. Shared by detection + fix so they can never disagree.
+const DOC_FENCE_WRAPPER = /^```(?:markdown|md)[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```\s*$/;
+
 // ── Rules ──────────────────────────────────────────────────────────
 
 /**
@@ -127,7 +133,7 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   }
 
   // Rule: Wrapping code fences (```markdown ... ```)
-  if (content.match(/^```(?:markdown|md)\s*\n/m) && content.match(/\n```\s*$/m)) {
+  if (DOC_FENCE_WRAPPER.test(content)) {
     issues.push({
       file: filePath, line: 1, rule: 'code-fence-wrap',
       message: 'Page wrapped in ```markdown code fences (LLM artifact)',
@@ -291,9 +297,10 @@ export function fixContent(content: string): string {
     fixed = fixed.replace(pattern, '');
   }
 
-  // Fix wrapping code fences
-  fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
-  fixed = fixed.replace(/\n```\s*$/, '');
+  // Fix a whole-document markdown wrapper only when both fences are present
+  // (runs after preamble stripping, so a preamble-then-wrapper page unwraps too).
+  const wrapper = fixed.match(DOC_FENCE_WRAPPER);
+  if (wrapper) fixed = wrapper[1];
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');
