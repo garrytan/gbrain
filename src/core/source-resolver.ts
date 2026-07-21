@@ -353,6 +353,45 @@ export async function resolveSourceWithTier(
   return { source_id: 'default', tier: 'seed_default' };
 }
 
+/**
+ * #2561 — compute the federated read scope for an UNQUALIFIED local CLI call.
+ *
+ * `sources add --federated` promises that a `config.federated = true` source
+ * "participates in unqualified `gbrain search` results"
+ * (docs/guides/multi-source-brains.md). This helper turns that promise into a
+ * scope: given the resolved source and WHICH tier resolved it, return
+ * `[resolvedSource, ...other federated source ids]` — or `undefined` when the
+ * expansion must not apply:
+ *
+ *   - explicit tiers (`flag` / `env` / `dotfile`): the user named a source;
+ *     scalar scope stands (that IS the qualified case);
+ *   - no other federated source exists: keep the scalar fast path unchanged.
+ *
+ * Archived sources are excluded (same rationale as pickSoleNonDefaultSource);
+ * the archived column is v34+, so fall back to the un-archived query on older
+ * brains. Callers put the result on `OperationContext.localFederatedSourceIds`
+ * — consumed only by `federatedSearchScope` and only when `remote === false`.
+ */
+export async function localFederatedSourceIds(
+  engine: BrainEngine,
+  sourceId: string,
+  tier: SourceTier,
+): Promise<string[] | undefined> {
+  if (tier === 'flag' || tier === 'env' || tier === 'dotfile') return undefined;
+  let rows: Array<{ id: string }>;
+  try {
+    rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE config->>'federated' = 'true' AND archived = false ORDER BY id`,
+    );
+  } catch {
+    rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE config->>'federated' = 'true' ORDER BY id`,
+    );
+  }
+  const ids = [sourceId, ...rows.map((r) => r.id).filter((id) => id !== sourceId)];
+  return ids.length > 1 ? ids : undefined;
+}
+
 /** Exposed for tests. */
 export const __testing = {
   readDotfileWalk,

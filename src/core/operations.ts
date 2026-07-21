@@ -424,6 +424,23 @@ export interface OperationContext {
    * satisfied even on single-source brains.
    */
   sourceId: string;
+  /**
+   * #2561 — federated read scope for UNQUALIFIED local CLI reads.
+   *
+   * Set ONLY by the local CLI's context builder (src/cli.ts makeContext), and
+   * only when the source resolved via a non-explicit tier (local_path /
+   * brain_default / sole_non_default / seed_default — NOT --source, NOT
+   * GBRAIN_SOURCE, NOT a .gbrain-source dotfile). Contains the resolved
+   * source first, then every other `config.federated = true` source, so an
+   * unqualified `gbrain search "X"` spans federated sources as
+   * docs/guides/multi-source-brains.md promises.
+   *
+   * Consumed exclusively by `federatedSearchScope` and ONLY when
+   * `ctx.remote === false` — a remote caller's scope stays governed by
+   * `ctx.auth.allowedSources` / scalar `ctx.sourceId` (source-isolation
+   * invariant, fail-closed).
+   */
+  localFederatedSourceIds?: string[];
 }
 
 /**
@@ -537,6 +554,45 @@ export function resolveRequestedScope(
     return { sourceId: sourceIdParam };
   }
   return sourceScopeOpts(ctx);
+}
+
+/**
+ * #2561 — source scope for the search-shaped read ops (`search`, `query`).
+ *
+ * Delegates to `resolveRequestedScope` (the single trust+grant resolver), then
+ * widens an UNQUALIFIED trusted-local scalar scope to the CLI-computed
+ * federated set (`ctx.localFederatedSourceIds`, resolved source first). This is
+ * what makes `sources add --federated` mean something for local search: a
+ * federated source participates in unqualified `gbrain search "X"` results.
+ *
+ * The expansion NEVER applies when:
+ *   - the caller is not strictly trusted-local (`ctx.remote !== false`) —
+ *     remote scope stays grant-governed (fail-closed source isolation);
+ *   - a per-call `source_id` was passed (explicit wins, including `__all__`);
+ *   - the resolver already produced a federated array (OAuth grant);
+ *   - the CLI resolved the source from an explicit signal (--source / env /
+ *     dotfile) — makeContext leaves `localFederatedSourceIds` unset then.
+ *
+ * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
+ * multi-element scope to an error (`resolveCodeIntelScope`), and non-search
+ * reads (get_page, get_links, …) keep their long-standing scalar behavior.
+ */
+export function federatedSearchScope(
+  ctx: OperationContext,
+  sourceIdParam?: string,
+): { sourceId?: string; sourceIds?: string[] } {
+  const scope = resolveRequestedScope(ctx, sourceIdParam);
+  if (
+    ctx.remote === false &&
+    sourceIdParam === undefined &&
+    scope.sourceId !== undefined &&
+    scope.sourceIds === undefined &&
+    ctx.localFederatedSourceIds !== undefined &&
+    ctx.localFederatedSourceIds.length > 1
+  ) {
+    return { sourceIds: ctx.localFederatedSourceIds };
+  }
+  return scope;
 }
 
 /**
@@ -1448,7 +1504,8 @@ const search: Operation = {
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
-    const scope = sourceScopeOpts(ctx);
+    // #2561: unqualified trusted-local search spans federated sources.
+    const scope = federatedSearchScope(ctx);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
@@ -1610,7 +1667,9 @@ const query: Operation = {
     // is spread into BOTH the image-similarity searchVector path and the text
     // hybridSearch path below, so both honor the same grant.
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    const querySourceScope = resolveRequestedScope(ctx, sourceIdParam);
+    // #2561: unqualified trusted-local query spans federated sources (per-call
+    // source_id / remote grants still resolve through resolveRequestedScope).
+    const querySourceScope = federatedSearchScope(ctx, sourceIdParam);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
