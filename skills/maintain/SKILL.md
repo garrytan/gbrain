@@ -270,6 +270,11 @@ Populate them periodically or after major imports:
 - `gbrain stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
 - `gbrain health` — review `link_coverage` and `timeline_coverage` percentages
   on entity pages (person/company). Below 50% means more extraction is needed.
+  Note: pages flagged `reference: true` (canon/reference figures the user only
+  reads about) are EXEMPT from these two metrics — if coverage looks stuck
+  because of book/article-imported figures with no real history, mark them with
+  `gbrain reference <slug>` rather than chasing the percentage. See
+  `conventions/reference-entities.md`.
 
 Available link types (use with `gbrain graph-query --type`):
 `attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`.
