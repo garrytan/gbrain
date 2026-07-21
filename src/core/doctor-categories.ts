@@ -103,6 +103,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'sync_failures',
   'sync_freshness',
   'takes_weight_grid',
+  'timeline_coverage',
   'unified_multimodal_coverage',
   'voice_gate_health',
 ]);
