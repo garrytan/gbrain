@@ -5321,15 +5321,24 @@ export class PostgresEngine implements BrainEngine {
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      ),
+      narrative_pages AS (
+        -- Composition-aware score: code source files and calendar daily
+        -- files are orphans-by-design (no inbound wikilinks, no Timeline
+        -- fence). Excluding them from the orphan/link-density/timeline
+        -- denominators keeps a bulk code/calendar import from cratering
+        -- brain_score.
+        SELECT id FROM pages WHERE type IS NULL OR type NOT IN ('code', 'calendar-index')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM narrative_pages) as narrative_page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
-        (SELECT count(*) FROM pages p
+        (SELECT count(*) FROM narrative_pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
@@ -5338,7 +5347,8 @@ export class PostgresEngine implements BrainEngine {
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
+         WHERE te.page_id IN (SELECT id FROM narrative_pages)) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -5357,6 +5367,9 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     const pageCount = Number(h.page_count);
+    // Composition-aware denominators (excludes code/calendar-index pages);
+    // a code-only brain has nothing narrative to penalize → full marks.
+    const narrativePageCount = Number(h.narrative_page_count);
     const embedCoverage = Number(h.embed_coverage);
     const orphanPages = Number(h.orphan_pages);
     const deadLinks = Number(h.dead_links);
@@ -5364,9 +5377,9 @@ export class PostgresEngine implements BrainEngine {
     const pagesWithTimeline = Number(h.pages_with_timeline);
 
     // brain_score: 0-100 weighted average
-    const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageWhole = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
-    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    const linkDensity = narrativePageCount > 0 ? Math.min(linkCount / narrativePageCount, 1) : 1;
+    const timelineCoverageWhole = narrativePageCount > 0 ? Math.min(pagesWithTimeline / narrativePageCount, 1) : 1;
+    const noOrphans = narrativePageCount > 0 ? 1 - (orphanPages / narrativePageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Per-component points. Sum equals brainScore by construction.
     //

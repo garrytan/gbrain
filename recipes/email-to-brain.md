@@ -23,7 +23,7 @@ health_checks:
     label: "Auth provider"
     checks:
       - type: http
-        url: "$CLAWVISOR_URL/health"
+        url: "$CLAWVISOR_URL/ready"
         label: "ClawVisor"
       - type: env_exists
         name: GOOGLE_CLIENT_ID
@@ -130,7 +130,7 @@ Tell the user:
 
 Validate:
 ```bash
-curl -sf "$CLAWVISOR_URL/health" && echo "PASS: ClawVisor reachable" || echo "FAIL"
+curl -sf "$CLAWVISOR_URL/ready" && echo "PASS: ClawVisor reachable" || echo "FAIL"
 ```
 
 **STOP until ClawVisor validates.**
@@ -328,7 +328,7 @@ threads you already replied to. Sent mail acts as a negative filter.
 ## Troubleshooting
 
 **No emails collected:**
-- Check ClawVisor health: `curl $CLAWVISOR_URL/health`
+- Check ClawVisor health: `curl $CLAWVISOR_URL/ready`
 - Check standing task is active and has Gmail service enabled
 - Check task purpose is expansive enough (narrow purposes block requests)
 

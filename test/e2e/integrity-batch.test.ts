@@ -140,6 +140,35 @@ describeE2E('scanIntegrity batch parity (E2E, Postgres-only)', () => {
     });
   });
 
+  describe('code pages', () => {
+    test('type:code page is skipped on both paths (#1143)', async () => {
+      const engine = getEngine();
+
+      await engine.putPage('people/alice', {
+        type: 'person',
+        title: 'Alice',
+        compiled_truth: 'Alice tweeted about something.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.putPage('code/src/bot.py', {
+        type: 'code',
+        title: 'src/bot.py (python)',
+        compiled_truth: '# the user tweeted about this feature\ndef send_tweet():\n    pass',
+        timeline: '',
+        frontmatter: { language: 'python', file: 'src/bot.py' },
+      });
+
+      const batchResult = await scanIntegrity(engine, { limit: 100, batchLoad: true });
+      const seqResult = await scanIntegrity(engine, { limit: 100, batchLoad: false });
+
+      expect(batchResult.pagesScanned).toBe(seqResult.pagesScanned);
+      expect(batchResult.pagesScanned).toBe(1);
+      expect(batchResult.bareHits.map(h => h.slug)).not.toContain('code/src/bot.py');
+      expect(seqResult.bareHits.map(h => h.slug)).not.toContain('code/src/bot.py');
+    });
+  });
+
   describe('topPages', () => {
     test('topPages ordering matches between paths', async () => {
       const engine = getEngine();

@@ -334,6 +334,10 @@ export async function scanIntegrity(
     if (!page) continue;
     // Skip grandfathered pages (opted out of brain-integrity enforcement)
     if ((page.frontmatter as Record<string, unknown> | undefined)?.validate === false) continue;
+    // Skip code pages: indexed source files aren't prose. 'tweet' in an
+    // identifier or comment is not a bare-tweet citation gap, and auto-repair
+    // would inject wikilink brackets into source code.
+    if (page.type === 'code') continue;
     pagesScanned++;
     bareHits.push(...findBareTweetHits(page.compiled_truth, slug));
     externalHits.push(...findExternalLinks(page.compiled_truth, slug));
@@ -363,6 +367,9 @@ async function scanIntegrityBatch(
   // YAML) diverges from the sequential path's strict === false check. Intentional
   // — gbrain lint should reject stringly-typed validate at write time.
   const validateCondition = sql`AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
+  // Mirror of the sequential path's `page.type === 'code'` skip: code pages
+  // (indexed source files) are never prose-integrity candidates.
+  const codeCondition = sql`AND type IS DISTINCT FROM 'code'`;
 
   // v0.32.8: scan ONE row per (source_id, slug) pair, not one per slug.
   // Pre-fix used DISTINCT ON (slug) which collapsed multi-source rows into
@@ -372,7 +379,7 @@ async function scanIntegrityBatch(
   const rows = await sql`
     SELECT slug, compiled_truth, frontmatter
     FROM pages
-    WHERE 1=1 ${typeCondition} ${validateCondition}
+    WHERE 1=1 ${typeCondition} ${validateCondition} ${codeCondition}
     ORDER BY source_id, slug
     LIMIT ${limit}
   `;
@@ -461,6 +468,9 @@ async function cmdAuto(args: string[]): Promise<void> {
 
       const page = await engine.getPage(slug, { sourceId: source_id });
       if (!page) continue;
+      // Never auto-repair code pages — injecting tweet citations into
+      // indexed source files corrupts them. Same gate as scanIntegrity.
+      if (page.type === 'code') continue;
 
       pagesProcessed++;
       progress.tick(1, slug);

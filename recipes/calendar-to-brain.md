@@ -23,7 +23,7 @@ health_checks:
     label: "Auth provider"
     checks:
       - type: http
-        url: "$CLAWVISOR_URL/health"
+        url: "$CLAWVISOR_URL/ready"
         label: "ClawVisor"
       - type: env_exists
         name: GOOGLE_CLIENT_ID
@@ -135,7 +135,7 @@ Tell the user:
 
 Validate:
 ```bash
-curl -sf "$CLAWVISOR_URL/health" && echo "PASS: ClawVisor reachable" || echo "FAIL"
+curl -sf "$CLAWVISOR_URL/ready" && echo "PASS: ClawVisor reachable" || echo "FAIL"
 ```
 
 **STOP until ClawVisor validates.**
