@@ -24,6 +24,7 @@ import {
   isAvailable,
   resetGateway,
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
   getChatModel,
 } from '../src/core/ai/gateway.ts';
 import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
@@ -114,6 +115,48 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
       source: 'test:no-op-regression',
     });
     expect(facts).toEqual([]);
+  });
+
+  test('facts model override availability is independent of the global chat model', () => {
+    // A brain can leave the global chat model on Anthropic while routing only
+    // facts extraction through an OpenAI-compatible/private endpoint. The
+    // extractor must probe the EFFECTIVE facts model, not the global chat model.
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      base_urls: { openrouter: 'http://127.0.0.1:8806/v1' },
+      env: { OPENROUTER_API_KEY: 'unused' },
+    });
+    expect(isAvailable('chat')).toBe(false); // no ANTHROPIC_API_KEY
+    expect(isAvailable('chat', 'openrouter:private/gemma4-31b')).toBe(true);
+  });
+
+  test('extractFactsFromTurn extracts via the per-call facts model even when the global chat model is unavailable', async () => {
+    // Pre-fix, extract probed isAvailable('chat') with NO model — so a brain
+    // whose facts model differed from the (unavailable) global chat model
+    // silently extracted zero facts (takeover of #2233).
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      base_urls: { openrouter: 'http://127.0.0.1:8806/v1' },
+      env: { OPENROUTER_API_KEY: 'unused' },
+    });
+    expect(isAvailable('chat')).toBe(false);
+    __setGenerateTextTransportForTests(async () => ({
+      content: [{ type: 'text', text: JSON.stringify({ facts: [
+        { fact: 'The user prefers short answers', kind: 'preference', confidence: 0.9, notability: 'medium' },
+      ] }) }],
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }) as any);
+    try {
+      const facts = await extractFactsFromTurn({
+        turnText: 'I prefer short answers, always.',
+        source: 'test:facts-model-override',
+        model: 'openrouter:private/gemma4-31b',
+      });
+      expect(facts.length).toBeGreaterThan(0);
+    } finally {
+      __setGenerateTextTransportForTests(null);
+    }
   });
 
   test('extractFactsFromTurn USES the chat transport when available — does NOT silently return []', async () => {

@@ -620,7 +620,10 @@ export function loadConfig(): GBrainConfig | null {
  * size the schema and must be stable across engine connect.
  */
 export async function loadConfigWithEngine(
-  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  engine: {
+    getConfig(key: string): Promise<string | null | undefined>;
+    listConfigKeys?(prefix: string): Promise<string[]>;
+  },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -669,10 +672,36 @@ export async function loadConfigWithEngine(
   const dbEmbeddingColumns = await dbStr('embedding_columns');
   const dbSearchEmbeddingColumn = await dbStr('search_embedding_column');
 
+  // `gbrain config set provider_base_urls.<id> <url>` writes DB plane (the
+  // prefix is advertised in KNOWN_CONFIG_KEY_PREFIXES) but pre-fix nothing
+  // ever merged it back, so the gateway never saw the configured proxy.
+  const dbProviderBaseUrls: Record<string, string> = {};
+  if (typeof engine.listConfigKeys === 'function') {
+    try {
+      const keys = await engine.listConfigKeys('provider_base_urls.');
+      for (const key of keys) {
+        const provider = key.slice('provider_base_urls.'.length).trim();
+        if (!provider) continue;
+        const value = await dbStr(key);
+        if (value !== undefined && value.trim()) dbProviderBaseUrls[provider] = value.trim();
+      }
+    } catch {
+      // Minimal engine shims (tests) may not support prefix listing; keep
+      // file/env behavior.
+    }
+  }
+
   // DB applies only when env did NOT win. Env presence is detected by the
   // sync loadConfig() already setting the field. For each flag, prefer the
   // existing fileConfig value when defined; otherwise fall through to DB.
   const merged: GBrainConfig = { ...fileConfig };
+  if (Object.keys(dbProviderBaseUrls).length > 0) {
+    // File-plane entries win over DB values per the documented precedence.
+    merged.provider_base_urls = {
+      ...dbProviderBaseUrls,
+      ...(merged.provider_base_urls ?? {}),
+    };
+  }
   if (merged.embedding_multimodal === undefined && dbMultimodal !== undefined) {
     merged.embedding_multimodal = dbMultimodal;
   }
