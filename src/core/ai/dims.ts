@@ -263,6 +263,14 @@ export function dimsProviderOptions(
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
+      // Qwen3-Embedding family (qwen3-embedding-0.6b/4b/8b) — Matryoshka models
+      // that accept `dimensions` on the OpenAI-compat path. Commonly reached via
+      // a LiteLLM/OpenRouter proxy; without `dimensions` the provider returns its
+      // native width (e.g. 4096 for 8b) and a brain configured for a smaller dim
+      // (1536) hard-fails at first embed. Symmetric retrieval — inputType ignored.
+      if (modelId.includes('qwen3-embedding')) {
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
       // retrieval. Today still hardcoded to 'db' for back-compat — opting
       // into the new inputType seam is a follow-up (see plan's deferred
