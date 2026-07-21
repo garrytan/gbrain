@@ -25,7 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 
 export interface ABRunInput {
   question: string;
-  /** Holder context for calibration. Default 'garry'. */
+  /** Holder context for calibration. Resolves via resolveOwnerHolder (config emotional_weight.user_holder, else 'self'). */
   holder?: string;
   /** Engine for DB write. */
   engine: BrainEngine;

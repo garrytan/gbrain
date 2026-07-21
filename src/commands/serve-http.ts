@@ -45,6 +45,7 @@ import {
   type IngestionContentType,
   type IngestionEvent,
 } from '../core/ingestion/types.ts';
+import { resolveOwnerHolder } from '../core/owner-holder.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -1190,7 +1191,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/calibration/pattern/:id', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { getLatestProfile } = await import('./calibration.ts');
-      const holder = (req.query.holder as string) || 'garry';
+      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
       const profile = await getLatestProfile(engine, { holder });
       if (!profile) {
         res.status(404).json({ error: 'no_profile' });
@@ -1240,7 +1241,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/calibration/profile', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { getLatestProfile } = await import('./calibration.ts');
-      const holder = (req.query.holder as string) || 'garry';
+      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
       const profile = await getLatestProfile(engine, { holder });
       res.json(profile);
     } catch (err) {
@@ -1257,7 +1258,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         renderAbandonedThreadsCard,
         renderPatternStatementsCard,
       } = await import('../core/calibration/svg-renderer.ts');
-      const holder = (req.query.holder as string) || 'garry';
+      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
       const type = req.params.type;
       const profile = await getLatestProfile(engine, { holder });
 

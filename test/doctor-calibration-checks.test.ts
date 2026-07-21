@@ -32,6 +32,12 @@ function buildMockEngine(opts: {
 }): BrainEngine {
   return {
     kind: 'pglite',
+    // #2464: checkCalibrationFreshness resolves the owner holder via
+    // resolveOwnerHolder(config emotional_weight.user_holder, else 'self'), so the
+    // mock must implement getConfig. null = key unset → resolver falls back to 'self'.
+    async getConfig(): Promise<string | null> {
+      return null;
+    },
     async executeRaw<T>(sql: string): Promise<T[]> {
       if (opts.throwOn && opts.throwOn.test(sql)) {
         throw new Error('mock engine error: ' + sql.slice(0, 50));

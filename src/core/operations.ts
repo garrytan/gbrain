@@ -3289,7 +3289,7 @@ const get_calibration_profile: Operation = {
     holder: {
       type: 'string',
       description:
-        "Holder slug, e.g. 'garry' or 'people/charlie-example'. Defaults to 'garry' when omitted.",
+        "Holder slug, e.g. 'self' or 'people/charlie-example'. Defaults to config emotional_weight.user_holder, else 'self', when omitted.",
     },
   },
   handler: async (ctx, p) => {

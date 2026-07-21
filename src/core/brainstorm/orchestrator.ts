@@ -68,6 +68,7 @@ import {
   type BrainstormCheckpoint,
   type CheckpointCross,
 } from './checkpoint.ts';
+import { resolveOwnerHolder } from '../owner-holder.ts';
 
 export { BudgetExhausted };
 
@@ -139,7 +140,7 @@ export interface BrainstormOptions {
   modelOverride?: string;
   /** Skip the cost-preview TTY grace window. Required for non-interactive callers. */
   skipCostPreview?: boolean;
-  /** When set, force the user holder for calibration profile lookup. Falls back to config (`emotional_weight.user_holder`) then `'garry'`. */
+  /** When set, force the user holder for calibration profile lookup. Falls back to config (`emotional_weight.user_holder`) then `'self'`. */
   holderOverride?: string;
   /** Source scope. */
   sourceId?: string;
@@ -623,7 +624,7 @@ async function _runBrainstormInner(
   }
 
   // ---- Phase 3: calibration context (cold-start fallback) ----
-  const holder = opts.holderOverride ?? config.emotional_weight?.user_holder ?? 'garry';
+  const holder = resolveOwnerHolder({ override: opts.holderOverride, configValue: config.emotional_weight?.user_holder });
   const calibContext = await loadCalibrationContext(engine, {
     holder,
     sourceId: opts.sourceId,
