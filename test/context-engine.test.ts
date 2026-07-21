@@ -322,6 +322,28 @@ describe('gbrain-context engine', () => {
     expect(result.systemPromptAddition).not.toContain('Something later');
   });
 
+  it('injects documented "## P1 — Today" plain tasks from ops/tasks.md (#2186)', async () => {
+    tmpDir = makeWorkspace({
+      heartbeat: { garryAwake: true },
+      tasks: `# Tasks\n\n## P0 — Urgent\n- [ ] **Escalate outage**\n\n## P1 — Today\n- [ ] Call Alice about launch plan\n- [ ] **Review Bob contract** — due Friday\n- [x] Completed item\n\n## P2 — This Week\n- [ ] Should not surface`,
+    });
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+
+    const result = await engine.assemble({
+      sessionId: 'test-session',
+      messages: [],
+    });
+
+    expect(result.systemPromptAddition).toContain('Open tasks');
+    expect(result.systemPromptAddition).toContain('Call Alice about launch plan');
+    // Bold form still extracts just the task name, not trailing metadata.
+    expect(result.systemPromptAddition).toContain('Review Bob contract');
+    expect(result.systemPromptAddition).not.toContain('due Friday');
+    expect(result.systemPromptAddition).not.toContain('Escalate outage');
+    expect(result.systemPromptAddition).not.toContain('Completed item');
+    expect(result.systemPromptAddition).not.toContain('Should not surface');
+  });
+
   it('no activity section when calendar is empty and no tasks', async () => {
     tmpDir = makeWorkspace({
       heartbeat: { garryAwake: true },
