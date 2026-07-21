@@ -39,6 +39,10 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import {
+  CONSECUTIVE_TRANSPORT_FAILURE_BUDGET,
+  isRetryableTransportFailure,
+} from './transport-failure.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -154,6 +158,16 @@ export interface ProposeTakesResult {
   proposals_inserted: number;
   budget_exhausted: boolean;
   warnings: string[];
+  /** True when the consecutive transport-failure budget tripped mid-run. */
+  transport_abort?: boolean;
+  /** Count of consecutive retryable transport failures at abort (or end). */
+  consecutive_transport_failures?: number;
+  /** Page slugs that produced the consecutive transport failures. */
+  transport_failure_slugs?: string[];
+  /** Last transport-failure messages (one per consecutive failure). */
+  transport_failure_errors?: string[];
+  /** Machine-stable abort reason when transport_abort is true. */
+  abort_reason?: 'consecutive_transport_failures';
 }
 
 /**
@@ -318,6 +332,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
       warnings: [],
     };
 
+    // Consecutive retryable transport failures (timeout / DNS / 5xx).
+    // Resets on any successful extractor response; non-transport errors
+    // neither increment nor reset. Budget trip → phase FAILED (not warn).
+    let consecutiveTransportFailures = 0;
+    const transportFailureSlugs: string[] = [];
+    const transportFailureErrors: string[] = [];
+
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
     const pageFilters: PageFilters = {
       ...scope,
@@ -371,7 +392,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
         break;
       }
 
-      // Call the extractor. Errors on a single page log a warning but do not abort.
+      // Call the extractor. Non-transport errors on a single page log a
+      // warning and continue. Retryable transport failures increment a
+      // consecutive budget; 3 in a row aborts the phase as FAILED so a
+      // dead egress path cannot exit rc=0 with zero work done.
       let proposals: ProposedTake[];
       try {
         proposals = await extractor({
@@ -380,9 +404,35 @@ class ProposeTakesPhase extends BaseCyclePhase {
           existingTakes,
           modelHint: opts.model,
         });
+        // Any successful LLM response resets the consecutive counter
+        // (and the rolling error/slug window used for the abort report).
+        consecutiveTransportFailures = 0;
+        transportFailureSlugs.length = 0;
+        transportFailureErrors.length = 0;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        if (isRetryableTransportFailure(err)) {
+          consecutiveTransportFailures += 1;
+          transportFailureSlugs.push(page.slug);
+          transportFailureErrors.push(msg);
+          if (consecutiveTransportFailures >= CONSECUTIVE_TRANSPORT_FAILURE_BUDGET) {
+            result.transport_abort = true;
+            result.abort_reason = 'consecutive_transport_failures';
+            result.consecutive_transport_failures = consecutiveTransportFailures;
+            result.transport_failure_slugs = transportFailureSlugs.slice(
+              -CONSECUTIVE_TRANSPORT_FAILURE_BUDGET,
+            );
+            result.transport_failure_errors = transportFailureErrors.slice(
+              -CONSECUTIVE_TRANSPORT_FAILURE_BUDGET,
+            );
+            result.warnings.push(
+              `aborted after ${CONSECUTIVE_TRANSPORT_FAILURE_BUDGET} consecutive transport failures ` +
+                `(last: ${page.slug})`,
+            );
+            break;
+          }
+        }
         continue;
       }
 
@@ -441,9 +491,19 @@ class ProposeTakesPhase extends BaseCyclePhase {
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
-      round_completed_delta: result.budget_exhausted ? 0 : 1,
-      halt_delta: result.budget_exhausted ? 1 : 0,
+      round_completed_delta: result.budget_exhausted || result.transport_abort ? 0 : 1,
+      halt_delta: result.budget_exhausted || result.transport_abort ? 1 : 0,
     });
+
+    if (result.transport_abort) {
+      return {
+        summary:
+          `propose_takes FAILED: ${CONSECUTIVE_TRANSPORT_FAILURE_BUDGET} consecutive transport failures ` +
+          `(scanned ${result.pages_scanned}, ${result.proposals_inserted} proposals before abort; run ${proposalRunId})`,
+        details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+        status: 'fail',
+      };
+    }
 
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
