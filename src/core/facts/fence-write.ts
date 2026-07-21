@@ -218,11 +218,27 @@ export async function writeFactsToFence(
       }
 
       // 2. Upsert each fact onto the fence in input order. row_num
-      //    monotonically increases (max-existing + 1 per call, append-only).
+      //    monotonically increases, append-only, seeded from the MAX of
+      //    the fence and the DB index (#2044): when fence and DB have
+      //    diverged (e.g. legacy writes that stamped DB rows against a
+      //    fence at a path this code no longer reads), fence-max+1 can
+      //    collide with an existing DB row_num, tripping
+      //    idx_facts_fence_key and rolling back the whole batch.
+      const dbMaxRows = await engine.executeRaw<{ max: number | string | null }>(
+        `SELECT MAX(row_num) AS max FROM facts
+          WHERE source_id = $1 AND source_markdown_slug = $2`,
+        [target.sourceId, target.slug],
+      );
+      const dbMaxRowNum = Number(dbMaxRows[0]?.max ?? 0) || 0;
+      const fenceMaxRowNum = parseFactsFence(body).facts
+        .reduce((m, f) => Math.max(m, f.rowNum), 0);
+      let nextRowNum = Math.max(fenceMaxRowNum, dbMaxRowNum) + 1;
+
       const assignedRowNums: number[] = [];
       for (const f of facts) {
         const validFromStr = (f.validFrom ?? new Date()).toISOString().slice(0, 10);
         const { body: updated, rowNum } = upsertFactRow(body, {
+          rowNum:      nextRowNum++,
           claim:       f.fact,
           kind:        (f.kind ?? 'fact') as 'fact' | 'event' | 'preference' | 'commitment' | 'belief',
           confidence:  f.confidence ?? 1.0,

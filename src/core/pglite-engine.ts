@@ -4102,11 +4102,13 @@ export class PGLiteEngine implements BrainEngine {
   ): Promise<{ inserted: number; ids: number[] }> {
     if (rows.length === 0) return { inserted: 0, ids: [] };
 
-    // Single transaction so the v51 partial UNIQUE index can roll back the
-    // whole batch on constraint violation. Per-row INSERTs (not multi-row
-    // VALUES) keep the embedding-vs-no-embedding branching readable; batch
-    // sizes are small (5-30 rows per page in practice) so the loop overhead
-    // is negligible vs the embedding compute cost.
+    // Single transaction; per-row INSERTs (not multi-row VALUES) keep the
+    // embedding-vs-no-embedding branching readable; batch sizes are small
+    // (5-30 rows per page in practice) so the loop overhead is negligible
+    // vs the embedding compute cost. #2044: ON CONFLICT DO NOTHING on the
+    // v51 partial UNIQUE index makes a residual fence/DB row_num collision
+    // skip that row instead of rolling back the whole batch (parity with
+    // postgres-engine.ts).
     const ids = await this.db.transaction(async (tx) => {
       const out: number[] = [];
       for (const input of rows) {
@@ -4149,7 +4151,11 @@ export class PGLiteEngine implements BrainEngine {
                  $14, $15,
                  $16, $17, $18, $19,
                  $20
-               ) RETURNING id`
+               )
+               ON CONFLICT (source_id, source_markdown_slug, row_num)
+                 WHERE row_num IS NOT NULL
+                 DO NOTHING
+               RETURNING id`
             : `INSERT INTO facts (
                  source_id, entity_slug, fact, kind, visibility, notability, context,
                  valid_from, valid_until, source, source_session, confidence,
@@ -4163,12 +4169,16 @@ export class PGLiteEngine implements BrainEngine {
                  $15, $16,
                  $17, $18, $19, $20,
                  $21
-               ) RETURNING id`,
+               )
+               ON CONFLICT (source_id, source_markdown_slug, row_num)
+                 WHERE row_num IS NOT NULL
+                 DO NOTHING
+               RETURNING id`,
           embedStr === null
             ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType]
             : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType],
         );
-        out.push(ins.rows[0].id);
+        if (ins.rows[0]) out.push(ins.rows[0].id);
       }
       return out;
     });

@@ -1739,13 +1739,14 @@ export interface BrainEngine {
    * single-row supersede flow because fence reconciliation is the canonical
    * source-of-truth direction, not the consolidator path.
    *
-   * Insertion is atomic per call: all rows commit in a single transaction
-   * or none commit (the transaction rolls back on any constraint
-   * violation, e.g. the v51 partial UNIQUE index on
-   * `(source_id, source_markdown_slug, row_num)`).
+   * Insertion runs in a single transaction. A collision on the v51
+   * partial UNIQUE index `(source_id, source_markdown_slug, row_num)`
+   * skips ONLY that row (ON CONFLICT DO NOTHING, #2044) — the rest of
+   * the batch still commits, so a redundant deposit against an
+   * already-indexed fence row is idempotent instead of a hard failure.
    *
-   * Returns the inserted ids in input-order so callers can correlate
-   * fence-row → DB-id without a separate lookup.
+   * Returns the inserted ids in input-order (colliding rows omitted) so
+   * callers can correlate fence-row → DB-id without a separate lookup.
    */
   insertFacts(
     rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,

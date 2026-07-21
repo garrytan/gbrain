@@ -292,6 +292,49 @@ describe('lookupSourceLocalPath', () => {
   });
 });
 
+describe('writeFactsToFence — fence/DB divergence (#2044)', () => {
+  test('seeds row_num past the DB max when the fence lags the DB', async () => {
+    // Simulate the divergence class from #2044: DB rows were stamped with
+    // row_nums against a fence written at a path this code no longer reads
+    // (e.g. the pre-"Local patch 2026-06-11" wrong-path writes). The page
+    // on disk has NO fence, but the DB already holds row_num 1..3 for the
+    // slug. Pre-fix, the next deposit re-assigned row_num=1 from fence
+    // text alone and the whole insertFacts batch failed on
+    // idx_facts_fence_key.
+    for (let n = 1; n <= 3; n++) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                            valid_from, source, confidence, row_num, source_markdown_slug)
+         VALUES ('default', 'people/dana', $1, 'fact', 'private', 'medium',
+                 now(), 'mcp:extract_facts', 1.0, $2, 'people/dana')`,
+        [`old claim ${n}`, n],
+      );
+    }
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/dana' },
+      [baseInput({ fact: 'second deposit' })],
+    );
+
+    expect(result.fenceWriteFailed).toBeUndefined();
+    expect(result.inserted).toBe(1);
+
+    // The new row landed PAST the DB max, not at fence-max+1 (= 1).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      'SELECT row_num FROM facts WHERE id = $1',
+      [result.ids[0]],
+    );
+    expect(rows.rows[0].row_num).toBe(4);
+
+    // And the on-disk fence carries the same row_num — fence and DB agree.
+    const body = readFileSync(join(brainDir, 'people/dana.md'), 'utf-8');
+    expect(body).toContain('| 4 | second deposit |');
+  });
+});
+
 // Cleanup any leftover tempdirs after the whole suite.
 afterAll(() => {
   // No-op: each test cleaned up via the beforeEach; this is a safety net.

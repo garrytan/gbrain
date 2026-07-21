@@ -39,6 +39,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import { upsertFactRow, parseFactsFence } from '../../core/facts-fence.ts';
+import { resolvePageFilePath } from '../../core/markdown.ts';
 
 let testEngineOverride: BrainEngine | null = null;
 export function __setTestEngineOverride(engine: BrainEngine | null): void {
@@ -148,9 +149,16 @@ function isLocalPathDirty(localPath: string): boolean {
   }
 }
 
-async function phaseBFenceFacts(
+/**
+ * Exported (not just via `__testing`) because `gbrain facts fence-backfill`
+ * (#1867) re-runs this phase on demand: remote `extract_facts` deposits that
+ * predate the fence-write backstop leave row_num-NULL rows the cycle guard
+ * refuses to reconcile past. The phase is idempotent (only touches
+ * `row_num IS NULL` rows), so re-running is always safe.
+ */
+export async function phaseBFenceFacts(
   engine: BrainEngine | null,
-  opts: OrchestratorOpts,
+  opts: Pick<OrchestratorOpts, 'dryRun'>,
 ): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) {
     // Dry-run: report what WOULD happen without touching FS or DB.
@@ -238,7 +246,11 @@ async function phaseBFenceFacts(
     for (const [key, group] of groups) {
       const [sourceId, entitySlug] = key.split('\0');
       const localPath = localPathById.get(sourceId)!;
-      const filePath = join(localPath, `${entitySlug}.md`);
+      // resolvePageFilePath, NOT a bare join — non-default sources fence
+      // into `<local_path>/.sources/<id>/<slug>.md`, the same path the
+      // fence-write backstop and put_page write-through compute. A bare
+      // join here diverges fence and DB for non-default sources (#2044).
+      const filePath = resolvePageFilePath(localPath, entitySlug, sourceId);
       const tmpPath = `${filePath}.tmp`;
 
       try {
@@ -381,7 +393,7 @@ async function phaseCVerify(
     for (const g of groups) {
       const localPath = localPathById.get(g.source_id);
       if (!localPath) continue;
-      const filePath = join(localPath, `${g.source_markdown_slug}.md`);
+      const filePath = resolvePageFilePath(localPath, g.source_markdown_slug, g.source_id);
       if (!existsSync(filePath)) {
         mismatches.push(`${g.source_markdown_slug} (file missing)`);
         continue;
