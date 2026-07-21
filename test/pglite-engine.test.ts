@@ -216,6 +216,49 @@ describe('PGLiteEngine: Search', () => {
     expect(results.length).toBe(0);
   });
 
+  // Regression (#2380): queries containing `/` used to bypass FTS AND
+  // semantics. Postgres' default text-search parser classifies `foo/bar` as
+  // a `file`-alias token mapped to the `simple` dictionary, so it became a
+  // single un-stemmed lexeme `'foo/bar'` that never matches indexed text —
+  // the primary FTS pass returned 0 and the OR fallback took over, matching
+  // pages that contain EITHER term. searchKeyword/searchTitles now normalize
+  // `/` to whitespace before websearch_to_tsquery parses, so the primary
+  // AND pass matches directly.
+  test('searchKeyword: slash query matches with AND semantics, not OR fallback', async () => {
+    // Decoy shares only ONE of the two query terms ('enterprise').
+    await engine.putPage('concepts/enterprise-pricing', {
+      type: 'concept', title: 'Widget Pricing',
+      compiled_truth: 'Enterprise pricing for widgets.',
+    });
+    await engine.upsertChunks('concepts/enterprise-pricing', [
+      { chunk_index: 0, chunk_text: 'Enterprise pricing for widgets', chunk_source: 'compiled_truth' },
+    ]);
+
+    // Both terms co-occur only in the novamind chunk. Pre-fix this returned
+    // BOTH pages (primary pass zero-hit → OR fallback); post-fix the primary
+    // AND pass returns exactly the co-occurrence page.
+    const results = await engine.searchKeyword('NovaMind/enterprise');
+    expect(results.length).toBe(1);
+    expect(results[0].slug).toBe('companies/novamind');
+  });
+
+  test('searchTitles: slash query matches with AND semantics, not OR fallback', async () => {
+    await engine.putPage('companies/novamind-enterprise', {
+      type: 'company', title: 'NovaMind Enterprise Platform',
+      compiled_truth: 'Placeholder body.',
+    });
+    await engine.putPage('guides/enterprise-sales', {
+      type: 'concept', title: 'Enterprise Sales Guide',
+      compiled_truth: 'Placeholder body.',
+    });
+
+    // Pre-fix: `NovaMind/Enterprise` parsed as one file-alias lexeme → the
+    // primary title pass returned 0 and the OR fallback matched BOTH titles.
+    const results = await engine.searchTitles('NovaMind/Enterprise');
+    expect(results.length).toBe(1);
+    expect(results[0].slug).toBe('companies/novamind-enterprise');
+  });
+
   test('tsvector trigger populates search_vector on insert', async () => {
     // Verify the PL/pgSQL trigger fires and content_chunks.search_vector is
     // populated from chunk_text. v0.20.0 Cathedral II Layer 3 moved FTS from

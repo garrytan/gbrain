@@ -67,6 +67,7 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { normalizeKeywordQuery } from './search/keyword.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -1691,7 +1692,11 @@ export class PostgresEngine implements BrainEngine {
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
 
-    const params: unknown[] = [query];
+    // Normalize the FTS query so `/` is split into separate words before
+    // websearch_to_tsquery parses it; Postgres' default parser otherwise
+    // treats `foo/bar` as a single `file`-alias token that never matches
+    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
+    const params: unknown[] = [normalizeKeywordQuery(query)];
     let typeClause = '';
     if (type) {
       params.push(type);
@@ -1864,7 +1869,11 @@ export class PostgresEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const params: unknown[] = [query];
+    // Normalize the FTS query so `/` is split into separate words before
+    // websearch_to_tsquery parses it; Postgres' default parser otherwise
+    // treats `foo/bar` as a single `file`-alias token that never matches
+    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
+    const params: unknown[] = [normalizeKeywordQuery(query)];
     let typeClause = '';
     if (opts?.type) {
       params.push(opts.type);
@@ -2000,7 +2009,11 @@ export class PostgresEngine implements BrainEngine {
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
 
-    const params: unknown[] = [query];
+    // Normalize the FTS query so `/` is split into separate words before
+    // websearch_to_tsquery parses it; Postgres' default parser otherwise
+    // treats `foo/bar` as a single `file`-alias token that never matches
+    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
+    const params: unknown[] = [normalizeKeywordQuery(query)];
     let typeClause = '';
     if (type) {
       params.push(type);

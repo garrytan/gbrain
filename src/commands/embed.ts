@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
+import { isLocalEmbeddingEndpoint, LOCAL_EMBED_CONCURRENCY_CAP } from '../core/ai/gateway.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
@@ -174,6 +175,31 @@ export class EmbeddingDimMismatchError extends Error {
     super(recipeMessage);
     this.name = 'EmbeddingDimMismatchError';
   }
+}
+
+/**
+ * #2552: resolve the bulk-embed worker count. Env override or the
+ * cloud-tuned default of 20 — but when the operator did NOT set
+ * GBRAIN_EMBED_CONCURRENCY and the embedding endpoint is a local inference
+ * server (Ollama / llama-server / localhost base URL), cap at
+ * LOCAL_EMBED_CONCURRENCY_CAP: 20 parallel pages against a single-slot
+ * server serialize on the one loaded model, multiply latency x20 past the
+ * fetch timeout, and starve the backfill with no surfaced error. An
+ * explicit env value always wins (`gbrain doctor` warns instead).
+ * Pacing only ever LOWERS concurrency (Codex P2).
+ */
+export function resolveEmbedConcurrency(paceMaxConcurrency?: number): number {
+  const envSet = !!process.env.GBRAIN_EMBED_CONCURRENCY;
+  const base = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  let resolved = base;
+  if (!envSet && isLocalEmbeddingEndpoint() && base > LOCAL_EMBED_CONCURRENCY_CAP) {
+    resolved = LOCAL_EMBED_CONCURRENCY_CAP;
+    serr(
+      `[embed] local embedding endpoint detected — capping concurrency at ` +
+      `${LOCAL_EMBED_CONCURRENCY_CAP} (set GBRAIN_EMBED_CONCURRENCY to override)`,
+    );
+  }
+  return paceMaxConcurrency ? Math.min(resolved, paceMaxConcurrency) : resolved;
 }
 
 /**
@@ -677,10 +703,8 @@ async function embedAll(
   // Paced runs lower this to the resolved cap (the real lever vs pooler-slot
   // starvation); unpaced keeps the env/default 20. Codex P2: only ever LOWER —
   // never raise above an operator's existing env cap.
-  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  const CONCURRENCY = staleOpts?.paceMaxConcurrency
-    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
-    : BASE_CONCURRENCY;
+  // #2552: local endpoints auto-cap — see resolveEmbedConcurrency.
+  const CONCURRENCY = resolveEmbedConcurrency(staleOpts?.paceMaxConcurrency);
 
   async function embedOnePage(page: typeof pages[number]) {
     // #1737: bail before doing any work for this page if the run was aborted.
@@ -855,10 +879,8 @@ async function embedAllStale(
   // Paced runs lower concurrency to the resolved cap (E-1: worker count IS the
   // lever on this single pool, no separate permit). Codex P2: pacing only ever
   // LOWERS concurrency — never raise above an operator's existing env cap.
-  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  const CONCURRENCY = staleOpts?.paceMaxConcurrency
-    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
-    : BASE_CONCURRENCY;
+  // #2552: local endpoints auto-cap — see resolveEmbedConcurrency.
+  const CONCURRENCY = resolveEmbedConcurrency(staleOpts?.paceMaxConcurrency);
   const pacer = staleOpts?.pacer ?? createNoopPacer();
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.

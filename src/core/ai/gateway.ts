@@ -684,6 +684,33 @@ export function getEmbeddingDimensions(): number {
 }
 
 /**
+ * #2552: cap for parallel bulk-embed workers against a local inference
+ * server. A single-slot Ollama/llama-server serializes requests, so the
+ * cloud-tuned 20-worker fan-out multiplies latency x20 and blows past the
+ * fetch timeout with no surfaced error (the backfill silently starves).
+ */
+export const LOCAL_EMBED_CONCURRENCY_CAP = 2;
+
+/**
+ * #2552: true when the configured embedding model routes to a local
+ * inference server — the `ollama` / `llama-server` recipes, or any recipe
+ * whose base URL was explicitly pointed at localhost. Bulk callers use this
+ * to pick CPU-safe concurrency defaults; `gbrain doctor` uses it to warn
+ * about an explicit cloud-sized override. Fail-open: unconfigured or
+ * unresolvable gateway → false (cloud behavior, the historical default).
+ */
+export function isLocalEmbeddingEndpoint(): boolean {
+  try {
+    const { recipe } = resolveRecipe(getEmbeddingModel());
+    if (recipe.id === 'ollama' || recipe.id === 'llama-server') return true;
+    const base = requireConfig().base_urls?.[recipe.id] ?? '';
+    return /\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(base);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * v0.28.11: returns the configured multimodal embedding model when set,
  * or undefined if the brain falls back to `embedding_model` for multimodal
  * routing. Mirrors the other gateway accessors so doctor/tests can read the

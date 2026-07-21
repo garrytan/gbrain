@@ -28,8 +28,8 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     resetGateway();
   });
 
-  test('Ollama, LiteLLM, llama-server all declare no_batch_cap: true', () => {
-    for (const id of ['ollama', 'litellm', 'llama-server']) {
+  test('LiteLLM and llama-server declare no_batch_cap: true', () => {
+    for (const id of ['litellm', 'llama-server']) {
       const r = getRecipe(id);
       expect(r, `${id} not registered`).toBeDefined();
       expect(
@@ -37,6 +37,18 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
         `${id} should declare no_batch_cap: true`,
       ).toBe(true);
     }
+  });
+
+  test('#2552: Ollama declares a conservative static batch cap, not no_batch_cap', () => {
+    // A CPU-only Ollama box wedges when a whole page ships in one request;
+    // Ollama never returns a token-limit error so the recursive-halving
+    // safety net can't fire. The pre-split cap is the only guard.
+    const r = getRecipe('ollama');
+    expect(r).toBeDefined();
+    const e = r!.touchpoints.embedding!;
+    expect(e.no_batch_cap).toBeUndefined();
+    expect(e.max_batch_tokens).toBe(4096);
+    expect(e.chars_per_token).toBe(2);
   });
 
   test('configureGateway does NOT warn for ollama/litellm/llama-server', () => {

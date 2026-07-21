@@ -820,6 +820,10 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // v0.42.x (#1794, 4A): pool-budget nudge when GBRAIN_MAX_CONNECTIONS is set.
   checks.push(await checkPoolBudget(engine));
 
+  // #2552: warn when an explicit embed-concurrency override fans out against
+  // a local single-slot embedding endpoint (silent backfill starvation).
+  checks.push(await checkEmbedConcurrency());
+
   // v0.42.7 (#1696): link-extraction lag. Strictly SQL (single indexed COUNT),
   // safe on the thin-client/remote path — remote operators on checkout-less
   // Postgres brains are exactly who can't otherwise see the extraction backlog.
@@ -3813,6 +3817,61 @@ export function computePoolBudgetCheck(
       `GBRAIN_MAX_CONNECTIONS=${maxConnections}: room for up to ${maxWorkers} parallel sync ` +
       `worker(s) (parent pool ${parentPool} + ${perWorkerPool} per-worker).`,
   };
+}
+
+/**
+ * #2552: warn when an explicit GBRAIN_EMBED_CONCURRENCY override fans out
+ * against a local single-slot embedding endpoint (Ollama / llama-server /
+ * localhost base URL). Requests serialize on the one loaded model, so N
+ * parallel pages multiply latency xN and can exceed the fetch timeout with
+ * no surfaced error — the backfill silently starves. (When the env var is
+ * unset, embed auto-caps at LOCAL_EMBED_CONCURRENCY_CAP and this check
+ * reports ok.) Pure; exported for tests.
+ */
+export function computeEmbedConcurrencyCheck(
+  isLocalEndpoint: boolean,
+  envValue: string | undefined,
+  localCap: number,
+): Check {
+  const name = 'embed_concurrency';
+  if (!isLocalEndpoint) {
+    return { name, status: 'ok', message: 'Embedding endpoint is not a local inference server — cloud concurrency defaults apply.' };
+  }
+  const parsed = envValue ? parseInt(envValue, 10) : NaN;
+  if (envValue && Number.isFinite(parsed) && parsed > localCap) {
+    return {
+      name,
+      status: 'warn',
+      message:
+        `GBRAIN_EMBED_CONCURRENCY=${parsed} against a local embedding endpoint. ` +
+        `Local inference servers serialize requests, so ${parsed} parallel pages multiply ` +
+        `latency x${parsed} and can exceed the fetch timeout — the embed backfill stalls ` +
+        `with no error. Unset GBRAIN_EMBED_CONCURRENCY (auto-caps at ${localCap}) or set it <= ${localCap}.`,
+    };
+  }
+  return {
+    name,
+    status: 'ok',
+    message: `Local embedding endpoint detected; embed concurrency capped at ${envValue ? parsed : localCap}.`,
+  };
+}
+
+/** Thin gateway/env wrapper over `computeEmbedConcurrencyCheck`. */
+export async function checkEmbedConcurrency(): Promise<Check> {
+  try {
+    const { isLocalEmbeddingEndpoint, LOCAL_EMBED_CONCURRENCY_CAP } = await import('../core/ai/gateway.ts');
+    return computeEmbedConcurrencyCheck(
+      isLocalEmbeddingEndpoint(),
+      process.env.GBRAIN_EMBED_CONCURRENCY,
+      LOCAL_EMBED_CONCURRENCY_CAP,
+    );
+  } catch (err) {
+    return {
+      name: 'embed_concurrency',
+      status: 'ok',
+      message: `Skipped (${err instanceof Error ? err.message : String(err)})`,
+    };
+  }
 }
 
 /** Thin env/engine wrapper over `computePoolBudgetCheck`. */
