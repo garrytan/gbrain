@@ -10,6 +10,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isChronicleEligible } from '../src/core/chronicle/eligibility.ts';
 import { runChronicleExtract, parseJudgeJson, type ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
 import { runChronicleBackstop } from '../src/core/chronicle/backstop.ts';
+import { runSources } from '../src/commands/sources.ts';
 
 let engine: PGLiteEngine;
 const LONG_BODY = 'A'.repeat(120);
@@ -127,6 +128,111 @@ describe('runChronicleExtract', () => {
     const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync', judge: parseFailed });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('judge_parse_failed');
+  });
+});
+
+describe('runChronicleExtract — mirrored-source guard (#2786)', () => {
+  const oneEvent: ChronicleJudge = async () => ({
+    events: [{ when: '2026-07-01T10:00:00Z', who: ['people/a'], what: 'Something happened', kind: 'meeting' }],
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw(`DELETE FROM timeline_entries`);
+    await engine.executeRaw(`DELETE FROM pages WHERE type = 'event' OR slug = 'meetings/mirror-test'`);
+    await engine.executeRaw(
+      `DELETE FROM sources WHERE id IN ('legacy-mirror', 'legacy-mirror-2', 'legacy-mirror-3')`,
+    );
+  });
+
+  // Exact repro from the issue: source A ('default', canonical) and source B
+  // ('legacy-mirror', DB-only — no local_path) both hold the identical page
+  // at the same slug. Backfill scoped to B must refuse to derive, not fork.
+  test('skips when the scoped non-default, non-file-backed source holds a byte-identical mirror of another source\'s page', async () => {
+    await runSources(engine, ['add', 'legacy-mirror', '--no-federated']);
+    await engine.putPage('meetings/mirror-test', { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY }); // default
+    await engine.putPage(
+      'meetings/mirror-test',
+      { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY }, // identical content → identical content_hash
+      { sourceId: 'legacy-mirror' },
+    );
+
+    const before = await countEvents();
+    const r = await runChronicleExtract(engine, {
+      slug: 'meetings/mirror-test', sourceId: 'legacy-mirror', judge: oneEvent,
+    });
+    expect(r.status).toBe('skipped');
+    expect(r.reason).toBe('mirrored_source_slug');
+    expect(r.mirror_sources).toEqual(['default']);
+    expect(await countEvents()).toBe(before); // no db-only fork written
+  });
+
+  // The reporter's own remediation (re-derive at the canonical source, then
+  // remove the legacy one) must keep working after this fix.
+  test('still derives normally when scoped to the canonical source ("default"), even though a legacy mirror exists elsewhere', async () => {
+    await runSources(engine, ['add', 'legacy-mirror', '--no-federated']);
+    await engine.putPage('meetings/mirror-test', { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY });
+    await engine.putPage(
+      'meetings/mirror-test',
+      { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY },
+      { sourceId: 'legacy-mirror' },
+    );
+
+    const r = await runChronicleExtract(engine, {
+      slug: 'meetings/mirror-test', sourceId: 'default', judge: oneEvent,
+    });
+    expect(r.status).toBe('extracted');
+    expect(r.events_written).toBe(1);
+  });
+
+  // Same-slug-DIFFERENT-content across sources is the supported multi-tenant
+  // shape (multi-source-drift.test.ts's OV4 case) — must NOT be flagged as a
+  // mirror just because the slug string collides.
+  test('does NOT skip when the same slug holds different content across sources', async () => {
+    await runSources(engine, ['add', 'legacy-mirror-2', '--no-federated']);
+    await engine.putPage('meetings/mirror-test', { type: 'meeting', title: 'Unrelated at default', compiled_truth: LONG_BODY });
+    await engine.putPage(
+      'meetings/mirror-test',
+      { type: 'meeting', title: 'Different content', compiled_truth: `${LONG_BODY} extra` },
+      { sourceId: 'legacy-mirror-2' },
+    );
+
+    const r = await runChronicleExtract(engine, {
+      slug: 'meetings/mirror-test', sourceId: 'legacy-mirror-2', judge: oneEvent,
+    });
+    expect(r.status).toBe('extracted');
+    expect(r.events_written).toBe(1);
+  });
+
+  // A non-default source with its OWN local_path is a real, separately
+  // rooted working tree, not a throwaway DB-only mirror — it derives normally
+  // even when a byte-identical copy also lives elsewhere.
+  test('does NOT skip when the scoped source is file-backed (has its own local_path)', async () => {
+    await runSources(engine, ['add', 'legacy-mirror-3', '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, ['/tmp/gbrain-2786-fixture', 'legacy-mirror-3']);
+    await engine.putPage('meetings/mirror-test', { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY });
+    await engine.putPage(
+      'meetings/mirror-test',
+      { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY },
+      { sourceId: 'legacy-mirror-3' },
+    );
+
+    const r = await runChronicleExtract(engine, {
+      slug: 'meetings/mirror-test', sourceId: 'legacy-mirror-3', judge: oneEvent,
+    });
+    expect(r.status).toBe('extracted');
+  });
+
+  // Complementary provenance stamp (partial Option 1): even on a normal,
+  // un-skipped derivation, the event records which source its depth page was
+  // read from, so a later fork stays auditable.
+  test('stamps frontmatter.event.depth_source with the derivation-scoped source', async () => {
+    await engine.putPage('meetings/mirror-test', { type: 'meeting', title: 'Sync', compiled_truth: LONG_BODY });
+    await runChronicleExtract(engine, { slug: 'meetings/mirror-test', sourceId: 'default', judge: oneEvent });
+    const rows = await engine.executeRaw<{ frontmatter: Record<string, unknown> }>(
+      `SELECT frontmatter FROM pages WHERE type = 'event' ORDER BY id DESC LIMIT 1`,
+    );
+    const ev = rows[0].frontmatter.event as Record<string, unknown>;
+    expect(ev.depth_source).toBe('default');
   });
 });
 

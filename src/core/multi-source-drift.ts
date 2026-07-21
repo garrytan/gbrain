@@ -225,3 +225,36 @@ export async function findMisroutedPages(
 
   return { walk_truncated: walkTruncated, count: totalCount, sample };
 }
+
+/**
+ * Cheap, single-slug mirror check (#2786) — distinct from `findMisroutedPages`
+ * above, which is a bulk FS-walk heuristic meant for the periodic `gbrain
+ * doctor` sweep. This one is meant to run inline on a hot write path (Life
+ * Chronicle derivation, one page at a time) so it does DB-only work: no
+ * filesystem access, no walk, just an indexed-by-value lookup.
+ *
+ * "Mirror" here means an EXACT content copy: the same slug exists (and is
+ * not soft-deleted) under a different source AND its `content_hash` matches
+ * byte-for-byte. That precision matters — same-slug-DIFFERENT-content across
+ * sources is the supported multi-tenant case (see
+ * `multi-source-drift.test.ts` "healthy same-slug-across-sources" / OV4) and
+ * must NOT be flagged as a mirror. Only a literal duplicate counts.
+ *
+ * Returns the `source_id`s of any such duplicate. Empty `contentHash` (a
+ * page whose hash was never computed) short-circuits to `[]` rather than
+ * matching everything.
+ */
+export async function findMirrorSources(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+  contentHash: string | undefined,
+): Promise<string[]> {
+  if (!contentHash) return [];
+  const rows = await engine.executeRaw<{ source_id: string }>(
+    `SELECT source_id FROM pages
+      WHERE slug = $1 AND source_id <> $2 AND deleted_at IS NULL AND content_hash = $3`,
+    [slug, sourceId, contentHash],
+  );
+  return rows.map((r) => r.source_id);
+}

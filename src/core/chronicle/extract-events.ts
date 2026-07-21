@@ -44,6 +44,12 @@ export interface ChronicleExtractResult {
   status: 'extracted' | 'no_events' | 'skipped';
   events_written: number;
   reason?: string;
+  /**
+   * #2786 — populated when `reason === 'mirrored_source_slug'`: the other
+   * source_id(s) holding a byte-identical copy of this page's slug. The
+   * scoped source is where derivation was REFUSED, not where it happened.
+   */
+  mirror_sources?: string[];
 }
 
 const KIND_VOCAB = new Set([
@@ -115,6 +121,47 @@ export async function runChronicleExtract(
   const page = await engine.getPage(opts.slug, { sourceId });
   if (!page) return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'page_not_found' };
 
+  // #2786 — refuse to derive under a non-canonical, DB-only mirror source.
+  // `chronicle_backfill`/the put_page backstop scope derivation strictly to
+  // `sourceId` with no awareness of whether that page is a same-slug copy of
+  // a page whose canonical home is a DIFFERENT source. The derived
+  // `life/events/*` pages below are ALWAYS written via the raw engine
+  // `putPage` — never through `write-through.ts` — so they are DB-only
+  // regardless of which source they land under. If the scoped source is
+  // later removed (`sources remove`), any events derived under it vanish
+  // with no other copy.
+  //
+  // `default` and any source with its own `local_path` (a real, separately
+  // rooted working tree) are treated as safe derivation homes — matches the
+  // convention `multi-source-drift.ts`'s bulk doctor sweep already uses
+  // (`default` as the anchor; non-default sources with `local_path` as
+  // legitimate homes in their own right). A non-default, non-file-backed
+  // source is exactly the "legacy artifacts" shape from the bug report: the
+  // kind of source most likely to be torn down later. Only skip when this
+  // page is a byte-identical copy of a page living at a different source —
+  // same-slug-DIFFERENT-content across sources is the supported multi-tenant
+  // case and must proceed normally (there's nothing to fork against).
+  if (sourceId !== 'default') {
+    const srcRows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const fileBacked = !!srcRows[0]?.local_path;
+    if (!fileBacked) {
+      const { findMirrorSources } = await import('../multi-source-drift.ts');
+      const mirrorSources = await findMirrorSources(engine, opts.slug, sourceId, page.content_hash);
+      if (mirrorSources.length > 0) {
+        return {
+          slug: opts.slug,
+          status: 'skipped',
+          events_written: 0,
+          reason: 'mirrored_source_slug',
+          mirror_sources: mirrorSources,
+        };
+      }
+    }
+  }
+
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
   const edRaw = page.effective_date as unknown;
   const effectiveDate: string | null =
@@ -166,6 +213,13 @@ export async function runChronicleExtract(
         event: {
           when, who, what: ev.what, where: ev.where ?? null,
           kind: normalizeKind(ev.kind), depth: opts.slug,
+          // #2786 — provenance: which source the depth page was read from at
+          // derivation time (the mirror guard above already refuses the risky
+          // cases; this is the complementary audit trail for the rest — e.g.
+          // same-slug-different-content pages this guard intentionally lets
+          // through, or brains upgraded after older forks already exist — so
+          // a wrong-source fork stays detectable even without re-deriving).
+          depth_source: sourceId,
         },
         captured_via: 'life-chronicle:auto',
       },
