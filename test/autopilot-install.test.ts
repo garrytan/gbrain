@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { detectInstallTarget } from '../src/commands/autopilot.ts';
+import { detectInstallTarget, writeWrapperScript } from '../src/commands/autopilot.ts';
 
 let tmp: string;
 const envSnapshot: Record<string, string | undefined> = {};
@@ -85,6 +85,23 @@ describe('detectInstallTarget', () => {
 // exported in zshrc never reach the LaunchAgent subprocess. Operators who
 // exported GBRAIN_DATABASE_URL or {OPENAI,ANTHROPIC}_API_KEY in zshrc and
 // expected autopilot to inherit them hit silent missing-secret failures.
+// issue #2794: `--install --interval N` used to be silently dropped — the
+// wrapper always exec'd bare `autopilot --repo ...` (default 300s). The
+// wrapper's exec line must carry the interval when one is known.
+describe('autopilot wrapper script — --interval threading (#2794)', () => {
+  test('exec line carries --interval when provided', () => {
+    const wrapperPath = writeWrapperScript('/tmp/some repo', 600);
+    const script = readFileSync(wrapperPath, 'utf8');
+    expect(script).toContain(`--repo '/tmp/some repo' --interval '600'`);
+  });
+
+  test('exec line omits --interval when not provided (default applies)', () => {
+    const wrapperPath = writeWrapperScript('/tmp/some-repo');
+    const script = readFileSync(wrapperPath, 'utf8');
+    expect(script).not.toContain('--interval');
+  });
+});
+
 describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () => {
   test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {
     const { readFileSync } = await import('fs');
