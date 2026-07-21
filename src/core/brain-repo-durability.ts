@@ -100,7 +100,15 @@ function gbrainHome(): string {
  *  core→commands import). which gbrain → process.execPath → argv[1] → "gbrain". */
 function resolveGbrainCliPath(): string {
   try {
-    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // #2747: `env: process.env` required under Bun — see the sibling copy
+    // of this function in commands/autopilot.ts for the full explanation
+    // (Bun snapshots process.env at its own startup; execSync without an
+    // explicit env is blind to any PATH mutation since then).
+    const which = execSync('which gbrain', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: process.env,
+    }).trim();
     if (which) return which;
   } catch { /* not on PATH */ }
   const exec = process.execPath ?? '';

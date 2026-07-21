@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { MIGRATIONS, LATEST_VERSION } from '../src/core/migrate.ts';
+import { MIGRATIONS } from '../src/core/migrate.ts';
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 
 const ENV_KEY = 'GBRAIN_FTS_LANGUAGE';
@@ -24,9 +24,11 @@ describe('configurable_fts_language migration', () => {
     expect(ftsMig?.version).toBeGreaterThan(115);
   });
 
-  test('fts migration is the latest migration', () => {
-    expect(MIGRATIONS.find(m => m.name === 'configurable_fts_language')?.version).toBe(LATEST_VERSION);
-  });
+  // #2704 (v124, page_search_vector_drop_compiled_truth) landed after this
+  // migration — "is the latest migration" was only ever true at the
+  // moment v123 was added and would break on every subsequent migration,
+  // so it's removed rather than bumped to a hardcoded v124. The
+  // registration + shape assertions below don't depend on migration order.
 
   test('ftsMig uses handler (not static SQL) because language interpolation is dynamic', () => {
     const ftsMig = MIGRATIONS.find(m => m.name === 'configurable_fts_language');

@@ -179,10 +179,16 @@ export async function runReindexSearchVector(
   }
 
   // Recreate trigger functions. The strings are intentionally identical to
-  // the v123 migration body — keeping them in lockstep is the contract.
+  // the v124 migration body — keeping them in lockstep is the contract.
   // `SET search_path = pg_catalog, public` mirrors the v120/#1647 hardening:
   // CREATE OR REPLACE resets proconfig, so omitting it here would strip the
   // hardening from every brain that runs this command.
+  //
+  // #2704: compiled_truth (the unbounded whole-page body) is deliberately
+  // NOT indexed here — it overflows Postgres's 1MB tsvector cap on large
+  // pages, and content_chunks.search_vector (populated separately, chunk-
+  // grain, well under the cap) is what searchKeyword() actually queries.
+  // See migrate.ts's v124 for the full rationale; keep this copy in sync.
   const recreatePagesFn = `
     CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
     DECLARE
@@ -195,7 +201,6 @@ export async function runReindexSearchVector(
 
       NEW.search_vector :=
         setweight(to_tsvector('${lang}', coalesce(NEW.title, '')), 'A') ||
-        setweight(to_tsvector('${lang}', coalesce(NEW.compiled_truth, '')), 'B') ||
         setweight(to_tsvector('${lang}', coalesce(NEW.timeline, '')), 'C') ||
         setweight(to_tsvector('${lang}', coalesce(timeline_text, '')), 'C');
 
