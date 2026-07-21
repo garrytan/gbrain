@@ -65,6 +65,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { normalizeKeywordQuery } from './search/keyword.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1591,7 +1592,11 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
-    const params: unknown[] = [query, innerLimit, limit, offset];
+    // Normalize the FTS query so `/` is split into separate words before
+    // websearch_to_tsquery parses it; Postgres' default parser otherwise
+    // treats `foo/bar` as a single `file`-alias token that never matches
+    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
+    const params: unknown[] = [normalizeKeywordQuery(query), innerLimit, limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
@@ -1713,7 +1718,11 @@ export class PGLiteEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const params: unknown[] = [query, limit, offset];
+    // Normalize the FTS query so `/` is split into separate words before
+    // websearch_to_tsquery parses it; Postgres' default parser otherwise
+    // treats `foo/bar` as a single `file`-alias token that never matches
+    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
+    const params: unknown[] = [normalizeKeywordQuery(query), limit, offset];
     let extraFilter = '';
     if (opts?.type) {
       params.push(opts.type);
@@ -1962,7 +1971,11 @@ export class PGLiteEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query, limit, offset];
+    // Normalize the FTS query so `/` is split into separate words before
+    // websearch_to_tsquery parses it; Postgres' default parser otherwise
+    // treats `foo/bar` as a single `file`-alias token that never matches
+    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
+    const params: unknown[] = [normalizeKeywordQuery(query), limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);

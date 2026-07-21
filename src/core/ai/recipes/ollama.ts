@@ -29,9 +29,17 @@ export const ollama: Recipe = {
       trust_custom_dims: true, // #2271: local models carry varied native dims
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
-      // Ollama's batch capacity depends on the locally loaded model + the
-      // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
-      no_batch_cap: true,
+      // #2552: Ollama's true batch capacity depends on the locally loaded
+      // model + OLLAMA_NUM_PARALLEL, but the previous `no_batch_cap: true`
+      // meant a whole page went out in ONE request — on a CPU-only box that
+      // multiplies latency past the fetch timeout and the backfill starves
+      // with no surfaced error. Ollama doesn't return a recognizable
+      // token-limit error either, so the recursive-halving safety net never
+      // fires; a conservative static pre-split cap is the only guard.
+      // 4096 tokens x 2 chars/token ~= 8K chars per request (code-dense
+      // pages run ~2 chars/token, not the tiktoken-ish 4).
+      max_batch_tokens: 4096,
+      chars_per_token: 2,
     },
   },
   setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',
