@@ -967,6 +967,12 @@ const put_page: Operation = {
       && ctx.allowedSlugPrefixes.length > 0;
     if (ctx.remote !== false && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
+      // Default for remote callers; overwritten below by the timeline
+      // extraction when result.parsedPage is present. Kept here so a remote
+      // write that never parses (e.g. oversized content, no parsedPage) still
+      // reports auto_timeline: { skipped: 'remote' } instead of dropping the
+      // key, preserving the original paired-skip response contract.
+      autoTimeline = { skipped: 'remote' };
     }
     // Auto-timeline is decoupled from the remote gate: unlike auto-link's
     // cross-page bare-slug matching, timeline entries are keyed to the page's
@@ -993,13 +999,26 @@ const put_page: Operation = {
         const enabled = await isAutoTimelineEnabled(ctx.engine);
         if (enabled) {
           const fullContent = result.parsedPage.compiled_truth + '\n' + result.parsedPage.timeline;
-          const entries = parseTimelineEntries(fullContent);
+          // This path is now reachable by remote/untrusted callers, so bound the
+          // work and align validation with the manual add_timeline_entry op:
+          // cap the batch (bulk-insert amplification) and drop out-of-range years
+          // (PG DATE silently accepts year 5874897).
+          const MAX_AUTO_TIMELINE_ENTRIES = 500;
+          const entries = parseTimelineEntries(fullContent)
+            .filter(e => { const y = Number(String(e.date).slice(0, 4)); return y >= 1900 && y <= 2199; })
+            .slice(0, MAX_AUTO_TIMELINE_ENTRIES);
           if (entries.length > 0) {
             const batch = entries.map(e => ({
               slug,
               date: e.date,
               summary: e.summary,
               detail: e.detail || '',
+              // Scope each entry to the caller's own source, mirroring the
+              // runAutoLink call above. Without source_id the batch defaults to
+              // source_id='default', so a write under a non-default source would
+              // attach timeline rows to a same-slug page in the default source
+              // (cross-source forgery / silent drop). See TimelineBatchInput.
+              source_id: ctx.sourceId,
             }));
             // v0.41.18.0: engine self-retries on Supavisor circuit-breaker
             // recovery. auditSite label routes the audit JSONL emission so
