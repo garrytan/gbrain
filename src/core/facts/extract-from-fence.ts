@@ -76,6 +76,22 @@ export interface SupersedeResolution {
   warning: string | null;
 }
 
+/** Largest value a Postgres `int4` column (`facts.row_num`) can hold. */
+export const PG_INT4_MAX = 2147483647;
+
+/**
+ * v0.42 (#3014) — can `n` safely target the `row_num` (int4) column in
+ * insertFacts' supersession-resolution SELECT? The fence parser accepts any
+ * finite `#N`, but a value outside int4 range would overflow the comparison
+ * and raise `integer out of range`, aborting the whole extract cycle. The
+ * engines gate the lookup on this so an absurd `#N` is treated as a dangling
+ * reference (resolveSupersededByRow with `target` undefined → NULL + warning)
+ * rather than an uncaught throw.
+ */
+export function isInt4RowRef(n: number): boolean {
+  return Number.isInteger(n) && n >= 1 && n <= PG_INT4_MAX;
+}
+
 /**
  * v0.42 (#3014) — resolve a struck row's `superseded by #N` page-local
  * reference to a fact id. Pure: the caller supplies the already-looked-up

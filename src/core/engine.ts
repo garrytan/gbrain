@@ -1764,11 +1764,22 @@ export interface BrainEngine {
    * (source_id, source_markdown_slug, row_num). Unresolvable references
    * (self / dangling / chained) leave `superseded_by` NULL and surface a
    * `warnings` entry — never an FK to a guessed id.
+   *
+   * v0.42 (#3014): `opts.deleteForPageFirst` makes the wipe-then-reinsert
+   * reconcile atomic. When set, the page's fence-owned rows are DELETEd as
+   * the first statement of the SAME transaction that inserts `rows`, so a
+   * failing insert rolls the delete back and the page is never left emptied.
+   * (The pre-fix reconcile called `deleteFactsForPage` — a separate,
+   * self-committing transaction — before `insertFacts`, so an insert throw
+   * permanently lost the page's facts.) `slug` + `excludeSourcePrefixes`
+   * mirror `deleteFactsForPage`; the deleted count is returned as `deleted`.
+   * Callers that omit it get the standalone insert (deleted: 0), unchanged.
    */
   insertFacts(
     rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-  ): Promise<{ inserted: number; ids: number[]; warnings: string[] }>;
+    opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[] } },
+  ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }>;
 
   /**
    * v0.32.2: hard-delete every fact row scoped to a single fence page.

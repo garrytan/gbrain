@@ -49,7 +49,7 @@ import type {
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
-import { resolveSupersededByRow, type SupersedeTarget } from './facts/extract-from-fence.ts';
+import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from './facts/extract-from-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
@@ -4092,10 +4092,14 @@ export class PGLiteEngine implements BrainEngine {
   async insertFacts(
     rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-  ): Promise<{ inserted: number; ids: number[]; warnings: string[] }> {
-    if (rows.length === 0) return { inserted: 0, ids: [], warnings: [] };
+    opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[] } },
+  ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
+    if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
 
     const warnings: string[] = [];
+    // v0.42 (#3014): captured inside the transaction below when
+    // deleteForPageFirst runs; stays 0 for the standalone insert path.
+    let deleted = 0;
     // Single transaction so the v51 partial UNIQUE index can roll back the
     // whole batch on constraint violation. Per-row INSERTs (not multi-row
     // VALUES) keep the embedding-vs-no-embedding branching readable; batch
@@ -4105,6 +4109,31 @@ export class PGLiteEngine implements BrainEngine {
     // stamped inline, and `superseded by #N` references are resolved to
     // `facts.superseded_by` in a second pass below (same transaction).
     const ids = await this.db.transaction(async (tx) => {
+      // v0.42 (#3014) — atomic reconcile: wipe the page's fence-owned rows
+      // as the FIRST statement of this transaction so a failing insert
+      // below rolls the delete back too. Inlined (not a deleteFactsForPage
+      // call) so it shares this transaction. Delete scoping mirrors
+      // deleteFactsForPage exactly.
+      const del = opts?.deleteForPageFirst;
+      if (del) {
+        const prefixes = del.excludeSourcePrefixes;
+        if (prefixes && prefixes.length > 0) {
+          const patterns = prefixes.map(p => `${p}%`);
+          const r = await tx.query(
+            `DELETE FROM facts
+               WHERE source_id = $1 AND source_markdown_slug = $2
+                 AND NOT (COALESCE(source, '') LIKE ANY($3::text[]))`,
+            [ctx.source_id, del.slug, patterns],
+          );
+          deleted = r.affectedRows ?? 0;
+        } else {
+          const r = await tx.query(
+            `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
+            [ctx.source_id, del.slug],
+          );
+          deleted = r.affectedRows ?? 0;
+        }
+      }
       const out: number[] = [];
       for (const input of rows) {
         const validFrom = input.valid_from ?? new Date();
@@ -4179,16 +4208,24 @@ export class PGLiteEngine implements BrainEngine {
         const targetRow = rows[i].superseded_by_row;
         if (targetRow === undefined) continue;
         const slug = rows[i].source_markdown_slug;
-        const found = await tx.query<{ id: number; expired_at: Date | string | null }>(
-          `SELECT id, expired_at FROM facts
-             WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3
-             LIMIT 1`,
-          [ctx.source_id, slug, targetRow],
-        );
-        const hit = found.rows[0];
-        const target: SupersedeTarget | undefined = hit
-          ? { id: Number(hit.id), struck: hit.expired_at != null }
-          : undefined;
+        // v0.42 (#3014) — only look up an int4-safe target. An absurd `#N`
+        // (11+ digits) would overflow the `row_num` comparison and abort
+        // the cycle; skipping the lookup leaves `target` undefined, so
+        // resolveSupersededByRow treats it as a dangling reference (NULL +
+        // warning) instead of throwing.
+        let target: SupersedeTarget | undefined;
+        if (isInt4RowRef(targetRow)) {
+          const found = await tx.query<{ id: number; expired_at: Date | string | null }>(
+            `SELECT id, expired_at FROM facts
+               WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3
+               LIMIT 1`,
+            [ctx.source_id, slug, targetRow],
+          );
+          const hit = found.rows[0];
+          target = hit
+            ? { id: Number(hit.id), struck: hit.expired_at != null }
+            : undefined;
+        }
         const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug);
         if (warning) warnings.push(warning);
         if (superseded_by !== null) {
@@ -4197,7 +4234,7 @@ export class PGLiteEngine implements BrainEngine {
       }
       return out;
     });
-    return { inserted: ids.length, ids, warnings };
+    return { inserted: ids.length, ids, warnings, deleted };
   }
 
   async deleteFactsForPage(

@@ -19,6 +19,8 @@ import {
   extractFactsFromFenceText,
   FENCE_SOURCE_DEFAULT,
   resolveSupersededByRow,
+  isInt4RowRef,
+  PG_INT4_MAX,
   type SupersedeTarget,
 } from '../src/core/facts/extract-from-fence.ts';
 import type { ParsedFact } from '../src/core/facts-fence.ts';
@@ -275,6 +277,32 @@ describe('resolveSupersededByRow — reference resolution', () => {
     const r = resolveSupersededByRow(1, 2, { id: 7, struck: true }, 'deals/acme');
     expect(r.superseded_by).toBeNull();
     expect(r.warning).toContain('chain');
+  });
+});
+
+describe('isInt4RowRef — supersession-target overflow guard (#3014)', () => {
+  test('accepts a normal positive row reference', () => {
+    expect(isInt4RowRef(1)).toBe(true);
+    expect(isInt4RowRef(42)).toBe(true);
+  });
+
+  test('accepts the int4 maximum, rejects one past it', () => {
+    expect(isInt4RowRef(PG_INT4_MAX)).toBe(true);
+    expect(isInt4RowRef(PG_INT4_MAX + 1)).toBe(false);
+  });
+
+  test('rejects an 11-digit reference (the reported overflow shape)', () => {
+    // The parser accepts any finite #N; this one would overflow int4 in the
+    // resolution SELECT and abort the cycle if it reached the DB.
+    expect(isInt4RowRef(99999999999)).toBe(false);
+  });
+
+  test('rejects zero, negatives, and non-integers', () => {
+    expect(isInt4RowRef(0)).toBe(false);
+    expect(isInt4RowRef(-5)).toBe(false);
+    expect(isInt4RowRef(1.5)).toBe(false);
+    expect(isInt4RowRef(Number.NaN)).toBe(false);
+    expect(isInt4RowRef(Number.POSITIVE_INFINITY)).toBe(false);
   });
 });
 

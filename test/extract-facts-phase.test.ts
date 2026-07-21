@@ -439,6 +439,14 @@ describe('runExtractFacts — v0.42 (#3014) supersession transport + heal', () =
     return r.rows as Array<{ row_num: number; superseded_by: number | null; expired_at: unknown }>;
   };
 
+  const readIds = async (): Promise<number[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await (engine as any).db.query(
+      `SELECT id FROM facts WHERE source_markdown_slug = 'people/deal' ORDER BY row_num, id`,
+    );
+    return (r.rows as Array<{ id: number }>).map(x => Number(x.id));
+  };
+
   test('reconcile transports superseded_by (resolved to the target row id) + expired_at', async () => {
     await putPage('people/deal', SUPERSEDE_FENCE);
     const r = await runExtractFacts(engine, { slugs: ['people/deal'] });
@@ -502,5 +510,145 @@ describe('runExtractFacts — v0.42 (#3014) supersession transport + heal', () =
     const row1 = (await readSupersessionCols()).find(x => x.row_num === 1)!;
     expect(row1.superseded_by).toBeNull();
     expect(row1.expired_at).not.toBeNull();
+  });
+
+  // Finding A: a permanently-unresolvable reference must NOT re-drift every
+  // cycle. Pre-fix, the drift term keyed off "the fence has a reference" vs
+  // "the DB resolved one", so self / dangling / chain (which correctly stay
+  // NULL) drifted forever — a full wipe+reinsert + duplicate warning each
+  // cycle, with the fact ids advancing 1→2→3→…
+  test('idempotent: a dangling reference does not churn — second reconcile is a no-op', async () => {
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Retired claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #9 |`,
+    ));
+    const first = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(first.factsInserted).toBeGreaterThan(0);
+    const idsAfterFirst = await readIds();
+
+    const second = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(second.factsInserted).toBe(0);
+    expect(second.factsDeleted).toBe(0);
+    expect(second.warnings).toEqual([]);
+    expect(await readIds()).toEqual(idsAfterFirst);
+  });
+
+  test('idempotent: a self-reference does not churn — second reconcile is a no-op', async () => {
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Ouroboros claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #1 |`,
+    ));
+    const first = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(first.warnings.some(w => w.includes('references itself'))).toBe(true);
+    const idsAfterFirst = await readIds();
+
+    const second = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(second.factsInserted).toBe(0);
+    expect(second.factsDeleted).toBe(0);
+    expect(second.warnings).toEqual([]);
+    expect(await readIds()).toEqual(idsAfterFirst);
+  });
+
+  test('idempotent: a chain (struck → struck) does not churn — second reconcile is a no-op', async () => {
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Link a~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #2 |
+| 2 | ~~Link b~~ | commitment | 0.6 | world | medium | 2026-02-01 |  | call | superseded by #3 |
+| 3 | Live tail | fact | 1.0 | world | high | 2026-03-01 |  | call |  |`,
+    ));
+    const first = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(first.warnings.some(w => w.includes('chain'))).toBe(true);
+    const idsAfterFirst = await readIds();
+
+    const second = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(second.factsInserted).toBe(0);
+    expect(second.factsDeleted).toBe(0);
+    expect(second.warnings).toEqual([]);
+    expect(await readIds()).toEqual(idsAfterFirst);
+  });
+
+  // Finding A: the no-churn fix must not mask a genuine reference change.
+  test('changed reference re-attempts: dangling → resolvable re-resolves superseded_by', async () => {
+    // Cycle 1: row 1 struck, superseded by #9 (dangling); row 2 live.
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Old claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #9 |
+| 2 | New claim | fact | 1.0 | world | high | 2026-07-01 |  | call |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect((await readSupersessionCols()).find(x => x.row_num === 1)!.superseded_by).toBeNull();
+
+    // Cycle 2: the operator fixes the reference to #2. The claim text and
+    // row_num are unchanged, so only the supersession-drift term can catch
+    // it — and it must, keying off the now-resolvable reference.
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Old claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #2 |
+| 2 | New claim | fact | 1.0 | world | high | 2026-07-01 |  | call |  |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(r.factsInserted).toBeGreaterThan(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ids = await (engine as any).db.query(
+      `SELECT row_num, id FROM facts WHERE source_markdown_slug = 'people/deal' ORDER BY row_num`,
+    );
+    const row2Id = Number(ids.rows.find((x: { row_num: number }) => Number(x.row_num) === 2).id);
+    const row1 = (await readSupersessionCols()).find(x => x.row_num === 1)!;
+    expect(Number(row1.superseded_by)).toBe(row2Id);
+
+    // And it settles: a third cycle is a no-op.
+    const third = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(third.factsInserted).toBe(0);
+    expect(third.factsDeleted).toBe(0);
+  });
+
+  // Finding B: pre-fix, the reconcile deleted the page in a self-committing
+  // transaction BEFORE the separate insertFacts transaction; an insert throw
+  // left the page permanently emptied. The caller now defers the wipe into
+  // insertFacts' own transaction, so a failing insert can never empty it.
+  test('a failing insert during the wipe+reinsert path leaves the page intact', async () => {
+    await putPage('people/deal', SUPERSEDE_FENCE);
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+    const before = await readIds();
+    expect(before).toHaveLength(2);
+
+    // Force a drift so the reconcile takes the wipe+reinsert path.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE facts SET superseded_by = NULL, expired_at = NULL WHERE source_markdown_slug = 'people/deal' AND row_num = 1`,
+    );
+
+    // Make the insert throw. Pre-fix, the separate-commit delete had already
+    // emptied the page by the time this threw; now no delete runs outside
+    // insertFacts, so the rows survive.
+    const original = engine.insertFacts.bind(engine);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (engine as any).insertFacts = async () => { throw new Error('simulated insert failure'); };
+    try {
+      await expect(runExtractFacts(engine, { slugs: ['people/deal'] })).rejects.toThrow('simulated insert failure');
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (engine as any).insertFacts = original;
+    }
+
+    // The page keeps its rows — not silently emptied.
+    expect(await readIds()).toEqual(before);
+  });
+
+  // Finding C: an int4-overflowing #N in the fence must be treated as a
+  // dangling reference, never overflow the resolution SELECT and abort the
+  // cycle.
+  test('int4-overflow reference in the fence → warning, cycle completes, second cycle no-op', async () => {
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Retired claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #99999999999 |`,
+    ));
+    const first = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(first.warnings.some(w => w.includes('absent from the fence'))).toBe(true);
+    const row1 = (await readSupersessionCols()).find(x => x.row_num === 1)!;
+    expect(row1.superseded_by).toBeNull();
+    expect(row1.expired_at).not.toBeNull();
+    const idsAfterFirst = await readIds();
+
+    const second = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(second.factsInserted).toBe(0);
+    expect(second.factsDeleted).toBe(0);
+    expect(second.warnings).toEqual([]);
+    expect(await readIds()).toEqual(idsAfterFirst);
   });
 });

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
+import type { NewFact } from '../../src/core/engine.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const skip = !databaseUrl;
@@ -128,6 +129,26 @@ describe.skipIf(skip)('facts-fence supersession transport on Postgres (#3014)', 
       [slug],
     ));
 
+  const readIds = async (): Promise<number[]> =>
+    (await readRows()).map(r => Number(r.id));
+
+  // Row 1 struck with an unresolvable `superseded by #N`; no target row.
+  const buildDanglingFence = (ref: number): string => renderFactsTable([
+    {
+      rowNum: 1,
+      claim: 'Retired claim with a bad reference',
+      kind: 'commitment',
+      confidence: 0.6,
+      visibility: 'world',
+      notability: 'medium',
+      validFrom: '2026-01-01',
+      source: 'call',
+      context: `superseded by #${ref}`,
+      active: false,
+      supersededBy: ref,
+    },
+  ]);
+
   test('struck row lands with superseded_by + expired_at and surfaces in listSupersessions', async () => {
     await engine.putPage(slug, {
       title: 'Supersession E2E Example',
@@ -181,5 +202,85 @@ describe.skipIf(skip)('facts-fence supersession transport on Postgres (#3014)', 
     const target = after.find(r => Number(r.row_num) === 2)!;
     expect(Number(healed.superseded_by)).toBe(Number(target.id));
     expect(healed.expired_at).not.toBeNull();
+  }, 30_000);
+
+  // Finding A (#3014) — a dangling reference resolves to NULL every cycle
+  // and matches the DB's NULL, so it must not re-drift (pre-fix it wiped +
+  // reinserted the page every cycle, advancing the fact ids).
+  test('idempotent: a dangling reference does not churn on re-reconcile', async () => {
+    await engine.putPage(slug, {
+      title: 'Supersession E2E Example',
+      type: 'person',
+      compiled_truth: buildDanglingFence(9),
+      frontmatter: {},
+      timeline: '',
+    });
+    const first = await runExtractFacts(engine, { slugs: [slug] });
+    expect(first.warnings.some(w => w.includes('absent from the fence'))).toBe(true);
+    const idsAfterFirst = await readIds();
+
+    const second = await runExtractFacts(engine, { slugs: [slug] });
+    expect(second.factsInserted).toBe(0);
+    expect(second.factsDeleted).toBe(0);
+    expect(second.warnings).toEqual([]);
+    expect(await readIds()).toEqual(idsAfterFirst);
+  }, 30_000);
+
+  // Finding C (#3014) — an int4-overflowing #N would raise `integer out of
+  // range` in the resolution SELECT and abort the cycle; the guard treats it
+  // as a dangling reference instead.
+  test('int4-overflow reference (11-digit #N) resolves as dangling — cycle completes', async () => {
+    await engine.putPage(slug, {
+      title: 'Supersession E2E Example',
+      type: 'person',
+      compiled_truth: buildDanglingFence(99999999999),
+      frontmatter: {},
+      timeline: '',
+    });
+    const r = await runExtractFacts(engine, { slugs: [slug] });
+    expect(r.warnings.some(w => w.includes('absent from the fence'))).toBe(true);
+    const row1 = (await readRows()).find(x => Number(x.row_num) === 1)!;
+    expect(row1.superseded_by).toBeNull();
+    expect(row1.expired_at).not.toBeNull();
+  }, 30_000);
+
+  // Finding B (#3014) — the wipe now runs inside insertFacts' transaction, so
+  // a failing insert rolls it back and the page is never left emptied.
+  test('deleteForPageFirst rolls the wipe back when the insert fails — the page survives', async () => {
+    type Row = NewFact & { row_num: number; source_markdown_slug: string };
+    const fixture = (rowNum: number, fact: string): Row => ({
+      fact,
+      kind: 'fact',
+      entity_slug: 'people/zz-supersession-e2e-3014',
+      visibility: 'world',
+      notability: 'medium',
+      source: 'fence:reconcile',
+      confidence: 1.0,
+      row_num: rowNum,
+      source_markdown_slug: slug,
+    });
+
+    await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug = $1', [slug]);
+    await engine.insertFacts([fixture(1, 'keeper one'), fixture(2, 'keeper two')], { source_id: 'default' });
+
+    let threw = false;
+    try {
+      // Two row_num=1 rows collide on the v51 UNIQUE index AFTER the delete
+      // has run inside the same transaction.
+      await engine.insertFacts(
+        [fixture(1, 'replacement a'), fixture(1, 'dup collides')],
+        { source_id: 'default' },
+        { deleteForPageFirst: { slug, excludeSourcePrefixes: ['cli:'] } },
+      );
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+
+    const facts = await engine.executeRaw<{ fact: string }>(
+      'SELECT fact FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num',
+      [slug],
+    );
+    expect(Array.from(facts).map(f => f.fact)).toEqual(['keeper one', 'keeper two']);
   }, 30_000);
 });
