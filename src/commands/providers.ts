@@ -6,7 +6,7 @@
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
-import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
+import { configureGateway, embedOne, embedMultimodal, getEmbeddingModel, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
@@ -215,9 +215,28 @@ async function runTest(args: string[]): Promise<void> {
   const start = Date.now();
   try {
     if (tpArg === 'embedding') {
+      // Multimodal-only models (voyage:voyage-multimodal-3) are rejected by
+      // /embeddings; the recipe declares them via multimodal_models. Route the
+      // probe through embedMultimodal() so `providers test` exercises the same
+      // endpoint the gateway uses at ingest time instead of a false 400.
+      const modelStr = modelArg ?? getEmbeddingModel();
+      let isMultimodalOnly = false;
+      try {
+        const [providerId, ...modelParts] = modelStr.split(':');
+        const probeRecipe = getRecipe(providerId);
+        const tp = probeRecipe?.touchpoints.embedding;
+        isMultimodalOnly = !!tp?.supports_multimodal
+          && !!tp?.multimodal_models?.includes(modelParts.join(':'));
+      } catch { /* fall through to embedOne */ }
+      if (isMultimodalOnly) {
+        const vs = await embedMultimodal([{ kind: 'text', text: 'gbrain smoke test' }]);
+        const ms = Date.now() - start;
+        console.log(`  ✓ ${ms}ms, ${vs[0]?.length ?? 0} dims (multimodal endpoint)`);
+      } else {
       const v = await embedOne('gbrain smoke test');
       const ms = Date.now() - start;
       console.log(`  ✓ ${ms}ms, ${v.length} dims`);
+      }
     } else {
       const result = await gwChat({
         messages: [{ role: 'user', content: 'Reply with just the word: pong' }],
