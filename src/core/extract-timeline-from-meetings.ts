@@ -68,11 +68,14 @@ export async function extractTimelineFromMeetings(
   // 1. Fetch all meeting pages (one round-trip).
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const meetingParams = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
+  // #2109: gbrain-base-v2's unify-types catch-all retypes meeting pages to
+  // `note` with frontmatter.legacy_type = 'meeting'. Match both spellings so
+  // the extractor keeps working on migrated (v2) brains, not just v1 ones.
   const meetings = await engine.executeRaw<MeetingRow>(
     `SELECT slug, source_id, title, effective_date, updated_at,
             compiled_truth, COALESCE(timeline, '') AS timeline
        FROM pages
-      WHERE type = 'meeting'
+      WHERE (type = 'meeting' OR frontmatter ->> 'legacy_type' = 'meeting')
         AND deleted_at IS NULL
         ${sourceFilter}
       ORDER BY effective_date DESC NULLS LAST, slug`,
@@ -94,7 +97,7 @@ export async function extractTimelineFromMeetings(
        JOIN pages pf ON pf.id = l.from_page_id
        JOIN pages pt ON pt.id = l.to_page_id
       WHERE l.link_type = 'attended'
-        AND pf.type = 'meeting'
+        AND (pf.type = 'meeting' OR pf.frontmatter ->> 'legacy_type' = 'meeting')
         AND pf.deleted_at IS NULL
         AND pt.deleted_at IS NULL`,
   );

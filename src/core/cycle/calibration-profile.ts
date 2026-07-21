@@ -96,7 +96,7 @@ export type PatternStatementsGenerator = (input: {
 export type BiasTagsGenerator = (patterns: string[]) => Promise<string[]>;
 
 export interface CalibrationProfileOpts extends BasePhaseOpts {
-  /** Holder to generate the profile for. Default 'garry'. */
+  /** Holder to generate the profile for. Default: `calibration.user_holder` config, then 'garry'. */
   holder?: string;
   /** Inject the patterns generator (tests). */
   patternsGenerator?: PatternStatementsGenerator;
@@ -194,6 +194,26 @@ export function parseBiasTagsOutput(raw: string): string[] {
     .slice(0, 4);
 }
 
+/**
+ * #1726: resolve the calibration holder. Explicit param wins, then the
+ * persistent `calibration.user_holder` config key (symmetric with
+ * emotional_weight.user_holder), then the legacy 'garry' default. Fail-open:
+ * a missing config table / mock engine without getConfig falls through.
+ */
+export async function resolveCalibrationHolder(
+  engine: BrainEngine,
+  explicit?: string,
+): Promise<string> {
+  if (explicit) return explicit;
+  try {
+    const configured = await engine.getConfig('calibration.user_holder');
+    if (configured && configured.trim().length > 0) return configured.trim();
+  } catch {
+    // Config unavailable — use the legacy default.
+  }
+  return 'garry';
+}
+
 /** Pick the "loudest" pattern slot for the template fallback. */
 function pickFallbackSlots(scorecard: TakesScorecard): PatternStatementSlots {
   if (!scorecard || scorecard.resolved === 0) {
@@ -227,7 +247,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
     _ctx: OperationContext,
     opts: CalibrationProfileOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
-    const holder = opts.holder ?? 'garry';
+    const holder = await resolveCalibrationHolder(engine, opts.holder);
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
     const modelId = opts.model ?? TIER_DEFAULTS.reasoning;
     const gradeCompletion = opts.gradeCompletion ?? 1.0;

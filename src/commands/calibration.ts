@@ -19,7 +19,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { runPhaseCalibrationProfile } from '../core/cycle/calibration-profile.ts';
+import { resolveCalibrationHolder, runPhaseCalibrationProfile } from '../core/cycle/calibration-profile.ts';
 import { sourceScopeOpts, type OperationContext } from '../core/operations.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import { GBrainError } from '../core/types.ts';
@@ -167,7 +167,7 @@ export async function runCalibration(
   config: GBrainConfig,
 ): Promise<void> {
   const { opts } = parseArgs(args);
-  const holder = opts.holder ?? 'garry';
+  const holder = await resolveCalibrationHolder(engine, opts.holder);
   // Resolve --source / GBRAIN_SOURCE / .gbrain-source so the (now reachable, #2035)
   // calibration command targets the right source in a multi-source brain instead
   // of always reading `default`. No signal → 'default' (prior behavior).
@@ -253,14 +253,14 @@ export async function getCalibrationProfileOp(
   ctx: OperationContext,
   params: { holder?: string },
 ): Promise<CalibrationProfileRow | null> {
-  const holder = params.holder ?? 'garry';
-  if (typeof holder !== 'string' || holder.length === 0) {
+  if (params.holder !== undefined && (typeof params.holder !== 'string' || params.holder.length === 0)) {
     throw new GBrainError(
       'INVALID_HOLDER',
       'get_calibration_profile.holder must be a non-empty string',
-      'pass holder="<slug>" or omit to default to "garry"',
+      'pass holder="<slug>" or omit to default to the calibration.user_holder config (then "garry")',
     );
   }
+  const holder = await resolveCalibrationHolder(ctx.engine, params.holder);
   const scope = sourceScopeOpts(ctx);
   return getLatestProfile(ctx.engine, { holder, ...scope });
 }

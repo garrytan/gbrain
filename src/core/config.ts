@@ -928,6 +928,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
+  // Calibration holder (#1726): persistent default for the nightly
+  // calibration_profile phase + `gbrain calibration`, symmetric with
+  // emotional_weight.user_holder. Falls back to 'garry' when unset.
+  'calibration.user_holder',
   // Cycle phase config
   'cycle.grade_takes.write_gstack_learnings',
   // Content sanity (v0.41)
