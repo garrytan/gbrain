@@ -29,7 +29,7 @@ import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
 // phase — both phases must agree on the configured namespace.
-import { loadAllowedSlugPrefixes, loadOutputRoot, resolveDreamHomeGate } from './synthesize.ts';
+import { loadAllowedSlugPrefixes, loadOutputRoot, resolveDreamHomeGate, checkDreamCooldown } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -61,6 +61,16 @@ export async function runPhasePatterns(
 
     if (!config.enabled) {
       return skipped('disabled', 'dream.patterns.enabled is false');
+    }
+
+    // Cooldown (mirror of synthesize's): patterns has no per-item
+    // idempotency — every run re-analyzes the same reflections window —
+    // so without this it re-ran on EVERY home-source cycle, spawning an
+    // LLM child and near-duplicate pattern pages each time.
+    const cooldown = await checkDreamCooldown(engine, 'dream.patterns.last_completion_ts', config.cooldownHours);
+    if (cooldown.active) {
+      return skipped('cooldown_active',
+        `patterns cooled down until ${cooldown.expires_at} (${config.cooldownHours}h cooldown)`);
     }
 
     // Gather reflections within lookback window.
@@ -176,7 +186,10 @@ export async function runPhasePatterns(
           ),
         };
       }
-      // Partial: the child died/timed out but some pages landed first.
+      // Partial: the child died/timed out but some pages landed first. A
+      // real run happened — stamp the cooldown so the next cycles don't
+      // re-burn on the same reflections window (same posture as success).
+      await engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
       return {
         phase: 'patterns',
         status: 'warn',
@@ -186,6 +199,9 @@ export async function runPhasePatterns(
       };
     }
 
+    // Success: stamp the cooldown (fail-with-zero-writes deliberately does
+    // NOT stamp, mirroring synthesize — the next eligible cycle retries).
+    await engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
   } catch (e) {
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
@@ -201,6 +217,8 @@ interface PatternsConfig {
   enabled: boolean;
   lookbackDays: number;
   minEvidence: number;
+  /** Cooldown between runs, config `dream.patterns.cooldown_hours` (default 12; 0 disables). */
+  cooldownHours: number;
   model: string;
   /** #2415: shared output namespace (dream.synthesize.output_root, default 'wiki'). */
   outputRoot: string;
@@ -233,10 +251,16 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     tier: 'reasoning',
     fallback: 'sonnet',
   });
+  const cooldownHoursStr = await engine.getConfig('dream.patterns.cooldown_hours');
   return {
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
     minEvidence: minEvidenceStr ? Math.max(1, parseInt(minEvidenceStr, 10) || 3) : 3,
+    // NOT the `parseInt(x) || 12` shape — that would turn an explicit '0'
+    // (cooldown disabled) into the default.
+    cooldownHours: cooldownHoursStr !== null && Number.isFinite(parseInt(cooldownHoursStr, 10)) && parseInt(cooldownHoursStr, 10) >= 0
+      ? parseInt(cooldownHoursStr, 10)
+      : 12,
     model,
     outputRoot: await loadOutputRoot(engine),
     subagentTimeoutMs: await getNumberConfig(

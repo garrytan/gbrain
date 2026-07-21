@@ -19,6 +19,7 @@ function engineWith(config: Record<string, string | null>, opts: { throwOnGet?: 
       if (opts.throwOnGet) throw new Error('db down');
       return config[key] ?? null;
     },
+    setConfig: async (key: string, value: string) => { config[key] = value; },
   } as unknown as BrainEngine;
 }
 
@@ -85,6 +86,34 @@ describe('runPhasePatterns — home-source gate integration', () => {
     });
     expect(result.status).toBe('skipped');
     expect((result.details as { reason?: string }).reason).toBe('not_home_source');
+  });
+});
+
+describe('runPhasePatterns — cooldown', () => {
+  test('active cooldown skips with cooldown_active before any reflection work', async () => {
+    const engine = engineWith({
+      'dream.patterns.last_completion_ts': new Date(Date.now() - 60_000).toISOString(),
+    });
+    const result = await runPhasePatterns(engine, { brainDir: '/tmp/nonexistent-brain-dir', dryRun: false, sourceId: 'default' });
+    expect(result.status).toBe('skipped');
+    expect((result.details as { reason?: string }).reason).toBe('cooldown_active');
+  });
+
+  test('expired cooldown proceeds (skips later for a different reason on the stub engine)', async () => {
+    const engine = engineWith({
+      'dream.patterns.last_completion_ts': new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString(),
+    });
+    const result = await runPhasePatterns(engine, { brainDir: '/tmp/nonexistent-brain-dir', dryRun: false, sourceId: 'default' });
+    expect((result.details as { reason?: string }).reason).not.toBe('cooldown_active');
+  });
+
+  test('cooldown_hours=0 disables the cooldown', async () => {
+    const engine = engineWith({
+      'dream.patterns.cooldown_hours': '0',
+      'dream.patterns.last_completion_ts': new Date().toISOString(),
+    });
+    const result = await runPhasePatterns(engine, { brainDir: '/tmp/nonexistent-brain-dir', dryRun: false, sourceId: 'default' });
+    expect((result.details as { reason?: string }).reason).not.toBe('cooldown_active');
   });
 });
 

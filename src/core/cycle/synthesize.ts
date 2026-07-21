@@ -741,8 +741,24 @@ async function checkCooldown(
   engine: BrainEngine,
   hours: number,
 ): Promise<{ active: boolean; expires_at?: string }> {
+  return checkDreamCooldown(engine, 'dream.synthesize.last_completion_ts', hours);
+}
+
+/**
+ * Shared cooldown probe for the corpus-global dream phases. Patterns reuses
+ * it with its own timestamp key — without a cooldown, patterns re-ran on
+ * EVERY home-source cycle (the phase has no per-item idempotency the way
+ * synthesize's per-transcript verdict cache provides), spawning an LLM
+ * child and near-duplicate pattern pages every few minutes on an active
+ * autopilot.
+ */
+export async function checkDreamCooldown(
+  engine: BrainEngine,
+  configKey: string,
+  hours: number,
+): Promise<{ active: boolean; expires_at?: string }> {
   if (hours <= 0) return { active: false };
-  const last = await engine.getConfig('dream.synthesize.last_completion_ts');
+  const last = await engine.getConfig(configKey);
   if (!last) return { active: false };
   const lastMs = Date.parse(last);
   if (Number.isNaN(lastMs)) return { active: false };

@@ -924,6 +924,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.subagent_timeout_ms',
   'dream.synthesize.subagent_wait_timeout_ms',
   'dream.patterns.lookback_days',
+  // Cooldown between patterns runs (default 12h; 0 disables). Sibling of
+  // dream.synthesize's cooldown — patterns has no per-item idempotency, so
+  // without it the phase re-runs on every home-source cycle.
+  'dream.patterns.cooldown_hours',
+  'dream.patterns.last_completion_ts',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the
   // dream.synthesize.* pair from #1594).
