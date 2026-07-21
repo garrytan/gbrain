@@ -136,6 +136,50 @@ describe('extractTimelineFromContent', () => {
     expect(entries).toHaveLength(1);
   });
 
+  it('does not split a hyphenated word in the bullet body (bare-hyphen regression, #1341)', () => {
+    // A hyphen inside a slug/compound must not be read as the source/summary
+    // separator. Pre-fix this produced source "acme".
+    const content = `- **2025-05-13** | acme-consulting-group kickoff call`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries.find((e) => e.source === 'acme')).toBeUndefined();
+  });
+
+  it('keeps hyphenated words intact in the summary when splitting on a spaced dash', () => {
+    const content = `- **2025-05-13** | Call — acme-consulting-group renewed`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Call');
+    expect(entries[0].summary).toBe('acme-consulting-group renewed');
+  });
+
+  it('still splits on a spaced plain hyphen separator', () => {
+    // Bullets written as `Source - Summary` extracted fine pre-fix and must
+    // keep extracting (the #1341 PR's em/en-dash-only regex dropped them).
+    const content = `- **2025-05-13** | Standup - shipped the beta`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Standup');
+    expect(entries[0].summary).toBe('shipped the beta');
+  });
+
+  it('still splits on an unspaced em dash separator', () => {
+    const content = `- **2025-05-13** | Call—renewed the contract`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Call');
+    expect(entries[0].summary).toBe('renewed the contract');
+  });
+
+  it('long and parenthesized sources still extract', () => {
+    // The #1341 PR capped sources at 24 bracket-free chars, silently dropping
+    // previously-extracted bullets. No such cap here.
+    const content = `- **2025-05-13** | Quarterly business review (with acme-example team) — agreed on roadmap`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Quarterly business review (with acme-example team)');
+    expect(entries[0].summary).toBe('agreed on roadmap');
+  });
+
   it('extracts inline citation format entries', () => {
     const content = `Closed the seed round with fund-a leading. [Source: board meeting notes, 2025-04-02]`;
     const entries = extractTimelineFromContent(content, 'deals/acme-seed');
