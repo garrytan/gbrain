@@ -708,3 +708,32 @@ body unchanged
     expect(shortCircuited).toBe(true);
   });
 });
+
+describe('importFromContent — empty content guard (#2822)', () => {
+  test('empty string throws instead of writing an invisible 0-chunk page', async () => {
+    const engine = mockEngine();
+    await expect(importFromContent(engine, 'inbox/empty', '', { noEmbed: true })).rejects.toThrow(/empty/i);
+    expect((engine as any)._calls.find((c: any) => c.method === 'putPage')).toBeUndefined();
+  });
+
+  test('whitespace-only content throws', async () => {
+    const engine = mockEngine();
+    await expect(importFromContent(engine, 'inbox/ws', '  \n\t \n', { noEmbed: true })).rejects.toThrow(/empty/i);
+  });
+});
+
+describe('importFromContent — stacked frontmatter rejection (#2743)', () => {
+  test('double-put shaped content (two ---…--- blocks) throws MULTI_FRONTMATTER', async () => {
+    const engine = mockEngine();
+    const md = '---\ntitle: outer\n---\n\n---\ntitle: inner\ntype: concept\n---\n\nreal body';
+    await expect(importFromContent(engine, 'inbox/double', md, { noEmbed: true })).rejects.toThrow(/MULTI_FRONTMATTER/);
+    expect((engine as any)._calls.find((c: any) => c.method === 'putPage')).toBeUndefined();
+  });
+
+  test('normal content with horizontal rules in the body still imports', async () => {
+    const engine = mockEngine();
+    const md = '---\ntitle: ok\ntype: concept\n---\n\nprose before\n\n---\n\nprose after the rule';
+    const result = await importFromContent(engine, 'inbox/hrule', md, { noEmbed: true });
+    expect(result.status).toBe('imported');
+  });
+});

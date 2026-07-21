@@ -365,6 +365,12 @@ async function main() {
     if (def.required && params[key] === undefined) {
       if (queryHasAlt && key === 'query') continue;
       const cliName = op.cliHints?.name || op.name;
+      // #2822: when the missing param is the op's stdin-fed one, the usage
+      // line alone is misleading (the positionals may all be present — the
+      // pipe was just empty). Name the real problem.
+      if (op.cliHints?.stdin === key) {
+        console.error(`Error: required "${key}" is missing — stdin was empty or not piped. Pipe content on stdin or pass --${key.replace(/_/g, '-')}.`);
+      }
       const positional = op.cliHints?.positional || [];
       const usage = positional.map(p => `<${p}>`).join(' ');
       console.error(`Usage: gbrain ${cliName} ${usage}`);
@@ -761,6 +767,10 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
+  // #2822: track which params came from positionals so a later flag that
+  // silently discards one (`gbrain put CONTENT --slug foo` — CONTENT was
+  // parsed as the slug) gets a stderr warning instead of vanishing.
+  const positionallySet = new Set<string>();
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -778,13 +788,20 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       if (paramDef?.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
+        if (positionallySet.has(key) && params[key] !== args[i + 1]) {
+          console.error(`Warning: ${arg} overrides the positional <${key}> value ${JSON.stringify(params[key])}.`);
+        }
         params[key] = args[++i];
         if (paramDef?.type === 'number') params[key] = Number(params[key]);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
+      if (params[key] !== undefined && params[key] !== (paramDef?.type === 'number' ? Number(arg) : arg)) {
+        console.error(`Warning: positional <${key}> overrides the earlier --${key.replace(/_/g, '-')} value ${JSON.stringify(params[key])}.`);
+      }
       params[key] = paramDef?.type === 'number' ? Number(arg) : arg;
+      positionallySet.add(key);
     }
   }
 
@@ -796,7 +813,11 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
       process.exit(1);
     }
-    params[op.cliHints.stdin] = stdinContent;
+    // #2822: empty/whitespace-only stdin (cron with no input, broken pipe)
+    // stays UNSET so the required-param check rejects the call instead of
+    // silently writing an empty page (0 chunks, invisible to search and
+    // embed --stale).
+    if (stdinContent.trim().length > 0) params[op.cliHints.stdin] = stdinContent;
   }
 
   return params;

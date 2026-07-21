@@ -11,7 +11,8 @@ export type ParseValidationCode =
   | 'NULL_BYTES'
   | 'NESTED_QUOTES'
   | 'NON_STRING_FIELD'
-  | 'EMPTY_FRONTMATTER';
+  | 'EMPTY_FRONTMATTER'
+  | 'MULTI_FRONTMATTER';
 
 export interface ParseValidationError {
   code: ParseValidationCode;
@@ -328,6 +329,36 @@ function collectValidationErrors(
       errors.push({
         code: 'NON_STRING_FIELD',
         message: `Frontmatter "${field}" should be a string but is ${typeof v} (${JSON.stringify(v)}); quote the value (e.g. ${field}: "${String(v)}").`,
+      });
+    }
+  }
+
+  // 9. MULTI_FRONTMATTER (#2743) — a second ---…--- block right after the
+  //    closing fence is stacked frontmatter (the double-put corruption class:
+  //    already-serialized markdown re-wrapped in fresh frontmatter).
+  //    gray-matter parses only the first block and silently leaves the second
+  //    in the body. Heuristic: first non-empty line after the close is `---`,
+  //    a later `---` closes it, and at least one line between looks like a
+  //    YAML `key:` — a lone `---` stays a markdown horizontal rule.
+  let afterClose = closeLine + 1;
+  while (afterClose < lines.length && lines[afterClose].trim().length === 0) afterClose++;
+  if (afterClose < lines.length && lines[afterClose].trim() === '---') {
+    let secondClose = -1;
+    for (let i = afterClose + 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') {
+        secondClose = i;
+        break;
+      }
+    }
+    if (
+      secondClose > afterClose + 1 &&
+      lines.slice(afterClose + 1, secondClose).some(l => /^\s*[A-Za-z_][\w-]*\s*:/.test(l))
+    ) {
+      errors.push({
+        code: 'MULTI_FRONTMATTER',
+        message:
+          'Stacked frontmatter: a second ---…--- block follows the frontmatter (double-put corruption); merge into a single frontmatter block',
+        line: afterClose + 1,
       });
     }
   }
