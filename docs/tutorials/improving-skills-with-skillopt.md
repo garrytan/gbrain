@@ -233,13 +233,14 @@ keep it or `git checkout` to throw it away. Nothing is committed for you.
 
 **For a skill that ships with gbrain** (anything under the gbrain repo's own
 `skills/`): SkillOpt refuses to overwrite it by default and writes the winner to
-`skills/<name>/skillopt/best.md` instead, so an optimization pass can never
-silently mutate a skill other people depend on. Two ways to handle that:
+`skills/<name>/skillopt/proposed.md` instead (while keeping `best.md` as the
+optimizer's current-best pointer), so an optimization pass can never silently
+mutate a skill other people depend on. Two ways to handle that:
 
 ```bash
 # See the proposed improvement without touching SKILL.md (works for ANY skill):
 gbrain skillopt meeting-prep --split 1:1:1 --no-mutate
-# → writes skills/meeting-prep/skillopt/best.md (the proposed rewrite), prints its path. Copy what you want.
+# → writes skills/meeting-prep/skillopt/proposed.md, updates best.md, and prints the proposal path.
 
 # Actually rewrite a bundled skill (explicit opt-in + an independent held-out set):
 gbrain skillopt brain-ops --split 1:1:1 --allow-mutate-bundled \
