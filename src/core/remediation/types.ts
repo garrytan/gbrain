@@ -101,6 +101,12 @@ export interface RemediationResult {
     target: number;
     ceiling: number;
   };
+  /**
+   * #2116: set when the Postgres pre-flight found no live jobs worker.
+   * Nothing was submitted — without a worker every step would burn its full
+   * timeout and abort silently. Caller decides exit code + hint.
+   */
+  no_worker?: true;
 }
 
 /**
@@ -124,4 +130,6 @@ export interface RemediationHooks {
   onResumeLoaded?: (planHash: string, completedCount: number, remainingCount: number) => void;
   /** Fired on resume-checkpoint miss (resume mode only). */
   onResumeMissed?: (planHash: string, requested?: string) => void;
+  /** Fired when the Postgres worker-liveness pre-flight found no worker (#2116). */
+  onNoWorker?: () => void;
 }

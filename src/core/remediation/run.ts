@@ -26,6 +26,41 @@ import type {
 } from './types.ts';
 
 /**
+ * #2116: worker-liveness pre-flight for the Postgres submission path.
+ *
+ * With no jobs worker running, every submitted step just sits 'waiting'
+ * until waitForCompletion burns its full (est_seconds + 60) timeout, then
+ * aborts — a plan of N steps silently wastes N timeouts and remediates
+ * nothing. Check BEFORE the step loop and fail fast instead.
+ *
+ * Liveness signals (either suffices):
+ *   1. Local worker registry (ground truth on this host — every
+ *      `gbrain jobs work`, standalone or supervisor-spawned, registers).
+ *   2. DB proxy: any active job holding a live lock (covers a busy worker
+ *      on ANOTHER host sharing the same Postgres).
+ *
+ * Known ceiling: an IDLE worker on another host shows neither signal.
+ * `GBRAIN_REMEDIATION_ASSUME_WORKER=1` is the escape hatch for that
+ * topology. Probe failures fail OPEN — a broken probe must never block
+ * remediation that would otherwise work.
+ */
+export async function hasLiveJobsWorker(engine: BrainEngine): Promise<boolean> {
+  if (process.env.GBRAIN_REMEDIATION_ASSUME_WORKER === '1') return true;
+  try {
+    const { readWorkers } = await import('../minions/worker-registry.ts');
+    if (readWorkers().length > 0) return true;
+  } catch { /* registry unavailable — fall through to the DB probe */ }
+  try {
+    const rows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_jobs WHERE status = 'active' AND lock_until > now()`,
+    );
+    return parseInt(rows[0]?.count ?? '0', 10) > 0;
+  } catch {
+    return true; // fail open
+  }
+}
+
+/**
  * Submit ordered Remediation jobs sequentially per D3, with D5 cascade
  * on failure and D7 scoped recheck between steps.
  *
@@ -188,6 +223,22 @@ export async function runRemediation(
   const { waitForCompletion } = await import('../minions/wait-for-completion.ts');
   const isPGLite = engine.kind === 'pglite';
   const queue = new MinionQueue(engine);
+
+  // #2116: Postgres path needs a live jobs worker to drain what we submit.
+  // PGLite runs inline (no durable worker), so the check doesn't apply there.
+  if (!isPGLite && !(await hasLiveJobsWorker(engine))) {
+    hooks.onNoWorker?.();
+    return {
+      doctor_run_id: crypto.randomUUID(),
+      brain_score_initial: initialHealth.brain_score,
+      brain_score_final: initialHealth.brain_score,
+      brain_score_target: targetScore,
+      target_reached: false,
+      submitted: [],
+      aborted_count: 0,
+      no_worker: true,
+    };
+  }
 
   // A4 amended: install a BudgetTracker scope around the plan-step loop so
   // any gateway.chat / embed / rerank inside a Minion handler (synthesize,

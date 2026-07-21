@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { detectInstallTarget } from '../src/commands/autopilot.ts';
+import { detectInstallTarget, generateWrapperScript, shutdownExitCode } from '../src/commands/autopilot.ts';
 
 let tmp: string;
 const envSnapshot: Record<string, string | undefined> = {};
@@ -85,6 +85,71 @@ describe('detectInstallTarget', () => {
 // exported in zshrc never reach the LaunchAgent subprocess. Operators who
 // exported GBRAIN_DATABASE_URL or {OPENAI,ANTHROPIC}_API_KEY in zshrc and
 // expected autopilot to inherit them hit silent missing-secret failures.
+// issue #1868: the wrapper runs under systemd/cron with a minimal PATH and the
+// zsh profiles it sources are a macOS convention that often doesn't exist on a
+// Linux server. A bun-shebang gbrain shim then dies with "bun: not found" and
+// the service crash-loops. The generator must bake the install-time runtime
+// dirs (gbrain's dir, the running runtime's dir, ~/.bun/bin) onto PATH, AFTER
+// profile sourcing so they win even if a profile reset PATH.
+describe('generateWrapperScript — runtime PATH baked in (#1868)', () => {
+  const script = generateWrapperScript('/usr/local/bin/gbrain', '/srv/brain', {
+    home: '/home/u',
+    execPath: '/home/u/.bun/bin/bun',
+  });
+
+  test('prepends gbrain dir, runtime dir, and ~/.bun/bin to PATH', () => {
+    expect(script).toContain(`export PATH='/usr/local/bin:/home/u/.bun/bin':"$PATH"`);
+  });
+
+  test('PATH export comes AFTER profile sourcing (profiles must not clobber it)', () => {
+    const pathIdx = script.indexOf('export PATH=');
+    const zshrcIdx = script.indexOf('~/.zshrc');
+    const bashrcIdx = script.indexOf('~/.bashrc');
+    expect(pathIdx).toBeGreaterThan(zshrcIdx);
+    expect(pathIdx).toBeGreaterThan(bashrcIdx);
+  });
+
+  test('PATH export comes BEFORE the exec line', () => {
+    expect(script.indexOf('export PATH=')).toBeLessThan(script.indexOf('exec '));
+  });
+
+  test('exec line uses the resolved gbrain path + repo', () => {
+    expect(script).toContain(`exec '/usr/local/bin/gbrain' autopilot --repo '/srv/brain'`);
+  });
+
+  test('deduplicates identical dirs', () => {
+    const s = generateWrapperScript('/opt/bin/gbrain', '/repo', { home: '', execPath: '/opt/bin/bun' });
+    expect(s).toContain(`export PATH='/opt/bin':"$PATH"`);
+  });
+
+  test('never emits an empty PATH entry (cwd injection) when nothing resolves', () => {
+    const s = generateWrapperScript('gbrain', '/repo', { home: '', execPath: '' });
+    expect(s).not.toContain(`PATH='':`);
+    expect(s).not.toMatch(/export PATH=''/);
+  });
+
+  test('single-quote-escapes hostile dirs', () => {
+    const s = generateWrapperScript("/tmp/o'brien/gbrain", '/repo', { home: '', execPath: '' });
+    expect(s).toContain(`'/tmp/o'\\''brien'`);
+  });
+});
+
+// issue #2234 (part 2): a daemon that GIVES UP (max_crashes /
+// cycle-failure-cap) must exit non-zero so systemd Restart=on-failure
+// restarts it; pre-fix it exited 0 and stayed silently dead for days.
+// Operator-initiated stops stay 0.
+describe('shutdownExitCode (#2234)', () => {
+  test('give-up paths exit non-zero', () => {
+    expect(shutdownExitCode('max_crashes')).toBe(1);
+    expect(shutdownExitCode('cycle-failure-cap')).toBe(1);
+  });
+
+  test('signal-driven stops exit 0', () => {
+    expect(shutdownExitCode('SIGTERM')).toBe(0);
+    expect(shutdownExitCode('SIGINT')).toBe(0);
+  });
+});
+
 describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () => {
   test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {
     const { readFileSync } = await import('fs');
