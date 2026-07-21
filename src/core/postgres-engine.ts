@@ -18,10 +18,9 @@ import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatch
 import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
-import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { MAX_SEARCH_LIMIT, clampSearchLimit, resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
-import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from './facts/extract-from-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';

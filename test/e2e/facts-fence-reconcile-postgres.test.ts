@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
@@ -92,6 +92,16 @@ describe.skipIf(skip)('facts-fence supersession transport on Postgres (#3014)', 
       await engine.executeRaw('DELETE FROM pages WHERE slug = $1', [slug]);
       await engine.disconnect();
     }
+  });
+
+  // Each test putPages its own fence and expects a fresh reconcile, so wipe
+  // the page's DB rows first. Without this, two consecutive tests whose
+  // struck rows both resolve to NULL (e.g. dangling #9 then int4-overflow
+  // #99999999999) share a claim + slug, so the second reconcile sees no
+  // drift and skips — correct no-churn behavior, but it would starve a test
+  // that asserts a fresh warning.
+  beforeEach(async () => {
+    await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug = $1', [slug]);
   });
 
   // Row 1 struck + "superseded by #2"; row 2 the live superseding fact.
@@ -282,5 +292,68 @@ describe.skipIf(skip)('facts-fence supersession transport on Postgres (#3014)', 
       [slug],
     );
     expect(Array.from(facts).map(f => f.fact)).toEqual(['keeper one', 'keeper two']);
+  }, 30_000);
+});
+
+// v0.42 (#3014) option B — the ontology-dimension writer closes a superseded
+// row via valid_until + superseded_by (NOT expired_at, so getOntology's
+// --asof time-travel still sees it). listSupersessions must surface it anyway
+// (filter on superseded_by alone) and order/since via COALESCE(expired_at,
+// valid_until). Both verified here on real Postgres.
+describe.skipIf(skip)('facts supersession visibility on Postgres — ontology + since (#3014)', () => {
+  const SARAH = 'people/zz-sarah-ontology-3014';
+  let engine: PostgresEngine;
+
+  beforeAll(async () => {
+    engine = new PostgresEngine();
+    await engine.connect({ database_url: databaseUrl! });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) {
+      await engine.executeRaw('DELETE FROM facts WHERE entity_slug = $1', [SARAH]);
+      await engine.disconnect();
+    }
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw('DELETE FROM facts WHERE entity_slug = $1', [SARAH]);
+  });
+
+  // founder (2024) → advisor (2026-05-01): the prior 'founder' row is closed
+  // via valid_until = 2026-05-01, superseded_by set, expired_at left NULL.
+  const supersede = async () => {
+    await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'founder', source: 'meetings/a', validFrom: '2024-01-01' });
+    const r = await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'advisor', source: 'meetings/b', validFrom: '2026-05-01' });
+    expect(r.action).toBe('superseded_prior');
+  };
+
+  test('a forward ontology supersession surfaces in listSupersessions while --asof still time-travels', async () => {
+    await supersede();
+
+    const sup = await engine.listSupersessions('default');
+    const founder = sup.find(s => s.fact.includes('founder'));
+    expect(founder).toBeDefined();
+    expect(founder!.superseded_by).not.toBeNull();
+    // Option A ("writers set both columns") would have set expired_at here and
+    // broken the --asof read below; option B leaves it NULL and surfaces anyway.
+    expect(founder!.expired_at).toBeNull();
+
+    const past = await engine.getOntology(SARAH, { asof: '2025-01-01' });
+    expect(past[0].value).toBe('founder');
+  }, 30_000);
+
+  test('listSupersessions({since}) filters a NULL-expired_at row by COALESCE(expired_at, valid_until)', async () => {
+    await supersede(); // founder row: valid_until = 2026-05-01, expired_at NULL
+
+    // since before the close date → COALESCE falls back to valid_until, included.
+    const included = await engine.listSupersessions('default', { since: new Date('2026-01-01T00:00:00Z') });
+    expect(included.some(s => s.fact.includes('founder'))).toBe(true);
+
+    // since after the close date → excluded (a pre-fix `expired_at >= since`
+    // would have dropped it unconditionally since expired_at is NULL).
+    const excluded = await engine.listSupersessions('default', { since: new Date('2026-09-01T00:00:00Z') });
+    expect(excluded.some(s => s.fact.includes('founder'))).toBe(false);
   }, 30_000);
 });

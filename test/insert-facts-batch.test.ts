@@ -392,7 +392,7 @@ describe('engine.insertFacts — v0.42 (#3014) supersession transport', () => {
     );
     // Row 1 → row 2 is a chain (row 2 struck) → NULL + warning.
     // Row 2 → row 3 (live) resolves cleanly.
-    expect(r.warnings.some(w => w.includes('chain'))).toBe(true);
+    expect(r.warnings.some(w => w.includes('struck'))).toBe(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const persisted = await (engine as any).db.query(
       `SELECT row_num, superseded_by FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,

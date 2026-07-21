@@ -554,7 +554,7 @@ describe('runExtractFacts — v0.42 (#3014) supersession transport + heal', () =
 | 3 | Live tail | fact | 1.0 | world | high | 2026-03-01 |  | call |  |`,
     ));
     const first = await runExtractFacts(engine, { slugs: ['people/deal'] });
-    expect(first.warnings.some(w => w.includes('chain'))).toBe(true);
+    expect(first.warnings.some(w => w.includes('struck'))).toBe(true);
     const idsAfterFirst = await readIds();
 
     const second = await runExtractFacts(engine, { slugs: ['people/deal'] });

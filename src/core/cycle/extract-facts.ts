@@ -33,16 +33,14 @@
  * while legacy rows linger in the DB.
  */
 
-import type { BrainEngine } from '../engine.ts';
+import { resolveSupersededByRow, type BrainEngine, type SupersedeTarget } from '../engine.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import {
   extractFactsFromFenceText,
-  resolveSupersededByRow,
   FENCE_SOURCE_DEFAULT,
   type FenceExtractedFact,
-  type SupersedeTarget,
 } from '../facts/extract-from-fence.ts';
 import {
   runPhantomRedirectPass,
@@ -353,7 +351,11 @@ export async function runExtractFacts(
       if (desired === undefined) return false;
 
       // Expiry dimension: a struck row must carry expired_at; a pre-fix row
-      // (both columns NULL) drifts here and re-heals.
+      // (both columns NULL) drifts here and re-heals. Compare NULL-ness, NOT
+      // the timestamp value: the mapper stamps `expired_at = valid_until ??
+      // today`, so a value comparison would see the stored timestamp differ
+      // from a freshly-recomputed `today` every day and churn the page each
+      // cycle. NULL-ness is the stable "is this row struck?" signal.
       const desiredExpired = desired.expired_at != null;
       const dbExpired = f.expired_at != null;
       if (desiredExpired !== dbExpired) return true;
@@ -439,9 +441,11 @@ export async function runExtractFacts(
     // count it here from the atomic result rather than a separate delete.
     result.factsDeleted += inserted.deleted;
     // v0.42 (#3014) — surface unresolvable `superseded by #N` references
-    // (self / dangling / chain) as cycle warnings; the row still inserts
-    // with superseded_by NULL + expired_at set (never a guessed FK).
-    for (const w of inserted.warnings) result.warnings.push(`${slug}: ${w}`);
+    // (self / dangling / struck target) as cycle warnings; the row still
+    // inserts with superseded_by NULL + expired_at set (never a guessed FK).
+    // resolveSupersededByRow already prefixes each message with the slug +
+    // row, so push verbatim — no `${slug}: ` re-prefix.
+    for (const w of inserted.warnings) result.warnings.push(w);
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic

@@ -11,7 +11,15 @@
  * It is intentionally pure: no engine call, no I/O. Inputs are the parsed
  * facts plus the page-level binding (entity slug + source_id). Output is
  * a `FenceExtractedFact[]` — structural superset of `NewFact` that
- * carries the v51 fence columns (`row_num`, `source_markdown_slug`).
+ * carries the v51 fence columns (`row_num`, `source_markdown_slug`) and,
+ * for struck rows, the v0.42 (#3014) supersession-transport fields:
+ *   - `expired_at` stamped on every inactive row (superseded / forgotten
+ *     / inactive-unrecognized) so the row exits active views — there is
+ *     no DB derivation from `valid_until`, so the mapper sets it here.
+ *   - `superseded_by_row` carrying the page-local `superseded by #N`
+ *     reference for the engine's insert-time resolution to a fact id
+ *     (the resolver + its types live in `engine.ts`, the layer that owns
+ *     the id lookup).
  *
  * Codex Q7 resolution: engines stay markdown-unaware. The cycle phase
  * (commit 7) and the backstop rewrite (commit 5) call this function to
@@ -19,12 +27,12 @@
  * batch insert.
  *
  * Strikethrough → date derivation:
- *   - `forgotten` rows get `valid_until = today` so the DB's existing
- *     `expired_at = valid_until + now()` rule produces the same forget
- *     state after `gbrain rebuild` (v0.32.3) as before.
+ *   - `forgotten` rows get `valid_until = today` (and `expired_at`) so the
+ *     row is inactive after reconcile.
  *   - `supersededBy` rows preserve their existing `validUntil` if set;
- *     otherwise leave `valid_until = null` (the consolidator phase fills
- *     this in based on the newer row's `valid_from`).
+ *     otherwise leave `valid_until = null`. `expired_at` is set to
+ *     `valid_until ?? today` regardless, so the struck row exits active
+ *     views and satisfies `listSupersessions`.
  *   - Inactive rows with neither flag (parser-tolerated hand-edits) are
  *     treated like `forgotten` for DB-derivation purposes — the user's
  *     strikethrough intent is honored; the lost reason is a JSONL
@@ -52,85 +60,6 @@ export type FenceExtractedFact = NewFact & {
    */
   superseded_by_row?: number;
 };
-
-/**
- * v0.42 (#3014) — the target row a struck `superseded by #N` reference
- * resolves to, as seen at insert time.
- */
-export interface SupersedeTarget {
-  id: number;
-  /**
-   * true when the target row is itself inactive (its `expired_at` is
-   * set) — i.e. `#N` points at another struck row (a chain). A
-   * supersession target must be a live row, so a struck target is
-   * rejected.
-   */
-  struck: boolean;
-}
-
-/** Outcome of resolving a `superseded by #N` reference to a fact id. */
-export interface SupersedeResolution {
-  /** The resolved target fact id, or null when the reference is unsafe. */
-  superseded_by: number | null;
-  /** A human-readable warning when the reference could not be resolved. */
-  warning: string | null;
-}
-
-/** Largest value a Postgres `int4` column (`facts.row_num`) can hold. */
-export const PG_INT4_MAX = 2147483647;
-
-/**
- * v0.42 (#3014) — can `n` safely target the `row_num` (int4) column in
- * insertFacts' supersession-resolution SELECT? The fence parser accepts any
- * finite `#N`, but a value outside int4 range would overflow the comparison
- * and raise `integer out of range`, aborting the whole extract cycle. The
- * engines gate the lookup on this so an absurd `#N` is treated as a dangling
- * reference (resolveSupersededByRow with `target` undefined → NULL + warning)
- * rather than an uncaught throw.
- */
-export function isInt4RowRef(n: number): boolean {
-  return Number.isInteger(n) && n >= 1 && n <= PG_INT4_MAX;
-}
-
-/**
- * v0.42 (#3014) — resolve a struck row's `superseded by #N` page-local
- * reference to a fact id. Pure: the caller supplies the already-looked-up
- * `target` (keyed on source + row_num within the same transaction) so
- * this decision is unit-testable without a DB.
- *
- * Three references are unsafe and resolve to NULL + a warning (never an
- * FK write to a guessed id); `expired_at` is set by the mapper regardless
- * of the outcome so the struck row still exits active views:
- *   - self-reference (`#N` == the row's own number)
- *   - dangling (`#N` names a row absent from the page)
- *   - chain (`#N` names another struck row)
- */
-export function resolveSupersededByRow(
-  ownRowNum: number,
-  supersededByRow: number,
-  target: SupersedeTarget | undefined,
-  slug: string,
-): SupersedeResolution {
-  if (supersededByRow === ownRowNum) {
-    return {
-      superseded_by: null,
-      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" references itself — leaving superseded_by NULL`,
-    };
-  }
-  if (!target) {
-    return {
-      superseded_by: null,
-      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row absent from the fence — leaving superseded_by NULL`,
-    };
-  }
-  if (target.struck) {
-    return {
-      superseded_by: null,
-      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row that is itself superseded (chain) — leaving superseded_by NULL`,
-    };
-  }
-  return { superseded_by: target.id, warning: null };
-}
 
 /**
  * Default `source` value when a fence row doesn't carry one. The string

@@ -18,11 +18,13 @@ import { describe, test, expect } from 'bun:test';
 import {
   extractFactsFromFenceText,
   FENCE_SOURCE_DEFAULT,
+} from '../src/core/facts/extract-from-fence.ts';
+import {
   resolveSupersededByRow,
   isInt4RowRef,
   PG_INT4_MAX,
   type SupersedeTarget,
-} from '../src/core/facts/extract-from-fence.ts';
+} from '../src/core/engine.ts';
 import type { ParsedFact } from '../src/core/facts-fence.ts';
 
 const baseFact = (overrides: Partial<ParsedFact> = {}): ParsedFact => ({
@@ -273,10 +275,12 @@ describe('resolveSupersededByRow — reference resolution', () => {
     expect(r.warning).toContain('absent from the fence');
   });
 
-  test('chain (target is itself struck) → NULL + warning', () => {
+  test('struck target (chain or forgotten) → NULL + warning', () => {
     const r = resolveSupersededByRow(1, 2, { id: 7, struck: true }, 'deals/acme');
     expect(r.superseded_by).toBeNull();
-    expect(r.warning).toContain('chain');
+    // The warning names the target as struck/inactive, not specifically a
+    // chain — a forgotten target is struck too but isn't a supersession chain.
+    expect(r.warning).toContain('struck');
   });
 });
 
