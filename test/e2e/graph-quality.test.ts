@@ -241,6 +241,41 @@ title: Frank
     }
   });
 
+  test('auto-timeline runs for remote callers while auto-link stays gated', async () => {
+    // Regression for the remote gate: auto-link is skipped for remote/untrusted
+    // callers (its cross-page bare-slug matching can forge edges), but timeline
+    // entries are keyed to the page's own slug, so they are safe on remote and
+    // must still be extracted. See put_page in src/core/operations.ts.
+    const putOp = operationsByName['put_page'];
+    const result = await putOp.handler(
+      { ...makeContext(), remote: true },
+      {
+        slug: 'people/grace',
+        content: `---
+type: person
+title: Grace
+---
+
+Grace works at people/acme.
+
+## Timeline
+
+- **2026-03-15** | Joined Acme
+- **2026-04-02** | Led Series A
+`,
+      },
+    );
+
+    // Timeline now runs for remote callers.
+    expect((result as any).auto_timeline).toBeDefined();
+    expect((result as any).auto_timeline.created).toBe(2);
+    const entries = await engine.getTimeline('people/grace');
+    expect(entries.length).toBe(2);
+
+    // Auto-link stays gated for remote callers (cross-page injection defense).
+    expect((result as any).auto_links).toEqual({ skipped: 'remote' });
+  });
+
   test('auto-link respects auto_link=false config', async () => {
     await engine.setConfig('auto_link', 'false');
     try {

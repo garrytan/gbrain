@@ -967,8 +967,15 @@ const put_page: Operation = {
       && ctx.allowedSlugPrefixes.length > 0;
     if (ctx.remote !== false && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
-      autoTimeline = { skipped: 'remote' };
-    } else if (result.parsedPage) {
+    }
+    // Auto-timeline is decoupled from the remote gate: unlike auto-link's
+    // cross-page bare-slug matching, timeline entries are keyed to the page's
+    // OWN slug (see batch.map below), so a remote/untrusted writer can only
+    // add entries about the page it is already writing — it cannot forge
+    // edges onto other pages or manipulate cross-page search ranking. Auto-link
+    // stays gated for remote callers; auto-timeline is safe to run for them.
+    if (result.parsedPage) {
+      if (ctx.remote === false || trustedWorkspace) {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
@@ -976,6 +983,7 @@ const put_page: Operation = {
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
+      }
       }
       // Timeline extraction mirrors auto-link: runs post-write, best-effort,
       // never blocks the write. ON CONFLICT DO NOTHING in
