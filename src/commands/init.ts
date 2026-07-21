@@ -1078,6 +1078,9 @@ async function initPostgres(opts: {
     console.warn('  Direct connections are IPv6 only and fail in many environments.');
     console.warn('  Use the Transaction pooler connection string instead (port 6543):');
     console.warn('  Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler');
+    console.warn('  (With a pooler URL, gbrain derives a direct connection for DDL and falls back');
+    console.warn('  to the pooler automatically if that host is unreachable. Power users:');
+    console.warn('  GBRAIN_DIRECT_DATABASE_URL overrides the derived URL; GBRAIN_DISABLE_DIRECT_POOL=1 disables it.)');
     console.warn('');
   }
 
@@ -1091,6 +1094,9 @@ async function initPostgres(opts: {
       if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
         console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
         console.error('Use the Transaction pooler connection string instead (port 6543).');
+        console.error('(gbrain derives its own direct connection from pooler URLs for DDL; if that host is');
+        console.error('unreachable it falls back to the pooler. GBRAIN_DIRECT_DATABASE_URL overrides the');
+        console.error('derived URL; GBRAIN_DISABLE_DIRECT_POOL=1 disables the direct pool entirely.)');
       }
       throw e;
     }

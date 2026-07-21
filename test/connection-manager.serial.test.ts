@@ -3,6 +3,7 @@ import {
   isSupabasePoolerUrl,
   deriveDirectUrl,
   readKillSwitchEnv,
+  isNetworkUnreachableError,
   resolveDirectPoolSize,
   ConnectionManager,
   DEFAULT_DIRECT_POOL_SIZE,
@@ -237,4 +238,66 @@ describe('ConnectionManager — parent inheritance (A2)', () => {
       else process.env.GBRAIN_DISABLE_DIRECT_POOL = original;
     }
   });
+});
+
+describe('isNetworkUnreachableError (#1641)', () => {
+  test('classifies network codes as unreachable', () => {
+    for (const code of ['ENOTFOUND', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT', 'CONNECT_TIMEOUT']) {
+      const err = Object.assign(new Error('connect failed'), { code });
+      expect(isNetworkUnreachableError(err)).toBe(true);
+    }
+  });
+
+  test('classifies by message when code absent', () => {
+    expect(isNetworkUnreachableError(new Error('getaddrinfo ENOTFOUND db.abc.supabase.co'))).toBe(true);
+  });
+
+  test('auth/SQL errors are NOT unreachable', () => {
+    expect(isNetworkUnreachableError(new Error('password authentication failed for user "postgres"'))).toBe(false);
+    expect(isNetworkUnreachableError(new Error('syntax error at or near "SELEC"'))).toBe(false);
+    expect(isNetworkUnreachableError(null)).toBe(false);
+  });
+});
+
+describe('ConnectionManager — direct-pool fallback on unreachable host (#1641)', () => {
+  let originalKillSwitch: string | undefined;
+  let originalError: typeof console.error;
+  let errLines: string[];
+  beforeEach(() => {
+    originalKillSwitch = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    originalError = console.error;
+    errLines = [];
+    console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+  });
+  afterEach(() => {
+    console.error = originalError;
+    if (originalKillSwitch === undefined) delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    else process.env.GBRAIN_DISABLE_DIRECT_POOL = originalKillSwitch;
+  });
+
+  test('ddl() falls back to the read pool when the direct host is unreachable', async () => {
+    const cm = new ConnectionManager({
+      url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+      // 127.0.0.1:9 (discard) → instant ECONNREFUSED, the IPv4-only-network shape.
+      directUrl: 'postgresql://postgres:p@127.0.0.1:9/db',
+    });
+    const fakeReadPool = {} as ReturnType<typeof ConnectionManager.prototype.read>;
+    cm.setReadPool(fakeReadPool);
+    expect(cm.isDualPoolActive()).toBe(true);
+
+    const pool = await cm.ddl(); // without the fix this throws ECONNREFUSED
+    expect(pool).toBe(fakeReadPool);
+    // Self-activating kill-switch: subsequent calls skip the direct pool.
+    expect(cm.isKillSwitchActive()).toBe(true);
+    expect(cm.isDualPoolActive()).toBe(false);
+    expect(cm.describeMode().mode).toBe('single (kill-switch)');
+    // One stderr line mentioning the power-user override.
+    const warning = errLines.filter(l => l.includes('GBRAIN_DIRECT_DATABASE_URL'));
+    expect(warning.length).toBe(1);
+
+    const again = await cm.ddl();
+    expect(again).toBe(fakeReadPool);
+    expect(errLines.filter(l => l.includes('GBRAIN_DIRECT_DATABASE_URL')).length).toBe(1);
+  }, 20000);
 });
