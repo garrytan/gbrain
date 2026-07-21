@@ -1025,6 +1025,10 @@ async function extractForSlugs(
   let linksCreated = 0;
   let timelineCreated = 0;
   let pagesProcessed = 0;
+  // #2636: successfully processed pages get their extraction watermark
+  // stamped after the final flush (mode 'all' only — a partial-mode run
+  // hasn't done the full extraction the watermark asserts).
+  const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   // Issue #972: read the basename flag once per extract run.
   const globalBasename = await isGlobalBasenameEnabled(engine);
@@ -1113,6 +1117,7 @@ async function extractForSlugs(
         }
 
         pagesProcessed++;
+        if (!dryRun) processedRefs.push({ slug, source_id: sourceId ?? 'default' });
       } catch { /* skip unreadable */ }
       progress.tick(1);
     },
@@ -1120,6 +1125,13 @@ async function extractForSlugs(
 
   await flushLinks();
   await flushTimeline();
+  // #2636: the Dream cycle disables sync's inline extraction and routes
+  // changed slugs through this incremental path — without a stamp here,
+  // those pages never get links_extracted_at and stay permanently visible
+  // to `extract --stale` / doctor. Stamp only after BOTH batches flushed.
+  if (!dryRun && mode === 'all') {
+    await stampExtracted(engine, processedRefs);
+  }
   progress.finish();
 
   if (!jsonMode) {

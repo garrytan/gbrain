@@ -60,6 +60,51 @@ async function seedPage(slug: string, body: string): Promise<void> {
 }
 
 describe('runExtractCore — incremental cycle path (#417)', () => {
+  test('Dream incremental all-mode stamps the source-scoped extraction watermark (#2636)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['repo-a', 'repo-a', tempDir],
+    );
+    await engine.putPage('people/alice-example', {
+      type: 'person',
+      title: 'alice-example',
+      compiled_truth: '# alice',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'h',
+    }, { sourceId: 'repo-a' });
+    writeFileSync(join(tempDir, 'people/alice-example.md'), '# alice');
+
+    await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+      sourceId: 'repo-a',
+    });
+
+    const rows = await engine.executeRaw<{ links_extracted_at: string | null }>(
+      `SELECT links_extracted_at FROM pages WHERE slug = $1 AND source_id = $2`,
+      ['people/alice-example', 'repo-a'],
+    );
+    expect(rows[0]?.links_extracted_at).not.toBeNull();
+    expect(await engine.countStalePagesForExtraction({ sourceId: 'repo-a' })).toBe(0);
+  });
+
+  test('Dream incremental dry-run does NOT stamp the watermark', async () => {
+    await seedPage('people/alice-example', '# alice');
+    await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+      dryRun: true,
+    });
+    const rows = await engine.executeRaw<{ links_extracted_at: string | null }>(
+      `SELECT links_extracted_at FROM pages WHERE slug = $1`,
+      ['people/alice-example'],
+    );
+    expect(rows[0]?.links_extracted_at ?? null).toBeNull();
+  });
+
   test('1. slugs: [] returns immediately with zero counts (early-return path)', async () => {
     await seedPage('people/alice-example', '# alice');
     const result = await runExtractCore(engine as unknown as BrainEngine, {
