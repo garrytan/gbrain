@@ -76,9 +76,13 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-4o-mini':                   { input:  0.15, output:  0.60 },
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
   'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
+  // gpt-5.2 baseline — matches the openai recipe's chat cost anchors.
+  'openai:gpt-5.2':                       { input:  1.25, output: 10.00 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },
+  // Gemini 3 Pro (≤200K context rate) — the cross-modal slot C default.
+  'google:gemini-3-pro':                  { input:  2.00, output: 12.00 },
   // Gemini 2.0 Flash: $0.10 in / $0.40 out (verified 2026-06-03). Reconciled
   // from a stale $0.30/$1.20 entry that had drifted in takes-quality-eval.
   // `gemini-2-flash` kept as an alias for the legacy id spelling.
