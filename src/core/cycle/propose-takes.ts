@@ -145,6 +145,8 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   model?: string;
   /** Skip pages that already have a complete takes fence. Default: true. */
   skipPagesWithFence?: boolean;
+  /** Override the phase wall-clock deadline (tests). Default: 30 min. */
+  deadlineMs?: number;
 }
 
 export interface ProposeTakesResult {
@@ -153,6 +155,8 @@ export interface ProposeTakesResult {
   cache_misses: number;
   proposals_inserted: number;
   budget_exhausted: boolean;
+  /** True when the phase deadline fired before the page loop completed (partial result). */
+  deadline_hit?: boolean;
   warnings: string[];
 }
 
@@ -210,6 +214,9 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
   return rows;
 }
 
+/** Per-call wall-clock timeout for the extractor LLM call. */
+const EXTRACTOR_CALL_TIMEOUT_MS = 90_000;
+
 /**
  * Production extractor — calls gateway.chat with the EXTRACT_TAKES_PROMPT
  * and parses the JSON array output. Returns [] on parse failure (logged as
@@ -227,10 +234,14 @@ export async function defaultExtractor(
     .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
     .replace('{PAGE_BODY}', input.pageBody);
 
+  // Bound each call so one stalled provider socket can't pin the phase for the
+  // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
+  // caller already catches per-page errors, logs a warning, and continues.
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 2048,
+    abortSignal: AbortSignal.timeout(EXTRACTOR_CALL_TIMEOUT_MS),
   });
 
   // ChatResult.text is already the concatenated text content.
@@ -287,6 +298,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
   readonly name = 'propose_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
   protected readonly budgetUsdDefault = 5.0;
+  /**
+   * Hard wall-clock deadline for the phase. Even with the per-call timeout in
+   * defaultExtractor, a long tail of slow-but-completing calls can accumulate.
+   * The phase breaks cleanly and returns a partial result with
+   * `deadline_hit: true` instead of being killed mid-write by an outer
+   * `timeout` wrapper (the recurring SIGTERM in nightly dream runs).
+   */
+  private static readonly PHASE_DEADLINE_MS = 30 * 60 * 1000;
 
   protected override mapErrorCode(err: unknown): string {
     if (err instanceof GBrainError) return err.problem;
@@ -307,6 +326,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const deadlineMs = opts.deadlineMs ?? ProposeTakesPhase.PHASE_DEADLINE_MS;
+    const phaseStartMs = Date.now();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -333,6 +354,18 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const modelId = opts.model ?? getChatModel();
 
     for (const page of pages) {
+      // Phase deadline check. Break (not throw) so the phase returns a
+      // partial result with deadline_hit:true; work already banked stays.
+      const elapsedMs = Date.now() - phaseStartMs;
+      if (elapsedMs > deadlineMs) {
+        result.warnings.push(
+          `phase deadline hit at page ${result.pages_scanned}/${pages.length} ` +
+          `after ${(elapsedMs / 1000).toFixed(0)}s (cap ${(deadlineMs / 1000).toFixed(0)}s); partial completion`,
+        );
+        result.deadline_hit = true;
+        break;
+      }
+
       result.pages_scanned += 1;
       this.tick(opts);
 
@@ -450,7 +483,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
       details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
-      status: result.budget_exhausted ? 'warn' : 'ok',
+      status: result.budget_exhausted || result.deadline_hit ? 'warn' : 'ok',
     };
   }
 }

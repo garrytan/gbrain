@@ -368,6 +368,40 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
   });
 
+  test('phase deadline breaks the page loop with a partial result (deadline_hit)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/slow-a', body: 'page a' }),
+      buildPage({ slug: 'wiki/slow-b', body: 'page b' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      await new Promise((r) => setTimeout(r, 10));
+      return [{ claim_text: 'x', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    // 5ms deadline: page 1 processes (elapsed 0 at check), the 10ms extractor
+    // call pushes elapsed past the cap, page 2 is never scanned.
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, deadlineMs: 5 });
+
+    expect(result.status).toBe('warn');
+    const details = result.details as Record<string, unknown>;
+    expect(details.deadline_hit).toBe(true);
+    expect(details.pages_scanned).toBe(1);
+    expect(extractorCalls).toBe(1);
+    expect((details.warnings as string[]).some(w => w.includes('phase deadline hit'))).toBe(true);
+  });
+
+  test('default deadline does not fire on a fast run', async () => {
+    const pages = [buildPage({ slug: 'wiki/fast', body: 'quick page' })];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    const details = result.details as Record<string, unknown>;
+    expect(details.deadline_hit).toBeUndefined();
+    expect(details.pages_scanned).toBe(1);
+  });
+
   test('proposal_run_id is stable across all proposals from one phase invocation', async () => {
     const pages = [
       buildPage({ slug: 'wiki/a', body: 'page a' }),
