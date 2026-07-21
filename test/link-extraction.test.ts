@@ -140,6 +140,15 @@ describe('extractEntityRefs', () => {
     expect(wikiRefs[0].needsResolution).toBe(true);
   });
 
+  test('recognizes ops/ qualified wikilinks (issue #2576 bug 2)', () => {
+    // `ops` was missing from DIR_PATTERN, so [[ops/...]] fell through to
+    // the generic 2c pass (needsResolution) instead of being a real ref.
+    const refs = extractEntityRefs('Deployed via [[ops/services/pointer-agent]].');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('ops/services/pointer-agent');
+    expect(refs[0].needsResolution).toBeUndefined();
+  });
+
   test('skips qualified-syntax tokens (those belong to 2a)', () => {
     // [[wiki:topics/ai]] looks like 2a's qualified shape — even though
     // it wouldn't satisfy DIR_PATTERN, 2c must not claim it either
@@ -1067,6 +1076,15 @@ describe('makeResolver — fallback chain', () => {
       'notes/struktura',
       'projects/struktura',
     ]);
+  });
+
+  test('resolveBasenameMatches: path-style ref falls back to the tail (issue #2576 bug 2)', async () => {
+    // normalizeBasename strips slashes, so `runbooks/2026-05-01-pointer-agent`
+    // used to normalize to a garbage key that never hit the tail-keyed index.
+    const engine = makeFakeEngineWithSlugs(['ops/changes/2026-05-01-pointer-agent']);
+    const r = makeResolver(engine);
+    expect(await r.resolveBasenameMatches!('runbooks/2026-05-01-pointer-agent'))
+      .toEqual(['ops/changes/2026-05-01-pointer-agent']);
   });
 
   test('resolveBasenameMatches: case-insensitive fallback', async () => {
