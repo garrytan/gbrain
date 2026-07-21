@@ -38,6 +38,7 @@ import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
+import { registerCleanup } from '../core/process-cleanup.ts';
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -433,6 +434,37 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   let stopping = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
 
+  // #1872: graceful engine shutdown. On PGLite the cycle steps run INLINE in
+  // this process, so a hard `process.exit` mid-write (systemctl stop →
+  // SIGTERM) kills WASM Postgres with the WAL dirty and can corrupt the
+  // brain. Two exit paths must both close the engine:
+  //   - autopilot's own shutdown() below (owns SIGINT + internal stops like
+  //     max_crashes / cycle-failure-cap), and
+  //   - process-cleanup's SIGTERM handler (installed at cli.ts module load;
+  //     it runs the cleanup registry with a 3s deadline and then exits) —
+  //     which is why closeEngine is ALSO registered there.
+  // closeEngine aborts the in-flight inline cycle (runCycle checks the
+  // signal between phases and threads it into phase sub-work), gives it a
+  // short bounded window to wind down, then disconnects. PGLite's
+  // disconnect() drains the pending query and checkpoints before closing;
+  // a second call is a no-op (disconnect snapshots + nulls the handle), so
+  // both paths firing is safe.
+  const shutdownAbort = new AbortController();
+  let inflightInlineCycle: Promise<unknown> | null = null;
+  const closeEngine = async () => {
+    shutdownAbort.abort(new Error('autopilot shutdown'));
+    if (inflightInlineCycle) {
+      // ponytail: 2s cap keeps us inside process-cleanup's 3s deadline; a
+      // between-phase abort resolves instantly, a mid-phase one may not.
+      await Promise.race([
+        inflightInlineCycle.catch(() => { /* cycle errors already logged by the loop */ }),
+        new Promise((r) => setTimeout(r, 2_000)),
+      ]);
+    }
+    try { await engine.disconnect(); } catch { /* best-effort */ }
+  };
+  const deregisterEngineClose = registerCleanup('autopilot-engine-close', closeEngine);
+
   if (spawnManagedWorker) {
     const cliPath = resolveGbrainCliPath();
     // Cgroup-aware auto-sized RSS watchdog cap (issue #1678). The old flat
@@ -520,6 +552,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         childSupervisor.killChild('SIGKILL');
       }
     }
+    // #1872: abort the in-flight inline cycle and close the engine BEFORE
+    // process.exit — a hard exit mid-write corrupts PGLite's WASM Postgres.
+    await closeEngine();
+    deregisterEngineClose();
     try { unlinkSync(lockPath); } catch { /* already gone */ }
     process.exit(0);
   };
@@ -1008,16 +1044,21 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // path's phase set). Now both converge on the same primitive.
       try {
         const { runCycle } = await import('../core/cycle.ts');
-        const report = await runCycle(engine, {
+        // #1872: track the promise so closeEngine can drain it on shutdown,
+        // and pass the abort signal so the cycle winds down between phases.
+        const cyclePromise = runCycle(engine, {
           brainDir: repoPath,
           // Autopilot daemon path: pulls by default (matches
           // pre-v0.17 autopilot behavior). CLI dream defaults false
           // for cron safety; that choice is scoped to dream only.
           pull: true,
+          signal: shutdownAbort.signal,
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
           },
         });
+        inflightInlineCycle = cyclePromise;
+        const report = await cyclePromise.finally(() => { inflightInlineCycle = null; });
         // Only 'failed' (every attempted phase failed) trips the autopilot
         // circuit breaker. 'partial' means at least one phase warned or
         // failed while others ran — that's a soft signal, not a fatal
