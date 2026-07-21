@@ -83,6 +83,14 @@ const SYNTHESIS_OUTPUT_TYPES = new Set<string>(['atom', 'concept']);
 
 const PAGE_DISCOVERY_BUDGET = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
+// Source pages whose frontmatter declares a `raw` payload pointer hold raw
+// import data, not extractable prose. Extraction on them yields zero atoms,
+// so no atom row is ever written and they re-enter discovery + the doctor
+// backlog count on every cycle — a permanent no-progress loop. Shared by
+// discoverExtractablePages and countExtractAtomsBacklog so the phase and the
+// doctor check can't drift.
+const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
+  `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
 
 /**
  * Pure allowlist policy: the legacy floor UNION the pack's `extractable: true`
@@ -207,6 +215,10 @@ interface DiscoveredPage {
  *      participate in the NOT EXISTS check anyway.
  *   #4 dream_generated exclusion — prevents the phase from chewing
  *      its own output (e.g. dream-generated originals).
+ *   #5 raw source-holder exclusion — source pages that only point at a raw
+ *      import payload are not extractable prose; counting them creates a
+ *      permanent backlog/no-progress loop (see
+ *      RAW_SOURCE_HOLDER_EXCLUSION_SQL).
  */
 export async function discoverExtractablePages(
   engine: BrainEngine,
@@ -225,6 +237,7 @@ export async function discoverExtractablePages(
       AND p.content_hash IS NOT NULL
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
@@ -297,6 +310,7 @@ export async function countExtractAtomsBacklog(
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -310,6 +324,7 @@ export async function countExtractAtomsBacklog(
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $2
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
