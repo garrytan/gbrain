@@ -10,6 +10,7 @@ import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath,
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { runInitEmbedCheck } from '../core/init-embed-check.ts';
+import { effectiveDefaultDims } from '../core/embedding-dim-check.ts';
 
 export async function runInit(args: string[]) {
   // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
@@ -246,7 +247,7 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       process.exit(1);
     }
     out.embedding_model = `${shorthand}:${firstModel}`;
-    out.embedding_dimensions = recipe.touchpoints.embedding!.default_dims;
+    out.embedding_dimensions = effectiveDefaultDims(recipe.touchpoints.embedding!, firstModel);
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -271,7 +272,11 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       process.exit(1);
     }
     if (recipe?.touchpoints.embedding?.default_dims) {
-      out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
+      // #2170: resolve the SELECTED model's native width (e.g. ollama:bge-m3 →
+      // 1024), not the provider-wide default_dims, so the schema isn't sized
+      // wrong when no --embedding-dimensions was passed.
+      const modelId = out.embedding_model.slice(providerId.length + 1);
+      out.embedding_dimensions = effectiveDefaultDims(recipe.touchpoints.embedding, modelId);
     }
   }
 
@@ -436,7 +441,7 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
         await import('../core/ai/defaults.ts');
       const dims = fullModel === DEFAULT_EMBEDDING_MODEL
         ? DEFAULT_EMBEDDING_DIMENSIONS
-        : tp.default_dims;
+        : effectiveDefaultDims(tp, model);
       out.embedding_model = fullModel;
       out.embedding_dimensions = dims;
       console.error(
