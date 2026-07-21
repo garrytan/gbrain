@@ -49,7 +49,7 @@ import {
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
-import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
+import { executeToolWithTimeoutAndRetry, toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
 import { randomUUIDv7 } from 'bun';
@@ -419,8 +419,15 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           }
           await persistToolExecPending(engine, ctx.id, last.message_idx, use.id, use.name, use.input);
           try {
-            const output = await toolDef.execute(use.input, {
-              engine, jobId: ctx.id, remote: true, signal: ctx.signal,
+            const output = await executeToolWithTimeoutAndRetry({
+              toolName: use.name,
+              baseSignal: mergeSignals(ctx.signal, ctx.shutdownSignal),
+              timeoutMs: subagentToolTimeoutMs(),
+              maxAttempts: subagentToolMaxAttempts(),
+              idempotent: toolDef.idempotent === true,
+              execute: signal => toolDef.execute(use.input, {
+                engine, jobId: ctx.id, remote: true, signal,
+              }),
             });
             await persistToolExecComplete(engine, ctx.id, use.id, output);
             synthesizedResults.push({
@@ -732,11 +739,26 @@ export function makeSubagentHandler(deps: SubagentDeps) {
 
         const toolStart = Date.now();
         try {
-          const output = await toolDef.execute(use.input, {
-            engine,
-            jobId: ctx.id,
-            remote: true,
-            signal: ctx.signal,
+          const output = await executeToolWithTimeoutAndRetry({
+            toolName,
+            baseSignal: mergeSignals(ctx.signal, ctx.shutdownSignal),
+            timeoutMs: subagentToolTimeoutMs(),
+            maxAttempts: subagentToolMaxAttempts(),
+            idempotent: toolDef.idempotent === true,
+            execute: signal => toolDef.execute(use.input, {
+              engine,
+              jobId: ctx.id,
+              remote: true,
+              signal,
+            }),
+            onRetry: (attempt, error) => logSubagentHeartbeat({
+              job_id: ctx.id,
+              event: 'tool_retry',
+              turn_idx: turnIdx,
+              tool_name: toolName,
+              attempt,
+              error: error instanceof Error ? error.message : String(error),
+            }),
           });
           await persistToolExecComplete(engine, ctx.id, use.id, output);
           logSubagentHeartbeat({
@@ -1492,6 +1514,21 @@ async function persistToolExecFailed(
 }
 
 // ── Internal: helpers ───────────────────────────────────────
+
+/** Per-tool wall-clock timeout for the legacy Anthropic path. Read at call
+ * time (not module load) so operators can tune it per worker restart. Same
+ * env vars as the gateway toolLoop defaults. */
+function subagentToolTimeoutMs(): number {
+  const raw = process.env.GBRAIN_SUBAGENT_TOOL_TIMEOUT_MS;
+  const n = raw === undefined ? 60_000 : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 60_000;
+}
+
+function subagentToolMaxAttempts(): number {
+  const raw = process.env.GBRAIN_SUBAGENT_TOOL_MAX_ATTEMPTS;
+  const n = raw === undefined ? 2 : Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;
+}
 
 function asStringIfNotObject(value: unknown): string {
   if (typeof value === 'string') return value;

@@ -80,6 +80,20 @@ const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_0
 const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
 /** multimodal per request. */
 const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
+/** Per tool execution inside the tool loop. A hung DB/pooler/client call must
+ * settle as a failed tool result instead of squatting a worker slot until the
+ * job's wall-clock timeout expires. */
+const AI_TOOL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_SUBAGENT_TOOL_TIMEOUT_MS', 60_000);
+/** Max attempts for idempotent transient/timeout tool failures. A COUNT, not a
+ * timeout — parsed by its own resolver, not resolveAiTimeoutMs. */
+const AI_TOOL_MAX_ATTEMPTS = resolveAiCount('GBRAIN_SUBAGENT_TOOL_MAX_ATTEMPTS', 2);
+
+function resolveAiCount(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
 
 /**
  * Compose a caller signal with a default wall-clock timeout. When the caller
@@ -3260,6 +3274,10 @@ export interface ToolLoopOpts {
   abortSignal?: AbortSignal;
   /** Apply Anthropic cache_control to system + last tool. Silently ignored elsewhere. */
   cacheSystem?: boolean;
+  /** Per-tool wall-clock timeout. Defaults to GBRAIN_SUBAGENT_TOOL_TIMEOUT_MS or 60s. */
+  toolTimeoutMs?: number;
+  /** Max attempts for idempotent transient/timeout tool failures. Defaults to GBRAIN_SUBAGENT_TOOL_MAX_ATTEMPTS or 2. */
+  toolMaxAttempts?: number;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -3334,6 +3352,8 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
   const maxTokens = opts.maxTokens ?? defaultMaxOutputTokens(opts.model ?? getChatModel());
   const handlers = opts.toolHandlers;
+  const toolTimeoutMs = opts.toolTimeoutMs ?? AI_TOOL_TIMEOUT_MS;
+  const toolMaxAttempts = Math.max(1, Math.floor(opts.toolMaxAttempts ?? AI_TOOL_MAX_ATTEMPTS));
   const totalUsage: ChatResult['usage'] = {
     input_tokens: 0,
     output_tokens: 0,
@@ -3492,10 +3512,25 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         );
       }
 
-      // Step 3: execute (side effect).
+      // Step 3: execute (side effect). Bound every call: DB/pooler/client
+      // hangs must settle as failed tool results instead of squatting a worker
+      // slot until the whole job timeout expires. Only idempotent tools retry.
       opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
       try {
-        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+        const output = await executeToolWithTimeoutAndRetry({
+          toolName: call.toolName,
+          baseSignal: opts.abortSignal,
+          timeoutMs: toolTimeoutMs,
+          maxAttempts: toolMaxAttempts,
+          idempotent: handler.idempotent === true,
+          execute: signal => handler.execute(call.input, signal),
+          onRetry: (attempt, error) => opts.onHeartbeat?.('tool_retry', {
+            turn_idx: turnIdx,
+            tool_name: call.toolName,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        });
         // Step 4: settle complete.
         await opts.onToolCallComplete?.(gbrainToolUseId, output);
         toolResultBlocks.push({
@@ -3536,6 +3571,110 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   }
 
   return { finalText, totalTurns: turnIdx, totalUsage, stopReason, messages };
+}
+
+// ---- Per-tool timeout + retry (subagent tool loop) ----
+
+/** Thrown when a single tool execution exceeds its wall-clock timeout. */
+export class ToolCallTimeoutError extends Error {
+  constructor(public toolName: string, public timeoutMs: number) {
+    super(`tool "${toolName}" timed out after ${timeoutMs}ms`);
+    this.name = 'ToolCallTimeoutError';
+  }
+}
+
+export interface ExecuteToolWithTimeoutAndRetryOpts {
+  toolName: string;
+  /** Caller abort (job cancel / worker shutdown). Composed with the per-attempt timeout. */
+  baseSignal?: AbortSignal;
+  /** Per-attempt wall-clock timeout in ms. */
+  timeoutMs: number;
+  /** Total attempts allowed for idempotent tools; non-idempotent tools always run once. */
+  maxAttempts: number;
+  idempotent: boolean;
+  execute: (signal: AbortSignal) => Promise<unknown>;
+  /** Fires before each retry with the 1-based attempt number about to run. */
+  onRetry?: (attempt: number, error: unknown) => void;
+}
+
+/**
+ * Run one tool call bounded by a wall-clock timeout, retrying transient
+ * failures (timeouts + connection-class errors) for IDEMPOTENT tools only.
+ * The timeout wins even when the tool ignores its abort signal — the race
+ * settles and the loop feeds a failed tool result back to the model instead
+ * of wedging the worker until the job-level timeout reaps it.
+ */
+export async function executeToolWithTimeoutAndRetry(
+  opts: ExecuteToolWithTimeoutAndRetryOpts,
+): Promise<unknown> {
+  const maxAttempts = opts.idempotent ? Math.max(1, opts.maxAttempts) : 1;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await executeSingleToolAttempt(opts);
+    } catch (err) {
+      lastErr = err;
+      if (opts.baseSignal?.aborted) throw err;
+      if (attempt >= maxAttempts || !isRetryableToolError(err)) throw err;
+      opts.onRetry?.(attempt + 1, err);
+      await abortableSleep(Math.min(1000 * attempt, 3000), opts.baseSignal);
+    }
+  }
+  throw lastErr;
+}
+
+async function executeSingleToolAttempt(opts: ExecuteToolWithTimeoutAndRetryOpts): Promise<unknown> {
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => {
+    timeoutController.abort(new ToolCallTimeoutError(opts.toolName, opts.timeoutMs));
+  }, opts.timeoutMs);
+  const signal = opts.baseSignal
+    ? AbortSignal.any([opts.baseSignal, timeoutController.signal])
+    : timeoutController.signal;
+
+  let abortListener: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    abortListener = () => {
+      const reason = signal.reason;
+      reject(reason instanceof Error ? reason : new Error('tool call aborted'));
+    };
+    if (signal.aborted) abortListener();
+    else signal.addEventListener('abort', abortListener, { once: true });
+  });
+
+  const workPromise = Promise.resolve().then(() => opts.execute(signal));
+  // Promise.race may settle via timeout first; keep the abandoned work's
+  // eventual rejection from becoming an unhandledRejection.
+  workPromise.catch(() => {});
+  try {
+    return await Promise.race([workPromise, abortPromise]);
+  } finally {
+    clearTimeout(timer);
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
+function isRetryableToolError(err: unknown): boolean {
+  if (err instanceof ToolCallTimeoutError) return true;
+  const name = err && typeof err === 'object' ? String((err as { name?: unknown }).name ?? '') : '';
+  if (name === 'TimeoutError') return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /CONNECT_TIMEOUT|connect timeout|Cannot connect|ECONNRESET|ECONNREFUSED|ETIMEDOUT|connection terminated|server closed the connection|pooler/i.test(message);
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ---- Reranker (v0.35.0.0+) ----

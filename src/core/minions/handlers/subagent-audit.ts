@@ -37,8 +37,10 @@ export interface SubagentHeartbeatEvent {
   ts: string;
   type: 'heartbeat';
   job_id: number;
-  event: 'llm_call_started' | 'llm_call_completed' | 'tool_called' | 'tool_result' | 'tool_failed';
+  event: 'llm_call_started' | 'llm_call_completed' | 'tool_called' | 'tool_result' | 'tool_failed' | 'tool_retry';
   turn_idx: number;
+  /** 1-based attempt number about to run, for tool_retry. */
+  attempt?: number;
   /** Tool name for tool_* events. Never the input — that may contain secrets. */
   tool_name?: string;
   /** ms elapsed for *_completed / tool_result / tool_failed. */
