@@ -136,6 +136,38 @@ describe('extractTimelineFromContent', () => {
     expect(entries).toHaveLength(1);
   });
 
+  it('does not split on hyphens inside markdown link targets', () => {
+    const content = `- **2025-03-18** | Referenced in [Pedro](../people/pedro-franceschi.md)`;
+    const entries = extractTimelineFromContent(content, 'companies/brex');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Referenced in [Pedro](../people/pedro-franceschi.md)');
+  });
+
+  it('does not split on spaced dashes inside link labels', () => {
+    const content = `- **2025-03-18** | Referenced in [Deals — Q1 Review](../deals/q1-review.md)`;
+    const entries = extractTimelineFromContent(content, 'companies/brex');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Referenced in [Deals — Q1 Review](../deals/q1-review.md)');
+  });
+
+  it('splits on the first spaced dash outside links', () => {
+    const content = `- **2025-03-18** | [Board notes](../meetings/2025-03-18-board.md) — Approved the hire`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('[Board notes](../meetings/2025-03-18-board.md)');
+    expect(entries[0].summary).toBe('Approved the hire');
+  });
+
+  it('keeps delimiterless bullet lines whole instead of dropping them', () => {
+    const content = `- **2025-03-18** | Imported from legacy tracker`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Imported from legacy tracker');
+  });
+
   it('extracts inline citation format entries', () => {
     const content = `Closed the seed round with fund-a leading. [Source: board meeting notes, 2025-04-02]`;
     const entries = extractTimelineFromContent(content, 'deals/acme-seed');
