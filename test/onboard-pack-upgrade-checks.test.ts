@@ -14,17 +14,33 @@ import {
 } from '../src/core/onboard/checks.ts';
 import { toOnboardRecommendation } from '../src/core/onboard/render.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
-import { _resetPackLocatorForTests } from '../src/core/schema-pack/load-active.ts';
+import {
+  __setPackLocatorForTests,
+  _resetPackLocatorForTests,
+} from '../src/core/schema-pack/load-active.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let engine: PGLiteEngine;
+let priorGbrainHome: string | undefined;
 
 beforeAll(async () => {
+  // #2469: the onboard checks now read the file-plane config via
+  // loadConfig(). Point GBRAIN_HOME at an empty temp dir so the host
+  // machine's real ~/.gbrain/config.json (schema_pack, etc.) can't leak
+  // into the default-behavior tests below.
+  priorGbrainHome = process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = mkdtempSync(join(tmpdir(), 'gbrain-onboard-home-'));
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
 });
 
 afterAll(async () => {
+  if (priorGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = priorGbrainHome;
   await engine.disconnect();
 });
 
@@ -97,6 +113,68 @@ describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
     const result = await checkTypeProliferation(engine);
     expect(result.check.status).toBe('warn');
     expect(result.check.message).toMatch(new RegExp(`${seedCount} distinct`));
+  });
+
+  it('resolves the pack from file-plane config.json schema_pack (tier 6, #2469)', async () => {
+    // A pack selected via `gbrain schema use` lives ONLY in
+    // ~/.gbrain/config.json. With cfg:null the check silently fell back to
+    // the default pack (declared≈15) and never flagged proliferation against
+    // the user's actual (smaller) pack.
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-onboard-'));
+    const packDir = join(home, 'packs');
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    mkdirSync(packDir, { recursive: true });
+    const packPath = join(packDir, 'pack.yaml');
+    writeFileSync(packPath, [
+      'api_version: gbrain-schema-pack-v1',
+      'name: tiny-file-plane',
+      'version: 1.0.0',
+      'description: ""',
+      'gbrain_min_version: 0.38.0',
+      'extends: null',
+      'borrow_from: []',
+      'page_types:',
+      '  - name: note',
+      '    primitive: entity',
+      '    path_prefixes:',
+      '      - notes/',
+      '    aliases: []',
+      '    extractable: false',
+      '    expert_routing: false',
+      '  - name: meeting',
+      '    primitive: entity',
+      '    path_prefixes:',
+      '      - meetings/',
+      '    aliases: []',
+      '    extractable: false',
+      '    expert_routing: false',
+      'link_types: []',
+      'frontmatter_links: []',
+      'takes_kinds:',
+      '  - fact',
+      '  - take',
+      '  - bet',
+      '  - hunch',
+      'enrichable_types: []',
+      'filing_rules: []',
+      '',
+    ].join('\n'), 'utf-8');
+    writeFileSync(
+      join(home, '.gbrain', 'config.json'),
+      JSON.stringify({ schema_pack: 'tiny-file-plane' }) + '\n',
+      'utf-8',
+    );
+    __setPackLocatorForTests((name) => (name === 'tiny-file-plane' ? packPath : null));
+
+    // 8 distinct types: fail against tiny-file-plane (declared 2 → fail >4),
+    // ok against the declared=15 fallback the old cfg:null path produced.
+    await seedPages(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((s) => `custom-${s}`));
+
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('fail');
+      expect(result.check.message).toContain('pack declares 2');
+    });
   });
 });
 

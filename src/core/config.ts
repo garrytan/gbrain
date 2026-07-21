@@ -865,6 +865,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync',
   'sync.repo_path',
   'sync.last_commit',
+  // Active schema pack (tier-4 DB plane via `gbrain config set schema_pack`;
+  // tier-6 file plane written by `gbrain schema use`). #2469.
+  'schema_pack',
   // Gateway-native subagent loop toggle (routes subagent jobs through the
   // provider-agnostic gateway.toolLoop for non-Anthropic providers). The
   // subagent handler's error message tells users to `config set` this, so it
@@ -930,6 +933,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'emotional_weight.user_holder',
   // Cycle phase config
   'cycle.grade_takes.write_gstack_learnings',
+  // Doctor cycle-freshness tuning (#2505): DB-plane thresholds + source
+  // scoping for nightly-cadence brains. Env vars win over these keys.
+  'doctor.cycle_freshness.warn_hours',
+  'doctor.cycle_freshness.fail_hours',
+  'doctor.cycle_freshness.source_allowlist',
+  'doctor.cycle_freshness.source_ignorelist',
   // Content sanity (v0.41)
   'content_sanity.bytes_warn',
   'content_sanity.bytes_block',

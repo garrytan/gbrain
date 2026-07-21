@@ -121,4 +121,104 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.status).toBe('ok');
     expect(result.message).toMatch(/No federated sources/);
   });
+
+  // #2505 — DB-plane thresholds + source scoping for nightly-cadence brains.
+
+  test('DB-configured thresholds support nightly cadence with grace', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('nightly-fresh', agoH(29));
+    await seed('missed-one-night', agoH(36));
+    await engine.setConfig('doctor.cycle_freshness.warn_hours', '30');
+    await engine.setConfig('doctor.cycle_freshness.fail_hours', '48');
+
+    const result = await checkCycleFreshness(engine, { nowMs: NOW, env: {} as NodeJS.ProcessEnv });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/missed-one-night/);
+    expect(result.message).not.toMatch(/nightly-fresh/);
+  });
+
+  test('env thresholds override DB-configured thresholds', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('env-overrides-db', agoH(36));
+    await engine.setConfig('doctor.cycle_freshness.warn_hours', '30');
+    await engine.setConfig('doctor.cycle_freshness.fail_hours', '48');
+
+    const result = await checkCycleFreshness(engine, {
+      nowMs: NOW,
+      env: {
+        GBRAIN_CYCLE_FRESHNESS_WARN_HOURS: '6',
+        GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS: '24',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toMatch(/env-overrides-db/);
+  });
+
+  test('DB source allowlist limits the check to intentionally dreamed sources', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('ops-brain', agoH(1));
+    await seed('reference-brain', undefined);
+    await engine.setConfig('doctor.cycle_freshness.source_allowlist', 'ops-brain');
+
+    const result = await checkCycleFreshness(engine, { nowMs: NOW, env: {} as NodeJS.ProcessEnv });
+
+    expect(result.status).toBe('ok');
+    expect(result.message).toMatch(/1\/2 source\(s\) checked/);
+    expect(result.details).toMatchObject({
+      checked_source_count: 1,
+      skipped_source_count: 1,
+      source_allowlist: ['ops-brain'],
+    });
+  });
+
+  test('env allowlist overrides DB allowlist', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('env-scoped', agoH(1));
+    await seed('never-cycled', undefined);
+    await engine.setConfig('doctor.cycle_freshness.source_allowlist', 'never-cycled');
+
+    const result = await checkCycleFreshness(engine, {
+      nowMs: NOW,
+      env: { GBRAIN_CYCLE_FRESHNESS_SOURCE_ALLOWLIST: 'env-scoped' } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.details).toMatchObject({
+      checked_source_count: 1,
+      skipped_source_count: 1,
+      source_allowlist: ['env-scoped'],
+    });
+  });
+
+  test('source ignorelist can suppress intentionally excluded stale sources', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('fresh-operating', agoH(1));
+    await seed('excluded-reference', undefined);
+    await engine.setConfig('doctor.cycle_freshness.source_ignorelist', 'excluded-reference');
+
+    const result = await checkCycleFreshness(engine, { nowMs: NOW, env: {} as NodeJS.ProcessEnv });
+
+    expect(result.status).toBe('ok');
+    expect(result.details).toMatchObject({
+      checked_source_count: 1,
+      skipped_source_count: 1,
+      source_ignorelist: ['excluded-reference'],
+    });
+  });
+
+  test('invalid source scope returns warn instead of silently hiding sources', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('fresh', agoH(1));
+
+    const result = await checkCycleFreshness(engine, {
+      nowMs: NOW,
+      env: { GBRAIN_CYCLE_FRESHNESS_SOURCE_ALLOWLIST: 'fresh,bad/source' } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/Invalid cycle_freshness source scope/);
+    expect(result.message).toMatch(/bad\/source/);
+  });
 });
