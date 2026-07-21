@@ -36,7 +36,7 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
+  isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
   type UnresolvedFrontmatterRef, type LinkCandidate,
@@ -63,6 +63,7 @@ import { createHash } from 'crypto';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted } from '../core/abort-check.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
+import { ensureWellFormed } from '../core/text-safe.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -227,15 +228,15 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
  * (containing ://) are always skipped. For wikilinks, the .md suffix is added
  * if absent and section anchors (#heading) are stripped.
  */
-export function extractMarkdownLinks(content: string): { name: string; relTarget: string }[] {
-  const results: { name: string; relTarget: string }[] = [];
+export function extractMarkdownLinks(content: string): { name: string; relTarget: string; index: number }[] {
+  const results: { name: string; relTarget: string; index: number }[] = [];
 
   const mdPattern = /\[([^\]]+)\]\(([^)]+\.md)\)/g;
   let match;
   while ((match = mdPattern.exec(content)) !== null) {
     const target = match[2];
     if (target.includes('://')) continue;
-    results.push({ name: match[1], relTarget: target });
+    results.push({ name: match[1], relTarget: target, index: match.index });
   }
 
   const wikiPattern = /\[\[([^|\]]+?)(?:\|[^\]]*?)?\]\]/g;
@@ -248,7 +249,7 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
     const relTarget = pagePath.endsWith('.md') ? pagePath : pagePath + '.md';
     const pipeIdx = match[0].indexOf('|');
     const displayName = pipeIdx >= 0 ? match[0].slice(pipeIdx + 1, -2).trim() : rawPath;
-    results.push({ name: displayName, relTarget });
+    results.push({ name: displayName, relTarget, index: match.index });
   }
 
   return results;
@@ -332,49 +333,21 @@ export function resolveSlugAll(
   return resolveBasenameMatchesFromSlugs(basename, allSlugs);
 }
 
-/**
- * Directory-based link-type inference for the fs-source path.
- *
- * FS-source operates without a BrainEngine. We have paths, not pages. This
- * helper looks at source + target directories and returns a type aligned
- * with the canonical `inferLinkType` in link-extraction.ts (calibrated
- * verb-based inference for db-source).
- *
- * v0.13: aligned type names with link-extraction.ts (was: 'mention' →
- * 'mentions', 'attendee' → 'attended'). Diverged historically; the v0_13_0
- * migration normalizes any legacy rows on existing brains.
- */
-function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
-  const from = fromDir.split('/')[0];
-  const to = toDir.split('/')[0];
-  if (from === 'people' && to === 'companies') {
-    if (Array.isArray(frontmatter?.founded)) return 'founded';
-    return 'works_at';
-  }
-  if (from === 'people' && to === 'deals') return 'involved_in';
-  if (from === 'deals' && to === 'companies') return 'deal_for';
-  if (from === 'meetings' && to === 'people') return 'attended';
-  return 'mentions';
-}
-
-/** Parse frontmatter using the project's gray-matter-based parser */
-function parseFrontmatterFromContent(content: string, relPath: string): Record<string, unknown> {
-  try {
-    const parsed = parseMarkdown(content, relPath);
-    return parsed.frontmatter;
-  } catch {
-    return {};
-  }
+function excerptForInference(s: string, idx: number, width: number): string {
+  const half = Math.floor(width / 2);
+  const start = Math.max(0, idx - half);
+  const end = Math.min(s.length, idx + half);
+  return ensureWellFormed(s.slice(start, end)).replace(/\s+/g, ' ').trim();
 }
 
 /**
  * Full link extraction from a single markdown file (FS-source path).
  *
- * Async (v0.13): uses the canonical `extractFrontmatterLinks` via a
- * synthetic resolver backed by the pre-loaded `allSlugs` Set. No DB,
- * no fuzzy match — FS-source resolves only when the dir-hint + slugify
- * of the frontmatter value hits an actual file path. That mirrors the
- * fs path's existing "exact match against disk" behavior.
+ * Async (v0.13): uses the canonical `extractPageLinks` via a synthetic
+ * resolver backed by the pre-loaded `allSlugs` Set. No DB, no fuzzy match —
+ * FS-source resolves only when the dir-hint + slugify of the frontmatter value
+ * hits an actual file path. That mirrors the fs path's existing "exact match
+ * against disk" behavior.
  */
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
@@ -383,18 +356,63 @@ export async function extractLinksFromFile(
   const links: ExtractedLink[] = [];
   const slug = pathToSlug(relPath);
   const fileDir = dirname(relPath);
-  const fm = parseFrontmatterFromContent(content, relPath);
+  const parsed = parseMarkdown(content, relPath);
+  const bodyContent = [parsed.compiled_truth, parsed.timeline].filter(Boolean).join('\n\n');
+  const frontmatterForLinks = { ...parsed.frontmatter, title: parsed.title };
   // Issue #972: globalBasename routes bare `[[name]]` wikilinks through
   // basename lookup against allSlugs when the ancestor walk fails. Off
   // by default for back-compat with the v0.10.1 ancestor-only behavior.
   const globalBasename = opts?.globalBasename ?? false;
+  const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+  const fsResolver = {
+    async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
+      if (!name) return null;
+      const trimmed = name.trim();
+      if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
+        return trimmed;
+      }
+      const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
+      for (const hint of hints) {
+        if (!hint) continue;
+        const candidate = `${hint}/${slugify(trimmed)}`;
+        if (allSlugs.has(candidate)) return candidate;
+      }
+      return null;
+    },
+    async resolveBasenameMatches(name: string): Promise<string[]> {
+      return resolveBasenameMatchesFromSlugs(name, allSlugs);
+    },
+  };
+
+  const seen = new Set<string>();
+  function pushLink(link: ExtractedLink) {
+    if (!allSlugs.has(link.from_slug) || !allSlugs.has(link.to_slug)) return;
+    const key = `${link.from_slug}::${link.to_slug}::${link.link_type}::${link.link_source ?? 'markdown'}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    links.push(link);
+  }
+
+  const extracted = await extractPageLinks(
+    slug, bodyContent, frontmatterForLinks, parsed.type, fsResolver,
+    { skipFrontmatter: !opts?.includeFrontmatter, globalBasename },
+  );
+  for (const c of extracted.candidates) {
+    pushLink({
+      from_slug: c.fromSlug ?? slug,
+      to_slug: c.targetSlug,
+      link_type: c.linkType,
+      context: c.context,
+      link_source: c.linkSource,
+    });
+  }
 
   // Issue #972 (codex [P2]): strip code fences before scanning so a
   // `[[name]]` inside a code block doesn't create an FS edge. Mirrors the
   // DB path, which goes through extractEntityRefs (which strips internally).
-  const scanContent = stripCodeBlocks(content);
+  const scanContent = stripCodeBlocks(bodyContent);
 
-  for (const { name, relTarget } of extractMarkdownLinks(scanContent)) {
+  for (const { name, relTarget, index } of extractMarkdownLinks(scanContent)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
     if (resolvedSlugs.length === 0) continue;
     // Single hit on the ancestor path → emit one edge with the inferred
@@ -409,57 +427,17 @@ export async function extractLinksFromFile(
       // Issue #972 (codex [P2]): drop a basename self-loop ([[own-tail]] on
       // its own page resolving back to itself).
       if (isBasename && target === slug) continue;
-      links.push({
+      const context = excerptForInference(scanContent, index, 240) || `markdown link: [${name}]`;
+      pushLink({
         from_slug: slug,
         to_slug: target,
         link_type: isBasename
           ? WIKILINK_BASENAME_LINK_TYPE
-          : inferTypeByDir(fileDir, dirname(target), fm),
-        context: isBasename
-          ? `wikilink (basename match): [${name}]`
-          : `markdown link: [${name}]`,
+          : inferLinkType(parsed.type, context, bodyContent, target, parsed.title),
+        context,
         // Issue #972: tag basename edges so the FS path matches DB/put_page
         // provenance and migration v112's widened CHECK is exercised here too.
         link_source: isBasename ? 'wikilink-resolved' : undefined,
-      });
-    }
-  }
-
-  if (opts?.includeFrontmatter) {
-    // Synthetic sync-ish resolver: only does step 1 (already a slug) and
-    // step 2 (dir-hint + slugify), backed by the Set of all known slugs.
-    const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
-    const fsResolver = {
-      async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
-        if (!name) return null;
-        const trimmed = name.trim();
-        if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
-          return trimmed;
-        }
-        const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
-        for (const hint of hints) {
-          if (!hint) continue;
-          const candidate = `${hint}/${slugify(trimmed)}`;
-          if (allSlugs.has(candidate)) return candidate;
-        }
-        return null;
-      },
-    };
-    // Guess the page type from its directory for field-map filtering.
-    const topDir = slug.split('/')[0];
-    const pageType = topDir === 'people' ? 'person'
-      : topDir === 'companies' ? 'company'
-      : topDir === 'deals' || topDir === 'deal' ? 'deal'
-      : topDir === 'meetings' ? 'meeting'
-      : 'concept';
-    const fm = parseFrontmatterFromContent(content, relPath);
-    const fmLinks = await extractFrontmatterLinks(slug, pageType as never, fm, fsResolver);
-    for (const c of fmLinks.candidates) {
-      links.push({
-        from_slug: c.fromSlug ?? slug,
-        to_slug: c.targetSlug,
-        link_type: c.linkType,
-        context: c.context,
       });
     }
   }
