@@ -27,6 +27,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { extractFrontmatterBlock } from './markdown.ts';
 
 export interface ManifestEntry {
   name: string;
@@ -47,9 +48,8 @@ export interface ManifestLoadResult {
 function parseSkillName(skillMdPath: string): string | null {
   try {
     const content = readFileSync(skillMdPath, 'utf-8');
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!fmMatch) return null;
-    const fm = fmMatch[1];
+    const fm = extractFrontmatterBlock(content);
+    if (fm === null) return null;
     // Match `name: foo` or `name: "foo"` or `name: 'foo'`
     const nameMatch = fm.match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
     if (!nameMatch) return null;

@@ -21,12 +21,15 @@ beforeEach(() => {
   origHome = process.env.HOME;
   origGbrainHome = process.env.GBRAIN_HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-prefs-test-'));
-  // preferences.ts's gbrainDir() returns `$HOME/.gbrain` when GBRAIN_HOME
-  // is unset. Test fixtures write to `$tmp/.gbrain/...`, so set HOME only
-  // and clear GBRAIN_HOME — setting GBRAIN_HOME would route prefs to $tmp
-  // directly (no .gbrain suffix), which doesn't match the fixture layout.
+  // Both gbrainDir() (preferences) and configDir() (config) now share the
+  // same contract via configDir(): GBRAIN_HOME is the parent dir, and they
+  // always append `.gbrain`. So setting GBRAIN_HOME=$tmp routes prefs to
+  // `$tmp/.gbrain/...`, matching the fixture layout used in this file.
+  //
+  // HOME alone is unreliable for isolation: os.homedir() reads USERPROFILE
+  // on Windows, ignoring HOME. GBRAIN_HOME is the platform-neutral hook.
   process.env.HOME = tmp;
-  delete process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = tmp;
 });
 
 afterEach(() => {
@@ -175,6 +178,40 @@ describe('appendCompletedMigration', () => {
     appendCompletedMigration({ version: '0.11.0', status: 'complete', ts: '2020-01-01T00:00:00Z' });
     const parsed = JSON.parse(readFileSync(preferencesPaths.completedJsonl(), 'utf-8').trim());
     expect(parsed.ts).toBe('2020-01-01T00:00:00Z');
+  });
+});
+
+describe('legacy GBRAIN_HOME path adoption', () => {
+  // Before gbrainDir() delegated to configDir(), a set GBRAIN_HOME meant
+  // preferences.json + migrations/completed.jsonl lived at $GBRAIN_HOME/...
+  // directly (no `.gbrain` suffix). The unification must not orphan those
+  // files — first access moves them to $GBRAIN_HOME/.gbrain/... .
+  test('adopts a legacy preferences.json on load', () => {
+    writeFileSync(join(tmp, 'preferences.json'), JSON.stringify({ minion_mode: 'off' }));
+    expect(loadPreferences()).toEqual({ minion_mode: 'off' });
+    expect(existsSync(join(tmp, '.gbrain', 'preferences.json'))).toBe(true);
+    expect(existsSync(join(tmp, 'preferences.json'))).toBe(false);
+  });
+
+  test('adopts a legacy migrations/completed.jsonl on load', () => {
+    mkdirSync(join(tmp, 'migrations'), { recursive: true });
+    writeFileSync(
+      join(tmp, 'migrations', 'completed.jsonl'),
+      JSON.stringify({ version: '0.21.0', status: 'complete' }) + '\n',
+    );
+    const entries = loadCompletedMigrations();
+    expect(entries.length).toBe(1);
+    expect(entries[0].version).toBe('0.21.0');
+    expect(existsSync(join(tmp, '.gbrain', 'migrations', 'completed.jsonl'))).toBe(true);
+  });
+
+  test('new-path file wins over a stale legacy file', () => {
+    mkdirSync(join(tmp, '.gbrain'), { recursive: true });
+    writeFileSync(join(tmp, '.gbrain', 'preferences.json'), JSON.stringify({ minion_mode: 'always' }));
+    writeFileSync(join(tmp, 'preferences.json'), JSON.stringify({ minion_mode: 'off' }));
+    expect(loadPreferences()).toEqual({ minion_mode: 'always' });
+    // Legacy file left untouched — never clobber the adopted copy.
+    expect(existsSync(join(tmp, 'preferences.json'))).toBe(true);
   });
 });
 
