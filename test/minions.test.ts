@@ -702,6 +702,32 @@ describe('MinionQueue: Prune', () => {
     const count = await queue.prune({ olderThan: new Date(Date.now() + 86400000) }); // future date = prune everything old enough
     expect(count).toBe(1); // only the cancelled one
   });
+
+  // PR #2282: `jobs prune --status` passes an explicit status subset through.
+  test('status filter prunes only the requested terminal statuses', async () => {
+    const cancelled = await queue.add('sync', {});
+    await queue.cancelJob(cancelled.id);
+    const dead = await queue.add('embed', {}, { max_attempts: 1 });
+    await queue.claim('tok1', 30000, 'default', ['embed']);
+    await queue.failJob(dead.id, 'tok1', 'boom', 'dead');
+
+    const count = await queue.prune({ olderThan: new Date(Date.now() + 86400000), status: ['dead'] });
+    expect(count).toBe(1); // only the dead one
+
+    const remaining = await queue.getJobs({ status: 'cancelled' });
+    expect(remaining.length).toBe(1);
+  });
+
+  // PR #2282: `--older-than 0d` = no age floor — olderThan of "now" deletes
+  // terminal jobs that finished moments ago.
+  test('olderThan now (0d semantics) prunes just-terminated jobs', async () => {
+    const job = await queue.add('sync', {});
+    await queue.cancelJob(job.id);
+    await new Promise(r => setTimeout(r, 5)); // ensure updated_at < now
+
+    const count = await queue.prune({ olderThan: new Date() });
+    expect(count).toBe(1);
+  });
 });
 
 // --- Stats (1 test) ---
