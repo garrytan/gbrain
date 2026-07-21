@@ -1,0 +1,107 @@
+/**
+ * #2098: thin-client routing dropped --source / GBRAIN_SOURCE / .gbrain-source.
+ *
+ * The local CLI path resolves source scope in makeContext (ctx.sourceId); the
+ * thin-client route short-circuits before that and sent params verbatim, so
+ * `gbrain query --source X` against a remote brain silently searched unscoped
+ * (the server op ignores the unknown `source` key).
+ *
+ * applyThinClientSourceScope runs the engine-free tiers (flag → env → dotfile)
+ * and maps the result onto the op's `source_id` wire param. These tests fail
+ * without the fix (params.source_id stays undefined / params.source leaks).
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { applyThinClientSourceScope, parseOpArgs } from '../src/cli.ts';
+import { operationsByName } from '../src/core/operations.ts';
+
+const queryOp = operationsByName.query;
+
+let savedEnv: string | undefined;
+beforeEach(() => {
+  savedEnv = process.env.GBRAIN_SOURCE;
+  delete process.env.GBRAIN_SOURCE;
+});
+afterEach(() => {
+  if (savedEnv === undefined) delete process.env.GBRAIN_SOURCE;
+  else process.env.GBRAIN_SOURCE = savedEnv;
+});
+
+describe('applyThinClientSourceScope (#2098)', () => {
+  test('--source maps onto the query op wire param source_id', () => {
+    const params = parseOpArgs(queryOp, ['find things', '--source', 'wiki']);
+    expect(params.source).toBe('wiki'); // pre-fix state: wrong key
+    applyThinClientSourceScope(queryOp, params, '/');
+    expect(params.source_id).toBe('wiki');
+    expect('source' in params).toBe(false); // never leaks the unknown key
+  });
+
+  test('GBRAIN_SOURCE env tier fires when no flag is passed', () => {
+    process.env.GBRAIN_SOURCE = 'gstack';
+    const params = parseOpArgs(queryOp, ['find things']);
+    applyThinClientSourceScope(queryOp, params, '/');
+    expect(params.source_id).toBe('gstack');
+  });
+
+  test('.gbrain-source dotfile tier fires when flag and env are absent', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'gbrain-thin-scope-'));
+    try {
+      writeFileSync(join(tmp, '.gbrain-source'), 'essays\n');
+      const params = parseOpArgs(queryOp, ['find things']);
+      applyThinClientSourceScope(queryOp, params, tmp);
+      expect(params.source_id).toBe('essays');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit --source-id on the wire wins over ambient env scope', () => {
+    process.env.GBRAIN_SOURCE = 'gstack';
+    const params = parseOpArgs(queryOp, ['find things', '--source-id', 'wiki']);
+    applyThinClientSourceScope(queryOp, params, '/');
+    expect(params.source_id).toBe('wiki');
+  });
+
+  test('--source together with --source-id is rejected loudly', () => {
+    const params = parseOpArgs(queryOp, ['q', '--source', 'a', '--source-id', 'b']);
+    expect(() => applyThinClientSourceScope(queryOp, params, '/')).toThrow(/not both/);
+  });
+
+  test('invalid --source value is rejected loudly', () => {
+    const params = parseOpArgs(queryOp, ['q', '--source', 'Bad_Value!']);
+    expect(() => applyThinClientSourceScope(queryOp, params, '/')).toThrow(/Invalid --source/);
+  });
+
+  test('--source on an op with no source_id wire param errors instead of silently dropping', () => {
+    const op = operationsByName.add_tag;
+    expect('source_id' in op.params).toBe(false);
+    const params = { slug: 'x', tag: 'y', source: 'wiki' };
+    expect(() => applyThinClientSourceScope(op, params, '/')).toThrow(/--source/);
+  });
+
+  test('ambient env scope on an op with no source_id wire param is ignored (no throw)', () => {
+    process.env.GBRAIN_SOURCE = 'wiki';
+    const op = operationsByName.add_tag;
+    const params: Record<string, unknown> = { slug: 'x', tag: 'y' };
+    applyThinClientSourceScope(op, params, '/');
+    expect(params.source_id).toBeUndefined();
+  });
+
+  test('ops that declare their OWN source param are left untouched', () => {
+    const op = operationsByName.put_raw_data;
+    expect('source' in op.params).toBe(true);
+    const params: Record<string, unknown> = { slug: 'x', source: 'crustdata', data: {} };
+    applyThinClientSourceScope(op, params, '/');
+    expect(params.source).toBe('crustdata');
+    expect(params.source_id).toBeUndefined();
+  });
+
+  test('no scope from any tier leaves params unchanged', () => {
+    const params = parseOpArgs(queryOp, ['find things']);
+    applyThinClientSourceScope(queryOp, params, '/');
+    expect(params.source_id).toBeUndefined();
+  });
+});
