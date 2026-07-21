@@ -888,7 +888,9 @@ export function formatResult(opName: string, result: unknown): string {
         return formatResultsExplain(results);
       }
       return results.map(r =>
-        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
+        // #468: NaN.toFixed(4) is the truthy string 'NaN', so `?.toFixed() || '?'`
+        // printed '[NaN]'. Gate on Number.isFinite instead.
+        `[${Number.isFinite(r.score) ? r.score.toFixed(4) : '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
     }
     case 'get_tags': {

@@ -528,6 +528,56 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   };
 }
 
+/**
+ * #550 — pages(source_id, slug) unique-index presence.
+ *
+ * `putPage` in BOTH engines upserts via `ON CONFLICT (source_id, slug)`, which
+ * needs a non-partial unique index whose column set is exactly
+ * {source_id, slug} as its arbiter. Migration v23 adds `pages_source_slug_key`
+ * by NAME, so a brain whose constraint was dropped/renamed by an external
+ * migration is stamped past v23 with silently broken writes ("no unique or
+ * exclusion constraint matching the ON CONFLICT specification") that the
+ * version counter can't see. Match by COLUMNS, not name — any conforming
+ * unique index satisfies the arbiter (mirror of the #2038 timeline_dedup
+ * shape check).
+ */
+export async function checkPagesSlugUniqueIndex(engine: BrainEngine): Promise<Check> {
+  const name = 'pages_slug_unique_index';
+  try {
+    const rows = await engine.executeRaw<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes WHERE tablename = 'pages'`,
+    );
+    const ok = rows.some(r => {
+      const def = r.indexdef;
+      // Partial indexes can't arbitrate a bare ON CONFLICT (source_id, slug).
+      if (!/^CREATE UNIQUE INDEX/i.test(def) || /\bWHERE\b/i.test(def)) return false;
+      const open = def.lastIndexOf('(');
+      const close = def.lastIndexOf(')');
+      if (open < 0 || close < open) return false;
+      const cols = def
+        .slice(open + 1, close)
+        .split(',')
+        .map(c => c.trim().split(/\s+/)[0]) // drop DESC / opclass suffixes
+        .filter(Boolean)
+        .sort();
+      return cols.length === 2 && cols[0] === 'slug' && cols[1] === 'source_id';
+    });
+    if (ok) {
+      return { name, status: 'ok', message: 'pages has a unique index on (source_id, slug)' };
+    }
+    return {
+      name,
+      status: 'fail',
+      message:
+        'No unique index on pages(source_id, slug) — every put_page write fails with ' +
+        '"no unique or exclusion constraint matching the ON CONFLICT specification" (#550). ' +
+        'Run `gbrain apply-migrations --force-schema` to restore it.',
+    };
+  } catch {
+    return { name, status: 'warn', message: 'Could not check pages(source_id, slug) unique index' };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -601,6 +651,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   } catch {
     checks.push({ name: 'timeline_dedup_index', status: 'warn', message: 'Could not check idx_timeline_dedup shape' });
   }
+
+  // 2c. #550: pages(source_id, slug) unique index — putPage's ON CONFLICT arbiter.
+  checks.push(await checkPagesSlugUniqueIndex(engine));
 
   // v0.42.x — Life Chronicle (#2390): orphaned event projections. Reads already
   // hide projections whose event page is soft-deleted (read-time correctness);
@@ -5248,6 +5301,10 @@ export async function buildChecks(
   // 4. pgvector extension
   progress.heartbeat('pgvector');
   checks.push(await pgvectorCheck(engine));
+
+  // 4a. #550: pages(source_id, slug) unique index — putPage's ON CONFLICT arbiter.
+  progress.heartbeat('pages_slug_unique_index');
+  checks.push(await checkPagesSlugUniqueIndex(engine));
 
   // 4b. PgBouncer / prepared-statement compatibility.
   // URL-only inspection — no DB roundtrip — so this is cheap and works
