@@ -2059,6 +2059,8 @@ export async function registerBuiltinHandlers(
         sourceId,
         windowSeconds,
         brainDir: repoPath,
+        // #2750: worker cancel/timeout/lock-loss propagates into the drain.
+        abortSignal: job.signal,
       });
     } catch (e) {
       if (e instanceof LockUnavailableError) {

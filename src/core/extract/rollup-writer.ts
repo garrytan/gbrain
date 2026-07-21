@@ -70,6 +70,7 @@ function today(): string {
 export async function upsertExtractRollup(
   engine: BrainEngine,
   input: RollupUpsertInput,
+  opts?: { signal?: AbortSignal },
 ): Promise<{ ok: boolean; error?: string }> {
   const day = input.day ?? today();
   const cost = input.cost_delta ?? 0;
@@ -96,9 +97,12 @@ export async function upsertExtractRollup(
          rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
          updated_at             = now()`,
       [input.kind, input.source_id, day, cost, halts, evalFails, evalPasses, completed, failures],
+      { signal: opts?.signal },
     );
     return { ok: true };
   } catch (err) {
+    // Signal-bounded callers get the abort surfaced, not a swallowed `ok:false`.
+    if (opts?.signal?.aborted) throw err;
     const msg = (err as Error).message || String(err);
     // Don't spam: log once per process per (kind, day) error class.
     rollupErrorLogOnce(input.kind, day, msg);

@@ -187,6 +187,7 @@ function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unk
 export async function writeReceipt(
   engine: BrainEngine,
   input: ExtractReceiptInput,
+  opts?: { signal?: AbortSignal },
 ): Promise<{ slug: string; page: Page }> {
   const slug = receiptSlug(input);
   const title = `${input.kind} — ${input.round} — ${input.source_id}`;
@@ -201,7 +202,7 @@ export async function writeReceipt(
       compiled_truth,
       frontmatter,
     },
-    { sourceId: input.source_id },
+    { sourceId: input.source_id, signal: opts?.signal },
   );
 
   return { slug, page };
