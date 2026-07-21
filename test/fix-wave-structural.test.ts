@@ -78,6 +78,8 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
     // (under either name) from req.body. Pin the fallback pattern so the
     // PKCE-fix regression contract stays load-bearing.
     expect(src).toMatch(/req\.body[^;]*scopes\s*\?\?\s*[^;]*scope\b/);
+    expect(src).toMatch(/req\.body[^;]*source_id\s*\?\?\s*[^;]*sourceId\b/);
+    expect(src).toMatch(/req\.body[^;]*federated_read\s*\?\?\s*[^;]*federatedRead\b/);
     // v0.41.3 (T4 atomicity fix, codex F4): admin endpoint now validates
     // tokenEndpointAuthMethod via the shared validator and passes it to
     // registerClientManual as a positional arg. Pre-v0.41.3 the route did
@@ -87,6 +89,7 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
     // UPDATE block (the regex deliberately asserts the post-insert UPDATE
     // is GONE).
     expect(src).toMatch(/validateTokenEndpointAuthMethod\(tokenEndpointAuthMethod\)/);
+    expect(src).toMatch(/normalizeAdminClientSourceScope\(/);
     expect(src).toMatch(/registerClientManual\([^)]*validatedAuthMethod[^)]*\)/);
     // Regression guard: post-insert UPDATE flipping client_secret_hash to
     // NULL based on a runtime check is exactly the non-atomic pattern T4
@@ -265,5 +268,28 @@ describe('v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (struc
     const src = readFileSync('src/core/cycle.ts', 'utf8');
     expect(src).toMatch(/purgeStaleVolunteerEvents\(engine\)/);
     expect(src).toMatch(/purged_volunteer_events_count/);
+  });
+});
+
+describe('#1490 + #1036 — admin Register Agent form exposes source scope + redirect URIs', () => {
+  test('Agents.tsx RegisterModal sends source_id + federated_read in the POST body (#1490)', () => {
+    const src = readFileSync('admin/src/pages/Agents.tsx', 'utf8');
+    expect(src).toMatch(/source_id:\s*sourceId/);
+    expect(src).toMatch(/federated_read:\s*federatedRead/);
+    // The source list comes from the requireAdmin-gated endpoint, not a hardcoded 'default'.
+    expect(src).toMatch(/api\.sources\(\)/);
+  });
+
+  test('serve-http.ts serves /admin/api/sources behind requireAdmin (#1490)', () => {
+    const src = readFileSync('src/commands/serve-http.ts', 'utf8');
+    expect(src).toMatch(/app\.get\('\/admin\/api\/sources',\s*requireAdmin/);
+  });
+
+  test('Agents.tsx RegisterModal sends redirectUris + authorization_code grants when URIs are entered (#1036)', () => {
+    const src = readFileSync('admin/src/pages/Agents.tsx', 'utf8');
+    // One-per-line textarea split into an array...
+    expect(src).toMatch(/redirectUris\.split\('\\n'\)/);
+    // ...included in the body with the CLI's grant-type inference convention.
+    expect(src).toMatch(/redirectUris:\s*uris,\s*grantTypes:\s*\['authorization_code',\s*'refresh_token'\]/);
   });
 });

@@ -39,6 +39,7 @@ import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { isRetryableError } from '../core/retry-matcher.ts';
+import { normalizeAdminClientSourceScope } from '../core/admin-source-scope.ts';
 import {
   computeContentHash,
   validateIngestionEvent,
@@ -1086,6 +1087,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const oauthClients = await sql`
         SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
           c.grant_types, c.scope, c.created_at, c.token_ttl,
+          c.source_id, c.federated_read,
           CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
@@ -1095,6 +1097,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
           '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          null as source_id, null as federated_read,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
@@ -1102,6 +1105,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         FROM access_tokens a ORDER BY a.created_at DESC
       `;
       res.json([...oauthClients, ...legacyKeys]);
+    } catch (e) {
+      res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/sources', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const sources = await engine.listAllSources({ includeArchived: false });
+      const options = sources.map(s => ({ id: s.id, name: s.name }));
+      if (!options.some(s => s.id === 'default')) options.unshift({ id: 'default', name: 'default' });
+      res.json(options);
     } catch (e) {
       res.status(503).json({ error: 'service_unavailable' });
     }
@@ -1440,6 +1454,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // missing, empty) and rejects the rest with a structured 400.
       const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
       const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
+      const rawSourceId = (req.body as Record<string, unknown>).source_id ?? (req.body as Record<string, unknown>).sourceId;
+      const rawFederatedRead = (req.body as Record<string, unknown>).federated_read ?? (req.body as Record<string, unknown>).federatedRead;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       let scopeString: string;
       try {
@@ -1470,8 +1486,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         });
         return;
       }
+      let sourceScope: ReturnType<typeof normalizeAdminClientSourceScope>;
+      try {
+        const sources = await engine.listAllSources({ includeArchived: false });
+        sourceScope = normalizeAdminClientSourceScope(
+          rawSourceId,
+          rawFederatedRead,
+          sources.map(s => s.id),
+        );
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_source_scope',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
       const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+        name, grants, scopeString, uris, sourceScope.sourceId, sourceScope.federatedRead, validatedAuthMethod,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
