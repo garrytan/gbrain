@@ -73,4 +73,21 @@ describe('importFromContent embedding_signature stamping (F1)', () => {
     await importFromContent(engine, 'concepts/unstamped', '# Unstamped\n\nbody content.', { noEmbed: true });
     expect(await signatureOf('concepts/unstamped')).toBeNull();
   });
+
+  // #1717: content_chunks.model must record the model that produced the
+  // vector (the configured gateway model), not the engine's hardcoded
+  // default. The gateway here is configured to openai:text-embedding-3-large,
+  // which differs from DEFAULT_EMBEDDING_MODEL — so this fails without the
+  // import-path model stamping.
+  test('inline embed labels content_chunks.model with the configured model (#1717)', async () => {
+    await importFromContent(engine, 'concepts/labeled', '# Labeled\n\nsome body content to chunk and embed.', {});
+    const rows = await engine.executeRaw<{ model: string }>(
+      `SELECT cc.model FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+       WHERE p.slug = $1 AND p.source_id = 'default'`,
+      ['concepts/labeled'],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.model).toBe('openai:text-embedding-3-large');
+  });
 });

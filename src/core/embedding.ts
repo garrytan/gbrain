@@ -113,6 +113,21 @@ export async function embedBatch(
   return results;
 }
 
+/**
+ * Resolve the embedding model label (`provider:model`) to stamp onto
+ * `content_chunks.model`, so each chunk records the model that actually
+ * produced its vector instead of the engine's hardcoded default (#1717).
+ * Returns undefined if the gateway is unconfigured; callers then fall back
+ * to the chunk's existing model rather than mislabeling it.
+ */
+export function resolveEmbeddingModelLabel(): string | undefined {
+  try {
+    return gatewayGetModel();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Currently-configured embedding model (short form without provider prefix). */
 export function getEmbeddingModelName(): string {
   return gatewayGetModel().split(':').slice(1).join(':') || 'text-embedding-3-large';
