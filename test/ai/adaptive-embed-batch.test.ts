@@ -39,6 +39,8 @@ import {
   __getShrinkStateForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
+import { RECIPES } from '../../src/core/ai/recipes/index.ts';
+import type { Recipe } from '../../src/core/ai/types.ts';
 
 // The last test in this file leaves the gateway configured with a remote
 // provider + fake key and a REAL embed transport. Without a final reset,
@@ -90,6 +92,14 @@ function configureGoogle(): void {
     embedding_model: 'google:gemini-embedding-001',
     embedding_dimensions: 768,
     env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+  });
+}
+
+function configureDashscope(): void {
+  configureGateway({
+    embedding_model: 'dashscope:text-embedding-v3',
+    embedding_dimensions: 1024,
+    env: { DASHSCOPE_API_KEY: 'sk-fake' },
   });
 }
 
@@ -149,6 +159,27 @@ describe('splitByTokenBudget (pure helper)', () => {
     expect(splitByTokenBudget(texts, 96_000, 0)).toEqual(splitByTokenBudget(texts, 96_000, 4));
     expect(splitByTokenBudget(texts, 96_000, -1)).toEqual(splitByTokenBudget(texts, 96_000, 4));
   });
+
+  // #1199: count cap for providers that reject batches by input count.
+  test('max_batch_count flushes even when token budget has room', () => {
+    const texts = Array.from({ length: 25 }, (_, i) => `t${i}`);
+    const result = splitByTokenBudget(texts, 1_000_000, 4, 10);
+    expect(result.map(b => b.length)).toEqual([10, 10, 5]);
+    expect(result.flat()).toEqual(texts);
+  });
+
+  test('token budget still governs alongside max_batch_count', () => {
+    const texts = ['a'.repeat(50_000), 'b'.repeat(50_000), 'c'.repeat(50_000)];
+    const result = splitByTokenBudget(texts, 96_000, 1, 10);
+    expect(result).toHaveLength(3);
+  });
+
+  test('undefined / zero / negative max_batch_count is ignored', () => {
+    const texts = Array.from({ length: 25 }, () => 'x');
+    expect(splitByTokenBudget(texts, 1_000_000, 4, undefined)).toHaveLength(1);
+    expect(splitByTokenBudget(texts, 1_000_000, 4, 0)).toHaveLength(1);
+    expect(splitByTokenBudget(texts, 1_000_000, 4, -5)).toHaveLength(1);
+  });
 });
 
 describe('isTokenLimitError (pure helper)', () => {
@@ -177,6 +208,12 @@ describe('isTokenLimitError (pure helper)', () => {
 
   test('matches generic "max tokens per request" phrasing', () => {
     expect(isTokenLimitError(new Error('Exceeded 300000 max tokens per request'))).toBe(true);
+  });
+
+  test('matches DashScope batch-count error (#1199)', () => {
+    expect(isTokenLimitError(new Error(
+      'InvalidParameter: batch size is invalid, it should not be larger than 10.',
+    ))).toBe(true);
   });
 
   test('does not match unrelated errors', () => {
@@ -387,26 +424,92 @@ describe('shrink-on-miss adaptive cache', () => {
   });
 });
 
+// --------- 8. Pre-split count cap through public embed() (#1199 / #970) ---------
+
+describe('embed() pre-split honors max_batch_count', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  test('dashscope never dispatches more than 10 inputs per call (#1199)', async () => {
+    configureDashscope();
+    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1024));
+    __setEmbedTransportForTests(stub as any);
+
+    // 25 short texts fit trivially in the 8192-token budget; without the
+    // count cap they'd ship as ONE batch and DashScope would reject it.
+    const texts = Array.from({ length: 25 }, (_, i) => `short-${i}`);
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(25);
+    const callLengths = stub.mock.calls.map(([arg]) => (arg as { values: string[] }).values.length);
+    expect(Math.max(...callLengths)).toBeLessThanOrEqual(10);
+    expect(callLengths.reduce((a, b) => a + b, 0)).toBe(25);
+    // Order preserved across sub-batches.
+    expect((stub.mock.calls[0][0] as { values: string[] }).values[0]).toBe('short-0');
+  });
+
+  test('google pre-splits at 100 inputs per batchEmbedContents call (#970)', async () => {
+    configureGoogle();
+    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 250 }, (_, i) => `g${i}`);
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(250);
+    const callLengths = stub.mock.calls.map(([arg]) => (arg as { values: string[] }).values.length);
+    expect(callLengths).toEqual([100, 100, 50]);
+  });
+});
+
 // --------- 7. Startup warning (D9-B) ---------
 
 describe('startup warning for recipes missing max_batch_tokens', () => {
   beforeEach(() => resetGateway());
 
+  // #970 closed google's missing cap, so no registered recipe is capless
+  // anymore. Inject a synthetic capless recipe to keep the warning path
+  // covered for the NEXT recipe that forgets the field.
+  const caplessRecipe: Recipe = {
+    id: 'capless-test',
+    name: 'Capless Test Provider',
+    tier: 'openai-compat',
+    implementation: 'openai-compatible',
+    base_url_default: 'https://example.invalid/v1',
+    auth_env: { required: [] },
+    touchpoints: {
+      embedding: { models: ['capless-embed-1'], default_dims: 768 },
+    },
+  };
+
+  function configureCapless(): void {
+    configureGateway({
+      embedding_model: 'capless-test:capless-embed-1',
+      embedding_dimensions: 768,
+      env: {},
+    });
+  }
+
   test('configured missing-cap recipe warns once; unrelated recipes stay quiet', () => {
     const warnings: string[] = [];
     const original = console.warn;
     console.warn = (msg: string) => warnings.push(String(msg));
+    RECIPES.set(caplessRecipe.id, caplessRecipe);
     try {
       configureOpenAI();
       expect(warnings.length).toBe(0);
+      // #970 regression: google now declares max_batch_tokens → quiet.
       configureGoogle();
+      expect(warnings.length).toBe(0);
+      configureCapless();
       const firstCallCount = warnings.length;
       // Reconfigure: the warning should NOT re-fire for the same recipes
       // within one process (we already told the operator).
-      configureGoogle();
+      configureCapless();
       expect(warnings.length).toBe(firstCallCount);
     } finally {
       console.warn = original;
+      RECIPES.delete(caplessRecipe.id);
     }
 
     // The warning text should match the documented contract.
@@ -415,11 +518,12 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
     );
     expect(contractMatch.length).toBe(1);
 
-    // Voyage declares max_batch_tokens → suppressed. OpenAI is the
-    // canonical fast-path recipe → also suppressed by id. Both must be
-    // absent from the warnings.
+    // Voyage + google declare max_batch_tokens → suppressed. OpenAI is the
+    // canonical fast-path recipe → also suppressed by id. All must be
+    // absent from the warnings; only the synthetic capless recipe fires.
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
-    expect(warnings.find(w => w.includes('"google"'))).toBeDefined();
+    expect(warnings.find(w => w.includes('"google"'))).toBeUndefined();
+    expect(warnings.find(w => w.includes('"capless-test"'))).toBeDefined();
   });
 });

@@ -52,16 +52,7 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     }
   });
 
-  test('configureGateway warns for google only when google embedding is configured', () => {
-    warnSpy.mockClear();
-    resetGateway();
-    configureGateway({ env: {} });
-    let messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
-    expect(
-      messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
-      'google should not warn while OpenAI default is configured',
-    ).toBe(false);
-
+  test('configureGateway does NOT warn for google now that it declares batch caps (#970)', () => {
     warnSpy.mockClear();
     resetGateway();
     configureGateway({
@@ -69,11 +60,20 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
       embedding_dimensions: 768,
       env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
     });
-    messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
+    const messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
     expect(
       messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
-      'google should warn when configured because it has fixed-cap models',
-    ).toBe(true);
+      'google declares max_batch_tokens/max_batch_count since #970 — no warning',
+    ).toBe(false);
+  });
+
+  test('google recipe declares its derived batch caps (#970)', () => {
+    const e = getRecipe('google')!.touchpoints.embedding!;
+    // Count cap is the REAL Gemini limit (batchEmbedContents: 100 inputs);
+    // the token budget is derived (100 × 2048 per-input tokens), NOT the
+    // 2048 per-input limit — copying that verbatim would over-split 50×.
+    expect(e.max_batch_count).toBe(100);
+    expect(e.max_batch_tokens).toBe(204_800);
   });
 
   test('every recipe with empty models[] declares user_provided_models OR has openai-fast-path', () => {
