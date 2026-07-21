@@ -49,6 +49,15 @@ describe('T5 — gbrain search dispatch', () => {
     });
   });
 
+  test('`search "<freetext>" --json` emits a parseable result array', () => {
+    withHome((home) => {
+      const { stdout, stderr, status } = run(['search', 'zzz-no-such-page-xyz', '--json'], home);
+      expect(status).toBe(0);
+      expect(stderr).not.toContain('Unknown subcommand');
+      expect(JSON.parse(stdout)).toEqual([]);
+    });
+  });
+
   test('`search stats --json` routes to the dashboard', () => {
     withHome((home) => {
       const { stdout, status } = run(['search', 'stats', '--json'], home);
