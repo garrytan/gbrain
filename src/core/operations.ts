@@ -4,6 +4,7 @@
  */
 
 import { lstatSync, realpathSync } from 'fs';
+import { createHash } from 'crypto';
 import { resolve, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
@@ -2138,7 +2139,8 @@ const traverse_graph: Operation = {
 
 const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
-  description: 'Add timeline entry to a page',
+  description:
+    'Add timeline entry to a page. Inserts the structured timeline_entries row and write-throughs the matching markdown bullet into pages.timeline + the brain-repo .md (same contract as put_page / takes add).',
   params: {
     slug: { type: 'string', required: true },
     date: { type: 'string', required: true },
@@ -2168,13 +2170,91 @@ const add_timeline_entry: Operation = {
     }
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries
+    const slug = p.slug as string;
+    const summary = p.summary as string;
+    const source = (p.source as string) || '';
+    const detail = (p.detail as string) || '';
+    await ctx.engine.addTimelineEntry(slug, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries
       date,
-      source: (p.source as string) || '',
-      summary: p.summary as string,
-      detail: (p.detail as string) || '',
+      source,
+      summary,
+      detail,
     }, sourceOpts);
-    return { status: 'ok' };
+
+    // Markdown write-through (Minerva fork): mirror takes-add / put_page so the
+    // brain repo stays the system of record. Structured timeline_entries alone
+    // left git/markdown silently stale. Failures are non-fatal — the DB row is
+    // already durable; the next put_page/capture can reconcile.
+    let markdown: { written: boolean; path?: string; skipped?: string; error?: string } | undefined;
+    const isSandboxSubagent = ctx.viaSubagent === true
+      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
+    if (!isSandboxSubagent) {
+      try {
+        const page = await ctx.engine.getPage(slug, sourceOpts);
+        if (page) {
+          // Match TIMELINE_LINE_RE in link-extraction.ts so auto_timeline re-parse is idempotent.
+          let bullet = `- **${date}** | ${summary}`;
+          if (source) bullet += ` [Source: ${source}]`;
+          if (detail) {
+            const detailLines = detail.split(/\r?\n/).map((line) => `  ${line.trim()}`).filter((l) => l.trim().length > 0);
+            if (detailLines.length > 0) bullet += `\n${detailLines.join('\n')}`;
+          }
+          const existing = (page.timeline ?? '').trimEnd();
+          if (!existing.includes(bullet)) {
+            const nextTimeline = existing ? `${existing}\n${bullet}` : bullet;
+            const tags = await ctx.engine.getTags(slug, sourceOpts);
+            // Same content_hash shape as importFromContent so the next sync is a no-op.
+            const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
+              'captured_at',
+              'ingested_at',
+              'quarantine',
+              'content_flag',
+              'embed_skip',
+            ];
+            const stableFrontmatter: Record<string, unknown> = {
+              ...((page.frontmatter ?? {}) as Record<string, unknown>),
+            };
+            for (const k of HASH_EPHEMERAL_FRONTMATTER_KEYS) {
+              delete stableFrontmatter[k];
+            }
+            const contentHash = createHash('sha256')
+              .update(JSON.stringify({
+                title: page.title,
+                type: page.type,
+                compiled_truth: page.compiled_truth ?? '',
+                timeline: nextTimeline,
+                frontmatter: stableFrontmatter,
+                tags: [...tags].sort(),
+              }))
+              .digest('hex');
+            const sourceId = ctx.sourceId ?? 'default';
+            await ctx.engine.refreshPageBody(
+              slug,
+              sourceId,
+              page.compiled_truth ?? '',
+              nextTimeline,
+              contentHash,
+            );
+            markdown = await writePageThrough(ctx.engine, slug, {
+              sourceId,
+              logger: ctx.logger,
+            });
+          } else {
+            markdown = { written: false, skipped: 'already_present' };
+          }
+        } else {
+          markdown = { written: false, skipped: 'page_not_found_after_write' };
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        ctx.logger.warn(`[add_timeline_entry] markdown write-through failed for ${slug}: ${msg}`);
+        markdown = { written: false, error: msg };
+      }
+    } else {
+      markdown = { written: false, skipped: 'subagent_sandbox' };
+    }
+
+    return { status: 'ok', ...(markdown ? { markdown } : {}) };
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },
 };
