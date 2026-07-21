@@ -1,7 +1,13 @@
 #!/usr/bin/env bun
 
-import { installSigchldHandler } from './core/zombie-reap.ts';
+import { installSigchldHandler, installPid1OrphanReaper } from './core/zombie-reap.ts';
 installSigchldHandler();
+// #2443: when gbrain IS the container init (PID 1 — `gbrain serve` /
+// `gbrain jobs supervisor start` as the entrypoint), re-parented orphan
+// grandchildren (e.g. git spawned by a dead worker) become zombies nobody
+// waits on and eventually exhaust the cgroup pid budget. No-op unless
+// PID 1 on Linux.
+installPid1OrphanReaper();
 // v0.41.6.0 D5: cleanup registry + signal handlers for SIGTERM/SIGHUP/SIGPIPE/
 // uncaughtException. NOT SIGINT (the existing AbortController path at :254
 // owns SIGINT). Installed at module load so locks acquired during boot

@@ -33,11 +33,11 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { resolveFenceFilePath } from './fence-write.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -126,7 +126,12 @@ export async function forgetFactInFence(
 
   const slug = row.source_markdown_slug!;
   const targetRowNum = row.row_num!;
-  const filePath = join(localPath, `${slug}.md`);
+  // #2722: resolve through the same helper the fence WRITE used, so a page
+  // imported from a spaced filename (slug `10-people/jane-doe`, file
+  // `10 People/Jane Doe.md`) gets its forget struck through in the canonical
+  // file — a bare `join(localPath, slug + '.md')` missed it and silently
+  // degraded to the DB-only path (forget didn't survive rebuild).
+  const filePath = await resolveFenceFilePath(engine, { sourceId: row.source_id, localPath, slug });
   const tmpPath = `${filePath}.tmp`;
 
   if (!existsSync(filePath)) {

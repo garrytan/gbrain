@@ -44,11 +44,12 @@ import {
 } from 'fs';
 import { dirname } from 'path';
 import type { BrainEngine } from '../engine.ts';
-import { tryAcquireDbLock, type DbLockHandle } from '../db-lock.ts';
+import { tryAcquireDbLock, inspectLock, classifyHolderLiveness, resolveStealGraceSeconds, type DbLockHandle, type LockSnapshot } from '../db-lock.ts';
 import { currentBrainId } from './worker-registry.ts';
 
 export type SupervisorEvent =
   | 'started'
+  | 'db_lock_wait'
   | 'worker_spawned'
   | 'worker_exited'
   | 'worker_spawn_failed'
@@ -335,6 +336,96 @@ export function supervisorLockId(queue: string): string {
 }
 
 /**
+ * #2308: acquire the supervisor DB lock, waiting out a DEAD holder instead of
+ * one-shot exiting.
+ *
+ * Container recreation is the motivating case: the old container's supervisor
+ * dies without releasing the row, the replacement container has a new hostname
+ * (so same-host dead-PID takeover can't fire), and the row only becomes
+ * stealable once its TTL + heartbeat steal-grace lapse (~5-6 min). A one-shot
+ * acquire at boot exits LOCK_HELD inside that window and nothing retries — the
+ * queue is dead until an operator intervenes.
+ *
+ * A single snapshot cannot distinguish "live supervisor elsewhere" from
+ * "holder died seconds ago" — both look like an unexpired, recently-refreshed
+ * row. Liveness is therefore decided by OBSERVATION:
+ *   - Same-host holder whose PID is alive → return null immediately (fail
+ *     fast; the interactive duplicate-start case keeps its instant exit 2).
+ *   - Heartbeat ADVANCES between polls → a live supervisor is refreshing
+ *     somewhere (e.g. another container) → return null.
+ *   - Heartbeat never advances → the holder is dead; keep polling until the
+ *     TTL + steal grace lapse and the upsert's host-agnostic takeover branch
+ *     fires. Bounded by maxWaitMs (default TTL + steal grace + 30s margin).
+ *
+ * Exported for tests; the seams replace the DB round-trips and the sleep.
+ */
+export interface SupervisorLockWaitOpts {
+  maxWaitMs?: number;
+  retryMs?: number;
+  tryAcquire?: () => Promise<DbLockHandle | null>;
+  inspect?: () => Promise<LockSnapshot | null>;
+  sleep?: (ms: number) => Promise<void>;
+  onWait?: (snap: LockSnapshot, waitedMs: number) => void;
+  now?: () => number;
+  /** Test seam for the same-host PID probe (defaults to process.kill via classifyHolderLiveness). */
+  processKill?: (pid: number, signal: number) => void;
+}
+
+export async function acquireSupervisorDbLockWithWait(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number,
+  opts: SupervisorLockWaitOpts = {},
+): Promise<DbLockHandle | null> {
+  const tryAcquire = opts.tryAcquire ?? (() => tryAcquireDbLock(engine, lockId, ttlMinutes));
+  const inspect = opts.inspect ?? (() => inspectLock(engine, lockId));
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = opts.now ?? Date.now;
+  const retryMs = opts.retryMs ?? 10_000;
+  const maxWaitMs = opts.maxWaitMs
+    ?? ttlMinutes * 60_000 + resolveStealGraceSeconds(ttlMinutes) * 1000 + 30_000;
+
+  const first = await tryAcquire();
+  if (first) return first;
+
+  const start = now();
+  let lastSeenRefresh: number | null = null;
+  for (;;) {
+    let snap: LockSnapshot | null = null;
+    try {
+      snap = await inspect();
+    } catch {
+      // Transient inspect failure — treat as unknown and keep polling.
+    }
+    if (snap) {
+      // Same-host live PID → a supervisor is genuinely running here.
+      const liveness = classifyHolderLiveness(
+        snap.holder_pid,
+        snap.holder_host,
+        snap.age_ms,
+        opts.processKill ? { processKill: opts.processKill } : {},
+      );
+      if (liveness === 'alive') return null;
+      // Heartbeat advanced since the last poll → a live holder is refreshing
+      // (cross-host, unprobeable) → fail fast.
+      const refreshedAt = snap.last_refreshed_at?.getTime() ?? null;
+      if (lastSeenRefresh !== null && refreshedAt !== null && refreshedAt > lastSeenRefresh) {
+        return null;
+      }
+      if (refreshedAt !== null) lastSeenRefresh = refreshedAt;
+    }
+
+    const waited = now() - start;
+    if (waited >= maxWaitMs) return null;
+    if (snap) opts.onWait?.(snap, waited);
+
+    await sleep(retryMs);
+    const handle = await tryAcquire();
+    if (handle) return handle;
+  }
+}
+
+/**
  * #1849 (doctor): pure classification of the supervisor singleton state from
  * the DB lock holder vs the local pidfile holder. Compares host+pid (bare pid
  * is meaningless across hosts/containers — Codex #25).
@@ -545,7 +636,26 @@ export class MinionSupervisor {
     // above but loses here, so it can't run a conflicting --max-rss worker on
     // the same (db, queue). Keyed on the queue alone; the database half of the
     // mutex is physical (the lock row lives in this DB).
-    this.dbLock = await tryAcquireDbLock(this.engine, this.supervisorLockId(), SUPERVISOR_LOCK_TTL_MIN);
+    // #2308: wait out a DEAD holder (e.g. the previous container's supervisor
+    // whose row can only lapse via TTL, since cross-host takeover is TTL-only)
+    // instead of one-shot exiting inside the TTL window. A genuinely live
+    // holder (same-host live PID, or a heartbeat that advances) still exits
+    // LOCK_HELD.
+    this.dbLock = await acquireSupervisorDbLockWithWait(
+      this.engine,
+      this.supervisorLockId(),
+      SUPERVISOR_LOCK_TTL_MIN,
+      {
+        onWait: (snap, waitedMs) => {
+          this.emit('db_lock_wait', {
+            holder_pid: snap.holder_pid,
+            holder_host: snap.holder_host,
+            ms_since_last_refresh: snap.ms_since_last_refresh,
+            waited_ms: waitedMs,
+          });
+        },
+      },
+    );
     if (!this.dbLock) {
       console.error(
         `Supervisor already running for queue '${this.opts.queue}' on this database ` +
