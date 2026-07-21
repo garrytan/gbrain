@@ -66,9 +66,10 @@ export async function runRemediation(
   } = await import('../remediation-checkpoint.ts');
 
   const ctx = await loadRecommendationContext(engine);
+  const extraRemediations = opts.extraRemediations ?? [];
 
   // Pre-flight ceiling check via the shared plan computation.
-  const initialPlan = await computeRemediationPlan(engine, { targetScore });
+  const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
   if (initialPlan.target_unreachable) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
     return {
@@ -87,7 +88,7 @@ export async function runRemediation(
   }
 
   const initialHealth = await engine.getHealth();
-  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx)
+  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx, extraRemediations)
     .filter((r) => r.status === 'remediable');
   if (recs.length === 0) {
     hooks.onNothingToDo?.(initialHealth.brain_score, targetScore);
@@ -305,7 +306,13 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      // Extras carry a static status:'remediable' — a fresh health snapshot
+      // never ages them out the way health-derived steps drop. Filter out
+      // ids this run already processed (any terminal status), or the recheck
+      // would resubmit completed extras every iteration, forever.
+      const processedIds = new Set(submitted.map((s) => s.id));
+      const pendingExtras = extraRemediations.filter((r) => !processedIds.has(r.id));
+      recs = computeRecommendations(freshHealth, ctx, pendingExtras).filter((r) => r.status === 'remediable');
     }
   };
 
