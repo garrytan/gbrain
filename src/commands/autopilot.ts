@@ -356,6 +356,19 @@ async function attemptAutopilotSelfUpgrade(
   }
 }
 
+/**
+ * #2608 — pure function (test seam, same pattern as generateLaunchdPlist):
+ * the boot-time warning emitted when no chat provider is available, so the
+ * silent no-op of every LLM phase is visible in the daemon log.
+ */
+export function chatBootWarning(chatAvailable: boolean): string | null {
+  if (chatAvailable) return null;
+  return (
+    '[autopilot] WARNING: no chat provider available — LLM phases (extract, dream, enrich) will no-op. ' +
+    'Set a key via `gbrain config set anthropic_api_key <key>` or export it in ~/.gbrain/env (sourced by the daemon wrapper).'
+  );
+}
+
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
@@ -415,6 +428,18 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   } catch { /* best-effort */ }
 
   console.log(`Autopilot starting. Repo: ${repoPath}, interval: ${baseInterval}s`);
+
+  // #2608: LLM phases (extract-events, dream synthesis, enrich) gate on
+  // isAvailable('chat') and silently no-op when no chat provider resolves —
+  // the classic symptom of a daemon shell that never sourced the API keys.
+  // One loud boot-time stderr line makes that failure mode visible in the
+  // daemon log instead of manifesting as "autopilot runs but nothing gets
+  // extracted".
+  try {
+    const { isAvailable } = await import('../core/ai/gateway.ts');
+    const warn = chatBootWarning(isAvailable('chat'));
+    if (warn) console.error(warn);
+  } catch { /* diagnostic only — never blocks the loop */ }
 
   // Mode resolution: Minions dispatch when the user has opted in AND the
   // worker daemon can actually run (Postgres only; PGLite's exclusive file
@@ -1186,6 +1211,12 @@ function writeWrapperScript(repoPath: string): string {
 # OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
+# gbrain-owned env file (#2608): daemon shells are non-interactive, so
+# zshrc-only exports never arrive here (and many zshrc/bashrc files guard
+# against non-interactive sourcing). ~/.gbrain/env is the deterministic
+# place to put API keys / GBRAIN_* vars for the daemon. Sourced last so it
+# wins over anything the profiles set.
+[ -f ~/.gbrain/env ] && source ~/.gbrain/env 2>/dev/null
 exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });

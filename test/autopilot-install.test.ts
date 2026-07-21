@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { detectInstallTarget } from '../src/commands/autopilot.ts';
+import { detectInstallTarget, chatBootWarning } from '../src/commands/autopilot.ts';
 
 let tmp: string;
 const envSnapshot: Record<string, string | undefined> = {};
@@ -97,5 +97,36 @@ describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () =>
     // Both should appear inside writeWrapperScript's heredoc as `source ~/.foo`
     expect(src).toMatch(/source\s+~\/\.zshenv/);
     expect(src).toMatch(/source\s+~\/\.zshrc/);
+  });
+
+  // #2608: shell profiles are unreliable in non-interactive daemon shells
+  // (zshrc-only exports never arrive; many profiles guard against
+  // non-interactive sourcing). The wrapper must also source the
+  // gbrain-owned ~/.gbrain/env, AFTER the profiles so it wins.
+  test('wrapper sources ~/.gbrain/env after the shell profiles (#2608)', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    expect(src).toMatch(/\[ -f ~\/\.gbrain\/env \] && source ~\/\.gbrain\/env/);
+    const zshrcIdx = src.indexOf('source ~/.zshrc');
+    const gbrainEnvIdx = src.indexOf('source ~/.gbrain/env');
+    expect(zshrcIdx).toBeGreaterThan(0);
+    expect(gbrainEnvIdx).toBeGreaterThan(zshrcIdx);
+  });
+});
+
+// #2608: when the daemon boots without a resolvable chat provider, every
+// LLM phase (extract-events, dream, enrich) silently no-ops. The boot-time
+// warning is the visibility fix; pure function so the wiring is pinnable
+// without spinning up a full autopilot loop.
+describe('chatBootWarning (#2608)', () => {
+  test('warns loudly when chat is unavailable', () => {
+    const warn = chatBootWarning(false);
+    expect(warn).toContain('[autopilot] WARNING');
+    expect(warn).toContain('no chat provider');
+    expect(warn).toContain('~/.gbrain/env');
+  });
+
+  test('silent when chat is available', () => {
+    expect(chatBootWarning(true)).toBeNull();
   });
 });

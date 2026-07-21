@@ -49,6 +49,19 @@ function configureFromEnv(): void {
   configureGateway({ env: { ...process.env } });
 }
 
+/**
+ * The env the gateway actually sees: file-plane API keys (openai_api_key,
+ * anthropic_api_key, zeroentropy_api_key, openrouter_api_key in
+ * ~/.gbrain/config.json) folded under process.env via buildGatewayConfig.
+ * Every `providers` key check reads this instead of bare process.env so a
+ * config.json-keyed provider isn't reported as missing (#2728). Falls back
+ * to bare process.env pre-init (no config file yet).
+ */
+export function gatewayEnv(): NodeJS.ProcessEnv {
+  const cfg = loadConfig();
+  return cfg ? buildGatewayConfig(cfg).env : process.env;
+}
+
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
   const required = recipe.auth_env?.required ?? [];
   if (required.length === 0) return true; // e.g. local Ollama
@@ -144,9 +157,7 @@ function runList(_args: string[]): void {
   // Same env the gateway actually sees (file-plane keys folded in), not bare
   // process.env — keeps this table's STATUS column honest with what
   // `providers test` (and the real init/gateway path) would report.
-  const cfg = loadConfig();
-  const env = cfg ? buildGatewayConfig(cfg).env : process.env;
-  console.log(formatRecipeTable(listRecipes(), env));
+  console.log(formatRecipeTable(listRecipes(), gatewayEnv()));
 }
 
 async function runTest(args: string[]): Promise<void> {
@@ -278,12 +289,15 @@ function runEnv(args: string[]): void {
   }
   console.log(`${recipe.name} (${recipe.id})`);
   console.log('');
+  // Folded env, not bare process.env — a key living only in
+  // ~/.gbrain/config.json must still show '✓ set' here (#2728).
+  const env = gatewayEnv();
   const required = recipe.auth_env?.required ?? [];
   const optional = recipe.auth_env?.optional ?? [];
   if (required.length > 0) {
     console.log('Required:');
     for (const k of required) {
-      const set = !!process.env[k];
+      const set = !!env[k];
       console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
     }
   } else {
@@ -292,7 +306,7 @@ function runEnv(args: string[]): void {
   if (optional.length > 0) {
     console.log('\nOptional:');
     for (const k of optional) {
-      const set = !!process.env[k];
+      const set = !!env[k];
       console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
     }
   }
@@ -308,14 +322,17 @@ async function runExplain(args: string[]): Promise<void> {
   const asJson = args.includes('--json') || args.includes('-j');
 
   const recipes = listRecipes();
+  // Folded env (file-plane keys included), matching what the gateway and
+  // `providers test` actually resolve against (#2728).
+  const env = gatewayEnv();
   const env_detected = {
-    OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-    GOOGLE_GENERATIVE_AI_API_KEY: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
-    VOYAGE_API_KEY: !!process.env.VOYAGE_API_KEY,
-    DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY,
-    GROQ_API_KEY: !!process.env.GROQ_API_KEY,
-    TOGETHER_API_KEY: !!process.env.TOGETHER_API_KEY,
+    OPENAI_API_KEY: !!env.OPENAI_API_KEY,
+    GOOGLE_GENERATIVE_AI_API_KEY: !!env.GOOGLE_GENERATIVE_AI_API_KEY,
+    ANTHROPIC_API_KEY: !!env.ANTHROPIC_API_KEY,
+    VOYAGE_API_KEY: !!env.VOYAGE_API_KEY,
+    DEEPSEEK_API_KEY: !!env.DEEPSEEK_API_KEY,
+    GROQ_API_KEY: !!env.GROQ_API_KEY,
+    TOGETHER_API_KEY: !!env.TOGETHER_API_KEY,
   };
 
   // Parallel probes for local providers (1s timeout each)
@@ -332,7 +349,7 @@ async function runExplain(args: string[]): Promise<void> {
         dims: m.default_dims,
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
+        env_ready: envReady(r, env) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
         tier: r.tier,
         pros: prosFor(r, 'embedding'),
         cons: consFor(r),
@@ -346,7 +363,7 @@ async function runExplain(args: string[]): Promise<void> {
         model: m.models[0],
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
+        env_ready: envReady(r, env),
         tier: r.tier,
         pros: prosFor(r, 'expansion'),
         cons: consFor(r),
@@ -361,7 +378,7 @@ async function runExplain(args: string[]): Promise<void> {
         cost_per_1m_input_usd: m.cost_per_1m_input_usd,
         cost_per_1m_output_usd: m.cost_per_1m_output_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
+        env_ready: envReady(r, env),
         tier: r.tier,
         pros: prosFor(r, 'chat'),
         cons: consFor(r),
