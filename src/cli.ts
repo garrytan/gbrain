@@ -429,7 +429,7 @@ async function main() {
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        makeContext(engine, params),
+        makeContext(engine, params, op),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -802,19 +802,36 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   return params;
 }
 
-async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+// Exported for tests (same import-safety contract as cliAliases/printOpHelp).
+export async function makeContext(engine: BrainEngine, params: Record<string, unknown>, op?: Operation): Promise<OperationContext> {
   // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
   // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
   // never set up sources still returns 'default' silently.
   let sourceId: string | undefined;
+  // params.source is set when a CLI flag was parsed for the op (rare; most
+  // CLI ops don't take --source). Falls through to env/dotfile/path-match.
+  // #2289: ops that declare their OWN `source` param (put_raw_data's data
+  // source, add_timeline_entry's provenance, ...) own the flag — it is not
+  // the brain-source selector, so it never feeds resolveSourceId.
+  const opOwnsSource = op?.params?.source !== undefined;
+  let explicit = opOwnsSource ? null : ((params.source as string | undefined) ?? null);
+  // #2289: '--source __all__' is the op-level all-sources sentinel, not a
+  // source id — SOURCE_ID_RE rejects it, so pre-fix it silently fell back to
+  // 'default'. Map it to params.source_id (understood by resolveRequestedScope
+  // in operations.ts; local callers span the whole brain) and let ctx.sourceId
+  // resolve through the normal non-explicit chain.
+  if (explicit === '__all__') {
+    if (params.source_id === undefined) params.source_id = '__all__';
+    explicit = null;
+  }
   try {
     const { resolveSourceId } = await import('./core/source-resolver.ts');
-    // params.source is set when a CLI flag was parsed for the op (rare; most
-    // CLI ops don't take --source). Falls through to env/dotfile/path-match.
-    const explicit = (params.source as string | undefined) ?? null;
     sourceId = await resolveSourceId(engine, explicit);
-  } catch {
+  } catch (err) {
+    // #2289: an EXPLICIT --source that fails to resolve (bad format, unknown
+    // source) must error loudly — silently defaulting misroutes the query.
+    if (explicit) throw err;
     // Source resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
     // to the cross-source view (D16 back-compat path).

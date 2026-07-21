@@ -266,6 +266,39 @@ describe('tryRedirectPhantom (single phantom orchestration)', () => {
     });
   });
 
+  test('#2412: straggler wipe preserves cli:-sourced facts (#1928 guard parity with extract-facts)', async () => {
+    await withTempDirs(async ({ brainDir }) => {
+      await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
+      await putPage('alice', STUB_BODY);
+      writeMd(brainDir, 'alice', STUB_BODY);
+      writeMd(brainDir, 'people/alice-example', '# alice-example\n');
+
+      // An EXPIRED cli: conversation fact on the phantom slug. The canonical
+      // migration only moves active rows (expired_at IS NULL), so this row is
+      // exactly what the post-migration straggler wipe sees. cli: facts are
+      // DB-only (never fence-owned) — the wipe must not destroy their
+      // supersession audit trail.
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, expired_at)
+         VALUES ('default', 'alice', 'Superseded CLI claim', 'fact', '2020-01-01'::date, 'cli:session-1', 'alice', now())`,
+      );
+      // A plain expired straggler with no protected prefix — still wiped.
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, expired_at)
+         VALUES ('default', 'alice', 'Stale fence straggler', 'fact', '2020-01-01'::date, 'linkedin', 'alice', now())`,
+      );
+
+      const phantom = await engine.getPage('alice', { sourceId: 'default' });
+      const result = await tryRedirectPhantom(engine, phantom!, 'default', brainDir, false);
+      expect(result.outcome).toBe('redirected');
+
+      const remaining = await engine.executeRaw<{ fact: string; source: string }>(
+        `SELECT fact, source FROM facts WHERE source_markdown_slug = 'alice' AND source_id = 'default'`,
+      );
+      expect(remaining.map((r) => r.source)).toEqual(['cli:session-1']);
+    });
+  });
+
   test('codex #2: real top-level fact-bearing page → not_phantom (residue gate)', async () => {
     await withTempDirs(async ({ brainDir }) => {
       await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
