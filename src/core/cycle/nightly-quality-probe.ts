@@ -63,6 +63,42 @@ export interface NightlyProbeDeps {
 }
 
 /**
+ * Dual-plane flag resolution (same precedent as `mcp.publish_skills` in
+ * serve-http.ts): the DB config row — what `gbrain config set` writes —
+ * wins when present; the file plane (~/.gbrain/config.json) is the
+ * fallback. Doctor's paste-ready enable hint says `gbrain config set
+ * autopilot.nightly_quality_probe.enabled true`, so the gate MUST read
+ * the DB plane — a file-only read turns that hint into a silent no-op.
+ */
+export function resolveProbeEnabled(
+  dbVal: string | null | undefined,
+  fileVal: unknown,
+): boolean {
+  if (dbVal != null) return dbVal === 'true';
+  return fileVal === true;
+}
+
+/**
+ * Same dual-plane rule for the per-run cost cap. Malformed or negative
+ * values on either plane fall through to the next plane / the default.
+ */
+export function resolveProbeMaxUsd(
+  dbVal: string | null | undefined,
+  fileVal: unknown,
+  fallback: number = DEFAULT_MAX_USD,
+): number {
+  if (dbVal != null) {
+    const n = Number(dbVal);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  if (fileVal != null) {
+    const n = Number(fileVal);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return fallback;
+}
+
+/**
  * Pure function: decide whether the probe should run given the audit
  * history. Returns reason when skipping.
  */
@@ -101,21 +137,17 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     return { outcome: 'disabled', exit_code: 0, detail: 'feature flag off' };
   }
 
-  // 24h rate limit — skip + audit "rate_limited".
+  // 24h rate limit — skip WITHOUT an audit row. The autopilot loop invokes
+  // the probe every cycle (~5-10 min), so all but one invocation per day
+  // lands here; logging each skip floods the audit file (~hundreds of
+  // rows/day) and — because doctor treats any non-pass outcome as bad
+  // signal — flips nightly_quality_probe_health to a permanent WARN the
+  // moment the probe is enabled. A skip is a non-event: the real runs are
+  // the signal, and their rows are what gates the next 24h window.
   const now = deps.now();
   const recent = readRecentQualityProbeEvents(2, now); // 2-day window is enough for 24h check
   const decision = shouldRunNightly(now, recent);
   if (!decision.run) {
-    logQualityProbeEvent({
-      outcome: 'rate_limited',
-      exit_code: 0,
-      pass_count: 0,
-      fail_count: 0,
-      inconclusive_count: 0,
-      error_count: 0,
-      est_cost_usd: 0,
-      detail: 'already ran within 24h window',
-    });
     return { outcome: 'rate_limited', exit_code: 0, detail: 'already ran within 24h' };
   }
 

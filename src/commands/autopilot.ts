@@ -527,6 +527,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   process.on('SIGINT',  () => { void shutdown('SIGINT'); });
 
   let consecutiveErrors = 0;
+  // Parser-probe fixture warning is once-per-process, not once-per-cycle
+  // (compiled-binary installs have no source tree; don't spam the log).
+  let parserProbeFixtureWarned = false;
   // v0.37.7.0 #1162 — counter for consecutive reconnect failures.
   // Reset on every successful health probe or reconnect. Threshold
   // controlled by GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS env (default 30).
@@ -1073,17 +1076,36 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // loop. Probe runs even when cycleOk=false (probe may surface signal
     // explaining why the cycle is failing).
     try {
-      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      const { resolveProbeEnabled, resolveProbeMaxUsd, runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
+      // Dual-plane read: `gbrain config set` (what the doctor enable hint
+      // prints) writes the DB plane; ~/.gbrain/config.json is the fallback.
+      let dbEnabled: string | null = null;
+      let dbMaxUsd: string | null = null;
+      try {
+        dbEnabled = await engine.getConfig('autopilot.nightly_quality_probe.enabled');
+        dbMaxUsd = await engine.getConfig('autopilot.nightly_quality_probe.max_usd');
+      } catch { /* DB unavailable → file plane only */ }
+      const probeEnabled = resolveProbeEnabled(dbEnabled, cfg?.autopilot?.nightly_quality_probe?.enabled);
       if (probeEnabled) {
-        const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
         const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
         const { isAvailable } = await import('../core/ai/gateway.ts');
-        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        const { existsSync } = await import('node:fs');
+        const { fileURLToPath } = await import('node:url');
+        const { join } = await import('node:path');
+        const maxUsd = resolveProbeMaxUsd(dbMaxUsd, cfg?.autopilot?.nightly_quality_probe?.max_usd);
+        // The committed fixture (test/fixtures/longmemeval-nightly.jsonl)
+        // lives in the gbrain PACKAGE, not the brain repo — repoPath is
+        // sync.repo_path (the user's brain), where the fixture never
+        // exists, so the probe error'd on every real install. Resolve the
+        // package root from the module location; keep repoPath as the
+        // fallback for setups that vendor the fixture into the brain repo.
+        const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
+        const fixtureAtPkgRoot = existsSync(join(pkgRoot, 'test', 'fixtures', 'longmemeval-nightly.jsonl'));
         await runNightlyQualityProbe({
           isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
           hasEmbeddingProvider: () => isAvailable('embedding'),
           resolveMaxUsd: () => maxUsd,
-          resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
+          resolveRepoRoot: () => (fixtureAtPkgRoot ? pkgRoot : repoPath ?? gbrainHomePath('.')),
           runLongMemEval: runLongMemEvalForProbe,
           runCrossModalBatch: runCrossModalBatchForProbe,
           now: () => new Date(),
@@ -1093,6 +1115,62 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       logError('autopilot.nightly_probe', e);
       // Intentional: do NOT bump consecutiveErrors. Probe failure is
       // informational; autopilot loop continues.
+    }
+
+    // 4.6 — Nightly conversation-parser probe (v0.41.16.0 phase module;
+    // the scheduler wire-up was deferred at ship and is added here). Same
+    // posture as 4.5: the phase owns its gates (enabled/mode-gate, LLM
+    // key), the wiring owns invocation + the audit row, and a probe
+    // failure NEVER crashes the autopilot loop. Per D10 the probe is
+    // default-ON for search.mode=tokenmax, opt-in otherwise.
+    try {
+      const { runConversationParserNightlyProbe } = await import('../core/conversation-parser/nightly-probe.ts');
+      const { logParserProbeEvent, parserProbeRanWithin } = await import('../core/audit-parser-probe.ts');
+      const { isAvailable } = await import('../core/ai/gateway.ts');
+      const { existsSync } = await import('node:fs');
+      const { fileURLToPath } = await import('node:url');
+      const { join } = await import('node:path');
+      // Flag reads dual-plane: the DB row (`gbrain config set …`) wins,
+      // ~/.gbrain/config.json is the fallback. search.mode lives on the
+      // DB plane only (mode.ts owns it).
+      let parserDbEnabled: string | null = null;
+      let dbSearchMode: string | null = null;
+      try {
+        parserDbEnabled = await engine.getConfig('autopilot.conversation_parser_probe.enabled');
+        dbSearchMode = await engine.getConfig('search.mode');
+      } catch { /* DB unavailable → file plane only */ }
+      const parserEnabled = parserDbEnabled != null
+        ? parserDbEnabled === 'true'
+        : cfg?.autopilot?.conversation_parser_probe?.enabled === true;
+      const searchMode = dbSearchMode ?? '';
+      // Fixtures are committed in the gbrain package (test/fixtures/…),
+      // NOT the brain repo — resolve from the module location. Compiled
+      // binaries carry no source tree: skip quietly instead of writing
+      // failure rows that would flip doctor to WARN on every binary install.
+      const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
+      const fixturePath = join(pkgRoot, 'test', 'fixtures', 'conversation-formats', 'all.jsonl');
+      const adversarialPath = join(pkgRoot, 'test', 'fixtures', 'conversation-formats', 'adversarial.jsonl');
+      const shouldInvoke = parserEnabled || searchMode === 'tokenmax';
+      if (shouldInvoke && existsSync(fixturePath) && existsSync(adversarialPath)) {
+        const result = await runConversationParserNightlyProbe({
+          isEnabled: () => parserEnabled,
+          searchMode: () => searchMode,
+          hasLlmKey: () => isAvailable('chat'),
+          resolveFixturePath: () => fixturePath,
+          resolveAdversarialPath: () => adversarialPath,
+          now: () => new Date(),
+          shouldSkipForRateLimit: () => parserProbeRanWithin(24 * 60 * 60 * 1000),
+        });
+        // rate_limited is a non-run: the loop ticks every few minutes, so
+        // logging every skip would flood the audit file with no-signal rows.
+        if (result.outcome !== 'rate_limited') logParserProbeEvent(result);
+      } else if (shouldInvoke && !parserProbeFixtureWarned) {
+        parserProbeFixtureWarned = true;
+        console.error(`[parser-probe] fixtures not found under ${pkgRoot}; skipping (probe needs a source-checkout install)`);
+      }
+    } catch (e) {
+      logError('autopilot.parser_probe', e);
+      // Informational, like 4.5: do NOT bump consecutiveErrors.
     }
 
     // Wait for next cycle
