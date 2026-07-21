@@ -21,8 +21,8 @@
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { dirname, join } from 'path';
+import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
+import { basename, dirname, join } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
@@ -56,8 +56,12 @@ export interface WriteThroughResult {
    *     DB write failed or targeted a different source).
    *   - path_escapes_source_root: the computed file path resolves outside the
    *     source's working tree (hostile slug row / symlinked subtree) — refused.
+   *   - case_insensitive_collision: on a case-insensitive filesystem
+   *     (macOS/Windows default), the target directory already holds a
+   *     differently-cased entry that the FS folds onto this page's file, so
+   *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root';
+  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -145,6 +149,30 @@ export async function writePageThrough(
     const md = serializePageToMarkdown(writtenPage, tags, {
       frontmatterOverrides: opts.frontmatterOverrides,
     });
+
+    // #2831: two distinct DB slugs differing only by case (FOO vs foo) resolve
+    // to the SAME file on a case-insensitive filesystem — the second write
+    // would silently clobber the first slug's artifact. Refuse when the target
+    // dir holds a differently-cased entry that the FS folds onto our path:
+    // exact-case entry present → normal update, falls through; on a
+    // case-sensitive FS the variant path doesn't exist, so the guard is a
+    // no-op there.
+    const dir = dirname(filePath);
+    if (existsSync(dir)) {
+      const base = basename(filePath);
+      const entries = readdirSync(dir);
+      if (!entries.includes(base) && existsSync(filePath)) {
+        // The path exists on disk but no exactly-named entry does → the FS
+        // folded the name (case, or unicode normalization on APFS) onto a
+        // different slug's file.
+        const clash =
+          entries.find((e) => e.toLowerCase() === base.toLowerCase()) ?? '(normalization variant)';
+        opts.logger?.warn(
+          `[write-through] case-insensitive collision for ${slug}: '${clash}' already occupies ${filePath} — file not written (DB row is intact)`,
+        );
+        return { written: false, skipped: 'case_insensitive_collision' };
+      }
+    }
 
     mkdirSync(dirname(filePath), { recursive: true });
 
