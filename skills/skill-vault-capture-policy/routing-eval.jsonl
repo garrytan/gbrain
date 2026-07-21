@@ -1,0 +1,10 @@
+// Routing eval fixtures for skills/skill-vault-capture-policy.
+{"intent": "save this learning to the vault", "expected_skill": "skill-vault-capture-policy"}
+{"intent": "capture this new skill in Obsidian", "expected_skill": "skill-vault-capture-policy"}
+{"intent": "record this workflow in my notes", "expected_skill": "skill-vault-capture-policy"}
+{"intent": "put this setup change in the knowledge base", "expected_skill": "skill-vault-capture-policy"}
+{"intent": "should we add this recurring agent skill to the wiki", "expected_skill": "skill-vault-capture-policy"}
+{"intent": "I learned a new gbrain cost control, write it down", "expected_skill": "skill-vault-capture-policy"}
+// Negative cases: related but owned by other skills.
+{"intent": "connect my Obsidian vault to gbrain", "expected_skill": null}
+{"intent": "harvest this skill into gbrain", "expected_skill": null}
