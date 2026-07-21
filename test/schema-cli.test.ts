@@ -64,11 +64,23 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout + r.stderr).toMatch(/schema|active|list|show|validate|use/i);
   });
 
-  test('schema list shows gbrain-base bundled', () => {
+  test('schema list shows all bundled packs', () => {
     const r = gbrain(['schema', 'list']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
     expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('gbrain-recommended');
+    expect(r.stdout).toContain('gbrain-creator');
+    expect(r.stdout).toContain('gbrain-investor');
+    expect(r.stdout).toContain('gbrain-engineer');
+    expect(r.stdout).toContain('gbrain-everything');
+    expect(r.stdout).toContain('gbrain-base-v2');
+  });
+
+  test('schema show gbrain-creator resolves a lens pack manifest', () => {
+    const r = gbrain(['schema', 'show', 'gbrain-creator']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('gbrain-creator');
   });
 
   test('schema show gbrain-base prints manifest details', () => {
