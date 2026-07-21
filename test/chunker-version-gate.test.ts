@@ -15,19 +15,22 @@ import { describe, test, expect } from 'bun:test';
 import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
 
 describe('Layer 12 — CHUNKER_VERSION constant', () => {
-  test('bumped to 4 for Cathedral II', () => {
+  test('bumped to 5 for the estimated-token hard cap', () => {
     // v3: v0.19.0 Chonkie parity (tokenizer + small-sibling merge).
     // v4: v0.20.0 Cathedral II (qualified names + parent scope + doc_comment
     //     + fence extraction + chunk-grain FTS). Folded into content_hash
     //     so any bump forces clean re-chunks on next sync.
-    expect(CHUNKER_VERSION).toBe(4);
+    // v5: estimated-token hard cap on AST-path chunks (capCodeChunks) so
+    //     un-subdividable giant nodes can't overflow strict embedding
+    //     server token limits.
+    expect(CHUNKER_VERSION).toBe(5);
   });
 
   test('is stable across imports (not recomputed at call time)', async () => {
     const a = (await import('../src/core/chunkers/code.ts')).CHUNKER_VERSION;
     const b = (await import('../src/core/chunkers/code.ts')).CHUNKER_VERSION;
     expect(a).toBe(b);
-    expect(a).toBe(4);
+    expect(a).toBe(5);
   });
 });
 

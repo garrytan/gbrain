@@ -18,8 +18,9 @@
  * at runtime.
  */
 
-import { chunkText as recursiveChunk } from './recursive.ts';
+import { chunkText as recursiveChunk, capByEstimatedTokens, DEFAULT_MAX_EST_TOKENS } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
+import { estimateEmbeddingTokens } from '../cjk.ts';
 
 // Embed the tree-sitter runtime + per-language grammars as files.
 // `with { type: 'file' }` returns a path (string) at runtime. Bun bundles
@@ -111,7 +112,15 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // chunks get the new columns populated. Without this, the v28 backfill
 // gives every existing chunk a search_vector but subsequent Layer 5 AST
 // work would silently no-op.
-export const CHUNKER_VERSION = 4;
+//
+// v5: estimated-token hard cap on AST-path chunks (capCodeChunks). A node
+// splitLargeNode can't subdivide (giant single-statement function, huge
+// literal) previously shipped WHOLE regardless of size and could overflow
+// strict per-request embedding-token limits (local llama-server crashes
+// past ~2,050 tokens, measured). Mirrors the markdown
+// chunker's v4 cap; fallback-path chunks are already capped inside
+// recursiveChunk.
+export const CHUNKER_VERSION = 5;
 
 // Lazy-loaded tree-sitter module (v0.22.x API: Parser is default export)
 let Parser: typeof import('web-tree-sitter') | null = null;
@@ -708,7 +717,7 @@ export async function chunkCodeTextFull(
     if (chunks.length === 0) {
       return { chunks: fallbackChunks(source, filePath, language, opts), edges: rawEdges };
     }
-    return { chunks: mergeSmallSiblings(chunks, chunkTarget), edges: rawEdges };
+    return { chunks: capCodeChunks(mergeSmallSiblings(chunks, chunkTarget)), edges: rawEdges };
   } catch {
     return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
   } finally {
@@ -789,6 +798,33 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
     i = j;
   }
   return merged;
+}
+
+/**
+ * v5 final safety pass for AST-path chunks: split any chunk whose
+ * ESTIMATED embedding tokens (conservative per-char-class heuristic,
+ * cjk.ts) exceed DEFAULT_MAX_EST_TOKENS. Reaches chunks the AST logic
+ * can't subdivide — splitLargeNode returns [] for nodes with < 2 body
+ * children (giant single-statement functions, huge literals), which
+ * previously shipped whole at any size.
+ *
+ * Split pieces inherit the source chunk's metadata verbatim; start/end
+ * lines become approximate for pieces after the first. Acceptable —
+ * these chunks exist for embedding + retrieval, and the alternative was
+ * an embedding request the server rejects (or worse, crashes on).
+ */
+function capCodeChunks(chunks: CodeChunk[]): CodeChunk[] {
+  if (chunks.every((c) => estimateEmbeddingTokens(c.text) <= DEFAULT_MAX_EST_TOKENS)) {
+    return chunks;
+  }
+  const out: CodeChunk[] = [];
+  for (const c of chunks) {
+    const pieces = capByEstimatedTokens(c.text, DEFAULT_MAX_EST_TOKENS);
+    for (const piece of pieces) {
+      out.push({ ...c, text: piece, index: out.length, metadata: { ...c.metadata } });
+    }
+  }
+  return out;
 }
 
 function buildMergedChunk(group: CodeChunk[], index: number): CodeChunk {
