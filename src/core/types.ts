@@ -1586,6 +1586,14 @@ export interface EvalCaptureFailure {
 export interface HybridSearchMeta {
   /** True iff vector search actually ran. False when OPENAI_API_KEY missing or embed failed. */
   vector_enabled: boolean;
+  /**
+   * #2028 — WHY the vector arm didn't run, set only when vector_enabled is
+   * false. 'embed_timeout' = the query embed missed the GBRAIN_QUERY_EMBED_TIMEOUT_MS
+   * deadline (default 6s); 'no_embedding_provider' = gateway has no reachable
+   * embedding provider for the resolved column; 'embed_error' = any other
+   * embed/vector failure. Omitted when vector ran.
+   */
+  degraded_reason?: 'embed_timeout' | 'no_embedding_provider' | 'embed_error';
   /** Post-auto-detect detail level. */
   detail_resolved: 'low' | 'medium' | 'high' | null;
   /** True iff multi-query expansion (Haiku) actually fired and produced variants. */

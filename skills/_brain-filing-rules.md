@@ -105,9 +105,13 @@ Every ingested item should have its raw source preserved for provenance.
 
 **Upload command:**
 ```bash
-gbrain files upload-raw <file> --page <page-slug> --type <type>
+gbrain files upload-raw <file> --page <page-slug> --type <type> [--source <id>]
 ```
 Returns JSON: `{storage: "git"}` for small files, `{storage: "supabase", storagePath, reference}` for cloud.
+Add `--source <id>` when the page slug exists in more than one mounted source — it
+disambiguates strictly (a slug not found in that source errors rather than silently
+attaching to another source). The stored path is namespaced per source so the same
+slug+filename in two sources never collide.
 
 **The `.redirect.yaml` pointer format:**
 ```yaml

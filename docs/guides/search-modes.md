@@ -65,6 +65,7 @@ on user_asks_about(topic):
 3. **Don't use hybrid search for known names.** `gbrain query "Pedro Franceschi"` wastes embedding compute. Use `gbrain search "Pedro Franceschi"` or better yet `gbrain get pedro-franceschi` if you know the slug.
 4. **Token budget awareness.** A full page via `gbrain get` can be large. Read the search chunks first to confirm relevance before pulling the full page. "Did anyone mention the Series A?" -- search results (chunks) are probably enough. "Tell me everything about Pedro" -- get the full page.
 5. **Hybrid search needs embeddings to have been run.** If `gbrain query` returns nothing but `gbrain search` finds results, the embeddings haven't been generated yet. Run the embedding pipeline first.
+6. **Slow embedding providers can silently degrade `gbrain query` to keyword-only.** The query-time embed is bounded by a deadline (default 6 seconds, tunable via the `GBRAIN_QUERY_EMBED_TIMEOUT_MS` env var). If the provider misses it, hybrid search falls back to keyword-only — which returns nothing for content keyword FTS can't tokenize (e.g. CJK). The result meta reports `vector_enabled: false` with a `degraded_reason` (`embed_timeout`, `embed_error`, or `no_embedding_provider`), and a once-per-process warning prints to stderr. For a slow local provider (ollama, llama-server), raise `GBRAIN_QUERY_EMBED_TIMEOUT_MS`.
 
 ## How to Verify
 

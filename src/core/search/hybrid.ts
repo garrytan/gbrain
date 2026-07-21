@@ -780,6 +780,11 @@ const QUERY_EMBED_TIMEOUT_MS = (() => {
  */
 const MIN_QUERY_EMBED_BUDGET_MS = 2_000;
 
+// #2028 — once-per-process guard for the query-embed-failure stderr warning
+// (bulk keyword-only sessions shouldn't spam one line per query; meta carries
+// degraded_reason on every affected query instead).
+let queryEmbedFailureWarned = false;
+
 export interface QueryEmbedDeadline {
   /** Aborts the underlying fetch (clean socket close) when the budget elapses. */
   signal: AbortSignal;
@@ -1128,6 +1133,9 @@ export async function hybridSearch(
     lastRank1Score = noEmbedBudgeted[0] ? (noEmbedBudgeted[0].base_score ?? noEmbedBudgeted[0].score) : undefined;
     emitMeta({
       vector_enabled: false,
+      // #2028 — distinguish "no provider configured" from a runtime embed
+      // failure (the timeout path below) so degraded searches are diagnosable.
+      degraded_reason: 'no_embedding_provider',
       detail_resolved: detailResolved,
       expansion_applied: false,
       intent: suggestions.intent,
@@ -1213,6 +1221,10 @@ export async function hybridSearch(
   //   - 'image': embedQueryMultimodal + searchVector(embedding_image), skip keyword
   //   - 'both': text + image vector searches in parallel; merged via weighted RRF
   let vectorLists: SearchResult[][] = [];
+  // #2028 — why the vector arm didn't run, surfaced in the keyword-only
+  // fallback meta so a degraded hybrid search is diagnosable (vector_enabled:
+  // false alone hid a 9-day dead vector arm).
+  let vectorDegradedReason: 'embed_timeout' | 'no_embedding_provider' | 'embed_error' | undefined;
   let queryEmbedding: Float32Array | null = null;
   let imageVectorList: SearchResult[] | null = null;
   let crossModalFellOpen = false;
@@ -1323,8 +1335,28 @@ export async function hybridSearch(
       if (effectiveModality === 'both' && imageVectorList !== null) {
         vectorLists = [...vectorLists, imageVectorList];
       }
-    } catch {
-      // Embedding failure is non-fatal, fall back to keyword-only
+    } catch (err) {
+      // Embedding failure is non-fatal, fall back to keyword-only — but never
+      // silently (#2028): a query-embed deadline miss degraded hybrid search
+      // to keyword-only with zero operator signal (empty results for CJK/
+      // vector-dependent content). Classify the reason for meta and warn once
+      // per process on stderr.
+      const msg = err instanceof Error ? err.message : String(err);
+      vectorDegradedReason = /deadline .*exceeded/i.test(msg)
+        ? 'embed_timeout'
+        : /not configured|no embedding model/i.test(msg)
+          ? 'no_embedding_provider'
+          : 'embed_error';
+      if (!queryEmbedFailureWarned) {
+        queryEmbedFailureWarned = true;
+        console.error(
+          `[search] query embed failed (${msg}); falling back to keyword-only. ` +
+          (vectorDegradedReason === 'embed_timeout'
+            ? `The query-embed deadline is ${QUERY_EMBED_TIMEOUT_MS}ms — for a slow local provider, raise GBRAIN_QUERY_EMBED_TIMEOUT_MS. `
+            : '') +
+          `(shown once per process; meta.degraded_reason carries this on every degraded query)`,
+        );
+      }
     }
   }
 
@@ -1361,6 +1393,9 @@ export async function hybridSearch(
     lastRank1Score = kwBudgeted[0] ? (kwBudgeted[0].base_score ?? kwBudgeted[0].score) : undefined;
     emitMeta({
       vector_enabled: false,
+      // #2028 — embed_timeout / embed_error / no_embedding_provider, so a
+      // silently-degraded hybrid search names WHY the vector arm didn't run.
+      ...(vectorDegradedReason ? { degraded_reason: vectorDegradedReason } : {}),
       detail_resolved: detailResolved,
       expansion_applied: expansionApplied,
       intent: suggestions.intent,

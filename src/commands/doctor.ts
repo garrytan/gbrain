@@ -646,6 +646,40 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     });
   }
 
+  // 3a. Skill surface honesty (#2330). The focused doctor emits no skill
+  // checks, so computeDoctorReport scored category `skill` as a vacuous 100 —
+  // "structurally dishonest": run_doctor reported skill 100/100 while the skills
+  // directory was unreadable. Emit an EXPLICIT skill check so an unassessed/
+  // unreadable surface can't masquerade as perfect. (We do NOT change
+  // computeDoctorReport's vacuous-truth contract for genuinely-empty categories —
+  // it's pinned; we make the surface emit a real check instead.) ok when the
+  // resolver is reachable, warn when it isn't — never silent.
+  try {
+    const detected = autoDetectSkillsDirReadOnly();
+    if (detected.dir) {
+      const report = checkResolvable(detected.dir);
+      checks.push({
+        name: 'skill_surface',
+        status: report.errors.length > 0 ? 'fail' : report.warnings.length > 0 ? 'warn' : 'ok',
+        message: report.errors.length > 0 || report.warnings.length > 0
+          ? `${report.summary.total_skills} skills, ${report.errors.length} error(s)/${report.warnings.length} warning(s)`
+          : `${report.summary.total_skills} skills reachable`,
+      });
+    } else {
+      checks.push({
+        name: 'skill_surface',
+        status: 'warn',
+        message: 'Skills directory not found — skill health could not be assessed (run `gbrain doctor` on the host for full skill checks).',
+      });
+    }
+  } catch (e) {
+    checks.push({
+      name: 'skill_surface',
+      status: 'warn',
+      message: `Could not assess skill surface: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
   // 3b. Migration wedge hint (v0.31.8 — D14 + D19). The brain server's
   // filesystem holds the migration ledger; the wedge condition (>=3 consecutive
   // partials with no later complete) needs the force-retry hint, not plain
