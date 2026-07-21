@@ -218,6 +218,8 @@ export function buildDreamCommand(input: {
   preset?: 'full' | 'meeting' | 'quick';
   sourceId?: string;
   maxPages?: number;
+  drainProposals?: boolean;
+  windowSeconds?: number;
   dryRun?: boolean;
   input?: string;
   date?: string;
@@ -242,6 +244,14 @@ export function buildDreamCommand(input: {
     }
     cmd.push('--max-pages', String(maxPages));
   }
+  if (input.drainProposals) cmd.push('--drain-proposals');
+  if (input.windowSeconds !== undefined) {
+    const windowSeconds = Math.floor(Number(input.windowSeconds));
+    if (!Number.isInteger(windowSeconds) || windowSeconds <= 0) {
+      throw new Error('Dream window must be a positive integer');
+    }
+    cmd.push('--window', String(windowSeconds));
+  }
   if (input.input?.trim()) cmd.push('--input', input.input.trim());
   if (input.date?.trim()) cmd.push('--date', input.date.trim());
   if (input.from?.trim()) cmd.push('--from', input.from.trim());
@@ -256,6 +266,8 @@ export async function startDreamRun(input: {
   preset?: 'full' | 'meeting' | 'quick';
   sourceId?: string;
   maxPages?: number;
+  drainProposals?: boolean;
+  windowSeconds?: number;
   dryRun?: boolean;
   input?: string;
   date?: string;

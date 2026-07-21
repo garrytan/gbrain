@@ -78,6 +78,10 @@ interface DreamArgs {
   proposeRequireChunks: boolean;
   /** Optional cap to skip very large chunked pages during propose_takes. */
   proposeMaxChunks: number | null;
+  /** PMBrain extension of upstream drain semantics for the proposal backlog. */
+  drainProposals: boolean;
+  /** Wallclock budget for proposal draining, in seconds. */
+  windowSeconds: number;
 }
 
 export type DreamPreset = 'full' | 'meeting' | 'quick';
@@ -296,6 +300,31 @@ function parseArgs(args: string[]): DreamArgs {
     proposeMaxChunks = parsed;
   }
 
+  const drainProposals = args.includes('--drain-proposals');
+  if (drainProposals && phase !== 'propose_takes' && preset !== 'full') {
+    console.error('--drain-proposals requires --phase propose_takes or --preset full');
+    process.exit(2);
+  }
+  const windowValues = collectFlagValues(args, '--window');
+  if (windowValues === null) {
+    console.error('--window <seconds>: missing value');
+    process.exit(2);
+  }
+  const uniqWindow = Array.from(new Set(windowValues));
+  if (uniqWindow.length > 1) {
+    console.error(`specify --window once; got [${uniqWindow.map(v => `"${v}"`).join(', ')}]`);
+    process.exit(2);
+  }
+  let windowSeconds = 60 * 60;
+  if (uniqWindow.length === 1) {
+    const parsed = Number(uniqWindow[0]);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      console.error(`--window must be a positive integer (seconds); got "${uniqWindow[0]}"`);
+      process.exit(2);
+    }
+    windowSeconds = parsed;
+  }
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -313,6 +342,8 @@ function parseArgs(args: string[]): DreamArgs {
     maxPages,
     proposeRequireChunks,
     proposeMaxChunks,
+    drainProposals,
+    windowSeconds,
   };
 }
 
@@ -396,6 +427,9 @@ function printHelp() {
                       calibration_profile 也会使用这个 source。
   --source-id <id>    --source 的别名。
   --max-pages <n>     限制 propose_takes 最多处理的页面数，适合分批执行。
+  --drain-proposals   按批次持续处理真正未整理的页面，直到清空或达到 --window。
+                      每批默认 100 页；仅用于 --phase propose_takes 或 --preset full。
+  --window <seconds>  proposal 排空的运行时间上限，默认 3600 秒。
   --propose-require-chunks
                       仅让已有文本 chunks 的页面进入 propose_takes。默认开启。
   --propose-allow-unchunked
@@ -419,6 +453,7 @@ function printHelp() {
   pmbrain dream --dry-run --json
   pmbrain dream --phase propose_takes --dry-run --source pmgbrain
   pmbrain dream --phase propose_takes --source pmgbrain --max-pages 25
+  pmbrain dream --phase propose_takes --source pmgbrain --drain-proposals --window 3600
   pmbrain dream --phase calibration_profile --source pmgbrain
   pmbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
   pmbrain dream --phase synthesize --input ~/transcripts/
@@ -604,6 +639,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     proposeTakesPageLimit: opts.maxPages ?? undefined,
     proposeTakesRequireChunks: opts.proposeRequireChunks,
     proposeTakesMaxChunks: opts.proposeMaxChunks ?? undefined,
+    proposeTakesDrain: opts.drainProposals,
+    proposeTakesWindowMs: opts.windowSeconds * 1000,
   });
 
   if (opts.json) {

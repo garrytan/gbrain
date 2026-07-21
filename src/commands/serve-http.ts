@@ -20,6 +20,7 @@ import { randomBytes, createHash } from 'crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { isIP } from 'node:net';
 import { extname, join as joinPath } from 'node:path';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -1459,6 +1460,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.json({ source: source === 'light' || source === 'dark' ? source : 'system' });
   });
 
+  app.get('/admin/api/desktop-state', requireAdmin, (_req: Request, res: Response) => {
+    const desktop = loadConfig()?.desktop;
+    const networkMode = desktop?.network_mode === 'shared' ? 'shared' : 'local';
+    const configuredSharedIp = typeof desktop?.shared_ip === 'string' ? desktop.shared_ip.trim() : '';
+    const sharedIp = isIP(configuredSharedIp) === 4 ? configuredSharedIp : undefined;
+    res.json({ networkMode, sharedIp });
+  });
+
   app.post('/admin/api/sources/default', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
     const sourceId = typeof req.body?.sourceId === 'string' ? req.body.sourceId.trim() : '';
     if (!sourceId) {
@@ -1949,6 +1958,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         preset: ['full', 'meeting', 'quick'].includes(req.body?.preset) ? req.body.preset : undefined,
         sourceId: typeof req.body?.sourceId === 'string' ? req.body.sourceId : undefined,
         maxPages,
+        drainProposals: req.body?.drainProposals === true,
+        windowSeconds: typeof req.body?.windowSeconds === 'number' ? req.body.windowSeconds : undefined,
         dryRun: req.body?.dryRun === true,
         input: typeof req.body?.input === 'string' ? req.body.input : undefined,
         date: typeof req.body?.date === 'string' ? req.body.date : undefined,

@@ -40,10 +40,12 @@ function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
   chunkCounts?: Map<number, number>;
-}): { engine: BrainEngine; captured: CapturedSql[] } {
+  checkpointKeys?: Set<string>;
+}): { engine: BrainEngine; captured: CapturedSql[]; checkpointKeys: Set<string> } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
   const chunkCounts = opts.chunkCounts ?? new Map(opts.pages.map((page) => [page.id, 1]));
+  const checkpointKeys = opts.checkpointKeys ?? new Set<string>();
 
   const engine = {
     kind: 'pglite',
@@ -57,6 +59,22 @@ function buildMockEngine(opts: {
           .map((id) => ({ page_id: Number(id), chunk_count: chunkCounts.get(Number(id)) ?? 0 }))
           .filter((row) => row.chunk_count > 0) as T[];
       }
+      if (sql.includes('FROM op_checkpoints')) {
+        return checkpointKeys.size > 0
+          ? [{ completed_keys: [...checkpointKeys], completed_kind: 'array' } as unknown as T]
+          : [];
+      }
+      if (sql.includes('INSERT INTO op_checkpoints')) {
+        checkpointKeys.clear();
+        for (const key of JSON.parse(String(params?.[2] ?? '[]')) as string[]) checkpointKeys.add(key);
+        return [];
+      }
+      if (sql.includes('SELECT source_id, page_slug, content_hash') && sql.includes('FROM take_proposals')) {
+        return [...existing].map((key) => {
+          const [source_id, page_slug, content_hash, prompt_version] = key.split('|');
+          return { source_id, page_slug, content_hash, prompt_version } as unknown as T;
+        });
+      }
       // SELECT idempotency check
       if (sql.includes('SELECT id FROM take_proposals')) {
         const [sourceId, slug, ch, pv] = params ?? [];
@@ -64,12 +82,15 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
+      if (sql.includes('INSERT INTO take_proposals')) {
+        return [{ id: captured.length } as unknown as T];
+      }
       // INSERT — return nothing
       return [];
     },
   } as unknown as BrainEngine;
 
-  return { engine, captured };
+  return { engine, captured, checkpointKeys };
 }
 
 function buildPage(opts: { slug: string; body: string; sourceId?: string; id?: number }): Page {
@@ -294,6 +315,100 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 
+  test('selects truly unprocessed pages before applying the page limit', async () => {
+    const cachedBody = 'newest but already processed';
+    const pendingBody = 'older and still pending';
+    const pages = [
+      buildPage({ id: 1, slug: 'wiki/cached', body: cachedBody }),
+      buildPage({ id: 2, slug: 'wiki/pending', body: pendingBody }),
+    ];
+    const existing = new Set([
+      `default|wiki/cached|${contentHash(cachedBody)}|${PROPOSE_TAKES_PROMPT_VERSION}`,
+    ]);
+    const { engine } = buildMockEngine({ pages, existingProposals: existing });
+    const visited: string[] = [];
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      pageLimit: 1,
+      extractor: async ({ pagePath }) => {
+        visited.push(pagePath);
+        return [];
+      },
+    });
+
+    expect(visited).toEqual(['wiki/pending']);
+    expect(result.details.cache_hits).toBe(1);
+    expect(result.details.pages_processed).toBe(1);
+    expect(result.details.remaining).toBe(0);
+  });
+
+  test('prioritizes pages changed by the current sync', async () => {
+    const pages = [
+      buildPage({ id: 1, slug: 'wiki/newer', body: 'newer page' }),
+      buildPage({ id: 2, slug: 'wiki/just-synced', body: 'just synced page' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const visited: string[] = [];
+
+    await runPhaseProposeTakes(buildCtx(engine), {
+      pageLimit: 1,
+      prioritySlugs: ['wiki/just-synced'],
+      extractor: async ({ pagePath }) => {
+        visited.push(pagePath);
+        return [];
+      },
+    });
+
+    expect(visited).toEqual(['wiki/just-synced']);
+  });
+
+  test('drain processes repeated bounded batches until the pending backlog is empty', async () => {
+    const pages = Array.from({ length: 5 }, (_, index) => buildPage({
+      id: index + 1,
+      slug: `wiki/page-${index + 1}`,
+      body: `page ${index + 1}`,
+    }));
+    const { engine } = buildMockEngine({ pages });
+    let calls = 0;
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      pageLimit: 2,
+      drain: true,
+      windowMs: 60_000,
+      extractor: async () => {
+        calls++;
+        return [];
+      },
+    });
+
+    expect(calls).toBe(5);
+    expect(result.details.batches).toBe(3);
+    expect(result.details.pages_processed).toBe(5);
+    expect(result.details.remaining).toBe(0);
+    expect(result.details.stopped).toBe('drained');
+  });
+
+  test('checkpoint remembers successful zero-proposal pages across runs', async () => {
+    const pages = [buildPage({ slug: 'wiki/no-take', body: 'descriptive prose without a gradeable claim' })];
+    const checkpointKeys = new Set<string>();
+    const first = buildMockEngine({ pages, checkpointKeys });
+    let calls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      calls++;
+      return [];
+    };
+
+    const firstResult = await runPhaseProposeTakes(buildCtx(first.engine), { extractor });
+    const second = buildMockEngine({ pages, checkpointKeys });
+    const secondResult = await runPhaseProposeTakes(buildCtx(second.engine), { extractor });
+
+    expect(firstResult.details.pages_processed).toBe(1);
+    expect(checkpointKeys.size).toBe(1);
+    expect(calls).toBe(1);
+    expect(secondResult.details.cache_hits).toBe(1);
+    expect(secondResult.details.pages_processed).toBe(0);
+  });
+
   test('dry-run does not call extractor or write proposals', async () => {
     const pages = [buildPage({ slug: 'wiki/dry-run', body: 'This page would need LLM extraction.' })];
     const { engine, captured } = buildMockEngine({ pages });
@@ -353,7 +468,7 @@ New prose appended here.`;
     };
     const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
 
-    expect(result.status).toBe('ok');
+    expect(result.status).toBe('warn');
     const details = result.details as Record<string, unknown>;
     expect(details.pages_scanned).toBe(2);
     expect(details.proposals_inserted).toBe(1);
@@ -424,7 +539,7 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
     expect(details.pages_scanned).toBe(1);
     expect(details.skipped_no_chunks).toBe(1);
-    expect(captured.filter(c => c.sql.includes('SELECT id FROM take_proposals'))).toHaveLength(1);
+    expect(captured.filter(c => c.sql.includes('SELECT source_id, page_slug, content_hash'))).toHaveLength(1);
   });
 
   test('requireChunks:false preserves old behavior for unchunked pages', async () => {

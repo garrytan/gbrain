@@ -133,7 +133,7 @@ export function buildAdminGatewayConfig(config: GBrainConfig): AIGatewayConfig {
 // LLM status / provider status
 // ---------------------------------------------------------------------------
 
-function getProviderStatus(config: GBrainConfig | null) {
+export function getProviderStatus(config: GBrainConfig | null) {
   const chatModel = config?.chat_model ?? null;
   const provider = chatModel?.split(':')[0] ?? null;
   const providers = {
@@ -143,6 +143,11 @@ function getProviderStatus(config: GBrainConfig | null) {
     openai: !!config?.openai_api_key,
     anthropic: !!config?.anthropic_api_key,
     zeroentropy: !!config?.zeroentropy_api_key,
+    // Ollama is an explicitly local, no-auth provider. This flag describes
+    // configuration readiness just like the API-key flags above; the gateway
+    // remains responsible for surfacing a native connection/model error when
+    // the local service is stopped or the configured model is absent.
+    ollama: provider === 'ollama',
   };
   const providerKeyMap: Record<string, keyof typeof providers> = {
     mimo: 'mimo',
@@ -157,6 +162,8 @@ function getProviderStatus(config: GBrainConfig | null) {
     ?? config?.provider_base_urls?.['custom-openai'];
   const hasRequired = provider === 'custom-openai'
     ? !!customOpenAiBaseUrl
+    : provider === 'ollama'
+      ? true
     : required ? providers[required] : false;
   return {
     chat: {
@@ -169,6 +176,8 @@ function getProviderStatus(config: GBrainConfig | null) {
           ? []
           : provider === 'custom-openai'
             ? ['provider_touchpoint_base_urls.custom-openai.chat']
+            : provider === 'ollama'
+              ? []
             : [`${provider}_api_key`],
     },
     providers,

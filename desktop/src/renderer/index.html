@@ -232,23 +232,8 @@
           </section>
 
           <section class="integration-section shared-access" aria-labelledby="shared-integration-title">
-            <div class="subsection-heading"><div><span>03B / LAN</span><h3 id="shared-integration-title">共享成员接入</h3></div><p>为另一台电脑的 Agent 创建独立凭证；默认只读，需要时再明确开放写入。</p></div>
-            <div class="lan-security-note" role="note"><b>仅用于可信局域网</b><p>当前共享入口使用 HTTP + Bearer。敏感企业环境请在内网通过 TLS 反向代理保护传输，不要直接暴露到公网。</p></div>
-            <div class="shared-mode-hint" id="shared-mode-hint" role="status">正在读取共享入口…</div>
-            <div class="shared-access-grid" id="shared-access-form" hidden>
-              <div class="shared-form">
-                <label for="shared-member-name"><span>成员名称</span><input id="shared-member-name" autocomplete="off" maxlength="64" placeholder="例如：销售部-小陈" /></label>
-                <label for="shared-client"><span>对方使用的 Agent</span><select id="shared-client"><option value="cursor">Cursor</option><option value="codebuddy">CodeBuddy</option><option value="workbuddy">WorkBuddy</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
-                <fieldset class="shared-read-fieldset"><legend>允许读取的知识源</legend><div class="source-check-list" id="shared-read-sources"></div><small>至少选择一个知识源。共享凭证只会搜索这里勾选的范围。</small></fieldset>
-                <label class="permission-toggle" for="shared-can-write"><input id="shared-can-write" type="checkbox" /><span><b>允许写入</b><small>默认关闭。开启后，对方可在下方指定的单一知识源中新增、覆盖、删除、恢复和回滚内容。</small></span></label>
-                <label for="shared-write-source"><span>写入知识源</span><select id="shared-write-source" disabled><option value="">请先开启写入权限</option></select></label>
-                <button class="primary" id="create-shared-integration"><span>创建凭证并生成配置</span><i></i></button>
-              </div>
-              <div class="shared-members">
-                <div class="shared-members-head"><b>已创建成员</b><small id="shared-mcp-url"></small></div>
-                <div id="shared-member-list" class="shared-member-list"><p class="empty-copy">还没有共享成员凭证。</p></div>
-              </div>
-            </div>
+            <div class="subsection-heading"><div><span>03B / LAN</span><h3 id="shared-integration-title">共享成员接入</h3></div><p>凭证创建与成员管理请到 PMBrain 管理控制台「集成 → MCP 接入 → Agent 凭证管理」。</p></div>
+            <button class="primary" id="shared-open-admin"><span>打开管理控制台</span></button>
           </section>
           <div class="result-console" id="result-console" hidden>
             <div><b id="result-title">配置结果</b><button class="ghost" id="copy-result">复制</button></div>

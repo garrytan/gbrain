@@ -98,7 +98,7 @@ export const api = {
   dreamSettings: () => apiFetch('/admin/api/dream/settings'),
   saveDreamSettings: (body: { outputDir: string; dualWrite: boolean }) =>
     apiFetch('/admin/api/dream/settings', { method: 'POST', body: JSON.stringify(body) }),
-  startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
+  startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; drainProposals?: boolean; windowSeconds?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
     apiFetch('/admin/api/dream-runs', { method: 'POST', body: JSON.stringify(body) }),
   breakDreamLock: (id: string, holderPid: number) =>
     apiFetch(`/admin/api/dream/locks/${encodeURIComponent(id)}/break`, { method: 'POST', body: JSON.stringify({ holderPid }) }),
@@ -120,8 +120,9 @@ export const api = {
   agents: () => apiFetch('/admin/api/agents'),
   requests: (page = 1, qs = '') => apiFetch(`/admin/api/requests?page=${page}${qs}`),
   apiKeys: () => apiFetch('/admin/api/api-keys'),
-  createApiKey: (name: string, sourceScope?: { sourceId?: string; federatedRead?: string[] }) =>
-    apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name, ...sourceScope }) }),
+  desktopState: () => apiFetch('/admin/api/desktop-state'),
+  createApiKey: (name: string, options?: { scopes?: string[]; sourceId?: string; federatedRead?: string[] }) =>
+    apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name, ...options }) }),
   updateAgentSourceScope: (body: { id: string; authType: 'oauth' | 'api_key'; sourceId: string; federatedRead: string[] }) =>
     apiFetch('/admin/api/agents/source-scope', { method: 'POST', body: JSON.stringify(body) }),
   revokeApiKey: (name: string) => apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name }) }),

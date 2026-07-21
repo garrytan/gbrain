@@ -2066,6 +2066,13 @@ export async function expand(query: string): Promise<string[]> {
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
+      // Ollama reasoning models can spend the whole output budget on hidden
+      // reasoning and return no JSON. Its OpenAI-compatible endpoint accepts
+      // reasoning_effort=none; keep this local-only so hosted/custom provider
+      // behavior is unchanged.
+      providerOptions: recipe.id === 'ollama'
+        ? { ollama: { reasoningEffort: 'none' } }
+        : undefined,
       prompt: [
         'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
         'Return ONLY the JSON object. Do NOT include the original query in the result.',
@@ -2443,6 +2450,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const providerOptions: Record<string, any> = {};
   if (useCache) {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
+  }
+  if (recipe.id === 'ollama') {
+    providerOptions.ollama = { reasoningEffort: 'none' };
   }
 
   let _budgetRecorded = false;

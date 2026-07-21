@@ -5306,6 +5306,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, var(--conso
 .agents-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
 .agents-section-head .page-title { margin-bottom: 5px; font-size: 20px; }
 .agents-section-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.agents-create-actions { display: flex; flex-wrap: nowrap; gap: 8px; }
 .agents-revoked-filter { display: inline-flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
 .agents-revoked-filter input { width: 15px; min-height: 15px; }
 .agents-table { min-width: 860px; }
@@ -5925,6 +5926,8 @@ html[data-theme="dark"] .dream-journey { background: var(--console-surface-soft)
   .agents-section { padding: 16px; }
   .agents-section-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .agents-revoked-filter { grid-column: 1 / -1; }
+  .agents-create-actions { display: grid; grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
+  .agents-create-actions .btn { width: 100%; }
   .dream-hero { grid-template-columns: 1fr; min-height: 0; padding: 21px 18px; }
   .dream-status-orbit { display: none; }
   .dream-journey-track { grid-template-columns: 1fr; }

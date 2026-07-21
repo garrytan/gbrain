@@ -13,6 +13,7 @@ interface DreamData {
     embedding_coverage: number;
     pending_embeddings: number;
     recent_write_at: string | null;
+    main_source_id: string;
     stats: {
       page_count: number;
       chunk_count: number;
@@ -362,12 +363,12 @@ export function dreamRunDeltas(run: ConsoleRun | null): { pages: number; links: 
     return { pages: 0, links: 0 };
   }
   const totals = parseDreamReport(run)?.totals ?? {};
-  const pages = Math.max(0, Number(totals.synth_pages_written ?? 0));
-  const links = Math.max(0,
+  const pages = Math.max(0, Number(totals.pages_added ?? totals.synth_pages_written ?? 0));
+  const links = Math.max(0, Number(totals.links_created ?? (
     Number(totals.backlinks_added ?? 0)
     + Number(totals.pages_extracted ?? 0)
-    + Number(totals.edges_resolved ?? 0),
-  );
+    + Number(totals.edges_resolved ?? 0)
+  )));
   return { pages, links };
 }
 
@@ -422,6 +423,13 @@ export function describeDreamRun(run: ConsoleRun): {
   const takesWritten = Number(totals.consolidate_takes_written ?? 0);
   const transcriptsProcessed = Number(totals.transcripts_processed ?? synthDetails.transcripts_processed ?? 0);
   const transcriptsDiscovered = Number(synthDetails.transcripts_discovered ?? 0);
+  const proposalPhase = report?.phases?.find(phase => phase.phase === 'propose_takes');
+  const proposalDetails = proposalPhase?.details ?? {};
+  const proposalPagesProcessed = Number(proposalDetails.pages_processed ?? 0);
+  const proposalsInserted = Number(proposalDetails.proposals_inserted ?? 0);
+  const proposalCacheHits = Number(proposalDetails.cache_hits ?? 0);
+  const proposalPagesFailed = Number(proposalDetails.pages_failed ?? 0);
+  const proposalRemaining = Number(proposalDetails.remaining ?? 0);
 
   if (run.status === 'running' || run.status === 'queued') {
     return {
@@ -502,6 +510,12 @@ export function describeDreamRun(run: ConsoleRun): {
       : `检测到 ${pagesSynced} 个待同步文件；本次运行记录未提供实际写入页面明细。`);
   }
   if (!isDryRun && pagesEmbedded > 0) outputs.push(`为 ${pagesEmbedded} 个内容块更新搜索索引。`);
+  if (!isDryRun && proposalPhase) {
+    outputs.push(
+      `观点整理：处理 ${proposalPagesProcessed} 页，生成 ${proposalsInserted} 条候选观点，` +
+      `跳过 ${proposalCacheHits} 页已处理内容，失败 ${proposalPagesFailed} 页，剩余 ${proposalRemaining} 页。`,
+    );
+  }
 
   const totalKnowledgeUpdates = pagesWritten + patternsWritten + takesWritten;
   if (!isDryRun && totalKnowledgeUpdates > 0 && pagesWritten === 0) {
@@ -658,6 +672,8 @@ export function phaseSummaryZh(phase: DreamPhaseReport): string {
       return `已建立 ${number('linksCreated')} 条知识链接和 ${number('timelineCreated')} 条时间线记录。`;
     case 'extract_facts':
       return `已检查 ${number('pagesScanned')} 个页面，核对并写入 ${number('factsInserted')} 条事实。`;
+    case 'propose_takes':
+      return `已分 ${number('batches')} 批处理 ${number('pages_processed')} 页，生成 ${number('proposals_inserted')} 条候选观点，跳过 ${number('cache_hits')} 页已处理内容，失败 ${number('pages_failed')} 页，剩余 ${number('remaining')} 页。`;
     case 'resolve_symbol_edges':
       return number('chunks_walked') > 0
         ? `已检查 ${number('chunks_walked')} 个内容块，确认 ${number('edges_resolved')} 条关系，${number('edges_ambiguous')} 条仍需消歧。`
@@ -847,6 +863,7 @@ function DreamOpsDiagnostics({
 
 function DreamRunPanel({
   defaultPhase = 'all',
+  defaultSourceId,
   compact = false,
   phaseCatalog = [],
   sources,
@@ -856,6 +873,7 @@ function DreamRunPanel({
   onDone,
 }: {
   defaultPhase?: string;
+  defaultSourceId?: string;
   compact?: boolean;
   phaseCatalog?: string[];
   sources?: Array<{ id: string; name: string; page_count: number; archived?: boolean }>;
@@ -880,7 +898,6 @@ function DreamRunPanel({
       : defaultPhase === 'all' ? 'cycle' : 'advanced';
   });
 
-  const isAllPhase = phase === 'all';
   const [run, setRun] = useState<ConsoleRun | null>(null);
   const [error, setError] = useState('');
   const running = run?.status === 'running' || run?.status === 'queued';
@@ -987,8 +1004,12 @@ function DreamRunPanel({
       const res = await api.startDreamRun({
         preset: runMode === 'meeting' ? 'meeting' : runMode === 'cycle' ? 'full' : undefined,
         phase: runMode === 'advanced' ? phase : undefined,
-        sourceId: sourceId.trim() || undefined,
-        maxPages: maxPages.trim() ? Number(maxPages) : undefined,
+        sourceId: runMode === 'advanced' ? sourceId.trim() || undefined : defaultSourceId,
+        maxPages: runMode === 'advanced' && phase === 'propose_takes' && maxPages.trim() ? Number(maxPages) : undefined,
+        drainProposals: runMode === 'cycle',
+        windowSeconds: runMode === 'cycle' && timeoutMs
+          ? Math.max(60, Math.floor((timeoutMs * 0.75) / 1000))
+          : undefined,
         dryRun: effectiveDryRun,
         input: inputEnabled ? input.trim() || undefined : undefined,
         date: dateEnabled ? date.trim() || undefined : undefined,
@@ -1068,10 +1089,9 @@ function DreamRunPanel({
           </label>
         )}
         {showAdvancedControls && (
-          <label className={isAllPhase ? 'dream-input-disabled' : ''}>
+          <label>
             <span>Source ID</span>
-            <select value={sourceId} onChange={event => setSourceId(event.target.value)} disabled={isAllPhase}
-              title={isAllPhase ? '整轮 cycle 不支持按 source 过滤，部分 phase（embed/orphans/purge 等）始终全局执行。如需指定 source 请先选择单个 phase。' : ''}>
+            <select value={sourceId} onChange={event => setSourceId(event.target.value)}>
               <option value="">全部 source</option>
               {activeSources.map(s => (
                 <option key={s.id} value={s.id}>{s.name || s.id}（{s.page_count} 页）</option>
@@ -1079,11 +1099,16 @@ function DreamRunPanel({
             </select>
           </label>
         )}
-        {showAdvancedControls && (
+        {showAdvancedControls && phase === 'propose_takes' && (
           <label>
-            <span>最多处理页面</span>
+            <span>提议最多处理页面</span>
             <input value={maxPages} onChange={event => setMaxPages(event.target.value)} placeholder="可选" inputMode="numeric" />
           </label>
+        )}
+        {showAdvancedControls && phase === 'embed' && (
+          <div className="pm-hint">
+            embed 会处理全部待向量分块；本地模型的实际速度取决于模型并发与页面大小。
+          </div>
         )}
         {!compact && showInputControls && (
           <>
@@ -1227,7 +1252,7 @@ export function DreamOverviewPage() {
         <small>最近更新 {formatDate(data.overview?.recent_write_at ?? null, '暂无')}</small>
       </section>
 
-      <DreamRunPanel phaseCatalog={data.phase_catalog} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+      <DreamRunPanel defaultSourceId={data.overview?.main_source_id} phaseCatalog={data.phase_catalog} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
 
       <div className="dream-home-grid">
         <section className="dream-summary-card">
@@ -1274,7 +1299,7 @@ export function DreamExecutePage() {
       {loading && <Loading />}
       {data && (
         <>
-          <DreamRunPanel phaseCatalog={data.phase_catalog} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+          <DreamRunPanel defaultSourceId={data.overview?.main_source_id} phaseCatalog={data.phase_catalog} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
           <PhaseRail catalog={data.phase_catalog} />
           <div className="pm-card">
             <h2>队列与重试</h2>

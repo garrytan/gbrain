@@ -6,7 +6,7 @@ import { getRecipe } from '../../src/core/ai/recipes/index.js';
 import {
   activeConfigDirectory, desktopConfigPath, getSetupInfo, markDesktopMigration, needsDesktopMigration,
   getDatabaseRuntimeConfig, getDesktopPreferences, normalizeDesktopTheme, normalizePgliteDatabasePath, preferredConfigDirectory, restoreConfig,
-  saveDesktopPreferences, saveDesktopTheme, saveSetup, writeJsonConfig,
+  isTrayHintShown, markTrayHintShown, saveDesktopPreferences, saveDesktopTheme, saveSetup, writeJsonConfig,
 } from '../src/main/config-manager.js';
 
 const originalHome = process.env.PMBRAIN_HOME;
@@ -48,6 +48,22 @@ describe('desktop config manager', () => {
     });
     expect(getDatabaseRuntimeConfig().databaseUrl).toBe('postgresql://local:secret@127.0.0.1:5433/pmbrain');
     expect(readFileSync(desktopConfigPath(), 'utf8')).toBe(before);
+  });
+
+  test('persists the tray hint once and backs up the existing config', () => {
+    isolatedHome();
+    writeJsonConfig(desktopConfigPath(), {
+      engine: 'pglite',
+      desktop: { theme: 'system' },
+    });
+
+    expect(isTrayHintShown()).toBe(false);
+    const backup = markTrayHintShown();
+    expect(backup).not.toBeNull();
+    expect(existsSync(backup!)).toBe(true);
+    expect(isTrayHintShown()).toBe(true);
+    expect(JSON.parse(readFileSync(desktopConfigPath(), 'utf8')).desktop.tray_hint_shown).toBe(true);
+    expect(markTrayHintShown()).toBeNull();
   });
 
   test('persists desktop system preferences with a config backup and preserves existing fields', () => {

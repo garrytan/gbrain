@@ -59,7 +59,7 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('ollama')!.touchpoints.chat).toMatchObject({
       models: [],
       supports_tools: true,
-      supports_subagent_loop: false,
+      supports_subagent_loop: true,
     });
     expect(getRecipe('ollama')!.touchpoints.expansion?.models).toEqual([]);
   });

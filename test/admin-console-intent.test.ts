@@ -127,6 +127,42 @@ describe('admin console intent planning', () => {
     expect(status.missing).toEqual([]);
   });
 
+  test('Ollama chat is ready without an API key', () => {
+    const status = getAdminLlmStatus({
+      chat_model: 'ollama:qwen3.6:latest',
+      expansion_model: 'ollama:qwen3.6:latest',
+    } as any);
+
+    expect(status.enabled).toBe(true);
+    expect(status.provider).toBe('ollama');
+    expect(status.missing).toEqual([]);
+    expect(status.providersConfigured.ollama).toBe(true);
+  });
+
+  test('Ollama can pass the intent gate and use the shared gateway path', async () => {
+    __setChatTransportForTests(async () => ({
+      text: '',
+      blocks: [{
+        type: 'tool-call',
+        toolCallId: 'ollama-call-1',
+        toolName: 'pmbrain_action',
+        input: { intent: 'search_brain', query: '本地模型搜索' },
+      }],
+      stopReason: 'tool_calls',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'ollama:qwen3.6:latest',
+      providerId: 'ollama',
+    }));
+
+    const preview = await previewIntent('搜索本地模型内容', {
+      chat_model: 'ollama:qwen3.6:latest',
+      expansion_model: 'ollama:qwen3.6:latest',
+    } as any);
+
+    expect(preview.intent).toBe('search_brain');
+    expect(preview.slots.query).toBe('本地模型搜索');
+  });
+
   test('knowledge questions use the existing think synthesis command', () => {
     const command = commandForPreview({
       previewId: 'preview-search',
@@ -246,6 +282,26 @@ describe('admin console intent planning', () => {
       '--input',
       'D:\\meetings',
     ]);
+  });
+
+  test('full preset enables bounded proposal draining without overriding the upstream 100-page batch', () => {
+    const command = buildDreamCommand({
+      preset: 'full',
+      sourceId: 'duwu',
+      drainProposals: true,
+      windowSeconds: 3600,
+    });
+    expect(command.slice(3)).toEqual([
+      'dream',
+      '--preset',
+      'full',
+      '--source',
+      'duwu',
+      '--drain-proposals',
+      '--window',
+      '3600',
+    ]);
+    expect(command).not.toContain('--max-pages');
   });
 
   test('phase and preset cannot create two competing Dream selections', () => {
