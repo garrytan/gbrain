@@ -263,6 +263,18 @@ export class ZeroEntropyResponseTooLargeError extends Error {
   }
 }
 
+/** Perplexity twin of the Voyage/ZE OOM caps (#1046). Int8 components are
+ * 1 byte each, so a real response (512 texts × 2560 dims) is ~1.3 MB —
+ * anything near this cap is unambiguously not legitimate. */
+const MAX_PERPLEXITY_RESPONSE_BYTES = 256 * 1024 * 1024;
+
+export class PerplexityResponseTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PerplexityResponseTooLargeError';
+  }
+}
+
 // ---- Unified auth resolution (D12=A) ----
 //
 // Pre-v0.32, openai-compatible auth was duplicated across instantiateEmbedding,
@@ -1292,6 +1304,103 @@ const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: Req
   return fetch(typeof input === 'string' ? input : input.toString(), baseInit);
 }) as unknown as typeof fetch;
 
+/**
+ * Perplexity compatibility shim (#1046). Perplexity's `/v1/embeddings`
+ * endpoint is OpenAI-shaped but diverges on two points that break the AI
+ * SDK's openai-compatible adapter:
+ *   - `encoding_format` only accepts 'base64_int8' (default) or
+ *     'base64_binary'; the SDK sends 'float', which Perplexity rejects.
+ *     Force 'base64_int8' on the wire.
+ *   - The response `embedding` is a base64 string encoding SIGNED INT8
+ *     components (natively quantized output). The SDK schema expects
+ *     `number[]` — decode Int8Array → number[] here. Cosine similarity is
+ *     scale-invariant, so the raw int8 components rank correctly.
+ * `dimensions` is Perplexity's native field name — no translation needed
+ * (dims.ts emits it directly). Layer 1/Layer 2 OOM caps mirror the Voyage
+ * pattern.
+ *
+ * Exported for tests (behavioral coverage of the int8 decode); not part of
+ * the public gateway API.
+ */
+export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  // OUTBOUND: force the encoding Perplexity actually accepts.
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object' && parsed.encoding_format !== 'base64_int8') {
+        parsed.encoding_format = 'base64_int8';
+        // Drop Content-Length so fetch recomputes from the new body.
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+
+  const resp = await fetch(input as any, init);
+  if (!resp.ok) return resp;
+  const ct = resp.headers.get('content-type') ?? '';
+  if (!ct.toLowerCase().includes('application/json')) return resp;
+
+  // Layer 1: Content-Length pre-check BEFORE the body is parsed.
+  const contentLengthHeader = resp.headers.get('content-length');
+  if (contentLengthHeader) {
+    const len = parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(len) && len > MAX_PERPLEXITY_RESPONSE_BYTES) {
+      throw new PerplexityResponseTooLargeError(
+        `Perplexity response Content-Length=${len} exceeds ${MAX_PERPLEXITY_RESPONSE_BYTES} bytes — ` +
+        `likely compromised endpoint or misconfiguration`,
+      );
+    }
+  }
+
+  // INBOUND: decode base64 int8 embeddings to number[] so the SDK's Zod
+  // schema validates.
+  try {
+    const json: any = await resp.clone().json();
+    if (!json || typeof json !== 'object') return resp;
+    let modified = false;
+    if (Array.isArray(json.data)) {
+      for (const item of json.data) {
+        if (item && typeof item.embedding === 'string') {
+          // Layer 2: per-embedding cap for chunked responses that skipped
+          // Layer 1. base64 → bytes is the canonical 0.75 ratio.
+          const estDecoded = Math.ceil(item.embedding.length * 0.75);
+          if (estDecoded > MAX_PERPLEXITY_RESPONSE_BYTES) {
+            throw new PerplexityResponseTooLargeError(
+              `Perplexity embedding base64 exceeds ${MAX_PERPLEXITY_RESPONSE_BYTES} bytes ` +
+              `(estimated ${estDecoded} bytes from ${item.embedding.length} base64 chars)`,
+            );
+          }
+          // base64_int8: one signed int8 per component.
+          const bytes = Buffer.from(item.embedding, 'base64');
+          item.embedding = Array.from(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+          modified = true;
+        }
+      }
+    }
+    if (json.usage && typeof json.usage === 'object' && json.usage.prompt_tokens === undefined) {
+      json.usage.prompt_tokens = typeof json.usage.total_tokens === 'number'
+        ? json.usage.total_tokens
+        : 0;
+      modified = true;
+    }
+    if (!modified) return resp;
+    return new Response(JSON.stringify(json), {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: resp.headers,
+    });
+  } catch (err) {
+    // OOM-cap throws MUST propagate; anything else falls back to the
+    // original response (same contract as voyageCompatFetch).
+    if (err instanceof PerplexityResponseTooLargeError) throw err;
+    return resp;
+  }
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1360,6 +1469,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? zeroEntropyCompatFetch
           : recipe.id === 'nvidia'
           ? nvidiaCompatFetch
+          : recipe.id === 'perplexity'
+          ? perplexityCompatFetch
           : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,

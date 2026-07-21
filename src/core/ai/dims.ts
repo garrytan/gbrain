@@ -90,6 +90,30 @@ export function isValidOpenAITextEmbedding3Dim(modelId: string, dims: number): b
   return Number.isInteger(dims) && dims >= 1 && dims <= max;
 }
 
+// Perplexity hosted embeddings (#1046): Matryoshka-style flexible dims,
+// any integer from 128 up to the model's native size. `dimensions` is the
+// native wire field (no translation needed); output encoding divergence
+// (base64 int8) is handled by perplexityCompatFetch in gateway.ts.
+const PERPLEXITY_EMBEDDING_MAX_DIMS: Record<string, number> = {
+  'pplx-embed-v1-0.6b': 1024,
+  'pplx-embed-v1-4b': 2560,
+};
+export const PERPLEXITY_MIN_DIMS = 128;
+
+export function isPerplexityEmbeddingModel(modelId: string): boolean {
+  return modelId in PERPLEXITY_EMBEDDING_MAX_DIMS;
+}
+
+export function maxPerplexityEmbeddingDim(modelId: string): number | undefined {
+  return PERPLEXITY_EMBEDDING_MAX_DIMS[modelId];
+}
+
+export function isValidPerplexityDim(modelId: string, dims: number): boolean {
+  const max = PERPLEXITY_EMBEDDING_MAX_DIMS[modelId];
+  if (max === undefined) return false;
+  return Number.isInteger(dims) && dims >= PERPLEXITY_MIN_DIMS && dims <= max;
+}
+
 // NVIDIA NIM hosted embedding models use asymmetric input_type values. Most
 // emit fixed natural dimensions, but llama-nemotron-embed-1b-v2 accepts
 // Matryoshka-style dimension overrides (e.g. matching an existing 1280d
@@ -225,6 +249,23 @@ export function dimsProviderOptions(
             ...(inputType ? { input_type: inputType } : {}),
           },
         };
+      }
+      // Perplexity pplx-embed-v1-* — flexible dims via the native
+      // `dimensions` field. Fail-loud when the configured dim is outside
+      // the model's range (same rationale as the Voyage/ZE guards: the
+      // upstream HTTP 400 misroutes as a transient network error).
+      // Symmetric retrieval — inputType is never emitted.
+      if (isPerplexityEmbeddingModel(modelId)) {
+        if (!isValidPerplexityDim(modelId, dims)) {
+          const max = maxPerplexityEmbeddingDim(modelId)!;
+          throw new AIConfigError(
+            `Perplexity model "${modelId}" supports embedding_dimensions in ` +
+            `${PERPLEXITY_MIN_DIMS}..${max}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to a value between ${PERPLEXITY_MIN_DIMS} and ${max} ` +
+            `in your gbrain config.`,
+          );
+        }
+        return { openaiCompatible: { dimensions: dims } };
       }
       // NVIDIA NIM hosted embeddings are OpenAI-compatible but require
       // asymmetric input_type. Use passage for indexing/document-side vectors
