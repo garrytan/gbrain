@@ -509,8 +509,12 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   // DB-level uniqueness cannot collapse.
   const citationPattern = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
   const bulletLinePattern = /^-\s+\*\*\d{4}-\d{2}-\d{2}\*\*\s*\|/;
+  // Lines captured by Format 4 (plain bullet) are skipped for the same
+  // reason: quality.md mandates a trailing [Source: ...] on those bullets,
+  // and re-extracting the citation would double-count the event.
+  const plainBulletLinePattern = /^-\s+\d{4}-\d{2}-\d{2}\s*[—–-]/;
   for (const line of content.split(/\r?\n/)) {
-    if (bulletLinePattern.test(line)) continue;
+    if (bulletLinePattern.test(line) || plainBulletLinePattern.test(line)) continue;
     const lineMatches = [...line.matchAll(citationPattern)];
     if (lineMatches.length === 0) continue;
     // Strip every citation marker from the line to leave the annotated text.
@@ -524,6 +528,19 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     for (const m of lineMatches) {
       entries.push({ slug, date: m[2], source: m[1].trim().slice(0, 200), summary });
     }
+  }
+
+  // Format 4: Plain bullet — - YYYY-MM-DD — Summary
+  // This is the format gbrain's own enrich skill writes (no bold, no source
+  // pipe). Without it, every brain-authored timeline entry is invisible to
+  // extraction and timeline_coverage stays at 0%. Anchored at line start so a
+  // date inside a summary/link cannot start a spurious entry; a bold Format-1
+  // line (`- **…**`) cannot match here (a `*` follows the bullet, not a
+  // digit), and the citation loop above skips these lines, so a plain bullet
+  // carrying its own [Source: ...] files exactly one entry.
+  const plainBulletPattern = /^-\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
+  while ((match = plainBulletPattern.exec(content)) !== null) {
+    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim() });
   }
 
   return entries;
