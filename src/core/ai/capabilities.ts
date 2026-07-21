@@ -22,6 +22,7 @@
  */
 
 import { resolveRecipe } from './model-resolver.ts';
+import { listRecipes } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
 export interface ProviderCapabilities {
@@ -77,7 +78,10 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
   if (!chat) {
     throw new AIConfigError(
       `Provider "${recipe.id}" does not offer a chat touchpoint.`,
-      `Known providers with chat: openai, anthropic, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai, dashscope, minimax, zhipu, ollama, llama-server. Pick one for models.tier.subagent.`,
+      // Computed from the registry so the hint can't drift into listing
+      // chat-less providers (the pre-fix list falsely included embedding-only
+      // recipes, sending users in circles — #1157).
+      `Known providers with chat: ${listRecipes().filter(r => r.touchpoints.chat).map(r => r.id).join(', ')}. Pick one for models.tier.subagent.`,
     );
   }
 
