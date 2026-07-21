@@ -304,7 +304,9 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(r.legacyRowsPending).toBe(1);
     expect(r.factsInserted).toBe(0);
     expect(r.factsDeleted).toBe(0);
-    expect(r.warnings.some(w => w.includes('apply-migrations'))).toBe(true);
+    // #1867: the remedy hint points at the re-runnable backfill command,
+    // not the one-shot v0_32_2 migration (which the ledger never re-runs).
+    expect(r.warnings.some(w => w.includes('gbrain facts fence-backfill'))).toBe(true);
 
     // Legacy row was NOT touched.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -5,7 +5,7 @@
  *   - Batch insert N rows persists row_num + source_markdown_slug
  *   - Empty batch is a no-op
  *   - Returns ids in input-order
- *   - v51 partial UNIQUE index rolls back the whole batch on a collision
+ *   - v51 partial UNIQUE collision skips only the colliding row (#2044)
  *   - deleteFactsForPage scopes by (source_id, source_markdown_slug);
  *     never touches other pages or pre-v51 NULL-source_markdown_slug rows
  *   - deleteFactsForPage on an empty page returns deleted:0 (idempotent)
@@ -135,30 +135,29 @@ describe('engine.insertFacts — batch insert', () => {
     });
   });
 
-  test('v51 partial UNIQUE index rolls back the whole batch on collision', async () => {
+  test('v51 partial UNIQUE collision skips ONLY the colliding row (#2044)', async () => {
     // Seed row #1 first.
     await engine.insertFacts([fixtureFact(1, { fact: 'seeded' })], { source_id: 'default' });
 
-    // Now try to batch-insert rows that include a colliding row_num=1.
-    let threw = false;
-    try {
-      await engine.insertFacts(
-        [
-          fixtureFact(2, { fact: 'second' }),
-          fixtureFact(1, { fact: 'collides' }),  // row_num=1 on same (source_id, source_markdown_slug)
-          fixtureFact(3, { fact: 'third' }),
-        ],
-        { source_id: 'default' },
-      );
-    } catch {
-      threw = true;
-    }
-    expect(threw).toBe(true);
+    // Batch-insert rows that include a colliding row_num=1. Pre-#2044 this
+    // threw and rolled back the whole batch, making a second remote
+    // extract_facts deposit to an already-fenced page a hard failure. Now
+    // ON CONFLICT DO NOTHING skips the colliding row and keeps the rest.
+    const result = await engine.insertFacts(
+      [
+        fixtureFact(2, { fact: 'second' }),
+        fixtureFact(1, { fact: 'collides' }),  // row_num=1 on same (source_id, source_markdown_slug)
+        fixtureFact(3, { fact: 'third' }),
+      ],
+      { source_id: 'default' },
+    );
+    expect(result.inserted).toBe(2);
+    expect(result.ids).toHaveLength(2);
 
-    // Verify the transaction rolled back — only the seeded row should remain.
+    // The seeded row survives untouched; the colliding claim is skipped.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query('SELECT fact FROM facts ORDER BY id');
-    expect(rows.rows.map((r: { fact: string }) => r.fact)).toEqual(['seeded']);
+    expect(rows.rows.map((r: { fact: string }) => r.fact)).toEqual(['seeded', 'second', 'third']);
   });
 
   test('different source_markdown_slug values DO NOT collide on the same row_num', async () => {

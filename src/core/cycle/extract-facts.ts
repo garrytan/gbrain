@@ -176,9 +176,11 @@ export async function runExtractFacts(
   if (legacyCount > 0) {
     result.guardTriggered = true;
     result.warnings.push(
-      `extract_facts: ${legacyCount} legacy v0.31 fact rows pending fence backfill. ` +
-      `Run \`gbrain apply-migrations --yes\` to complete v0_32_2 before this phase ` +
-      `can safely reconcile fence → DB.`,
+      `extract_facts: ${legacyCount} legacy fact rows pending fence backfill ` +
+      `(row_num IS NULL — v0.31 rows or remote extract_facts deposits that ` +
+      `predate the fence backstop). Run \`gbrain facts fence-backfill\` ` +
+      `(idempotent, re-runnable) before this phase can safely reconcile ` +
+      `fence → DB.`,
     );
     return result;
   }

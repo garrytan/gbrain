@@ -4302,10 +4302,12 @@ export class PostgresEngine implements BrainEngine {
     // ONCE per process so the cast matches the actual column type
     // (halfvec vs vector). The probe is cached after first call.
     const castSuffix = await this.resolveFactsEmbeddingCast();
-    // Single transaction so the v51 partial UNIQUE index can roll back
-    // the whole batch on constraint violation. Per-row INSERTs (not
-    // multi-row VALUES) keep the embedding-vs-no-embedding branching
-    // readable; batch sizes are small (5-30 rows per page in practice).
+    // Single transaction; per-row INSERTs (not multi-row VALUES) keep the
+    // embedding-vs-no-embedding branching readable; batch sizes are small
+    // (5-30 rows per page in practice). #2044: ON CONFLICT DO NOTHING on
+    // the v51 partial UNIQUE index makes a residual fence/DB row_num
+    // collision skip that row instead of rolling back the whole batch —
+    // the fence stays system-of-record and reconciliation catches up.
     // No supersede flow in this path — fence reconciliation is the
     // canonical source-of-truth direction, not the consolidator path.
     const ids = await sql.begin(async (tx) => {
@@ -4346,9 +4348,13 @@ export class PostgresEngine implements BrainEngine {
             ${input.row_num}, ${input.source_markdown_slug},
             ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod},
             ${eventType}
-          ) RETURNING id
+          )
+          ON CONFLICT (source_id, source_markdown_slug, row_num)
+            WHERE row_num IS NOT NULL
+            DO NOTHING
+          RETURNING id
         `;
-        out.push(Number(ins[0].id));
+        if (ins[0]) out.push(Number(ins[0].id));
       }
       return out;
     });
