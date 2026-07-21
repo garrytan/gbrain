@@ -196,13 +196,45 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const needsCloud = stat.size >= SIZE_THRESHOLD || isMedia;
 
   if (!needsCloud) {
-    // Small text/PDF files stay in git
+    // Small text/PDF files stay in git — copy into the brain repo's `.raw/`
+    // sidecar (the shape documented in skills/_brain-filing-rules.md) and
+    // record a files row. #2297: this branch used to print success and
+    // persist NOTHING (the reported path was the caller's input file), so
+    // provenance was silently lost.
+    const { getDefaultSourcePath } = await import('../core/source-resolver.ts');
+    const repoPath = await getDefaultSourcePath(engine);
+    if (!repoPath) {
+      console.error('No brain repo configured — cannot preserve the raw file in git.');
+      console.error('Set a source local_path (`gbrain sources add <id> --path <repo>`) or configure sync.repo_path.');
+      process.exit(1);
+    }
+    const content = readFileSync(filePath);
+    const hash = createHash('sha256').update(content).digest('hex');
+    const relPath = join(pageSlug ?? 'unsorted', '.raw', filename);
+    const destPath = join(repoPath, relPath);
+    mkdirSync(dirname(destPath), { recursive: true });
+    writeFileSync(destPath, content);
+
+    await executeRawJsonb(
+      engine,
+      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (storage_path) DO UPDATE SET
+         content_hash = EXCLUDED.content_hash,
+         size_bytes = EXCLUDED.size_bytes,
+         mime_type = EXCLUDED.mime_type`,
+      [pageSlug, filename, relPath, mimeType, stat.size, 'sha256:' + hash],
+      [{ type: fileType, storage: 'git' }],
+    );
+
     console.log(JSON.stringify({
       success: true,
       storage: 'git',
-      path: filePath,
+      path: destPath,
+      storagePath: relPath,
       size: stat.size,
       size_human: humanSize(stat.size),
+      hash: `sha256:${hash}`,
     }));
     return;
   }
