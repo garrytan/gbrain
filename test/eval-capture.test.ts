@@ -309,3 +309,62 @@ describe('isEvalCaptureEnabled / isEvalScrubEnabled (CONTRIBUTOR_MODE-gated)', (
     } finally { restore(); }
   });
 });
+
+describe('DB-plane stash (#1475): GBRAIN_EVAL_CAPTURE / GBRAIN_EVAL_SCRUB_PII', () => {
+  // connectEngine stamps `gbrain config set eval.capture` (DB plane) onto
+  // these env vars because ctx.config is the sync file-plane load. Without
+  // the stash check the DB value was written and never read.
+  const origCapture = process.env.GBRAIN_EVAL_CAPTURE;
+  const origScrub = process.env.GBRAIN_EVAL_SCRUB_PII;
+  const origMode = process.env.GBRAIN_CONTRIBUTOR_MODE;
+  const restore = () => {
+    if (origCapture === undefined) delete process.env.GBRAIN_EVAL_CAPTURE;
+    else process.env.GBRAIN_EVAL_CAPTURE = origCapture;
+    if (origScrub === undefined) delete process.env.GBRAIN_EVAL_SCRUB_PII;
+    else process.env.GBRAIN_EVAL_SCRUB_PII = origScrub;
+    if (origMode === undefined) delete process.env.GBRAIN_CONTRIBUTOR_MODE;
+    else process.env.GBRAIN_CONTRIBUTOR_MODE = origMode;
+  };
+
+  test('stash=true turns capture on when file plane is silent (the #1475 repro)', () => {
+    delete process.env.GBRAIN_CONTRIBUTOR_MODE;
+    process.env.GBRAIN_EVAL_CAPTURE = 'true';
+    try {
+      expect(isEvalCaptureEnabled(null)).toBe(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const noEval: any = { engine: 'pglite' };
+      expect(isEvalCaptureEnabled(noEval)).toBe(true);
+    } finally { restore(); }
+  });
+
+  test('stash=false wins over CONTRIBUTOR_MODE=1 (explicit per-key beats broad flag)', () => {
+    process.env.GBRAIN_CONTRIBUTOR_MODE = '1';
+    process.env.GBRAIN_EVAL_CAPTURE = 'false';
+    try {
+      expect(isEvalCaptureEnabled(null)).toBe(false);
+    } finally { restore(); }
+  });
+
+  test('file-plane explicit value still wins over the stash', () => {
+    process.env.GBRAIN_EVAL_CAPTURE = 'true';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const disabled: any = { engine: 'pglite', eval: { capture: false } };
+      expect(isEvalCaptureEnabled(disabled)).toBe(false);
+    } finally { restore(); }
+  });
+
+  test('scrub stash: false disables, file plane wins, default stays true', () => {
+    process.env.GBRAIN_EVAL_SCRUB_PII = 'false';
+    try {
+      expect(isEvalScrubEnabled(null)).toBe(false);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fileWins: any = { engine: 'pglite', eval: { scrub_pii: true } };
+      expect(isEvalScrubEnabled(fileWins)).toBe(true);
+    } finally { restore(); }
+    delete process.env.GBRAIN_EVAL_SCRUB_PII;
+    try {
+      expect(isEvalScrubEnabled(null)).toBe(true);
+    } finally { restore(); }
+  });
+});

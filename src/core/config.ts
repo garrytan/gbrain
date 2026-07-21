@@ -816,6 +816,25 @@ export async function loadConfigWithEngine(
     merged.dream = mergedDream;
   }
 
+  // #1475: eval.* DB-plane merge. `gbrain config set eval.capture true`
+  // writes the DB plane (both keys are in KNOWN_CONFIG_KEYS, so `set`
+  // accepts them silently), but the capture gate (isEvalCaptureEnabled)
+  // reads the merged config. Without this merge the DB value was written
+  // and never read — capture only fired via GBRAIN_CONTRIBUTOR_MODE=1.
+  // Sparse per-key merge: file/env wins per key, DB fills the gaps.
+  const dbEvalCapture = await dbBool('eval.capture');
+  const dbEvalScrub = await dbBool('eval.scrub_pii');
+  const mergedEval: NonNullable<GBrainConfig['eval']> = { ...(merged.eval ?? {}) };
+  if (mergedEval.capture === undefined && dbEvalCapture !== undefined) {
+    mergedEval.capture = dbEvalCapture;
+  }
+  if (mergedEval.scrub_pii === undefined && dbEvalScrub !== undefined) {
+    mergedEval.scrub_pii = dbEvalScrub;
+  }
+  if (Object.keys(mergedEval).length > 0) {
+    merged.eval = mergedEval;
+  }
+
   return merged;
 }
 

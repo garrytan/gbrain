@@ -54,7 +54,7 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'bench', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -104,6 +104,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   // `gbrain connect --help` prints its own usage (flags + examples) from
   // runConnect; route around the generic one-line short-circuit.
   'connect',
+  // #1474: bench-publish ships its own detailed HELP (flags, exit codes,
+  // the export → publish → gate loop). Route around the generic stub.
+  'bench',
 ]);
 
 // v114 (#1941): alias -> operation lookup, kept separate from `cliOps` so
@@ -1427,6 +1430,29 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // #1474: `gbrain bench publish` is pure file I/O (reads a captured
+  // eval-candidates NDJSON from `gbrain eval export`, writes a baseline
+  // NDJSON). No DB access; bypass connectEngine entirely so the documented
+  // export → publish → gate loop works on machines without a brain.
+  // The v0.41.1 wave shipped bench-publish.ts + docs/eval-bench.md but this
+  // dispatcher case was never added, so the command hit 'Unknown command'.
+  if (command === 'bench') {
+    if (args[0] === 'publish') {
+      const { runBenchPublish } = await import('./commands/bench-publish.ts');
+      await runBenchPublish(args.slice(1));
+      return;
+    }
+    if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+      const { runBenchPublish } = await import('./commands/bench-publish.ts');
+      await runBenchPublish(['--help']);
+      return;
+    }
+    console.error(`Unknown bench subcommand: ${args[0]}`);
+    console.error('Usage: gbrain bench publish --from <captured.ndjson> --to <baseline.ndjson> [flags]');
+    console.error('  See docs/eval-bench.md for the full loop: eval export → bench publish → eval gate');
+    process.exit(2);
+  }
+
   // v0.42.x (#2390): `gbrain eval chronicle` is deterministic — brings its own
   // in-memory PGLite, no DB/gateway. CI fixture gate runs anywhere.
   if (command === 'eval' && args[0] === 'chronicle') {
@@ -2216,6 +2242,18 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       }
       if (merged.embedding_image_ocr_model !== undefined) {
         process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL = merged.embedding_image_ocr_model;
+      }
+      // #1475: stash the merged eval.* flags the same way. The capture gate
+      // (isEvalCaptureEnabled / isEvalScrubEnabled) runs against ctx.config,
+      // which is built from the sync file-plane loadConfig() in both the CLI
+      // op path and MCP dispatch — it never sees the DB plane directly. The
+      // gates consult this stash when the file plane is silent, so
+      // `gbrain config set eval.capture true` actually turns capture on.
+      if (merged.eval?.capture !== undefined) {
+        process.env.GBRAIN_EVAL_CAPTURE = String(merged.eval.capture);
+      }
+      if (merged.eval?.scrub_pii !== undefined) {
+        process.env.GBRAIN_EVAL_SCRUB_PII = String(merged.eval.scrub_pii);
       }
       // Always re-configure with merged values when DB merge succeeded. The
       // trigger used to be field-name-gated (only when embedding_multimodal_model
