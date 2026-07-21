@@ -124,6 +124,10 @@ describe('categorizeCheck', () => {
     expect(categorizeCheck('sync_freshness')).toBe('brain');
   });
 
+  test('timeline_coverage (emitted by onboard/checks.ts, not doctor.ts) is brain, not meta fallthrough (#2817)', () => {
+    expect(categorizeCheck('timeline_coverage')).toBe('brain');
+  });
+
   test('returns the right category for a known skill name', () => {
     expect(categorizeCheck('resolver_health')).toBe('skill');
     expect(categorizeCheck('skill_conformance')).toBe('skill');
