@@ -14,6 +14,7 @@ import type {
   SourceRow,
 } from './engine.ts';
 import { withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay, type BatchAuditSite } from './retry.ts';
+import { factsWorldOnly } from './facts/reader-trust.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
@@ -4532,7 +4533,10 @@ export class PostgresEngine implements BrainEngine {
     const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
     const sourceIds = useArray ? opts.sourceIds! : null;
     const sourceId = opts.sourceId ?? 'default';
-    const remoteFilter = opts.remote === true;
+    // Direct-engine contract: unset `remote` here means a trusted in-process
+    // caller (CLI/tests) — the fail-closed default lives in the op layer, which
+    // always passes explicit booleans. Normalize before the fail-closed helper.
+    const remoteFilter = factsWorldOnly({ remote: opts.remote === true, trustedFactReads: opts.trustedFactReads === true });
 
     // Source-scope predicate: array path (federated) wins over scalar.
     // Engine.ts contract: returns chronological points; regressions +

@@ -30,6 +30,13 @@ export interface ToolResult {
 export interface DispatchOpts {
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
   remote?: boolean;
+  /**
+   * Owner opt-in (`facts.trust_local_reads`): let this remote caller read
+   * `private` facts. Set ONLY by the stdio MCP server; the HTTP transport
+   * leaves it unset so a served brain stays world-only. See
+   * `src/core/facts/reader-trust.ts`.
+   */
+  trustedFactReads?: boolean;
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
   /**
@@ -203,6 +210,7 @@ export function buildOperationContext(
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    trustedFactReads: opts.trustedFactReads === true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
     // v0.34 D4: sourceId is REQUIRED at the type level. Auto-fill 'default'
     // for single-source brains and any caller who didn't resolve a sourceId.
