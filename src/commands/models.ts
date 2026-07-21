@@ -50,6 +50,10 @@ const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }
   { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
   { key: 'models.expansion',                tier: 'utility',   description: 'Query expansion for hybrid search' },
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
+  { key: 'models.propose_takes',            tier: 'reasoning', description: 'propose_takes claim extractor' },
+  { key: 'models.grade_takes',              tier: 'reasoning', description: 'grade_takes verdict judge' },
+  { key: 'models.calibration_profile',      tier: 'reasoning', description: 'Calibration profile generator' },
+  { key: 'models.brainstorm',               tier: 'reasoning', description: '`gbrain brainstorm` orchestrator' },
 ];
 
 interface ModelEntry {

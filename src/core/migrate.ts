@@ -5671,6 +5671,41 @@ export const MIGRATIONS: Migration[] = [
 `);
     },
   },
+  {
+    version: 125,
+    name: 'take_proposals_empty_scan_sentinels_and_per_claim_rows',
+    // v0.42.x — kill the propose_takes rescan loop + stop dropping claims.
+    //
+    // Two defects, one schema touch:
+    //   1. Zero-claim scans never entered the idempotency cache (only
+    //      proposal rows were written), so pages whose extraction yielded
+    //      nothing were re-extracted on EVERY cycle. Observed live: ~60
+    //      such pages per run ≈ 1,400 wasted extractor calls / ~$15 per
+    //      day — ~90% of total autopilot LLM spend. Fix: the phase now
+    //      writes a status='empty' sentinel row per zero-claim scan; the
+    //      status CHECK gains the 'empty' value. Sentinels are excluded
+    //      from the partial pending index, so the review queue never sees
+    //      them.
+    //   2. The 4-column unique index collapsed a same-page multi-claim run
+    //      to its FIRST claim: rows 2..N conflicted and ON CONFLICT DO
+    //      NOTHING silently dropped them (verified live: exactly one row
+    //      per (page, hash) across 3 days of runs). Fix: the idempotency
+    //      index gains md5(claim_text) — per-claim rows, while the
+    //      4-column prefix still serves the per-scan cache lookup.
+    //
+    // Existing data is index-safe by construction: the old index guaranteed
+    // at most one row per 4-tuple, so the widened index has no duplicates
+    // to trip on. The DROP+ADD CONSTRAINT pair is idempotent as a unit.
+    idempotent: true,
+    sql: `
+      ALTER TABLE take_proposals DROP CONSTRAINT IF EXISTS take_proposals_status_check;
+      ALTER TABLE take_proposals ADD CONSTRAINT take_proposals_status_check
+        CHECK (status IN ('pending','accepted','rejected','superseded','empty'));
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

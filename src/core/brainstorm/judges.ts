@@ -61,7 +61,10 @@ export const MAX_OUTPUT_TOKENS_CEIL = 32_000;
  * (with a readable error) instead of the provider's opaque HTTP 400.
  */
 export const ANTHROPIC_OUTPUT_CAPS: Record<string, number> = {
+  'claude-fable-5': 64_000,
+  'claude-opus-4-8': 32_000,
   'claude-opus-4-7': 32_000,
+  'claude-sonnet-5': 64_000,
   'claude-sonnet-4-6': 64_000,
   'claude-haiku-4-5': 64_000,
   'claude-haiku-4-5-20251001': 64_000,

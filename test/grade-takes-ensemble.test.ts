@@ -47,6 +47,7 @@ function buildMockEngine(opts: { takes: Take[] }): {
   const captured: CapturedSql[] = [];
   const resolves: CapturedResolve[] = [];
   const engine = {
+    async getConfig() { return null; },
     kind: 'pglite',
     async listTakes() {
       return opts.takes;

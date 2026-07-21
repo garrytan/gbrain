@@ -32,6 +32,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { resolveModel } from '../model-config.ts';
 import { chat as defaultChat, embedQuery, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
 import { hybridSearch, hybridSearchCached } from '../search/hybrid.ts';
 import { fetchFar, type CloseRef, type FarPage } from './domain-bank.ts';
@@ -538,7 +539,14 @@ async function _runBrainstormInner(
   const embedFn = opts.embedQueryFn ?? embedQuery;
 
   // ---- Phase 0: cost preview + TTY grace ----
-  const modelStr = opts.modelOverride ?? 'anthropic:claude-sonnet-4-6';
+  // Tier-resolved (mirrors the cycle phases): honors models.brainstorm >
+  // models.default > models.tier.reasoning; the fallback keeps stock
+  // behavior identical (reasoning tier default IS claude-sonnet-4-6).
+  const modelStr = opts.modelOverride ?? await resolveModel(engine, {
+    configKey: 'models.brainstorm',
+    tier: 'reasoning',
+    fallback: 'anthropic:claude-sonnet-4-6',
+  });
   const { aborted, estimate } = await previewCostAndWait({
     profile,
     model: modelStr,
