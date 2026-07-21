@@ -11,32 +11,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
+import { buildGatewayConfig } from '../src/core/ai/build-gateway-config.ts';
 import {
   configureGateway,
   getEmbeddingModel,
   getMultimodalModel,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
-import type { AIGatewayConfig } from '../src/core/ai/types.ts';
-
-// Mirror the cli.ts buildGatewayConfig helper exactly. Keeping a copy here
-// (instead of exporting from cli.ts) is intentional: the test asserts the
-// shape of the contract, not the helper's identity. If cli.ts drifts, the
-// e2e behavior these tests care about (DB-set value lands in gateway) still
-// holds, but a helper-shape test would also catch the drift in PR review.
-function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
-  return {
-    embedding_model: c.embedding_model,
-    embedding_dimensions: c.embedding_dimensions,
-    embedding_multimodal_model: c.embedding_multimodal_model,
-    expansion_model: c.expansion_model,
-    chat_model: c.chat_model,
-    chat_fallback_chain: c.chat_fallback_chain,
-    base_urls: c.provider_base_urls,
-    provider_chat_options: c.provider_chat_options,
-    env: { ...process.env },
-  };
-}
 
 let engine: PGLiteEngine;
 

@@ -25,6 +25,7 @@ import { withEnv } from '../helpers/with-env.ts';
 
 const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
   { envVar: 'LLAMA_SERVER_BASE_URL', recipeId: 'llama-server' },
+  { envVar: 'LLAMA_SERVER_RERANKER_BASE_URL', recipeId: 'llama-server-reranker' },
   { envVar: 'OLLAMA_BASE_URL', recipeId: 'ollama' },
   { envVar: 'LMSTUDIO_BASE_URL', recipeId: 'lmstudio' },
   { envVar: 'LITELLM_BASE_URL', recipeId: 'litellm' },

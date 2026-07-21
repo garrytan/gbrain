@@ -7,6 +7,7 @@ import { homedir } from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { runInitEmbedCheck } from '../core/init-embed-check.ts';
@@ -722,7 +723,8 @@ async function configureGatewayWithMergedPrecedence(
   // pollutes config.json.
   const envOverlay = loadConfig() ?? ({} as GBrainConfig);
 
-  const merged = {
+  const merged: GBrainConfig = {
+    ...envOverlay,
     embedding_model: aiOpts?.embedding_model ?? envOverlay.embedding_model ?? existingFile.embedding_model,
     embedding_dimensions: aiOpts?.embedding_dimensions ?? envOverlay.embedding_dimensions ?? existingFile.embedding_dimensions,
     expansion_model: aiOpts?.expansion_model ?? envOverlay.expansion_model ?? existingFile.expansion_model,
@@ -730,13 +732,9 @@ async function configureGatewayWithMergedPrecedence(
   };
 
   const { configureGateway, getEmbeddingModel, getEmbeddingDimensions, getExpansionModel, getChatModel } = await import('../core/ai/gateway.ts');
-  configureGateway({
-    embedding_model: merged.embedding_model,
-    embedding_dimensions: merged.embedding_dimensions,
-    expansion_model: merged.expansion_model,
-    chat_model: merged.chat_model,
-    env: { ...process.env },
-  });
+  // buildGatewayConfig (the single adapter seam) so file-plane API keys and
+  // env base URLs reach the gateway — a hand-rolled config here dropped them.
+  configureGateway(buildGatewayConfig(merged));
 
   // Read back resolved values — gateway applies internal defaults for unset
   // fields, so these are the values that actually shaped the schema.
@@ -831,13 +829,13 @@ async function initPGLite(opts: {
   // resolveAIOptions above: CLI flags > env vars > existing file > gateway
   // defaults.
   const { configureGateway } = await import('../core/ai/gateway.ts');
-  configureGateway({
+  configureGateway(buildGatewayConfig({
+    ...(loadConfig() ?? ({} as GBrainConfig)),
     embedding_model: resolvedModel ?? opts.aiOpts?.embedding_model,
     embedding_dimensions: resolvedDim ?? opts.aiOpts?.embedding_dimensions,
     expansion_model: opts.aiOpts?.expansion_model,
     chat_model: opts.aiOpts?.chat_model,
-    env: { ...process.env },
-  });
+  } as GBrainConfig));
   if (resolvedModel) console.log(`  Embedding: ${resolvedModel} (${resolvedDim}d)`);
   if (opts.aiOpts?.expansion_model) console.log(`  Expansion: ${opts.aiOpts.expansion_model}`);
   if (opts.aiOpts?.chat_model) console.log(`  Chat: ${opts.aiOpts.chat_model}`);
@@ -1046,13 +1044,13 @@ async function initPostgres(opts: {
 
   // T6: unconditional configureGateway BEFORE initSchema.
   const { configureGateway } = await import('../core/ai/gateway.ts');
-  configureGateway({
+  configureGateway(buildGatewayConfig({
+    ...(loadConfig() ?? ({} as GBrainConfig)),
     embedding_model: resolvedModel ?? opts.aiOpts?.embedding_model,
     embedding_dimensions: resolvedDim ?? opts.aiOpts?.embedding_dimensions,
     expansion_model: opts.aiOpts?.expansion_model,
     chat_model: opts.aiOpts?.chat_model,
-    env: { ...process.env },
-  });
+  } as GBrainConfig));
   if (resolvedModel) console.log(`  Embedding: ${resolvedModel} (${resolvedDim}d)`);
   if (opts.aiOpts?.expansion_model) console.log(`  Expansion: ${opts.aiOpts.expansion_model}`);
   if (opts.aiOpts?.chat_model) console.log(`  Chat: ${opts.aiOpts.chat_model}`);
