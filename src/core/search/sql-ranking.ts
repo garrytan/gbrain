@@ -18,6 +18,7 @@
  */
 
 import { quarantineFilterFragment } from '../quarantine.ts';
+import { lifecycleFilterFragment } from '../lifecycle.ts';
 
 /**
  * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
@@ -145,14 +146,24 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
  * @param sourceAlias — source table alias (e.g. `'s'`); the caller is
  *                      responsible for joining `sources` so this alias resolves.
  *
+ * Also hides RETIRED pages — those whose author-set frontmatter `status` is a
+ * lifecycle hide value (`superseded`/`deprecated`/`retired`/`obsolete`). Like
+ * quarantine this is a search-only filter: a retired page stays fetchable by
+ * slug (`get_page`) and in `list`, it is just not surfaced by keyword/vector
+ * search. Single source of truth: `lifecycleFilterFragment` in `lifecycle.ts`.
+ *
  * @returns raw SQL fragment, e.g.
- *   `AND p.deleted_at IS NULL AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')`
+ *   `AND p.deleted_at IS NULL AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT (lower(trim(COALESCE(p.frontmatter ->> 'status', ''))) IN ('superseded', 'deprecated', 'retired', 'obsolete'))`
  */
 export function buildVisibilityClause(pageAlias: string, sourceAlias: string): string {
   // Single source of truth for the quarantine SQL lives in quarantine.ts so
   // the marker key + filter can't drift from the search filter (#1699).
   const quarantine = quarantineFilterFragment(pageAlias);
-  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine}`;
+  // Author-set lifecycle retirement (superseded/deprecated/…). Single source of
+  // truth in lifecycle.ts, same reason: marker vocabulary and search filter
+  // must never drift.
+  const lifecycle = lifecycleFilterFragment(pageAlias);
+  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine} AND ${lifecycle}`;
 }
 
 // ============================================================
