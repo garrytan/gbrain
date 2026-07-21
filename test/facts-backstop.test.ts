@@ -76,6 +76,34 @@ const meetingPage = (slug = 'meetings/test-' + Math.random().toString(36).slice(
   frontmatter: {} as Record<string, unknown>,
 });
 
+describe('runFactsBackstop — flattened entity slug recovery', () => {
+  test('recovers a unique dash-flattened reference to a live page', async () => {
+    const suffix = Math.random().toString(36).slice(2, 9);
+    const realSlug = `companies/recovery-${suffix}`;
+    await engine.putPage(realSlug, {
+      title: 'Recovery Target',
+      type: 'company',
+      compiled_truth: LONG_BODY,
+      frontmatter: {},
+      timeline: '',
+    });
+    chatStub([
+      { fact: `flattened reference ${suffix}`, kind: 'fact', notability: 'high', entity: realSlug.replace('/', '-') },
+    ]);
+
+    const r = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline' }));
+    expect(r.mode).toBe('inline');
+    if (r.mode === 'inline') {
+      expect(r.inserted).toBe(1);
+      const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+        `SELECT entity_slug FROM facts WHERE fact = $1`,
+        [`flattened reference ${suffix}`],
+      );
+      expect(rows[0]?.entity_slug).toBe(realSlug);
+    }
+  });
+});
+
 describe('runFactsBackstop — eligibility + kill-switch gates', () => {
   test('skips with extraction_disabled when kill-switch off', async () => {
     await engine.setConfig('facts.extraction_enabled', 'false');
