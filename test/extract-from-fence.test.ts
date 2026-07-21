@@ -5,6 +5,9 @@
  *   - All-fields happy path
  *   - The strikethrough date-derivation contract (forgotten / superseded
  *     / inactive-unrecognized branches)
+ *   - v0.42 (#3014) supersession transport: struck rows carry expired_at
+ *     + the `superseded by #N` row reference; resolveSupersededByRow's
+ *     self / dangling / chain edge cases
  *   - source default when fence row has no `source` cell
  *   - row_num and source_markdown_slug threading
  *   - ISO date parsing tolerance + UTC determinism
@@ -15,6 +18,8 @@ import { describe, test, expect } from 'bun:test';
 import {
   extractFactsFromFenceText,
   FENCE_SOURCE_DEFAULT,
+  resolveSupersededByRow,
+  type SupersedeTarget,
 } from '../src/core/facts/extract-from-fence.ts';
 import type { ParsedFact } from '../src/core/facts-fence.ts';
 
@@ -135,7 +140,7 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
     expect(out[0].valid_until).toBeNull();
   });
 
-  test('forgotten row → valid_until = today (UTC midnight)', () => {
+  test('forgotten row → valid_until = today (UTC midnight) + expired_at set, no supersession', () => {
     const out = extractFactsFromFenceText(
       [baseFact({
         active: false,
@@ -147,6 +152,10 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
       { nowOverride: FROZEN_TODAY },
     );
     expect(out[0].valid_until).toEqual(FROZEN_TODAY);
+    // v0.42 (#3014) — a struck row stamps expired_at so it exits active
+    // views; a forgotten row is not a supersession, so no row reference.
+    expect(out[0].expired_at).toEqual(FROZEN_TODAY);
+    expect(out[0].superseded_by_row).toBeUndefined();
   });
 
   test('forgotten row with explicit validUntil → explicit value wins', () => {
@@ -168,7 +177,12 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
     expect(out[0].valid_until).not.toEqual(FROZEN_TODAY);
   });
 
-  test('supersededBy row without explicit validUntil → null (consolidator owns derivation)', () => {
+  test('supersededBy row without explicit validUntil → valid_until null, expired_at today, superseded_by_row carried', () => {
+    // v0.42 (#3014): pre-fix the mapper dropped supersededBy and left
+    // valid_until null "for the consolidator". The mapper now owns the
+    // transport: it carries the row reference and stamps expired_at so the
+    // struck row exits active views. valid_until stays null (no explicit
+    // date, and the superseding row's valid_from isn't visible here).
     const out = extractFactsFromFenceText(
       [baseFact({
         active: false,
@@ -180,9 +194,11 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
       { nowOverride: FROZEN_TODAY },
     );
     expect(out[0].valid_until).toBeNull();
+    expect(out[0].expired_at).toEqual(FROZEN_TODAY);
+    expect(out[0].superseded_by_row).toBe(4);
   });
 
-  test('supersededBy row with explicit validUntil → explicit value wins', () => {
+  test('supersededBy row with explicit validUntil → explicit value wins for both valid_until and expired_at', () => {
     const out = extractFactsFromFenceText(
       [baseFact({
         active: false,
@@ -195,6 +211,10 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
       { nowOverride: FROZEN_TODAY },
     );
     expect(out[0].valid_until!.getUTCFullYear()).toBe(2026);
+    // expired_at derives from valid_until when present (valid_until ?? today).
+    expect(out[0].expired_at!.getUTCFullYear()).toBe(2026);
+    expect(out[0].expired_at!.getUTCMonth()).toBe(5); // June
+    expect(out[0].superseded_by_row).toBe(4);
   });
 
   test('inactive-unrecognized row (strikethrough but no forgotten/superseded flag) → today', () => {
@@ -212,6 +232,49 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
       { nowOverride: FROZEN_TODAY },
     );
     expect(out[0].valid_until).toEqual(FROZEN_TODAY);
+    // v0.42 (#3014) — unrecognized-inactive still exits active views via
+    // expired_at, but is not a supersession.
+    expect(out[0].expired_at).toEqual(FROZEN_TODAY);
+    expect(out[0].superseded_by_row).toBeUndefined();
+  });
+
+  test('active row → expired_at null, no supersession reference', () => {
+    const out = extractFactsFromFenceText(
+      [baseFact()],
+      'people/alice',
+      'default',
+      { nowOverride: FROZEN_TODAY },
+    );
+    expect(out[0].expired_at).toBeNull();
+    expect(out[0].superseded_by_row).toBeUndefined();
+  });
+});
+
+describe('resolveSupersededByRow — reference resolution', () => {
+  const live: SupersedeTarget = { id: 42, struck: false };
+
+  test('valid reference → resolves to the target fact id, no warning', () => {
+    const r = resolveSupersededByRow(1, 2, live, 'deals/acme');
+    expect(r.superseded_by).toBe(42);
+    expect(r.warning).toBeNull();
+  });
+
+  test('self-reference → NULL + warning', () => {
+    const r = resolveSupersededByRow(3, 3, { id: 99, struck: false }, 'deals/acme');
+    expect(r.superseded_by).toBeNull();
+    expect(r.warning).toContain('references itself');
+  });
+
+  test('dangling reference (target absent from fence) → NULL + warning', () => {
+    const r = resolveSupersededByRow(1, 9, undefined, 'deals/acme');
+    expect(r.superseded_by).toBeNull();
+    expect(r.warning).toContain('absent from the fence');
+  });
+
+  test('chain (target is itself struck) → NULL + warning', () => {
+    const r = resolveSupersededByRow(1, 2, { id: 7, struck: true }, 'deals/acme');
+    expect(r.superseded_by).toBeNull();
+    expect(r.warning).toContain('chain');
   });
 });
 

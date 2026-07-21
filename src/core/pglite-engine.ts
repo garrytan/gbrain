@@ -49,6 +49,7 @@ import type {
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
+import { resolveSupersededByRow, type SupersedeTarget } from './facts/extract-from-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
@@ -4089,21 +4090,26 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async insertFacts(
-    rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
+    rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-  ): Promise<{ inserted: number; ids: number[] }> {
-    if (rows.length === 0) return { inserted: 0, ids: [] };
+  ): Promise<{ inserted: number; ids: number[]; warnings: string[] }> {
+    if (rows.length === 0) return { inserted: 0, ids: [], warnings: [] };
 
+    const warnings: string[] = [];
     // Single transaction so the v51 partial UNIQUE index can roll back the
     // whole batch on constraint violation. Per-row INSERTs (not multi-row
     // VALUES) keep the embedding-vs-no-embedding branching readable; batch
     // sizes are small (5-30 rows per page in practice) so the loop overhead
     // is negligible vs the embedding compute cost.
+    // v0.42 (#3014): the fence path carries struck rows — `expired_at` is
+    // stamped inline, and `superseded by #N` references are resolved to
+    // `facts.superseded_by` in a second pass below (same transaction).
     const ids = await this.db.transaction(async (tx) => {
       const out: number[] = [];
       for (const input of rows) {
         const validFrom = input.valid_from ?? new Date();
         const validUntil = input.valid_until ?? null;
+        const expiredAt = input.expired_at ?? null;
         const kind = input.kind ?? 'fact';
         const visibility = input.visibility ?? 'private';
         const notability = input.notability ?? 'medium';
@@ -4124,47 +4130,74 @@ export class PGLiteEngine implements BrainEngine {
 
         // Param-positional dispatch: embedStr presence shifts the trailing
         // slots by one. Order of named slots stays stable across both
-        // branches: embedded_at, row_num, source_markdown_slug,
+        // branches: expired_at, embedded_at, row_num, source_markdown_slug,
         // claim_metric, claim_value, claim_unit, claim_period, event_type.
         const ins = await tx.query<{ id: number }>(
           embedStr === null
             ? `INSERT INTO facts (
                  source_id, entity_slug, fact, kind, visibility, notability, context,
-                 valid_from, valid_until, source, source_session, confidence,
+                 valid_from, valid_until, expired_at, source, source_session, confidence,
                  embedding, embedded_at,
                  row_num, source_markdown_slug,
                  claim_metric, claim_value, claim_unit, claim_period,
                  event_type
                ) VALUES (
-                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-                 NULL, $13,
-                 $14, $15,
-                 $16, $17, $18, $19,
-                 $20
-               ) RETURNING id`
-            : `INSERT INTO facts (
-                 source_id, entity_slug, fact, kind, visibility, notability, context,
-                 valid_from, valid_until, source, source_session, confidence,
-                 embedding, embedded_at,
-                 row_num, source_markdown_slug,
-                 claim_metric, claim_value, claim_unit, claim_period,
-                 event_type
-               ) VALUES (
-                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-                 $13::vector, $14,
+                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+                 NULL, $14,
                  $15, $16,
                  $17, $18, $19, $20,
                  $21
+               ) RETURNING id`
+            : `INSERT INTO facts (
+                 source_id, entity_slug, fact, kind, visibility, notability, context,
+                 valid_from, valid_until, expired_at, source, source_session, confidence,
+                 embedding, embedded_at,
+                 row_num, source_markdown_slug,
+                 claim_metric, claim_value, claim_unit, claim_period,
+                 event_type
+               ) VALUES (
+                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+                 $14::vector, $15,
+                 $16, $17,
+                 $18, $19, $20, $21,
+                 $22
                ) RETURNING id`,
           embedStr === null
-            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType]
-            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType],
+            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, expiredAt, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType]
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, expiredAt, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType],
         );
         out.push(ins.rows[0].id);
       }
+
+      // v0.42 (#3014) — second pass: resolve `superseded by #N` page-local
+      // references to fact ids. Same transaction so a target row inserted
+      // above is visible. Keyed on (source_id, source_markdown_slug,
+      // row_num) — the v51 unique index — so a reference also resolves
+      // against a target that already existed before this batch. A target
+      // whose `expired_at` is set is itself struck (chain) and rejected.
+      for (let i = 0; i < rows.length; i++) {
+        const targetRow = rows[i].superseded_by_row;
+        if (targetRow === undefined) continue;
+        const slug = rows[i].source_markdown_slug;
+        const found = await tx.query<{ id: number; expired_at: Date | string | null }>(
+          `SELECT id, expired_at FROM facts
+             WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3
+             LIMIT 1`,
+          [ctx.source_id, slug, targetRow],
+        );
+        const hit = found.rows[0];
+        const target: SupersedeTarget | undefined = hit
+          ? { id: Number(hit.id), struck: hit.expired_at != null }
+          : undefined;
+        const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug);
+        if (warning) warnings.push(warning);
+        if (superseded_by !== null) {
+          await tx.query(`UPDATE facts SET superseded_by = $1 WHERE id = $2`, [superseded_by, out[i]]);
+        }
+      }
       return out;
     });
-    return { inserted: ids.length, ids };
+    return { inserted: ids.length, ids, warnings };
   }
 
   async deleteFactsForPage(
@@ -4242,10 +4275,16 @@ export class PGLiteEngine implements BrainEngine {
     source_id: string,
     opts?: { since?: Date; limit?: number },
   ): Promise<FactRow[]> {
-    const where: string[] = [`expired_at IS NOT NULL`, `superseded_by IS NOT NULL`];
+    // v0.42 (#3014) — filter on `superseded_by` alone; the ontology
+    // writer closes a superseded row via `valid_until` (not `expired_at`,
+    // which would break its `--asof` time-travel), so requiring both
+    // columns dropped every ontology supersession AND every fence-authored
+    // one. Order / `since` fall back to `valid_until` when `expired_at` is
+    // NULL.
+    const where: string[] = [`superseded_by IS NOT NULL`];
     const params: Record<string, unknown> = {};
     if (opts?.since) {
-      where.push(`expired_at >= $since`);
+      where.push(`COALESCE(expired_at, valid_until) >= $since`);
       params.since = opts.since;
     }
     return this._listFacts(source_id, {
@@ -4253,7 +4292,7 @@ export class PGLiteEngine implements BrainEngine {
       limit: opts?.limit,
       whereClauses: where,
       whereParams: params,
-      order: 'expired_at DESC, id DESC',
+      order: 'COALESCE(expired_at, valid_until) DESC, id DESC',
     });
   }
 

@@ -423,3 +423,84 @@ describe('runExtractFacts — empty-slugs guard (v0.36.x #1096 regression)', () 
     expect(r.pagesScanned).toBe(1);
   });
 });
+
+describe('runExtractFacts — v0.42 (#3014) supersession transport + heal', () => {
+  // Row 1 struck + "superseded by #2"; row 2 the live superseding fact.
+  const SUPERSEDE_FENCE = FACT_FENCE(
+    `| 1 | ~~Will close by Q2~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #2 |
+| 2 | Closed in Q3 | fact | 1.0 | world | high | 2026-07-01 |  | call |  |`,
+  );
+
+  const readSupersessionCols = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await (engine as any).db.query(
+      `SELECT row_num, superseded_by, expired_at FROM facts WHERE source_markdown_slug = 'people/deal' ORDER BY row_num`,
+    );
+    return r.rows as Array<{ row_num: number; superseded_by: number | null; expired_at: unknown }>;
+  };
+
+  test('reconcile transports superseded_by (resolved to the target row id) + expired_at', async () => {
+    await putPage('people/deal', SUPERSEDE_FENCE);
+    const r = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(r.factsInserted).toBe(2);
+    expect(r.warnings).toEqual([]);
+
+    const rows = await readSupersessionCols();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ids = await (engine as any).db.query(
+      `SELECT row_num, id FROM facts WHERE source_markdown_slug = 'people/deal' ORDER BY row_num`,
+    );
+    const row2Id = ids.rows.find((x: { row_num: number; id: number }) => x.row_num === 2).id;
+    const row1 = rows.find(x => x.row_num === 1)!;
+    expect(Number(row1.superseded_by)).toBe(Number(row2Id));
+    expect(row1.expired_at).not.toBeNull();
+
+    const sup = await engine.listSupersessions('default');
+    expect(sup.some(s => s.superseded_by === Number(row2Id))).toBe(true);
+  });
+
+  test('idempotent: a second reconcile with the struck row already healed is a no-op', async () => {
+    await putPage('people/deal', SUPERSEDE_FENCE);
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+    const r2 = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    // Columns already match the fence-desired state → no drift → no churn.
+    expect(r2.factsInserted).toBe(0);
+    expect(r2.factsDeleted).toBe(0);
+  });
+
+  test('heal: a struck row with NULL supersession columns re-populates on re-reconcile', async () => {
+    await putPage('people/deal', SUPERSEDE_FENCE);
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+
+    // Simulate the pre-#3014 mis-transport: struck row inserted with NULL
+    // columns. The fence text is unchanged, so only the supersession-column
+    // drift check can trigger a re-heal.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE facts SET superseded_by = NULL, expired_at = NULL WHERE source_markdown_slug = 'people/deal' AND row_num = 1`,
+    );
+    const drifted = (await readSupersessionCols()).find(x => x.row_num === 1)!;
+    expect(drifted.superseded_by).toBeNull();
+    expect(drifted.expired_at).toBeNull();
+
+    const healRun = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    // Drift detected → wipe+reinsert re-transports the columns.
+    expect(healRun.factsInserted).toBeGreaterThan(0);
+
+    const healed = (await readSupersessionCols()).find(x => x.row_num === 1)!;
+    expect(healed.superseded_by).not.toBeNull();
+    expect(healed.expired_at).not.toBeNull();
+  });
+
+  test('dangling reference (#N absent from fence) → warning, superseded_by NULL, expired_at set', async () => {
+    await putPage('people/deal', FACT_FENCE(
+      `| 1 | ~~Retired claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #9 |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(r.warnings.some(w => w.includes('absent from the fence'))).toBe(true);
+
+    const row1 = (await readSupersessionCols()).find(x => x.row_num === 1)!;
+    expect(row1.superseded_by).toBeNull();
+    expect(row1.expired_at).not.toBeNull();
+  });
+});

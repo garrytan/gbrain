@@ -43,7 +43,78 @@ import type { ParsedFact } from '../facts-fence.ts';
 export type FenceExtractedFact = NewFact & {
   row_num: number;
   source_markdown_slug: string;
+  /**
+   * v0.42 (#3014) — page-local row reference parsed from `~~claim~~` +
+   * `superseded by #N` (the `#N`). NOT a fact id: `facts.superseded_by`
+   * is a FK to `facts.id`, so `insertFacts` resolves this row number to
+   * the target row's id in a second pass. undefined when the row is not
+   * a supersession.
+   */
+  superseded_by_row?: number;
 };
+
+/**
+ * v0.42 (#3014) — the target row a struck `superseded by #N` reference
+ * resolves to, as seen at insert time.
+ */
+export interface SupersedeTarget {
+  id: number;
+  /**
+   * true when the target row is itself inactive (its `expired_at` is
+   * set) — i.e. `#N` points at another struck row (a chain). A
+   * supersession target must be a live row, so a struck target is
+   * rejected.
+   */
+  struck: boolean;
+}
+
+/** Outcome of resolving a `superseded by #N` reference to a fact id. */
+export interface SupersedeResolution {
+  /** The resolved target fact id, or null when the reference is unsafe. */
+  superseded_by: number | null;
+  /** A human-readable warning when the reference could not be resolved. */
+  warning: string | null;
+}
+
+/**
+ * v0.42 (#3014) — resolve a struck row's `superseded by #N` page-local
+ * reference to a fact id. Pure: the caller supplies the already-looked-up
+ * `target` (keyed on source + row_num within the same transaction) so
+ * this decision is unit-testable without a DB.
+ *
+ * Three references are unsafe and resolve to NULL + a warning (never an
+ * FK write to a guessed id); `expired_at` is set by the mapper regardless
+ * of the outcome so the struck row still exits active views:
+ *   - self-reference (`#N` == the row's own number)
+ *   - dangling (`#N` names a row absent from the page)
+ *   - chain (`#N` names another struck row)
+ */
+export function resolveSupersededByRow(
+  ownRowNum: number,
+  supersededByRow: number,
+  target: SupersedeTarget | undefined,
+  slug: string,
+): SupersedeResolution {
+  if (supersededByRow === ownRowNum) {
+    return {
+      superseded_by: null,
+      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" references itself — leaving superseded_by NULL`,
+    };
+  }
+  if (!target) {
+    return {
+      superseded_by: null,
+      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row absent from the fence — leaving superseded_by NULL`,
+    };
+  }
+  if (target.struck) {
+    return {
+      superseded_by: null,
+      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row that is itself superseded (chain) — leaving superseded_by NULL`,
+    };
+  }
+  return { superseded_by: target.id, warning: null };
+}
 
 /**
  * Default `source` value when a fence row doesn't carry one. The string
@@ -204,6 +275,15 @@ export function extractFactsFromFenceText(
       validUntil = null;
     }
 
+    // v0.42 (#3014) — struck rows carry their expiry + supersession
+    // reference into the DB. `expired_at` has no DB derivation from
+    // `valid_until` (no trigger, sweep, or read-time coalesce), so the
+    // mapper stamps it explicitly for EVERY inactive row (superseded,
+    // forgotten, or inactive-unrecognized) — that is how a struck row
+    // exits active views. `valid_until ?? today` keeps it deterministic
+    // under nowOverride. Active rows leave it null.
+    const expiredAt: Date | null = !f.active ? (validUntil ?? today) : null;
+
     const row: FenceExtractedFact = {
       fact: f.claim,
       kind: f.kind as FactKind,
@@ -213,10 +293,15 @@ export function extractFactsFromFenceText(
       context: f.context ?? null,
       valid_from: validFrom,
       valid_until: validUntil,
+      expired_at: expiredAt,
       source: f.source ?? FENCE_SOURCE_DEFAULT,
       confidence: f.confidence,
       row_num: f.rowNum,
       source_markdown_slug: slug,
+      // v0.42 (#3014) — carry the page-local `superseded by #N` reference
+      // for insertFacts to resolve to a fact id. undefined for non-struck
+      // rows and for struck rows with no supersession context.
+      superseded_by_row: f.supersededBy,
       // v0.35.4 (D-CDX-5) — typed-claim threading. Metric label normalized
       // here so the DB-side index hits use the canonical name; value /
       // unit / period stored verbatim.

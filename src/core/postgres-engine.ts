@@ -21,6 +21,7 @@ import type {
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
+import { resolveSupersededByRow, type SupersedeTarget } from './facts/extract-from-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';
@@ -4285,27 +4286,30 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async insertFacts(
-    rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
+    rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-  ): Promise<{ inserted: number; ids: number[] }> {
-    if (rows.length === 0) return { inserted: 0, ids: [] };
+  ): Promise<{ inserted: number; ids: number[]; warnings: string[] }> {
+    if (rows.length === 0) return { inserted: 0, ids: [], warnings: [] };
 
     const sql = this.sql;
     // v0.41.15.0 (T6, codex #20): resolve the embedding-cast suffix
     // ONCE per process so the cast matches the actual column type
     // (halfvec vs vector). The probe is cached after first call.
     const castSuffix = await this.resolveFactsEmbeddingCast();
+    const warnings: string[] = [];
     // Single transaction so the v51 partial UNIQUE index can roll back
     // the whole batch on constraint violation. Per-row INSERTs (not
     // multi-row VALUES) keep the embedding-vs-no-embedding branching
     // readable; batch sizes are small (5-30 rows per page in practice).
-    // No supersede flow in this path — fence reconciliation is the
-    // canonical source-of-truth direction, not the consolidator path.
+    // v0.42 (#3014): the fence path carries struck rows — `expired_at` is
+    // stamped inline here, and `superseded by #N` references are resolved
+    // to `facts.superseded_by` in a second pass below (same transaction).
     const ids = await sql.begin(async (tx) => {
       const out: number[] = [];
       for (const input of rows) {
         const validFrom = input.valid_from ?? new Date();
         const validUntil = input.valid_until ?? null;
+        const expiredAt = input.expired_at ?? null;
         const kind = input.kind ?? 'fact';
         const visibility = input.visibility ?? 'private';
         const notability = input.notability ?? 'medium';
@@ -4327,14 +4331,14 @@ export class PostgresEngine implements BrainEngine {
         const ins = await tx<Array<{ id: number }>>`
           INSERT INTO facts (
             source_id, entity_slug, fact, kind, visibility, notability, context,
-            valid_from, valid_until, source, source_session, confidence,
+            valid_from, valid_until, expired_at, source, source_session, confidence,
             embedding, embedded_at,
             row_num, source_markdown_slug,
             claim_metric, claim_value, claim_unit, claim_period,
             event_type
           ) VALUES (
             ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
-            ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+            ${validFrom}, ${validUntil}, ${expiredAt}, ${input.source}, ${sourceSession}, ${confidence},
             ${embedLit === null ? null : tx.unsafe(`'${embedLit}'${castSuffix}`)}, ${embeddedAt},
             ${input.row_num}, ${input.source_markdown_slug},
             ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod},
@@ -4343,9 +4347,36 @@ export class PostgresEngine implements BrainEngine {
         `;
         out.push(Number(ins[0].id));
       }
+
+      // v0.42 (#3014) — second pass: resolve `superseded by #N` page-local
+      // references to fact ids. Same transaction so a target row inserted
+      // above is visible. Keyed on (source_id, source_markdown_slug,
+      // row_num) — the v51 unique index — so a reference also resolves
+      // against a target that already existed before this batch. A target
+      // whose `expired_at` is set is itself struck (chain) and rejected.
+      for (let i = 0; i < rows.length; i++) {
+        const targetRow = rows[i].superseded_by_row;
+        if (targetRow === undefined) continue;
+        const slug = rows[i].source_markdown_slug;
+        const found = await tx<Array<{ id: number; expired_at: Date | null }>>`
+          SELECT id, expired_at FROM facts
+          WHERE source_id = ${ctx.source_id}
+            AND source_markdown_slug = ${slug}
+            AND row_num = ${targetRow}
+          LIMIT 1
+        `;
+        const target: SupersedeTarget | undefined = found[0]
+          ? { id: Number(found[0].id), struck: found[0].expired_at != null }
+          : undefined;
+        const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug);
+        if (warning) warnings.push(warning);
+        if (superseded_by !== null) {
+          await tx`UPDATE facts SET superseded_by = ${superseded_by} WHERE id = ${out[i]}`;
+        }
+      }
       return out;
     });
-    return { inserted: ids.length, ids };
+    return { inserted: ids.length, ids, warnings };
   }
 
   async deleteFactsForPage(
@@ -4455,13 +4486,18 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
     const since = opts?.since ?? null;
+    // v0.42 (#3014) — filter on `superseded_by` alone; the ontology
+    // writer closes a superseded row via `valid_until` (not `expired_at`,
+    // which would break its `--asof` time-travel), so requiring both
+    // columns dropped every ontology supersession AND every fence-authored
+    // one. Order / `since` fall back to `valid_until` when `expired_at` is
+    // NULL.
     const rows = await sql<FactRowSqlShape[]>`
       SELECT * FROM facts
       WHERE source_id = ${source_id}
-        AND expired_at IS NOT NULL
         AND superseded_by IS NOT NULL
-        ${since ? sql`AND expired_at >= ${since}` : sql``}
-      ORDER BY expired_at DESC, id DESC
+        ${since ? sql`AND COALESCE(expired_at, valid_until) >= ${since}` : sql``}
+      ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC
       LIMIT ${limit}
     `;
     return rows.map(rowToFactPg);

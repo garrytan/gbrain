@@ -54,6 +54,11 @@ interface ExistingPageFact {
   fact: string;
   source: string | null;
   row_num: number | string | null;
+  // v0.42 (#3014) — supersession columns, read so a struck row whose
+  // fence says "superseded" but whose DB columns are still NULL counts as
+  // drifted and re-heals through the wipe+reinsert fallback.
+  superseded_by: number | string | null;
+  expired_at: Date | string | null;
 }
 
 function factContentKey(fact: string, source: string | null | undefined): string {
@@ -85,7 +90,7 @@ async function listExistingFactsForPage(
   sourceId: string,
 ): Promise<ExistingPageFact[]> {
   return engine.executeRaw<ExistingPageFact>(
-    `SELECT fact, source, row_num
+    `SELECT fact, source, row_num, superseded_by, expired_at
        FROM facts
       WHERE source_id = $1
         AND source_markdown_slug = $2
@@ -313,18 +318,35 @@ export async function runExtractFacts(
       const desired = desiredByKey.get(factContentKey(f.fact, f.source));
       return desired !== undefined && Number(f.row_num) !== desired.row_num;
     });
+    // v0.42 (#3014) — a struck row whose fence says "superseded" (or
+    // otherwise inactive) but whose DB columns are still NULL has an
+    // identical content key + row_num, so the checks above miss it. Treat
+    // a mismatch between the fence-desired supersession/expiry state and
+    // the DB columns as drift so the wipe+reinsert fallback re-heals the
+    // row (transports superseded_by + expired_at that a pre-fix cycle
+    // dropped).
+    const hasSupersessionDrift = existing.some(f => {
+      const desired = desiredByKey.get(factContentKey(f.fact, f.source));
+      if (desired === undefined) return false;
+      const desiredSuperseded = desired.superseded_by_row !== undefined;
+      const dbSuperseded = f.superseded_by != null;
+      const desiredExpired = desired.expired_at != null;
+      const dbExpired = f.expired_at != null;
+      return desiredSuperseded !== dbSuperseded || desiredExpired !== dbExpired;
+    });
 
     if (
       existing.length === extracted.length &&
       !hasStaleExisting &&
       !hasDuplicateExisting &&
-      !hasRowNumDrift
+      !hasRowNumDrift &&
+      !hasSupersessionDrift
     ) {
       continue;
     }
 
     let toInsert = extracted.filter(f => !existingKeys.has(factContentKey(f.fact, f.source)));
-    if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift) {
+    if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift || hasSupersessionDrift) {
       // Fall back to the legacy page-level reconcile when old DB rows must
       // be removed. Same delete scoping as above: legacy
       // NULL-source_markdown_slug rows and `cli:`-origin conversation
@@ -368,6 +390,10 @@ export async function runExtractFacts(
 
     const inserted = await engine.insertFacts(toInsert, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
+    // v0.42 (#3014) — surface unresolvable `superseded by #N` references
+    // (self / dangling / chain) as cycle warnings; the row still inserts
+    // with superseded_by NULL + expired_at set (never a guessed FK).
+    for (const w of inserted.warnings) result.warnings.push(`${slug}: ${w}`);
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic
