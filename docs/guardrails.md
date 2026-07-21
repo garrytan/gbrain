@@ -52,7 +52,7 @@ import APIs.
 ## Writing a guardrail provider
 
 ```ts
-import { registerGuardrailProvider, type GuardrailInput } from 'gbrain/core/guardrails';
+import { registerGuardrailProvider, type GuardrailInput } from 'gbrain/guardrails';
 
 registerGuardrailProvider({
   id: 'my-firewall',
