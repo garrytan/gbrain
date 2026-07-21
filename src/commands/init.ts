@@ -161,13 +161,48 @@ interface ResolveAIOptionsArgs {
   nonInteractive: boolean;       // --non-interactive (forces D3 fail-loud, no picker)
 }
 
-interface ResolvedAIOptions {
+export interface ResolvedAIOptions {
   embedding_model?: string;
   embedding_dimensions?: number;
   expansion_model?: string;
   chat_model?: string;
   /** v0.37 (D9): user opted into deferred embedding setup. */
   noEmbedding?: boolean;
+}
+
+/**
+ * Seed init's AI options from persisted config, falling back to the raw env
+ * vars when loadConfig() returned null (#1058). On a cold install (no
+ * config.json AND no DATABASE_URL) loadConfig short-circuits BEFORE its env
+ * merge, so GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS /
+ * GBRAIN_EXPANSION_MODEL / GBRAIN_CHAT_MODEL were silently ignored by init
+ * and Tier-3 detection auto-picked by API key instead. Exported for unit
+ * tests (env injectable).
+ */
+export function seedAIOptionsFromConfig(
+  cfg: GBrainConfig | null,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedAIOptions {
+  const envDims = env.GBRAIN_EMBEDDING_DIMENSIONS
+    ? parseInt(env.GBRAIN_EMBEDDING_DIMENSIONS, 10)
+    : NaN;
+  const seed = cfg ?? {
+    embedding_disabled: undefined,
+    embedding_model: env.GBRAIN_EMBEDDING_MODEL,
+    embedding_dimensions: Number.isFinite(envDims) ? envDims : undefined,
+    expansion_model: env.GBRAIN_EXPANSION_MODEL,
+    chat_model: env.GBRAIN_CHAT_MODEL,
+  };
+  const out: ResolvedAIOptions = {};
+  if (seed.embedding_disabled) {
+    out.noEmbedding = true;
+  } else if (seed.embedding_model) {
+    out.embedding_model = seed.embedding_model;
+    if (seed.embedding_dimensions) out.embedding_dimensions = seed.embedding_dimensions;
+  }
+  if (seed.expansion_model) out.expansion_model = seed.expansion_model;
+  if (seed.chat_model) out.chat_model = seed.chat_model;
+  return out;
 }
 
 /**
@@ -203,18 +238,13 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
   // user already opted into deferred mode.
   try {
     const { loadConfig } = await import('../core/config.ts');
-    const cfg = loadConfig();
-    if (cfg?.embedding_disabled) {
-      out.noEmbedding = true;
-    } else if (cfg?.embedding_model) {
-      out.embedding_model = cfg.embedding_model;
-      if (cfg.embedding_dimensions) out.embedding_dimensions = cfg.embedding_dimensions;
-    }
-    if (cfg?.expansion_model) out.expansion_model = cfg.expansion_model;
-    if (cfg?.chat_model) out.chat_model = cfg.chat_model;
+    // #1058: loadConfig() returns null on a cold install (no config.json AND
+    // no DATABASE_URL) — before it ever reaches its env merge. The seed helper
+    // falls back to the same GBRAIN_* env vars directly in that case.
+    Object.assign(out, seedAIOptionsFromConfig(loadConfig()));
   } catch {
-    // loadConfig throws when no brain configured — first-time install, fall
-    // through to env detection.
+    // loadConfig threw — treat as first-time install, fall through to env
+    // detection.
   }
 
   // --- Tier 1+2: explicit flags ---------------------------------------------

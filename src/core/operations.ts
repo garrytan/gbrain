@@ -333,6 +333,15 @@ export interface OperationContext {
    */
   remote: boolean;
   /**
+   * Transport marker for auth-less remote surfaces (#1061). The stdio MCP
+   * dispatch sets 'stdio' — it is deliberately `remote: true` (agent-facing,
+   * untrusted) but has no per-token auth (local pipe), so identity ops like
+   * whoami need a way to distinguish "known auth-less transport" from "a
+   * transport bug forgot to thread ctx.auth". Trust decisions MUST NOT key
+   * off this field — only `ctx.remote === false` grants trust.
+   */
+  transport?: 'stdio';
+  /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).
@@ -3713,9 +3722,10 @@ const whoami: Operation = {
     'Introspect the calling identity. Returns one of three transport shapes: ' +
     '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
     '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
-    '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
-    'context is ambiguous (remote=true without auth) — fail-closed posture ' +
-    'mirroring the v0.26.9 trust-boundary contract.',
+    '{transport: "local", scopes: []}, or {transport: "stdio", scopes: []} ' +
+    'for the auth-less stdio MCP pipe. Throws unknown_transport when the ' +
+    'context is ambiguous (remote=true without auth and no transport marker) ' +
+    '— fail-closed posture mirroring the v0.26.9 trust-boundary contract.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -3726,6 +3736,12 @@ const whoami: Operation = {
     // special-case `transport: 'local'` explicitly.
     if (ctx.remote === false) {
       return { transport: 'local', scopes: [] };
+    }
+    // #1061: stdio MCP is remote/untrusted by design but has no per-token
+    // auth (local pipe) — a known transport, not a bug. Report it instead of
+    // throwing. Empty scopes: nothing here may be used to gate anything.
+    if (!ctx.auth && ctx.transport === 'stdio') {
+      return { transport: 'stdio', scopes: [] };
     }
     if (!ctx.auth) {
       throw new OperationError(

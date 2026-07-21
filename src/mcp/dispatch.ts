@@ -33,6 +33,12 @@ export interface DispatchOpts {
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
   /**
+   * #1061: transport marker for auth-less remote surfaces. The stdio MCP
+   * server passes 'stdio' so identity ops (whoami) can report the transport
+   * instead of throwing unknown_transport. Never used for trust decisions.
+   */
+  transport?: OperationContext['transport'];
+  /**
    * v0.28: per-token allow-list for the takes.holder field. Threaded by
    * the HTTP/stdio transport from `access_tokens.permissions.takes_holders`.
    * When set, takes_list / takes_search / query (when it returns takes)
@@ -203,6 +209,7 @@ export function buildOperationContext(
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    transport: opts.transport,
     takesHoldersAllowList: opts.takesHoldersAllowList,
     // v0.34 D4: sourceId is REQUIRED at the type level. Auto-fill 'default'
     // for single-source brains and any caller who didn't resolve a sourceId.

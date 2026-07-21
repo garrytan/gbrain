@@ -42,6 +42,10 @@ export async function startMcpServer(engine: BrainEngine) {
     // `gbrain call <op>` (sets remote=false in src/cli.ts).
     return dispatchToolCall(engine, name, params, {
       remote: true,
+      // #1061: mark the transport so whoami can report {transport: 'stdio'}
+      // instead of throwing unknown_transport. Trust posture unchanged —
+      // stdio stays remote/untrusted.
+      transport: 'stdio',
       takesHoldersAllowList: ['world'],
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
       // Operators who want a different source on stdio MCP should set

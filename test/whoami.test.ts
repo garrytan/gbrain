@@ -94,6 +94,35 @@ describe('whoami op contract', () => {
     expect(result.expires_at).toBeNull();
   });
 
+  // #1061: stdio MCP is remote/untrusted by design but has no per-token auth
+  // (local pipe). The stdio dispatch marks ctx.transport='stdio'; whoami
+  // reports it instead of throwing unknown_transport.
+  test('stdio transport (remote=true, no auth, transport marker) reports stdio', async () => {
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, auth: undefined, transport: 'stdio' }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('stdio');
+    expect(result.scopes).toEqual([]);
+  });
+
+  test('stdio marker does not mask real auth (auth still wins)', async () => {
+    const result = (await whoami.handler(
+      ctxWith({
+        remote: true,
+        transport: 'stdio',
+        auth: {
+          token: 'gbrain_at_xxx',
+          clientId: 'gbrain_cl_abc',
+          scopes: ['read'],
+          expiresAt: 1,
+        } as AuthInfo,
+      }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('oauth');
+  });
+
   // Q3: ambiguous transport — fail-closed. The footgun this guards against
   // is a future transport that lands without threading auth, where a buggy
   // caller might trust whoami's output to gate sensitive ops.
