@@ -163,6 +163,21 @@ describe('hardenBrainRepo', () => {
     expect(r.steps.find(s => s.step === 'commit')).toBeUndefined();
   });
 
+  test('#2545 — scaffolding commit does not fire the post-commit hook (no push race)', async () => {
+    await harden();
+    // The gbrain hook's brain_push always writes to $GBRAIN_HOME/brain-push.log
+    // (ok / rejected / lock-timeout — every path logs). If the scaffolding
+    // commit fired the hook, the detached push races commitScaffolding's own
+    // push (pull --rebase → index.lock) and this log appears within ms.
+    await new Promise(r => setTimeout(r, 1500));
+    expect(existsSync(join(process.env.GBRAIN_HOME!, 'brain-push.log'))).toBe(false);
+    // And the hook no longer documents a bypass that doesn't work: --no-verify
+    // skips pre-commit/commit-msg only, never post-commit.
+    const hook = readFileSync(join(work, '.git', 'hooks', 'post-commit'), 'utf-8');
+    expect(hook).not.toContain('Bypass: git commit --no-verify');
+    expect(hook).toContain('core.hooksPath=/dev/null');
+  });
+
   test('dry-run makes no commit and writes no files', async () => {
     const before = commitCount(work);
     await harden({ dryRun: true });
