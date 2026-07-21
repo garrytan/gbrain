@@ -3,7 +3,11 @@
  *
  * Usage:
  *   gbrain migrate --to supabase [--url <connection_string>]
+ *     (--url is persisted to config.json, mode 0600, so the migrated brain
+ *      works without env — #1271)
  *   gbrain migrate --to pglite [--path <db_path>]
+ *     (an explicit --path destination is bootstrapped with its own
+ *      <path>/.gbrain/config.json so GBRAIN_HOME=<path> just works — #1271)
  *   gbrain migrate --to <engine> --force  (overwrite non-empty target)
  */
 
@@ -11,9 +15,9 @@ import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
-import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync, chmodSync } from 'fs';
 import { createHash } from 'crypto';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -57,6 +61,31 @@ export interface MigrateManifest {
   target_id?: string;
   schema_version?: number;
   started_at: string;
+}
+
+/**
+ * #1271 Finding 1: make an explicit `--to pglite --path P` destination usable
+ * as a standalone brain. Writes `P/.gbrain/config.json` (mode 0600, plus a
+ * `*` .gitignore) so `GBRAIN_HOME=P` resolves without a manual `gbrain init`.
+ * Never clobbers an existing config at the destination. Returns the written
+ * config path, or null when skipped.
+ */
+export function bootstrapDestinationConfig(dbPath: string): string | null {
+  const abs = resolve(dbPath);
+  const dir = join(abs, '.gbrain');
+  const file = join(dir, 'config.json');
+  if (existsSync(file)) return null;
+  mkdirSync(dir, { recursive: true });
+  const cfg: GBrainConfig = { engine: 'pglite', database_path: abs };
+  writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+  try { chmodSync(file, 0o600); } catch { /* platform-specific */ }
+  // Same worktree-safety pattern as saveConfig()'s ensureGitignore, scoped
+  // to the destination home. Don't clobber a user-customized .gitignore.
+  const gitignore = join(dir, '.gitignore');
+  if (!existsSync(gitignore)) {
+    writeFileSync(gitignore, '*\n', { mode: 0o600 });
+  }
+  return file;
 }
 
 export function migrationTargetId(config: EngineConfig): string {
@@ -351,6 +380,25 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       : { database_path: targetConfig.database_path, database_url: undefined }),
   };
   saveConfig(newConfig);
+
+  // #1271 Finding 2 (by design, but say it out loud): the connection string
+  // is persisted so the migrated brain works without env. Mode 0600.
+  if (opts.targetEngine === 'postgres' && opts.targetUrl) {
+    console.error('Note: the --url connection string (including credentials) is persisted to config.json (mode 0600).');
+  }
+
+  // #1271 Finding 1: an explicit --path destination doubles as a standalone
+  // GBRAIN_HOME. Best-effort — never fail a completed migration over it.
+  if (opts.targetEngine === 'pglite' && opts.targetPath) {
+    try {
+      const written = bootstrapDestinationConfig(opts.targetPath);
+      if (written) {
+        console.log(`Destination bootstrapped: ${written} (usable via GBRAIN_HOME=${resolve(opts.targetPath)})`);
+      }
+    } catch (e) {
+      console.warn(`  WARN could not bootstrap destination config: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   // Clean up
   clearManifest();
