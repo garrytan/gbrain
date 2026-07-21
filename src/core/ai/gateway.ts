@@ -48,6 +48,7 @@ import type {
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
+import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
@@ -405,6 +406,20 @@ export function applyOpenAICompatConfig(
     );
   }
   return { baseURL, fetch: recipe.compat?.fetch };
+}
+
+/**
+ * Whether an openai-compatible recipe's backend honors OpenAI structured
+ * outputs. Threaded into `createOpenAICompatible`'s `supportsStructuredOutputs`
+ * at the chat + expansion build sites, and consulted by `expand()` to pick the
+ * strict `generateObject` path over the schemaless text path. Single source of
+ * truth read from the chat touchpoint: the backend serves both chat and
+ * expansion, so the capability is declared once.
+ *
+ * @internal exported for tests.
+ */
+export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
+  return recipe.touchpoints.chat?.supports_structured_outputs === true;
 }
 
 /**
@@ -2264,6 +2279,7 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         baseURL: compat.baseURL,
         ...(compat.fetch ? { fetch: compat.fetch } : {}),
         ...auth,
+        supportsStructuredOutputs: recipeSupportsStructuredOutputs(recipe),
       }).languageModel(modelId);
     }
   }
@@ -2272,6 +2288,20 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
 const ExpansionSchema = z.object({
   queries: z.array(z.string()).min(1).max(5),
 });
+
+/**
+ * Recover expansion queries from a schemaless model response. Used by the
+ * openai-compatible expansion paths: a tolerant JSON decode plus schema
+ * validation pulls the `queries` array out of the model's text (the prompt
+ * pins it to a bare JSON object). Returns null when the text carries no valid
+ * `{ queries: string[] }` object.
+ *
+ * @internal exported for tests.
+ */
+export function parseExpansionResponse(text: string): string[] | null {
+  const parsed = ExpansionSchema.safeParse(parseLlmJson<unknown>(text));
+  return parsed.success ? parsed.data.queries : null;
+}
 
 /**
  * Expand a search query into up to 4 related queries.
@@ -2289,24 +2319,65 @@ export async function expand(query: string): Promise<string[]> {
     metadata: { query_chars: query.length },
   });
 
+  const expansionPrompt = [
+    'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents. Respond with a JSON object in exactly this shape: {"queries": ["rewrite1", "rewrite2", "rewrite3"]}. The JSON key MUST be exactly "queries" (not "rewrites" or any other variation).',
+    'Return ONLY the JSON object. Do NOT include the original query in the result.',
+    'Each rewrite should emphasize different aspects, synonyms, or framings.',
+    '',
+    `Query: ${query}`,
+  ].join('\n');
+
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
-    const result = await generateObject({
-      model,
-      schema: ExpansionSchema,
-      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
-      // class as chat. Default the chat timeout.
-      abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
-      prompt: [
-        'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
-        'Return ONLY the JSON object. Do NOT include the original query in the result.',
-        'Each rewrite should emphasize different aspects, synonyms, or framings.',
-        '',
-        `Query: ${query}`,
-      ].join('\n'),
-    });
 
-    const expansions = result.object?.queries ?? [];
+    let expansions: string[];
+
+    // Schemaless text path for openai-compatible backends whose structured-output
+    // support is unknown: the AI SDK can't send a json_schema response_format
+    // there, so generateObject would warn and silently degrade. generateText + a
+    // tolerant parse recovers the queries instead. Fresh abortSignal per call.
+    const viaText = async (): Promise<string[]> => {
+      const { text } = await generateText({
+        model,
+        // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same
+        // stalled-socket class as chat. Default the chat timeout.
+        abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
+        prompt: expansionPrompt,
+      });
+      return parseExpansionResponse(text) ?? [];
+    };
+
+    if (recipe.implementation !== 'openai-compatible') {
+      // Native providers (Anthropic, OpenAI, Google) support generateObject's
+      // structured output natively — unchanged path.
+      const result = await generateObject({
+        model,
+        schema: ExpansionSchema,
+        abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
+        prompt: expansionPrompt,
+      });
+      expansions = result.object?.queries ?? [];
+    } else if (recipeSupportsStructuredOutputs(recipe)) {
+      // openai-compatible backend that honors strict json_schema: request the
+      // schema (strict validation), and fall back to the text path if it is
+      // rejected at call time so a mis-declared capability never drops expansion.
+      try {
+        const result = await generateObject({
+          model,
+          schema: ExpansionSchema,
+          abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
+          prompt: expansionPrompt,
+        });
+        expansions = result.object?.queries ?? [];
+      } catch {
+        expansions = await viaText();
+      }
+    } else {
+      // openai-compatible backend, structured-output support unknown: skip the
+      // json_schema attempt entirely (no SDK warning, no silent degradation).
+      expansions = await viaText();
+    }
+
     // Deduplicate + include the original query
     const seen = new Set<string>();
     const all = [query, ...expansions].filter(q => {
@@ -2752,6 +2823,7 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
         baseURL: compat.baseURL,
         ...(compat.fetch ? { fetch: compat.fetch } : {}),
         ...auth,
+        supportsStructuredOutputs: recipeSupportsStructuredOutputs(recipe),
       }).languageModel(modelId);
     }
     default:

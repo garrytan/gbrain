@@ -25,10 +25,13 @@ import {
   getChatFallbackChain,
   chat,
   __setGenerateTextTransportForTests,
+  recipeSupportsStructuredOutputs,
+  parseExpansionResponse,
 } from '../../src/core/ai/gateway.ts';
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
+import type { Recipe } from '../../src/core/ai/types.ts';
 
 describe('chat touchpoint — recipe registry', () => {
   test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
@@ -62,6 +65,56 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('deepseek')!.base_url_default).toBe('https://api.deepseek.com/v1');
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
+  });
+});
+
+describe('expansion — structured-output capability gating', () => {
+  test('openai-compat chat recipes default to no structured-output support', () => {
+    // The capability is opt-in per recipe: an openai-compatible recipe may front
+    // arbitrary backends, so expand() routes the default through the schemaless
+    // text path rather than requesting a json_schema the backend may reject.
+    for (const id of ['deepseek', 'groq', 'together']) {
+      expect(recipeSupportsStructuredOutputs(getRecipe(id)!)).toBe(false);
+    }
+  });
+
+  test('recipeSupportsStructuredOutputs is false when no chat touchpoint exists', () => {
+    // Embedding-only recipes have no chat touchpoint; the helper must not throw.
+    expect(recipeSupportsStructuredOutputs(getRecipe('voyage')!)).toBe(false);
+  });
+
+  test('recipeSupportsStructuredOutputs is true when a recipe opts in', () => {
+    const optedIn = {
+      id: 'synthetic',
+      touchpoints: { chat: { models: [], supports_tools: true, supports_subagent_loop: true, supports_structured_outputs: true } },
+    } as unknown as Recipe;
+    expect(recipeSupportsStructuredOutputs(optedIn)).toBe(true);
+  });
+});
+
+describe('expansion — schemaless recovery (parseExpansionResponse)', () => {
+  // The openai-compat expansion paths recover queries from raw model text. This
+  // is the testable seam both the default and the strict-fallback paths share.
+  test('recovers queries from clean JSON', () => {
+    expect(parseExpansionResponse('{"queries":["a","b","c"]}')).toEqual(['a', 'b', 'c']);
+  });
+
+  test('recovers queries from fenced JSON', () => {
+    expect(parseExpansionResponse('```json\n{"queries":["a","b"]}\n```')).toEqual(['a', 'b']);
+  });
+
+  test('recovers queries from prose-wrapped JSON', () => {
+    expect(parseExpansionResponse('Here you go: {"queries":["a"]} done')).toEqual(['a']);
+  });
+
+  test('returns null for non-JSON so the caller can drop expansion cleanly', () => {
+    expect(parseExpansionResponse('I cannot help with that.')).toBeNull();
+  });
+
+  test('returns null when the JSON violates the schema', () => {
+    expect(parseExpansionResponse('{"queries":[]}')).toBeNull(); // min(1)
+    expect(parseExpansionResponse('{"rewrites":["a"]}')).toBeNull(); // wrong key
+    expect(parseExpansionResponse('{"queries":[1,2]}')).toBeNull(); // wrong item type
   });
 });
 
