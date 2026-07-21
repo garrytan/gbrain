@@ -55,6 +55,12 @@ describe('recipe: dashscope', () => {
     expect(r.touchpoints.embedding!.chars_per_token).toBeGreaterThan(0);
   });
 
+  test('declares max_batch_items: 10 (DashScope hard item-count cap per request)', () => {
+    const r = getRecipe('dashscope')!;
+    expect(r.touchpoints.embedding!.max_batch_items).toBe(10);
+    expect(r.touchpoints.embedding!.models).toContain('text-embedding-v4');
+  });
+
   test('dimsProviderOptions threads dimensions for text-embedding-v3 (Matryoshka)', async () => {
     // Codex finding #1: DashScope text-embedding-v3 is Matryoshka 64-1024.
     // Without `dimensions` on the wire, user-selected non-default dims are

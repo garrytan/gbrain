@@ -34,7 +34,9 @@ import {
   resetGateway,
   embed,
   splitByTokenBudget,
+  splitByItemLimit,
   isTokenLimitError,
+  isBatchSizeError,
   __setEmbedTransportForTests,
   __getShrinkStateForTests,
 } from '../../src/core/ai/gateway.ts';
@@ -81,6 +83,21 @@ function configureGoogle(): void {
     embedding_model: 'google:gemini-embedding-001',
     embedding_dimensions: 768,
     env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+  });
+}
+
+// Real error string returned by DashScope's OpenAI-compatible /embeddings
+// endpoint when a request carries more than 10 items. Note: no "token"
+// wording — none of isTokenLimitError's patterns match it.
+const DASHSCOPE_BATCH_SIZE_ERROR = new Error(
+  'batch size is invalid, it should not be larger than 10',
+);
+
+function configureDashScope(): void {
+  configureGateway({
+    embedding_model: 'dashscope:text-embedding-v4',
+    embedding_dimensions: 1024,
+    env: { DASHSCOPE_API_KEY: 'sk-fake' },
   });
 }
 
@@ -184,6 +201,79 @@ describe('isTokenLimitError (pure helper)', () => {
   });
 });
 
+describe('splitByItemLimit (pure helper)', () => {
+  test('empty input returns empty array', () => {
+    expect(splitByItemLimit([], 10)).toEqual([]);
+  });
+
+  test('batches at or under the limit pass through unchanged', () => {
+    const batches = [['a', 'b'], ['c', 'd', 'e']];
+    expect(splitByItemLimit(batches, 5)).toEqual([['a', 'b'], ['c', 'd', 'e']]);
+    expect(splitByItemLimit(batches, 3)).toEqual([['a', 'b'], ['c', 'd', 'e']]);
+  });
+
+  test('over-limit batch is subdivided into ≤maxItems slices', () => {
+    const batch = Array.from({ length: 12 }, (_, i) => `t${i}`);
+    const result = splitByItemLimit([batch], 10);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toHaveLength(10);
+    expect(result[1]).toHaveLength(2);
+  });
+
+  test('multiple input batches are each subdivided independently', () => {
+    const a = Array.from({ length: 11 }, (_, i) => `a${i}`);
+    const b = Array.from({ length: 21 }, (_, i) => `b${i}`);
+    const result = splitByItemLimit([a, b], 10);
+    expect(result.map(x => x.length)).toEqual([10, 1, 10, 10, 1]);
+  });
+
+  test('maxItems of 0 / negative / undefined passes batches through untouched', () => {
+    const batches = [Array.from({ length: 25 }, (_, i) => `t${i}`)];
+    expect(splitByItemLimit(batches, 0)).toBe(batches);
+    expect(splitByItemLimit(batches, -1)).toBe(batches);
+    expect(splitByItemLimit(batches, undefined as unknown as number)).toBe(batches);
+  });
+
+  test('concatenating the output reproduces the input order exactly', () => {
+    const a = Array.from({ length: 17 }, (_, i) => `a${i}`);
+    const b = Array.from({ length: 4 }, (_, i) => `b${i}`);
+    const result = splitByItemLimit([a, b], 5);
+    expect(result.flat()).toEqual([...a, ...b]);
+    for (const slice of result) {
+      expect(slice.length).toBeLessThanOrEqual(5);
+    }
+  });
+});
+
+describe('isBatchSizeError (pure helper)', () => {
+  test('matches the real DashScope batch-size error verbatim', () => {
+    expect(isBatchSizeError(DASHSCOPE_BATCH_SIZE_ERROR)).toBe(true);
+  });
+
+  test('matches generic item-count-limit variants', () => {
+    expect(isBatchSizeError(new Error('too many inputs in request'))).toBe(true);
+    expect(isBatchSizeError(new Error('too many items in batch'))).toBe(true);
+    expect(isBatchSizeError(new Error('exceeded maximum batch size of 16'))).toBe(true);
+    expect(isBatchSizeError(new Error('max items per request is 32'))).toBe(true);
+    expect(isBatchSizeError(new Error('batch count exceeds the limit'))).toBe(true);
+  });
+
+  test('does not match token-budget or unrelated errors', () => {
+    expect(isBatchSizeError(VOYAGE_TOKEN_LIMIT_ERROR)).toBe(false);
+    expect(isBatchSizeError(new Error('Token limit exceeded for batch request'))).toBe(false);
+    expect(isBatchSizeError(new Error('Connection refused'))).toBe(false);
+    expect(isBatchSizeError(new Error('Invalid API key'))).toBe(false);
+    expect(isBatchSizeError(new Error('429 rate limited'))).toBe(false);
+  });
+
+  test('handles non-Error throwables', () => {
+    expect(isBatchSizeError('batch size is invalid, it should not be larger than 10')).toBe(true);
+    expect(isBatchSizeError({ message: 'some other thing' })).toBe(false);
+    expect(isBatchSizeError(null)).toBe(false);
+    expect(isBatchSizeError(undefined)).toBe(false);
+  });
+});
+
 // --------- 2-4. Recursion via embed() with stubbed transport ---------
 
 describe('embed() recursion via stubbed transport', () => {
@@ -231,6 +321,55 @@ describe('embed() recursion via stubbed transport', () => {
     // preservation despite the embeddings being concatenated from two calls.
     const slotZero = result.map(v => v[0]);
     expect(slotZero).toEqual([0, 1, 2, 3, 4, 0, 1, 2, 3, 4]);
+  });
+
+  test('dashscope recipe: 47 short texts → every transport call carries ≤10 items (regression: live 400)', async () => {
+    // Encodes the exact live-bug shape: many short chunks fit easily inside
+    // the token budget, so a token-budget-only pre-split packs >10 into one
+    // request and DashScope 400s. With max_batch_items: 10 declared, the
+    // gateway must subdivide so NO call ever exceeds 10 items.
+    configureDashScope();
+
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      if (values.length > 10) throw DASHSCOPE_BATCH_SIZE_ERROR;
+      return fakeEmbeddings(values, 1024);
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 47 }, (_, i) => `short-${i}`);
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(47);
+    // 47 items → pre-split into [10, 10, 10, 10, 7]: five calls, zero errors.
+    expect(stub).toHaveBeenCalledTimes(5);
+    for (const [arg] of stub.mock.calls) {
+      expect((arg as { values: string[] }).values.length).toBeLessThanOrEqual(10);
+    }
+    const callLengths = stub.mock.calls.map(([arg]) => (arg as { values: string[] }).values.length);
+    expect(callLengths).toEqual([10, 10, 10, 10, 7]);
+  });
+
+  test('item-count-limit error triggers halving recovery WITHOUT tightening the token safety factor', async () => {
+    // A recipe with no max_batch_items declared (voyage) can still hit a
+    // provider item-count ceiling. The halving safety net must engage (halving
+    // reduces item counts too), but shrinkOnMiss must NOT fire — the miss has
+    // no token-budget cause.
+    configureVoyage();
+
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      if (values.length > 10) throw DASHSCOPE_BATCH_SIZE_ERROR;
+      return fakeEmbeddings(values, 1024);
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 16 }, (_, i) => `t${i}`);
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(16);
+    // 16 fails → halves into 8 + 8: three calls total.
+    expect(stub).toHaveBeenCalledTimes(3);
+    // Token safety factor untouched: item misses must not pollute shrink state.
+    expect(__getShrinkStateForTests('voyage')).toBeUndefined();
   });
 
   test('terminal case: single text always fails → normalizes and throws (no infinite loop)', async () => {
