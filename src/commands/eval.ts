@@ -60,6 +60,12 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCodeRetrieval } = await import('./eval-code-retrieval.ts');
     return runEvalCodeRetrieval(engine, args.slice(1));
   }
+  if (sub === 'retrieval-quality') {
+    // T6 — NamedThingBench. Gold query set vs hybrid retrieval; gates the
+    // families that ARE the retrieval-maxpool incident (title/alias/dilution).
+    const { runEvalRetrievalQuality } = await import('./eval-retrieval-quality.ts');
+    return runEvalRetrievalQuality(engine, args.slice(1));
+  }
   if (sub === 'brainstorm') {
     // v0.37.0 (D3 + codex r2 #11) — three-axis evaluation gate for the
     // brainstorm + LSD wave. Engine connected (calls hybridSearch +
@@ -87,6 +93,14 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     // is connected; thin-client routing handled inside the command file.
     const { runEvalTrajectory } = await import('./eval-trajectory.ts');
     return runEvalTrajectory(engine, args.slice(1));
+  }
+  if (sub === 'conversation-parser') {
+    // v0.41.13.0 — fixture-corpus CI gate for the 12-pattern built-in
+    // registry + opt-in LLM polish/fallback. Pure-function eval; no
+    // DB access, no API keys when --no-llm is passed. Wired into
+    // bun run verify so built-in regressions block PRs.
+    const { runEvalConversationParser } = await import('./eval-conversation-parser.ts');
+    process.exit(await runEvalConversationParser(args.slice(1)));
   }
   // v0.32.3 search-lite — per-mode orchestrator + comparison report.
   if (sub === 'run-all') {

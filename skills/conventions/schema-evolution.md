@@ -112,3 +112,35 @@ is a git repo), commit after every batch of mutations. The
 `mutation_count_anomaly` lint rule warns at >50 mutations in 7 days —
 that's the hint to start committing rather than relying on disk-only
 state.
+
+## When to upgrade your pack (v0.42+)
+
+A pack can declare `migration_from: {pack: <name>, version: <semver-range>}`
+to register itself as the successor to another pack. When a brain's
+active pack matches the declared `from`, the `pack_upgrade_available`
+onboard check surfaces the successor + a `manual_only` RemediationStep
+pointing at the `unify-types` PROTECTED Minion handler.
+
+v0.41.22 ships **gbrain-base-v2** as the declared successor to
+gbrain-base@1.x — collapses 94 noisy types to 15 canonical via
+declarative mapping_rules. Run via `gbrain onboard --check --explain`
+(preview) → `gbrain jobs submit unify-types --allow-protected --params
+'{"target_pack":"gbrain-base-v2"}'` (apply). See
+`skills/schema-unify/SKILL.md` for the full playbook.
+
+Authoring a successor pack: declare
+`migration_from: {pack: <parent>, version: "1.x"}` in the manifest
+plus `mapping_rules:` (discriminated union over retype / page_to_link /
+page_to_alias kinds). Catch-all sentinel `from_type: '*unknown*'` MUST
+appear last. Subtype_field is restricted to ALLOWED_SUBTYPE_FIELDS
+(`subtype, legacy_type, origin, format, kind, period, domain`) per
+codex D9 — third-party packs cannot inject `title` / `slug` / `type`.
+
+When NOT to upgrade:
+- Custom types not covered by the successor's mapping_rules → fork the
+  successor first (`gbrain schema fork gbrain-base-v2 my-pack`), edit
+  rules, then target your fork.
+- Mid-ingest or autopilot maintenance → wait. Unify holds the
+  `gbrain-unify` db-lock for ~10 min on big brains.
+- Federated brain with sources you don't want to touch → scope per
+  source via `--params sourceId`.

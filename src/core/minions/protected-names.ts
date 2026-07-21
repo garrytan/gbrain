@@ -37,6 +37,32 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // budget. Only trusted local callers (the mode-switch hook in
   // commands/config.ts, reindex sweep, doctor --remediate) can submit.
   'contextual_reindex_per_chunk',
+  // v0.41.18.0 (A12, T9) — takes-bootstrap. Per-page Haiku classifier
+  // call over concept/atom/lore/briefing/writing/originals. Two-gate
+  // consent (takes.bootstrap_enabled + --yes) AND PROTECTED ensures
+  // no remote / MCP / autopilot path can bulk-extract takes without
+  // explicit operator intent.
+  'extract-takes-from-pages',
+  // v0.42 type-unification (T11, plan D17). Pack-upgrade migration that
+  // retypes 25K+ pages, creates 5K+ alias rows, converts edge-shaped
+  // pages to link rows, AND flips the active schema pack. One-time
+  // consenting user decision. PROTECTED + manual_only in
+  // src/core/onboard/render.ts:toOnboardRecommendation ensures autopilot
+  // can't auto-apply; user must run `gbrain onboard --auto-with-prompt`
+  // or submit explicitly via `gbrain jobs submit unify-types --allow-protected`.
+  'unify-types',
+  // v0.42.0.0 — SkillOpt: optimizer Sonnet/Opus loops over a benchmark.
+  // Preemptive register entry (v1 is CLI-only foreground; future Minion
+  // handler must reject MCP submission). Costs user money (optimizer +
+  // judge + rollouts) so PROTECTED is the right posture.
+  'skillopt',
+  // v0.42.x (#1685 GAP D, CODEX #1) — extract_atoms backlog drain. Each run
+  // calls Haiku to extract atoms (~$0.30/source/run), so it MUST NOT be
+  // submittable by an MCP/OAuth-scoped caller — same posture as the protected
+  // `extract-takes-from-pages`. Only trusted local callers (the autopilot
+  // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain
+  // --allow-protected`) can insert it.
+  'extract-atoms-drain',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */

@@ -1,3 +1,7 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 /**
  * Run a callback with `process.env` mutations applied, then restore the prior
  * values via try/finally. The canonical pattern for env-touching tests in this
@@ -68,4 +72,18 @@ export async function withEnv<T>(
       }
     }
   }
+}
+
+/**
+ * A fresh empty temp dir for `GBRAIN_HOME`, so `loadConfig()` / `configDir()`
+ * resolve to a directory with no config.json. Pair with a `withEnv` override
+ * (`GBRAIN_HOME: emptyHome()`) on any "no key" assertion: `hasAnthropicKey()`
+ * and the ZE/embedding key probes read BOTH the env var AND the gbrain config
+ * file, so clearing only the env var is NOT hermetic on a dev machine whose
+ * real `~/.gbrain/config.json` holds a key — the assertion flips and the test
+ * fails locally while passing in key-less CI. The dir is tiny and intentionally
+ * leaked (test process is short-lived); the OS reaps tmp.
+ */
+export function emptyHome(): string {
+  return mkdtempSync(join(tmpdir(), 'gbrain-nokey-home-'));
 }

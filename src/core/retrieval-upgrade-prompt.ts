@@ -102,10 +102,22 @@ export async function runRetrievalUpgradePrompt(
   const normalized = key.toLowerCase().trim();
 
   if (normalized === 's') {
+    // v0.41.2.1 — interactive path does NOT pass ignoreEnvOverride; if the
+    // user has env vars set, the apply call returns 'refused' with the
+    // structured warning. The prompt surfaces the ASCII box and surfaces
+    // `failed` status so the CLI exits non-zero. Power users who really
+    // want to override use the non-interactive `--ignore-env-override`.
     const result = await applyRetrievalUpgrade(engine, plan);
     if (result.status === 'applied') {
       writeFn('[ze-switch] Schema rebuilt at 1024d. Run `gbrain embed --stale` to refill embeddings (or wait for autopilot).');
       return { status: 'applied', plan };
+    }
+    if (result.status === 'refused' && result.reason === 'env_override') {
+      // Lazy-import to avoid the prompt module pulling in the planner
+      // module's full surface at module-load time.
+      const { formatEnvOverrideWarning } = await import('./retrieval-upgrade-planner.ts');
+      writeFn(formatEnvOverrideWarning(result.warning));
+      return { status: 'failed', plan, reason: 'env_override (use --ignore-env-override to apply anyway)' };
     }
     if (result.status === 'failed') {
       return { status: 'failed', plan, reason: result.reason };

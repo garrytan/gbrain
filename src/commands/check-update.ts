@@ -1,5 +1,27 @@
 import { VERSION } from '../version.ts';
 import { detectInstallMethod } from './upgrade.ts';
+import {
+  isMinorOrMajorBump,
+  isValidVersionString,
+  parseSemver,
+  semverGt,
+  semverLte,
+} from '../core/semver.ts';
+import { writeUpdateCache, type UpdateMarker } from '../core/self-upgrade.ts';
+
+/** Best-effort cache write — a read-only ~/.gbrain must never make the check throw. */
+function safeWriteCache(marker: UpdateMarker): void {
+  try {
+    writeUpdateCache(marker);
+  } catch {
+    /* fail-open: no cache this run, next invocation re-checks */
+  }
+}
+
+// Back-compat re-exports: these used to live here; moved to ../core/semver.ts
+// so the self-upgrade decision module can depend on them without an import
+// cycle. Existing importers (`test/check-update.test.ts`, etc.) keep working.
+export { parseSemver, isMinorOrMajorBump };
 
 interface CheckUpdateResult {
   current_version: string;
@@ -13,38 +35,25 @@ interface CheckUpdateResult {
   error?: string;
 }
 
-export function parseSemver(v: string): [number, number, number] | null {
-  const clean = v.replace(/^v/, '');
-  const parts = clean.split('.');
-  if (parts.length < 3) return null;
-  const nums = parts.slice(0, 3).map(Number);
-  if (nums.some(isNaN)) return null;
-  return nums as [number, number, number];
-}
-
-export function isMinorOrMajorBump(current: string, latest: string): boolean {
-  const cur = parseSemver(current);
-  const lat = parseSemver(latest);
-  if (!cur || !lat) return false;
-  if (lat[0] > cur[0]) return true;
-  if (lat[0] === cur[0] && lat[1] > cur[1]) return true;
-  return false;
-}
-
 function upgradeCommandForMethod(method: string): string {
   switch (method) {
     case 'bun': return 'bun update gbrain';
     case 'clawhub': return 'clawhub update gbrain';
-    case 'binary': return 'Download from https://github.com/garrytan/gbrain/releases';
+    case 'binary': return 'gbrain self-upgrade';
     default: return 'gbrain upgrade';
   }
 }
 
-async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
+/**
+ * Fetch the latest GitHub release. Exported (v0.42) so the self-upgrade refresh
+ * path and tests can reuse it. 5s timeout (was 10s) — this runs on the detached
+ * refresh, never the hot path, but a tight bound keeps the refresh cheap.
+ */
+export async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
   try {
     const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return null;
     const data = await res.json() as any;
@@ -58,10 +67,10 @@ async function fetchLatestRelease(): Promise<{ tag: string; published_at: string
   }
 }
 
-async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
+export async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
   try {
     const res = await fetch('https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md', {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return '';
     const text = await res.text();
@@ -69,16 +78,6 @@ async function fetchChangelog(currentVersion: string, latestVersion: string): Pr
   } catch {
     return '';
   }
-}
-
-function semverGt(a: [number, number, number], b: [number, number, number]): boolean {
-  if (a[0] !== b[0]) return a[0] > b[0];
-  if (a[1] !== b[1]) return a[1] > b[1];
-  return a[2] > b[2];
-}
-
-function semverLte(a: [number, number, number], b: [number, number, number]): boolean {
-  return !semverGt(a, b);
 }
 
 export function extractChangelogBetween(changelog: string, from: string, to: string): string {
@@ -117,9 +116,46 @@ export function extractChangelogBetween(changelog: string, from: string, to: str
   return entries.join('\n').trim();
 }
 
+/**
+ * Fetch the latest release and write the self-upgrade cache (the marker line
+ * read by the CLI startup hook). Fail-open: on any network failure we cache
+ * `UP_TO_DATE <current>` so the TTL prevents hammering GitHub on every
+ * invocation. Returns the resolved marker for callers that want it. This is the
+ * function the detached single-flight refresh (`gbrain check-update
+ * --refresh-cache`) invokes.
+ */
+export async function refreshUpdateCache(): Promise<void> {
+  const release = await fetchLatestRelease();
+  if (!release) {
+    safeWriteCache({ kind: 'up_to_date', current: VERSION });
+    return;
+  }
+  const latestVersion = release.tag.replace(/^v/, '');
+  if (!isValidVersionString(latestVersion) || !isMinorOrMajorBump(VERSION, latestVersion)) {
+    safeWriteCache({ kind: 'up_to_date', current: VERSION });
+    return;
+  }
+  safeWriteCache({ kind: 'upgrade_available', current: VERSION, latest: latestVersion });
+}
+
 export async function runCheckUpdate(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain check-update [--json]\n\nCheck for new GBrain versions.\n\nOnly reports minor/major version bumps (v0.X.0), not patches.\nFails silently on network errors.');
+    console.log('Usage: gbrain check-update [--json] [--refresh-cache]\n\nCheck for new GBrain versions.\n\nOnly reports minor/major version bumps (v0.X.0), not patches.\nFails silently on network errors.\n\n--refresh-cache  Fetch + update the self-upgrade cache, print nothing (used by\n                 the CLI startup hook\'s detached refresh).');
+    return;
+  }
+
+  // Detached refresh path: warm the cache for the next invocation, emit nothing.
+  // Single-flight via the refresh lock so many simultaneous stale-cache
+  // invocations don't stampede GitHub. If another refresh holds the lock, exit.
+  if (args.includes('--refresh-cache')) {
+    const { tryAcquireRefreshLock, releaseRefreshLock } = await import('../core/self-upgrade.ts');
+    const lock = tryAcquireRefreshLock();
+    if (!lock) return; // another refresh is in flight
+    try {
+      await refreshUpdateCache();
+    } finally {
+      releaseRefreshLock(lock);
+    }
     return;
   }
 
@@ -130,6 +166,8 @@ export async function runCheckUpdate(args: string[]) {
   const release = await fetchLatestRelease();
 
   if (!release) {
+    // Warm the cache fail-open so the startup hook doesn't re-fetch every call.
+    safeWriteCache({ kind: 'up_to_date', current: VERSION });
     if (json) {
       console.log(JSON.stringify({
         current_version: VERSION,
@@ -149,7 +187,15 @@ export async function runCheckUpdate(args: string[]) {
   }
 
   const latestVersion = release.tag.replace(/^v/, '');
-  const updateAvailable = isMinorOrMajorBump(VERSION, latestVersion);
+  const updateAvailable = isValidVersionString(latestVersion) && isMinorOrMajorBump(VERSION, latestVersion);
+
+  // Warm the self-upgrade cache so the next `gbrain <cmd>` startup hook can emit
+  // the marker without a network call.
+  safeWriteCache(
+    updateAvailable
+      ? { kind: 'upgrade_available', current: VERSION, latest: latestVersion }
+      : { kind: 'up_to_date', current: VERSION },
+  );
 
   let changelogDiff = '';
   if (updateAvailable) {

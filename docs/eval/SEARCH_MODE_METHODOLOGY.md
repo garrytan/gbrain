@@ -160,7 +160,7 @@ The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table
 - Your agent's system prompt + reasoning tokens add input that gbrain doesn't see.
 - Compaction reduces input over a long session.
 - Most agents make 1-5 searches per turn; cost-per-turn is what bills you, not cost-per-query.
-- The model price column drifts as providers reprice; pin the rate via `src/core/anthropic-pricing.ts` for a current snapshot.
+- The model price column drifts as providers reprice; pin the rate via `src/core/model-pricing.ts` (the canonical chat-pricing table) for a current snapshot.
 
 The picker copy + CLAUDE.md table are the canonical user-facing source. Update them in lockstep when the underlying chunker size or default `searchLimit` changes.
 

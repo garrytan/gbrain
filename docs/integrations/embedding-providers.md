@@ -34,7 +34,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
 | `ollama` | (none — runs locally) | 768 | 0 | yes | no |
 | `llama-server` | (none — runs locally) | user-set | 0 | yes | no |
-| `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | no |
+| `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | yes (backend permitting) |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
@@ -63,7 +63,8 @@ The doctor distinguishes two repair paths:
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
-- **Reranking pair**: Voyage (their reranker `rerank-2.5` pairs cleanly with Voyage embeddings).
+- **Reranking pair**: ZeroEntropy `zerank-2` is the hosted default in `tokenmax` mode (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). Voyage `rerank-2.5` pairs cleanly with Voyage embeddings.
+- **Local reranking (no API spend)**: `llama-server-reranker` recipe (v0.40.6.1) — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
 - **China region**: DashScope (Alibaba) or Zhipu (BigModel). DashScope's international endpoint at `dashscope-intl.aliyuncs.com`; override `provider_base_urls.dashscope` for the China endpoint.
@@ -75,6 +76,8 @@ The doctor distinguishes two repair paths:
 ### OpenAI
 
 Default. Set `OPENAI_API_KEY`. Models: `text-embedding-3-large` (3072 max, 1536 default), `text-embedding-3-small` (1536). Matryoshka via the `dimensions` field — gbrain pins it from `embedding_dimensions` config so existing 1536-dim brains stay aligned across SDK upgrades.
+
+Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls.
 
 ### Voyage AI
 
@@ -140,19 +143,23 @@ Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims)
 
 No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embed-8b` (4096d) and `snowflake-arctic-embed-l-v2` (1024d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+
+The recipe default is `nomic-embed-text`'s 768 dims. If you run one of the larger models, declare its native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes instead of rejecting a non-768 width.
 
 ### llama-server (local, llama.cpp)
 
 `llama.cpp`'s `llama-server --embeddings` endpoint. No env required. Optional `LLAMA_SERVER_BASE_URL` (default `http://localhost:8080/v1`) and `LLAMA_SERVER_API_KEY`.
 
-User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. The recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
+User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. gbrain trusts the dimension you declare (you know the GGUF you launched); the recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
 
 ### LiteLLM proxy (universal escape hatch)
 
 Run [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) in front of any provider — Bedrock, Vertex, Cohere, Jina, Fireworks, OctoAI, etc. The proxy normalizes everything to the OpenAI-compatible API; gbrain points at the proxy via `LITELLM_BASE_URL` and proxies the call.
 
 This is the catch-all for "my provider isn't in the list above." Set up LiteLLM, then `gbrain init --embedding-model litellm:<your-model-id> --embedding-dimensions <N>`.
+
+**Include the `/v1` suffix in `LITELLM_BASE_URL` if your proxy serves the OpenAI route there** (e.g. `http://localhost:4000/v1`). Many LiteLLM deployments expose the OpenAI-compatible API only under `/v1`; pointing gbrain at the bare host 404s or fails authentication with no hint. gbrain trusts the dimension you declare for the proxy-backed model — the proxy's backend, not gbrain, decides the true width — so `--embedding-dimensions <N>` is required and accepted as-is.
 
 ## Choosing dimensions
 
@@ -180,7 +187,5 @@ The supported paths:
 
 - **PGLite (default install):** `gbrain reinit-pglite --embedding-model <provider>:<model> --embedding-dimensions <N>` — one-command wipe-and-reinit that preserves every other config field (chat model, expansion model, API keys), backs up the prior brain to `<path>.bak`, runs `gbrain init` with the new flags, and re-syncs your brain repo. Add `--no-sync` to skip the resync, `--yes` to skip the TTY confirmation, `--json` for scripts.
 - **Postgres (Supabase / self-hosted):** follow the SQL recipe in `docs/embedding-migrations.md` (drop the HNSW index, ALTER COLUMN TYPE, clear stale embeddings, recreate the index conditionally, then `gbrain init --supabase --embedding-model X --embedding-dimensions N` to update the file plane and re-embed).
-
-`gbrain doctor` 8c "alternative_providers" surfaces unconfigured providers whose env is already set — useful when you've configured OpenAI but also have e.g. `VOYAGE_API_KEY` exported and want to know you can switch without extra setup.
 
 `gbrain doctor` 8c "alternative_providers" surfaces unconfigured providers whose env is already set — useful when you've configured OpenAI but also have e.g. `VOYAGE_API_KEY` exported and want to know you can switch without extra setup.

@@ -21,6 +21,7 @@
  */
 
 import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { splitProviderModelId } from '../model-id.ts';
 
 export interface RecentJobStats {
   /** How many jobs informed this window. 0 → cold start. */
@@ -56,20 +57,18 @@ export interface BatchProjection {
   raise_cap_hint?: string;
 }
 
-/** Strip `provider:` prefix the same way the SDK call site does. */
-function bareModel(model: string): string {
-  const idx = model.indexOf(':');
-  return idx > 0 ? model.slice(idx + 1) : model;
-}
-
 /**
  * Resolve per-token cost for a model. Returns null for unknown models.
  * Conservative: uses output-side pricing as a tight upper bound when
  * we don't have per-call usage stats yet.
+ *
+ * v0.41.21.0: routes through splitProviderModelId so slash-prefixed ids
+ * (`anthropic/claude-sonnet-4-6`) strip to the bare model name. Pre-fix
+ * the inline `bareModel(model)` helper only handled `:`-form.
  */
 function modelDefaultMeanCostUsd(model: string): number | null {
   // Match the alias map's behavior loosely: bare names + the few we know.
-  const bare = bareModel(model);
+  const bare = splitProviderModelId(model).model;
   const p = ANTHROPIC_PRICING[bare];
   if (!p) return null;
   // Assume a typical subagent turn: ~2k input + ~1k output tokens.
@@ -94,7 +93,7 @@ export interface ProjectBatchInput {
 
 export function projectBatch(input: ProjectBatchInput): BatchProjection {
   const { job_count, model, stats, current_lease_cap } = input;
-  const bare = bareModel(model);
+  const bare = splitProviderModelId(model).model;
   const cold = stats.sample_size === 0;
 
   // Mean latency: historical → use it. Cold → 5s guess.

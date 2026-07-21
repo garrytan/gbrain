@@ -49,6 +49,12 @@ interface RunOpts {
   source?: string;
   quiet?: boolean;
   json?: boolean;
+  // v0.42.x — Life Chronicle (#2390): manual `--type event` frontmatter sugar.
+  who?: string;    // comma-separated entity slugs
+  what?: string;
+  where?: string;
+  kind?: string;
+  depth?: string;  // the depth page this event backlinks
 }
 
 function parseArgs(args: string[]): RunOpts | { help: true; positional: string | undefined } {
@@ -80,6 +86,12 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
       if (v) opts.source = v;
       continue;
     }
+    // v0.42.x — Life Chronicle event sugar.
+    if (a === '--who') { const v = args[++i]; if (v) opts.who = v; continue; }
+    if (a === '--what') { const v = args[++i]; if (v) opts.what = v; continue; }
+    if (a === '--where') { const v = args[++i]; if (v) opts.where = v; continue; }
+    if (a === '--kind') { const v = args[++i]; if (v) opts.kind = v; continue; }
+    if (a === '--depth') { const v = args[++i]; if (v) opts.depth = v; continue; }
     if (a.startsWith('--')) continue; // unknown flag, ignore
     positional.push(a);
   }
@@ -132,12 +144,21 @@ Examples:
   JOB=$(gbrain capture "..." --quiet)
 `;
 
-function defaultSlug(content: string, now: Date = new Date()): string {
+// v0.42.x — Life Chronicle (#2390): route the default slug prefix by type so
+// `gbrain capture --type diary` lands under life/diary/ and `--type event`
+// under life/events/ (matching the chronicle path-prefix inference). Everything
+// else keeps the inbox/ default.
+function slugPrefixForType(type?: string): string {
+  if (type === 'diary') return 'life/diary';
+  if (type === 'event') return 'life/events';
+  return 'inbox';
+}
+function defaultSlug(content: string, now: Date = new Date(), type?: string): string {
   const y = now.getUTCFullYear();
   const m = String(now.getUTCMonth() + 1).padStart(2, '0');
   const d = String(now.getUTCDate()).padStart(2, '0');
   const hashPrefix = computeContentHash(content).slice(0, 8);
-  return `inbox/${y}-${m}-${d}-${hashPrefix}`;
+  return `${slugPrefixForType(type)}/${y}-${m}-${d}-${hashPrefix}`;
 }
 
 /**
@@ -245,6 +266,22 @@ function deriveTitle(rawBody: string): string {
  * stamps a fresh frontmatter block, and if the body doesn't already look
  * like markdown (no `#` heading), wraps it under a `# {title}` heading.
  */
+// v0.42.x — Life Chronicle (#2390): assemble the `event:` frontmatter block
+// from the --who/--what/--where/--kind/--depth flags (only for --type event).
+// Returns undefined when no event flags are set so non-event captures are
+// untouched.
+function buildEventBlock(opts: RunOpts): Record<string, unknown> | undefined {
+  if (opts.type !== 'event') return undefined;
+  const who = opts.who ? opts.who.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  const block: Record<string, unknown> = {};
+  if (opts.what) block.what = opts.what;
+  if (who.length) block.who = who;
+  if (opts.where) block.where = opts.where;
+  if (opts.kind) block.kind = opts.kind;
+  if (opts.depth) block.depth = opts.depth;
+  return Object.keys(block).length ? block : undefined;
+}
+
 export function mergeCaptureFrontmatter(rawBody: string, opts: RunOpts): string {
   const nowIso = new Date().toISOString();
   // Detect frontmatter: leading `---\n` or `---\r\n`, tolerating leading BOM/whitespace.
@@ -263,6 +300,8 @@ export function mergeCaptureFrontmatter(rawBody: string, opts: RunOpts): string 
       captured_via: opts.source ?? 'capture-cli',
       captured_at: nowIso,
     };
+    const ev = buildEventBlock(opts);
+    if (ev) fm.event = ev;
     const looksMarkdown = /^#{1,6}\s/.test(rawBody.trimStart());
     const body = looksMarkdown ? rawBody : `# ${title}\n\n${rawBody}`;
     return matter.stringify(body, fm);
@@ -290,6 +329,11 @@ export function mergeCaptureFrontmatter(rawBody: string, opts: RunOpts): string 
     captured_via: userFm.captured_via ?? opts.source ?? 'capture-cli',
     captured_at: userFm.captured_at ?? nowIso,
   };
+  // v0.42.x — merge the event block (user-declared keys win per-key).
+  const ev = buildEventBlock(opts);
+  if (ev || userFm.event) {
+    merged.event = { ...(ev ?? {}), ...((userFm.event as Record<string, unknown>) ?? {}) };
+  }
   return matter.stringify(parsed.content, merged);
 }
 
@@ -439,7 +483,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
   // The daemon's 24h LRU dedup keys on this hash; identical captures must
   // produce identical hashes. The DB content_hash (importFromContent at
   // src/core/import-file.ts) gets the same treatment in Phase 3d.
-  const slug = parsed.slug ?? defaultSlug(normalizedBody);
+  const slug = parsed.slug ?? defaultSlug(normalizedBody, new Date(), parsed.type);
   const fullContent = buildContent(rawBody, parsed);
   const capturedAt = new Date().toISOString();
   const contentHash = computeContentHash(normalizedBody);

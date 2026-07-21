@@ -116,6 +116,17 @@ export interface PromptResult {
  *   - GBRAIN_NO_REEMBED=1     → bail out entirely (writes a doctor warning marker).
  *   - GBRAIN_REEMBED_GRACE_SECONDS=0 → skip wait (proceed immediately).
  *   - Non-TTY (CI / cron) → skip wait, proceed.
+ *
+ * v0.41.13.0 T13 retrofit relationship: this prompt is a pre-flight gate
+ * for `gbrain reindex --markdown` (which is a separate site we retrofitted
+ * onto the progressive-batch primitive — see T11 in reindex.ts). The
+ * underlying reindex sweep now writes progressive-batch audit JSONL +
+ * cost-cap gating; this prompt remains as the operator-facing cost
+ * estimate before that work starts. The `GBRAIN_NO_REEMBED=1` env var
+ * remains the authoritative bail-out at THIS layer; the
+ * `GBRAIN_PROGRESSIVE_BATCH_DISABLED=1` env var at the reindex layer
+ * is a different toggle (skips ramp within reindex but doesn't bail
+ * out the whole cycle).
  */
 export async function runPostUpgradeReembedPrompt(
   engine: BrainEngine,

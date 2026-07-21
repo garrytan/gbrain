@@ -43,6 +43,7 @@ import type {
 } from './types.ts';
 import type { GBrainConfig } from './config.ts';
 import { scrubPii } from './eval-capture-scrub.ts';
+import { registerBackgroundWorkDrainer } from './background-work.ts';
 
 // HybridSearchMeta is canonical in src/core/types.ts and exported via the
 // public `gbrain/types` subpath. Surfaced from hybridSearch via the
@@ -158,6 +159,21 @@ export async function captureEvalCandidate(
   ctx: CaptureContext,
   opts: { scrub_pii?: boolean } = {},
 ): Promise<void> {
+  // v0.42.20.0 — track the fire-and-forget promise so the background-work
+  // registry can drain it before CLI disconnect. Callers still `void` this; the
+  // returned promise is back-compat for any awaiter. The async DB write
+  // (logEvalCandidate) is the same lock-pin / disconnect-race class as the other
+  // sinks — on PGLite an undrained capture racing db.close() can wedge.
+  const p = doCaptureEvalCandidate(engine, ctx, opts);
+  trackEvalCapture(p);
+  return p;
+}
+
+async function doCaptureEvalCandidate(
+  engine: BrainEngine,
+  ctx: CaptureContext,
+  opts: { scrub_pii?: boolean } = {},
+): Promise<void> {
   try {
     const input = buildEvalCandidateInput(ctx, opts);
     await engine.logEvalCandidate(input);
@@ -173,6 +189,45 @@ export async function captureEvalCandidate(
     }
   }
 }
+
+// v0.42.20.0 — bounded drain + registration (mirrors last-retrieved). The 4th
+// fire-and-forget DB-write sink (codex caught this one missing from the
+// registry). order 3, no abort (bare INSERT, nothing to hard-stop).
+const pendingEvalCaptures = new Set<Promise<unknown>>();
+
+function trackEvalCapture(promise: Promise<unknown>): void {
+  pendingEvalCaptures.add(promise);
+  promise.finally(() => pendingEvalCaptures.delete(promise)).catch(() => { /* swallow */ });
+}
+
+export async function awaitPendingEvalCaptures(timeoutMs = 5_000): Promise<{ unfinished: number }> {
+  if (pendingEvalCaptures.size === 0) return { unfinished: 0 };
+  const snapshot = [...pendingEvalCaptures];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  const drain = Promise.allSettled(snapshot).then(() => 'drained' as const);
+  const outcome = await Promise.race([drain, timeout]);
+  if (timer) clearTimeout(timer);
+  if (outcome === 'timeout') {
+    const unfinished = pendingEvalCaptures.size;
+    for (const pr of snapshot) pendingEvalCaptures.delete(pr);
+    return { unfinished };
+  }
+  return { unfinished: 0 };
+}
+
+/** Test seam — clears the pending eval-capture set. */
+export function _resetPendingEvalCapturesForTests(): void {
+  pendingEvalCaptures.clear();
+}
+
+registerBackgroundWorkDrainer({
+  name: 'eval-capture',
+  order: 3,
+  drain: (ms) => awaitPendingEvalCaptures(ms),
+});
 
 /**
  * Check whether capture is enabled for this process.

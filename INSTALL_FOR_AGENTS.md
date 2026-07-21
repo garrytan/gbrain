@@ -161,6 +161,29 @@ After this step:
 If a user has a very large brain (>10K pages), `extract --source db` is idempotent
 and supports `--since YYYY-MM-DD` for incremental runs.
 
+### Obsidian-style bare wikilinks (opt-in)
+
+If the user imported an Obsidian or Notion vault that uses **bare** `[[note-name]]`
+wikilinks — where `[[struktura]]` written in one folder means the page that lives
+at `projects/struktura.md` in another — GBrain does NOT connect those by default.
+Out of the box it only resolves path-qualified refs like `[[projects/struktura]]`,
+so a vault full of bare links shows up as a thin, broken graph. Turn on basename
+resolution so the cross-folder links connect:
+
+```bash
+gbrain config set link_resolution.global_basename true
+gbrain extract links --source db          # re-run so the new edges land
+```
+
+`gbrain doctor` surfaces a `link_resolution_opportunity` hint with the exact count
+("47 of 60 bare wikilinks would resolve") so you know whether it's worth enabling
+before you flip it. When a bare name matches more than one page (`[[struktura]]` →
+both `projects/struktura` and `archive/struktura`), GBrain emits one edge to each
+rather than guessing a winner — review and prune the duplicates with
+`gbrain graph-query <slug>`. The mode is also honored on the filesystem-walk path
+(`gbrain extract links` with no `--source db`) and by auto-link on every future
+`put_page`.
+
 ## Step 5: Load Skills
 
 If you're running an agent platform (OpenClaw, Hermes, or any repo with a workspace),
@@ -274,3 +297,58 @@ automatically during `gbrain post-upgrade` to fix the double-encoded JSONB
 columns. PGLite brains no-op. If wiki-style imports were truncated by the old
 `splitBody` bug, run `gbrain sync --full` after upgrading to rebuild
 `compiled_truth` from source markdown.
+
+## v0.42.0+ onboard surface (NEW)
+
+`gbrain onboard` is the activation surface gbrain did not have before.
+Once your brain has any content, run `gbrain onboard --check --json` to
+see structured recommendations across 5 brain-health axes (orphans,
+stale embeddings, entity link coverage, timeline coverage, takes count).
+
+**On first connect (after `gbrain init`):**
+```bash
+gbrain onboard --check --json
+```
+The JSON envelope (`schema_version: 1`) carries `recommendations[]` with
+`apply_policy` per item: `auto_apply` (safe to run unattended),
+`prompt_required` (needs explicit user consent), or `manual_only`
+(LLM-bearing, user must run themselves).
+
+**After every `gbrain upgrade`:**
+```bash
+gbrain onboard --check --json
+```
+New versions may surface new opportunities. The post-upgrade banner
+nudges the user when it runs, but agents should re-probe as a hygiene
+step regardless.
+
+**Unattended remediation (cron / autopilot):**
+```bash
+gbrain onboard --auto --max-usd 5
+```
+Refuses without `--max-usd N`. Runs auto-eligible items only. The
+autopilot daemon also consults onboard recommendations on its tick — no
+explicit agent action needed for the autonomous path.
+
+**Remote / federated brain installs (MCP):**
+The `run_onboard` MCP op (admin scope) lets thin-client agents probe
+brain health + drive remediation over OAuth-authenticated MCP. Protected
+LLM-bearing handlers (synthesize, patterns, consolidate, takes-bootstrap,
+contextual_reindex_per_chunk) require the additional `run_protected_onboard`
+scope — admin alone is insufficient. The MCP op returns
+`skipped_missing_scope[]` listing what would have run with the right
+grants.
+
+**Privacy + consent gates:**
+- `gbrain takes extract --from-pages` sends concept/atom/lore/briefing/
+  writing/originals page content to your configured chat model (default
+  Anthropic Haiku). Refuses to run unless `takes.bootstrap_enabled=true`
+  is set in config AND `--yes` is passed. Two-gate opt-in by design.
+- Autopilot's auto-apply tier for takes-bootstrap stays `manual_only`
+  until v0.42.1's eval gate (do not bypass).
+
+**Suppress nudges in CI / scripted environments:**
+```bash
+export GBRAIN_NO_ONBOARD_NUDGE=1
+```
+Init + upgrade banners auto-skip in non-TTY too.

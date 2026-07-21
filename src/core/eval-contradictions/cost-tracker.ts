@@ -20,22 +20,17 @@
  */
 
 import type { CostBreakdown } from './types.ts';
+import { splitProviderModelId } from '../model-id.ts';
+import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
 
 /**
- * Per-million-token prices (USD). Update when models bump. These are
- * approximate — provider accounting after the call is authoritative.
+ * Chat prices come from the canonical table via the bare-keyed
+ * `ANTHROPIC_PRICING` view (`src/core/anthropic-pricing.ts` → `model-pricing.ts`).
+ * This site used to carry its own duplicate (TODOS.md #3); folding it in closes
+ * that consolidation. `pricingFor` still routes through `splitProviderModelId`
+ * so colon/slash forms hit, and keeps the legacy silent-Haiku fallback for
+ * genuinely-unknown models (pinned by test/eval-contradictions/cost-tracker-slash.test.ts).
  */
-const ANTHROPIC_PRICING: Record<string, { input: number; output: number }> = {
-  // Haiku 4.5: ~$1/Mtok in, $5/Mtok out (current as of 2026-05).
-  'claude-haiku-4-5': { input: 1.0, output: 5.0 },
-  'anthropic:claude-haiku-4-5': { input: 1.0, output: 5.0 },
-  // Sonnet 4.6: ~$3/Mtok in, $15/Mtok out.
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  'anthropic:claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  // Opus 4.7: ~$5/Mtok in, $25/Mtok out.
-  'claude-opus-4-7': { input: 5.0, output: 25.0 },
-  'anthropic:claude-opus-4-7': { input: 5.0, output: 25.0 },
-};
 
 /** OpenAI text-embedding-3-large: ~$0.13/Mtok (current as of 2026-05). */
 const OPENAI_EMBEDDING_PRICE_PER_MTOK = 0.13;
@@ -48,7 +43,21 @@ const ESTIMATE_NOTE =
   'approximate; provider accounting is post-call. --budget-usd is a soft ceiling — mid-run stop on cumulative > cap.';
 
 function pricingFor(modelId: string): { input: number; output: number } {
-  return ANTHROPIC_PRICING[modelId] ?? ANTHROPIC_PRICING['claude-haiku-4-5'];
+  // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
+  // (`anthropic/claude-sonnet-4-6`) hit the pricing table. Pre-fix the
+  // exact-key match silently fell back to Haiku on every non-bare lookup
+  // (including colon-form Sonnet/Opus that the table DOES carry — caller
+  // bug class). Legacy silent-Haiku fallback for genuinely-unknown models
+  // is preserved by design — see TODOS.md #3 for the pricing-system
+  // consolidation that would tighten this to warn-once.
+  const direct = ANTHROPIC_PRICING[modelId];
+  if (direct) return direct;
+  const { model: tail } = splitProviderModelId(modelId);
+  if (tail) {
+    const tailHit = ANTHROPIC_PRICING[tail];
+    if (tailHit) return tailHit;
+  }
+  return ANTHROPIC_PRICING['claude-haiku-4-5'];
 }
 
 /**

@@ -44,7 +44,26 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   'person', 'company', 'deal', 'yc', 'civic', 'project', 'concept',
   'source', 'media', 'writing', 'analysis', 'guide', 'hardware',
   'architecture', 'meeting', 'note', 'email', 'slack', 'calendar-event',
+  // v0.41.11+ — `conversation` (imported chat/transcript pages, lives
+  // under conversations/) and `atom` (smallest extractable claim unit,
+  // lives under atoms/). Both promoted into the gbrain-base seed list
+  // so they share the universal validation surface with the rest of
+  // the base types; their pack entries are declared in
+  // src/core/schema-pack/base/gbrain-base.yaml.
+  'conversation', 'atom',
   'code', 'image', 'synthesis',
+  // v0.42 — `extract_receipt` pages record extraction-run outcomes as
+  // first-class brain memory. Slug-prefix `extracts/`. Demoted in search
+  // via DEFAULT_SOURCE_BOOSTS (factor 0.3) and excluded from extraction
+  // loops via the dream_generated:true + type:extract_receipt belt-and-
+  // suspenders pattern per plan D-EXTRACT-19.
+  'extract_receipt',
+  // v0.42.x — Life Chronicle (#2390). `event` = timeline atom
+  // (when·where·who·what), lives under life/events/; `diary` = first-person
+  // interiority, lives under life/diary/. Both temporal-primitive,
+  // extractable:false (events are one-line atoms; diary is private interiority
+  // never mined into the facts table). Pack entries in gbrain-base.yaml.
+  'event', 'diary',
 ] as const;
 
 /**
@@ -317,6 +336,12 @@ export interface PageFilters {
 export interface GetPageOpts {
   /** Filter to a specific source. When omitted, getPage returns the first slug match across sources (pre-existing semantics). */
   sourceId?: string;
+  /**
+   * Filter to a federated set of sources (the caller's allowedSources grant).
+   * Takes precedence over `sourceId` when non-empty. Closes the #1393 leak: the
+   * get_page exact path must honor a federated grant, not just scalar sourceId.
+   */
+  sourceIds?: string[];
   /** Include soft-deleted pages. Default false. See PageFilters.includeDeleted. */
   includeDeleted?: boolean;
 }
@@ -419,6 +444,70 @@ export interface SalienceResult {
 }
 
 /**
+ * v0.41.39 (issue #1700) — `gbrain enrich --thin` candidate selection.
+ *
+ * One source-aware SQL query enumerates thin (stub) pages of the given
+ * types, computes a source-correct inbound-link count per page, applies an
+ * optional re-enrich recency guard, orders by the chosen signal, and slices
+ * to `limit`. Returns a LIGHTWEIGHT projection (no page bodies) so a 100K-
+ * page brain doesn't pull every stub body into memory just to rank them.
+ *
+ * Why a dedicated engine method instead of composing `listPages` +
+ * `getBacklinkCounts` in memory:
+ *   - `getBacklinkCounts` groups by bare `slug`, so the same slug in two
+ *     sources collapses/contaminates the count. This query counts inbound
+ *     links per page row (`to_page_id = p.id`), which is source-correct by
+ *     construction.
+ *   - `listPages` returns full `Page` rows (bodies). 500 stub bodies per
+ *     type per source is not a memory guarantee. This projection carries
+ *     only `body_len`, never the body.
+ */
+export interface EnrichCandidatesOpts {
+  /** Page types to consider (e.g. ['person', 'company']). Empty → no rows. */
+  types: PageType[];
+  /** Body-length (chars) below which a page is "thin". */
+  thinThreshold: number;
+  /** Ordering signal. Whitelisted via ENRICH_ORDER_SQL. */
+  order: 'inbound-links' | 'updated' | 'salience';
+  /** Max rows to return. */
+  limit: number;
+  /**
+   * Skip pages whose frontmatter `enriched_at` is newer than
+   * `now - reenrichAfterMs`. Omitted/0 → no recency guard (every thin page
+   * is eligible). Pages never enriched (no `enriched_at`) are always eligible.
+   */
+  reenrichAfterMs?: number;
+  /** Single-source scope (canonical scalar form). */
+  sourceId?: string;
+  /** Federated read scope (array form, wins over scalar). */
+  sourceIds?: string[];
+}
+
+/** v0.41.39 — one row per enrich candidate. Lightweight: NO page body. */
+export interface EnrichCandidate {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: PageType;
+  /** char_length(compiled_truth) + char_length(timeline). */
+  body_len: number;
+  /** Source-correct inbound-link count (excludes `link_source='mentions'`). */
+  inbound_count: number;
+}
+
+/**
+ * v0.41.39 — whitelisted ORDER BY fragments for EnrichCandidatesOpts.order.
+ * No SQL-injection risk: callers pass the enum, engines map to these literal
+ * fragments. Every fragment ends with the (source_id, slug) tiebreaker so
+ * tied scores produce a deterministic order across engines and runs.
+ */
+export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
+  'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
+  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+};
+
+/**
  * v0.29 — Anomaly detection: cohorts (tag, type) with unusually-high activity in a window.
  * Cohort baseline is computed over `lookback_days` excluding `since`; current count is
  * the number of distinct pages touched on `since`. A cohort is anomalous when its
@@ -492,6 +581,13 @@ export interface Chunk {
   parent_symbol_path?: string[] | null;
   doc_comment?: string | null;
   symbol_name_qualified?: string | null;
+  /**
+   * v0.27.1 multimodal. Read side of ChunkInput.modality — must round-trip
+   * through getChunks → embed-stale merge → upsertChunks or image rows get
+   * reset to 'text' (EXCLUDED.modality on the upsert) and vanish from the
+   * image search arm.
+   */
+  modality?: 'text' | 'image';
 }
 
 /**
@@ -511,6 +607,35 @@ export interface StaleChunkRow {
   source_id: string;
   /** v0.33.3: page_id for cursor pagination in listStaleChunks. */
   page_id: number;
+}
+
+/**
+ * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
+ * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
+ * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per
+ * batch instead of an N+1 `getPage` per page (mirrors how StaleChunkRow carries
+ * chunk_text). `id` is the keyset cursor; `updated_at` lets callers reason about
+ * the edited-since-extract staleness arm.
+ */
+export interface StalePageRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  type: string;
+  title: string;
+  compiled_truth: string;
+  timeline: string;
+  frontmatter: Record<string, unknown>;
+  updated_at: Date;
+  /**
+   * Full-precision (microsecond) UTC ISO string of `updated_at`, projected
+   * straight from the DB via `to_char(... AT TIME ZONE 'UTC', '...US"Z"')`.
+   * `updated_at` (a JS `Date`) is millisecond-truncated, so stamping it back as
+   * `links_extracted_at` left the row permanently stale on Postgres (#1768).
+   * `extractStaleFromDB` stamps THIS instead, so `links_extracted_at` equals the
+   * DB `updated_at` exactly and the staleness predicate clears.
+   */
+  updated_at_iso: string;
 }
 
 export interface ChunkInput {
@@ -565,6 +690,16 @@ export interface SearchResult {
   score: number;
   stale: boolean;
   /**
+   * v0.42 (issue #1699) content-quality gate agent-warning channel. Set
+   * when the result's page carries a `frontmatter.content_flag` marker
+   * (fuzzy markup-heavy or oversize). The page is still searchable — this
+   * is the "this looks odd, examine if you expected real content" signal
+   * the agent reads to decide whether to trust the page. Stamped post-
+   * fusion by `stampContentFlags` (the v0.41.34 stampEvidence precedent).
+   * Absent when the page is clean.
+   */
+  content_flag?: { reason: string; detail: string };
+  /**
    * v0.36 (cross-modal wave): the chunk's modality discriminator from
    * content_chunks.modality. 'text' for the existing text-embedding rows,
    * 'image' for rows populated by importImageFile. Surfaced so callers /
@@ -604,6 +739,20 @@ export interface SearchResult {
   /** Slug prefix used for the session-diversification grouping. */
   graph_session_prefix?: string;
   /**
+   * v0.43 relational recall arm — set when this result was surfaced by
+   * typed-edge traversal (not lexical/vector). Drives `gbrain search
+   * --explain` attribution ("surfaced via invested_in edge from widget-co").
+   * Absent for organic keyword/vector results.
+   */
+  /** Edge types the result was reached by (e.g. ['invested_in']). */
+  relational_via_link_types?: string[];
+  /** The resolved seed entity slug the traversal started from. */
+  relational_seed?: string;
+  /** Shortest hop distance from the seed (1 = direct neighbor). */
+  relational_hop?: number;
+  /** Shortest connecting slug path seed→…→result (for "how I know this"). */
+  relational_path?: string[];
+  /**
    * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
    * `gbrain search --explain` formatter. Every boost stage stamps its
    * contribution so the formatter can reconstruct the score derivation.
@@ -619,6 +768,8 @@ export interface SearchResult {
   salience_boost?: number;
   /** Multiplier applied by applyRecencyBoost. */
   recency_boost?: number;
+  /** v0.42.x (#2390) — multiplier applied by applyChronicleTypeBoost (event/diary on temporal queries). */
+  chronicle_boost?: number;
   /** Multiplier applied by applyExactMatchBoost. */
   exact_match_boost?: number;
   /** Multiplier applied by applyGraphSignals (adjacency hit). */
@@ -632,6 +783,51 @@ export interface SearchResult {
    *  Undefined when no reranker fired. The raw reranker relevance score
    *  is separately stamped as `rerank_score` for back-compat. */
   reranker_delta?: number;
+  /** Raw cross-encoder relevance score stamped by applyReranker on the
+   *  reranked head (undefined when no reranker fired). Distinct from `score`
+   *  (RRF + boosts). v0.42.3.0 autocut cuts on this — the trustworthy
+   *  separatrix — never on RRF/cosine. */
+  rerank_score?: number;
+  /**
+   * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
+   * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
+   * a canonical_slug in slug_aliases — the page is the authoritative
+   * version of 1+ aliases. Signals "user explicitly disambiguated this
+   * as canonical" and lets canonicals outrank fuzzy matches.
+   */
+  alias_resolved_boost?: number;
+  /**
+   * T2 (retrieval-maxpool incident) — multiplier applied by applyTitleBoost
+   * (1.0 = unchanged; default ~1.25x). Fires when the normalized query is a
+   * contiguous token-run inside the page title (or an exact full-title match).
+   * Floor-ratio-gated + clamped so a title hit reorders without burying a
+   * strong semantic match or lying about base_score (the agent's dedup gate
+   * keys off base_score / evidence, not the boosted score).
+   */
+  title_match_boost?: number;
+  /**
+   * T3 (retrieval-maxpool incident) — set when this result was surfaced or
+   * boosted by the free-text alias hop (the query exactly matched a page's
+   * declared alias in page_aliases). An injected canonical that wasn't in the
+   * organic candidate set carries alias_hit=true with score = top-of-organic
+   * + epsilon. Drives the evidence=alias_hit signal the agent's don't-duplicate
+   * decision keys off (T4).
+   */
+  alias_hit?: boolean;
+  /**
+   * T4 — the strongest signal that surfaced this page (alias_hit >
+   * exact_title_match > high_vector_match > keyword_exact > weak_semantic).
+   * Computed by classifyEvidence at the end of the hybrid pipeline.
+   */
+  evidence?: import('./search/evidence.ts').Evidence;
+  /**
+   * T4 — derived "is this page already in the brain?" hint. The agent's
+   * don't-write-a-duplicate decision keys off THIS, not a raw score:
+   * 'exists' = strong (don't duplicate), 'probable' = prefer update,
+   * 'unknown' = look closer. This is the contract that prevents the
+   * incident's duplicate-stub class.
+   */
+  create_safety?: import('./search/evidence.ts').CreateSafety;
 }
 
 /**
@@ -702,6 +898,22 @@ export interface ResolvedColumn {
 export interface SearchOpts {
   limit?: number;
   offset?: number;
+  /**
+   * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
+   * default caps; an object overrides caps per-call; omitted/`false` = off
+   * (default, no behavior change). Trims the ranked set to an intent-driven
+   * cap (entity → tight, else → recall-preserving). Only fires when offset===0.
+   * See src/core/search/return-policy.ts.
+   */
+  adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
+  /**
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
+   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
+   * / exploration (the ceiling override). Cuts the ranked set at the largest
+   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
+   * offset===0. See src/core/search/autocut.ts.
+   */
+  autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
   /**
    * v0.33: multi-type filter. When set, search results are filtered to
@@ -714,9 +926,11 @@ export interface SearchOpts {
   types?: PageType[];
   exclude_slugs?: string[];
   /**
-   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/, archive/,
+   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/,
    * attachments/, .raw/) and the GBRAIN_SEARCH_EXCLUDE env var. Stacks with
    * `exclude_slugs` (exact match) — a row is filtered if it matches either set.
+   * NOTE (issue #1777): `archive/` is NOT hard-excluded; it is demoted (0.5x)
+   * via DEFAULT_SOURCE_BOOSTS so archived content stays findable by default.
    */
   exclude_slug_prefixes?: string[];
   /**
@@ -767,6 +981,19 @@ export interface SearchOpts {
    * client) → `sourceIds`; otherwise `ctx.sourceId` (scalar) → `sourceId`.
    */
   sourceIds?: string[];
+  /**
+   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall
+   * fallback. When true, `searchKeyword` retries ONCE with OR-of-terms after
+   * the strict websearch AND query returns zero rows (strict results always
+   * win when non-empty). Default false/undefined = strict-AND only — the
+   * pre-fix contract. hybridSearch opts in for its keyword arm; precision
+   * consumers (enrichment countMentions, link-extraction resolution, eval
+   * paths) MUST NOT set this: OR-matches would inflate mention counts and
+   * relax link-candidate resolution ("John Smith" matching every John and
+   * every Smith). `searchTitles` has its own page-grain fallback and
+   * ignores this flag.
+   */
+  orFallback?: boolean;
   /**
    * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
    *
@@ -910,6 +1137,14 @@ export interface SearchOpts {
    * would resolve to the same mode default and the gate would be a no-op.
    */
   graph_signals?: boolean;
+  /**
+   * v0.43 — relational recall arm per-call override. Per-call wins over the
+   * `search.relational_retrieval` config key wins over the mode bundle. Eval
+   * A/B gates need explicit per-call control or both branches resolve to the
+   * same mode default. `relationalRetrievalDepth` caps traversal hops (1..3).
+   */
+  relationalRetrieval?: boolean;
+  relationalRetrievalDepth?: number;
 }
 
 /**
@@ -998,6 +1233,43 @@ export interface GraphPath {
   depth: number;
 }
 
+/**
+ * One reached node from a typed-edge relational fan-out (v0.43). The recall
+ * arm hydrates these into SearchResult rows and injects them as a fourth RRF
+ * arm. Aggregated to the page level: `hop` is the shortest distance from any
+ * seed, `edge_count` is a connection-richness proxy (distinct edge types via
+ * which the node is reached), `via_link_types` names them, `path` is the
+ * shortest connecting slug chain (for --explain), and `canonical_chunk_id` is
+ * the page's lowest-ordinal chunk (null for frontmatter-only entity pages).
+ */
+export interface RelationalFanoutRow {
+  source_id: string;
+  slug: string;
+  hop: number;
+  edge_count: number;
+  via_link_types: string[];
+  path: string[];
+  canonical_chunk_id: number | null;
+}
+
+/** Options for BrainEngine.relationalFanout. */
+export interface RelationalFanoutOpts {
+  /** Edge types to traverse; null/empty = type-agnostic. */
+  linkTypes?: string[] | null;
+  /** Direction from each seed. Default 'both'. */
+  direction?: 'in' | 'out' | 'both';
+  /** Max hops. Default 2, hard-capped at 3. */
+  depth?: number;
+  /** Include `link_source='mentions'` edges. Default false (typed edges only). */
+  includeMentions?: boolean;
+  /** Single-source scope. */
+  sourceId?: string;
+  /** Federated scope; traversal stays WITHIN each seed's own source. */
+  sourceIds?: string[];
+  /** Hard cap on returned candidate nodes. Default 50. */
+  limit?: number;
+}
+
 // Timeline
 export interface TimelineEntry {
   id: number;
@@ -1026,6 +1298,99 @@ export interface TimelineOpts {
    * (pre-v0.31.8 behavior; preserved by the two-branch query in both engines).
    */
   sourceId?: string;
+  /**
+   * #2200: federated read grant (caller's allowedSources). Takes precedence over
+   * scalar `sourceId` when non-empty; scopes the page-id lookup to
+   * `source_id = ANY($::text[])` so a federated read honors the whole grant
+   * (union of allowed sources), not just one source. Mirrors `GetPageOpts.sourceIds`.
+   */
+  sourceIds?: string[];
+}
+
+// v0.42.x — Life Chronicle (#2390): timeline read surfaces.
+// A ChronicleTimelineRow is a timeline_entries projection JOINed to its depth
+// page (always) and, when it is an event projection, to the event page (for
+// intra-day order via effective_date, the backlink slug, and the event kind).
+export interface ChronicleTimelineRow {
+  date: string;               // YYYY-MM-DD (the projection date, pinned tz)
+  summary: string;
+  detail: string;
+  source: string;
+  page_id: number;            // depth page id (the rich page the row belongs to)
+  page_slug: string;          // depth page slug (backlink target)
+  event_page_id: number | null;
+  event_slug: string | null;  // the type:event page, when this is an event projection
+  effective_date: string | null; // event page effective_date — drives intra-day order
+  kind: string | null;        // event.kind from the event page frontmatter
+}
+
+export interface ChronicleTimelineOpts {
+  /** getTimelineForDate: expand to the ISO week (Mon–Sun) containing `date`. */
+  week?: boolean;
+  /** getSince: filter event projections by `event.kind`. */
+  kind?: string;
+  limit?: number;
+  /** Source scope (scalar). Federated `sourceIds` takes precedence when set. */
+  sourceId?: string;
+  sourceIds?: string[];
+}
+
+export interface LastSeenResult {
+  entity_slug: string;
+  /** Most recent timeline date the entity appears in (own page or an event's who). NULL if never. */
+  last_date: string | null;
+  /** The most recent event page slug involving the entity, if the last hit was an event. */
+  last_event_slug: string | null;
+  /** Whole days between last_date and `asof` (default today). NULL when last_date is NULL. */
+  days_ago: number | null;
+}
+
+// v0.42.x — Life Chronicle (#2390) per-entity ontology (rides the `facts` table).
+// An observation is a sourced, confidence-weighted, bi-temporal claim that an
+// entity has dimension=value (e.g. role=advisor). Supersession/validity/visibility
+// are inherited from facts columns.
+export interface OntologyObservationInput {
+  entitySlug: string;
+  dimension: string;
+  value: string;
+  /** 0..1; default 0.7. */
+  confidence?: number;
+  /** Provenance — written to facts.source_markdown_slug (the dedup key + retraction key). */
+  source: string;
+  validFrom?: string | null; // ISO; null = -infinity
+  validTo?: string | null;   // ISO; null = open/current
+  visibility?: 'private' | 'world';
+  /** Novel/LLM-proposed dimensions land 'quarantined' (excluded from current resolution). */
+  status?: 'active' | 'quarantined';
+  sourceId?: string;
+}
+export interface OntologyMergeResult {
+  action: 'inserted' | 'corroborated' | 'superseded_prior' | 'noop';
+  factId: number | null;
+  supersededId: number | null;
+}
+export interface OntologyValue {
+  dimension: string;
+  value: string;
+  confidence: number;
+  source: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  status: string;          // 'active' | 'quarantined'
+  fact_id: number;
+}
+export interface OntologyDimensionStat { dimension: string; entities: number; observations: number }
+export interface OntologyConflict {
+  entity_slug: string;
+  dimension: string;
+  values: { value: string; source: string | null; confidence: number; fact_id: number }[];
+}
+export interface OntologyReadOpts {
+  asof?: string;
+  minConfidence?: number;
+  includeQuarantined?: boolean;
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 // Raw data
@@ -1232,6 +1597,17 @@ export interface HybridSearchMeta {
    * weighting decision auditable.
    */
   intent?: 'entity' | 'temporal' | 'event' | 'general';
+  /**
+   * v0.42 — adaptive return-sizing decision (intent, cap, kept, total).
+   * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
+   */
+  adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
+  /**
+   * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
+   * Omitted when autocut didn't run (no reranker). Surfaced for
+   * `gbrain search --explain`.
+   */
+  autocut?: import('./search/autocut.ts').AutocutDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

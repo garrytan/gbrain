@@ -547,6 +547,10 @@ export function supersedeRow(
  * unchanged.
  */
 export function stripTakesFence(body: string): string {
+  // Pages without a compiled body (e.g. metadata-only rows from a read op)
+  // have nothing to strip. Guard so the privacy strip is a safe no-op rather
+  // than crashing on `undefined.indexOf`.
+  if (typeof body !== 'string') return body;
   const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
   if (beginIdx === -1) return body;
   const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
