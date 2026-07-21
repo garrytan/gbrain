@@ -17,6 +17,7 @@ import {
   type NightlyProbeResult,
 } from '../src/core/cycle/nightly-quality-probe.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { computeQualityProbeAuditFilename } from '../src/core/audit-quality-probe.ts';
 
 // ---------------------------------------------------------------------------
 // Hermetic audit dir per test
@@ -142,6 +143,56 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       expect(r2.outcome).toBe('rate_limited');
       const events = await readEvents();
       expect(events.length).toBe(2);
+      expect(events[1].outcome).toBe('rate_limited');
+    });
+  });
+
+  test('REGRESSION: a history of only rate_limited rows must not block the run (livelock guard)', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      // Seed the current-week audit file with skip rows ONLY — the exact
+      // state the 5-min tick cadence produces after one stale real run.
+      const nowMs = Date.now();
+      const rows: string[] = [];
+      for (let i = 1; i <= 3; i++) {
+        rows.push(JSON.stringify({
+          ts: new Date(nowMs - i * 5 * 60000).toISOString(),
+          outcome: 'rate_limited', exit_code: 0, pass_count: 0, fail_count: 0,
+          inconclusive_count: 0, error_count: 0, est_cost_usd: 0,
+          detail: 'already ran within 24h window',
+        }));
+      }
+      writeFileSync(join(auditTmp, computeQualityProbeAuditFilename(new Date())), rows.join('\n') + '\n');
+      const r = await runNightlyQualityProbe(makeDeps());
+      expect(r.outcome).toBe('pass'); // gate ignored the skip rows and ran
+    });
+  });
+
+  test('REGRESSION: rate_limited audit row is written once per window, not per tick', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      await runNightlyQualityProbe(makeDeps()); // real run -> pass row
+      const r2 = await runNightlyQualityProbe(makeDeps()); // blocked -> writes ONE rate_limited row
+      const r3 = await runNightlyQualityProbe(makeDeps()); // blocked again -> must NOT write another
+      expect(r2.outcome).toBe('rate_limited');
+      expect(r3.outcome).toBe('rate_limited');
+      const events = await readEvents();
+      expect(events.length).toBe(2);
+      expect(events[1].outcome).toBe('rate_limited');
+    });
+  });
+
+  test('REGRESSION: no_embedding_key counts as a completed attempt — no re-warn/re-log per tick on a keyless brain', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const keyless = () => makeDeps({ hasEmbeddingProvider: async () => false });
+      const r1 = await runNightlyQualityProbe(keyless());
+      expect(r1.outcome).toBe('no_embedding_key'); // one warn + one audit row
+      const r2 = await runNightlyQualityProbe(keyless());
+      expect(r2.outcome).toBe('rate_limited'); // gated, not another no_embedding_key
+      const r3 = await runNightlyQualityProbe(keyless());
+      expect(r3.outcome).toBe('rate_limited');
+      const events = await readEvents();
+      // Exactly 2 rows: the no_embedding_key attempt + ONE rate_limited marker.
+      expect(events.length).toBe(2);
+      expect(events[0].outcome).toBe('no_embedding_key');
       expect(events[1].outcome).toBe('rate_limited');
     });
   });

@@ -23,7 +23,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { logQualityProbeEvent, readRecentQualityProbeEvents } from '../audit-quality-probe.ts';
+import { logQualityProbeEvent, readRecentQualityProbeEvents, type QualityProbeAuditEvent, type QualityProbeOutcome } from '../audit-quality-probe.ts';
 
 /** Run-once gate window in ms. 24h matches the "nightly" cadence. */
 const NIGHTLY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -102,20 +102,38 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
   }
 
   // 24h rate limit — skip + audit "rate_limited".
+  // Only completed-attempt outcomes count toward the window. Skip rows
+  // (rate_limited) must not refresh it: each skip writes an audit row, so
+  // counting skips would livelock the gate on its own trail (one skip row
+  // per autopilot tick, forever). no_embedding_key DOES count — it's a
+  // completed attempt that shouldn't retry (and re-warn on stderr + re-log)
+  // every 5-min tick on a keyless brain; the key showing up is picked up
+  // within 24h, same cadence as any other outcome.
   const now = deps.now();
-  const recent = readRecentQualityProbeEvents(2, now); // 2-day window is enough for 24h check
+  const allRecent = readRecentQualityProbeEvents(2, now); // 2-day window is enough for 24h check
+  const runOutcomes: ReadonlySet<QualityProbeOutcome> = new Set(['pass', 'fail', 'inconclusive', 'error', 'budget_exceeded', 'no_embedding_key']);
+  const recent = allRecent.filter((ev) => runOutcomes.has(ev.outcome));
   const decision = shouldRunNightly(now, recent);
   if (!decision.run) {
-    logQualityProbeEvent({
-      outcome: 'rate_limited',
-      exit_code: 0,
-      pass_count: 0,
-      fail_count: 0,
-      inconclusive_count: 0,
-      error_count: 0,
-      est_cost_usd: 0,
-      detail: 'already ran within 24h window',
-    });
+    // Log-once per window: skip the duplicate audit row when the latest
+    // row is already rate_limited (the 5-min tick cadence otherwise
+    // writes ~288 identical rows/day and pollutes probe-health).
+    const latest = allRecent.reduce<QualityProbeAuditEvent | null>(
+      (a, b) => (a === null || Date.parse(b.ts) >= Date.parse(a.ts) ? b : a),
+      null,
+    );
+    if (latest === null || latest.outcome !== 'rate_limited') {
+      logQualityProbeEvent({
+        outcome: 'rate_limited',
+        exit_code: 0,
+        pass_count: 0,
+        fail_count: 0,
+        inconclusive_count: 0,
+        error_count: 0,
+        est_cost_usd: 0,
+        detail: 'already ran within 24h window',
+      });
+    }
     return { outcome: 'rate_limited', exit_code: 0, detail: 'already ran within 24h' };
   }
 
