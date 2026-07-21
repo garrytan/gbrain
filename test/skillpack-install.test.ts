@@ -125,6 +125,23 @@ describe('findGbrainRoot', () => {
   it('returns null when no gbrain root above', () => {
     expect(findGbrainRoot('/tmp/definitely-not-a-gbrain-repo-XYZ')).toBeNull();
   });
+  it('falls back to the module location when cwd has no markers (#1917)', () => {
+    // Simulate a bun-global install: cwd is an unrelated directory with no
+    // gbrain markers anywhere above it. The no-arg call must still resolve
+    // via bundle.ts's own location (which lives in the real repo).
+    const elsewhere = mkdtempSync(join(tmpdir(), 'skillpack-elsewhere-'));
+    created.push(elsewhere);
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(elsewhere);
+      const root = findGbrainRoot();
+      expect(root).not.toBeNull();
+      expect(existsSync(join(root!, 'openclaw.plugin.json'))).toBe(true);
+      expect(existsSync(join(root!, 'src', 'cli.ts'))).toBe(true);
+    } finally {
+      process.chdir(prevCwd);
+    }
+  });
 });
 
 describe('loadBundleManifest', () => {
