@@ -216,6 +216,27 @@ describe('PGLiteEngine: Search', () => {
     expect(results.length).toBe(0);
   });
 
+  // Regression: queries containing `/` used to silently return zero hits.
+  // Postgres' default text-search parser classifies `foo/bar` as a `file`-
+  // alias token mapped to the `simple` dictionary, so it becomes a single
+  // un-stemmed lexeme `'foo/bar'` that almost never matches indexed text.
+  // searchKeyword now normalizes `/` to whitespace before websearch_to_tsquery
+  // parses, so the FTS path matches the same content the user would find by
+  // manually dropping the slash.
+  test('searchKeyword: query with `/` matches content with the same words', async () => {
+    // Both lexemes co-occur in the `companies/novamind` chunk
+    // ('NovaMind builds AI agents for enterprise'). Pre-fix this returned 0
+    // because `NovaMind/AI` was parsed as a single file-alias token.
+    const singleSlash = await engine.searchKeyword('NovaMind/AI');
+    expect(singleSlash.length).toBeGreaterThan(0);
+    expect(singleSlash[0].slug).toBe('companies/novamind');
+
+    // Slash in the middle of a multi-word query — same fix path.
+    const midSlash = await engine.searchKeyword('AI NovaMind/agents');
+    expect(midSlash.length).toBeGreaterThan(0);
+    expect(midSlash[0].slug).toBe('companies/novamind');
+  });
+
   test('tsvector trigger populates search_vector on insert', async () => {
     // Verify the PL/pgSQL trigger fires and content_chunks.search_vector is
     // populated from chunk_text. v0.20.0 Cathedral II Layer 3 moved FTS from
