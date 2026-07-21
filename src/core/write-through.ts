@@ -21,8 +21,8 @@
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { dirname, join } from 'path';
+import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
+import { dirname, join, relative, sep } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
@@ -56,8 +56,15 @@ export interface WriteThroughResult {
    *     DB write failed or targeted a different source).
    *   - path_escapes_source_root: the computed file path resolves outside the
    *     source's working tree (hostile slug row / symlinked subtree) — refused.
+   *   - case_insensitive_collision: the target directory already has an entry
+   *     whose name matches the target basename case-insensitively but not
+   *     exactly — #2831: on a case-insensitive filesystem (Windows, default
+   *     macOS/APFS) that entry and the target collapse to the same inode, so
+   *     writing here would silently clobber a differently-cased file (e.g. a
+   *     human-authored doc) that isn't ours. Refused rather than risking the
+   *     data loss.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root';
+  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -145,6 +152,55 @@ export async function writePageThrough(
     const md = serializePageToMarkdown(writtenPage, tags, {
       frontmatterOverrides: opts.frontmatterOverrides,
     });
+
+    // Case-insensitive-filesystem collision guard (#2831): on Windows and
+    // default-configuration macOS (case-insensitive APFS), a path that differs
+    // from an existing one only in case collapses to the SAME inode. Without
+    // this check, a human-authored (or otherwise non-gbrain) file sitting at a
+    // differently-cased path would be silently destroyed by the atomic rename
+    // below — no error, no warning. Refuse rather than clobber, matching the
+    // source_repo_belongs_to_other_source guard's shape above.
+    //
+    // A case mismatch can occur in ANY path component, not just the final
+    // basename — e.g. an existing `Docs/ops/note.md` collides with a target of
+    // `docs/ops/note.md` even though the final basename `note.md` matches
+    // exactly, because a case-insensitive filesystem resolves `docs/ops` to
+    // the SAME directory as `Docs/ops` before `readdirSync` ever sees the
+    // basename. So walk every path segment from writeRoot down, comparing
+    // against what's actually on disk at each level: an exact-case match at a
+    // level means "keep descending into the same real entry" (normal in-place
+    // update further down); a case-insensitive-but-not-exact match at any
+    // level means the write would land inside (or over) a differently-cased
+    // entry somewhere in the chain — refuse. A level with no match at all
+    // means nothing exists there yet, so nothing further down the chain can
+    // collide either.
+    //
+    // Honest caveat: this is a readdirSync-then-write check, not a lock — a
+    // narrow race window exists if another writer creates the colliding entry
+    // between this check and the rename below. Same risk class as the leak
+    // guard above (a DB check followed by a later write with nothing
+    // enforcing atomicity between them); this closes "always silently
+    // clobbers" down to a narrow race, not a claimed guarantee.
+    const relSegments = relative(writeRoot, filePath).split(sep).filter(Boolean);
+    let probeDir = writeRoot;
+    for (const segment of relSegments) {
+      if (!existsSync(probeDir)) break;
+      const entries = readdirSync(probeDir);
+      if (entries.includes(segment)) {
+        probeDir = join(probeDir, segment);
+        continue;
+      }
+      const caseInsensitiveMatch = entries.find(
+        (entry) => entry.toLowerCase() === segment.toLowerCase(),
+      );
+      if (caseInsensitiveMatch) {
+        return { written: false, skipped: 'case_insensitive_collision' };
+      }
+      // No entry at all (exact or case-insensitive) for this segment — the
+      // rest of the path doesn't exist yet, so nothing further down can
+      // collide either.
+      break;
+    }
 
     mkdirSync(dirname(filePath), { recursive: true });
 

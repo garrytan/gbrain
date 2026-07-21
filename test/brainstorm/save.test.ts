@@ -142,6 +142,19 @@ describe('formatSaveOutcome (pure)', () => {
     expect(m.stdout).toContain('not a directory');
   });
 
+  test('db only, case_insensitive_collision (#2831) → exit 0, honest message, no stray "error above"/"sync will reconcile" claim', () => {
+    const o: SaveOutcome = {
+      dbSaved: true,
+      writeThrough: { written: false, skipped: 'case_insensitive_collision' },
+    };
+    const m = formatSaveOutcome(o, ctx);
+    expect(m.exitCode).toBe(0);
+    expect(m.stdout).toContain('case-insensitive filesystem');
+    expect(m.stdout).not.toContain('see error above');
+    expect(m.stdout).not.toContain('gbrain sync will reconcile');
+    expect(m.stderr).toEqual([]);
+  });
+
   test('db saved but file errored → exit 0, warns on stderr', () => {
     const o: SaveOutcome = { dbSaved: true, writeThrough: { written: false, error: 'EACCES' } };
     const m = formatSaveOutcome(o, ctx);

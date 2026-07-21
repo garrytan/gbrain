@@ -420,6 +420,19 @@ export function formatSaveOutcome(
       exitCode: 0,
     };
   }
+  if (dbSaved && writeThrough.skipped === 'case_insensitive_collision') {
+    // #2831: no error was raised here — the write was deliberately refused
+    // because an existing file at a differently-cased path would collide
+    // with the target on a case-insensitive filesystem. Don't fall through
+    // to the generic "see error above / gbrain sync will reconcile" branch
+    // below: there's no error to point to, and `gbrain sync` won't resolve a
+    // standing case collision on its own — it would hit the same refusal.
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (file NOT written — an existing file at a differently-cased path would be overwritten on a case-insensitive filesystem; refused to avoid data loss)._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
   if (dbSaved) {
     // File write attempted but errored (already on stderr). Row is durable.
     return {
