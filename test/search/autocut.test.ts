@@ -18,7 +18,7 @@ import {
 // items survived the cut.
 type R = { id: string; rs?: number };
 const scoreOf = (r: R) => r.rs;
-const ON: AutocutConfig = { enabled: true, jumpRatio: 0.2, minKeep: 1 };
+const ON: AutocutConfig = { enabled: true, jumpRatio: 0.2, minKeep: 1, minTopScore: 0.5 };
 
 function mk(scores: Array<number | undefined>): R[] {
   return scores.map((rs, i) => ({ id: `r${i}`, rs }));
@@ -32,6 +32,12 @@ describe('DEFAULT_AUTOCUT', () => {
   });
   test('is frozen', () => {
     expect(Object.isFrozen(DEFAULT_AUTOCUT)).toBe(true);
+  });
+  test('module default carries a weak-top floor (minTopScore 0.5)', () => {
+    // The reranker (zerank-2) is bimodal: real matches score ≈0.95+, weak
+    // matches ≈0.3. Below this floor the top is not a confident anchor, so
+    // normalizing by it manufactures a false cliff (see weak-top-floor block).
+    expect(DEFAULT_AUTOCUT.minTopScore).toBe(0.5);
   });
 });
 
@@ -136,6 +142,56 @@ describe('applyAutocut — no-op guards', () => {
   });
 });
 
+describe('applyAutocut — weak-top floor (cross-source collapse fix)', () => {
+  // Root cause of the `--source __all__` collapse: applyAutocut normalizes the
+  // cliff test by the top score, so a WEAK top (e.g. 0.317 on a rare-term
+  // cross-source query) gets rescaled to 1.0 and a normal decay below it looks
+  // like a confident cliff → the 32-result pool collapses to 1. Calibration on
+  // the live brain: every legitimate single-answer collapse has top_rerank≥0.95;
+  // the only bug case had top_rerank=0.317. minTopScore=0.5 sits in the empty
+  // middle of the reranker's bimodal distribution.
+
+  test('weak top below floor → NO cut even when a cliff exists (recall preserved)', () => {
+    // The exact live-brain shape that collapsed: 0.317 / 0.197 / 0.131 / 0.118.
+    // Normalized, rank1→rank2 gap is 0.38 (clears jumpRatio 0.20) — but the top
+    // is a weak 0.317, so the cliff is untrustworthy. Keep all 4.
+    const r = applyAutocut(mk([0.317, 0.197, 0.131, 0.118]), scoreOf, ON);
+    expect(r.kept.length).toBe(4);
+    expect(r.decision.applied).toBe(false);
+    expect(r.decision.signal).toBe('none');
+  });
+
+  test('strong top above floor → still cuts on a real cliff (precision preserved)', () => {
+    // The legitimate single-answer case: top 0.984 is a confident anchor and the
+    // cliff after rank 1 is real. The floor must NOT suppress this.
+    const r = applyAutocut(mk([0.984, 0.1, 0.08, 0.05]), scoreOf, ON);
+    expect(r.kept.map((x) => x.id)).toEqual(['r0']);
+    expect(r.decision.applied).toBe(true);
+  });
+
+  test('top exactly at the floor → treated as confident (>= floor cuts)', () => {
+    const r = applyAutocut(mk([0.5, 0.1, 0.05]), scoreOf, ON);
+    expect(r.kept.map((x) => x.id)).toEqual(['r0']);
+    expect(r.decision.applied).toBe(true);
+  });
+
+  test('minTopScore 0 disables the floor (explicit pre-fix behavior)', () => {
+    const r = applyAutocut(mk([0.317, 0.197, 0.131, 0.118]), scoreOf, { ...ON, minTopScore: 0 });
+    expect(r.kept.length).toBe(1);
+    expect(r.decision.applied).toBe(true);
+  });
+
+  test('partial-knobs caller omitting minTopScore defaults to the 0.5 floor', () => {
+    // A literal that predates the field (or a JS caller) must compute the SAME
+    // trimmed set the knobsHash `acmts` default (0.5) claims — omitting the
+    // field must NOT silently disable the floor (compute/cache agreement).
+    const partial = { enabled: true, jumpRatio: 0.2, minKeep: 1 } as AutocutConfig;
+    const r = applyAutocut(mk([0.317, 0.197, 0.131, 0.118]), scoreOf, partial);
+    expect(r.kept.length).toBe(4); // weak top 0.317 < default 0.5 → no cut
+    expect(r.decision.applied).toBe(false);
+  });
+});
+
 describe('applyAutocut — failsafe', () => {
   test('never returns empty when input is non-empty', () => {
     const r = applyAutocut(mk([0.9, 0.01]), scoreOf, ON);
@@ -208,6 +264,15 @@ describe('autocutFromConfig', () => {
     expect(autocutFromConfig({ search: { autocut_jump: 5 } }).jumpRatio).toBeUndefined();
     expect(autocutFromConfig({ search: { autocut_jump: 0 } }).jumpRatio).toBeUndefined();
   });
+  test('reads search.autocut_min_top_score (clamped to [0, 1])', () => {
+    expect(autocutFromConfig({ search: { autocut_min_top_score: 0.7 } }).minTopScore).toBe(0.7);
+    // 0 is valid (disables the floor); 1 is valid (floor at the ceiling).
+    expect(autocutFromConfig({ search: { autocut_min_top_score: 0 } }).minTopScore).toBe(0);
+    expect(autocutFromConfig({ search: { autocut_min_top_score: 1 } }).minTopScore).toBe(1);
+    // Out of range → ignored (fall through to bundle/default).
+    expect(autocutFromConfig({ search: { autocut_min_top_score: -0.1 } }).minTopScore).toBeUndefined();
+    expect(autocutFromConfig({ search: { autocut_min_top_score: 1.5 } }).minTopScore).toBeUndefined();
+  });
   test('empty / missing config → empty partial', () => {
     expect(autocutFromConfig(null)).toEqual({});
     expect(autocutFromConfig({})).toEqual({});
@@ -228,5 +293,10 @@ describe('resolveAutocut — precedence ladder', () => {
     const cfg = resolveAutocut({ jumpRatio: 0.5 }, { jumpRatio: 0.3, enabled: false });
     expect(cfg.jumpRatio).toBe(0.5);
     expect(cfg.enabled).toBe(false); // inherited from config (partial didn't set it)
+  });
+  test('minTopScore resolves default → config → per-call', () => {
+    expect(resolveAutocut(undefined, undefined).minTopScore).toBe(0.5); // module default
+    expect(resolveAutocut(undefined, { minTopScore: 0.7 }).minTopScore).toBe(0.7); // config
+    expect(resolveAutocut({ minTopScore: 0.3 }, { minTopScore: 0.7 }).minTopScore).toBe(0.3); // per-call wins
   });
 });

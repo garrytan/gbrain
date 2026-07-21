@@ -80,6 +80,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       // v0.43 — relational recall OFF for conservative.
       relationalRetrieval: false,
       relational_retrieval_depth: 2,
+      autocut_min_top_score: 0.5,
     });
   });
 
@@ -112,6 +113,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       // v0.43 — relational recall ON for balanced.
       relationalRetrieval: true,
       relational_retrieval_depth: 2,
+      autocut_min_top_score: 0.5,
     });
   });
 
@@ -142,6 +144,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       // v0.43 — relational recall ON for tokenmax.
       relationalRetrieval: true,
       relational_retrieval_depth: 2,
+      autocut_min_top_score: 0.5,
     });
   });
 
@@ -409,8 +412,9 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // must not be served to post-fix lookups.
     // #2825: bumped 11→12 to fold the resolved hard-exclude prefix list
     // (hx=) — cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across
-    // processes.
-    expect(KNOBS_HASH_VERSION).toBe(12);
+    // processes. 12→13: autocut weak-top floor (acmts=) — the floor shifts
+    // whether autocut cuts at all.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -575,8 +579,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 12 (11→12 hard-exclude fold, #2825)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(12);
+  test('KNOBS_HASH_VERSION is 13 (12→13 autocut weak-top floor; 11→12 was #2825 hard-excludes)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
@@ -585,6 +589,8 @@ describe('v0.42.3.0 — autocut knobs', () => {
     expect(MODE_BUNDLES.tokenmax.autocut).toBe(true);
     for (const m of ['conservative', 'balanced', 'tokenmax'] as const) {
       expect(MODE_BUNDLES[m].autocut_jump).toBe(0.2);
+      // v0.42.x — weak-top floor default 0.5 across all bundles.
+      expect(MODE_BUNDLES[m].autocut_min_top_score).toBe(0.5);
     }
   });
 
@@ -614,9 +620,37 @@ describe('v0.42.3.0 — autocut knobs', () => {
     expect(ov.autocut_jump).toBe(0.35);
   });
 
+  test('resolveSearchMode threads autocut_min_top_score: per-call > config > bundle', () => {
+    expect(resolveSearchMode({ mode: 'balanced' }).autocut_min_top_score).toBe(0.5);
+    expect(
+      resolveSearchMode({ mode: 'balanced', overrides: { autocut_min_top_score: 0.7 } }).autocut_min_top_score,
+    ).toBe(0.7);
+    expect(
+      resolveSearchMode({
+        mode: 'balanced',
+        overrides: { autocut_min_top_score: 0.7 },
+        perCall: { autocut_min_top_score: 0.3 },
+      }).autocut_min_top_score,
+    ).toBe(0.3);
+  });
+
+  test('loadOverridesFromConfig reads search.autocut_min_top_score (clamped [0,1])', () => {
+    expect(loadOverridesFromConfig({ 'search.autocut_min_top_score': '0.7' }).autocut_min_top_score).toBe(0.7);
+    expect(loadOverridesFromConfig({ 'search.autocut_min_top_score': '0' }).autocut_min_top_score).toBe(0);
+    // out of range → ignored (undefined, falls through to bundle)
+    expect(loadOverridesFromConfig({ 'search.autocut_min_top_score': '1.5' }).autocut_min_top_score).toBeUndefined();
+  });
+
   test('SEARCH_MODE_CONFIG_KEYS includes the autocut keys', () => {
     expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.autocut');
     expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.autocut_jump');
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.autocut_min_top_score');
+  });
+
+  test('knobsHash includes acmts= — different weak-top floors differ', () => {
+    const a = knobsHash(resolveSearchMode({ mode: 'balanced' })); // floor 0.5
+    const b = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { autocut_min_top_score: 0.3 } }));
+    expect(a).not.toBe(b);
   });
 
   test('knobsHash includes ac= / acj= — autocut-on vs off differ', () => {
