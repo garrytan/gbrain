@@ -100,6 +100,10 @@ describe('runSyncTrigger', () => {
     const job = jobs[0];
     expect(job.priority).toBe(-10);
     expect((job.data as { sourceId: string }).sourceId).toBe('default');
+    // #2849: opt in to inline extraction — the standalone sync handler
+    // defaults noExtract to TRUE, which would leave triggered syncs
+    // extraction-stale.
+    expect((job.data as { noExtract: boolean }).noExtract).toBe(false);
     expect((job.data as { auto_embed_backfill: boolean }).auto_embed_backfill).toBe(true);
   });
 
