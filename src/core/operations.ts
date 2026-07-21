@@ -16,7 +16,7 @@ import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoLinkRemoteAllowed, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
@@ -332,6 +332,20 @@ export interface OperationContext {
    * remote/untrusted (defense in depth in case the type is bypassed via cast).
    */
   remote: boolean;
+  /**
+   * Which MCP transport delivered this call, when it came over MCP.
+   * `'stdio'` is the local pipe (`gbrain serve`) — remote/untrusted by the
+   * trust boundary, but auth-less BY DESIGN (no per-token auth on a local
+   * pipe; see src/mcp/server.ts). `'http'` is the bearer/OAuth HTTP transport,
+   * which threads `auth`. Unset for the trusted local CLI path.
+   *
+   * whoami uses this to distinguish "stdio pipe, legitimately auth-less"
+   * (report transport: 'stdio') from "HTTP transport that dropped auth"
+   * (a real bug → fail-closed unknown_transport). Do NOT use this to grant
+   * trust — `remote` remains the trust discriminator, and 'local' stays
+   * reserved for ctx.remote === false.
+   */
+  transport?: 'stdio' | 'http';
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -965,7 +979,11 @@ const put_page: Operation = {
     const trustedWorkspace = ctx.viaSubagent === true
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
-    if (ctx.remote !== false && !trustedWorkspace) {
+    // #2478: auto_link_allow_remote is the operator OPT-IN that re-enables the
+    // post-hooks for remote callers (single-user brains with a trusted MCP
+    // client). Default deny; `config set` is CLI-only so a remote caller
+    // cannot flip it for itself.
+    if (ctx.remote !== false && !trustedWorkspace && !(await isAutoLinkRemoteAllowed(ctx.engine))) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
@@ -3712,10 +3730,12 @@ const whoami: Operation = {
   description:
     'Introspect the calling identity. Returns one of three transport shapes: ' +
     '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
-    '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
-    '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
-    'context is ambiguous (remote=true without auth) — fail-closed posture ' +
-    'mirroring the v0.26.9 trust-boundary contract.',
+    '{transport: "legacy", token_name, scopes, expires_at: null}, ' +
+    '{transport: "local", scopes: []} (trusted local CLI only), or ' +
+    '{transport: "stdio", scopes: []} (auth-less stdio MCP pipe — untrusted, ' +
+    'no privileges). Throws unknown_transport when the ' +
+    'context is ambiguous (remote=true without auth over HTTP) — fail-closed ' +
+    'posture mirroring the v0.26.9 trust-boundary contract.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -3726,6 +3746,16 @@ const whoami: Operation = {
     // special-case `transport: 'local'` explicitly.
     if (ctx.remote === false) {
       return { transport: 'local', scopes: [] };
+    }
+    // The stdio MCP pipe (`gbrain serve`) is remote/untrusted by the trust
+    // boundary but carries no per-token auth by design (local pipe — see
+    // src/mcp/server.ts). That is NOT the "transport dropped auth" bug; it is
+    // the expected shape for stdio, so whoami reports it instead of throwing.
+    // Deliberately NOT `transport: 'local'` — that shape is the trusted
+    // local-CLI marker (ctx.remote === false) that clients special-case;
+    // an untrusted stdio caller must stay distinguishable from it.
+    if (ctx.transport === 'stdio') {
+      return { transport: 'stdio', scopes: [] };
     }
     if (!ctx.auth) {
       throw new OperationError(

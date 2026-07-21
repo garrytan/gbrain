@@ -15,8 +15,9 @@
  * stderr warning at use site is the operator's signal.
  */
 import { execFileSync } from 'child_process';
-import { lstatSync, existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { lstatSync, existsSync, readdirSync, realpathSync } from 'fs';
+import { join, sep } from 'path';
+import { fileURLToPath } from 'url';
 import { isInternalUrl } from './url-safety.ts';
 
 /**
@@ -44,6 +45,21 @@ import { isInternalUrl } from './url-safety.ts';
 export const GIT_SSRF_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
+  '-c', 'protocol.ext.allow=never',
+] as const;
+
+/**
+ * Global git config flags for a TRUSTED LOCAL-FILE origin (the brain's own bare
+ * durability repo under GBRAIN_HOME). A local filesystem remote is not an SSRF
+ * vector — no DNS, no network, no redirects — so the file transport is safe
+ * here. Redirect + external-helper hardening are KEPT; only protocol.file.allow
+ * is relaxed, and submodules stay disabled via GIT_SSRF_SUBCOMMAND_FLAGS so
+ * `always` cannot open a recursive file surface. Used ONLY via pullRepo's
+ * gated allowLocalFileOrigin path.
+ */
+export const GIT_SSRF_FLAGS_LOCAL = [
+  '-c', 'http.followRedirects=false',
+  '-c', 'protocol.file.allow=always',
   '-c', 'protocol.ext.allow=never',
 ] as const;
 
@@ -214,9 +230,82 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   }
 }
 
-/** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
-export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
+/**
+ * True when a git remote URL uses the local-file transport (no network): a
+ * `file://` URL or a bare filesystem path. Anything with a network scheme
+ * (http/https/ssh/git://) or scp-like `[user@]host:path` is remote.
+ */
+export function isLocalFileRemote(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith('file://')) return true;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return false;
+  const colon = url.indexOf(':');
+  const slash = url.indexOf('/');
+  if (colon !== -1 && (slash === -1 || colon < slash)) return false; // scp-like host:path
+  return true;
+}
+
+/**
+ * Resolve the URL of the remote `git pull` would use for repoPath's current
+ * branch (its configured upstream remote, defaulting to `origin`), or null.
+ */
+function pullOriginUrl(repoPath: string): string | null {
+  const run = (args: string[]): string | null => {
+    try {
+      return execFileSync('git', ['-C', repoPath, ...args], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, ...GIT_ENV },
+      }).toString().trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const branch = run(['symbolic-ref', '--short', '-q', 'HEAD']);
+  const remote = (branch && run(['config', '--get', `branch.${branch}.remote`])) || 'origin';
+  return run(['remote', 'get-url', remote]);
+}
+
+/**
+ * True only when repoPath's pull remote is a local-file path physically
+ * contained under trustedRoot (the gbrain-managed durability bare repo under
+ * GBRAIN_HOME). Gates the file-transport relaxation: a federated source
+ * (https-only via parseRemoteUrl) or any local path outside the trusted root
+ * never qualifies, so hardening cannot be bypassed by configuring a local origin.
+ */
+function isTrustedLocalOrigin(repoPath: string, trustedRoot: string): boolean {
+  const url = pullOriginUrl(repoPath);
+  if (!url || !isLocalFileRemote(url)) return false;
+  const originPath = url.startsWith('file://') ? fileURLToPath(url) : url;
+  try {
+    const real = realpathSync(originPath);
+    const root = realpathSync(trustedRoot);
+    return real === root || real.startsWith(root.endsWith(sep) ? root : root + sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pull a repo with --ff-only and SSRF-defensive flags. Strict by default
+ * (protocol.file.allow=never), matching cloneRepo.
+ *
+ * `allowLocalFileOrigin` opts into the file transport ONLY for a trusted local
+ * bare repo — the gbrain durability origin under GBRAIN_HOME (default) or
+ * `trustedOriginRoot`. Even then, pullRepo re-verifies the resolved origin is a
+ * local path contained under that root before relaxing, so network remotes keep
+ * full hardening. Needed because the brain's own durability origin is a local
+ * bare repo (file transport), which the strict flags reject with
+ * "fatal: transport 'file' not allowed".
+ */
+export function pullRepo(
+  repoPath: string,
+  opts: { timeoutMs?: number; allowLocalFileOrigin?: boolean; trustedOriginRoot?: string } = {},
+): void {
+  const trustedRoot = opts.trustedOriginRoot ?? (process.env.GBRAIN_HOME || join(process.env.HOME || '', '.gbrain'));
+  const flags = opts.allowLocalFileOrigin && isTrustedLocalOrigin(repoPath, trustedRoot)
+    ? GIT_SSRF_FLAGS_LOCAL
+    : GIT_SSRF_FLAGS;
+  const args: string[] = ['-C', repoPath, ...flags, 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],

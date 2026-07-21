@@ -8,6 +8,7 @@ import {
   makeResolver,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  isAutoLinkRemoteAllowed,
   FRONTMATTER_LINK_MAP,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
@@ -779,6 +780,34 @@ describe('isAutoLinkEnabled', () => {
   test('garbage value -> true (fail-safe to default)', async () => {
     const engine = makeFakeEngine(new Map([['auto_link', 'garbage']]));
     expect(await isAutoLinkEnabled(engine)).toBe(true);
+  });
+});
+
+// ─── isAutoLinkRemoteAllowed (#2478) — inverted default: opt-in, fail-closed ──
+
+describe('isAutoLinkRemoteAllowed', () => {
+  test('null/unset -> false (default deny for remote callers)', async () => {
+    const engine = makeFakeEngine(new Map());
+    expect(await isAutoLinkRemoteAllowed(engine)).toBe(false);
+  });
+
+  test('"true" -> true (operator opt-in)', async () => {
+    const engine = makeFakeEngine(new Map([['auto_link_allow_remote', 'true']]));
+    expect(await isAutoLinkRemoteAllowed(engine)).toBe(true);
+  });
+
+  test('"1", "yes", "on" -> true; case/whitespace tolerant', async () => {
+    for (const v of ['1', 'yes', 'on', '  TRUE  ']) {
+      const engine = makeFakeEngine(new Map([['auto_link_allow_remote', v]]));
+      expect(await isAutoLinkRemoteAllowed(engine)).toBe(true);
+    }
+  });
+
+  test('"false" and garbage -> false (fail-closed, NOT fail-safe-to-on)', async () => {
+    for (const v of ['false', '0', 'no', 'off', 'garbage', '']) {
+      const engine = makeFakeEngine(new Map([['auto_link_allow_remote', v]]));
+      expect(await isAutoLinkRemoteAllowed(engine)).toBe(false);
+    }
   });
 });
 

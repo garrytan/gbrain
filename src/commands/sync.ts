@@ -1960,7 +1960,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // timeout (ETIMEDOUT / SIGTERM on err.cause) from ordinary pull
       // failure. Pull applies to the whole git repo (gitContextRoot), not
       // just the sync scope — git has no per-subdir pull.
-      pullRepo(gitContextRoot);
+      //
+      // #2709: allow the file transport ONLY for the trusted local durability
+      // origin (the gbrain-managed bare repo under GBRAIN_HOME). pullRepo
+      // re-verifies via realpath containment that the resolved origin is a
+      // local path under the trusted root before relaxing, so federated
+      // https sources and arbitrary local origins keep full SSRF hardening.
+      // Without this, a durability-hardened brain fails every sync.git_pull
+      // with "transport 'file' not allowed".
+      pullRepo(gitContextRoot, { allowLocalFileOrigin: true });
       serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
