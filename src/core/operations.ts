@@ -25,7 +25,7 @@ import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { isSearchMode } from './search/mode.ts';
 import { stampEvidence } from './search/evidence.ts';
 import type { SearchResult } from './types.ts';
-import { CJK_SLUG_CHARS } from './cjk.ts';
+import { CJK_SLUG_CHARS, PAGE_SLUG_SEG } from './cjk.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -162,7 +162,6 @@ export function validatePageSlug(slug: string): void {
   }
   // v0.32.7: CJK ranges (Han / Hiragana / Katakana / Hangul Syllables) allowed
   // in segments. ASCII shape rules (lead char, hyphen continuation) preserved.
-  const PAGE_SLUG_SEG = `[a-z0-9${CJK_SLUG_CHARS}][a-z0-9${CJK_SLUG_CHARS}\\-]*`;
   if (!new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, 'i').test(slug)) {
     throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: alphanumeric, CJK, hyphens, forward-slash separated segments)`);
   }
