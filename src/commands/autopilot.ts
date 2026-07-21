@@ -161,9 +161,35 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Issue #2503: PID liveness alone is not identity. After a reboot (or plain
+ * PID-counter wraparound) the lock's PID can be reused by an unrelated
+ * process (observed: Apple `AirPlayUIAgent`), which made every new autopilot
+ * exit with "another instance is running" while maintenance silently stopped.
+ *
+ * Cheap identity check: does the holder's command line mention gbrain?
+ * Covers the compiled binary (`/usr/local/bin/gbrain autopilot`) and dev runs
+ * (`bun …/gbrain/src/cli.ts autopilot`). Fail-open: if `ps` is unavailable or
+ * unreadable we return true (keep the pre-#2503 "alive = holder" behavior and
+ * never steal a lock we can't judge).
+ */
+export function pidLooksLikeGbrain(pid: number): boolean {
+  try {
+    const cmd = execSync(`ps -p ${pid} -o command=`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (!cmd) return true; // no command visible — can't judge, don't steal
+    return /gbrain/i.test(cmd);
+  } catch {
+    return true; // ps failed (no ps, permissions, exotic OS) — fail-open
+  }
+}
+
 export function decideLockAcquisition(
   lockPath: string,
   currentPid: number,
+  holderIsGbrain: (pid: number) => boolean = pidLooksLikeGbrain,
 ): { action: 'acquire' } | { action: 'exit'; holderPid: number } | { action: 'takeover'; reason: string } {
   if (!existsSync(lockPath)) return { action: 'acquire' };
 
@@ -178,7 +204,12 @@ export function decideLockAcquisition(
   const sameProcess = Number.isFinite(holderPid) && holderPid === currentPid;
   const alive = !sameProcess && isPidAlive(holderPid);
 
-  if (alive) return { action: 'exit', holderPid };
+  if (alive) {
+    // #2503: a live PID that is not gbrain is a recycled PID, not a rival
+    // autopilot — take the lock over instead of exiting forever.
+    if (holderIsGbrain(holderPid)) return { action: 'exit', holderPid };
+    return { action: 'takeover', reason: `foreign process holds stale lock (pid ${holderPid})` };
+  }
   return { action: 'takeover', reason: `dead pid ${raw || '<empty>'}` };
 }
 

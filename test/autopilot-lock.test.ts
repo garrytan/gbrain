@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { decideLockAcquisition, isPidAlive } from '../src/commands/autopilot.ts';
+import { decideLockAcquisition, isPidAlive, pidLooksLikeGbrain } from '../src/commands/autopilot.ts';
 
 let tmp: string;
 let lockPath: string;
@@ -43,9 +43,19 @@ describe('decideLockAcquisition', () => {
 
   test('keeps a lock whose holder is alive regardless of age', () => {
     writeFileSync(lockPath, String(process.pid));
-    expect(decideLockAcquisition(lockPath, process.pid + 100_000)).toEqual({
+    expect(decideLockAcquisition(lockPath, process.pid + 100_000, () => true)).toEqual({
       action: 'exit',
       holderPid: process.pid,
+    });
+  });
+
+  // #2503: a live PID recycled by an unrelated process (e.g. AirPlayUIAgent)
+  // must not block autopilot forever — identity mismatch means takeover.
+  test('takes over a live lock held by a foreign (non-gbrain) process', () => {
+    writeFileSync(lockPath, String(process.pid));
+    expect(decideLockAcquisition(lockPath, process.pid + 100_000, () => false)).toEqual({
+      action: 'takeover',
+      reason: `foreign process holds stale lock (pid ${process.pid})`,
     });
   });
 
@@ -54,5 +64,20 @@ describe('decideLockAcquisition', () => {
     expect(decideLockAcquisition(lockPath, process.pid).action).toBe('takeover');
     writeFileSync(lockPath, '');
     expect(decideLockAcquisition(lockPath, process.pid).action).toBe('takeover');
+  });
+});
+
+describe('pidLooksLikeGbrain', () => {
+  test('fails open on a dead pid (ps errors → true, never steal blind)', () => {
+    expect(pidLooksLikeGbrain(4194303)).toBe(true);
+  });
+
+  test('recognizes a live non-gbrain process as foreign', () => {
+    const child = Bun.spawn(['sleep', '30']);
+    try {
+      expect(pidLooksLikeGbrain(child.pid)).toBe(false);
+    } finally {
+      child.kill();
+    }
   });
 });
