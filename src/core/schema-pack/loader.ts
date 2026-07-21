@@ -159,6 +159,28 @@ export function parseYamlMini(content: string): unknown {
     return parseMapping(baseIndent);
   }
 
+  function parseBlockScalar(parentIndent: number, folded: boolean): string {
+    const contentIndent = parentIndent + 2;
+    const out: string[] = [];
+    while (i < lines.length) {
+      const raw = lines[i];
+      if (isBlank(raw)) {
+        out.push('');
+        i++;
+        continue;
+      }
+      const indent = indentOf(raw);
+      if (indent <= parentIndent) break;
+      const withoutComment = stripComment(raw);
+      out.push(withoutComment.slice(Math.min(contentIndent, indent)));
+      i++;
+    }
+    if (folded) {
+      return out.join(' ').replace(/\s+$/u, '');
+    }
+    return out.join('\n').replace(/\n+$/u, '');
+  }
+
   function parseSequence(baseIndent: number): unknown[] {
     const result: unknown[] = [];
     while (i < lines.length) {
@@ -227,6 +249,10 @@ export function parseYamlMini(content: string): unknown {
           i++;
           if (rest2 === '') {
             map[key2] = parseBlock(nextIndent + 2);
+          } else if (rest2 === '|' || rest2 === '|-' || rest2 === '|+') {
+            map[key2] = parseBlockScalar(nextIndent, false);
+          } else if (rest2 === '>' || rest2 === '>-' || rest2 === '>+') {
+            map[key2] = parseBlockScalar(nextIndent, true);
           } else {
             map[key2] = parseScalar(rest2);
           }
@@ -257,6 +283,10 @@ export function parseYamlMini(content: string): unknown {
       i++;
       if (rest === '') {
         result[key] = parseBlock(indent + 2);
+      } else if (rest === '|' || rest === '|-' || rest === '|+') {
+        result[key] = parseBlockScalar(indent, false);
+      } else if (rest === '>' || rest === '>-' || rest === '>+') {
+        result[key] = parseBlockScalar(indent, true);
       } else {
         result[key] = parseScalar(rest);
       }
