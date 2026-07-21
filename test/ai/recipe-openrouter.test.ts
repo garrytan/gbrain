@@ -11,6 +11,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
+import {
+  openrouterSupportsPromptCache,
+  liftMessageCacheControl,
+  openrouterCacheControlFetch,
+} from '../../src/core/ai/recipes/openrouter.ts';
 import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
 import { assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
@@ -134,5 +139,88 @@ describe('recipe: openrouter', () => {
     expect(r.setup_hint).toContain('OPENROUTER_BASE_URL');
     expect(r.setup_hint).toContain('OPENROUTER_REFERER');
     expect(r.setup_hint).toContain('OPENROUTER_TITLE');
+  });
+
+  test('12. prompt cache capability is scoped to anthropic/claude-* routes (#1987)', () => {
+    expect(openrouterSupportsPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(openrouterSupportsPromptCache('anthropic/claude-opus-4.7')).toBe(true);
+    expect(openrouterSupportsPromptCache('ANTHROPIC/Claude-Haiku-4.5')).toBe(true); // case-insensitive
+    expect(openrouterSupportsPromptCache('openai/gpt-5.2')).toBe(false);
+    expect(openrouterSupportsPromptCache('deepseek/deepseek-chat')).toBe(false);
+    expect(openrouterSupportsPromptCache('google/gemini-3-flash-preview')).toBe(false);
+  });
+
+  test('13. liftMessageCacheControl moves a message-level marker into the content part', () => {
+    const body: any = {
+      model: 'anthropic/claude-sonnet-4.6',
+      messages: [
+        { role: 'system', content: 'SYS', cache_control: { type: 'ephemeral' } },
+        { role: 'user', content: 'hello' },
+      ],
+    };
+    expect(liftMessageCacheControl(body)).toBe(true);
+    expect(body.messages[0]).toEqual({
+      role: 'system',
+      content: [{ type: 'text', text: 'SYS', cache_control: { type: 'ephemeral' } }],
+    });
+    // The user message (no marker) is untouched.
+    expect(body.messages[1]).toEqual({ role: 'user', content: 'hello' });
+  });
+
+  test('14. liftMessageCacheControl is a no-op when no marker rides the body', () => {
+    const body = {
+      model: 'openai/gpt-5.2',
+      messages: [
+        { role: 'system', content: 'SYS' },
+        { role: 'user', content: 'hello' },
+      ],
+    };
+    expect(liftMessageCacheControl(body)).toBe(false);
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'SYS' });
+    expect(liftMessageCacheControl(undefined)).toBe(false);
+    expect(liftMessageCacheControl({ input: 'embedding body, no messages' })).toBe(false);
+  });
+
+  test('15. cache fetch shim rewrites the outbound body and recomputes content-length', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ init?: RequestInit }> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ init });
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    try {
+      await openrouterCacheControlFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-length': '999', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'anthropic/claude-sonnet-4.6',
+          messages: [{ role: 'system', content: 'SYS', cache_control: { type: 'ephemeral' } }],
+        }),
+      });
+      const rewritten = JSON.parse(calls[0].init!.body as string);
+      expect(rewritten.messages[0].content).toEqual([
+        { type: 'text', text: 'SYS', cache_control: { type: 'ephemeral' } },
+      ]);
+      expect(rewritten.messages[0].cache_control).toBeUndefined();
+      expect(new Headers(calls[0].init!.headers).get('content-length')).toBeNull();
+
+      // Marker-free body passes through byte-identical (fail-open contract).
+      const plain = JSON.stringify({ model: 'openai/gpt-5.2', messages: [{ role: 'user', content: 'hi' }] });
+      await openrouterCacheControlFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        body: plain,
+      });
+      expect(calls[1].init!.body).toBe(plain);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('16. cache shim is installed as compat.chatFetch (chat path only, embedding shim preserved)', () => {
+    const r = getRecipe('openrouter')!;
+    expect(r.compat?.chatFetch).toBe(openrouterCacheControlFetch);
+    // Deliberately NOT compat.fetch: that would displace the gateway's
+    // asymmetric input_type shim on the embedding path.
+    expect(r.compat?.fetch).toBeUndefined();
   });
 });

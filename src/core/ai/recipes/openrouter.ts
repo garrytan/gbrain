@@ -1,6 +1,73 @@
 import type { Recipe } from '../types.ts';
 
 /**
+ * OpenRouter prompt caching (#1987): OpenRouter forwards Anthropic
+ * `cache_control` breakpoints on Claude routes. Family-scoped (not "every
+ * anthropic/* model forever") so capability classification stays honest for
+ * routed models with no documented cache support.
+ *
+ * @internal exported for tests.
+ */
+export function openrouterSupportsPromptCache(modelId: string): boolean {
+  return modelId.trim().toLowerCase().startsWith('anthropic/claude-');
+}
+
+/**
+ * Lift message-level `cache_control` markers into OpenRouter's documented
+ * shape: a multipart content array whose text part carries the marker
+ * (OpenRouter only reads cache_control inside content parts). The gateway
+ * plants the message-level marker via the system block's
+ * `providerOptions.openaiCompatible` (the openai-compatible adapter spreads
+ * that metadata onto the outgoing message); this rewrite runs just before
+ * the request leaves the process. Mutates `body`; returns true when
+ * something changed.
+ *
+ * @internal exported for tests.
+ */
+export function liftMessageCacheControl(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const messages = (body as Record<string, unknown>).messages;
+  if (!Array.isArray(messages)) return false;
+  let modified = false;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    const m = msg as Record<string, unknown>;
+    if (!m.cache_control || typeof m.cache_control !== 'object') continue;
+    if (typeof m.content !== 'string') continue;
+    m.content = [{ type: 'text', text: m.content, cache_control: m.cache_control }];
+    delete m.cache_control;
+    modified = true;
+  }
+  return modified;
+}
+
+/**
+ * Chat-path fetch shim: rewrites outbound chat/completions bodies via
+ * `liftMessageCacheControl`. Fail-open — any parse error passes the original
+ * request through untouched. Installed as `compat.chatFetch` so the embedding
+ * path keeps the gateway's asymmetric input_type shim.
+ */
+export const openrouterCacheControlFetch = (async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const body = JSON.parse(init.body);
+      if (liftMessageCacheControl(body)) {
+        // Drop Content-Length so fetch recomputes it from the new body.
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(body), headers };
+      }
+    } catch {
+      // Non-JSON body: pass through untouched.
+    }
+  }
+  return fetch(input as any, init as any);
+}) as unknown as typeof fetch;
+
+/**
  * OpenRouter — single-key fan-out to OpenAI, Anthropic, Google, DeepSeek, and
  * dozens of other providers via a single OpenAI-compatible endpoint at
  * https://openrouter.ai/api/v1.
@@ -93,13 +160,18 @@ export const openrouter: Recipe = {
       supports_tools: true,
       // Informational only — real gate is isAnthropicProvider() upstream.
       supports_subagent_loop: false,
-      supports_prompt_cache: false,
+      // #1987: per-model-family — OpenRouter forwards Anthropic cache_control
+      // on Claude routes; other routed families stay uncached.
+      supports_prompt_cache: openrouterSupportsPromptCache,
       // No max_context_tokens: catalog spans 128K to 1M+; a single recipe-wide
       // value is either unsafe for smaller models or wasteful for larger ones.
       // Let upstream errors surface per-model.
       price_last_verified: '2026-05-20',
     },
   },
+  // #1987: chat-path-only shim (see chatFetch doc in types.ts) that lifts the
+  // gateway's message-level cache marker into OpenRouter's content-part shape.
+  compat: { chatFetch: openrouterCacheControlFetch },
   setup_hint:
     'Get an API key at https://openrouter.ai/settings/keys, then `export OPENROUTER_API_KEY=...` and use `openrouter:<provider>/<model>`. Optional overrides: OPENROUTER_BASE_URL (proxy), OPENROUTER_REFERER (attribution URL), OPENROUTER_TITLE (attribution name).',
 };

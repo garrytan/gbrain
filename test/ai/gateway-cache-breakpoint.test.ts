@@ -29,7 +29,7 @@
  * the bug made you believe was sufficient.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   chat,
   configureGateway,
@@ -39,6 +39,11 @@ import {
 
 describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
   beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  afterAll(() => {
     resetGateway();
     __setGenerateTextTransportForTests(null);
   });
@@ -191,5 +196,52 @@ describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
     expect(captured.providerOptions?.anthropic?.cacheControl).toEqual(expected);
     expect((captured.system as any)?.providerOptions?.anthropic?.cacheControl).toEqual(expected);
     expect(captured.tools?.search?.providerOptions?.anthropic?.cacheControl).toEqual(expected);
+  });
+
+  // #1987 — OpenRouter Anthropic routes support prompt caching. The
+  // capability is per-model-family (function-valued supports_prompt_cache),
+  // and the system-block marker must ALSO ride `openaiCompatible` metadata:
+  // `providerOptions.anthropic` never leaves the process on the
+  // openai-compatible wire, so without the extra key no cache_control could
+  // ever reach OpenRouter.
+  async function captureOpenRouterArgs(model: string): Promise<any> {
+    let captured: any;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      captured = args;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      chat_model: model,
+      env: { OPENROUTER_API_KEY: 'fake' },
+    });
+    await chat({
+      model,
+      system: 'SYS',
+      cacheSystem: true,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    return captured;
+  }
+
+  test('cacheSystem:true on openrouter:anthropic/claude-* plants anthropic AND openaiCompatible markers on the system block (#1987)', async () => {
+    const args = await captureOpenRouterArgs('openrouter:anthropic/claude-sonnet-4.6');
+    expect(args.system).toEqual({
+      role: 'system',
+      content: 'SYS',
+      providerOptions: {
+        anthropic: { cacheControl: { type: 'ephemeral' } },
+        openaiCompatible: { cache_control: { type: 'ephemeral' } },
+      },
+    });
+  });
+
+  test('cacheSystem:true on a non-Claude OpenRouter route stays uncached (per-model-family gate)', async () => {
+    const args = await captureOpenRouterArgs('openrouter:deepseek/deepseek-chat');
+    expect(args.system).toBe('SYS');
+    expect(args.providerOptions?.anthropic).toBeUndefined();
   });
 });

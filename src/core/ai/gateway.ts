@@ -423,6 +423,20 @@ export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
 }
 
 /**
+ * #1987: `supports_prompt_cache` may be a per-model-id function on
+ * openai-compatible aggregators (OpenRouter caches `anthropic/claude-*`
+ * routes but not every routed family). Fail-closed: anything not strictly
+ * `true` (or a function returning true) means no caching.
+ *
+ * @internal exported for tests.
+ */
+export function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
+  const support = recipe.touchpoints.chat?.supports_prompt_cache;
+  if (typeof support === 'function') return support(modelId);
+  return support === true;
+}
+
+/**
  * #1250: native providers (anthropic/openai) are instantiated as
  * `create<Provider>({ apiKey })` with NO explicit baseURL, so the AI SDK reads
  * `<PROVIDER>_BASE_URL` verbatim. When a host injects a BARE base URL (Claude
@@ -2274,10 +2288,13 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
       // v0.32: env-templated base URL + optional fetch wrapper.
       const compat = applyOpenAICompatConfig(recipe, cfg);
+      // #1987: chat/expansion-scoped fetch wrapper (does not displace the
+      // embedding path's asymmetric shim). Recipe-wide fetch wins when both set.
+      const chatFetch = compat.fetch ?? recipe.compat?.chatFetch;
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
-        ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        ...(chatFetch ? { fetch: chatFetch } : {}),
         ...auth,
         supportsStructuredOutputs: recipeSupportsStructuredOutputs(recipe),
       }).languageModel(modelId);
@@ -2818,10 +2835,13 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       const auth = applyResolveAuth(recipe, cfg, 'chat');
       // v0.32: env-templated base URL + optional fetch wrapper.
       const compat = applyOpenAICompatConfig(recipe, cfg);
+      // #1987: chat/expansion-scoped fetch wrapper (does not displace the
+      // embedding path's asymmetric shim). Recipe-wide fetch wins when both set.
+      const chatFetch = compat.fetch ?? recipe.compat?.chatFetch;
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
-        ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        ...(chatFetch ? { fetch: chatFetch } : {}),
         ...auth,
         supportsStructuredOutputs: recipeSupportsStructuredOutputs(recipe),
       }).languageModel(modelId);
@@ -3102,7 +3122,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
   const cfg = requireConfig();
 
-  const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
+  const supportsCache = chatSupportsPromptCache(recipe, modelId);
   const useCache = !!opts.cacheSystem && supportsCache;
 
   const tools = toAISDKTools(opts.tools);
@@ -3201,7 +3221,21 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     ? {
         role: 'system' as const,
         content: opts.system,
-        providerOptions: { anthropic: { cacheControl: cacheControlValue } },
+        providerOptions: {
+          anthropic: { cacheControl: cacheControlValue },
+          // #1987: OpenRouter Anthropic routes ride the openai-compatible
+          // wire, where `providerOptions.anthropic` never leaves the process.
+          // The openai-compatible adapter spreads message-level
+          // `openaiCompatible` metadata onto the outgoing system message; the
+          // recipe's chatFetch shim (liftMessageCacheControl) then lifts the
+          // marker into OpenRouter's documented content-part cache_control
+          // shape. Only reachable when chatSupportsPromptCache passed (i.e.
+          // anthropic/claude-* via openrouter), so no other compat recipe
+          // ever sees the marker.
+          ...(recipe.implementation === 'openai-compatible'
+            ? { openaiCompatible: { cache_control: cacheControlValue } }
+            : {}),
+        },
       }
     : opts.system;
 

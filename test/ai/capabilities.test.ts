@@ -24,6 +24,17 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.maxContext).toBe(1000000); // Gemini 1.5 Pro
   });
 
+  it('marks OpenRouter Anthropic routes as cache-capable (#1987 function-valued capability)', () => {
+    const caps = getProviderCapabilities('openrouter:anthropic/claude-sonnet-4.6');
+    expect(caps.supportsToolCalling).toBe(true);
+    expect(caps.supportsPromptCaching).toBe(true);
+  });
+
+  it('does not mark every OpenRouter route as cache-capable', () => {
+    const caps = getProviderCapabilities('openrouter:deepseek/deepseek-chat');
+    expect(caps.supportsPromptCaching).toBe(false);
+  });
+
   it('honors Anthropic alias (undated → dated)', () => {
     const caps = getProviderCapabilities('anthropic:claude-haiku-4-5');
     expect(caps.supportsToolCalling).toBe(true);
@@ -52,6 +63,11 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
 
   it('returns degraded:no_caching for OpenAI (tools yes, caching no)', () => {
     expect(classifyCapabilities('openai:gpt-5.2')).toBe('degraded:no_caching');
+  });
+
+  it('returns ok for OpenRouter Anthropic routes; other routes stay degraded:no_caching (#1987)', () => {
+    expect(classifyCapabilities('openrouter:anthropic/claude-sonnet-4.6')).toBe('ok');
+    expect(classifyCapabilities('openrouter:deepseek/deepseek-chat')).toBe('degraded:no_caching');
   });
 
   it('returns degraded:no_caching for Google Gemini', () => {
