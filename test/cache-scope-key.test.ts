@@ -3,29 +3,30 @@
  *
  * A federated search reads a different graph than a single-source one, so
  * the semantic cache must key them apart. `cacheScopeKey` produces an
- * order-independent key for federated scopes and leaves single-source
- * brains on their existing key (scalar id or 'default'), so single-source
- * cache hit-rate is unchanged.
+ * order-independent key for federated scopes and keeps unscoped all-source
+ * reads distinct from every scalar source key.
  */
 
 import { describe, test, expect } from 'bun:test';
-import { cacheScopeKey } from '../src/core/search/hybrid.ts';
+import { cacheScopeKey, isSemanticCacheRequestSafe } from '../src/core/search/hybrid.ts';
+import type { HybridSearchOpts } from '../src/core/search/hybrid.ts';
 
 describe('cacheScopeKey', () => {
-  test('unscoped → default (single-source unchanged)', () => {
-    expect(cacheScopeKey(undefined)).toBe('default');
-    expect(cacheScopeKey({})).toBe('default');
+  test('unscoped uses a typed key and never collides with scalar default', () => {
+    expect(cacheScopeKey(undefined)).toBe('["all"]');
+    expect(cacheScopeKey({})).toBe('["all"]');
+    expect(cacheScopeKey({})).not.toBe(cacheScopeKey({ sourceId: 'default' }));
   });
 
-  test('scalar sourceId → itself (single-source unchanged)', () => {
-    expect(cacheScopeKey({ sourceId: 'host' })).toBe('host');
+  test('scalar sourceId uses a typed key', () => {
+    expect(cacheScopeKey({ sourceId: 'host' })).toBe('["scalar","host"]');
   });
 
   test('federated sourceIds → order-independent set key', () => {
     const k1 = cacheScopeKey({ sourceIds: ['team-b', 'team-a', 'host'] });
     const k2 = cacheScopeKey({ sourceIds: ['host', 'team-a', 'team-b'] });
     expect(k1).toBe(k2); // order does not matter
-    expect(k1).toBe('__set__:host,team-a,team-b');
+    expect(k1).toBe('["set","host","team-a","team-b"]');
   });
 
   test('different source-sets do NOT share a key', () => {
@@ -38,5 +39,27 @@ describe('cacheScopeKey', () => {
     const set = cacheScopeKey({ sourceIds: ['host'] });
     const scalar = cacheScopeKey({ sourceId: 'host' });
     expect(set).not.toBe(scalar); // a 1-element set still cannot serve a scalar read
+  });
+
+  test('rejects forged scalar/set encodings and invalid federated ids', () => {
+    expect(() => cacheScopeKey({ sourceId: '__set__:a,b' })).toThrow('Invalid source_id');
+    expect(() => cacheScopeKey({ sourceIds: ['a', '__all__'] })).toThrow('Invalid source_id');
+  });
+});
+
+describe('isSemanticCacheRequestSafe', () => {
+  test('accepts the standard cache-safe request shape', () => {
+    expect(isSemanticCacheRequestSafe({ limit: 20, sourceId: 'default' })).toBe(true);
+  });
+
+  const unsafeRequests: HybridSearchOpts[] = [
+    { offset: 10 }, { detail: 'high' }, { language: 'typescript' },
+    { symbolKind: 'function' }, { types: ['note'] }, { since: '7d' },
+    { until: '2026-07-18' }, { salience: 'on' }, { recency: 'strong' },
+    { crossModal: 'both' }, { exclude_slugs: ['private/page'] },
+  ];
+
+  test.each(unsafeRequests)('rejects unsupported result-shaping request %#', (opts) => {
+    expect(isSemanticCacheRequestSafe(opts)).toBe(false);
   });
 });

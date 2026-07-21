@@ -45,7 +45,10 @@ export const QUARANTINE_KEY = 'quarantine';
  *  JSONB `?` existence, negated so we KEEP rows WITHOUT the marker.
  *  `pageAlias` is engine-supplied (never user input), so no escaping needed. */
 export function quarantineFilterFragment(pageAlias: string): string {
-  return `NOT (COALESCE(${pageAlias}.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}')`;
+  const frontmatter = `COALESCE(${pageAlias}.frontmatter, '{}'::jsonb)`;
+  // Fail closed on legacy/double-encoded JSONB. A top-level string can hide a
+  // quarantine marker from the JSONB `?` operator and must not be searchable.
+  return `(jsonb_typeof(${frontmatter}) = 'object' AND NOT (${frontmatter} ? '${QUARANTINE_KEY}'))`;
 }
 
 /** The `p`-aliased instance — the common case (all 6 search call sites alias

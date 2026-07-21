@@ -27,8 +27,25 @@ beforeEach(async () => {
 const slugsOf = (m: Map<string, Array<{ slug: string; source_id: string }>>, k: string) =>
   (m.get(k) ?? []).map(r => r.slug).sort();
 
+async function seedPage(slug: string, sourceId = 'default'): Promise<void> {
+  if (sourceId !== 'default') {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived)
+       VALUES ($1, $1, false)
+       ON CONFLICT (id) DO NOTHING`,
+      [sourceId],
+    );
+  }
+  await engine.putPage(
+    slug,
+    { title: slug, type: 'note', compiled_truth: `# ${slug}`, timeline: '', frontmatter: {} },
+    { sourceId },
+  );
+}
+
 describe('setPageAliases + resolveAliases', () => {
   test('write then read maps alias_norm → slug', async () => {
+    await seedPage('projects/mingtang');
     await engine.setPageAliases('projects/mingtang', 'default', ['hall of light', '明堂']);
     const m = await engine.resolveAliases(['hall of light'], { sourceId: 'default' });
     expect(slugsOf(m, 'hall of light')).toEqual(['projects/mingtang']);
@@ -36,6 +53,8 @@ describe('setPageAliases + resolveAliases', () => {
   });
 
   test('collision: two pages claim the same alias → both returned', async () => {
+    await seedPage('projects/mingtang');
+    await seedPage('projects/other-hall');
     await engine.setPageAliases('projects/mingtang', 'default', ['the hall']);
     await engine.setPageAliases('projects/other-hall', 'default', ['the hall']);
     const m = await engine.resolveAliases(['the hall'], { sourceId: 'default' });
@@ -43,6 +62,8 @@ describe('setPageAliases + resolveAliases', () => {
   });
 
   test('source-scoped: alias in source A not returned for source B', async () => {
+    await seedPage('a/page', 'src-a');
+    await seedPage('b/page', 'src-b');
     await engine.setPageAliases('a/page', 'src-a', ['shared name']);
     await engine.setPageAliases('b/page', 'src-b', ['shared name']);
     const aOnly = await engine.resolveAliases(['shared name'], { sourceId: 'src-a' });
@@ -55,6 +76,7 @@ describe('setPageAliases + resolveAliases', () => {
   });
 
   test('rewrite replaces the prior alias set (delete + insert)', async () => {
+    await seedPage('p/x');
     await engine.setPageAliases('p/x', 'default', ['old name']);
     await engine.setPageAliases('p/x', 'default', ['new name']);
     const oldM = await engine.resolveAliases(['old name'], { sourceId: 'default' });
@@ -64,6 +86,7 @@ describe('setPageAliases + resolveAliases', () => {
   });
 
   test('empty alias set clears the page', async () => {
+    await seedPage('p/x');
     await engine.setPageAliases('p/x', 'default', ['temp']);
     await engine.setPageAliases('p/x', 'default', []);
     const m = await engine.resolveAliases(['temp'], { sourceId: 'default' });
@@ -76,6 +99,7 @@ describe('setPageAliases + resolveAliases', () => {
   });
 
   test('idempotent re-write does not duplicate (unique triple)', async () => {
+    await seedPage('p/x');
     await engine.setPageAliases('p/x', 'default', ['name', 'name']);
     const m = await engine.resolveAliases(['name'], { sourceId: 'default' });
     expect(slugsOf(m, 'name')).toEqual(['p/x']);

@@ -29,6 +29,8 @@ import type { SearchResult, PageType, RelationalFanoutRow } from '../types.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
+import { projectEmailCitationMetadata } from '../utils.ts';
+import { buildVisibilityClause } from './sql-ranking.ts';
 
 export interface RelationalArmOpts {
   sourceId?: string;
@@ -108,11 +110,22 @@ async function hydrate(
   const slugs = Array.from(new Set(rows.map(r => r.slug)));
   const pageRows = await engine.executeRaw<{
     page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null;
+    message_id: string | null; thread_id: string | null; source_subject: string | null;
   }>(
     `SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type,
-            LEFT(p.compiled_truth, 240) AS synopsis
+            LEFT(p.compiled_truth, 240) AS synopsis,
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              THEN p.frontmatter->>'message_id' END AS message_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string'
+              THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              AND jsonb_typeof(p.frontmatter->'subject') = 'string'
+              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject
      FROM pages p
-     WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL`,
+     JOIN sources s ON s.id = p.source_id
+     WHERE p.slug = ANY($1::text[]) ${buildVisibilityClause('p', 's')}`,
     [slugs],
   );
   const byKey = new Map<string, typeof pageRows[number]>();
@@ -141,6 +154,7 @@ async function hydrate(
       relational_seed: seedSlug,
       relational_hop: r.hop,
       relational_path: r.path,
+      ...projectEmailCitationMetadata(pr),
     });
   }
   return out;

@@ -756,7 +756,13 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // slugs written by a process without it, and vice versa. Same one-time
 // global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 12;
+//
+// bump 12→13: SearchResult now projects allowlisted email citation metadata
+// (`message_id`, `thread_id`, and Message-ID-gated `source_subject`). Cached
+// rows store the complete result DTO, so pre-projection rows must miss rather
+// than keep returning the old shape after deployment. Same one-time global
+// cold-miss pattern; refills within cache.ttl_seconds.
+export const KNOBS_HASH_VERSION = 13;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

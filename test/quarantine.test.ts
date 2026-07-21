@@ -38,10 +38,12 @@ describe('quarantine marker (hides)', () => {
     expect(filterOutQuarantined(pages).map((p) => p.slug)).toEqual(['a', 'c']);
   });
 
-  test('QUARANTINE_FILTER_FRAGMENT is a negated JSONB existence check on p', () => {
-    expect(QUARANTINE_FILTER_FRAGMENT).toContain("p.frontmatter");
+  test('QUARANTINE_FILTER_FRAGMENT requires object-shaped JSONB and excludes the marker', () => {
+    expect(QUARANTINE_FILTER_FRAGMENT).toContain('p.frontmatter');
+    expect(QUARANTINE_FILTER_FRAGMENT).toContain("jsonb_typeof");
+    expect(QUARANTINE_FILTER_FRAGMENT).toContain("= 'object'");
     expect(QUARANTINE_FILTER_FRAGMENT).toContain("? 'quarantine'");
-    expect(QUARANTINE_FILTER_FRAGMENT.startsWith('NOT (')).toBe(true);
+    expect(QUARANTINE_FILTER_FRAGMENT).toContain('AND NOT');
   });
 
   test('quarantineFilterFragment(alias) parameterizes the page alias; constant is the p-instance', () => {

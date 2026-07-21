@@ -149,6 +149,149 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
   });
 
+  test('email citation metadata projects identically across engines', async () => {
+    const slug = 'mail/example-citation';
+    const page = {
+      type: 'note' as const,
+      title: 'Generated page title',
+      compiled_truth: 'unique citation projection evidence',
+      timeline: '',
+      frontmatter: {
+        message_id: '<citation@example.com>',
+        thread_id: 'thread-example',
+        subject: 'Example exact email subject',
+      },
+    };
+    const chunks = [{
+      chunk_index: 0,
+      chunk_text: page.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+      embedding: basisEmbedding(77),
+    }];
+
+    await pgEngine.putPage(slug, page);
+    await pgEngine.upsertChunks(slug, chunks);
+    await pgliteEngine.putPage(slug, page);
+    await pgliteEngine.upsertChunks(slug, chunks);
+
+    const results = [
+      (await pgEngine.searchKeyword('unique citation projection evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique citation projection evidence'))[0],
+      (await pgEngine.searchKeywordChunks('unique citation projection evidence'))[0],
+      (await pgliteEngine.searchKeywordChunks('unique citation projection evidence'))[0],
+      (await pgEngine.searchVector(basisEmbedding(77)))[0],
+      (await pgliteEngine.searchVector(basisEmbedding(77)))[0],
+    ];
+
+    for (const result of results) {
+      expect(result?.message_id).toBe('<citation@example.com>');
+      expect(result?.thread_id).toBe('thread-example');
+      expect(result?.source_subject).toBe('Example exact email subject');
+    }
+
+    const nonEmailSlug = 'notes/generated-title-subject-gate';
+    const nonEmailPage = {
+      type: 'note' as const,
+      title: 'Generated page title must stay a title',
+      compiled_truth: 'unique non-email subject gate evidence',
+      timeline: '',
+      frontmatter: {
+        subject: 'Frontmatter subject without an email identity',
+        thread_id: 'standalone-thread-id',
+      },
+    };
+    const nonEmailChunks = [{
+      chunk_index: 0,
+      chunk_text: nonEmailPage.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+    }];
+    await pgEngine.putPage(nonEmailSlug, nonEmailPage);
+    await pgEngine.upsertChunks(nonEmailSlug, nonEmailChunks);
+    await pgliteEngine.putPage(nonEmailSlug, nonEmailPage);
+    await pgliteEngine.upsertChunks(nonEmailSlug, nonEmailChunks);
+
+    for (const result of [
+      (await pgEngine.searchKeyword('unique non-email subject gate evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique non-email subject gate evidence'))[0],
+    ]) {
+      expect(result?.message_id).toBeUndefined();
+      expect(result?.thread_id).toBe('standalone-thread-id');
+      expect(result?.source_subject).toBeUndefined();
+    }
+
+    const whitespaceSlug = 'mail/whitespace-message-id';
+    const whitespacePage = {
+      type: 'note' as const,
+      title: 'Whitespace Message-ID',
+      compiled_truth: 'unique whitespace message id evidence',
+      timeline: '',
+      frontmatter: {
+        message_id: ' \t\n ',
+        thread_id: 'thread-whitespace',
+        subject: 'Subject must remain gated',
+      },
+    };
+    const whitespaceChunks = [{
+      chunk_index: 0,
+      chunk_text: whitespacePage.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+      embedding: basisEmbedding(78),
+    }];
+    await pgEngine.putPage(whitespaceSlug, whitespacePage);
+    await pgEngine.upsertChunks(whitespaceSlug, whitespaceChunks);
+    await pgliteEngine.putPage(whitespaceSlug, whitespacePage);
+    await pgliteEngine.upsertChunks(whitespaceSlug, whitespaceChunks);
+
+    for (const result of [
+      (await pgEngine.searchKeyword('unique whitespace message id evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique whitespace message id evidence'))[0],
+      (await pgEngine.searchKeywordChunks('unique whitespace message id evidence'))[0],
+      (await pgliteEngine.searchKeywordChunks('unique whitespace message id evidence'))[0],
+      (await pgEngine.searchVector(basisEmbedding(78)))[0],
+      (await pgliteEngine.searchVector(basisEmbedding(78)))[0],
+    ]) {
+      expect(result?.message_id).toBeUndefined();
+      expect(result?.thread_id).toBe('thread-whitespace');
+      expect(result?.source_subject).toBeUndefined();
+    }
+
+    const malformedSlug = 'notes/numeric-email-frontmatter';
+    const malformedPage = {
+      type: 'note' as const,
+      title: 'Numeric email frontmatter',
+      compiled_truth: 'unique numeric email frontmatter evidence',
+      timeline: '',
+      frontmatter: {
+        message_id: 12345,
+        thread_id: 67890,
+        subject: 98765,
+      },
+    };
+    const malformedChunks = [{
+      chunk_index: 0,
+      chunk_text: malformedPage.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+      embedding: basisEmbedding(79),
+    }];
+    await pgEngine.putPage(malformedSlug, malformedPage);
+    await pgEngine.upsertChunks(malformedSlug, malformedChunks);
+    await pgliteEngine.putPage(malformedSlug, malformedPage);
+    await pgliteEngine.upsertChunks(malformedSlug, malformedChunks);
+
+    for (const result of [
+      (await pgEngine.searchKeyword('unique numeric email frontmatter evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique numeric email frontmatter evidence'))[0],
+      (await pgEngine.searchKeywordChunks('unique numeric email frontmatter evidence'))[0],
+      (await pgliteEngine.searchKeywordChunks('unique numeric email frontmatter evidence'))[0],
+      (await pgEngine.searchVector(basisEmbedding(79)))[0],
+      (await pgliteEngine.searchVector(basisEmbedding(79)))[0],
+    ]) {
+      expect(result?.message_id).toBeUndefined();
+      expect(result?.thread_id).toBeUndefined();
+      expect(result?.source_subject).toBeUndefined();
+    }
+  });
+
   test('hard-exclude is consistent across engines', async () => {
     // Both engines should hide test/ pages by default; both should opt
     // them back in via include_slug_prefixes.
@@ -614,6 +757,7 @@ async function seedRelational(eng: BrainEngine) {
     ['people/ep-inv-b', 'person'],
     ['people/ep-emp-c', 'person'],
     ['people/ep-mentioner', 'person'],
+    ['people/ep-quarantined', 'person'],
   ];
   for (const [slug, type] of pages) {
     await eng.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '' });
@@ -626,7 +770,32 @@ async function seedRelational(eng: BrainEngine) {
   await eng.addLink('people/ep-inv-b', 'companies/ep-widget', '', 'invested_in', 'manual');
   await eng.addLink('people/ep-emp-c', 'companies/ep-widget', '', 'works_at', 'manual');
   await eng.addLink('people/ep-mentioner', 'companies/ep-widget', '', 'mentions', 'mentions');
+  await eng.addLink('people/ep-quarantined', 'companies/ep-widget', '', 'invested_in', 'manual');
   await eng.addLink('people/ep-inv-a', 'companies/ep-other', '', 'invested_in', 'manual');
+  await eng.executeRaw(
+    `UPDATE pages SET frontmatter = frontmatter || '{"quarantine":true}'::jsonb
+     WHERE slug = 'people/ep-quarantined' AND source_id = 'default'`,
+  );
+
+  await eng.executeRaw(
+    `INSERT INTO sources (id, name, archived, created_at)
+     VALUES ('ep-archived', 'ep-archived', false, NOW())`,
+  );
+  await eng.putPage(
+    'companies/ep-archived-widget',
+    { type: 'company', title: 'Archived Widget', compiled_truth: 'Hidden company.', timeline: '' },
+    { sourceId: 'ep-archived' },
+  );
+  await eng.putPage(
+    'people/ep-archived-investor',
+    { type: 'person', title: 'Archived Investor', compiled_truth: 'Hidden person.', timeline: '' },
+    { sourceId: 'ep-archived' },
+  );
+  await eng.addLink(
+    'people/ep-archived-investor', 'companies/ep-archived-widget', '', 'invested_in', 'manual', undefined, undefined,
+    { fromSourceId: 'ep-archived', toSourceId: 'ep-archived' },
+  );
+  await eng.executeRaw(`UPDATE sources SET archived = true WHERE id = 'ep-archived'`);
 }
 
 describeBoth('Engine parity — relationalFanout', () => {
@@ -668,6 +837,22 @@ describeBoth('Engine parity — relationalFanout', () => {
     const pglite = await pgliteEngine.relationalFanout(['companies/ep-widget'], { direction: 'in' });
     expect(shape(pg)).toEqual(shape(pglite));
     expect(pg.map(r => r.slug)).not.toContain('people/ep-mentioner');
+  });
+
+  test('archive and quarantine visibility is identical across engines', async () => {
+    const visibleOpts = { direction: 'in' as const, linkTypes: ['invested_in'] };
+    const pgVisible = await pgEngine.relationalFanout(['companies/ep-widget'], visibleOpts);
+    const pgliteVisible = await pgliteEngine.relationalFanout(['companies/ep-widget'], visibleOpts);
+    expect(shape(pgVisible)).toEqual(shape(pgliteVisible));
+    expect(pgVisible.map(r => r.slug)).not.toContain('people/ep-quarantined');
+
+    const archivedOpts = {
+      sourceId: 'ep-archived', direction: 'in' as const, linkTypes: ['invested_in'],
+    };
+    const pgArchived = await pgEngine.relationalFanout(['companies/ep-archived-widget'], archivedOpts);
+    const pgliteArchived = await pgliteEngine.relationalFanout(['companies/ep-archived-widget'], archivedOpts);
+    expect(shape(pgArchived)).toEqual(shape(pgliteArchived));
+    expect(pgArchived).toEqual([]);
   });
 
   test('connects (multi-seed, both) identical across engines', async () => {

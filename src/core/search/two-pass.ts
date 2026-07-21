@@ -23,6 +23,8 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
+import { projectEmailCitationMetadata } from '../utils.ts';
+import { buildVisibilityClause } from './sql-ranking.ts';
 
 const MAX_WALK_DEPTH = 2;
 const NEIGHBOR_CAP_PER_HOP = 50;
@@ -34,6 +36,8 @@ export interface TwoPassOpts {
   nearSymbol?: string;
   /** Filter expansion to one source. When unset, crosses sources. */
   sourceId?: string;
+  /** Federated source grant. Non-empty arrays take precedence over sourceId. */
+  sourceIds?: string[];
 }
 
 interface ChunkWithScore {
@@ -54,6 +58,16 @@ export async function expandAnchors(
   opts: TwoPassOpts = {},
 ): Promise<ChunkWithScore[]> {
   const depth = Math.min(Math.max(opts.walkDepth ?? 0, 0), MAX_WALK_DEPTH);
+  const federatedSourceIds = opts.sourceIds && opts.sourceIds.length > 0
+    ? opts.sourceIds
+    : undefined;
+  const sourceScopeSql = federatedSourceIds
+    ? ' AND p.source_id = ANY($2::text[])'
+    : opts.sourceId
+      ? ' AND p.source_id = $2'
+      : '';
+  const sourceScopeValue = federatedSourceIds ?? opts.sourceId;
+  const visibilityClause = buildVisibilityClause('p', 's');
   if (depth === 0 && !opts.nearSymbol) {
     return anchors.map(a => ({
       chunk_id: a.chunk_id,
@@ -83,18 +97,14 @@ export async function expandAnchors(
   // filter; undefined → cross-source (matches the documented contract).
   if (opts.nearSymbol) {
     try {
-      const rows = opts.sourceId
-        ? await engine.executeRaw<{ id: number }>(
-            `SELECT cc.id FROM content_chunks cc
-             JOIN pages p ON p.id = cc.page_id
-             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2
-             LIMIT 50`,
-            [opts.nearSymbol, opts.sourceId],
-          )
-        : await engine.executeRaw<{ id: number }>(
-            `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
-            [opts.nearSymbol],
-          );
+      const rows = await engine.executeRaw<{ id: number }>(
+        `SELECT cc.id FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         JOIN sources s ON s.id = p.source_id
+         WHERE cc.symbol_name_qualified = $1${sourceScopeSql} ${visibilityClause}
+         LIMIT 50`,
+        sourceScopeValue === undefined ? [opts.nearSymbol] : [opts.nearSymbol, sourceScopeValue],
+      );
       const baseScore = anchors.length > 0 ? anchors[0]!.score : 1.0;
       for (const r of rows) {
         if (!seen.has(r.id)) {
@@ -135,8 +145,19 @@ export async function expandAnchors(
       const directChunkIds: number[] = [];
       const unresolvedTargets: string[] = [];
       for (const e of edges) {
-        if (e.to_chunk_id != null) directChunkIds.push(e.to_chunk_id);
-        else if (e.to_symbol_qualified) unresolvedTargets.push(e.to_symbol_qualified);
+        if (e.to_chunk_id != null) {
+          // getEdgesByChunk(direction:'both') returns incoming and outgoing
+          // edges. Follow the endpoint opposite the current chunk; always
+          // taking to_chunk_id makes incoming A→B edges reselect B.
+          const neighborId = e.from_chunk_id === chunkId
+            ? e.to_chunk_id
+            : e.to_chunk_id === chunkId
+              ? e.from_chunk_id
+              : null;
+          if (neighborId != null) directChunkIds.push(neighborId);
+        } else if (e.to_symbol_qualified) {
+          unresolvedTargets.push(e.to_symbol_qualified);
+        }
       }
       // Resolve unresolved edges by looking up chunks whose
       // symbol_name_qualified matches. One batch query per frontier node.
@@ -146,26 +167,40 @@ export async function expandAnchors(
       // boundaries silently in multi-source brains.
       if (unresolvedTargets.length > 0) {
         try {
-          const resolved = opts.sourceId
-            ? await engine.executeRaw<{ id: number }>(
-                `SELECT cc.id FROM content_chunks cc
-                 JOIN pages p ON p.id = cc.page_id
-                 WHERE cc.symbol_name_qualified = ANY($1::text[])
-                   AND p.source_id = $2
-                 LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-                [unresolvedTargets, opts.sourceId],
-              )
-            : await engine.executeRaw<{ id: number }>(
-                `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-                [unresolvedTargets],
-              );
+          const resolved = await engine.executeRaw<{ id: number }>(
+            `SELECT cc.id FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+             JOIN sources s ON s.id = p.source_id
+             WHERE cc.symbol_name_qualified = ANY($1::text[])${sourceScopeSql} ${visibilityClause}
+             LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
+            sourceScopeValue === undefined ? [unresolvedTargets] : [unresolvedTargets, sourceScopeValue],
+          );
           for (const r of resolved) directChunkIds.push(r.id);
         } catch {
           // best-effort
         }
       }
 
-      for (const tid of directChunkIds) {
+      // Resolved chunk edges can cross sources even when the originating edge
+      // carries an allowed source. Filter the destination page itself. A scope
+      // query failure must fail closed rather than exposing an unverified row.
+      let scopedChunkIds: number[] = [];
+      if (directChunkIds.length > 0) {
+        try {
+          const scoped = await engine.executeRaw<{ id: number }>(
+            `SELECT cc.id FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+             JOIN sources s ON s.id = p.source_id
+             WHERE cc.id = ANY($1::int[])${sourceScopeSql} ${visibilityClause}`,
+            sourceScopeValue === undefined ? [directChunkIds] : [directChunkIds, sourceScopeValue],
+          );
+          scopedChunkIds = scoped.map((row) => row.id);
+        } catch {
+          scopedChunkIds = [];
+        }
+      }
+
+      for (const tid of scopedChunkIds) {
         if (seen.has(tid)) continue;
         const nbScore = current.score * decay;
         seen.set(tid, { chunk_id: tid, score: nbScore, hop, source: 'neighbor' });
@@ -188,18 +223,42 @@ export async function expandAnchors(
 export async function hydrateChunks(
   engine: BrainEngine,
   chunkIds: number[],
+  opts: Pick<TwoPassOpts, 'sourceId' | 'sourceIds'> = {},
 ): Promise<SearchResult[]> {
   if (chunkIds.length === 0) return [];
+  const federatedSourceIds = opts.sourceIds && opts.sourceIds.length > 0
+    ? opts.sourceIds
+    : undefined;
+  const scopeSql = federatedSourceIds
+    ? ' AND p.source_id = ANY($2::text[])'
+    : opts.sourceId
+      ? ' AND p.source_id = $2'
+      : '';
+  const params: unknown[] = [chunkIds];
+  if (federatedSourceIds) params.push(federatedSourceIds);
+  else if (opts.sourceId) params.push(opts.sourceId);
+  const visibilityClause = buildVisibilityClause('p', 's');
   const rows = await engine.executeRaw<{
     slug: string; page_id: number; title: string; type: string; source_id: string;
     chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
+    message_id: string | null; thread_id: string | null; source_subject: string | null;
   }>(
     `SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
-            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              THEN p.frontmatter->>'message_id' END AS message_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string'
+              THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+            CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string'
+              AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+              AND jsonb_typeof(p.frontmatter->'subject') = 'string'
+              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[])`,
-    [chunkIds],
+       JOIN sources s ON s.id = p.source_id
+       WHERE cc.id = ANY($1::int[])${scopeSql} ${visibilityClause}`,
+    params,
   );
   return rows.map((r) => ({
     slug: r.slug,
@@ -213,5 +272,6 @@ export async function hydrateChunks(
     score: 0, // two-pass caller assigns scores.
     stale: false,
     source_id: r.source_id,
+    ...projectEmailCitationMetadata(r),
   } as SearchResult));
 }

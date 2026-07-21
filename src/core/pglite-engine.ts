@@ -1636,6 +1636,10 @@ export class PGLiteEngine implements BrainEngine {
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
+           CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN p.frontmatter->>'message_id' END AS message_id, CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string' THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+           CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             AND jsonb_typeof(p.frontmatter->'subject') = 'string' THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
@@ -1880,6 +1884,10 @@ export class PGLiteEngine implements BrainEngine {
            SELECT
              p.slug, p.id as page_id, p.title, p.type, p.source_id,
              p.effective_date, p.effective_date_source,
+             CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+               THEN p.frontmatter->>'message_id' END AS message_id, CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string' THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+             CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+               AND jsonb_typeof(p.frontmatter->'subject') = 'string' THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              ${scoreExpr} AS score,
              CASE WHEN p.updated_at < (
@@ -1905,6 +1913,10 @@ export class PGLiteEngine implements BrainEngine {
         `SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
+           CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN p.frontmatter->>'message_id' END AS message_id, CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string' THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+           CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             AND jsonb_typeof(p.frontmatter->'subject') = 'string' THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ${scoreExpr} AS score,
            CASE WHEN p.updated_at < (
@@ -2001,6 +2013,10 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
          p.effective_date, p.effective_date_source,
+         CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN p.frontmatter->>'message_id' END AS message_id, CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string' THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+         CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           AND jsonb_typeof(p.frontmatter->'subject') = 'string' THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
@@ -2113,6 +2129,10 @@ export class PGLiteEngine implements BrainEngine {
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
            p.effective_date, p.effective_date_source,
+           CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             THEN p.frontmatter->>'message_id' END AS message_id, CASE WHEN jsonb_typeof(p.frontmatter->'thread_id') = 'string' THEN NULLIF(p.frontmatter->>'thread_id', '') END AS thread_id,
+           CASE WHEN jsonb_typeof(p.frontmatter->'message_id') = 'string' AND NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+             AND jsonb_typeof(p.frontmatter->'subject') = 'string' THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            1 - (cc.${col} <=> ${castSql}) AS raw_score
          FROM content_chunks cc
@@ -2135,6 +2155,7 @@ export class PGLiteEngine implements BrainEngine {
        SELECT
          bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
          bpp.effective_date, bpp.effective_date_source,
+         bpp.message_id, bpp.thread_id, bpp.source_subject,
          bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
          bpp.score,
          CASE WHEN bpp.updated_at < (
@@ -3186,14 +3207,17 @@ export class PGLiteEngine implements BrainEngine {
       typeFilter = `AND l.link_type = ANY($${params.length}::text[])`;
     }
     const mentionsFilter = opts?.includeMentions ? '' : `AND l.link_source IS DISTINCT FROM 'mentions'`;
+    const seedVisibility = buildVisibilityClause('p', 's');
+    const stepVisibility = buildVisibilityClause('p2', 's2');
 
     const recurStep =
       direction === 'out'
-        ? `JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id`
+        ? `JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id JOIN sources s2 ON s2.id = p2.source_id`
         : direction === 'in'
-          ? `JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id`
+          ? `JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id JOIN sources s2 ON s2.id = p2.source_id`
           : `JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-             JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END`;
+             JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+             JOIN sources s2 ON s2.id = p2.source_id`;
 
     const sql = `
       WITH RECURSIVE walk AS (
@@ -3201,7 +3225,8 @@ export class PGLiteEngine implements BrainEngine {
                ARRAY[p.id] AS visited, ARRAY[p.slug] AS path,
                p.source_id AS seed_source, NULL::text AS last_link_type
         FROM pages p
-        WHERE p.slug = ANY($1::text[]) ${seedScope} AND p.deleted_at IS NULL
+        JOIN sources s ON s.id = p.source_id
+        WHERE p.slug = ANY($1::text[]) ${seedScope} ${seedVisibility}
         UNION ALL
         SELECT p2.id, p2.slug, p2.source_id, w.depth + 1,
                w.visited || p2.id, w.path || p2.slug,
@@ -3211,7 +3236,7 @@ export class PGLiteEngine implements BrainEngine {
         WHERE w.depth < $2
           AND NOT (p2.id = ANY(w.visited))
           AND p2.source_id = w.seed_source
-          AND p2.deleted_at IS NULL
+          ${stepVisibility}
           ${mentionsFilter}
           ${typeFilter}
       )
@@ -5385,13 +5410,17 @@ export class PGLiteEngine implements BrainEngine {
         : opts?.sourceId
           ? [opts.sourceId]
           : null;
-    let q = `SELECT alias_norm, slug, source_id FROM page_aliases WHERE alias_norm = ANY($1::text[])`;
+    let q = `SELECT pa.alias_norm, pa.slug, pa.source_id
+      FROM page_aliases pa
+      JOIN pages p ON p.source_id = pa.source_id AND p.slug = pa.slug
+      JOIN sources s ON s.id = p.source_id
+      WHERE pa.alias_norm = ANY($1::text[]) ${buildVisibilityClause('p', 's')}`;
     const params: unknown[] = [aliasNorms];
     if (sources) {
       params.push(sources);
-      q += ` AND source_id = ANY($2::text[])`;
+      q += ` AND pa.source_id = ANY($2::text[])`;
     }
-    q += ` ORDER BY alias_norm, source_id, slug`;
+    q += ` ORDER BY pa.alias_norm, pa.source_id, pa.slug`;
     const { rows } = await this.db.query(q, params);
     for (const r of rows as Array<{ alias_norm: string; slug: string; source_id: string }>) {
       const list = out.get(r.alias_norm) ?? [];
