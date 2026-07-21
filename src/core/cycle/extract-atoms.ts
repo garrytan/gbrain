@@ -56,6 +56,7 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
+import { isHardExcludedSlug, resolveDeriveExcludes } from '../search/source-boost.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 
@@ -461,7 +462,11 @@ export async function runPhaseExtractAtoms(
     seenHashes.add(t.contentHash);
     work.push({ kind: 'transcript', ...t });
   }
+  // #2780 (privacy): never derive atoms from excluded-prefix pages — the
+  // atom lands under atoms/ (outside the exclusion) and becomes searchable.
+  const hardExcludes = resolveDeriveExcludes();
   for (const p of pages) {
+    if (isHardExcludedSlug(p.slug, hardExcludes)) continue;
     if (seenHashes.has(p.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(p.contentHash);
     work.push({ kind: 'page', ...p });

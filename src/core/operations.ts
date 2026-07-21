@@ -305,6 +305,15 @@ export interface AuthInfo {
    * case (back-compat).
    */
   allowedSources?: string[];
+  /**
+   * #2529: per-token takes-holder allow-list from
+   * `access_tokens.permissions.takes_holders`, resolved at
+   * token-verification time so `serve --http` bearer tokens honor
+   * `gbrain auth set-takes-holders`. Legacy tokens without a grant get
+   * `['world']` (fail-closed); OAuth clients leave it undefined and the
+   * transport defaults to `['world']`.
+   */
+  takesHoldersAllowList?: string[];
 }
 
 export interface OperationContext {

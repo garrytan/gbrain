@@ -49,6 +49,7 @@ import {
 } from './phantom-redirect.ts';
 import { embed, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
+import { isHardExcludedSlug, resolveDeriveExcludes } from '../search/source-boost.ts';
 
 interface ExistingPageFact {
   fact: string;
@@ -247,11 +248,15 @@ export async function runExtractFacts(
   }
 
   // ── Reconcile each page ───────────────────────────────────────
+  // #2780 (privacy): never derive from excluded-prefix pages — the facts
+  // rows would be searchable outside the exclusion.
+  const hardExcludes = resolveDeriveExcludes();
   for (const slug of slugs) {
     // #1972: bail at the top of the per-page loop on abort. Each page is an
     // independent delete-then-insert commit, so breaking leaves a consistent
     // partial state; the receipt/rollup below still runs with partial counts.
     if (isAborted(opts.signal)) break;
+    if (isHardExcludedSlug(slug, hardExcludes)) continue;
     result.pagesScanned += 1;
 
     const page = await engine.getPage(slug, { sourceId });

@@ -721,6 +721,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         ? (permissions as Record<string, unknown>).source_id
         : undefined;
       const { sourceId, allowedSources } = parseLegacyTokenScope(sourceGrant);
+      // #2529: honor permissions.takes_holders on the OAuth transport,
+      // mirroring src/mcp/http-transport.ts. Fail-closed default ['world']
+      // — a token with no grant sees public claims only.
+      const takesHoldersRaw = permissions && typeof permissions === 'object'
+        ? (permissions as Record<string, unknown>).takes_holders
+        : undefined;
+      const takesHoldersAllowList = Array.isArray(takesHoldersRaw)
+        ? takesHoldersRaw.filter((h): h is string => typeof h === 'string')
+        : ['world'];
       return {
         token,
         clientId: name,
@@ -732,6 +741,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // allowedSources for federated reads, matching legacy HTTP transport.
         sourceId,
         allowedSources,
+        takesHoldersAllowList,
       } as CoreAuthInfo as SdkAuthInfo;
     }
 

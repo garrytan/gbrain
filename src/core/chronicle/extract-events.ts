@@ -10,6 +10,7 @@
 // configured it returns zero events (auto-emit is a no-op, never an error).
 import type { BrainEngine } from '../engine.ts';
 import { computeContentHash } from '../ingestion/types.ts';
+import { isHardExcludedSlug, resolveDeriveExcludes } from '../search/source-boost.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -112,6 +113,12 @@ export async function runChronicleExtract(
 ): Promise<ChronicleExtractResult> {
   const sourceId = opts.sourceId ?? 'default';
   const tz = opts.tz ?? 'UTC';
+  // #2780 (privacy): never derive events from excluded-prefix pages — the
+  // event page lands under life/events/ (outside the exclusion) and quotes
+  // the excluded content in searchable form.
+  if (isHardExcludedSlug(opts.slug, resolveDeriveExcludes())) {
+    return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'excluded_prefix' };
+  }
   const page = await engine.getPage(opts.slug, { sourceId });
   if (!page) return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'page_not_found' };
 

@@ -19,6 +19,7 @@ import {
   discoverExtractablePages,
 } from '../src/core/cycle/extract-atoms.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -252,6 +253,25 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     expect(result.details?.duplicates_skipped).toBe(1); // page collided with transcript
     expect(result.details?.transcripts_processed).toBe(1);
     expect(result.details?.pages_processed).toBe(1);
+  });
+
+  test('#2780: excluded-prefix pages are never atomized (privacy)', async () => {
+    const chat = stubChatUnique();
+    const result = await withEnv({ GBRAIN_SEARCH_EXCLUDE: 'private/' }, () =>
+      runPhaseExtractAtoms(engine, {
+        _transcripts: [],
+        _pages: [
+          { slug: 'private/journal', content: 'secret content', contentHash: 'privhash123456789a' },
+          { slug: 'meeting/pub', content: 'public content', contentHash: 'pubhash1234567890b' },
+        ],
+        _chat: chat,
+      }));
+    expect(result.details?.pages_processed).toBe(1);
+    const rows = await engine.executeRaw<{ frontmatter: Record<string, unknown> }>(
+      `SELECT frontmatter FROM pages WHERE type = 'atom'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].frontmatter.source_slug).toBe('meeting/pub');
   });
 
   test('atom frontmatter: page-origin uses source_slug, transcript-origin uses source_path', async () => {
