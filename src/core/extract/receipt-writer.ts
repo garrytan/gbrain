@@ -51,6 +51,57 @@ export type ExtractReceiptRound =
   | 'single';
 
 /**
+ * Per-source outcome row for a receipt. Answers "which sources did this
+ * round actually process, and what did each yield?" — the question an
+ * operator (or a keeper agent auditing ingest coverage) otherwise has to
+ * reconstruct from atom frontmatter joins. A `rows: 0` entry is the
+ * load-bearing case: it proves the source WAS attempted and legitimately
+ * yielded nothing, distinguishing "processed, atom-less" from "never
+ * reached" without any DB forensics.
+ */
+export interface ExtractReceiptSourceOutcome {
+  /** Transcript file path/basename or page slug. */
+  ref: string;
+  /** 16-char content-hash prefix, when the extractor tracks one. */
+  hash?: string;
+  /** Rows extracted from this source (0 = processed, nothing yielded). */
+  rows: number;
+  /** Error message when this source failed instead of completing. */
+  error?: string;
+}
+
+/**
+ * Bound on per-source outcomes recorded in one receipt (frontmatter AND
+ * body). A backlog-drain round can touch hundreds of sources; the receipt
+ * stays a bounded audit page, with `sources_total` recording the true
+ * count when truncation applied.
+ */
+export const MAX_RECEIPT_SOURCES = 200;
+
+/** Rows rendered in the body table before deferring to frontmatter. */
+const BODY_SOURCE_ROWS = 50;
+
+/**
+ * Per-source outcome row for a receipt. Answers "which sources did this
+ * round actually process, and what did each yield?" — the question an
+ * operator (or a keeper agent auditing ingest coverage) otherwise has to
+ * reconstruct by joining atom frontmatter back to staged content. A
+ * `rows: 0` entry is the load-bearing case: it proves the source WAS
+ * attempted and legitimately yielded nothing, distinguishing
+ * "processed, atom-less" from "never reached" without DB forensics.
+ */
+export interface ExtractReceiptSourceOutcome {
+  /** Transcript file path/basename or page slug. */
+  ref: string;
+  /** 16-char content-hash prefix, when the extractor tracks one. */
+  hash?: string;
+  /** Rows extracted from this source (0 = processed, nothing yielded). */
+  rows: number;
+  /** Error message when this source failed instead of completing. */
+  error?: string;
+}
+
+/**
  * Input to writeReceipt. Optional fields are recorded in frontmatter
  * only when the caller provides them, so receipts stay clean for
  * deterministic extractors (no LLM cost or eval to record).
@@ -78,6 +129,12 @@ export interface ExtractReceiptInput {
   eval_score?: number;
   /** Human-readable summary line (1-2 sentences). */
   summary?: string;
+  /**
+   * Per-source outcomes (optional). Capped at MAX_RECEIPT_SOURCES;
+   * when the caller passes more, the first MAX_RECEIPT_SOURCES are
+   * recorded and frontmatter carries the true `sources_total`.
+   */
+  sources?: ExtractReceiptSourceOutcome[];
 }
 
 const RUN_ID_SHORT_LEN = 8;
@@ -145,7 +202,32 @@ function buildReceiptBody(input: ExtractReceiptInput): string {
       : '';
     lines.push(`Eval gate: **${verdict}**${score}`);
   }
+  const sources = cappedSources(input);
+  if (sources.length > 0) {
+    lines.push('');
+    lines.push('## Per-source outcomes');
+    lines.push('');
+    lines.push('| source | hash | rows | note |');
+    lines.push('|---|---|---|---|');
+    for (const s of sources.slice(0, BODY_SOURCE_ROWS)) {
+      // Pipes inside refs/errors would break the table — neutralize them.
+      const ref = s.ref.replace(/\|/g, '\\|');
+      const note = s.error ? `error: ${s.error.slice(0, 80).replace(/\|/g, '\\|')}` : '';
+      lines.push(`| ${ref} | ${s.hash ?? ''} | ${s.rows} | ${note} |`);
+    }
+    const total = input.sources?.length ?? 0;
+    if (total > BODY_SOURCE_ROWS) {
+      lines.push('');
+      lines.push(`…and ${total - BODY_SOURCE_ROWS} more (frontmatter \`sources\` carries up to ${MAX_RECEIPT_SOURCES}).`);
+    }
+  }
   return lines.join('\n') + '\n';
+}
+
+/** Apply the MAX_RECEIPT_SOURCES cap once, shared by body + frontmatter. */
+function cappedSources(input: ExtractReceiptInput): ExtractReceiptSourceOutcome[] {
+  if (!input.sources || input.sources.length === 0) return [];
+  return input.sources.slice(0, MAX_RECEIPT_SOURCES);
 }
 
 /**
@@ -168,6 +250,11 @@ function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unk
   if (input.model_id) fm.model_id = input.model_id;
   if (typeof input.eval_pass === 'boolean') fm.eval_pass = input.eval_pass;
   if (typeof input.eval_score === 'number') fm.eval_score = input.eval_score;
+  const sources = cappedSources(input);
+  if (sources.length > 0) {
+    fm.sources = sources;
+    fm.sources_total = input.sources!.length;
+  }
   return fm;
 }
 

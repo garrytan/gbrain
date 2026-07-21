@@ -52,7 +52,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
-import { writeReceipt } from '../extract/receipt-writer.ts';
+import { writeReceipt, type ExtractReceiptSourceOutcome } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
@@ -499,6 +499,11 @@ export async function runPhaseExtractAtoms(
   let transcriptsSkipped = 0;
   let pagesSkipped = 0;
   const failures: Array<{ source: string; error: string }> = [];
+  // Per-source audit trail for the receipt. rows:0 entries are the point:
+  // they prove a source was attempted and yielded nothing, so a keeper
+  // agent auditing ingest coverage never has to guess "processed vs never
+  // reached" from atom-frontmatter joins.
+  const sourceOutcomes: ExtractReceiptSourceOutcome[] = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
 
@@ -558,6 +563,7 @@ export async function runPhaseExtractAtoms(
       if (atoms.length === 0) {
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
+        sourceOutcomes.push({ ref: originLabel, hash: item.contentHash.slice(0, 16), rows: 0 });
         continue;
       }
 
@@ -601,22 +607,36 @@ export async function runPhaseExtractAtoms(
       }
       if (item.kind === 'transcript') transcriptsProcessed++;
       else pagesProcessed++;
+      sourceOutcomes.push({ ref: originLabel, hash: item.contentHash.slice(0, 16), rows: atoms.length });
       // v0.41.19.0 (T4): one tick per processed item, with a count note.
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
-      failures.push({
-        source: originLabel,
-        error: err instanceof Error ? err.message : String(err),
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push({ source: originLabel, error: message });
+      sourceOutcomes.push({
+        ref: originLabel,
+        hash: item.contentHash.slice(0, 16),
+        rows: 0,
+        error: message,
       });
     }
   }
 
-  // v0.42 Wave B2: write extract receipt + rollup row when the phase
-  // actually extracted atoms. Both are best-effort per F-OUT-19 —
-  // audit-trail / search-visibility surfaces don't block the phase result.
-  if (!opts.dryRun && totalAtomsExtracted > 0) {
+  // v0.42 Wave B2: write extract receipt + rollup row. Best-effort per
+  // F-OUT-19 — audit-trail / search-visibility surfaces don't block the
+  // phase result.
+  //
+  // The receipt now writes whenever the round PROCESSED anything (or
+  // failed on something), not only when atoms landed. Pre-fix, a round
+  // that attempted N sources and got 0 atoms from all of them left no
+  // audit trail at all — indistinguishable from "never ran", which is
+  // exactly the case an ingest-coverage audit needs receipts for.
+  const anyWorkTouched =
+    transcriptsProcessed + pagesProcessed + failures.length > 0;
+  if (!opts.dryRun && anyWorkTouched) {
     const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
+    const zeroYield = sourceOutcomes.filter((s) => s.rows === 0 && !s.error).length;
     try {
       await writeReceipt(engine, {
         kind: 'atoms',
@@ -628,7 +648,10 @@ export async function runPhaseExtractAtoms(
         cost_usd: estimatedSpendUsd,
         summary:
           `Extracted ${totalAtomsExtracted} atoms from ` +
-          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.`,
+          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.` +
+          (zeroYield > 0 ? ` ${zeroYield} source(s) yielded 0 atoms.` : '') +
+          (failures.length > 0 ? ` ${failures.length} failed.` : ''),
+        sources: sourceOutcomes,
       });
     } catch (err) {
       console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);
