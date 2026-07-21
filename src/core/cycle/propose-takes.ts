@@ -20,7 +20,7 @@
  * Auto-resolve posture:
  *   propose_takes only WRITES proposals to the queue. Nothing here mutates
  *   the canonical takes table. Operator opt-in via `gbrain takes propose
- *   --accept N` is the only path from queue to canonical fence (D17).
+ *   accept <proposal_id>` is the only path from queue to canonical fence (D17).
  *
  * Prompt tuning status (v0.36.1.0 ship state):
  *   The default extractor prompt was tuned against the synthetic corpus at

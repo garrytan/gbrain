@@ -150,6 +150,18 @@ export interface ThinkResult {
   };
 }
 
+export interface PersistThinkTakeOpts {
+  anchor?: string;
+  sourceId?: string;
+  sourceIds?: string[];
+}
+
+export interface PersistThinkTakeResult {
+  rowNum: number | null;
+  inserted: number;
+  warnings: string[];
+}
+
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 
 // Thinking-by-default Claude 5 models (`anthropic:claude-*-5`) spend a large
@@ -603,6 +615,50 @@ export async function persistSynthesis(
 
   const persisted = await persistCitations(engine, page.id, result.citations);
   return { slug, evidenceInserted: persisted.inserted, warnings: persisted.warnings };
+}
+
+/**
+ * Persist `gbrain think --take` as the next append-only take row on the anchor page.
+ * The synthesis answer is the claim; holder=brain because this is gbrain's own analysis.
+ */
+export async function persistThinkTake(
+  engine: BrainEngine,
+  result: ThinkResult,
+  opts: PersistThinkTakeOpts,
+): Promise<PersistThinkTakeResult> {
+  const anchor = opts.anchor?.trim();
+  if (!anchor) {
+    return { rowNum: null, inserted: 0, warnings: ['TAKE_REQUIRES_ANCHOR'] };
+  }
+  if (result.synthesisOk === false || result.answer.trim().length === 0) {
+    return { rowNum: null, inserted: 0, warnings: ['TAKE_EMPTY_NOT_PERSISTED'] };
+  }
+
+  const pageOpts: { sourceId?: string; sourceIds?: string[] } = {};
+  if (opts.sourceIds !== undefined) pageOpts.sourceIds = opts.sourceIds;
+  else if (opts.sourceId !== undefined) pageOpts.sourceId = opts.sourceId;
+  const page = await engine.getPage(anchor, pageOpts);
+  if (!page) {
+    return { rowNum: null, inserted: 0, warnings: [`TAKE_ANCHOR_NOT_FOUND: ${anchor}`] };
+  }
+
+  const rows = await engine.executeRaw<{ next: number | string }>(
+    `SELECT (COALESCE(MAX(row_num), 0) + 1)::int AS next FROM takes WHERE page_id = $1`,
+    [page.id],
+  );
+  const rowNum = Number(rows[0]?.next ?? 1);
+  const inserted = await engine.addTakesBatch([{
+    page_id: page.id,
+    row_num: rowNum,
+    claim: result.answer.trim(),
+    kind: 'take',
+    holder: 'brain',
+    weight: 0.5,
+    source: 'gbrain think',
+    active: true,
+  }]);
+
+  return { rowNum, inserted, warnings: [] };
 }
 
 // ─────────────────────────────────────────────────────────────────
