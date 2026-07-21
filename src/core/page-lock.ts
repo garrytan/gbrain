@@ -9,8 +9,13 @@
  * Lock file path: `~/.gbrain/page-locks/<sha256-of-slug>.lock`. SHA-256
  * keeps filenames safe regardless of slug content (slashes, unicode, etc.).
  *
- * File contents: `{pid}\n{iso-timestamp}`. Staleness = mtime older than
- * `LOCK_TTL_MS` (5 min) OR the PID is no longer alive on this host.
+ * File contents: `{pid}\n{iso-timestamp}\n{owner-token}`. Staleness = mtime
+ * older than `LOCK_TTL_MS` (5 min) — nothing else. PID-liveness
+ * (`process.kill(pid, 0)`) is deliberately NOT consulted (#2840): across PID
+ * namespaces (two containers sharing GBRAIN_HOME) a live holder's PID reads
+ * as ESRCH, so a liveness fast-steal silently steals a live lock. Same
+ * philosophy as the #2348 pglite-lock: never steal a possibly-live holder.
+ * Holders `refresh()` to stay fresh; a crashed holder ages out via the TTL.
  *
  * Usage:
  *
@@ -24,7 +29,7 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { gbrainPath } from './config.ts';
 
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches eng-review fold spec
@@ -53,62 +58,57 @@ function lockPathFor(slug: string, lockRoot?: string): string {
   return join(dir, `${sha}.lock`);
 }
 
-function isPidAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  // Note: unlike cycle.ts (single lock per process), page-lock allows
-  // multiple concurrent locks per process for DIFFERENT slugs. A same-pid
-  // collision on the SAME slug means another concurrent caller in this
-  // process holds it — treat as live and let mtime expiry handle stale
-  // post-crash cases.
-  if (pid === process.pid) return true;
+/** Third line of the lock file. Ownership checks use this token, not the PID:
+ * PID numbers are meaningless identity across PID namespaces (container A's
+ * pid 7 and container B's pid 7 are different processes on a shared volume). */
+function tokenOf(lockPath: string): string | null {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    // ESRCH = no such process; anything else (e.g. EPERM) = still alive.
-    return code !== 'ESRCH';
+    return readFileSync(lockPath, 'utf-8').trim().split('\n')[2] ?? null;
+  } catch {
+    return null;
   }
 }
 
 function tryAcquireOnce(slug: string, lockPath: string): PageLockHandle | null {
   const dir = join(lockPath, '..');
   mkdirSync(dir, { recursive: true });
-  const pid = process.pid;
 
   if (existsSync(lockPath)) {
     try {
       const st = statSync(lockPath);
       const ageMs = Date.now() - st.mtimeMs;
-      const content = readFileSync(lockPath, 'utf-8').trim();
-      const existingPid = parseInt(content.split('\n')[0] || '0', 10);
-      const pidAlive = isPidAlive(existingPid);
-
-      if (pidAlive && ageMs < LOCK_TTL_MS) {
-        return null; // live holder
+      // #2840: staleness is mtime-TTL ONLY. Do NOT fast-steal on a
+      // dead-looking PID — process.kill(pid, 0) returns ESRCH for LIVE
+      // holders in another PID namespace (containerized serve + jobs-work
+      // sharing GBRAIN_HOME), so "PID dead" is not evidence the lock is free.
+      if (ageMs < LOCK_TTL_MS) {
+        return null; // fresh lock — assume live holder
       }
-      // Stale — fall through to overwrite.
+      // TTL expired — stale, fall through to overwrite.
     } catch {
-      // Any read/stat error → treat as stale.
+      // Stat error (file vanished mid-check) → treat as stale.
     }
   }
 
-  writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n`);
+  const ownerToken = randomUUID();
+  const write = () =>
+    writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n${ownerToken}\n`);
+  write();
 
   return {
     slug,
     refresh: async () => {
       try {
-        writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n`);
+        // Only refresh if the on-disk lock is still ours — a stale handle
+        // must never clobber a new owner's lock (same rule as pglite-lock).
+        if (tokenOf(lockPath) === ownerToken) write();
       } catch {
         /* non-fatal — next acquirer will see it as stale */
       }
     },
     release: async () => {
       try {
-        const content = readFileSync(lockPath, 'utf-8').trim();
-        const heldPid = parseInt(content.split('\n')[0] || '0', 10);
-        if (heldPid === pid) unlinkSync(lockPath);
+        if (tokenOf(lockPath) === ownerToken) unlinkSync(lockPath);
       } catch {
         /* already gone */
       }

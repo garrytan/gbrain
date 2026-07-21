@@ -11,8 +11,8 @@
  *
  * Concurrency: reuses the v0.28 page-lock primitive
  * (`src/core/page-lock.ts`), an FS-level lockfile under
- * `~/.gbrain/page-locks/<sha256-of-slug>.lock` with PID-liveness +
- * 5-minute TTL. Multi-process safe — two `gbrain` invocations writing
+ * `~/.gbrain/page-locks/<sha256-of-slug>.lock` with a 5-minute
+ * mtime TTL. Multi-process safe — two `gbrain` invocations writing
  * to the same entity page serialize through the same kernel-visible
  * lockfile. 5-second timeout per the plan's "5s retry" failure mode.
  *
