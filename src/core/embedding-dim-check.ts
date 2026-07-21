@@ -71,9 +71,8 @@ export function assertEmbeddingEnabled(cfg: { embedding_disabled?: boolean } | n
     throw new EmbeddingDisabledError(
       'This brain was initialized with `--no-embedding` (deferred setup).\n' +
       'Configure an embedding provider before running embed / import:\n' +
-      '  gbrain config set embedding_model <provider>:<model>\n' +
-      '  gbrain config set embedding_dimensions <N>\n' +
-      '  gbrain init --force --embedding-model <provider>:<model>   # re-init to size schema\n',
+      '  gbrain init --force --embedding-model <provider>:<model>   # re-init to size schema\n' +
+      '(`gbrain config set embedding_model` is refused — schema-sizing fields are set at init.)\n',
     );
   }
 }
