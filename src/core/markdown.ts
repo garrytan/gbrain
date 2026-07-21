@@ -135,7 +135,16 @@ export function parseMarkdown(
   const type = coerceFrontmatterString(frontmatter.type) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
+  // #2446: title precedence is frontmatter `title:` > the body's first H1 >
+  // the slug/filename-humanized fallback. Slug-based imports (contacts,
+  // calendar) write a correct `# Heading` but no frontmatter title; without
+  // the H1 fallback they get junk titles humanized from the slug
+  // (`Contact 20170928 5 John Defalco`), which also breaks anything keyed on
+  // the title (e.g. the by-mention gazetteer's first-token bucketing).
+  const title =
+    coerceFrontmatterString(frontmatter.title).trim() ||
+    inferTitleFromBody(body) ||
+    inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
@@ -600,6 +609,31 @@ function inferTypeWithPrefixes(
     }
   }
   return 'concept';
+}
+
+/**
+ * #2446: derive a title from the body's first ATX H1 (`# Heading`).
+ *
+ * Returns the trimmed heading text with the leading `# ` and any decorative
+ * trailing `#` run stripped, or '' if the body has no H1. Only a SINGLE leading
+ * `#` matches — `##`+ (h2 and deeper) are skipped — and lines inside a fenced
+ * code block (```/~~~) are ignored so a `# comment` in a shell snippet can't be
+ * mistaken for the page title.
+ */
+function inferTitleFromBody(body: string): string {
+  let inFence = false;
+  for (const raw of body.split('\n')) {
+    const fence = /^\s*(`{3,}|~{3,})/.exec(raw);
+    if (fence) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    // Exactly one leading `#`, then whitespace, then the heading text.
+    const m = /^#(?!#)\s+(.+?)\s*$/.exec(raw);
+    if (m) return m[1].replace(/\s+#+\s*$/, '').trim();
+  }
+  return '';
 }
 
 function inferTitle(filePath?: string): string {
