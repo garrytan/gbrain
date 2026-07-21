@@ -80,13 +80,14 @@ describe('computeAnomaliesFromBuckets', () => {
     expect(computeAnomaliesFromBuckets(baseline, today, 3.0)).toEqual([]);
   });
 
-  test('brand-new cohort (no baseline) requires count >= 2', () => {
+  test('brand-new cohort (no baseline) requires count >= 2 when guard disabled', () => {
     // No baseline rows for "newtag"; today.count=2 → mean=0, stddev=0, threshold=mean+1=1, 2>1 ✓
+    // Pass minBaselineDays=0 to exercise the legacy small-sample fallback.
     const today: CohortTodayRow[] = [
       { cohort_kind: 'tag', cohort_value: 'newtag', count: 2, page_slugs: ['a','b'] },
       { cohort_kind: 'tag', cohort_value: 'singleton', count: 1, page_slugs: ['x'] },
     ];
-    const r = computeAnomaliesFromBuckets([], today, 3.0);
+    const r = computeAnomaliesFromBuckets([], today, 3.0, 20, 0);
     expect(r.length).toBe(1);
     expect(r[0].cohort_value).toBe('newtag');
   });
@@ -140,5 +141,93 @@ describe('computeAnomaliesFromBuckets', () => {
     const tagEntry = r.find(x => x.cohort_kind === 'tag');
     expect(tagEntry).toBeDefined();
     expect(tagEntry!.baseline_mean).toBe(0);
+  });
+});
+
+describe('min_baseline_days guard', () => {
+  function densify(values: number[], cohort_value: string, kind: 'tag' | 'type' = 'tag'): CohortDayRow[] {
+    return values.map((count, i) => ({
+      cohort_kind: kind,
+      cohort_value,
+      day: `2026-04-${String(i + 1).padStart(2, '0')}`,
+      count,
+    }));
+  }
+
+  test('cohort with no baseline rows is suppressed under default-7 guard', () => {
+    // Day-1-of-import noise: brand-new cohort, 0 active baseline days.
+    const today: CohortTodayRow[] = [
+      { cohort_kind: 'tag', cohort_value: 'fresh-import', count: 7, page_slugs: ['a','b','c','d','e','f','g'] },
+    ];
+    const r = computeAnomaliesFromBuckets([], today, 3.0, 20, 7);
+    expect(r).toEqual([]);
+  });
+
+  test('cohort with < N active baseline days is suppressed', () => {
+    // 30-day baseline window but only 3 days have any activity → not enough history.
+    const baseline: CohortDayRow[] = densify(
+      [1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      'sparse'
+    );
+    const today: CohortTodayRow[] = [
+      { cohort_kind: 'tag', cohort_value: 'sparse', count: 7, page_slugs: ['p1','p2','p3','p4','p5','p6','p7'] },
+    ];
+    expect(computeAnomaliesFromBuckets(baseline, today, 3.0, 20, 7)).toEqual([]);
+  });
+
+  test('cohort with >= N active baseline days still fires', () => {
+    // 7 distinct active days out of 30 → threshold met, real anomaly fires.
+    const baseline: CohortDayRow[] = densify(
+      [1,0,1,0,1,0,1,0,1,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      'borderline'
+    );
+    const today: CohortTodayRow[] = [
+      { cohort_kind: 'tag', cohort_value: 'borderline', count: 15, page_slugs: Array.from({length:15}, (_,i)=>`p${i}`) },
+    ];
+    const r = computeAnomaliesFromBuckets(baseline, today, 3.0, 20, 7);
+    expect(r.length).toBe(1);
+    expect(r[0].cohort_value).toBe('borderline');
+  });
+
+  test('only zero-filled baseline days do not count as active history', () => {
+    // 30 days of pure zero-fill (cohort_keys CTE in the engine includes this
+    // cohort because it appeared in the window, but every day was empty).
+    // Without the guard this would be a brand-new-cohort small-sample anomaly;
+    // with the guard it's suppressed.
+    const baseline: CohortDayRow[] = densify(
+      Array.from({length: 30}, () => 0),
+      'zeros-only'
+    );
+    const today: CohortTodayRow[] = [
+      { cohort_kind: 'tag', cohort_value: 'zeros-only', count: 5, page_slugs: ['a','b','c','d','e'] },
+    ];
+    expect(computeAnomaliesFromBuckets(baseline, today, 3.0, 20, 7)).toEqual([]);
+    // Same input with guard disabled: small-sample fallback fires.
+    expect(computeAnomaliesFromBuckets(baseline, today, 3.0, 20, 0).length).toBe(1);
+  });
+
+  test('passing min_baseline_days=0 disables the guard (legacy behavior)', () => {
+    const today: CohortTodayRow[] = [
+      { cohort_kind: 'tag', cohort_value: 'fresh-import', count: 7, page_slugs: ['a','b','c','d','e','f','g'] },
+    ];
+    const r = computeAnomaliesFromBuckets([], today, 3.0, 20, 0);
+    expect(r.length).toBe(1);
+    expect(r[0].cohort_value).toBe('fresh-import');
+  });
+
+  test('guard works mixed: dense cohort fires, sparse cohort suppressed', () => {
+    const baseline: CohortDayRow[] = [
+      // 10 active days, count=2 each → solid baseline
+      ...densify([2,2,2,2,2,2,2,2,2,2], 'dense'),
+      // 1 active day → not enough history
+      ...densify([3,0,0,0,0,0,0,0,0,0], 'sparse'),
+    ];
+    const today: CohortTodayRow[] = [
+      { cohort_kind: 'tag', cohort_value: 'dense', count: 8, page_slugs: ['a','b','c','d','e','f','g','h'] },
+      { cohort_kind: 'tag', cohort_value: 'sparse', count: 8, page_slugs: ['x'] },
+    ];
+    const r = computeAnomaliesFromBuckets(baseline, today, 3.0, 20, 7);
+    expect(r.length).toBe(1);
+    expect(r[0].cohort_value).toBe('dense');
   });
 });

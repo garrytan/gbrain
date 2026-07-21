@@ -3450,12 +3450,17 @@ const find_anomalies: Operation = {
       type: 'number',
       description: 'Sigma threshold. Default 3.0.',
     },
+    min_baseline_days: {
+      type: 'number',
+      description: 'Min distinct active days a cohort needs in the baseline before it can fire. Default 7. Pass 0 to disable.',
+    },
   },
   handler: async (ctx, p) => {
     return ctx.engine.findAnomalies({
       since: typeof p.since === 'string' ? p.since : undefined,
       lookback_days: typeof p.lookback_days === 'number' ? p.lookback_days : undefined,
       sigma: typeof p.sigma === 'number' ? p.sigma : undefined,
+      min_baseline_days: typeof p.min_baseline_days === 'number' ? p.min_baseline_days : undefined,
     });
   },
   cliHints: { name: 'anomalies' },
