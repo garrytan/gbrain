@@ -122,7 +122,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]',
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] ' +
+        '[--include <glob>...] [--exclude <glob>...]',
     );
     process.exit(2);
   }
@@ -135,6 +136,12 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let patFile: string | undefined;
   let noHarden = false;
   let force = false;
+  // Repeatable. `--include 'people/**' --include 'companies/**'` accumulates.
+  // Persisted into sources.config.include_globs / .exclude_globs and read at
+  // sync time by commands/sync.ts so `Templates/`, `.smart-env/`, `Drafts/`
+  // and other vault scaffolding can be skipped without renaming directories.
+  const includeGlobs: string[] = [];
+  const excludeGlobs: string[] = [];
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -147,6 +154,24 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--include') {
+      const v = args[++i];
+      if (!v || v.startsWith('--')) {
+        console.error('Error: --include requires a glob argument (e.g. --include "people/**")');
+        process.exit(2);
+      }
+      includeGlobs.push(v);
+      continue;
+    }
+    if (a === '--exclude') {
+      const v = args[++i];
+      if (!v || v.startsWith('--')) {
+        console.error('Error: --exclude requires a glob argument (e.g. --exclude "Templates/**")');
+        process.exit(2);
+      }
+      excludeGlobs.push(v);
+      continue;
+    }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -167,6 +192,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     federated,
     cloneDir,
     force,
+    includeGlobs: includeGlobs.length > 0 ? includeGlobs : undefined,
+    excludeGlobs: excludeGlobs.length > 0 ? excludeGlobs : undefined,
   });
 
   // Topology A discovery: if the just-added source carries a brain-resident
@@ -190,6 +217,12 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+  if (includeGlobs.length > 0) {
+    console.log(`  include globs: ${includeGlobs.join(', ')}`);
+  }
+  if (excludeGlobs.length > 0) {
+    console.log(`  exclude globs: ${excludeGlobs.join(', ')}`);
+  }
 
   // v0.42.44 — auto-harden managed clones for git durability the moment a brain
   // repo is added with a PAT. Best-effort: NEVER fail `add` if hardening fails.

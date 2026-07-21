@@ -219,6 +219,13 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
+/**
+ * Test a normalized POSIX-style path against an array of glob patterns. Returns
+ * true if any pattern matches. Empty / undefined `patterns` returns false (no
+ * filter engaged). Exported so non-sync surfaces (lint walker, future ingest
+ * variants) can apply the same glob semantics as `isSyncable` without
+ * re-declaring `globToRegex`.
+ */
 export function matchesAnyGlob(path: string, patterns?: string[]): boolean {
   if (!patterns || patterns.length === 0) return false;
   const normalized = path.replace(/\\/g, '/');

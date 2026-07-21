@@ -356,6 +356,69 @@ describe('sync monorepo subdir-source support (#753/#774)', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // --include: allow-list counterpart (#2156). Same scope-relative anchoring
+  // as --exclude; exclude applies after include.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  test('--include: only matching files import on full sync', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const result = await performSync(engine, {
+      repoPath,
+      include: ['wiki/**'],
+      noPull: true,
+      noEmbed: true,
+      full: true,
+    });
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBe(2); // wiki/page1 + wiki/page2; memory/* miss the allow-list
+    expect(await engine.getPage('wiki/page1')).not.toBeNull();
+    expect(await engine.getPage('memory/note1')).toBeNull();
+  });
+
+  test('--include applies to the incremental path too', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const first = await performSync(engine, {
+      repoPath,
+      include: ['wiki/**'],
+      noPull: true,
+      noEmbed: true,
+      full: true,
+    });
+    expect(first.status).toBe('first_sync');
+
+    writeFileSync(join(repoPath, 'wiki', 'page3.md'), mdPage('Wiki Page 3'));
+    writeFileSync(join(repoPath, 'memory', 'note3.md'), mdPage('Memory Note 3'));
+    gitCommit(repoPath, 'more pages');
+
+    const second = await performSync(engine, {
+      repoPath,
+      include: ['wiki/**'],
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(second.status).toBe('synced');
+    expect(second.added).toBe(1); // wiki/page3 only; memory/note3 misses the allow-list
+    expect(await engine.getPage('wiki/page3')).not.toBeNull();
+    expect(await engine.getPage('memory/note3')).toBeNull();
+  });
+
+  test('--exclude applies after --include (path in both is rejected)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const result = await performSync(engine, {
+      repoPath,
+      include: ['wiki/**'],
+      exclude: ['wiki/page2.md'],
+      noPull: true,
+      noEmbed: true,
+      full: true,
+    });
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBe(1); // page1 only: page2 included then excluded
+    expect(await engine.getPage('wiki/page1')).not.toBeNull();
+    expect(await engine.getPage('wiki/page2')).toBeNull();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // --exclude '**/*' emits warning (NAV-4)
   // ─────────────────────────────────────────────────────────────────────────
 

@@ -694,6 +694,12 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'minion_jobs.quiet_hours',
   'minion_jobs.stagger_key',
   'sources.chunker_version',
+  // #2157 follow-on (migration v125). TEXT column read by performSync's
+  // `Already up to date` gate; not referenced by any CREATE INDEX. Same
+  // upgrade-path coverage as sources.chunker_version above: fresh installs
+  // get it via the CREATE TABLE in src/schema.sql + schema-embedded.ts;
+  // pre-existing brains get it via the idempotent ALTER TABLE in v125.
+  'sources.config_fingerprint',
   'access_tokens.permissions',
   'takes.resolved_quality',
   'pages.emotional_weight_recomputed_at',
