@@ -78,6 +78,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   'capture',
   // v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   'self-upgrade',
+  // book-mirror ships detailed flag/cost help in its command module.
+  'book-mirror',
   // v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
   'watch',
   // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
@@ -1520,6 +1522,12 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'enrich' && (args.includes('--help') || args.includes('-h'))) {
     const { runEnrich } = await import('./commands/enrich.ts');
     await runEnrich(null as never, args);
+    return;
+  }
+
+  if (command === 'book-mirror' && (args.includes('--help') || args.includes('-h'))) {
+    const { runBookMirrorCmd } = await import('./commands/book-mirror.ts');
+    await runBookMirrorCmd(null as never, args);
     return;
   }
 

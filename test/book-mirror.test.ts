@@ -6,16 +6,10 @@
  * the opt-in smoke test (test/e2e/skill-smoke-openclaw.test.ts when
  * EVALS=1 EVALS_TIER=skills is set).
  *
- * Constraint: src/cli.ts dispatches connectEngine() BEFORE any
- * CLI_ONLY command's own arg parsing, including --help. This is a
- * pre-existing architectural choice (every CLI_ONLY command —
- * agent, sync, jobs, book-mirror — behaves the same). So we can't
- * exercise help-text or arg-validation paths from a clean tempdir
- * without DATABASE_URL.
- *
  * What we DO test:
  *   - The book-mirror command is registered (CLI dispatches it
  *     instead of "Unknown command").
+ *   - Detailed help is available without a configured brain.
  *   - Without DB, the command fails fast and never reaches the
  *     queue-submission path.
  *   - The command source file is parseable + exports the runner.
@@ -82,6 +76,17 @@ describe('gbrain book-mirror — CLI registration', () => {
     const { stderr, exit } = await runCli(['--slug', 'noop']);
     expect(exit).not.toBe(0);
     expect(stderr).not.toContain('submitted:');
+  }, 30000);
+
+  it('prints detailed help without a configured brain', async () => {
+    const { stdout, stderr, exit } = await runCli(['--help']);
+    expect(exit).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('personalized chapter-by-chapter book analysis');
+    expect(stdout).toContain('--chapters-dir <path>');
+    expect(stdout).toContain('--context-file <path>');
+    expect(stdout).toContain('--dry-run');
+    expect(stdout).not.toContain('run gbrain --help for the full command list');
   }, 30000);
 });
 
