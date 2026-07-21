@@ -10,8 +10,8 @@ import { describe, test, expect } from 'bun:test';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from '../../src/core/chunkers/code.ts';
 
 describe('CHUNKER_VERSION', () => {
-  test('v0.20.0 Cathedral II Layer 12 bumped to 4', () => {
-    expect(CHUNKER_VERSION).toBe(4);
+  test('v5: estimated-token hard cap on AST-path chunks', () => {
+    expect(CHUNKER_VERSION).toBe(5);
   });
 });
 

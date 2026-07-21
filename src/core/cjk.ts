@@ -65,3 +65,64 @@ export function countCJKAwareWords(s: string): number {
 export function escapeLikePattern(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
+
+/**
+ * Conservative per-char-class embedding-token weights (markdown chunker v4).
+ *
+ * Why this exists: the chunker's "word" counting drastically UNDER-counts
+ * whitespace-less ASCII runs (a 150-char URL = 1 whitespace word), so
+ * word-based size targets can emit chunks that overflow an embedding
+ * server's per-request token limit. Measured on a local Qwen3-embedding
+ * llama-server stack:
+ *   - URL/phone/email-dense text tokenizes at ~1.6 chars/token
+ *   - base64-ish / minified blobs approach ~1.3 chars/token (worst case)
+ *   - Korean prose tokenizes NO WORSE than 1 char/token in practice
+ *
+ * Weights are deliberately HIGH (tokens are overestimated) so any cap
+ * based on this estimate is safe against real tokenizers:
+ *   - CJK char        → 1.0 token  (real CJK prose is cheaper)
+ *   - other non-space → 0.75 token (≈1.33 chars/token, covers base64)
+ *   - whitespace      → 0.1 token  (mostly folds into neighbor tokens)
+ */
+export const EMBED_TOKEN_WEIGHT_CJK = 1.0;
+export const EMBED_TOKEN_WEIGHT_OTHER = 0.75;
+export const EMBED_TOKEN_WEIGHT_WS = 0.1;
+
+/** BMP CJK check by UTF-16 code unit — same ranges as CJK_SLUG_CHARS. */
+export function isCJKCodeUnit(code: number): boolean {
+  return (
+    (code >= 0x4e00 && code <= 0x9fff) || // Han
+    (code >= 0x3040 && code <= 0x309f) || // Hiragana
+    (code >= 0x30a0 && code <= 0x30ff) || // Katakana
+    (code >= 0xac00 && code <= 0xd7af)    // Hangul Syllables
+  );
+}
+
+/**
+ * Per-code-unit token weight. Unrecognized whitespace (exotic Unicode
+ * spaces) intentionally falls into OTHER — that only overestimates.
+ */
+export function charEmbedTokenWeight(code: number): number {
+  if (isCJKCodeUnit(code)) return EMBED_TOKEN_WEIGHT_CJK;
+  if (
+    code === 0x20 || (code >= 0x09 && code <= 0x0d) ||
+    code === 0xa0 || code === 0x3000
+  ) {
+    return EMBED_TOKEN_WEIGHT_WS;
+  }
+  return EMBED_TOKEN_WEIGHT_OTHER;
+}
+
+/**
+ * Tokenizer-free embedding-token estimate (conservative overestimate).
+ * See weight docs above. Astral chars count as 2 OTHER code units —
+ * another overestimate, which is the safe direction.
+ */
+export function estimateEmbeddingTokens(s: string): number {
+  if (s.length === 0) return 0;
+  let est = 0;
+  for (let i = 0; i < s.length; i++) {
+    est += charEmbedTokenWeight(s.charCodeAt(i));
+  }
+  return Math.ceil(est);
+}
