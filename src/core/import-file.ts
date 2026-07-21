@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
+import { embedBatch, embedMultimodal, currentEmbeddingSignature, resolveEmbeddingModelLabel } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -716,8 +716,12 @@ export async function importFromContent(
       ? chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source))
       : chunks.map((c) => c.chunk_text);
     const embeddings = await embedBatch(wrappedTexts);
+    // #1717: label each chunk with the model that actually produced its
+    // vector, not the engine's hardcoded default.
+    const embedModelLabel = resolveEmbeddingModelLabel();
     for (let i = 0; i < chunks.length; i++) {
       chunks[i].embedding = embeddings[i];
+      if (embedModelLabel) chunks[i].model = embedModelLabel;
       // token_count tracks the wrapped string length so cost reporting
       // reflects what we actually sent to the embedder.
       chunks[i].token_count = Math.ceil(wrappedTexts[i].length / 4);
@@ -1141,7 +1145,10 @@ export async function importCodeFile(
     const matched = existingByKey.get(key);
     if (matched && matched.embedding) {
       // Reuse the existing embedding verbatim. No API call, no cost.
+      // #1717: carry the existing model label along with the reused vector
+      // so the upsert doesn't relabel it with the engine default.
       chunks[i]!.embedding = matched.embedding as Float32Array;
+      chunks[i]!.model = matched.model ?? undefined;
       chunks[i]!.token_count = matched.token_count ?? undefined;
     } else {
       needsEmbedIndexes.push(i);
@@ -1153,9 +1160,12 @@ export async function importCodeFile(
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
       const embeddings = await embedBatch(textsToEmbed);
+      // #1717: stamp the model that produced these vectors.
+      const embedModelLabel = resolveEmbeddingModelLabel();
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
+        if (embedModelLabel) chunks[i]!.model = embedModelLabel;
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
