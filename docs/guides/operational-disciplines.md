@@ -57,6 +57,9 @@ on daily_schedule("09:00"):
     # Checks: database connectivity, embedding health, sync status,
     # page count, stale pages, broken links
     # If doctor reports issues, fix them before doing anything else.
+    # Cadence: this daily heartbeat is intentional alongside the WEEKLY
+    # deep maintenance pass (doctor + embed --stale) in cron-schedule.md —
+    # heartbeat=daily, deep pass=weekly.
 
 # DISCIPLINE 5: Nightly Dream Cycle
 on nightly_schedule("02:00"):

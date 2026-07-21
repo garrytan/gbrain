@@ -98,7 +98,9 @@ If the list is empty AND your submissions keep piling up, no worker is
 claiming. Start one:
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work --concurrency 4
+# Bare default is --concurrency 1, which starves jobs that wait on their own
+# subagent jobs — use 2 (the supervisor's default; see minions-deployment.md).
+GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work --concurrency 2
 ```
 
 ## Follow-ups tracked for v0.20+
