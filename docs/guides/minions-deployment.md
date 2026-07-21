@@ -26,11 +26,25 @@ with exponential backoff (1s → 60s cap), emits lifecycle events to an
 audit file, and drains gracefully on SIGTERM (35s worker-drain window
 before SIGKILL). Exit codes are documented so agents can branch on them.
 
+**Concurrency defaults (single source of truth):**
+
+| Command | Default | Flag / env |
+|---|---|---|
+| `gbrain jobs work` | **1** | `--concurrency N` / `GBRAIN_WORKER_CONCURRENCY` |
+| `gbrain jobs supervisor` | **2** | `--concurrency N` (passed through to the worker) |
+
+Every snippet in this guide (systemd, Fly, Procfile) pins `--concurrency 2`
+explicitly — the recommended baseline. Why not 1: at concurrency 1 a job that
+submits and waits on its own subagent job (e.g. an autopilot cycle) can never
+have that subagent claimed — the single slot is already occupied (#2782). Why
+not more: each slot holds a DB connection and can fan out an LLM subagent, so
+scale to 4 only when throughput demands it and your Postgres pool has headroom.
+
 **Typical commands:**
 
 ```bash
 # Start in the foreground (blocks; Ctrl-C to stop).
-gbrain jobs supervisor --concurrency 4
+gbrain jobs supervisor --concurrency 2
 
 # Start detached — returns {"event":"started","supervisor_pid":…} on stdout.
 gbrain jobs supervisor start --detach --json
@@ -66,10 +80,10 @@ isn't:
 ```bash
 # Full concurrency, low priority. Propagates to the spawned worker and its
 # children (shell jobs, subagents) via OS niceness inheritance.
-gbrain jobs supervisor --concurrency 4 --nice 10
+gbrain jobs supervisor --concurrency 2 --nice 10
 
 # Equivalent for a bare worker, or set it durably in the environment.
-GBRAIN_NICE=10 gbrain jobs work --concurrency 4
+GBRAIN_NICE=10 gbrain jobs work --concurrency 2
 ```
 
 `--nice` takes a POSIX value from `-20` (highest priority) to `19`

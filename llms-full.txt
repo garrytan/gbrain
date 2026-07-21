@@ -2910,7 +2910,9 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 # Calendar sync — Sundays at 10 AM
 0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date +%Y-%m-%d)
 
-# Brain health — weekly Mondays at 6 AM
+# Brain health — weekly DEEP pass, Mondays at 6 AM (doctor + embed backfill).
+# This complements — does not replace — the DAILY `gbrain doctor` heartbeat
+# from operational-disciplines.md Discipline 4: heartbeat=daily, deep pass=weekly.
 0 6 * * 1 gbrain doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain embed --stale
 
 # Dream cycle — nightly at 2 AM

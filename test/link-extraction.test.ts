@@ -474,6 +474,49 @@ describe('extractPageLinks', () => {
     );
     expect(candidates).toEqual([]);
   });
+
+  // ─── selfName derivation + threading into the page-role guard ───────────
+  // extractPageLinks derives selfName (frontmatter.title, else slug basename)
+  // and threads it to inferLinkType, so a role attributed to a THIRD PARTY in
+  // the page body no longer stamps a typed verb on the page subject's company
+  // edges. The role clause is placed >120 chars from the slug so the per-edge
+  // excerpt can't see the verb itself — the page-role prior is what's under test.
+  const FILLER = ' '.repeat(0) + 'and the team kept shipping features through the quarter while the rest of the org watched the numbers climb steadily upward overall. '.padEnd(160, '.');
+
+  test('selfName from frontmatter.title: third-party investor → company edge is mentions', async () => {
+    const content = `Carol is an investor in early-stage startups.${FILLER}See companies/acme for context.`;
+    const { candidates } = await extractPageLinks(
+      'people/bob', content, { title: 'Bob' }, 'person', allowAllResolver,
+    );
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  test('selfName from slug basename: third-party investor → company edge is mentions', async () => {
+    // No frontmatter.title, so selfName falls back to the slug basename
+    // ("bob-example" → "bob example"). The clause subject "Carol" shares no
+    // token with it, so the prior is suppressed — proving the basename branch.
+    const content = `Carol is an investor in early-stage startups.${FILLER}See companies/acme for context.`;
+    const { candidates } = await extractPageLinks(
+      'people/bob-example', content, {}, 'person', allowAllResolver,
+    );
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  test('selfName matches the page subject: page-role prior still applies', async () => {
+    // Same shape, but the role clause subject IS the page subject (title=Carol),
+    // so the guard does NOT suppress and the invested_in prior fires.
+    const content = `Carol is an investor in early-stage startups.${FILLER}See companies/acme for context.`;
+    const { candidates } = await extractPageLinks(
+      'people/carol', content, { title: 'Carol' }, 'person', allowAllResolver,
+    );
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('invested_in');
+  });
 });
 
 // ─── inferLinkType ─────────────────────────────────────────────
@@ -656,6 +699,79 @@ describe('inferLinkType', () => {
     const globalContext = 'Jane is a partner at Accel. She also advises multiple startups.';
     const perEdgeContext = 'Jane has worked with Acme.';
     expect(inferLinkType('person', perEdgeContext, globalContext, 'companies/acme')).toBe('invested_in');
+  });
+
+  // ─── Subject-scope guard on the page-role prior ─────────────────────
+  // A role keyword attributed to a THIRD PARTY on a person's page must not be
+  // stamped on the page subject. Regression for the case where "Alice is an
+  // investor in [[acme]]" on Bob's page produced bob --invested_in--> acme.
+  // The guard activates only when selfName is threaded (the production extraction
+  // path); legacy 4-arg calls keep the prior's original behavior.
+
+  test('subject-scope: third-party investor on a person page → mentions (not invested_in)', () => {
+    const globalContext = 'Carol is the founder of Acme. Dave is a personal investor in Acme.';
+    const perEdge = 'builds developer tooling for on-chain teams';
+    expect(inferLinkType('person', perEdge, globalContext, 'companies/acme', 'Carol')).toBe('mentions');
+  });
+
+  test('subject-scope: third-party employee on a person page → mentions (not works_at)', () => {
+    const globalContext = 'Dana runs design. Bob is a senior engineer at Delta.';
+    const perEdge = 'Delta ships weekly.';
+    expect(inferLinkType('person', perEdge, globalContext, 'companies/delta-3', 'Dana')).toBe('mentions');
+  });
+
+  test('subject-scope: role attributed to the page SUBJECT still infers', () => {
+    const globalContext = 'Adam Lopez is a senior engineer at Delta. His work is excellent.';
+    const perEdge = 'His work shipped on time.';
+    expect(inferLinkType('person', perEdge, globalContext, 'companies/delta-3', 'Adam Lopez')).toBe('works_at');
+  });
+
+  test('subject-scope: pronoun subject + first-name self still infers', () => {
+    const globalContext = 'Wendy is a venture partner. Her portfolio includes the firm.';
+    const perEdge = 'discussed Cipher recently';
+    expect(inferLinkType('person', perEdge, globalContext, 'companies/cipher-13', 'Wendy Chen')).toBe('invested_in');
+  });
+
+  test('subject-scope: legacy callers without selfName keep prior behavior', () => {
+    const globalContext = 'Dave is a personal investor in Acme.';
+    expect(inferLinkType('person', 'mentions Acme', globalContext, 'companies/acme')).toBe('invested_in');
+  });
+
+  test('subject-scope: pronoun-led role clause attributes to the page subject', () => {
+    // selfName shares NO token with the clause head 'His'; only the pronoun rule
+    // (not token overlap) can attribute the role to the page subject here.
+    const globalContext = 'His portfolio includes several seed-stage companies.';
+    expect(inferLinkType('person', 'mentions Acme', globalContext, 'companies/acme', 'Zeb Quill')).toBe('invested_in');
+  });
+
+  test('subject-scope: distinct people sharing one name token → third party suppressed', () => {
+    // "John Doe" and "John Smith" share "john" but are different people; the role
+    // must NOT be stamped on the page subject. (Subset-neither-way → third party.)
+    const globalContext = 'John Doe is a personal investor in Acme.';
+    expect(inferLinkType('person', 'mentions Acme', globalContext, 'companies/acme', 'John Smith')).toBe('mentions');
+  });
+
+  test("subject-scope: subject's own role applies even when a third party is mentioned first", () => {
+    // First PARTNER match is the third party (Alice); the scan must continue to
+    // the page subject's own later role (Bob) instead of falling to 'mentions'.
+    const globalContext = 'Alice is an investor in widgets. Bob is an investor in Acme.';
+    expect(inferLinkType('person', 'mentions Acme', globalContext, 'companies/acme', 'Bob')).toBe('invested_in');
+  });
+
+  test('subject-scope: third-party advisor on a person page → mentions (not advises)', () => {
+    // Exercises the ADVISOR_ROLE_RE arm through the guard. Per-edge context is
+    // benign so the advisor prior is the only thing that could fire.
+    const globalContext = 'Carol is an advisor to several startups. Bob runs growth.';
+    const perEdge = 'ships product weekly';
+    expect(inferLinkType('person', perEdge, globalContext, 'companies/acme', 'Bob')).toBe('mentions');
+  });
+
+  test('subject-scope: lowercase clause head (not a name) → prior still fires', () => {
+    // "the firm" leads the role clause: not a pronoun, not capitalized, so the
+    // guard can't judge attribution and falls back to applying the prior even
+    // though selfName differs. Mirrors src `if (!/^[A-Z]/.test(first)) return false`.
+    const globalContext = 'the firm is an investor in many seed-stage companies';
+    expect(inferLinkType('person', 'mentions Acme', globalContext, 'companies/acme', 'Bob')).toBe('invested_in');
   });
 });
 
@@ -996,6 +1112,29 @@ describe('makeResolver — fallback chain', () => {
     );
     const r = makeResolver(engine);
     expect(await r.resolve('Brex Inc', 'companies')).toBe('companies/brex');
+  });
+
+  test('step 3: fuzzy match to a reserved (_-prefixed) slug is rejected', async () => {
+    // isReservedSlug guard: a weak name must NOT fuzzy-resolve onto a
+    // reserved/test page (basename starting with '_'). Batch mode skips the
+    // step-4 search fallback, so the reserved hit becoming null is observable.
+    const engine = makeFakeEngine(
+      ['meetings/_dirtest-zzz'],
+      new Map([['Dirtest', { slug: 'meetings/_dirtest-zzz', similarity: 0.9 }]]),
+    );
+    const r = makeResolver(engine, { mode: 'batch' });
+    expect(await r.resolve('Dirtest', 'meetings')).toBeNull();
+  });
+
+  test('step 3: a real (non-reserved) fuzzy hit still resolves under the guard', async () => {
+    // Control for the reserved-slug guard: an ordinary basename resolves
+    // normally, proving the guard only filters '_'-prefixed targets.
+    const engine = makeFakeEngine(
+      ['people/alice'],
+      new Map([['Alice Q', { slug: 'people/alice', similarity: 0.9 }]]),
+    );
+    const r = makeResolver(engine, { mode: 'batch' });
+    expect(await r.resolve('Alice Q', 'people')).toBe('people/alice');
   });
 
   test('batch mode NEVER calls searchKeyword (deterministic migration)', async () => {

@@ -253,7 +253,7 @@ USAGE
       3  PID file unwritable (permission / path error)
 
     EXAMPLES
-      gbrain jobs supervisor --concurrency 4         # foreground (Ctrl-C stops)
+      gbrain jobs supervisor --concurrency 2         # foreground (Ctrl-C stops; 2 is the default)
       gbrain jobs supervisor start --detach --json   # agent-friendly: fork + return JSON
       gbrain jobs supervisor status --json           # machine-readable health check
       gbrain jobs supervisor stop                    # graceful stop

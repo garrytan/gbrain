@@ -28,7 +28,7 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-21T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -472,6 +472,14 @@ export async function extractPageLinks(
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
+  // Page subject's display name, for the inferLinkType subject-scope guard: a
+  // role keyword attributed to a DIFFERENT named person on this page must not be
+  // stamped on the page's outbound company edges.
+  const rawTitle = frontmatter?.title;
+  const selfName = (typeof rawTitle === 'string' && rawTitle.trim())
+    ? rawTitle.trim()
+    : (slug.split('/').pop()?.replace(/[-_]+/g, ' ').trim() || undefined);
+
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
     // Issue #972: refs from the generic `[[bare-name]]` pass carry the
@@ -514,7 +522,7 @@ export async function extractPageLinks(
     const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
     candidates.push({
       targetSlug: ref.slug,
-      linkType: inferLinkType(pageType, context, content, ref.slug),
+      linkType: inferLinkType(pageType, context, content, ref.slug, selfName),
       context,
       linkSource: 'markdown',
     });
@@ -536,7 +544,7 @@ export async function extractPageLinks(
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
-      linkType: inferLinkType(pageType, context, content, m[1]),
+      linkType: inferLinkType(pageType, context, content, m[1], selfName),
       context,
       linkSource: 'markdown',
     });
@@ -675,6 +683,81 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 // pages mentioning their employees use the page-role layer differently.
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
 
+// Pronouns at a clause head refer back to the page subject, not a third party.
+const PRONOUN_SUBJECT_RE = /^(?:he|she|they|his|her|their|its|my|our|we|i)$/i;
+
+/**
+ * Subject-attribution guard for the page-role prior. Returns true when the role
+ * keyword at `matchIdx` is attributed to a person OTHER than the page subject
+ * (`selfName`). Without it, a third party's role stated on someone else's page —
+ * e.g. "Alice is an investor in [[acme]]" appearing on Bob's page — would stamp
+ * `invested_in` on the page subject. Legacy callers that omit `selfName` keep the
+ * prior's original behavior (returns false), so single-subject inference is
+ * unchanged; the extraction call sites thread `selfName` and get the fix.
+ *
+ * Known limitations (each fails safe to the pre-guard "apply", never worse than
+ * pre-patch): a non-Latin clause subject (CJK/Cyrillic) isn't parsed by the Latin
+ * clause-head regex, and a role written as "<Name> - <role>" splits at the
+ * list-marker boundary — both fall through to legacy behavior rather than
+ * suppressing.
+ */
+function rolePriorThirdParty(text: string, matchIdx: number, selfName?: string): boolean {
+  if (!selfName) return false;
+  const before = text.slice(0, matchIdx);
+  // Clause = text after the nearest preceding boundary (sentence end, ';',
+  // newline, or list marker) up to the role keyword.
+  const boundary = Math.max(
+    before.lastIndexOf('. '), before.lastIndexOf('! '), before.lastIndexOf('? '),
+    before.lastIndexOf('\n'), before.lastIndexOf(';'),
+    before.lastIndexOf(') '), before.lastIndexOf('- '),
+  );
+  const clause = before.slice(boundary + 1).replace(/^\W+/, '');
+  // Clause-head subject: a leading name/pronoun token sequence (1–3 words).
+  const head = clause.match(/^([A-Za-z][A-Za-z0-9.'’-]*(?:\s+[A-Z][A-Za-z0-9.'’-]+){0,2})/);
+  if (!head) return false;
+  const first = head[1].split(/\s+/)[0];
+  if (PRONOUN_SUBJECT_RE.test(first)) return false; // pronoun → the page subject
+  if (!/^[A-Z]/.test(first)) return false;          // not a name → can't judge
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const selfTokens = norm(selfName).split(' ').filter(Boolean);
+  const subjTokens = norm(head[1]).split(' ').filter(Boolean);
+  if (selfTokens.length === 0 || subjTokens.length === 0) return false;
+  // Same person iff one name is a token-subset of the other ("Wendy" vs "Wendy
+  // Chen", "Adam" vs "Adam Lopez"). Two distinct people who merely SHARE a token
+  // ("John Doe" vs "John Smith") are a subset neither way → treated as third party.
+  const selfSet = new Set(selfTokens);
+  const subjSet = new Set(subjTokens);
+  const subjSubsetOfSelf = subjTokens.every((t) => selfSet.has(t));
+  const selfSubsetOfSubj = selfTokens.every((t) => subjSet.has(t));
+  return !(subjSubsetOfSelf || selfSubsetOfSubj);
+}
+
+/**
+ * True if ANY match of `re` in `text` is a role attributed to the page subject
+ * (not a third party). Scans every match, not just the first — otherwise an
+ * earlier third-party role ("Alice is an investor…") on the page would suppress
+ * the page subject's own later role and the prior would wrongly fall to 'mentions'.
+ */
+function roleAppliesToSubject(re: RegExp, text: string, selfName?: string): boolean {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+  let m: RegExpExecArray | null;
+  while ((m = g.exec(text)) !== null) {
+    if (!rolePriorThirdParty(text, m.index, selfName)) return true;
+    if (m.index === g.lastIndex) g.lastIndex++; // guard against zero-width matches
+  }
+  return false;
+}
+
+/**
+ * Reserved/internal pages (basename starts with '_', e.g. test fixtures like
+ * `meetings/_dirtest-zzz`) must never be a fuzzy-resolution TARGET: a weak
+ * wikilink/attendee name can cross the 0.55 similarity floor against them and
+ * silently redirect a real reference to junk.
+ */
+function isReservedSlug(slug: string): boolean {
+  return slug.slice(slug.lastIndexOf('/') + 1).startsWith('_');
+}
+
 /**
  * Infer link_type from page context. Deterministic regex heuristics, no LLM.
  *
@@ -683,15 +766,21 @@ const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|fro
  *      verbs (FOUNDED_RE, INVESTED_RE, ADVISES_RE, WORKS_AT_RE).
  *   2. Page-role prior: when per-edge inference falls through to 'mentions',
  *      check if the SOURCE page describes the author as a partner/investor.
- *      If yes, bias outbound company refs toward 'invested_in'.
+ *      If yes, bias outbound company refs toward 'invested_in' — but ONLY when
+ *      the role is attributed to the page subject (`selfName`), not to a third
+ *      party named elsewhere on the page (see `rolePriorThirdParty`).
  *
  * Precedence: founded > invested_in > advises > works_at > role prior > mentions.
  *
  * The role-prior layer is what closes the gap on partner bios where the prose
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
+ *
+ * @param selfName  Display name of the page subject; gates the page-role prior
+ *   (layer 2) so a third party's role mentioned on the page isn't attributed to
+ *   the subject. Optional — legacy callers that omit it keep pre-guard behavior.
  */
-export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): string {
+export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, selfName?: string): string {
   if (pageType === 'media') {
     return 'mentions';
   }
@@ -716,9 +805,13 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // employee/advisor match would mis-classify; keep investor first so those
   // phrasings resolve correctly.
   if (pageType === 'person' && globalContext && targetSlug?.startsWith('companies/')) {
-    if (PARTNER_ROLE_RE.test(globalContext)) return 'invested_in';
-    if (ADVISOR_ROLE_RE.test(globalContext)) return 'advises';
-    if (EMPLOYEE_ROLE_RE.test(globalContext)) return 'works_at';
+    // Subject-scope guard: apply a page-role prior only when the role is
+    // attributed to the page SUBJECT, not a third party named on the page.
+    // Scans ALL matches so an earlier third-party role can't suppress the
+    // subject's own later role.
+    if (roleAppliesToSubject(PARTNER_ROLE_RE, globalContext, selfName)) return 'invested_in';
+    if (roleAppliesToSubject(ADVISOR_ROLE_RE, globalContext, selfName)) return 'advises';
+    if (roleAppliesToSubject(EMPLOYEE_ROLE_RE, globalContext, selfName)) return 'works_at';
   }
   return 'mentions';
 }
@@ -969,7 +1062,7 @@ export function makeResolver(
       const searchHints = hints.length > 0 ? hints : [undefined];
       for (const hint of searchHints) {
         const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55);
-        if (match) {
+        if (match && !isReservedSlug(match.slug)) {
           cache.set(cacheKey, match.slug);
           return match.slug;
         }

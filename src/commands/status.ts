@@ -39,6 +39,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { gbrainPath, loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { pidLooksLikeGbrain } from './autopilot.ts';
 import { VERSION } from '../version.ts';
 import {
   buildSyncStatusReport,
@@ -101,6 +102,8 @@ export interface AutopilotStatus {
   lockfile_present: boolean;
   pid: number | null;
   running: boolean;
+  /** #2503: lock PID is alive but belongs to a non-gbrain process (recycled PID). */
+  foreign_lock_holder?: boolean;
 }
 
 export interface StatusReport {
@@ -302,6 +305,7 @@ function buildAutopilotStatus(): AutopilotStatus {
   const lockfile_present = existsSync(lockPath);
   let pid: number | null = null;
   let running = false;
+  let foreign_lock_holder = false;
   if (lockfile_present) {
     try {
       const raw = readFileSync(lockPath, 'utf-8').trim();
@@ -318,6 +322,12 @@ function buildAutopilotStatus(): AutopilotStatus {
           const code = (err as NodeJS.ErrnoException).code;
           running = code === 'EPERM';
         }
+        // #2503: liveness is not identity — a recycled PID owned by an
+        // unrelated process must not report autopilot as running.
+        if (running && !pidLooksLikeGbrain(parsed)) {
+          running = false;
+          foreign_lock_holder = true;
+        }
       }
     } catch {
       /* unreadable lockfile, leave pid=null/running=false */
@@ -328,6 +338,7 @@ function buildAutopilotStatus(): AutopilotStatus {
     lockfile_present,
     pid,
     running,
+    ...(foreign_lock_holder ? { foreign_lock_holder } : {}),
   };
 }
 
@@ -592,7 +603,10 @@ function renderHuman(report: StatusReport): string {
       if (a.running) {
         lines.push(`  running (PID ${a.pid})`);
       } else if (a.lockfile_present) {
-        lines.push(`  stale lockfile (PID ${a.pid ?? '?'} not alive). Run \`gbrain autopilot --install\` to restart.`);
+        const why = a.foreign_lock_holder
+          ? `PID ${a.pid ?? '?'} is held by a non-gbrain process`
+          : `PID ${a.pid ?? '?'} not alive`;
+        lines.push(`  stale lockfile (${why}). Run \`gbrain autopilot --install\` to restart.`);
       } else {
         lines.push('  not running. Install with `gbrain autopilot --install`.');
       }
