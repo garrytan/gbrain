@@ -24,6 +24,10 @@ jobs:
     permissions:
       actions: read
       contents: read
+      # Required by the reusable workflow's own top-level permissions block —
+      # GitHub validates the caller grants a superset AT STARTUP, even with
+      # upload-sarif: false (nothing is actually uploaded; see #2117 upstream).
+      security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2  # v2.3.8
     with:
       upload-sarif: false

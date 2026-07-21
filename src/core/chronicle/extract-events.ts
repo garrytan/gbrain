@@ -26,7 +26,17 @@ export interface ChronicleJudgeInput {
   effectiveDate: string | null;   // depth page effective_date (deterministic when)
   attendees: string[];            // deterministic who from frontmatter
 }
-export interface ChronicleJudgeResult { events: ChronicleEventProposal[] }
+export interface ChronicleJudgeResult {
+  events: ChronicleEventProposal[];
+  /**
+   * #2606 — distinct judge-failure signal so an unusable response is never
+   * recorded as a legitimate `no_events`:
+   *   - 'truncated': the model hit the output-token cap (stopReason 'length');
+   *     the JSON array was cut mid-stream and must not be parsed as complete.
+   *   - 'parse_failed': the model returned text but no valid JSON array.
+   */
+  failure?: 'truncated' | 'parse_failed';
+}
 export type ChronicleJudge = (input: ChronicleJudgeInput) => Promise<ChronicleJudgeResult>;
 
 export interface ChronicleExtractResult {
@@ -126,6 +136,12 @@ export async function runChronicleExtract(
     return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'judge_error' };
   }
 
+  // #2606: a truncated or unparseable judge response is a FAILURE, not an
+  // empty page. Record it as a distinct skipped reason so operators (and
+  // retries) can tell it apart from a genuine no_events.
+  if (result?.failure) {
+    return { slug: opts.slug, status: 'skipped', events_written: 0, reason: `judge_${result.failure}` };
+  }
   const proposals = Array.isArray(result?.events) ? result.events : [];
   if (proposals.length === 0) return { slug: opts.slug, status: 'no_events', events_written: 0 };
   // PARSE BARRIER — reject the WHOLE batch on any malformed proposal; no partial writes.
@@ -167,11 +183,25 @@ const JUDGE_SYSTEM = `You segment a meeting/transcript page into discrete timeli
 Return ONLY a JSON array. Each element: {"when": ISO datetime or YYYY-MM-DD, "who": [entity slugs/names], "what": one-clause summary, "where": optional string, "kind": one of meeting|call|meal|solo|travel|work|commitment|decision|intro|conflict|milestone|event}.
 Prefer the page's known date for "when" when the text gives no explicit time. Use the provided attendee slugs for "who" when the text does not name participants. No prose, no markdown — just the JSON array.`;
 
+/**
+ * #2606: default output-token cap for the judge. Raised from the original
+ * 1500 (which event-dense pages overflowed, silently truncating the JSON
+ * array). Override via `chronicle.judge_max_tokens`.
+ */
+const DEFAULT_JUDGE_MAX_TOKENS = 4000;
+
 function defaultJudge(engine: BrainEngine): ChronicleJudge {
   return async (input) => {
     const { isAvailable, chat } = await import('../ai/gateway.ts');
     if (!isAvailable('chat')) return { events: [] };
     const body = (input.body || '').slice(0, 12_000);
+    // #2606: configurable cap so event-dense pages have headroom.
+    let maxTokens = DEFAULT_JUDGE_MAX_TOKENS;
+    const capRaw = await engine.getConfig('chronicle.judge_max_tokens').catch(() => null);
+    if (capRaw) {
+      const n = parseInt(capRaw, 10);
+      if (Number.isFinite(n) && n > 0) maxTokens = n;
+    }
     let text: string;
     try {
       const res = await chat({
@@ -183,32 +213,44 @@ function defaultJudge(engine: BrainEngine): ChronicleJudge {
             `${input.title}\n\n${body}\n</page>\n\n` +
             `Known attendees: ${input.attendees.slice(0, 10).join(', ') || '(none)'}.\nExtract the events.`,
         }],
-        maxTokens: 1500,
+        maxTokens,
       });
       if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') return { events: [] };
+      // #2606: output hit the token cap — the JSON array is cut mid-stream.
+      // Do NOT feed it to the parser as if complete; surface the truncation.
+      if (res.stopReason === 'length') return { events: [], failure: 'truncated' };
       text = res.text;
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err;
       return { events: [] };
     }
     const parsed = parseJudgeJson(text);
+    // #2606: non-empty model text with no parseable JSON array is a parse
+    // failure, distinct from the model legitimately answering `[]`.
+    if (parsed === null) return { events: [], failure: 'parse_failed' };
     return { events: parsed };
   };
 }
 
-/** Tolerant JSON-array extraction from a model response (mirrors facts parser). */
-export function parseJudgeJson(text: string): ChronicleEventProposal[] {
-  if (!text) return [];
+/**
+ * Tolerant JSON-array extraction from a model response (mirrors facts parser).
+ *
+ * #2606: returns `null` on parse FAILURE (empty text, no `[...]` found,
+ * JSON.parse throw, non-array result) so callers can distinguish "the model
+ * said no events" (a legitimate `[]`) from "the response was unusable".
+ */
+export function parseJudgeJson(text: string): ChronicleEventProposal[] | null {
+  if (!text) return null;
   let s = text.trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const start = s.indexOf('[');
   const end = s.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) return [];
+  if (start === -1 || end === -1 || end < start) return null;
   try {
     const arr = JSON.parse(s.slice(start, end + 1));
-    return Array.isArray(arr) ? arr : [];
+    return Array.isArray(arr) ? arr : null;
   } catch {
-    return [];
+    return null;
   }
 }

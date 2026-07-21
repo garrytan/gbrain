@@ -2,7 +2,7 @@
  * v0.41.16.0 — E2E test for the conversation parser cathedral against
  * a real PGLite brain.
  *
- * For each of the 12 built-in formats: seed a page through
+ * For each built-in format: seed a page through
  * `importFromContent`, run `parseConversation` against the body, assert
  * the parser identifies the correct pattern AND produces at least one
  * message AND the message timestamp lands in the expected date range.

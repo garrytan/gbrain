@@ -23,6 +23,7 @@
 
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -52,6 +53,8 @@ import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+import { loadConfig } from '../config.ts';
+import { buildGatewayConfig } from './build-gateway-config.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -115,6 +118,18 @@ const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
+
+/**
+ * Recover the process-global gateway for foreground command entrypoints that
+ * were reached without cli.ts's normal engine-connect initialization (#2590).
+ * Existing configured gateways, including their DB-resolved model overrides,
+ * are deliberately left unchanged.
+ */
+export function configureGatewayIfUninitialized(): void {
+  if (_config) return;
+  const config = loadConfig();
+  if (config) configureGateway(buildGatewayConfig(config));
+}
 
 /**
  * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
@@ -1044,6 +1059,30 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
  * float[] (not base64), so the Layer 2 cap compares against the JSON
  * payload size of each embedding rather than a base64 string length.
  */
+/**
+ * NVIDIA NIM compatibility shim. NVIDIA uses the OpenAI embeddings wire
+ * shape but requires asymmetric input_type values: query for retrieval and
+ * passage for indexed documents. The generic gateway store carries
+ * query/document across the AI SDK boundary; map document to passage here.
+ */
+const nvidiaCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = __embedInputTypeStore.getStore() === 'query' ? 'query' : 'passage';
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Preserve the provider response when the SDK body is unexpectedly non-JSON.
+    }
+  }
+  return fetch(input as any, baseInit);
+}) as unknown as typeof fetch;
+
 const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
   // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
@@ -1304,6 +1343,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
+          : recipe.id === 'nvidia'
+          ? nvidiaCompatFetch
           : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
@@ -2849,6 +2890,30 @@ async function classifyGatewayGuardrail(input: {
   }
 }
 
+/**
+ * Derive OpenAI's `prompt_cache_key` (the AI SDK's `providerOptions.openai.
+ * promptCacheKey`). It's a ROUTING hint, not a cache breakpoint: OpenAI caches
+ * prefixes automatically, and a stable key makes requests sharing a prefix
+ * land on the same engine, raising the hit rate (OpenAI cites 60%→87%).
+ *
+ * Hash the system prompt + sorted tool names — that's the stable prefix
+ * gbrain's repeated loops (enrich, page-summary, skillopt, subagent) actually
+ * share. Returns undefined when there's no system prompt (nothing stable to
+ * key on), so one-off requests don't get pinned to a single engine. An
+ * explicit key can still be set per provider/model via
+ * `provider_chat_options` config, which overrides the derived key.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function openAIPromptCacheKey(args: {
+  system?: string;
+  toolNames?: string[];
+}): string | undefined {
+  if (!args.system) return undefined;
+  const basis = `${args.system} ${(args.toolNames ?? []).slice().sort().join(',')}`;
+  return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
+}
+
 export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, any> | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.reduce((acc, t) => {
@@ -2957,9 +3022,67 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const providerOptions: Record<string, any> = {};
   if (useCache) {
+    // Call-level `providerOptions.anthropic.cacheControl` is NOT a no-op:
+    // @ai-sdk/anthropic 3.0.47+ passes it through as a top-level
+    // `cache_control` field on the Anthropic request body, which the
+    // Messages API resolves as its documented "auto-cache the last
+    // cacheable block in the request" shorthand (see Anthropic's
+    // prompt-caching docs — "top-level auto-caching ... is the simplest
+    // option when you don't need fine-grained placement"). Keep it: it's
+    // what gives a growing multi-turn conversation (toolLoop()) a rolling
+    // cache breakpoint on each turn's tail for free, without us having to
+    // hand-roll the marker-walking logic subagent.ts's raw-SDK path uses.
+    //
+    // But "last cacheable block" is the wrong block for gbrain#2490's
+    // actual callers (page-summary, skillopt, enrich): those are
+    // single-turn calls with a STABLE system prompt and a DIFFERENT user
+    // message every time, so the auto-marker lands on the ever-varying
+    // tail — every call WRITES a fresh cache entry and never READS a prior
+    // one (cache_read_input_tokens stays 0 forever). Caching the stable
+    // prefix needs an EXPLICIT breakpoint on the system block itself,
+    // which is applied below via a `SystemModelMessage` (round-trips its
+    // own `providerOptions`) instead of a bare string.
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
+  // OpenAI prompt_cache_key (native-openai only): a stable per-prefix routing
+  // hint that keeps requests sharing a system prompt + tool set on the same
+  // inference engine, lifting OpenAI's automatic prefix-cache hit rate. The
+  // openai-compatible path (litellm/azure/groq/...) ignores
+  // providerOptions.openai, so it gets nothing. Applied BEFORE the configured
+  // provider options so `provider_chat_options.openai.promptCacheKey` from
+  // config still overrides the derived key.
+  if (recipe.implementation === 'native-openai') {
+    const promptCacheKey = openAIPromptCacheKey({
+      system: opts.system,
+      toolNames: (opts.tools ?? []).map(t => t.name),
+    });
+    if (promptCacheKey) providerOptions.openai = { promptCacheKey };
+  }
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
+
+  // Derive ONE canonical cache-control value AFTER config merging and reuse
+  // it for every breakpoint (system block, last tool def, call-level). If
+  // `provider_chat_options.anthropic.cacheControl` overrides the TTL (e.g.
+  // `{ type: 'ephemeral', ttl: '1h' }`), that override lands in
+  // `providerOptions.anthropic.cacheControl` via the deep-merge above —
+  // reusing it here (instead of hardcoding `{ type: 'ephemeral' }` per
+  // breakpoint) keeps every marker in the request on the same TTL.
+  const cacheControlValue: { type: 'ephemeral'; ttl?: '5m' | '1h' } | undefined = useCache
+    ? (providerOptions.anthropic?.cacheControl ?? { type: 'ephemeral' })
+    : undefined;
+
+  // Anthropic-only secondary breakpoint: mark the LAST tool def too (mirrors
+  // subagent.ts's raw-SDK path — Anthropic caches everything up to and
+  // including the last `cache_control` block it sees in the request, so
+  // marking the last tool extends the cached prefix through the whole tool
+  // list). `tool.providerOptions.anthropic.cacheControl` is the shape
+  // @ai-sdk/anthropic 3.x reads for tool-def breakpoints.
+  if (cacheControlValue && opts.tools && opts.tools.length > 0 && tools) {
+    const lastTool = tools[opts.tools[opts.tools.length - 1]!.name];
+    if (lastTool) {
+      lastTool.providerOptions = { anthropic: { cacheControl: cacheControlValue } };
+    }
+  }
 
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
@@ -2977,10 +3100,28 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   };
 
+  // The actual Anthropic system-prompt cache breakpoint. A bare string
+  // `system` produces `{ role: 'system', content }` with no `providerOptions`
+  // field (ai@6's convertToLanguageModelPrompt), so @ai-sdk/anthropic's
+  // getCacheControl(providerOptions) on that block always resolves to
+  // nothing. Passing a `SystemModelMessage` object instead — the shape `ai`
+  // documents specifically for "additional provider options (e.g. for
+  // caching)" — round-trips `providerOptions` onto that block. Byte-identical
+  // to the old bare-string form when useCache is false. Reuses
+  // `cacheControlValue` (the config-merged value) so this breakpoint's TTL
+  // always matches the last-tool and call-level breakpoints.
+  const systemParam = cacheControlValue && opts.system
+    ? {
+        role: 'system' as const,
+        content: opts.system,
+        providerOptions: { anthropic: { cacheControl: cacheControlValue } },
+      }
+    : opts.system;
+
   try {
     const result = await _generateTextTransport({
       model,
-      system: opts.system,
+      system: systemParam,
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),

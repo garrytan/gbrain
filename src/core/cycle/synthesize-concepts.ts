@@ -23,7 +23,13 @@ import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, isAvailable } from '../ai/gateway.ts';
+// #2163: concept pages route through importFromContent (the same
+// parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
+// so they land in the retrieval surface (content_chunks + embeddings) where
+// source-boost's 1.3× 'concepts/' weighting can actually reach them.
+import { importFromContent } from '../import-file.ts';
+import { serializeMarkdown } from '../markdown.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
 const TIER_T1_MIN = 10;
@@ -216,19 +222,23 @@ export async function runPhaseSynthesizeConcepts(
 
     if (!opts.dryRun) {
       const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
-      await engine.putPage(`concepts/${title}`, {
-        title: title.replace(/-/g, ' '),
-        type: 'concept',
-        compiled_truth: narrative,
-        frontmatter: {
-          type: 'concept',
+      // #2163: serialize to markdown and import via the canonical pipeline so
+      // the page is chunked (+ embedded when a provider is configured) —
+      // mirrors put_page's isAvailable('embedding') → noEmbed gate.
+      const md = serializeMarkdown(
+        {
           tier: group.tier,
           mention_count: group.atomTitles.length,
           composite_score: group.atomTitles.length,
           synthesized_at: new Date().toISOString(),
           synthesized_by: 'synthesize_concepts-v0.41',
         },
-        timeline: '',
+        narrative,
+        '',
+        { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
+      );
+      await importFromContent(engine, `concepts/${title}`, md, {
+        noEmbed: !isAvailable('embedding'),
       });
     }
     conceptsWritten++;

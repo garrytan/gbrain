@@ -54,7 +54,7 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -998,6 +998,13 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
   //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
   'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
+  // scratch-DB audit: `config` get/set operate on the host brain's config
+  // plane (DB rows / host file-plane). On a thin client they fabricated an
+  // ephemeral local PGLite (full migration replay per call) and read/wrote
+  // config nobody would ever see. NOTE: `jobs` is deliberately NOT here —
+  // it gets a partial dispatch (list/get route over MCP engine-free, the
+  // rest refuse) in the main dispatch before connectEngine().
+  'config',
 ]);
 
 /**
@@ -1035,6 +1042,9 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
   'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
   'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
+  // scratch-DB audit additions
+  config: "config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set.",
+  jobs: '`jobs list` and `jobs get <id>` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job MCP tools from your agent, or run on the host with GBRAIN_HOME set.',
 };
 
 /**
@@ -1593,6 +1603,27 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32
+  // routing branches in commands/jobs.ts) and never touch a local engine —
+  // but falling through to connectEngine() below fabricates an empty
+  // scratch PGLite in the thin-client GBRAIN_HOME and replays the entire
+  // migration chain on every invocation before the remote call even runs.
+  // Dispatch them engine-free here; every other jobs subcommand is
+  // host-queue-bound, so refuse with a pinpoint hint instead of building
+  // the scratch store.
+  if (command === 'jobs') {
+    const cfgJobs = loadConfig();
+    if (isThinClient(cfgJobs)) {
+      const jobsSub = args[0];
+      if (jobsSub === 'list' || jobsSub === 'get') {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(null, args);
+        return;
+      }
+      refuseThinClient('jobs', cfgJobs!.remote_mcp!.mcp_url);
+    }
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -2001,6 +2032,15 @@ async function handleCliOnly(command: string, args: string[]) {
         await runReindexCodeCli(engine, args);
         break;
       }
+      case 'reindex-search-vector': {
+        // Explicit recreate of FTS trigger functions + batched backfill,
+        // honoring GBRAIN_FTS_LANGUAGE. Use after changing the language
+        // env var on a brain that already ran the configurable_fts_language
+        // migration.
+        const { runReindexSearchVectorCli } = await import('./commands/reindex-search-vector.ts');
+        await runReindexSearchVectorCli(engine, args);
+        break;
+      }
       case 'reindex-frontmatter': {
         // v0.29.1: recovery / explicit-rebuild path for pages.effective_date.
         // Mirror of reindex-code shape. Wraps the shared library function in
@@ -2249,7 +2289,7 @@ IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
-  sync --install-cron                Install persistent sync daemon
+                                     See also: autopilot --install (continuous daemon).
   export [--dir ./out/]              Export to markdown
   export --restore-only [--repo <p>] Restore missing supabase-only files
         [--type T] [--slug-prefix S] With optional filters
@@ -2336,6 +2376,9 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
   reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
+  reindex-search-vector [--dry-run] [--yes] [--json]
+                                Recreate FTS triggers + backfill under
+                                $GBRAIN_FTS_LANGUAGE (default 'english')
   sync --strategy code               Sync code files into the brain
 
 JOBS (Minions)

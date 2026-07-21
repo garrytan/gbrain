@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -117,6 +120,24 @@ describe('doctor command', () => {
       expect(jsonb.status).toBe('ok');
     } finally {
       await engine.disconnect();
+    }
+  });
+
+  test('skill conformance derives a valid host manifest when manifest.json is absent', async () => {
+    const { skillConformanceCheck } = await import('../src/commands/doctor.ts');
+    const skillsDir = join(tmpdir(), `gbrain-doctor-skills-${crypto.randomUUID()}`);
+    mkdirSync(join(skillsDir, 'host-only'), { recursive: true });
+    writeFileSync(
+      join(skillsDir, 'host-only', 'SKILL.md'),
+      '---\nname: host-only\ndescription: host-owned skill\n---\n\n# Host-only\n',
+    );
+    try {
+      const check = skillConformanceCheck(skillsDir);
+      expect(check).toMatchObject({ name: 'skill_conformance', status: 'ok' });
+      expect(check.message).toContain('1/1 skills pass');
+      expect(check.message).toContain('derived from SKILL.md files');
+    } finally {
+      rmSync(skillsDir, { recursive: true, force: true });
     }
   });
 

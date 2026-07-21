@@ -67,6 +67,23 @@ export async function getFactsExtractionModel(engine?: BrainEngine): Promise<str
   return normalizeModelId(resolved);
 }
 
+/**
+ * #2113: output-token cap for the extractor call. The pre-fix hardcoded 1500
+ * silently truncated output on mandatory-reasoning models (thinking tokens
+ * count toward the cap), so the JSON never parsed and extraction returned
+ * zero facts with no signal. Configurable via
+ * `gbrain config set facts.extraction_max_tokens <n>`; default 4000.
+ */
+export const DEFAULT_EXTRACTION_MAX_TOKENS = 4000;
+
+export async function getFactsExtractionMaxTokens(engine?: BrainEngine): Promise<number> {
+  if (!engine) return DEFAULT_EXTRACTION_MAX_TOKENS;
+  const raw = await engine.getConfig('facts.extraction_max_tokens').catch(() => null);
+  if (raw == null || raw.trim() === '') return DEFAULT_EXTRACTION_MAX_TOKENS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_EXTRACTION_MAX_TOKENS;
+}
+
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact',
 ] as const;
@@ -164,24 +181,46 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
 
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
+  const maxTokens = await getFactsExtractionMaxTokens(input.engine);
+  const model = input.model ?? defaultModel;
+  const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
+    input.entityHints && input.entityHints.length
+      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
+      : ''
+  }`;
   let result: ChatResult;
   try {
     result = await chat({
-      model: input.model ?? defaultModel,
+      model,
       system: EXTRACTOR_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
-            input.entityHints && input.entityHints.length
-              ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
-              : ''
-          }`,
-        },
-      ],
-      maxTokens: 1500,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens,
       abortSignal: input.abortSignal,
     });
+    // #2113: never checked pre-fix — a truncated response (stopReason
+    // 'length', e.g. reasoning tokens eating the cap on mandatory-reasoning
+    // models) produced unparseable JSON and silently extracted zero facts.
+    // Retry ONCE at double the cap, then surface the truncation loudly.
+    if (result.stopReason === 'length') {
+      process.stderr.write(
+        `[facts-extract] WARN: extractor output truncated at maxTokens=${maxTokens} ` +
+        `(model=${model}); retrying once at ${maxTokens * 2}\n`,
+      );
+      result = await chat({
+        model,
+        system: EXTRACTOR_SYSTEM,
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: maxTokens * 2,
+        abortSignal: input.abortSignal,
+      });
+      if (result.stopReason === 'length') {
+        process.stderr.write(
+          `[facts-extract] WARN: extractor output STILL truncated at maxTokens=${maxTokens * 2} ` +
+          `(model=${model}); facts for this turn are likely lost. ` +
+          `Raise the cap: gbrain config set facts.extraction_max_tokens <n>\n`,
+        );
+      }
+    }
   } catch (err) {
     // Re-throw aborts; absorb other errors as "no extraction" — caller's
     // `put_page` backstop will still record the page itself.

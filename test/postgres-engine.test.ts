@@ -48,14 +48,34 @@ describe('postgres-engine / search path timeout isolation', () => {
     expect(bare).toBeNull();
   });
 
-  test('searchKeyword wraps its query in sql.begin()', () => {
+  test('searchKeyword wraps its query in a transaction (via withScopedReadTransaction alwaysTransaction)', () => {
+    // Post-RLS-scope-binding invariant: the search methods route through
+    // withScopedReadTransaction with alwaysTransaction: true, which
+    // guarantees a sql.begin() wrap in BOTH modes — flag off (identical to
+    // master's pre-helper wrap) and flag on (scoped transaction with
+    // set_config). See the helper tests in
+    // test/postgres-engine-rls-scope.test.ts for the behavioral pins.
     const fn = extractMethod(SRC, 'searchKeyword');
-    expect(fn).toMatch(/sql\.begin\s*\(\s*async\s+sql\s*=>/);
+    expect(fn).toMatch(/withScopedReadTransaction\s*\(/);
+    expect(fn).toMatch(/alwaysTransaction:\s*true/);
   });
 
-  test('searchVector wraps its query in sql.begin()', () => {
+  test('searchVector wraps its query in a transaction (via withScopedReadTransaction alwaysTransaction)', () => {
     const fn = extractMethod(SRC, 'searchVector');
-    expect(fn).toMatch(/sql\.begin\s*\(\s*async\s+sql\s*=>/);
+    expect(fn).toMatch(/withScopedReadTransaction\s*\(/);
+    expect(fn).toMatch(/alwaysTransaction:\s*true/);
+  });
+
+  test('withScopedReadTransaction owns the sql.begin() wrap (and only opens it when needed)', () => {
+    // (extractMethod can't grab this one: `private async ...<T>(`.)
+    const stripped = stripComments(SRC);
+    // The transaction lives in the helper...
+    expect(stripped).toMatch(/this\.sql\.begin\s*\(/);
+    // ...and the flag-off / non-alwaysTransaction path is a true
+    // pass-through on the shared pool — no per-read transaction hold.
+    expect(stripped).toMatch(
+      /if\s*\(!this\.rlsScopeBindingEnabled\s*&&\s*!opts\?\.alwaysTransaction\)\s*\{\s*return\s+await\s+callback\(this\.sql\);/,
+    );
   });
 
   test('both search methods use SET LOCAL for the timeout', () => {

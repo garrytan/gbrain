@@ -36,6 +36,7 @@ import {
   MAX_PAGE_BODY_BYTES,
   TERMINAL_AUDIT_SOURCE,
   PER_SEGMENT_SOURCE_PREFIX,
+  ALLOWED_TYPES,
 } from '../src/commands/extract-conversation-facts.ts';
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,11 @@ describe('parseConversationMessages', () => {
   test('empty body returns empty array', () => {
     expect(parseConversationMessages('')).toEqual([]);
   });
+});
+
+test('conversation-facts allowlist includes native iMessage page types (#2756)', () => {
+  expect(ALLOWED_TYPES).toContain('imessage');
+  expect(ALLOWED_TYPES).toContain('imessage-daily');
 });
 
 // ---------------------------------------------------------------------------
@@ -306,6 +312,7 @@ describe('runExtractConversationFactsCore', () => {
     // truncation semantics than the canonical reset helper.
     await engine.executeRaw(`DELETE FROM facts WHERE source LIKE 'cli:extract-conversation-facts%'`);
     await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
+    await engine.executeRaw(`DELETE FROM extract_rollup_7d`);
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
@@ -314,6 +321,13 @@ describe('runExtractConversationFactsCore', () => {
     await engine.putPage('conversations/imessage/alice-example', {
       type: 'conversation',
       title: 'iMessage: Alice Example',
+      compiled_truth: SAMPLE_BODY,
+      timeline: '',
+      frontmatter: {},
+    });
+    await engine.putPage('conversations/imessage/native-example', {
+      type: 'imessage',
+      title: 'Native iMessage export',
       compiled_truth: SAMPLE_BODY,
       timeline: '',
       frontmatter: {},
@@ -365,6 +379,21 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.segments_processed).toBeGreaterThanOrEqual(1);
   });
 
+  test('dry-run does not write the extract_rollup_7d cache row', async () => {
+    // Regression: --dry-run promises "no DB writes" but writeRunReceiptAndRollup
+    // upsert-ed extract_rollup_7d unconditionally. A preview must not mutate the DB.
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      dryRun: true,
+      sleepMs: 0,
+    });
+    const rows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM extract_rollup_7d WHERE kind = 'facts.conversation' AND source_id = 'default'`,
+    );
+    expect(Number(rows[0]?.count ?? 0)).toBe(0);
+  });
+
   test('non-conversation pages are skipped', async () => {
     const result = await runExtractConversationFactsCore(engine, {
       sourceId: 'default',
@@ -374,6 +403,17 @@ describe('runExtractConversationFactsCore', () => {
     });
     // pages_considered counts only pages whose type matches the allowlist.
     expect(result.pages_considered).toBe(0);
+  });
+
+  test('native imessage page types are eligible by default', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/native-example',
+      dryRun: true,
+      sleepMs: 0,
+    });
+    expect(result.pages_considered).toBe(1);
+    expect(result.pages_processed).toBe(1);
   });
 
   test('sinceIso filters already-processed history', async () => {
@@ -415,6 +455,17 @@ describe('runExtractConversationFactsCore', () => {
       [PER_SEGMENT_SOURCE_PREFIX, `${PER_SEGMENT_SOURCE_PREFIX}:conversations/imessage/alice-example`],
     );
     expect(Number(perSegFacts[0]?.count ?? 0)).toBeGreaterThan(0);
+
+    const validTimes = await engine.executeRaw<{ valid_from: Date }>(
+      `SELECT valid_from FROM facts
+       WHERE source = $1 AND source_session = $2
+       ORDER BY valid_from ASC`,
+      [PER_SEGMENT_SOURCE_PREFIX, `${PER_SEGMENT_SOURCE_PREFIX}:conversations/imessage/alice-example`],
+    );
+    expect(validTimes.map((row) => new Date(row.valid_from).toISOString())).toEqual([
+      '2024-03-15T09:00:00.000Z',
+      '2024-03-16T08:00:00.000Z',
+    ]);
 
     // Terminal audit row present.
     const terminalRows = await engine.executeRaw<{ count: string | number }>(

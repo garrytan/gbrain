@@ -101,12 +101,18 @@ async function getPageId(engine: BrainEngine, slug: string, sourceId?: string): 
   return rows[0].id;
 }
 
-async function resolveTakesSourceId(engine: BrainEngine): Promise<string | undefined> {
-  try {
-    return await resolveSourceId(engine, null);
-  } catch {
-    return undefined;
-  }
+// Fail-closed (#2698 residual, TODOS.md): `resolveSourceId` only ever
+// throws when a source WAS explicitly in play — an invalid or
+// unregistered `GBRAIN_SOURCE`, a `.gbrain-source` dotfile pointing at a
+// source that doesn't exist, or a genuine DB error — never for "nothing
+// configured" (that path resolves cleanly to the seeded `'default'`
+// source, tier 6 of resolveSourceId). Swallowing those errors here used
+// to fall back to the unscoped slug-only page lookup, silently
+// reintroducing the pre-#2698 cross-source write bug whenever resolution
+// merely errored instead of resolving cleanly. Let it propagate so the
+// write is blocked instead of silently unscoped.
+async function resolveTakesSourceId(engine: BrainEngine): Promise<string> {
+  return resolveSourceId(engine, null);
 }
 
 function readBodyOrEmpty(path: string): string {

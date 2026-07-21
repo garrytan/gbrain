@@ -71,7 +71,7 @@ import {
   extractFactsFromTurn,
   isFactsExtractionEnabled,
 } from '../core/facts/extract.ts';
-import { isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
+import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -81,7 +81,6 @@ import {
 } from '../core/op-checkpoint.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions, maybeBackground } from '../core/cli-options.ts';
-import { loadConfig } from '../core/config.ts';
 import { createHash } from 'crypto';
 // v0.41.15.0 (T5): worker-pool primitive + per-source-clamp wrapper +
 // per-page advisory lock + delete-orphans-first replay safety. See plan
@@ -141,7 +140,14 @@ export const DEFAULT_MAX_COST_USD = 5.0;
  * `--types` flag is an explicit per-run override; cycle config is
  * the single source of truth.
  */
-export const ALLOWED_TYPES = ['conversation', 'meeting', 'slack', 'email'] as const;
+export const ALLOWED_TYPES = [
+  'conversation',
+  'meeting',
+  'slack',
+  'email',
+  'imessage',
+  'imessage-daily',
+] as const;
 export type AllowedType = (typeof ALLOWED_TYPES)[number];
 
 /**
@@ -757,6 +763,12 @@ async function processPage(
         source_markdown_slug: page.slug,
         source: PER_SEGMENT_SOURCE_PREFIX,
         source_session: sessionId,
+        // Preserve the conversation's valid time instead of defaulting every
+        // extracted fact to extraction time. Epoch-anchored parses have no
+        // trustworthy date, so they retain the existing now() fallback.
+        ...(seg.startIso && !seg.startIso.startsWith('1970-')
+          ? { valid_from: new Date(seg.startIso) }
+          : {}),
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));
@@ -1069,7 +1081,8 @@ export async function runExtractConversationFactsCore(
       }
       // Fall through to receipt+rollup write so the partial run is
       // still observable in extract_health doctor + extracts/ pages.
-      await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
+      // ...but not under --dry-run: a preview must not persist cache state.
+      if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
       // Return partial result — caller (CLI / Minion) decides how to
       // surface. NOT a thrown failure.
       return result;
@@ -1081,7 +1094,9 @@ export async function runExtractConversationFactsCore(
   // (queryable + citable per D-EXTRACT-17/19) AND UPSERTs the per-day
   // rollup row (best-effort cache per F-OUT-19). Both are best-effort —
   // failures stderr-warn but never fail the parent operation.
-  await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
+  // --dry-run must not persist cache/knowledge state: skip the rollup UPSERT +
+  // receipt-page write so a preview leaves no extract cache row behind.
+  if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
 
   return result;
 }
@@ -1351,7 +1366,9 @@ export async function runExtractConversationFacts(
     process.exit(1);
   }
 
-  // Chat gateway is required for non-dry-run.
+  // Chat gateway is required for non-dry-run. Recover a cold singleton before
+  // reporting an availability error (#2590).
+  if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
     console.error('Chat gateway unavailable. Configure an Anthropic or compatible chat model, or pass --dry-run to preview segmentation.');
     process.exit(1);

@@ -271,6 +271,8 @@ export interface GBrainConfig {
       verdict_model?: string;
       max_prompt_tokens?: number;
       max_chunks_per_transcript?: number;
+      subagent_timeout_ms?: number;
+      subagent_wait_timeout_ms?: number;
     };
     patterns?: {
       lookback_days?: number;
@@ -710,6 +712,12 @@ export async function loadConfigWithEngine(
     const n = parseInt(v, 10);
     return Number.isFinite(n) && n > 0 ? n : undefined;
   }
+  async function dbNum(key: string): Promise<number | undefined> {
+    const v = await dbStr(key);
+    if (v === undefined) return undefined;
+    const n = Number(v);
+    return Number.isNaN(n) ? undefined : n;
+  }
   const dbWarnBytes = await dbInt('content_sanity.bytes_warn');
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
@@ -759,6 +767,8 @@ export async function loadConfigWithEngine(
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
   const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
   const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbSubagentTimeoutMs = await dbNum('dream.synthesize.subagent_timeout_ms');
+  const dbSubagentWaitTimeoutMs = await dbNum('dream.synthesize.subagent_wait_timeout_ms');
   const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
   const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
 
@@ -782,6 +792,12 @@ export async function loadConfigWithEngine(
   }
   if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
     mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedSynth.subagent_timeout_ms === undefined && dbSubagentTimeoutMs !== undefined) {
+    mergedSynth.subagent_timeout_ms = dbSubagentTimeoutMs;
+  }
+  if (mergedSynth.subagent_wait_timeout_ms === undefined && dbSubagentWaitTimeoutMs !== undefined) {
+    mergedSynth.subagent_wait_timeout_ms = dbSubagentWaitTimeoutMs;
   }
   if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
     mergedPatterns.lookback_days = dbLookbackDays;
@@ -854,6 +870,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // subagent handler's error message tells users to `config set` this, so it
   // must be a known key or `config set` rejects it without --force.
   'agent.use_gateway_loop',
+  // #2778: per-turn output-token cap for the subagent loop (default 8192).
+  'agent.max_output_tokens',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -888,6 +906,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.chat',
   'models.eval.longmemeval',
   'facts.extraction_model',
+  // #2113: output-token cap for the per-turn facts extractor (default 4000).
+  'facts.extraction_max_tokens',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',
@@ -895,8 +915,16 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
+  // #2415: top-level namespace for synthesize/patterns output (default 'wiki').
+  'dream.synthesize.output_root',
+  'dream.synthesize.subagent_timeout_ms',
+  'dream.synthesize.subagent_wait_timeout_ms',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
+  // #2782-family: patterns-phase subagent timeouts (mirror of the
+  // dream.synthesize.* pair from #1594).
+  'dream.patterns.subagent_timeout_ms',
+  'dream.patterns.subagent_wait_timeout_ms',
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
@@ -945,6 +973,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover --force by reading source. Same class as the
   // spend-controls registration above.
   'auto_chronicle',
+  // #2606: chronicle judge output-token cap (default 4000). Event-dense
+  // pages overflowed the old hardcoded 1500 and were misrecorded as
+  // no_events; the cap is now configurable and truncation is surfaced.
+  'chronicle.judge_max_tokens',
   // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.

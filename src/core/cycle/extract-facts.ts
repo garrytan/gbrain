@@ -11,15 +11,17 @@
  *   1. Reads the markdown body (DB-side fetch via engine.getPage).
  *   2. Parses the `## Facts` fence with parseFactsFence.
  *   3. Maps ParsedFact → FenceExtractedFact via extractFactsFromFenceText.
- *   4. Wipes the page's DB index via deleteFactsForPage.
- *   5. Re-inserts via engine.insertFacts batch.
+ *   4. De-dupes rows by canonical (claim, source) content key.
+ *   5. Reconciles the page-scoped DB index: no-op when already in sync,
+ *      insert only missing keys when possible, or wipe/reinsert when stale
+ *      DB rows need cleanup (#1781 — the unconditional wipe-and-reinsert
+ *      made every cycle non-idempotent, re-appending duplicate rows).
  *
- * After the phase, the DB index for every affected page byte-matches
- * the fence (modulo embeddings + runtime-derived fields). Pages with
- * no fence go through delete-then-empty-insert — DB rows for that
- * page coordinate are wiped; legacy NULL-source_markdown_slug rows
- * survive because deleteFactsForPage targets source_markdown_slug =
- * slug only.
+ * After the phase, the DB index for every affected page matches the
+ * fence's canonical (claim, source) row set (modulo embeddings +
+ * runtime-derived fields). Pages with no fence wipe DB rows for that
+ * page coordinate only; legacy NULL-source_markdown_slug rows survive
+ * because deleteFactsForPage targets source_markdown_slug = slug only.
  *
  * Empty-fence guard (Codex R2-#7): the phase refuses to do its
  * destructive reconciliation pass when legacy rows (row_num IS NULL,
@@ -35,7 +37,11 @@ import type { BrainEngine } from '../engine.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
-import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import {
+  extractFactsFromFenceText,
+  FENCE_SOURCE_DEFAULT,
+  type FenceExtractedFact,
+} from '../facts/extract-from-fence.ts';
 import {
   runPhantomRedirectPass,
   emptyPhantomPassResult,
@@ -43,6 +49,51 @@ import {
 } from './phantom-redirect.ts';
 import { embed, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
+
+interface ExistingPageFact {
+  fact: string;
+  source: string | null;
+  row_num: number | string | null;
+}
+
+function factContentKey(fact: string, source: string | null | undefined): string {
+  return `${fact}\u0000${source ?? FENCE_SOURCE_DEFAULT}`;
+}
+
+function dedupeFactsByContentKey(facts: FenceExtractedFact[]): FenceExtractedFact[] {
+  const seen = new Set<string>();
+  const deduped: FenceExtractedFact[] = [];
+  for (const fact of facts) {
+    const key = factContentKey(fact.fact, fact.source);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(fact);
+  }
+  return deduped;
+}
+
+/**
+ * Fence-owned DB rows for one page coordinate. Excludes `cli:`-origin
+ * conversation facts (#1928) — they are not fence-owned, so they must
+ * neither count as "stale" (which would force a wipe every cycle) nor
+ * be compared against the fence's row set. Mirrors the
+ * excludeSourcePrefixes filter deleteFactsForPage applies on the wipe.
+ */
+async function listExistingFactsForPage(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+): Promise<ExistingPageFact[]> {
+  return engine.executeRaw<ExistingPageFact>(
+    `SELECT fact, source, row_num
+       FROM facts
+      WHERE source_id = $1
+        AND source_markdown_slug = $2
+        AND COALESCE(source, '') NOT LIKE 'cli:%'
+      ORDER BY row_num ASC, id ASC`,
+    [sourceId, slug],
+  );
+}
 
 export interface ExtractFactsOpts {
   /** Subset of slugs to reconcile. undefined = walk every page in the brain. */
@@ -220,28 +271,70 @@ export async function runExtractFacts(
 
     if (parsed.facts.length > 0) result.pagesWithFacts += 1;
 
-    if (opts.dryRun) continue;
-
-    // Wipe-and-reinsert per page. The delete targets source_markdown_slug =
-    // slug only, so NULL-source_markdown_slug legacy rows survive (the
-    // partial-UNIQUE-index keyspace). #1928: `cli:`-origin facts (conversation
-    // facts from extract-conversation-facts) are NOT fence-owned — the page
-    // carries no `## Facts` fence to recreate them — so they MUST survive this
-    // reconcile. Exclude them from the wipe.
-    const deleted = await engine.deleteFactsForPage(slug, sourceId, {
-      excludeSourcePrefixes: ['cli:'],
-    });
-    result.factsDeleted += deleted.deleted;
-
-    if (parsed.facts.length === 0) continue;
-
     // v0.35.4 (D-ENG-1) — thread page.effective_date as the fallback
     // valid_from. Without this, fence rows without explicit `validFrom:`
     // land with `valid_from = now()` (import timestamp) and every
     // trajectory query against the page returns import dates instead of
     // claim dates.
     const pageEffectiveDate = page.effective_date ? new Date(page.effective_date) : null;
-    const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate });
+    const extracted = dedupeFactsByContentKey(
+      extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate }),
+    );
+
+    if (opts.dryRun) continue;
+
+    // #1781 — reconcile instead of unconditional wipe-and-reinsert. Compare
+    // the fence's canonical (claim, source) row set against the page's
+    // fence-owned DB rows: no-op when already in sync, insert only missing
+    // keys when possible, wipe/reinsert only when stale rows need cleanup.
+    const existing = await listExistingFactsForPage(engine, slug, sourceId);
+    const existingKeys = new Set(existing.map(f => factContentKey(f.fact, f.source)));
+    const desiredByKey = new Map(extracted.map(f => [factContentKey(f.fact, f.source), f]));
+
+    if (extracted.length === 0) {
+      if (existing.length > 0) {
+        // The delete targets source_markdown_slug = slug only, so
+        // NULL-source_markdown_slug legacy rows survive (the
+        // partial-UNIQUE-index keyspace). #1928: `cli:`-origin facts
+        // (conversation facts from extract-conversation-facts) are NOT
+        // fence-owned — the page carries no `## Facts` fence to recreate
+        // them — so they MUST survive this reconcile.
+        const deleted = await engine.deleteFactsForPage(slug, sourceId, {
+          excludeSourcePrefixes: ['cli:'],
+        });
+        result.factsDeleted += deleted.deleted;
+      }
+      continue;
+    }
+
+    const hasStaleExisting = existing.some(f => !desiredByKey.has(factContentKey(f.fact, f.source)));
+    const hasDuplicateExisting = existing.length !== existingKeys.size;
+    const hasRowNumDrift = existing.some(f => {
+      const desired = desiredByKey.get(factContentKey(f.fact, f.source));
+      return desired !== undefined && Number(f.row_num) !== desired.row_num;
+    });
+
+    if (
+      existing.length === extracted.length &&
+      !hasStaleExisting &&
+      !hasDuplicateExisting &&
+      !hasRowNumDrift
+    ) {
+      continue;
+    }
+
+    let toInsert = extracted.filter(f => !existingKeys.has(factContentKey(f.fact, f.source)));
+    if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift) {
+      // Fall back to the legacy page-level reconcile when old DB rows must
+      // be removed. Same delete scoping as above: legacy
+      // NULL-source_markdown_slug rows and `cli:`-origin conversation
+      // facts (#1928) survive.
+      const deleted = await engine.deleteFactsForPage(slug, sourceId, {
+        excludeSourcePrefixes: ['cli:'],
+      });
+      result.factsDeleted += deleted.deleted;
+      toInsert = extracted;
+    }
 
     // v0.35.4 (D-CDX-3) — batch-embed before insert. Without this,
     // cycle-inserted facts land with `embedding = NULL`, which breaks
@@ -250,17 +343,17 @@ export async function runExtractFacts(
     // unavailable (no API key configured), facts still insert with
     // NULL embeddings — drift_score gracefully returns null and
     // clustering falls back to recency.
-    if (isAvailable('embedding') && extracted.length > 0) {
+    if (isAvailable('embedding') && toInsert.length > 0) {
       try {
-        const texts = extracted.map(e => e.fact);
+        const texts = toInsert.map(e => e.fact);
         // #1972: forward the abort signal so a cancelled cycle's in-flight
         // batch embed (a network call) is itself abortable, not just the loop.
         const embeddings = await embed(texts, { abortSignal: opts.signal });
         // Defensive: embed should return one vector per input; if the
         // gateway returns a partial array (provider partial-batch retry
         // returning fewer than requested), only fill what we have.
-        for (let i = 0; i < extracted.length && i < embeddings.length; i++) {
-          extracted[i].embedding = embeddings[i];
+        for (let i = 0; i < toInsert.length && i < embeddings.length; i++) {
+          toInsert[i].embedding = embeddings[i];
         }
       } catch (err) {
         // Embedding failure is non-fatal — facts still get inserted, just
@@ -271,7 +364,9 @@ export async function runExtractFacts(
       }
     }
 
-    const inserted = await engine.insertFacts(extracted, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
+    if (toInsert.length === 0) continue;
+
+    const inserted = await engine.insertFacts(toInsert, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
   }
 
