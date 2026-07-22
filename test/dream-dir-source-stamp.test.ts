@@ -17,11 +17,12 @@
  * GBRAIN_HOME isolation as test/cycle-last-full-cycle-at.test.ts (the
  * cycle's PGLite file lock lives under ~/.gbrain).
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runDream } from '../src/commands/dream.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -29,19 +30,26 @@ let engine: PGLiteEngine;
 let brainDir: string;
 let gbrainHome: string;
 
-beforeEach(async () => {
+beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+}, 60_000);
+
+afterAll(async () => {
+  await engine.disconnect();
+});
+
+beforeEach(async () => {
+  await resetPgliteState(engine);
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-dream-stamp-'));
   gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-dream-stamp-home-'));
 }, 60_000);
 
-afterEach(async () => {
-  if (engine) await engine.disconnect();
+afterEach(() => {
   rmSync(brainDir, { recursive: true, force: true });
   rmSync(gbrainHome, { recursive: true, force: true });
-}, 60_000);
+});
 
 async function seedSource(id: string, archived = false): Promise<void> {
   await engine.executeRaw(
