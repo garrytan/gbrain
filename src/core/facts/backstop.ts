@@ -157,6 +157,52 @@ export async function runFactsBackstop(
 
   // --- Mode dispatch ---
   if (mode === 'queue') {
+    // Local patch 2026-06-11: in a one-shot CLI process the in-process queue
+    // is doomed — cli.ts's exit drain aborts the in-flight chat after ~1-2s,
+    // so every CLI capture logged `pipeline_error: [chat(...)] The operation
+    // was aborted.` and extracted nothing. Submit a durable facts-absorb
+    // minion job for the long-lived jobs worker instead. Falls through to
+    // the in-process queue if durable submission fails (old schema, no
+    // minions infra), preserving prior behavior + absorb-log visibility.
+    const { isShortLivedCliProcess } = await import('./cli-process-mode.ts');
+    if (isShortLivedCliProcess()) {
+      try {
+        const { MinionQueue } = await import('../minions/queue.ts');
+        const { createHash } = await import('node:crypto');
+        const contentHash = createHash('sha256')
+          .update(parsedPage.compiled_truth)
+          .digest('hex')
+          .slice(0, 16);
+        const minions = new MinionQueue(ctx.engine);
+        await minions.add(
+          'facts-absorb',
+          {
+            slug: parsedPage.slug,
+            sourceId: ctx.sourceId,
+            source: ctx.source,
+            sessionId: ctx.sessionId,
+            notabilityFilter: ctx.notabilityFilter ?? 'all',
+            visibility: ctx.visibility ?? 'private',
+            ...(ctx.model ? { model: ctx.model } : {}),
+          },
+          {
+            queue: 'default',
+            // Content-hash key: re-submits after edits, dedups rapid
+            // identical writes (idempotent ON CONFLICT returns existing row).
+            idempotency_key: `facts-absorb:${ctx.sourceId}:${parsedPage.slug}:${contentHash}`,
+            max_attempts: 3,
+            timeout_ms: 180_000,
+          },
+        );
+        return { mode: 'queue', enqueued: true, queueDepth: 0 };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnOnce(
+          'facts-absorb-job-submit',
+          `[facts] durable facts-absorb submit failed (${msg}); falling back to in-process queue`,
+        );
+      }
+    }
     const { getFactsQueue } = await import('./queue.ts');
     const queue = getFactsQueue();
     const enqueued = queue.enqueue(async (signal) => {
@@ -453,6 +499,32 @@ async function runPipelineWithBody(
       // every fact in this entity group as not-inserted (no fact_id
       // returned). Do NOT fall through to legacy DB-only — that
       // would write rows to a DB index whose fence is broken.
+      continue;
+    }
+    if (result.stubGuardBlocked) {
+      // v0.34.5: writeFactsToFence refused to spawn a phantom
+      // unprefixed entity page (e.g. `jared.md` at brain root).
+      // Route these facts to the legacy DB-only path so they
+      // aren't dropped — the slug stays attached but no markdown
+      // file is created.
+      for (const { f } of group) {
+        const newFact: NewFact = {
+          fact: f.fact,
+          kind: f.kind,
+          entity_slug: slug,
+          visibility,
+          notability: f.notability,
+          source: f.source,
+          source_session: f.source_session ?? null,
+          confidence: f.confidence,
+          embedding: f.embedding ?? null,
+        };
+        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed entity slugs (no fenceable page)
+        fact_ids.push(legacyResult.id);
+        if (legacyResult.status === 'inserted') inserted += 1;
+        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
+        else superseded += 1;
+      }
       continue;
     }
     if (result.legacyFallback) {

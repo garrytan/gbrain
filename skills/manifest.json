@@ -60,6 +60,11 @@
       "description": "Brain-first lookup, read-enrich-write loop, source attribution, ambient enrichment. The core read/write cycle."
     },
     {
+      "name": "capture",
+      "path": "capture/SKILL.md",
+      "description": "Single human-facing entrypoint for ingestion. Routes through put_page (local) or MCP (thin-client); replaces put-page-vs-commit-vs-autopilot confusion with one verb."
+    },
+    {
       "name": "idea-ingest",
       "path": "idea-ingest/SKILL.md",
       "description": "Ingest links, articles, tweets, and ideas into the brain with analysis and entity cross-linking."
@@ -140,6 +145,11 @@
       "description": "Unified Minions skill for deterministic shell jobs and LLM subagent orchestration. Submit, monitor, steer, pause/resume, replay. Replaces the older gbrain-jobs routing intent and sessions_spawn for durable observable background work."
     },
     {
+      "name": "schema-author",
+      "path": "schema-author/SKILL.md",
+      "description": "Evolve the active schema pack. Add page types, propose new types from a corpus scan, backfill page.type via sync. Wraps the 14 gbrain schema CLI verbs + 9 MCP ops shipped in v0.40.7.0."
+    },
+    {
       "name": "skillify",
       "path": "skillify/SKILL.md",
       "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with gbrain check-resolvable gives user-controllable auto-skill-creation."
@@ -150,9 +160,19 @@
       "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
     },
     {
+      "name": "skillpack-harvest",
+      "path": "skillpack-harvest/SKILL.md",
+      "description": "Editorial workflow for lifting a proven skill from a host repo back into gbrain. Pairs with `gbrain skillpack harvest` CLI. Drives the genericization checklist that scrubs fork-specific names + real entities before files land in gbrain core."
+    },
+    {
       "name": "smoke-test",
       "path": "smoke-test/SKILL.md",
       "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
+    },
+    {
+      "name": "gbrain-upgrade",
+      "path": "gbrain-upgrade/SKILL.md",
+      "description": "Keep gbrain current: act on the UPGRADE_AVAILABLE marker per self_upgrade.mode (notify prompt or silent auto)"
     },
     {
       "name": "book-mirror",
@@ -173,6 +193,11 @@
       "name": "concept-synthesis",
       "path": "concept-synthesis/SKILL.md",
       "description": "Deduplicate and synthesize raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff), tracing idea evolution across sources over time."
+    },
+    {
+      "name": "idea-lineage",
+      "path": "idea-lineage/SKILL.md",
+      "description": "Trace one idea's evolution through the brain: first mention, best articulation, reversals, contradictions, abandoned branches, related concepts, and current live version."
     },
     {
       "name": "perplexity-research",
@@ -213,6 +238,31 @@
       "name": "functional-area-resolver",
       "path": "functional-area-resolver/SKILL.md",
       "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."
+    },
+    {
+      "name": "gbrain-advisor",
+      "path": "gbrain-advisor/SKILL.md",
+      "description": "Proactive 'make the most of gbrain' coaching. Runs gbrain advisor on a cadence and pings the user with the top high-leverage actions for their brain. Read-only; always asks before fixing."
+    },
+    {
+      "name": "brain-taxonomist",
+      "path": "brain-taxonomist/SKILL.md",
+      "description": "Filing gate consulted before every brain page write. Reads the active schema pack via `gbrain schema show --json`; emits a recommended filing path with reasoning."
+    },
+    {
+      "name": "eiirp",
+      "path": "eiirp/SKILL.md",
+      "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
+    },
+    {
+      "name": "schema-unify",
+      "path": "schema-unify/SKILL.md",
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+    },
+    {
+      "name": "skill-optimizer",
+      "path": "skill-optimizer/SKILL.md",
+      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
     }
   ],
   "dependencies": {

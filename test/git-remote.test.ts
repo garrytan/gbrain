@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   GIT_SSRF_FLAGS,
+  GIT_SSRF_SUBCOMMAND_FLAGS,
   parseRemoteUrl,
   RemoteUrlError,
   cloneRepo,
@@ -81,11 +82,22 @@ const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
 // ---------------------------------------------------------------------------
 
 describe('GIT_SSRF_FLAGS', () => {
-  test('exact shape — codex SSRF lockdown', () => {
+  test('exact shape — global -c config flags only (spread BEFORE the verb)', () => {
     expect([...GIT_SSRF_FLAGS]).toEqual([
       '-c', 'http.followRedirects=false',
       '-c', 'protocol.file.allow=never',
       '-c', 'protocol.ext.allow=never',
+    ]);
+  });
+});
+
+describe('GIT_SSRF_SUBCOMMAND_FLAGS', () => {
+  test('exact shape — subcommand-level flags only (spread AFTER the verb)', () => {
+    // v0.34 fix wave: --no-recurse-submodules is a clone/pull subcommand
+    // flag, not a global flag. Real git exits 129 with "unknown option"
+    // when it appears before the verb. The pre-v0.34 single-constant
+    // spread baked the bug in.
+    expect([...GIT_SSRF_SUBCOMMAND_FLAGS]).toEqual([
       '--no-recurse-submodules',
     ]);
   });
@@ -220,7 +232,7 @@ describe('parseRemoteUrl — CGNAT 100.64/10 (Tailscale)', () => {
 // ---------------------------------------------------------------------------
 
 describe('cloneRepo', () => {
-  test('places --no-recurse-submodules after clone for Git 2.39 compatibility', async () => {
+  test('happy path: invokes git with GIT_SSRF_FLAGS + --depth=1 + url + dest', async () => {
     const dest = join(FAKE_GIT_DIR, 'clone-target');
     rmSync(dest, { recursive: true, force: true });
     await withEnv({ PATH: fakePath() }, async () => {
@@ -229,16 +241,22 @@ describe('cloneRepo', () => {
     const calls = readArgvLog();
     expect(calls.length).toBe(1);
     const argv = calls[0];
-    expect(argv).toEqual([
-      '-c', 'http.followRedirects=false',
-      '-c', 'protocol.file.allow=never',
-      '-c', 'protocol.ext.allow=never',
-      'clone',
-      '--no-recurse-submodules',
-      '--depth=1',
-      'https://example.com/repo',
-      dest,
-    ]);
+    // Global -c config flags must appear BEFORE the 'clone' verb.
+    expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
+    expect(argv).toContain('clone');
+    expect(argv).toContain('--depth=1');
+    expect(argv).toContain('https://example.com/repo');
+    expect(argv[argv.length - 1]).toBe(dest);
+    // v0.34 fix wave: subcommand flags MUST appear after the verb. Real
+    // git rejects `git --no-recurse-submodules clone ...` with exit 129.
+    // The fake-git harness returned 0 for any argv shape, so this
+    // position-anchored assertion is the structural regression test.
+    const cloneIdx = argv.indexOf('clone');
+    expect(cloneIdx).toBeGreaterThan(-1);
+    for (const subFlag of GIT_SSRF_SUBCOMMAND_FLAGS) {
+      const flagIdx = argv.indexOf(subFlag);
+      expect(flagIdx).toBeGreaterThan(cloneIdx);
+    }
   });
 
   test('depth=0 means no --depth flag (full clone)', async () => {
@@ -301,22 +319,25 @@ describe('cloneRepo', () => {
 // ---------------------------------------------------------------------------
 
 describe('pullRepo', () => {
-  test('places --no-recurse-submodules after pull for Git 2.39 compatibility', async () => {
+  test('happy path: invokes git -C path with GIT_SSRF_FLAGS + pull --ff-only', async () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
     await withEnv({ PATH: fakePath() }, async () => {
       pullRepo(repo);
     });
     const argv = readArgvLog()[0];
-    expect(argv).toEqual([
-      '-C', repo,
-      '-c', 'http.followRedirects=false',
-      '-c', 'protocol.file.allow=never',
-      '-c', 'protocol.ext.allow=never',
-      'pull',
-      '--no-recurse-submodules',
-      '--ff-only',
-    ]);
+    expect(argv[0]).toBe('-C');
+    expect(argv[1]).toBe(repo);
+    expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
+    expect(argv).toContain('pull');
+    expect(argv).toContain('--ff-only');
+    // v0.34 fix wave: subcommand flag position assertion.
+    const pullIdx = argv.indexOf('pull');
+    expect(pullIdx).toBeGreaterThan(-1);
+    for (const subFlag of GIT_SSRF_SUBCOMMAND_FLAGS) {
+      const flagIdx = argv.indexOf(subFlag);
+      expect(flagIdx).toBeGreaterThan(pullIdx);
+    }
     rmSync(repo, { recursive: true, force: true });
   });
 

@@ -7,7 +7,6 @@
 // 1024-dim vector comes back with sane shape.
 
 import { describe, expect, test, beforeAll, afterEach } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { configureGateway, embedMultimodal, resetGateway } from '../../src/core/ai/gateway.ts';
 
 const HAS_KEY = !!process.env.VOYAGE_API_KEY;
@@ -26,11 +25,11 @@ describe.if(HAS_KEY)('voyage-multimodal-3 (real API, gated VOYAGE_API_KEY)', () 
   });
 
   test('embeds the tiny PNG fixture into a 1024-dim vector', async () => {
-    // Reuse the Phase 1 fixture (the AVIF is fine for an embed call; Voyage
-    // accepts data URLs of common image types).
-    const buf = readFileSync('test/fixtures/images/tiny.avif');
-    const data = buf.toString('base64');
-    const out = await embedMultimodal([{ kind: 'image_base64', data, mime: 'image/avif' }]);
+    // Canonical 1×1 transparent PNG inlined as base64 (Voyage rejects AVIF
+    // even though its docs imply broad support; PNG/JPEG/WebP are the actually
+    // accepted set). No filesystem dependency keeps this test self-contained.
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAUAAarVyFEAAAAASUVORK5CYII=';
+    const out = await embedMultimodal([{ kind: 'image_base64', data, mime: 'image/png' }]);
     expect(out.length).toBe(1);
     expect(out[0]).toBeInstanceOf(Float32Array);
     expect(out[0].length).toBe(1024);

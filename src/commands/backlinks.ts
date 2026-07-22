@@ -100,9 +100,20 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
   for (const page of allPages) {
     const refs = extractEntityRefs(page.content, page.relPath);
     const sourceFilename = basename(page.relPath);
+    // LOCAL PATCH (paolo, 2026-05-12): dedupe (source, target) pairs within
+    // a single source page. extractEntityRefs returns one EntityRef per
+    // occurrence, so a source page that mentions the same target N times
+    // produced N identical gaps → N duplicate "Referenced in" lines on the
+    // target. The per-ref `hasBacklink(target.content, ...)` check reads a
+    // stale snapshot (target.content is frozen at this scope), so every
+    // iteration sees the same "no backlink yet" state and pushes another
+    // gap. Tracking seen target slugs per source caps gaps at one per pair.
+    const seen = new Set<string>();
 
     for (const ref of refs) {
       const targetSlug = `${ref.dir}/${ref.slug}`;
+      if (seen.has(targetSlug)) continue;
+      seen.add(targetSlug);
       const target = pagesBySlug.get(targetSlug);
       if (!target) continue; // target page doesn't exist
 

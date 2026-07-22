@@ -200,6 +200,12 @@ export interface MinionJobContext {
   attempts_made: number;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
+  /** Absolute wall-clock deadline (epoch ms) from the claim-time `timeout_at` stamp,
+   *  or null when the job has no per-job timeout. This is the DB's ground truth —
+   *  the same instant handleTimeouts() dead-letters against — so handlers that
+   *  spawn bounded sub-work (e.g. autopilot-cycle's subagent phases) can budget
+   *  from the REMAINING time instead of a fixed constant that may exceed it. */
+  deadlineAtMs: number | null;
   /** AbortSignal that fires only on worker process SIGTERM/SIGINT. Handlers sensitive
    *  to deploy restarts (e.g. the shell handler, which must run a SIGTERM → 5s → SIGKILL
    *  sequence on its child) listen to this in addition to `signal`. Most handlers can
@@ -412,6 +418,12 @@ export interface SubagentHandlerData {
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
   /**
+   * Per-turn max output tokens (#2778). Resolution: this field →
+   * `agent.max_output_tokens` config → 8192 default. The pre-#2778
+   * hardcoded 4096 made pages >~12KB unwritable via put_page.
+   */
+  max_tokens?: number;
+  /**
    * Whitelist of tool names the agent may call. MUST be a subset of the
    * derived registry names — invalid entries are rejected at tool-dispatch
    * time, not silently ignored. Empty array = no tools.
@@ -449,6 +461,49 @@ export interface SubagentHandlerData {
    * and direct CLI submitters set it.
    */
   allowed_slug_prefixes?: string[];
+  /**
+   * Brain source the subagent's tool calls are scoped to (#1586).
+   *
+   * When set, every tool-call `OperationContext.sourceId` uses this value
+   * instead of the legacy 'default', so put_page writes land in the cycle's
+   * resolved source. Same trust story as `allowed_slug_prefixes`:
+   * PROTECTED_JOB_NAMES gates subagent submission, so only cycle.ts and
+   * direct CLI submitters can set it. Validated via `validateSourceId` at
+   * tool-registry build time.
+   */
+  source_id?: string;
+  /**
+   * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
+   * that `buildSystemPrompt()` splices into `system`. Default behavior
+   * (omitted or false) prepends a deterministic preamble listing each
+   * tool's name + usage_hint. Set to `true` to keep `system` byte-for-byte
+   * as provided.
+   *
+   * Use when the caller has hand-tuned a complete system prompt for a
+   * specific subagent (no benefit from auto-generated guidance, prompt
+   * cache hits ride entirely on the caller-supplied prefix).
+   */
+  system_no_tool_preamble?: boolean;
+  /**
+   * v0.41 E6 — opt OUT of classifier-gated auto-resubmit on terminal
+   * failures. Default behavior (omitted or false) runs the
+   * `RECOVERABLE_CLUSTERS` self-fix path when the failure classifies as
+   * one of {`prompt_too_long`, `tool_schema_mismatch`, `malformed_json`}.
+   * Set true to disable per-job (useful for graders / probes where a
+   * retry would muddy the signal).
+   */
+  no_self_fix?: boolean;
+  /**
+   * v0.41 E6 — internal marker set by `submitSelfFixChild` so the
+   * chain-depth walker can count self-fix ancestors. Counter starts at
+   * 0 on a fresh user-submitted job; increments by 1 per chain hop.
+   */
+  is_self_fix_child?: boolean;
+  /**
+   * v0.41 E6 — which classifier bucket triggered this self-fix child.
+   * Read by audit + diagnostic surfaces (jobs get / dashboard).
+   */
+  self_fix_cluster?: string;
 }
 
 /**
@@ -499,6 +554,20 @@ export interface ToolDef {
   input_schema: Record<string, unknown>;
   idempotent: boolean;
   execute(input: unknown, ctx: ToolCtx): Promise<unknown>;
+  /**
+   * v0.41 Approach C: one-line hint surfaced verbatim in the subagent
+   * system prompt's tool preamble. Tells the model WHEN to use this tool.
+   * The `description` tells the model HOW; the `usage_hint` tells WHEN.
+   *
+   * Field-report case: a `shell` tool sat in the registry and the subagent
+   * never used it because nothing told the model "to write a file, use
+   * shell." Per-tool hints surface that directly. Plugin authors get this
+   * affordance for free.
+   *
+   * Optional — omitted tools just don't get a hint line. Must be a single
+   * line (no embedded newlines) so the rendered preamble stays scannable.
+   */
+  usage_hint?: string;
 }
 
 /**
@@ -516,6 +585,7 @@ export type ContentBlock =
 export type SubagentStopReason =
   | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
   | 'max_turns'   // hit max_turns budget before end_turn
+  | 'max_tokens'  // final turn hit the output-token cap — result text is TRUNCATED (#2778)
   | 'refusal'     // detected via stop_reason + content shape
   | 'error';      // unrecoverable (empty response retry exhausted, etc.)
 

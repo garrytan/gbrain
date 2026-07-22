@@ -163,12 +163,17 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     }
   });
 
-  it('finds skills via findRepoRoot when cwd is inside a repo (no --skills-dir)', () => {
+  it('finds skills via cwd_walk_up when cwd is inside a repo (no --skills-dir)', () => {
     // Running from this test file — we're inside the real gbrain repo.
+    // v0.33 added the cwd_walk_up tier ahead of repo_root, so the same
+    // skills/ dir is matched via the broader (no gbrain-shape gate)
+    // path. Behavior unchanged — source label updated. The repo_root
+    // tier is now functionally subsumed; kept in the type union for
+    // back-compat. See src/core/repo-root.ts.
     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
     expect(r.error).toBeNull();
     expect(r.dir).toMatch(/\/skills$/);
-    expect(r.source).toBe('repo_root');
+    expect(r.source).toBe('cwd_walk_up');
   });
 
   it('REGRESSION-GATE: --skills-dir override takes precedence over OpenClaw env auto-detection', () => {
@@ -314,9 +319,13 @@ describe('gbrain check-resolvable CLI — integration', () => {
   });
 
   it('exits 1 when fixture has an error-level unreachable skill', () => {
-    // "alpha" is in manifest but not resolver → unreachable (error)
+    // v0.41.11 contract change: a skill is unreachable only when BOTH
+    // surfaces are empty — no frontmatter `triggers:` AND no RESOLVER.md
+    // row. The prior fixture (`triggers: ['alpha']`, `inResolver: false`)
+    // is now reachable via frontmatter auto-registration, so we drop
+    // triggers and the resolver row to genuinely simulate unreachable.
     const skillsDir = makeFixture(
-      [{ name: 'alpha', triggers: ['alpha'], inResolver: false }],
+      [{ name: 'alpha', inResolver: false }],
       created,
     );
     const r = run(['--json', '--skills-dir', skillsDir]);

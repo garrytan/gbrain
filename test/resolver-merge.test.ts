@@ -76,11 +76,17 @@ describe('checkResolvable merges resolver files', () => {
     skillsDir = join(workspace, 'skills');
     mkdirSync(skillsDir, { recursive: true });
 
-    // Create 3 skills on disk
+    // Create 3 skills on disk WITHOUT frontmatter triggers — these
+    // tests exercise the legacy RESOLVER.md-only authority path. The
+    // v0.41.11 auto-registration path is covered by the test below
+    // ("with frontmatter triggers only → all 3 reachable via
+    // auto-registration").
     for (const name of ['alpha', 'beta', 'gamma']) {
       const skillDir = join(skillsDir, name);
       mkdirSync(skillDir, { recursive: true });
-      writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${name}\ntriggers:\n  - "${name} trigger"\n---\n# ${name}\n`);
+      // Name-only frontmatter; no triggers: so auto-registration is a
+      // no-op for these skills and RESOLVER.md is the sole authority.
+      writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${name}\n---\n# ${name}\n`);
     }
   });
 
@@ -94,6 +100,30 @@ describe('checkResolvable merges resolver files', () => {
     expect(report.summary.reachable).toBe(1);
     expect(report.summary.unreachable).toBe(2);
     rmSync(join(skillsDir, 'RESOLVER.md'));
+  });
+
+  it('v0.41.11: skills with frontmatter triggers are auto-registered (no RESOLVER.md needed)', () => {
+    // Rewrite the 3 skills with frontmatter triggers and assert
+    // checkResolvable sees all 3 as reachable without ANY RESOLVER.md
+    // or AGENTS.md present. This is the new structural contract:
+    // frontmatter is authoritative.
+    for (const name of ['alpha', 'beta', 'gamma']) {
+      writeFileSync(
+        join(skillsDir, name, 'SKILL.md'),
+        `---\nname: ${name}\ntriggers:\n  - "${name} trigger"\n---\n# ${name}\n`,
+      );
+    }
+    const report = checkResolvable(skillsDir);
+    expect(report.summary.reachable).toBe(3);
+    expect(report.summary.unreachable).toBe(0);
+    // Restore name-only frontmatter so subsequent tests in this
+    // describe block see the legacy RESOLVER.md-only setup.
+    for (const name of ['alpha', 'beta', 'gamma']) {
+      writeFileSync(
+        join(skillsDir, name, 'SKILL.md'),
+        `---\nname: ${name}\n---\n# ${name}\n`,
+      );
+    }
   });
 
   it('with skills/RESOLVER.md (1 skill) + ../AGENTS.md (2 more) → all 3 reachable', () => {

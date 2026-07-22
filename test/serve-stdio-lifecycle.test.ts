@@ -1,6 +1,13 @@
 import { describe, test, expect } from 'bun:test';
 import { EventEmitter } from 'events';
-import { runServe, type ServeOptions } from '../src/commands/serve';
+import { spawnSync } from 'node:child_process';
+import {
+  runServe,
+  isPidAlive,
+  readLiveParentPid,
+  probeWatchdogAvailable,
+  type ServeOptions,
+} from '../src/commands/serve';
 import type { BrainEngine } from '../src/core/engine';
 
 // These tests cover the stdio lifecycle hooks added to runServe so that the
@@ -297,7 +304,7 @@ describe('runServe stdio lifecycle', () => {
 
     // Watchdog NOT installed — message matches behavior.
     expect(h.timers.active()).toBe(0);
-    expect(h.logs.some(l => l.includes('[gbrain serve] watchdog disabled: ps unavailable'))).toBe(true);
+    expect(h.logs.some(l => l.includes('[gbrain serve] watchdog disabled: no parent-liveness mechanism'))).toBe(true);
 
     // Sanity: the other lifecycle paths still work — the shutdown still
     // funnels through stdin EOF / signals, just not via the watchdog.
@@ -499,5 +506,58 @@ describe('runServe stdio lifecycle', () => {
       expect(h.engine.disconnectCalls).toBe(1);
       expect(h.logs.some(l => l.includes('graceful exit (stdin-end)'))).toBe(true);
     });
+  });
+});
+
+// Default watchdog implementations — the platform split that decides
+// whether the watchdog can run at all. The injected-seam tests above
+// never touch these; before this suite existed, the Windows branch had
+// zero coverage and the ps-only default silently disabled the watchdog
+// on every Windows host (orphaned serve → PGLite write lock held until
+// reboot). Signal-0 works on every platform Node/Bun support, so the
+// win32 branch is exercised on POSIX CI via the platform test seam.
+describe('watchdog platform defaults', () => {
+  test('isPidAlive: our own PID is alive', () => {
+    expect(isPidAlive(process.pid)).toBe(true);
+  });
+
+  test('isPidAlive: rejects non-PIDs without probing', () => {
+    expect(isPidAlive(0)).toBe(false);
+    expect(isPidAlive(-1)).toBe(false);
+    expect(isPidAlive(1.5)).toBe(false);
+    expect(isPidAlive(NaN)).toBe(false);
+  });
+
+  test('isPidAlive: an exited child is dead', () => {
+    // Spawn a trivial child and let it exit; its PID must then probe
+    // dead. PID reuse between exit and probe is theoretically possible
+    // but the window is microseconds — acceptable for a unit test of
+    // the same mechanism the production watchdog relies on.
+    const r = spawnSync(process.execPath, ['-e', ''], { timeout: 10_000 });
+    expect(r.pid).toBeGreaterThan(0);
+    expect(isPidAlive(r.pid as number)).toBe(false);
+  });
+
+  test('readLiveParentPid(win32): reports cached ppid while parent is alive', () => {
+    // The test runner's parent (bun's spawner / the shell) is alive, so
+    // the Windows reader must report the cached ppid unchanged — a
+    // healthy tick that must NOT fire the watchdog.
+    expect(readLiveParentPid('win32')).toBe(process.ppid);
+  });
+
+  test('probeWatchdogAvailable(win32): signal-0 mechanism is always available', () => {
+    // No external binary involved — the probe verifies signal-0 against
+    // our own (always-alive) PID. This is the line that un-disables the
+    // watchdog on Windows hosts.
+    expect(probeWatchdogAvailable('win32')).toBe(true);
+  });
+
+  test('readLiveParentPid(default platform): returns a usable integer PID', () => {
+    // POSIX: live kernel PPID via ps (or the cached-ppid fallback).
+    // Windows: liveness-checked cached ppid. Either way the watchdog
+    // install site needs an integer >= 0.
+    const n = readLiveParentPid();
+    expect(Number.isInteger(n)).toBe(true);
+    expect(n).toBeGreaterThanOrEqual(0);
   });
 });

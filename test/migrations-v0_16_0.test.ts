@@ -54,8 +54,9 @@ describe('v0.16.0 migration', () => {
     ]);
   });
 
-  test('phaseASchema skips on dry-run', () => {
-    const r = __testing.phaseASchema({ dryRun: true, yes: true, noAutopilotInstall: true });
+  test('phaseASchema skips on dry-run', async () => {
+    // v0.41.37.0 #1605: phaseASchema is now async (in-process runMigrateOnlyCore).
+    const r = await __testing.phaseASchema({ dryRun: true, yes: true, noAutopilotInstall: true });
     expect(r.status).toBe('skipped');
     expect(r.detail).toBe('dry-run');
   });

@@ -10,6 +10,7 @@ import { openai } from './openai.ts';
 import { google } from './google.ts';
 import { anthropic } from './anthropic.ts';
 import { ollama } from './ollama.ts';
+import { openrouter } from './openrouter.ts';
 import { voyage } from './voyage.ts';
 import { litellmProxy } from './litellm-proxy.ts';
 import { deepseek } from './deepseek.ts';
@@ -20,22 +21,33 @@ import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
+import { zeroentropyai } from './zeroentropyai.ts';
+import { llamaServerReranker } from './llama-server-reranker.ts';
+import { moonshot } from './moonshot.ts';
+import { mistral } from './mistral.ts';
+import { nvidia } from './nvidia.ts';
 
 const ALL: Recipe[] = [
   openai,
   google,
   anthropic,
   ollama,
+  openrouter,
   voyage,
   litellmProxy,
   deepseek,
   groq,
   together,
   llamaServer,
+  llamaServerReranker,
   minimax,
   dashscope,
   zhipu,
   azureOpenAI,
+  zeroentropyai,
+  moonshot,
+  mistral,
+  nvidia,
 ];
 
 /** Map from `provider:id` key to recipe. */

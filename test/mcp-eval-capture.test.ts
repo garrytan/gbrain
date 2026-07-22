@@ -36,6 +36,33 @@ beforeAll(async () => {
     compiled_truth: 'Alice Example for op-layer capture tests.',
   };
   await engine.putPage('people/alice-example', page);
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name) VALUES ('testsrc', 'Test Source') ON CONFLICT DO NOTHING`,
+  );
+  await engine.putPage('notes/source-override-default', {
+    type: 'note',
+    title: 'Default Source Override',
+    compiled_truth: 'sourceoverrideunique belongs to the default source.',
+  });
+  await engine.upsertChunks('notes/source-override-default', [
+    {
+      chunk_index: 0,
+      chunk_text: 'sourceoverrideunique belongs to the default source.',
+      chunk_source: 'compiled_truth',
+    },
+  ]);
+  await engine.putPage('notes/source-override-testsrc', {
+    type: 'note',
+    title: 'Test Source Override',
+    compiled_truth: 'sourceoverrideunique belongs to the explicit source.',
+  }, { sourceId: 'testsrc' });
+  await engine.upsertChunks('notes/source-override-testsrc', [
+    {
+      chunk_index: 0,
+      chunk_text: 'sourceoverrideunique belongs to the explicit source.',
+      chunk_source: 'compiled_truth',
+    },
+  ], { sourceId: 'testsrc' });
 });
 
 afterAll(async () => {
@@ -147,12 +174,29 @@ describe('op-layer capture — query', () => {
     const rows = await engine.listEvalCandidates();
     expect(rows).toHaveLength(0);
   });
+
+  test('explicit source_id overrides ctx.sourceId for query retrieval', async () => {
+    const ctx = makeCtx({
+      sourceId: 'default',
+      config: makeConfig({ capture: false }),
+    });
+
+    const results = await queryOp.handler(ctx, {
+      query: 'sourceoverrideunique',
+      source_id: 'testsrc',
+      expand: false,
+      use_cache: false,
+    }) as Array<{ slug: string }>;
+
+    expect(results.map(r => r.slug)).toContain('notes/source-override-testsrc');
+    expect(results.map(r => r.slug)).not.toContain('notes/source-override-default');
+  });
 });
 
 describe('op-layer capture — search', () => {
   const searchOp = operations.find(o => o.name === 'search')!;
 
-  test('captures search call with tool_name="search" and vector_enabled=false', async () => {
+  test('captures search call with tool_name="search" (cheap-hybrid contract, T4/D4)', async () => {
     const ctx = makeCtx();
     await searchOp.handler(ctx, { query: 'alice' });
     await waitForCapture();
@@ -161,9 +205,12 @@ describe('op-layer capture — search', () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect(row.tool_name).toBe('search');
-    expect(row.vector_enabled).toBe(false); // search never runs vector
-    expect(row.expand_enabled).toBeNull(); // no expansion concept for search
-    expect(row.detail_resolved).toBeNull();
+    // T4/D4: search is now cheap-hybrid (vector+keyword+RRF). With no embedding
+    // provider in this test it falls open to keyword (vector_enabled=false), but
+    // expansion is structurally OFF for `search` (the cheap-hybrid contract) —
+    // false, not null, because search now HAS an expansion concept.
+    expect(row.vector_enabled).toBe(false); // no embedding provider configured in test
+    expect(row.expand_enabled).toBe(false); // cheap-hybrid: expansion always off
   });
 
   test('respects eval.capture=false off-switch', async () => {

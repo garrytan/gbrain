@@ -12,6 +12,11 @@
  */
 
 import { CJK_SLUG_CHARS } from './cjk.ts';
+// v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
+// aliases existsSync as `_existsSync` for other purposes; the top-of-file
+// import keeps the pruneDir helper's deps near its callsite.
+import { existsSync, statSync } from 'fs';
+import { join as pathJoin } from 'path';
 
 export interface SyncManifest {
   added: string[];
@@ -74,6 +79,18 @@ const CODE_EXTENSIONS = new Set<string>([
   '.json',
   '.yaml', '.yml',
   '.toml',
+  // v0.36.x #878: Terraform / HCL. Closes the silent-data-loss bug where
+  // Terraform repos were invisible to `gbrain sync --strategy code`.
+  // detectCodeLanguage() returns null for these so they chunk via the
+  // recursive chunker (no tree-sitter grammar), which is the correct
+  // fallback — same path as toml / yaml without language-specific AST.
+  '.tf', '.tfvars', '.hcl',
+  // v0.41 D2 wave (#1173): SQL via tree-sitter-sql. DerekStride grammar
+  // chunks DDL (CREATE TABLE/FUNCTION/VIEW/INDEX) and DML (SELECT/INSERT/
+  // UPDATE/DELETE) as one chunk per statement. DDL chunks carry
+  // symbol_name + symbol_type populated for code-def; DML chunks emit
+  // unnamed so they don't pollute symbol search.
+  '.sql',
 ]);
 
 /**
@@ -202,10 +219,157 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
-function matchesAnyGlob(path: string, patterns?: string[]): boolean {
+export function matchesAnyGlob(path: string, patterns?: string[]): boolean {
   if (!patterns || patterns.length === 0) return false;
   const normalized = path.replace(/\\/g, '/');
   return patterns.some((pattern) => globToRegex(pattern).test(normalized));
+}
+
+/**
+ * Directory names that walkers must NEVER descend into. Used at descent
+ * time (before recursion) to prune entire subtrees — saves the IO cost of
+ * walking thousands of vendor / generated / hidden files only to filter
+ * them at file-emit time. Used by every walker in gbrain (sync, extract,
+ * transcript-discovery, etc.).
+ *
+ * Pattern: dirname matching at single path-segment granularity. Walkers
+ * call `pruneDir(entry.name)` on each subdirectory before recursing.
+ *
+ * `node_modules` lacks a leading dot so the dot-prefix exclusion in
+ * isSyncable below doesn't catch it; explicit entry here closes the
+ * latent walker bug (#923, #202).
+ */
+const PRUNE_DIR_NAMES = new Set<string>([
+  'node_modules',
+  // Dependency / build-output trees that are git-ignored on virtually every
+  // repo and never contain hand-authored source worth indexing. `vendor`
+  // (PHP Composer / Go / Ruby bundle), `dist` + `build` (compiled output).
+  // Closes the silent-pollution bug where a Laravel/PHP repo's full code sync
+  // walked ~50k `vendor/` files (#1483 / #1159 / maintainer #1942).
+  'vendor',
+  'dist',
+  'build',
+  // Python venv: vendored dependency tree, the `node_modules` analogue (#2020).
+  // Like `node_modules` it lacks a leading dot so isSyncable's dot-prefix
+  // exclusion misses it; explicit entry keeps incremental sync consistent
+  // with the first-sync walker in commands/import.ts.
+  'venv',
+  '.raw',
+  // NOTE (#2404): `'ops'` used to be in this list (a v0.2.0-era carve-out for
+  // one brain layout). Matching the bare segment pruned EVERY user `ops/`
+  // directory at any depth — sync silently deleted `ops/*` pages and never
+  // imported `ops/*` files, while the bundled daily-task-manager skill
+  // prescribes `ops/tasks` as its canonical page. `ops/` is ordinary content;
+  // do NOT re-add it. Only generated/vendored trees belong here.
+]);
+
+/**
+ * Should this directory be descended into? Returns `false` for vendor / hidden /
+ * generated dirs that walkers should skip BEFORE recursing. Catches
+ * `node_modules` (latent bug — no leading dot), dot-prefix dirs (`.git`,
+ * `.obsidian`, `.raw`, `.cache`, etc. via the leading-dot heuristic), and the
+ * explicit `PRUNE_DIR_NAMES` set above.
+ *
+ * `name` is a single path segment (basename of the directory entry), NOT a
+ * full path. Walkers consult this on each subdirectory entry during recursion.
+ *
+ * v0.37.7.0 #1169: when callers pass `parentDir`, ALSO skip git submodule
+ * directories (detected by the presence of `.git` as a FILE — not a
+ * directory — inside the candidate dir). The `parentDir` arg is optional so
+ * existing callers stay back-compat; new callers (sync walker, extract
+ * walker) thread it through.
+ */
+export function pruneDir(name: string, parentDir?: string): boolean {
+  if (!name) return true;
+  if (name.startsWith('.')) return false;
+  if (PRUNE_DIR_NAMES.has(name)) return false;
+  // `.raw` is the literal directory name; `*.raw` is the gbrain sidecar
+  // convention (e.g. `people/pedro.raw/` holds raw source for pedro.md).
+  // Both forms should be skipped at descent time.
+  if (name.endsWith('.raw')) return false;
+  // Submodule detection: a git submodule directory contains `.git` as
+  // a FILE (a "gitfile" pointing into the parent's .git/modules/...),
+  // not a directory. Best-effort: if we can't stat (e.g. cross-platform
+  // permission edge), fall through and treat as a normal dir.
+  if (parentDir) {
+    try {
+      const gitPath = pathJoin(parentDir, name, '.git');
+      if (existsSync(gitPath) && statSync(gitPath).isFile()) {
+        return false;
+      }
+    } catch {
+      // Stat failed — descend normally rather than silently exclude.
+    }
+  }
+  return true;
+}
+
+/**
+ * Discriminator for WHY a path is not syncable. Returned by `unsyncableReason`
+ * so the sync cleanup loop in `commands/sync.ts` can distinguish "metafile we
+ * intentionally exclude" from "user removed this file from the strategy".
+ *
+ * v0.41.13 (#1433): pre-fix, the cleanup loop in performSync treated all
+ * unsyncable-modified paths the same and DELETED any pre-existing page for
+ * them. That silently dropped `log.md` / `schema.md` / `README.md` pages
+ * that had been indexed by older gbrain versions (or via direct put_page).
+ * The fix guards that loop on `unsyncableReason(...) === 'metafile'` and
+ * preserves those rows.
+ */
+export type SyncableReason =
+  | 'metafile'
+  | 'strategy'
+  | 'pruned-dir'
+  | 'include-glob-miss'
+  | 'exclude-glob-hit';
+
+/**
+ * Canonical metafile basenames the markdown sync strategy intentionally
+ * skips. Exported so the cleanup-loop guard in `commands/sync.ts` can
+ * surface them in user-facing logs / docs without re-declaring the list.
+ *
+ * These files are append-only domain logs / index pages / boilerplate
+ * READMEs / the master filing decision-tree — not typed brain pages — by
+ * convention. A user who genuinely wants to index one of these basenames as
+ * a page should rename it.
+ *
+ * `RESOLVER.md` is the brain's master routing/decision-tree config file. The
+ * recommended-schema docs group it with `schema.md` / `index.md` / `log.md`
+ * as a structural document ("a document … plus schema.md and RESOLVER.md …
+ * that tells the agent how the brain is structured"), NOT searchable content.
+ * It was the lone structural sibling missing from this list, so it leaked
+ * into the index as a content page (slug `resolver`).
+ */
+export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md'] as const;
+
+/**
+ * Internal classifier. Returns null when the path IS syncable, or a tagged
+ * SyncableReason explaining why it isn't. The single source of truth that
+ * both `isSyncable` (boolean) and `unsyncableReason` (tagged) call.
+ *
+ * Codex review caught the drift risk if `unsyncableReason` were an independent
+ * re-implementation. Funnelling both public APIs through `classifySync` means
+ * TypeScript enforces consistency at the compiler level.
+ */
+function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason | null {
+  const strategy = opts.strategy || 'markdown';
+
+  if (!isAllowedByStrategy(path, strategy)) return 'strategy';
+
+  // Skip every path segment that pruneDir would block walkers from descending
+  // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars, and
+  // vendor/generated trees (`node_modules/`, `vendor/`, …) at any depth.
+  const segments = path.split('/');
+  if (segments.some(p => !pruneDir(p))) return 'pruned-dir';
+
+  // Skip meta files that aren't pages
+  const basename = segments[segments.length - 1] || '';
+  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return 'metafile';
+
+  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return 'include-glob-miss';
+  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return 'exclude-glob-hit';
+
+  return null;
 }
 
 /**
@@ -213,28 +377,21 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
  * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
  */
 export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
-  const strategy = opts.strategy || 'markdown';
+  return classifySync(path, opts) === null;
+}
 
-  if (!isAllowedByStrategy(path, strategy)) return false;
-
-  // Skip hidden directories
-  if (path.split('/').some(p => p.startsWith('.'))) return false;
-
-  // Skip .raw/ sidecar directories
-  if (path.includes('.raw/')) return false;
-
-  // Skip meta files that aren't pages
-  const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
-  const basename = path.split('/').pop() || '';
-  if (skipFiles.includes(basename)) return false;
-
-  // Skip ops/ directory
-  if (path.startsWith('ops/')) return false;
-
-  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
-  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
-
-  return true;
+/**
+ * Companion to `isSyncable`. Returns null when the path IS syncable, or a
+ * tagged `SyncableReason` explaining why it isn't. Used by the v0.41.13
+ * #1433 cleanup guard in `commands/sync.ts` to distinguish metafile
+ * exclusions (preserve any pre-existing page) from genuine "file removed
+ * from the strategy" cases (delete the now-stale page).
+ *
+ * Routes through the same `classifySync` as `isSyncable` so the two cannot
+ * drift. Identical opts contract — callers pass whatever they pass `isSyncable`.
+ */
+export function unsyncableReason(path: string, opts: SyncableOptions = {}): SyncableReason | null {
+  return classifySync(path, opts);
 }
 
 /**
@@ -337,239 +494,42 @@ export function resolveSlugForPath(filePath: string, repoPrefix?: string): strin
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Sync failure tracking — Bug 9
+// Sync failure ledger — moved to ./sync-failure-ledger.ts (issue #1939)
 // ─────────────────────────────────────────────────────────────────
 //
-// When a sync run catches a per-file parse error (YAML with unquoted
-// colons, malformed frontmatter, etc.), we record it here instead of just
-// logging and moving on. Three goals:
-//   1. Gate the sync.last_commit bookmark advance in all three sync paths
-//      (incremental, full/runImport, `gbrain import` git continuity).
-//   2. Give users a visible record of what failed, with the commit hash
-//      they can use to re-attempt after fixing the source file.
-//   3. Let `gbrain sync --skip-failed` acknowledge a known-bad set so
-//      repos with many broken files aren't permanently stuck.
-
-import { existsSync as _existsSync, readFileSync as _readFileSync, appendFileSync as _appendFileSync, mkdirSync as _mkdirSync } from 'fs';
-import { join as _joinPath } from 'path';
-import { gbrainPath as _gbrainPath } from './config.ts';
-import { createHash as _createHash } from 'crypto';
-
-export interface SyncFailure {
-  path: string;
-  error: string;
-  /** Structured error code extracted from the error message. */
-  code?: string;
-  commit: string;
-  line?: number;
-  ts: string;
-  acknowledged?: boolean;
-  acknowledged_at?: string;
-}
-
-/**
- * Best-effort extraction of a structured error code from a sync failure
- * message. Matches known ParseValidationCode patterns (SLUG_MISMATCH,
- * YAML_PARSE, etc.) and common DB / timeout errors. Returns 'UNKNOWN'
- * when no pattern matches.
- *
- * Order matters: DB-layer errors are checked BEFORE YAML-layer ones so
- * Postgres `duplicate key value violates unique constraint` doesn't get
- * mislabeled as a YAML duplicate-key. Frontmatter patterns key off the
- * canonical messages emitted by `collectValidationErrors()` in markdown.ts.
- */
-export function classifyErrorCode(errorMsg: string): string {
-  // SLUG_MISMATCH: thrown by importFromFile() at src/core/import-file.ts:374.
-  if (/slug.*does not match|SLUG_MISMATCH/i.test(errorMsg)) return 'SLUG_MISMATCH';
-
-  // DB-layer errors come BEFORE the YAML duplicate-key check. Postgres unique-
-  // constraint violations contain "duplicate key" but are not a YAML problem.
-  if (/duplicate key value violates unique constraint|DB_DUPLICATE_KEY/i.test(errorMsg)) {
-    return 'DB_DUPLICATE_KEY';
-  }
-  if (/canceling statement due to statement timeout|STATEMENT_TIMEOUT/i.test(errorMsg)) {
-    return 'STATEMENT_TIMEOUT';
-  }
-
-  // YAML / frontmatter patterns. These match either the canonical message
-  // strings in src/core/markdown.ts (collectValidationErrors) or the literal
-  // ParseValidationCode token, so they fire whether the caller stores the
-  // message or just the code.
-  if (/YAML parse failed|YAML_PARSE/i.test(errorMsg)) return 'YAML_PARSE';
-  if (/YAMLException|duplicated mapping key|YAML_DUPLICATE_KEY/i.test(errorMsg)) {
-    return 'YAML_DUPLICATE_KEY';
-  }
-  if (/File is empty or whitespace-only|Frontmatter must start with ---|MISSING_OPEN/i.test(errorMsg)) {
-    return 'MISSING_OPEN';
-  }
-  if (/No closing --- delimiter|Heading at line .* found inside frontmatter|MISSING_CLOSE/i.test(errorMsg)) {
-    return 'MISSING_CLOSE';
-  }
-  if (/Frontmatter block is empty|EMPTY_FRONTMATTER/i.test(errorMsg)) return 'EMPTY_FRONTMATTER';
-  if (/Content contains null bytes|NULL_BYTES|null byte/i.test(errorMsg)) return 'NULL_BYTES';
-  if (/Nested double quotes|NESTED_QUOTES/i.test(errorMsg)) return 'NESTED_QUOTES';
-
-  // Generic fallbacks.
-  if (/invalid UTF-?8|INVALID_UTF8/i.test(errorMsg)) return 'INVALID_UTF8';
-
-  // v0.22.12 additions: covers the four real production sites in src/core/import-file.ts
-  // (lines 199, 347, 352, 401) that previously bucketed to UNKNOWN.
-  if (/file too large|content too large|FILE_TOO_LARGE/i.test(errorMsg)) return 'FILE_TOO_LARGE';
-  if (/skipping symlink|symlink|SYMLINK_NOT_ALLOWED/i.test(errorMsg)) return 'SYMLINK_NOT_ALLOWED';
-
-  // v0.32 takes-v2 additions: malformed fence rows + holder-grammar failures.
-  // TAKES_TABLE_MALFORMED and TAKES_ROW_NUM_COLLISION are produced by
-  // parseTakesFence (src/core/takes-fence.ts); TAKES_HOLDER_INVALID lands
-  // in v0.32 (EXP-4) when a holder doesn't match the world|brain|people/...|
-  // companies/... grammar. Wired into sync-failures.jsonl by the v0_28_0
-  // migration's phaseBBackfill (one-time backfill emission).
-  if (/TAKES_TABLE_MALFORMED|TAKES_ROW_NUM_COLLISION|TAKES_FENCE_UNBALANCED/i.test(errorMsg)) {
-    return 'TAKES_TABLE_MALFORMED';
-  }
-  if (/TAKES_HOLDER_INVALID/i.test(errorMsg)) return 'TAKES_HOLDER_INVALID';
-
-  return 'UNKNOWN';
-}
-
-/** Group failures by error code and return a sorted summary. */
-export function summarizeFailuresByCode(
-  failures: Array<{ error: string; code?: string }>,
-): Array<{ code: string; count: number }> {
-  const counts: Record<string, number> = {};
-  for (const f of failures) {
-    const code = f.code ?? classifyErrorCode(f.error);
-    counts[code] = (counts[code] ?? 0) + 1;
-  }
-  return Object.entries(counts)
-    .sort(([, a], [, b]) => b - a)
-    .map(([code, count]) => ({ code, count }));
-}
-
-/**
- * Format a code-grouped summary as a human-readable multi-line string for
- * stderr / doctor output. Accepts either raw failures (which are summarized
- * internally) or an already-summarized `{code, count}[]` shape (the return
- * value of `summarizeFailuresByCode` or `AcknowledgeResult.summary`).
- * Returns an empty string when the input is empty.
- */
-export function formatCodeBreakdown(
-  input: Array<{ error: string; code?: string }> | Array<{ code: string; count: number }>,
-): string {
-  // Distinguish by shape: summary entries have a numeric `count`. Empty array
-  // returns '' from either branch — both paths produce a 0-length join.
-  const summary =
-    input.length > 0 && typeof (input[0] as { count?: unknown }).count === 'number'
-      ? (input as Array<{ code: string; count: number }>)
-      : summarizeFailuresByCode(input as Array<{ error: string; code?: string }>);
-  return summary.map(s => `  ${s.code}: ${s.count}`).join('\n');
-}
-
-function _failuresDir(): string {
-  return _gbrainPath();
-}
-
-export function syncFailuresPath(): string {
-  return _joinPath(_failuresDir(), 'sync-failures.jsonl');
-}
-
-function _hashError(msg: string): string {
-  return _createHash('sha256').update(msg).digest('hex').slice(0, 12);
-}
-
-function _dedupKey(f: { path: string; commit: string; error: string }): string {
-  return `${f.path}|${f.commit}|${_hashError(f.error)}`;
-}
-
-/**
- * Read the failures JSONL, skipping malformed lines with a warning to stderr.
- * Returns empty array if the file doesn't exist.
- */
-export function loadSyncFailures(): SyncFailure[] {
-  const path = syncFailuresPath();
-  if (!_existsSync(path)) return [];
-  const raw = _readFileSync(path, 'utf-8');
-  const out: SyncFailure[] = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      out.push(JSON.parse(trimmed) as SyncFailure);
-    } catch {
-      console.warn(`[sync-failures] skipping malformed line: ${trimmed.slice(0, 120)}`);
-    }
-  }
-  return out;
-}
-
-/**
- * Append failure entries to the JSONL. Dedups by (path, commit, error-hash) —
- * the same file failing with the same error on the same commit writes ONCE
- * to the log, not once per sync run.
- */
-export function recordSyncFailures(
-  failures: Array<{ path: string; error: string; line?: number }>,
-  commit: string,
-): void {
-  if (failures.length === 0) return;
-  const existing = loadSyncFailures();
-  const seen = new Set(existing.map(f => _dedupKey(f)));
-
-  _mkdirSync(_failuresDir(), { recursive: true });
-  const now = new Date().toISOString();
-  for (const f of failures) {
-    const entry: SyncFailure = {
-      path: f.path,
-      error: f.error,
-      code: classifyErrorCode(f.error),
-      commit,
-      line: f.line,
-      ts: now,
-    };
-    if (seen.has(_dedupKey(entry))) continue;
-    _appendFileSync(syncFailuresPath(), JSON.stringify(entry) + '\n');
-    seen.add(_dedupKey(entry));
-  }
-}
-
-export interface AcknowledgeResult {
-  count: number;
-  summary: Array<{ code: string; count: number }>;
-}
-
-/**
- * Mark all unacknowledged failures as acknowledged. Used by
- * `gbrain sync --skip-failed`. Returns count and a structured summary
- * grouped by error code so the operator can see *why* files were skipped.
- *
- * We do not delete — acknowledged entries stay as historical record so
- * doctor can still show them under a "previously skipped" bucket.
- */
-export function acknowledgeSyncFailures(): AcknowledgeResult {
-  const entries = loadSyncFailures();
-  if (entries.length === 0) return { count: 0, summary: [] };
-  const now = new Date().toISOString();
-  let changed = 0;
-  const newlyAcked: SyncFailure[] = [];
-  const updated = entries.map(e => {
-    if (e.acknowledged) return e;
-    changed++;
-    // Backfill code for entries that predate the code field.
-    const code = e.code ?? classifyErrorCode(e.error);
-    const acked = { ...e, code, acknowledged: true, acknowledged_at: now };
-    newlyAcked.push(acked);
-    return acked;
-  });
-  if (changed === 0) return { count: 0, summary: [] };
-  _mkdirSync(_failuresDir(), { recursive: true });
-  const fd = require('fs').writeFileSync;
-  fd(syncFailuresPath(), updated.map(e => JSON.stringify(e)).join('\n') + '\n');
-  return {
-    count: changed,
-    summary: summarizeFailuresByCode(newlyAcked),
-  };
-}
-
-/** Return only unacknowledged failures. */
-export function unacknowledgedSyncFailures(): SyncFailure[] {
-  return loadSyncFailures().filter(f => !f.acknowledged);
-}
+// The failure store + bounded auto-skip valve now live in a leaf module so
+// they can be unit-tested in isolation and shared by both sync gates without
+// a circular import. Re-exported here so existing callers that
+// `await import('../core/sync.ts')` for these symbols keep working.
+export {
+  classifyErrorCode,
+  summarizeFailuresByCode,
+  formatCodeBreakdown,
+  syncFailuresPath,
+  loadSyncFailures,
+  unacknowledgedSyncFailures,
+  recordSyncFailures,
+  acknowledgeSyncFailures,
+  recordFailures,
+  clearFailures,
+  acknowledgeFailures,
+  autoSkipFailures,
+  withLedgerLock,
+  resolveAutoSkipThreshold,
+  isSkippablePath,
+  decideGateAction,
+  decideSyncFailureSeverity,
+  applySyncFailureGate,
+  DEFAULT_SOURCE_ID,
+  SENTINEL_PREFIX,
+  DEFAULT_AUTOSKIP_AFTER,
+} from './sync-failure-ledger.ts';
+export type {
+  SyncFailure,
+  SyncFailureState,
+  AcknowledgeResult,
+  GateDecision,
+  SeverityResult,
+  SyncGateInput,
+  SyncGateOutcome,
+} from './sync-failure-ledger.ts';

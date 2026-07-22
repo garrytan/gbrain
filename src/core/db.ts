@@ -8,6 +8,47 @@ let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
 
 /**
+ * #1972: hard upper bound (seconds) on a single pool `.end()` drain. postgres.js
+ * accepts `{ timeout }` but applies it internally — against PgBouncer
+ * transaction-mode the drain can still hang, and a stubbed `.end()` ignores it
+ * entirely. So `endPoolBounded` ALSO wraps each end in a gbrain-owned
+ * Promise.race and passes this value as the postgres.js hint so a healthy drain
+ * still finishes fast.
+ */
+export const POOL_END_TIMEOUT_SECONDS = 2;
+
+/**
+ * #1972: end a postgres.js pool with a gbrain-owned hard bound. Resolves as soon
+ * as `.end()` settles OR after POOL_END_TIMEOUT_SECONDS + a small slack — so
+ * teardown never hangs (the prior bare `.end()` blocked until the CLI's 10s
+ * force-exit fired, which `process.exit()`s and truncated pending stdout, e.g.
+ * #1959's relational query came back empty). Never throws: a teardown that
+ * rejects is worse than one that races past a stuck socket. The race timer is
+ * the real guarantee; `{ timeout }` just lets a healthy drain return in ms.
+ *
+ * Note callers that close MULTIPLE pools should `Promise.all` them rather than
+ * awaiting sequentially, so the per-pool bounds run concurrently instead of
+ * stacking.
+ */
+export async function endPoolBounded(
+  pool: { end: (opts?: { timeout?: number }) => Promise<void> },
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, POOL_END_TIMEOUT_SECONDS * 1000 + 500);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([
+      pool.end({ timeout: POOL_END_TIMEOUT_SECONDS }).catch(() => { /* idempotent / already-closed */ }),
+      guard,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Default pool size for Postgres connections. Users on the Supabase transaction
  * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
  * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
@@ -159,13 +200,30 @@ export function getConnection(): ReturnType<typeof postgres> {
   return sql;
 }
 
-export async function connect(config: EngineConfig, options?: EngineConnectOptions): Promise<void> {
+/**
+ * Connect the module-level singleton. Returns `true` iff THIS call created the
+ * singleton, `false` if it joined an existing one.
+ *
+ * #1471 ownership: the create-vs-join decision is made HERE, atomically. There
+ * is no `await` between the `if (sql)` null-check below and the synchronous
+ * `sql = postgres(url, opts)` assignment, so two concurrent module connects
+ * cannot both observe `sql === null` and both create. Callers store the return
+ * as their ownership token (`PostgresEngine._ownsModuleSingleton`); only the
+ * creator may later tear the singleton down. Borrowers (probe engines created
+ * while the singleton already exists) get `false` and must NOT disconnect it.
+ *
+ * Back-compat: callers that ignore the return value are unaffected.
+ */
+export async function connect(
+  config: EngineConfig,
+  options?: EngineConnectOptions,
+): Promise<boolean> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
       console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
-    return;
+    return false; // joined an existing singleton — caller is a borrower
   }
 
   const url = config.database_url;
@@ -188,6 +246,11 @@ export async function connect(config: EngineConfig, options?: EngineConnectOptio
         // Register pgvector type
         bigint: postgres.BigInt,
       },
+      // Silence postgres NOTICE-level messages by default ("relation already
+      // exists, skipping" floods stdout under idempotent CREATE statements
+      // during migrations + initSchema, and breaks stdout-parsing callers like
+      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
+      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
     };
     if (Object.keys(timeouts).length > 0) {
       opts.connection = timeouts;
@@ -208,6 +271,7 @@ export async function connect(config: EngineConfig, options?: EngineConnectOptio
     connectedUrl = url;
 
     await setSessionDefaults(sql);
+    return true; // we created the singleton — caller is the owner
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;
@@ -221,11 +285,25 @@ export async function connect(config: EngineConfig, options?: EngineConnectOptio
 }
 
 export async function disconnect(): Promise<void> {
-  if (sql) {
-    await sql.end();
-    sql = null;
-    connectedUrl = null;
-  }
+  // v0.41.25.0 (#1570) — instrument every disconnect call site so v0.41.26
+  // can identify the caller that's nulling the module singleton mid-cycle.
+  // Best-effort: audit failure must never block the actual disconnect.
+  // The audit module is lazy-imported to keep db.ts cold-path-free for
+  // tools that import db without ever calling disconnect.
+  try {
+    const { logDbDisconnect } = await import('./audit/db-disconnect-audit.ts');
+    // db.ts is always the module-singleton path by construction; no
+    // instance-pool callers go through here.
+    logDbDisconnect('postgres', 'module');
+  } catch { /* best-effort; never block disconnect on audit failure */ }
+  // #1471 (codex #6): snapshot + null the singleton BEFORE awaiting end(), so a
+  // concurrent module connect() can't observe a non-null `sql` mid-teardown and
+  // join a pool that's already closing. Mirrors the v0.41.8.0 PGLite-disconnect
+  // snapshot+early-null pattern.
+  const s = sql;
+  sql = null;
+  connectedUrl = null;
+  if (s) await endPoolBounded(s);
 }
 
 export async function initSchema(): Promise<void> {

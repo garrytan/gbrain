@@ -18,7 +18,16 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
+import {
+  assessContentSanity,
+  type OperatorLiteral,
+  DEFAULT_BYTES_WARN,
+} from '../core/content-sanity.ts';
+import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
+import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
+import type { BrainEngine } from '../core/engine.ts';
 
 export interface LintIssue {
   file: string;
@@ -37,6 +46,7 @@ const FRONTMATTER_RULE_NAMES: Record<ParseValidationCode, string> = {
   SLUG_MISMATCH: 'frontmatter-slug-mismatch',
   NULL_BYTES: 'frontmatter-null-bytes',
   NESTED_QUOTES: 'frontmatter-nested-quotes',
+  NON_STRING_FIELD: 'frontmatter-non-string-field',
   EMPTY_FRONTMATTER: 'frontmatter-empty',
 };
 
@@ -60,7 +70,28 @@ const LLM_PREAMBLES = [
 
 // ── Rules ──────────────────────────────────────────────────────────
 
-export function lintContent(content: string, filePath: string): LintIssue[] {
+/**
+ * Per-call options for `lintContent`. Tests pass content-sanity opts
+ * directly so the linter can be exercised without an engine.
+ * Production callers (`runLintCore`) resolve effective config first
+ * via the file/env/DB precedence chain and pass through.
+ */
+export interface LintContentOpts {
+  /** v0.41 content-sanity thresholds + operator literals. When omitted,
+   *  the assessor uses its built-in defaults (50K warn, 500K block,
+   *  built-in junk patterns only). */
+  contentSanity?: {
+    bytes_warn?: number;
+    bytes_block?: number;
+    junk_patterns_enabled?: boolean;
+    disabled?: boolean;
+    max_markup_ratio?: number;
+    prose_check_enabled?: boolean;
+    operator_literals?: ReadonlyArray<OperatorLiteral>;
+  };
+}
+
+export function lintContent(content: string, filePath: string, opts: LintContentOpts = {}): LintIssue[] {
   const issues: LintIssue[] = [];
   const lines = content.split('\n');
 
@@ -182,6 +213,71 @@ export function lintContent(content: string, filePath: string): LintIssue[] {
     }
   }
 
+  // v0.41 content-sanity rules. Two new lint rules (huge-page +
+  // scraper-junk) backed by the shared assessor in
+  // src/core/content-sanity.ts so the threshold + pattern set stays
+  // in sync with the ingest gate at importFromContent. Kill-switch
+  // (contentSanity.disabled) suppresses both.
+  //
+  // Bytes are measured against the parsed body (compiled_truth +
+  // timeline) for parity with doctor's `oversized_pages` check (D2).
+  // The earlier file-byte design disagreed with doctor on pages with
+  // large frontmatter; pulling from parsed keeps the surfaces aligned
+  // on the operationally-meaningful axis (embed pipeline input).
+  const cs = opts.contentSanity ?? {};
+  if (cs.disabled !== true) {
+    const operator_literals = cs.junk_patterns_enabled !== false
+      ? (cs.operator_literals ?? [])
+      : [];
+    const sanity = assessContentSanity({
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline ?? '',
+      title: parsed.title,
+      bytes_warn: cs.bytes_warn,
+      bytes_block: cs.bytes_block,
+      max_markup_ratio: cs.max_markup_ratio,
+      prose_check_enabled: cs.prose_check_enabled,
+      page_kind: parsed.type,
+      extra_literals: operator_literals,
+    });
+    // Rule: huge-page fires for both oversize_warn (over warn threshold)
+    // AND oversize_block (over block threshold). Operator sees the same
+    // rule name in both cases; the message names the actual byte count.
+    if (sanity.reasons.includes('oversize_warn') || sanity.reasons.includes('oversize_block')) {
+      const threshold = sanity.reasons.includes('oversize_block') ? 'block' : 'warn';
+      issues.push({
+        file: filePath, line: 1, rule: 'huge-page',
+        message: `Page body is ${sanity.bytes} bytes (exceeds ${threshold} threshold)`,
+        fixable: false,
+      });
+    }
+    // Rule: scraper-junk fires on any built-in pattern or operator literal hit.
+    // Message names which pattern(s) matched so the brain-author can
+    // either delete the file from their source repo or audit the scraper.
+    if (sanity.junk_pattern_matches.length > 0 || sanity.literal_substring_matches.length > 0) {
+      const matched = [
+        ...sanity.junk_pattern_matches,
+        ...sanity.literal_substring_matches,
+      ].join(', ');
+      issues.push({
+        file: filePath, line: 1, rule: 'scraper-junk',
+        message: `Matched junk pattern(s): ${matched}`,
+        fixable: false,
+      });
+    }
+    // Rule: markup-heavy fires when the fuzzy prose pass flags the page as
+    // boilerplate-shaped (issue #1699). At ingest this FLAGS (page stays
+    // searchable, agent warned) rather than hides — surfacing it in lint
+    // lets a brain-author notice nav/boilerplate scrapes in their source.
+    if (sanity.reasons.includes('high_markup')) {
+      issues.push({
+        file: filePath, line: 1, rule: 'markup-heavy',
+        message: `Markup ratio ${sanity.markup_ratio?.toFixed(2)} exceeds threshold (looks like nav/boilerplate; flagged, not hidden)`,
+        fixable: false,
+      });
+    }
+  }
+
   return issues;
 }
 
@@ -205,6 +301,83 @@ export function fixContent(content: string): string {
   return fixed.trim() + '\n';
 }
 
+/**
+ * Resolve effective content-sanity opts for lint (D1: file/env first,
+ * lift DB-plane when an engine is reachable).
+ *
+ * File/env path is sync via `loadConfig()`; DB-plane lift requires a
+ * brief engine open. Best-effort: any engine failure (no brain
+ * configured, connection refused, transient error) falls through to
+ * the file/env values. CI without `~/.gbrain/` falls through
+ * immediately since `loadConfig()` returns minimal config.
+ *
+ * Also loads the operator literals file (`~/.gbrain/junk-substrings.txt`)
+ * once per lint invocation so multi-file lint runs amortize the read.
+ */
+async function resolveLintContentSanity(
+  sharedEngine?: BrainEngine,
+): Promise<LintContentOpts['contentSanity']> {
+  const base = loadConfig();
+  let cs = base?.content_sanity;
+
+  // DB-plane lift. issue #1678: when the caller already holds a live engine
+  // (the cycle's lint phase, the Minion lint handler), REUSE it — do NOT
+  // create + disconnect our own. A self-created engine here is module-style
+  // (createEngine without poolSize wraps the db.ts singleton), so its
+  // disconnect() cascades to db.disconnect() and NULLS the shared singleton
+  // mid-cycle — which broke every subsequent cycle phase with a misleading
+  // "connect() has not been called". Reusing the live engine reads the same
+  // 4 config keys with zero connection churn.
+  if (sharedEngine) {
+    try {
+      const lifted = await loadConfigWithEngine(sharedEngine, base);
+      cs = lifted?.content_sanity ?? cs;
+    } catch {
+      // best-effort; fall through to file/env values.
+    }
+  } else {
+    // Standalone path (CLI `gbrain lint`, which is CLI_ONLY and shares no
+    // engine): only attempt when the file/env config suggests an engine is
+    // configured. Avoids spinning up a fresh PGLite just to read 4 config
+    // keys in a CI lint run that has no brain at all. Safe to create +
+    // disconnect here because nothing else shares this process's singleton.
+    const hasEngineConfig = !!(base?.database_url || base?.database_path);
+    if (hasEngineConfig) {
+      try {
+        const { createEngine } = await import('../core/engine-factory.ts');
+        const engine = await createEngine({
+          engine: base!.engine,
+          database_url: base!.database_url,
+          database_path: base!.database_path,
+        });
+        try {
+          await engine.connect({});
+          const lifted = await loadConfigWithEngine(engine, base);
+          cs = lifted?.content_sanity ?? cs;
+        } finally {
+          await engine.disconnect().catch(() => { /* best-effort cleanup */ });
+        }
+      } catch {
+        // Engine unreachable or failed mid-probe — fall through to
+        // file/env values. Lint should never block on engine state.
+      }
+    }
+  }
+
+  // Operator literals: always attempt to load (cheap FS read; missing
+  // file is the common case and returns []). Skip when kill-switch
+  // is on or junk patterns explicitly disabled to match the assessor's
+  // own bypass logic exactly.
+  const operator_literals = cs?.disabled === true || cs?.junk_patterns_enabled === false
+    ? []
+    : loadOperatorLiterals();
+
+  return {
+    ...cs,
+    operator_literals,
+  };
+}
+
 /** Collect markdown files from a directory */
 function collectPages(dir: string): string[] {
   const pages: string[] = [];
@@ -224,6 +397,23 @@ export interface LintOpts {
   target: string;
   fix?: boolean;
   dryRun?: boolean;
+  /** v0.41: optional pre-resolved content-sanity opts. When omitted,
+   *  `runLintCore` resolves via the file/env/DB chain. Tests inject
+   *  this directly to bypass the FS + engine layers. */
+  contentSanity?: LintContentOpts['contentSanity'];
+  /** issue #1678: a live, already-connected engine to REUSE for the
+   *  content-sanity DB-plane config lift. Callers with a shared engine (the
+   *  cycle lint phase, Minion lint handlers) MUST pass it so lint doesn't
+   *  create + disconnect a competing module-style engine that nulls the
+   *  shared db singleton mid-cycle. */
+  engine?: BrainEngine;
+  /**
+   * #1972: cooperative-abort signal. lint's per-page work is synchronous, so
+   * without a periodic yield the event loop can't deliver an abort and a
+   * very large lint would block past the worker's 30s force-evict. The loop
+   * yields + checks this every 200 pages.
+   */
+  signal?: AbortSignal;
 }
 
 export interface LintResult {
@@ -252,13 +442,28 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const isSingleFile = statSync(opts.target).isFile();
   const pages = isSingleFile ? [opts.target] : collectPages(opts.target);
 
+  // Resolve content-sanity config once for this lint run (D1: lift DB
+  // config when reachable). Caller can pre-pass via opts.contentSanity
+  // (tests, Minion handler) to bypass the engine probe entirely.
+  const contentSanity = opts.contentSanity ?? await resolveLintContentSanity(opts.engine);
+  const lintOpts: LintContentOpts = { contentSanity };
+
   let totalIssues = 0;
   let totalFixed = 0;
   let pagesWithIssues = 0;
 
-  for (const page of pages) {
+  for (let idx = 0; idx < pages.length; idx++) {
+    const page = pages[idx];
+    // #1972: every 200 pages, yield to the event loop and honor abort. The
+    // yield is what lets the abort signal actually fire (the rest of the loop
+    // is synchronous); the break returns a valid partial LintResult since each
+    // page is independently read + written.
+    if (idx > 0 && idx % 200 === 0) {
+      if (isAborted(opts.signal)) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     const content = readFileSync(page, 'utf-8');
-    const issues = lintContent(content, isSingleFile ? page : relative(opts.target, page));
+    const issues = lintContent(content, isSingleFile ? page : relative(opts.target, page), lintOpts);
     if (issues.length === 0) continue;
     pagesWithIssues++;
     totalIssues += issues.length;
@@ -313,10 +518,18 @@ export async function runLint(args: string[]) {
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('lint.pages', pages.length);
 
+  // v0.41 (D1): resolve content-sanity config once for this lint run.
+  // Mirrors runLintCore. The two paths must agree because runLint
+  // prints human details inline; runLintCore at end computes the
+  // aggregate. Sharing the resolved opts keeps both surfaces seeing
+  // the same rule firings.
+  const contentSanity = await resolveLintContentSanity();
+  const lintContentOpts: LintContentOpts = { contentSanity };
+
   for (const page of pages) {
     const content = readFileSync(page, 'utf-8');
     const relPath = isSingleFile ? page : relative(target, page);
-    const issues = lintContent(content, relPath);
+    const issues = lintContent(content, relPath, lintContentOpts);
     progress.tick(1);
     if (issues.length === 0) continue;
 
@@ -342,7 +555,9 @@ export async function runLint(args: string[]) {
 
   // Re-run core for the aggregate counts (cheap; re-parses contents but
   // produces canonical numbers for the summary line).
-  const result = await runLintCore({ target, fix: doFix, dryRun });
+  // Pass contentSanity through so runLintCore skips its own resolve
+  // (we already resolved once for the human-detail loop above).
+  const result = await runLintCore({ target, fix: doFix, dryRun, contentSanity });
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);

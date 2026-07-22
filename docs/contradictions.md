@@ -148,3 +148,19 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
 - CHANGELOG: `## [0.32.6]` entry covers the whole release.
 - Cost discipline: `docs/eval-bench.md` for the recommended nightly cadence
   + trend-tracking workflow.
+- **Temporal axis follow-on (v0.35.3.1 + v0.35.7):** v0.35.3.1 added a
+  six-member verdict enum (`no_contradiction | contradiction |
+  temporal_supersession | temporal_regression | temporal_evolution |
+  negation_artifact`) and threaded `pages.effective_date` into the judge
+  prompt so the probe stops crying wolf on legitimate change-over-time.
+  v0.35.7 lands the trajectory substrate the probe pointed at:
+  `gbrain eval trajectory <entity>` shows the chronological typed-claim
+  history with regressions flagged inline; `gbrain founder scorecard
+  <entity>` rolls up four signals (accuracy, consistency, growth
+  direction, red flags) into a stable JSON contract. MCP op
+  `find_trajectory` (read scope, visibility-filtered for remote callers)
+  exposes the same data to agents. The probe's `temporal_supersession`
+  verdict and the consolidate phase's `valid_until` writeback both
+  preserve the `auto-supersession.ts:4` "NEVER auto-applies" invariant
+  — the probe still emits paste-ready commands, only `consolidate`
+  writes `valid_until` (R1+R8 grep guard pins this).

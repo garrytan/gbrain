@@ -82,6 +82,83 @@ export interface ExtractFromFenceOpts {
    * the mapper uses real UTC midnight today.
    */
   nowOverride?: Date;
+  /**
+   * v0.35.4 (D-ENG-1 + D-CDX-5) — optional fallback for `valid_from` when
+   * the fence row lacks an explicit `validFrom:`. Threaded by the
+   * `extract-facts` cycle phase from `engine.getPage(slug).effective_date`
+   * so a meeting page dated 2026-04-28 stamps its facts as claimed-on
+   * that date instead of "the import timestamp".
+   *
+   * Precedence chain:
+   *   1. Explicit `validFrom:` in the fence row (today's behavior, preserved).
+   *   2. `pageEffectiveDate` when set.
+   *   3. `undefined` → engine.insertFact defaults to now() at insert time.
+   *
+   * Optional because `facts/fence-write.ts` calls this from a context
+   * with no `Page` object available (Codex F6). Null and undefined are
+   * treated identically: fall through to behavior (3).
+   */
+  pageEffectiveDate?: Date | null;
+}
+
+/**
+ * v0.35.4 (D-ENG-4) — normalized metric vocabulary.
+ *
+ * Seed map for common founder/company metrics. Free-text labels normalize
+ * to lowercase snake_case so trajectory queries don't fragment across
+ * capitalization variants. Unknown labels still pass through (lowercased
+ * + spaces → underscores) so the user can author arbitrary metrics
+ * without a code change. Exported so tests can pin the map.
+ */
+export const METRIC_NORMALIZATION_MAP: ReadonlyMap<string, string> = new Map([
+  // Revenue / financial
+  ['mrr', 'mrr'],
+  ['monthly recurring revenue', 'mrr'],
+  ['arr', 'arr'],
+  ['annual recurring revenue', 'arr'],
+  ['revenue', 'revenue'],
+  ['burn', 'burn_rate'],
+  ['burn rate', 'burn_rate'],
+  ['runway', 'runway'],
+  ['cash', 'cash'],
+  ['gross margin', 'gross_margin'],
+  // Funding
+  ['fundraise', 'fundraise'],
+  ['raise', 'fundraise'],
+  // People
+  ['headcount', 'headcount'],
+  ['team size', 'team_size'],
+  ['team', 'team_size'],
+  // Users / engagement
+  ['users', 'users'],
+  ['mau', 'mau'],
+  ['monthly active users', 'mau'],
+  ['dau', 'dau'],
+  ['daily active users', 'dau'],
+  ['churn', 'churn_rate'],
+  ['churn rate', 'churn_rate'],
+  // Unit economics
+  ['cac', 'cac'],
+  ['ltv', 'ltv'],
+]);
+
+/**
+ * Normalize a free-text metric label to lowercase snake_case. Known
+ * labels (seed map above) map to canonical names; unknown labels are
+ * lowercased + whitespace-collapsed → underscores. Returns undefined for
+ * empty / whitespace-only input so the caller can treat it as "no
+ * metric set" without an extra null check.
+ */
+export function normalizeMetricLabel(raw: string | undefined | null): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  const seed = METRIC_NORMALIZATION_MAP.get(trimmed);
+  if (seed) return seed;
+  // Collapse runs of whitespace to single underscore, strip non-alphanumeric
+  // edges. Allows users to write "Net Promoter Score" → `net_promoter_score`
+  // without registering it.
+  return trimmed.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
 /**
@@ -91,7 +168,7 @@ export interface ExtractFromFenceOpts {
  * @param slug         The entity page slug (also becomes source_markdown_slug)
  * @param sourceId     The source binding (resolved from sources.local_path
  *                     by the caller; multi-source brains thread this through)
- * @param opts         Test-only overrides
+ * @param opts         Optional overrides (test nowOverride; v0.35.4 page-date fallback)
  */
 export function extractFactsFromFenceText(
   facts: ParsedFact[],
@@ -100,9 +177,12 @@ export function extractFactsFromFenceText(
   opts: ExtractFromFenceOpts = {},
 ): FenceExtractedFact[] {
   const today = opts.nowOverride ?? todayUtcDate();
+  const pageDateFallback = opts.pageEffectiveDate ?? undefined;
 
   return facts.map(f => {
-    const validFrom = parseValidDate(f.validFrom);
+    // v0.35.4 (D-ENG-1) valid_from precedence: fence > pageEffectiveDate > engine default (now).
+    const fenceDate = parseValidDate(f.validFrom);
+    const validFrom = fenceDate ?? pageDateFallback ?? undefined;
 
     // valid_until derivation. Three branches:
     //   1. Explicit validUntil in the fence → honor as-is.
@@ -137,6 +217,13 @@ export function extractFactsFromFenceText(
       confidence: f.confidence,
       row_num: f.rowNum,
       source_markdown_slug: slug,
+      // v0.35.4 (D-CDX-5) — typed-claim threading. Metric label normalized
+      // here so the DB-side index hits use the canonical name; value /
+      // unit / period stored verbatim.
+      claim_metric: normalizeMetricLabel(f.claimMetric) ?? null,
+      claim_value:  f.claimValue ?? null,
+      claim_unit:   f.claimUnit ?? null,
+      claim_period: f.claimPeriod ?? null,
     };
     return row;
   });

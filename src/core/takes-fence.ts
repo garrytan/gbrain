@@ -36,9 +36,13 @@
  * stay valid forever because no row_num ever shifts.
  */
 
-export type TakeKind = 'fact' | 'take' | 'bet' | 'hunch';
+// v0.38: TakeKind opens from closed 4-element union to string (T3 + T10).
+// See `src/core/engine.ts` TakeKind for full rationale. Runtime validation
+// moves to active schema pack's annotation primitive declarations; the
+// pre-v0.38 {fact|take|bet|hunch} seed lives in `gbrain-base.yaml`.
+export type TakeKind = string;
 
-export type TakeQuality = 'correct' | 'incorrect' | 'partial';
+export type TakeQuality = 'correct' | 'incorrect' | 'partial' | 'unresolvable';
 
 export interface ParsedTake {
   rowNum: number;
@@ -144,7 +148,7 @@ export function isValidHolder(holder: string): boolean {
 }
 
 const KIND_VALUES: ReadonlySet<string> = new Set(['fact', 'take', 'bet', 'hunch']);
-const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial']);
+const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial', 'unresolvable']);
 
 // v0.30.0: header tokens that mark a v0.30-shape fence. Presence of `quality`
 // (or any other resolution column) widens the parser to read 7+ extra cells
@@ -353,7 +357,7 @@ export function parseTakesFence(body: string): ParseResult {
     takes.push({
       rowNum,
       claim: claimText,
-      kind: kind as TakeKind,
+      kind: kind as string,
       holder: holderRaw.trim(),
       weight,
       sinceDate: since,
@@ -543,6 +547,10 @@ export function supersedeRow(
  * unchanged.
  */
 export function stripTakesFence(body: string): string {
+  // Pages without a compiled body (e.g. metadata-only rows from a read op)
+  // have nothing to strip. Guard so the privacy strip is a safe no-op rather
+  // than crashing on `undefined.indexOf`.
+  if (typeof body !== 'string') return body;
   const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
   if (beginIdx === -1) return body;
   const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);

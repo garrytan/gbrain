@@ -33,6 +33,8 @@ import { JudgeCache } from './cache.ts';
 import { CostTracker, estimateUpperBoundCost } from './cost-tracker.ts';
 import { buildSourceTierBreakdown, classifySlugTier } from './cross-source.ts';
 import { shouldSkipForDateMismatch } from './date-filter.ts';
+import { withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
 import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.ts';
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
@@ -46,6 +48,8 @@ import {
   type PairMember,
   type PerQueryResult,
   type ProbeReport,
+  type Verdict,
+  type VerdictBreakdown,
 } from './types.ts';
 
 const DEFAULT_TOP_K = 5;
@@ -110,11 +114,27 @@ function searchResultToMember(r: SearchResult): PairMember {
     source_tier: classifySlugTier(r.slug),
     holder: null,
     text: r.chunk_text,
+    // Lane A1: effective_date carried through from the search projection.
+    // null when the page has no temporal anchor (judge will see `(date unknown)`).
+    effective_date: r.effective_date ?? null,
+    effective_date_source: r.effective_date_source ?? null,
   };
 }
 
-/** Convert a Take into a PairMember. */
-function takeToMember(take: { id: number; page_slug: string; claim: string; holder: string }, source_tier: ReturnType<typeof classifySlugTier>): PairMember {
+/**
+ * Convert a Take into a PairMember.
+ *
+ * Lane A1: takes are paired with a chunk from the same page, so the take's
+ * effective_date is inherited from the chunk's page-level effective_date.
+ * A future enhancement could distinguish `takes.since_date` from
+ * `pages.effective_date` here — for v1 they share the same page anchor.
+ */
+function takeToMember(
+  take: { id: number; page_slug: string; claim: string; holder: string },
+  source_tier: ReturnType<typeof classifySlugTier>,
+  effective_date: string | null,
+  effective_date_source: string | null,
+): PairMember {
   return {
     slug: take.page_slug,
     chunk_id: null,
@@ -122,6 +142,8 @@ function takeToMember(take: { id: number; page_slug: string; claim: string; hold
     source_tier,
     holder: take.holder,
     text: take.claim,
+    effective_date,
+    effective_date_source,
   };
 }
 
@@ -149,16 +171,29 @@ async function generateIntraPagePairs(
   results: SearchResult[],
 ): Promise<ContradictionPair[]> {
   if (results.length === 0) return [];
-  // Unique page_ids only.
-  const pageIds = Array.from(new Set(results.map((r) => r.page_id)));
+  // Unique, FINITE page_ids only. Defensive backstop for the alias-hop bug
+  // (#2339 sibling): an alias-injected synthetic result with an undefined/NaN
+  // page_id must never reach `ANY($1::int[])` — postgres.js rejects it with
+  // UNDEFINED_VALUE and aborts the whole probe. Mirrors the hybrid.ts:63 filter.
+  const pageIds = Array.from(
+    new Set(
+      results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
+    ),
+  );
   const takesByPage = await engine.listActiveTakesForPages(pageIds);
   const out: ContradictionPair[] = [];
   for (const r of results) {
+    if (typeof r.page_id !== 'number' || !Number.isFinite(r.page_id)) continue;
     const takes = takesByPage.get(r.page_id) ?? [];
     if (takes.length === 0) continue;
     const chunkMember = searchResultToMember(r);
     for (const t of takes) {
-      const takeMember = takeToMember(t, chunkMember.source_tier);
+      const takeMember = takeToMember(
+        t,
+        chunkMember.source_tier,
+        chunkMember.effective_date,
+        chunkMember.effective_date_source,
+      );
       out.push({
         kind: 'intra_page_chunk_take',
         a: chunkMember,
@@ -200,6 +235,34 @@ function sortPairs(
  * strings — CLI flag parsing lives in the command file, not here.
  */
 export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerResult> {
+  // T6: wrap the entire body in withBudgetTracker so every gateway-layer
+  // chat/embed/rerank call (judge, embed-on-query) auto-records via the
+  // AsyncLocalStorage scope from src/core/ai/gateway.ts. The existing
+  // CostTracker stays for the report shape — the new BudgetTracker is a
+  // parallel record-keeper that doesn't enforce a cap on top of the
+  // existing soft ceiling. Public surface (--budget-usd, PreFlightBudgetError)
+  // is byte-identical.
+  const _outerBudgetUsd = opts.budgetUsd ?? 5.0;
+  const _runnerTracker = new BudgetTracker({
+    // Set the cap only when callers passed --budget-usd explicitly; this
+    // keeps the existing soft-ceiling semantics from CostTracker as the
+    // primary enforcement and uses the new tracker for telemetry only.
+    label: 'eval.suspected-contradictions',
+  });
+  try {
+    return await withBudgetTracker(_runnerTracker, () => _runContradictionProbeInner(opts));
+  } catch (err) {
+    // BudgetExhausted from the gateway path should bubble cleanly. With no
+    // cap set, the tracker only records; it doesn't throw, so this path
+    // is reachable only via future opt-in.
+    if (err instanceof BudgetExhausted) {
+      throw err;
+    }
+    throw err;
+  }
+}
+
+async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResult> {
   const startedAt = Date.now();
   const judgeModel = opts.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const topK = Math.max(1, opts.topK ?? DEFAULT_TOP_K);
@@ -232,6 +295,17 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
   const allPairs: ContradictionPair[] = [];
   let capHitMidRun = false;
   let queriesWithContradiction = 0;
+  let queriesWithAnyFinding = 0;
+  // v0.34 / Lane A2: per-verdict tally across every judged pair (and cache hit).
+  const verdictBreakdown: VerdictBreakdown = {
+    no_contradiction: 0,
+    contradiction: 0,
+    temporal_supersession: 0,
+    temporal_regression: 0,
+    temporal_evolution: 0,
+    negation_artifact: 0,
+  };
+  const tallyVerdict = (v: Verdict) => { verdictBreakdown[v]++; };
 
   for (const query of opts.queries) {
     if (opts.abortSignal?.aborted) break;
@@ -258,10 +332,18 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
     allPairs.push(...allPairsForQuery);
 
     // Date pre-filter.
+    // v0.34 / Lane B: thread page-level effective_date through so the
+    // filter's relaxation rule fires for dated pairs (judge classifies
+    // temporal supersession instead of the pair being silently skipped).
     const survivedDate: ContradictionPair[] = [];
     let skippedByDate = 0;
     for (const p of allPairsForQuery) {
-      const decision = shouldSkipForDateMismatch({ textA: p.a.text, textB: p.b.text });
+      const decision = shouldSkipForDateMismatch({
+        textA: p.a.text,
+        textB: p.b.text,
+        effectiveDateA: p.a.effective_date,
+        effectiveDateB: p.b.effective_date,
+      });
       if (decision.skip) {
         skippedByDate++;
         continue;
@@ -286,7 +368,11 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
       const cached = await cache.lookup(pair.a.text, pair.b.text);
       if (cached) {
         cacheHits++;
-        if (cached.contradicts) {
+        tallyVerdict(cached.verdict);
+        // v0.34 / Lane A2: emit findings for every non-no_contradiction verdict.
+        // Without this, the new verdicts (temporal_supersession etc.) would
+        // disappear from the report and the whole wave is invisible to users.
+        if (cached.verdict !== 'no_contradiction') {
           findings.push(pairToFinding(pair, cached));
         }
         continue;
@@ -295,8 +381,20 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
       try {
         const out = await judgeFn({
           query,
-          a: { slug: pair.a.slug, text: pair.a.text, source_tier: pair.a.source_tier, holder: pair.a.holder },
-          b: { slug: pair.b.slug, text: pair.b.text, source_tier: pair.b.source_tier, holder: pair.b.holder },
+          a: {
+            slug: pair.a.slug,
+            text: pair.a.text,
+            source_tier: pair.a.source_tier,
+            holder: pair.a.holder,
+            effective_date: pair.a.effective_date,
+          },
+          b: {
+            slug: pair.b.slug,
+            text: pair.b.text,
+            source_tier: pair.b.source_tier,
+            holder: pair.b.holder,
+            effective_date: pair.b.effective_date,
+          },
           model: judgeModel,
           maxPairChars,
           abortSignal: opts.abortSignal,
@@ -304,7 +402,9 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
         tracker.recordJudgeCall(judgeModel, out.usage);
         await cache.store(pair.a.text, pair.b.text, out.verdict);
         judged++;
-        if (out.verdict.contradicts) {
+        tallyVerdict(out.verdict.verdict);
+        // v0.34 / Lane A2: same emit predicate as the cache-hit branch.
+        if (out.verdict.verdict !== 'no_contradiction') {
           findings.push(pairToFinding(pair, out.verdict));
         }
       } catch (err) {
@@ -312,7 +412,12 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
       }
     }
 
-    if (findings.length > 0) queriesWithContradiction++;
+    // v0.34 / Lane A2: distinguish strict-contradiction from any-finding.
+    // The strict count drives the Wilson-CI denominator (the historic
+    // headline metric). The broad count surfaces the wave's new value:
+    // "of N queries, M had at least one temporal signal."
+    if (findings.length > 0) queriesWithAnyFinding++;
+    if (findings.some((f) => f.verdict === 'contradiction')) queriesWithContradiction++;
     perQuery.push({
       query,
       result_count: results.length,
@@ -347,7 +452,9 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
     sampling,
     queries_evaluated: opts.queries.length,
     queries_with_contradiction: queriesWithContradiction,
+    queries_with_any_finding: queriesWithAnyFinding,
     total_contradictions_flagged: allFindings.length,
+    verdict_breakdown: verdictBreakdown,
     calibration,
     judge_errors: judgeErrors,
     cost_usd: cost,

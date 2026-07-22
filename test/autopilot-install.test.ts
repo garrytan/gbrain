@@ -79,8 +79,40 @@ describe('detectInstallTarget', () => {
   // exercised by the E2E test (Task 14) against a stubbed host.
 });
 
-describe('autopilot wrapper', () => {
-  test('finds the current runtime with a minimal service PATH', () => {
+// v0.36.1.x (cherry-pick #966): the autopilot wrapper script must source
+// ~/.zshenv BEFORE ~/.zshrc. zshenv is the canonical place for env vars in
+// non-interactive zsh; zshrc only fires for interactive shells, so vars
+// exported in zshrc never reach the LaunchAgent subprocess. Operators who
+// exported GBRAIN_DATABASE_URL or {OPENAI,ANTHROPIC}_API_KEY in zshrc and
+// expected autopilot to inherit them hit silent missing-secret failures.
+describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () => {
+  test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    const zshenvIdx = src.indexOf('~/.zshenv');
+    const zshrcIdx = src.indexOf('~/.zshrc');
+    expect(zshenvIdx).toBeGreaterThan(0);
+    expect(zshrcIdx).toBeGreaterThan(0);
+    expect(zshenvIdx).toBeLessThan(zshrcIdx);
+    // Both should appear inside writeWrapperScript's heredoc as `source ~/.foo`
+    expect(src).toMatch(/source\s+~\/\.zshenv/);
+    expect(src).toMatch(/source\s+~\/\.zshrc/);
+  });
+
+  test('prepends the active Bun runtime directory after sourcing profiles', () => {
+    const runtimeDir = join(tmp, "runtime's-bin");
+    const wrapper = renderAutopilotWrapper('/brain', '/usr/local/bin/gbrain', runtimeDir);
+
+    const zshenvIdx = wrapper.indexOf('~/.zshenv');
+    const zshrcIdx = wrapper.indexOf('~/.zshrc');
+    const pathIdx = wrapper.indexOf('export PATH=');
+    expect(zshenvIdx).toBeGreaterThan(0);
+    expect(zshrcIdx).toBeGreaterThan(zshenvIdx);
+    expect(pathIdx).toBeGreaterThan(zshrcIdx);
+    expect(wrapper).toContain(`export PATH='${runtimeDir.replace(/'/g, "'\\''")}':"$PATH"`);
+  });
+
+  test('finds Bun with a minimal service PATH', () => {
     const runtimeDir = join(tmp, 'runtime');
     mkdirSync(runtimeDir, { recursive: true });
 

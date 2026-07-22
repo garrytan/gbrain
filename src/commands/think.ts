@@ -29,17 +29,23 @@ Options:
   --rounds N               Multi-pass synthesis (default 1; gap-driven loop ships in v0.29)
   --save                   Persist a synthesis page under synthesis/<slug>-<date>.md
   --take                   Append a take row to the anchor page (requires --anchor)
-  --model <name>           Override the model (alias or full id)
+  --model <name>           Override the model: provider:model (preferred) or
+                           provider/model or a bare alias. An explicit --model that
+                           can't be resolved is a hard error (exit 1) — never a
+                           silent no-LLM degrade.
   --since YYYY-MM-DD       Start of temporal window
   --until YYYY-MM-DD       End of temporal window
   --json                   Output as JSON
   --help                   Show this help
 
 Without --save, the synthesis is printed to stdout and discarded. With --save,
-the synthesis page is persisted AND printed.
+the synthesis page is persisted AND printed. If --save is given but no synthesis
+was produced (no LLM available, or empty result), nothing is saved and the command
+exits non-zero.
 
-Set ANTHROPIC_API_KEY in the environment to run real synthesis. Without it,
-the gather phase still runs and prints what would have been the input.
+Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run
+real synthesis. Without it AND without --save, the gather phase still runs and
+prints what would have been the input (exit 0).
 `);
     return;
   }
@@ -50,7 +56,7 @@ the gather phase still runs and prints what would have been the input.
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (flagNames.includes(a)) { i++; continue; }
-    if (a === '--save' || a === '--take' || a === '--json' || a === '--help' || a === '-h') continue;
+    if (a === '--save' || a === '--take' || a === '--json' || a === '--help' || a === '-h' || a === '--with-calibration') continue;
     positional.push(a);
   }
   const question = positional.join(' ').trim();
@@ -68,6 +74,11 @@ the gather phase still runs and prints what would have been the input.
   const model = flagValue(args, '--model');
   const since = flagValue(args, '--since');
   const until = flagValue(args, '--until');
+  // v0.36.1.0 (E1, D22) — anti-bias rewrite mode. Off by default (no
+  // regression for existing think users). When on, the active calibration
+  // profile gets injected per D22 placement (after retrieval, before question).
+  const withCalibration = flagPresent(args, '--with-calibration');
+  const calibrationHolder = flagValue(args, '--calibration-holder');
 
   if (take && !anchor) {
     console.error('--take requires --anchor (the take row needs a target page)');
@@ -97,17 +108,41 @@ the gather phase still runs and prints what would have been the input.
     }, { timeoutMs: 180_000 });
     result = unpackToolResult<any>(raw);
   } else {
-    result = await runThink(engine, {
-      question, anchor, rounds, save, take, model, since, until,
-      // Local CLI: no MCP allow-list filter — operator owns the brain.
-    });
+    try {
+      result = await runThink(engine, {
+        question, anchor, rounds, save, take, model, since, until,
+        // #1698: explicit --model → hard error on an unresolvable model (no silent
+        // degrade to the no-LLM stub). Omitting --model keeps the graceful default path.
+        modelExplicit: !!model,
+        // v0.36.1.0 (E1) — opt-in anti-bias rewrite. Falls back to baseline
+        // think when no profile exists, with NO_CALIBRATION_PROFILE warning.
+        withCalibration,
+        ...(calibrationHolder ? { calibrationHolder } : {}),
+        // Local CLI: no MCP allow-list filter — operator owns the brain.
+      });
 
-    // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
-    if (save) {
-      const persisted = await persistSynthesis(engine, result);
-      savedSlug = persisted.slug;
-      evidenceInserted = persisted.evidenceInserted;
-      for (const w of persisted.warnings) result.warnings.push(w);
+      // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
+      if (save) {
+        const persisted = await persistSynthesis(engine, result);
+        savedSlug = persisted.slug || undefined;  // '' = persist-skip signal (#10)
+        evidenceInserted = persisted.evidenceInserted;
+        for (const w of persisted.warnings) result.warnings.push(w);
+        // #1698 (F2): --save requested but no synthesis was produced (no LLM, empty,
+        // or malformed) → exit non-zero. Saving nothing with exit 0 when the user
+        // explicitly asked to save is itself a silent failure.
+        if (!persisted.slug) {
+          console.error(
+            'think: --save requested but no synthesis was produced (no LLM available ' +
+            'or empty result) — nothing saved.',
+          );
+          process.exit(1);
+        }
+      }
+    } catch (e) {
+      // #1698: an unresolvable explicit --model throws here. Clean non-zero exit
+      // with the actionable message, not a stack trace.
+      console.error((e as Error).message);
+      process.exit(1);
     }
   }
 
