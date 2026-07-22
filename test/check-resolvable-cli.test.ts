@@ -319,9 +319,13 @@ describe('gbrain check-resolvable CLI — integration', () => {
   });
 
   it('exits 1 when fixture has an error-level unreachable skill', () => {
-    // "alpha" is in manifest but not resolver → unreachable (error)
+    // v0.41.11 contract change: a skill is unreachable only when BOTH
+    // surfaces are empty — no frontmatter `triggers:` AND no RESOLVER.md
+    // row. The prior fixture (`triggers: ['alpha']`, `inResolver: false`)
+    // is now reachable via frontmatter auto-registration, so we drop
+    // triggers and the resolver row to genuinely simulate unreachable.
     const skillsDir = makeFixture(
-      [{ name: 'alpha', triggers: ['alpha'], inResolver: false }],
+      [{ name: 'alpha', inResolver: false }],
       created,
     );
     const r = run(['--json', '--skills-dir', skillsDir]);

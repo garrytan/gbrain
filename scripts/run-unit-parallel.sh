@@ -58,10 +58,27 @@ N="${SHARDS_OVERRIDE:-${SHARDS:-$(detect_cpus)}}"
 if ! printf '%s' "$N" | grep -qE '^[0-9]+$' || [ "$N" -lt 1 ]; then
   echo "ERROR: invalid shard count: $N" >&2; exit 2
 fi
+# v0.40.10 flake-hardening: clamp default to 4 (was 8) to match CI's
+# test-shard.sh fan-out. At 8-shard parallel on Apple Silicon we observed
+# shard 5 SIGKILL during source-health.test.ts's PGLite migration replay —
+# 8 parallel PGLite WASM inits contend severely on the lockfile, and the
+# 92-migration replay × 8 simultaneous can wedge past even 900s. CI uses
+# 4 and is stable. Trade ~2x wallclock for reliability + parity with CI's
+# fan-out. Override via --shards N or SHARDS=N (still capped at 8).
 [ "$N" -gt 8 ] && N=8
+if [ -z "${SHARDS_OVERRIDE:-}" ] && [ -z "${SHARDS:-}" ] && [ "$N" -gt 4 ]; then
+  N=4
+fi
 
 INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-600}"
+# v0.40.10 flake-hardening: bump per-shard cap 600 → 1500 (was 900). At
+# 4-shard default each shard runs 159 files / ~2420 tests with internal
+# wallclock 960-1020s. The 900s value (sized for 8-shard's ~80 files /
+# 1100 tests at 620-770s) false-killed shard 1 at 900s even though it
+# had completed in 968s. 1500s cap gives ~55% headroom over observed
+# 4-shard wallclock; real hangs still hit it. Override via
+# GBRAIN_TEST_SHARD_TIMEOUT=N.
+SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-1500}"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Output directories. Prefer workspace-local .context/, fall back to /tmp.
@@ -164,28 +181,88 @@ bun_summary_count() {
   ' "$file"
 }
 
+# shard_total_files: parse the "[unit-shard N/M] running X files" line that
+# run-unit-shard.sh echoes before invoking bun test. Returns the file count
+# the shard was given, or 0 if the line isn't there yet (shard still
+# bootstrapping). Uses sed-then-grep so it's portable to macOS awk (BSD awk
+# doesn't support `match($0, /re/, arr)` with the array sink — that's gawk-only).
+shard_total_files() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  local n
+  n=$(sed -n 's/^\[unit-shard [0-9][0-9]*\/[0-9][0-9]*\] running \([0-9][0-9]*\) files.*/\1/p' "$file" 2>/dev/null | head -1)
+  echo "${n:-0}"
+}
+
+# shard_pglite_init_count: count "Schema version" lines as a proxy for "test
+# files initialized so far." Each PGLite-using test file's beforeAll triggers
+# one initSchema() which prints this. Undercounts because not every test file
+# opens a PGLite engine, but it's the only real-time progress signal bun's
+# default reporter leaves in the log (bun has no per-file progress markers,
+# only a final shard-end summary).
+shard_pglite_init_count() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  grep -cE 'Schema version [0-9]+ → [0-9]+' "$file" 2>/dev/null || echo 0
+}
+
+# log_size_kb: total stderr+stdout written by the shard so far. Strictly
+# monotonic — useful as a "definitely alive" signal when other heuristics
+# read 0 (e.g. very early in shard startup before initSchema fires).
+log_size_kb() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  local b
+  b=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
+  echo $(( ${b:-0} / 1024 ))
+}
+
+# fmt_elapsed: pretty-print seconds → "Mm:SS" or "SSs" for short.
+fmt_elapsed() {
+  local s=$1
+  if [ "$s" -ge 60 ]; then
+    printf '%dm%02ds' $((s / 60)) $((s % 60))
+  else
+    printf '%ds' "$s"
+  fi
+}
+
 heartbeat() {
+  local hb_start=$(date +%s)
   while true; do
     sleep 10
     local line=""
+    local now; now=$(date +%s)
+    local hb_elapsed=$((now - hb_start))
     for i in $(seq 1 "$N"); do
       if [ -f "$LOG_DIR/shard-$i.exit" ]; then
         local rc; rc=$(cat "$LOG_DIR/shard-$i.exit" 2>/dev/null || echo "?")
         local status="✓"
         [ "$rc" != "0" ] && status="✗"
-        line="$line [s$i: done $status]"
+        local f
+        f=$(bun_summary_count "fail" "$LOG_DIR/shard-$i.log")
+        local p
+        p=$(bun_summary_count "pass" "$LOG_DIR/shard-$i.log")
+        line="$line [s$i: done $status ${p}p ${f}f]"
       else
         local lf="$LOG_DIR/shard-$i.log"
         if [ -f "$lf" ]; then
-          # Heartbeat: prefer Bun's per-test "✓" (passed) and "(fail)" markers
-          # so we see live progress; the "N pass" summary line only appears at
-          # the very end of the shard and would always show 0 mid-run.
-          local p f
-          p=$(grep_count '^[[:space:]]+✓' "$lf")
-          f=$(grep_count '^\(fail\)' "$lf")
-          line="$line [s$i: ${p}p ${f}f ...]"
+          # Bun's default reporter has no per-file progress markers, only a
+          # final shard-end summary, so we surface three complementary signals
+          # mid-run: (1) PGLite initSchema() count as a "files started" proxy,
+          # (2) total files this shard was assigned (from the runner banner),
+          # (3) log size in KB as a strictly-monotonic liveness signal.
+          local total; total=$(shard_total_files "$lf")
+          local pglite; pglite=$(shard_pglite_init_count "$lf")
+          local kb; kb=$(log_size_kb "$lf")
+          local et; et=$(fmt_elapsed "$hb_elapsed")
+          if [ "$total" -gt 0 ]; then
+            line="$line [s$i: ~${pglite}/${total}f ${kb}KB ${et}]"
+          else
+            line="$line [s$i: starting ${kb}KB ${et}]"
+          fi
         else
-          line="$line [s$i: starting]"
+          line="$line [s$i: spawning]"
         fi
       fi
     done
@@ -194,11 +271,22 @@ heartbeat() {
 }
 heartbeat &
 HB_PID=$!
-trap 'kill "$HB_PID" 2>/dev/null; wait "$HB_PID" 2>/dev/null' EXIT
+# v0.41.11.0 cleanup: pkill children FIRST, then kill heartbeat. If we
+# kill the heartbeat shell first, its current `sleep 10` is reparented
+# to init/launchd and pkill -P can no longer find it (orphan). Order:
+# children first while the parent PID is still findable, then parent.
+# Known bash quirk: SIGTERM to a shell sleeping inside `sleep` doesn't
+# propagate to the sleep child before the wait returns. Without this,
+# each invocation of this script leaks ONE orphan sleep; CI's "orphan
+# process cleanup" at end-of-job reports them as (unnamed) test failures.
+# Seen on the garrytan/port-pr-1406 PR, 2 CI runs in a row, 6 orphans
+# matching the 6 invocations in test/scripts/run-unit-parallel.test.ts.
+trap 'pkill -P "$HB_PID" 2>/dev/null; kill "$HB_PID" 2>/dev/null; wait "$HB_PID" 2>/dev/null' EXIT
 
 # Wait for every shard. Don't care about wait's exit code.
 for pid in "${SHARD_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
 
+pkill -P "$HB_PID" 2>/dev/null
 kill "$HB_PID" 2>/dev/null
 wait "$HB_PID" 2>/dev/null
 trap - EXIT

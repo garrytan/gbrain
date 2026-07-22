@@ -35,6 +35,9 @@ import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts'
 import { gbrainPath } from '../core/config.ts';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+// v0.41.15.0 (T9, D9): per-chunk UPDATE workers within each batch.
+import { runSlidingPool } from '../core/worker-pool.ts';
+import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 
 const LOCK_ID = 'gbrain-reindex-multimodal';
 const BATCH_SIZE = 32; // Voyage cap
@@ -48,6 +51,14 @@ export interface ReindexMultimodalOpts {
   json?: boolean;
   /** Skip the 10s cost-grace window (CI / cron). */
   yes?: boolean;
+  /**
+   * v0.41.15.0 (T9, D9): in-process parallel UPDATE workers for the
+   * per-chunk write loop inside each batch. The outer batch loop stays
+   * serial (each batch is one Voyage round-trip); the inner write loop
+   * benefits from concurrent UPDATEs on Postgres. PGLite clamps to 1.
+   * Default 1 (back-compat). Recommended 4-8.
+   */
+  workers?: number;
 }
 
 export interface ReindexMultimodalResult {
@@ -69,6 +80,33 @@ export async function runReindexMultimodal(
 ): Promise<ReindexMultimodalResult> {
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('reindex_multimodal', 0);
+
+  // T11 (D12): preflight the multimodal model+dim before any DB work.
+  // Mirrors T6's text-side preflight contract: if the configured multimodal
+  // model can't produce a dim that matches the schema column, fail loud
+  // here with a paste-ready hint rather than mid-reindex with a vector(N)
+  // INSERT error.
+  try {
+    const { loadConfig } = await import('../core/config.ts');
+    const cfg = loadConfig();
+    const multimodalModel = cfg?.embedding_multimodal_model;
+    if (multimodalModel) {
+      const { resolveSchemaMultimodalDim } = await import('../core/embedding-dim-check.ts');
+      const pre = resolveSchemaMultimodalDim({
+        embedding_multimodal_model: multimodalModel,
+      });
+      if (!pre.ok) {
+        progress.finish();
+        throw new Error(
+          `Refusing to reindex: ${pre.error}\n` +
+          `Fix with \`gbrain config set embedding_multimodal_model <provider>:<model>\`.`,
+        );
+      }
+    }
+  } catch (e) {
+    // Re-throw if it's the preflight refusal; suppress only when loadConfig fails.
+    if (e instanceof Error && /Refusing to reindex/.test(e.message)) throw e;
+  }
 
   const sql = sqlQueryForEngine(engine);
 
@@ -217,21 +255,37 @@ export async function runReindexMultimodal(
           items.map(it => ({ kind: 'text' as const, text: it.text })),
           { inputType: 'document' },
         );
-        for (let i = 0; i < items.length; i++) {
-          const vec = result.embeddings[i];
-          if (vec) {
-            const vecLiteral = `[${Array.from(vec).join(',')}]`;
-            await sql`
-              UPDATE content_chunks
-              SET embedding_multimodal = ${vecLiteral}::vector
-              WHERE id = ${items[i].id}
-            `;
-            reembedded++;
-            completedIds.add(items[i].id);
-          } else {
-            failed++;
-          }
-        }
+        // v0.41.15.0 (T9): per-chunk UPDATE loop wrapped in the sliding
+        // pool. JS single-threaded event loop makes reembedded++ /
+        // failed++ / completedIds.add atomic; the workers race only on
+        // the DB UPDATE round-trip, which is exactly the parallelism
+        // win on Postgres.
+        const writersResolved = resolveWorkersWithClamp(
+          engine,
+          opts.workers,
+          'reindex-multimodal',
+          items.length,
+        );
+        await runSlidingPool({
+          items,
+          workers: writersResolved.workers,
+          failureLabel: (it) => String(it.id),
+          onItem: async (item, i) => {
+            const vec = result.embeddings[i];
+            if (vec) {
+              const vecLiteral = `[${Array.from(vec).join(',')}]`;
+              await sql`
+                UPDATE content_chunks
+                SET embedding_multimodal = ${vecLiteral}::vector
+                WHERE id = ${item.id}
+              `;
+              reembedded++;
+              completedIds.add(item.id);
+            } else {
+              failed++;
+            }
+          },
+        });
       }
 
       processed += items.length;

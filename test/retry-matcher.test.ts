@@ -75,6 +75,52 @@ describe('isRetryableConnError', () => {
   test('does not match arbitrary errors', () => {
     expect(isRetryableConnError(new Error('something else'))).toBe(false);
   });
+
+  // issue #1678: postgres.js's transaction-mode pooler reaps idle sockets and
+  // throws errors carrying `code: 'CONNECTION_ENDED'` (a library code, not an
+  // 08xxx SQLSTATE). Must be retryable via BOTH the code and the message form.
+  test('matches CONNECTION_ENDED via code', () => {
+    expect(isRetryableConnError(pgError('CONNECTION_ENDED', 'write CONNECTION_ENDED'))).toBe(true);
+  });
+
+  test('matches CONNECTION_ENDED via message even without the code', () => {
+    expect(isRetryableConnError(new Error('write CONNECTION_ENDED localhost:6543'))).toBe(true);
+  });
+
+  // The getter self-heal throws a GBrainError whose `problem` field is
+  // 'No database connection' — the existing typed-shape match must keep firing.
+  test('matches the instance-pool-reaped GBrainError shape (problem field)', () => {
+    const err = { problem: 'No database connection', message: 'instance pool torn down' };
+    expect(isRetryableConnError(err)).toBe(true);
+  });
+
+  // #1794: Supavisor session-pool exhaustion (EMAXCONNSESSION) + Postgres
+  // SQLSTATE 53300 too_many_connections. Transient under load — must retry so
+  // the resumable-sync checkpoint write survives the spike instead of being
+  // dropped (which is how #1794 lost 100% of progress).
+  test('matches EMAXCONNSESSION via message', () => {
+    expect(isRetryableConnError(new Error('EMAXCONNSESSION: max clients in session mode'))).toBe(true);
+  });
+
+  test('matches SQLSTATE 53300 too_many_connections via code', () => {
+    expect(isRetryableConnError(pgError('53300', 'too many connections for role'))).toBe(true);
+  });
+
+  test('matches "too many clients already" message', () => {
+    expect(isRetryableConnError(new Error('sorry, too many clients already'))).toBe(true);
+  });
+
+  test('matches reserved-slots message', () => {
+    expect(
+      isRetryableConnError(new Error('remaining connection slots are reserved for non-replication superuser connections'))
+    ).toBe(true);
+  });
+
+  // 53300 must NOT accidentally widen to other 53xxx (e.g. 53400
+  // configuration_limit_exceeded is not a transient pool blip).
+  test('does NOT match unrelated 53xxx codes', () => {
+    expect(isRetryableConnError(pgError('53400', 'configuration limit exceeded'))).toBe(false);
+  });
 });
 
 describe('isRetryableError', () => {

@@ -11,7 +11,7 @@
  *  - rerankerFn test seam used over gateway.rerank
  */
 
-import { describe, test, expect, beforeAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { applyReranker, type RerankerOpts } from '../../src/core/search/rerank.ts';
 import { RerankError, type RerankResult } from '../../src/core/ai/gateway.ts';
 import type { SearchResult } from '../../src/core/types.ts';
@@ -33,11 +33,23 @@ function makeResult(slug: string, score: number, chunk: string): SearchResult {
 
 // Setup: gateway must be configured so the rerank-audit logger doesn't
 // trip on missing env. We can call configureGateway with a minimal stub.
+// NOTE: this stub omits embedding_model, so the gateway falls back to the
+// v0.37 default (zeroentropyai:zembed-1 / 1280-d). Without the afterAll
+// reset below it would LEAK that default to the next file in the shard
+// process — a sibling that runs initSchema in beforeAll would build a
+// vector(1280) column and then mismatch on 1536-d fixtures. resetGateway
+// in afterAll restores the empty slot so the legacy-embedding preload
+// re-pins OpenAI/1536 for the next file.
 beforeAll(async () => {
   const { configureGateway } = await import('../../src/core/ai/gateway.ts');
   configureGateway({
     env: { ZEROENTROPY_API_KEY: 'test-key' },
   });
+});
+
+afterAll(async () => {
+  const { resetGateway } = await import('../../src/core/ai/gateway.ts');
+  resetGateway();
 });
 
 describe('applyReranker — happy path', () => {

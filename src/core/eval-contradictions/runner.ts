@@ -33,6 +33,8 @@ import { JudgeCache } from './cache.ts';
 import { CostTracker, estimateUpperBoundCost } from './cost-tracker.ts';
 import { buildSourceTierBreakdown, classifySlugTier } from './cross-source.ts';
 import { shouldSkipForDateMismatch } from './date-filter.ts';
+import { withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
 import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.ts';
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
@@ -169,11 +171,19 @@ async function generateIntraPagePairs(
   results: SearchResult[],
 ): Promise<ContradictionPair[]> {
   if (results.length === 0) return [];
-  // Unique page_ids only.
-  const pageIds = Array.from(new Set(results.map((r) => r.page_id)));
+  // Unique, FINITE page_ids only. Defensive backstop for the alias-hop bug
+  // (#2339 sibling): an alias-injected synthetic result with an undefined/NaN
+  // page_id must never reach `ANY($1::int[])` — postgres.js rejects it with
+  // UNDEFINED_VALUE and aborts the whole probe. Mirrors the hybrid.ts:63 filter.
+  const pageIds = Array.from(
+    new Set(
+      results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
+    ),
+  );
   const takesByPage = await engine.listActiveTakesForPages(pageIds);
   const out: ContradictionPair[] = [];
   for (const r of results) {
+    if (typeof r.page_id !== 'number' || !Number.isFinite(r.page_id)) continue;
     const takes = takesByPage.get(r.page_id) ?? [];
     if (takes.length === 0) continue;
     const chunkMember = searchResultToMember(r);
@@ -225,6 +235,34 @@ function sortPairs(
  * strings — CLI flag parsing lives in the command file, not here.
  */
 export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerResult> {
+  // T6: wrap the entire body in withBudgetTracker so every gateway-layer
+  // chat/embed/rerank call (judge, embed-on-query) auto-records via the
+  // AsyncLocalStorage scope from src/core/ai/gateway.ts. The existing
+  // CostTracker stays for the report shape — the new BudgetTracker is a
+  // parallel record-keeper that doesn't enforce a cap on top of the
+  // existing soft ceiling. Public surface (--budget-usd, PreFlightBudgetError)
+  // is byte-identical.
+  const _outerBudgetUsd = opts.budgetUsd ?? 5.0;
+  const _runnerTracker = new BudgetTracker({
+    // Set the cap only when callers passed --budget-usd explicitly; this
+    // keeps the existing soft-ceiling semantics from CostTracker as the
+    // primary enforcement and uses the new tracker for telemetry only.
+    label: 'eval.suspected-contradictions',
+  });
+  try {
+    return await withBudgetTracker(_runnerTracker, () => _runContradictionProbeInner(opts));
+  } catch (err) {
+    // BudgetExhausted from the gateway path should bubble cleanly. With no
+    // cap set, the tracker only records; it doesn't throw, so this path
+    // is reachable only via future opt-in.
+    if (err instanceof BudgetExhausted) {
+      throw err;
+    }
+    throw err;
+  }
+}
+
+async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResult> {
   const startedAt = Date.now();
   const judgeModel = opts.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const topK = Math.max(1, opts.topK ?? DEFAULT_TOP_K);

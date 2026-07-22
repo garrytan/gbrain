@@ -6,13 +6,28 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { readContentChunksEmbeddingDim } from '../src/core/embedding-dim-check.ts';
 
 let engine: PGLiteEngine;
+/**
+ * Actual `content_chunks.embedding` column width at runtime. Probed
+ * after initSchema, NOT hardcoded — the brain inherits from
+ * `~/.gbrain/config.json` (locally) or `DEFAULT_EMBEDDING_DIMENSIONS`
+ * (CI fresh-install). Hardcoding 1536 or 1280 makes the test green
+ * on one and red on the other; the default model has flipped twice
+ * already (OpenAI 3-large=1536 → ZE zembed-1=1280 in v0.36+).
+ */
+let TEXT_DIM = 0;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  const probe = await readContentChunksEmbeddingDim(engine);
+  if (!probe.exists || probe.dims === null) {
+    throw new Error('content_chunks.embedding column missing after initSchema — test environment broken');
+  }
+  TEXT_DIM = probe.dims;
 });
 
 afterAll(async () => {
@@ -23,9 +38,16 @@ beforeEach(async () => {
   await resetPgliteState(engine);
 });
 
-function fakeText1536(seed: number): Float32Array {
-  const out = new Float32Array(1536);
-  for (let i = 0; i < 1536; i++) out[i] = (i + seed) / 1536;
+/**
+ * Build a fake text-column vector at the column's runtime dim. Reads
+ * `TEXT_DIM` populated in `beforeAll` from the actual column. Works
+ * on any default — 1280 (CI fresh-install) and 1536 (local dev with
+ * gbrain config from older default) both pass.
+ */
+function fakeTextDefault(seed: number): Float32Array {
+  const n = TEXT_DIM;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = (i + seed) / n;
   return out;
 }
 
@@ -74,17 +96,17 @@ async function seedImagePage(slug: string, vec: Float32Array) {
 
 describe('searchVector column routing (v0.27.1)', () => {
   test('default path searches embedding column and returns text rows only', async () => {
-    await seedTextPage('notes/text-only', fakeText1536(1));
+    await seedTextPage('notes/text-only', fakeTextDefault(1));
     await seedImagePage('photos/img-only', fakeImage1024(1));
 
-    const out = await engine.searchVector(fakeText1536(1), { limit: 10 });
+    const out = await engine.searchVector(fakeTextDefault(1), { limit: 10 });
     const slugs = out.map(r => r.slug);
     expect(slugs).toContain('notes/text-only');
     expect(slugs).not.toContain('photos/img-only');
   });
 
   test('embeddingColumn=embedding_image searches image column and returns image rows only', async () => {
-    await seedTextPage('notes/text-only', fakeText1536(2));
+    await seedTextPage('notes/text-only', fakeTextDefault(2));
     await seedImagePage('photos/img-only', fakeImage1024(2));
 
     const out = await engine.searchVector(fakeImage1024(2), {
@@ -114,7 +136,7 @@ describe('searchVector column routing (v0.27.1)', () => {
   });
 
   test('searchKeyword hides image rows by default (modality filter)', async () => {
-    await seedTextPage('notes/keyword', fakeText1536(3));
+    await seedTextPage('notes/keyword', fakeTextDefault(3));
     await seedImagePage('photos/keyword', fakeImage1024(3));
     // Force image chunk_text to overlap with the text chunk's words so the
     // FTS would otherwise match both rows.

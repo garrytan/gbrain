@@ -270,6 +270,101 @@ describe('MinionQueue: Stall Detection', () => {
   });
 });
 
+// --- #1737 — honest attempt accounting on terminal dead-letter paths ---
+
+describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
+  test('wall-clock dead-letter increments attempts_made (no more 0/N (started:M))', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 2 });
+    // Per-job timeout so the wall-clock threshold is timeout_ms * 2 = 2s.
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    expect((await queue.getJob(job.id))!.attempts_made).toBe(0); // bug repro: started but not made
+
+    // Force cumulative wall-clock past timeout_ms * 2.
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id]
+    );
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.length).toBe(1);
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].error_text).toBe('wall-clock timeout exceeded');
+    // The fix: a job killed by wall-clock consumed an attempt.
+    expect(dead[0].attempts_made).toBe(1);
+    // Constraint chk_attempts_order (attempts_made <= attempts_started) holds.
+    expect(dead[0].attempts_made).toBeLessThanOrEqual(dead[0].attempts_started);
+  });
+
+  test('wall-clock dead-letter is terminal — does NOT retry even with attempts remaining', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 5 });
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id]
+    );
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.length).toBe(1);
+    // Even with 4 attempts left, wall-clock is terminal (non-idempotent handler safety).
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].status).not.toBe('delayed');
+  });
+
+  test('stall dead-letter increments attempts_made; requeue does NOT', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 2 WHERE id = $1', [job.id]);
+
+    // First stall: requeued, attempts_made stays 0 (lease-loss recovery, not an app attempt).
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const r1 = await queue.handleStalled();
+    expect(r1.requeued.length).toBe(1);
+    expect(r1.requeued[0].attempts_made).toBe(0);
+
+    // Second stall: dead-lettered, attempts_made now increments.
+    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const r2 = await queue.handleStalled();
+    expect(r2.dead.length).toBe(1);
+    expect(r2.dead[0].error_text).toBe('max stalled count exceeded');
+    expect(r2.dead[0].attempts_made).toBe(1);
+    expect(r2.dead[0].attempts_made).toBeLessThanOrEqual(r2.dead[0].attempts_started);
+  });
+});
+
+// --- #1737 — per-handler default wall-clock budget at submit ---
+
+describe('MinionQueue: #1737 per-handler default timeout', () => {
+  test('long handler with no explicit timeout_ms gets the 30-min default stamped', async () => {
+    const job = await queue.add('embed-backfill', { sourceId: 'x' });
+    expect(job.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
+  test('autopilot-cycle + subagent also get the long default', async () => {
+    const cycle = await queue.add('autopilot-cycle', {});
+    // subagent is a protected name → needs the trusted-submit flag (4th arg).
+    const sub = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
+    expect(cycle.timeout_ms).toBe(30 * 60 * 1000);
+    expect(sub.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
+  test('explicit timeout_ms always wins over the default', async () => {
+    const job = await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    expect(job.timeout_ms).toBe(5000);
+  });
+
+  test('short handler keeps null timeout_ms (tight wall-clock default applies)', async () => {
+    const job = await queue.add('sync', {});
+    expect(job.timeout_ms).toBeNull();
+  });
+});
+
 // --- v0.13.1 #219 — max_stalled default + input surface ---
 
 describe('MinionQueue: v0.13.1 max_stalled schema default (#219)', () => {
@@ -639,6 +734,99 @@ describe('MinionQueue: Cancel & Retry', () => {
     const retried = await queue.retryJob(job.id);
     expect(retried!.status).toBe('waiting');
     expect(retried!.error_text).toBeNull();
+  });
+
+  // #2783: retry must reset started_at/attempts_made/attempts_started/
+  // stalled_counter — an explicit `jobs retry` is an operator asserting
+  // "run this fresh".
+  test('retry resets started_at/attempts_made/attempts_started/stalled_counter', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 3 });
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.failJob(job.id, 'tok1', 'error', 'dead');
+    // Simulate the original claim having stamped started_at long ago,
+    // attempts already elevated, and a near-exhausted stall budget —
+    // matching what a real dead job (killed by wall-clock OR by stall
+    // exhaustion) looks like.
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '1 hour', stalled_counter = 2 WHERE id = $1",
+      [job.id],
+    );
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.status).toBe('waiting');
+    expect(retried!.started_at).toBeNull();
+    expect(retried!.attempts_made).toBe(0);
+    expect(retried!.attempts_started).toBe(0);
+    expect(retried!.stalled_counter).toBe(0);
+  });
+
+  // #2783 repro: retry issued long after the original claim must NOT be
+  // immediately dead-lettered by the wall-clock sweep on re-claim.
+  test('retry survives handleWallClockTimeouts after re-claim, even long after the original attempt', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    // Original attempt dies from a wall-clock timeout — matches the issue's
+    // repro (an outage that outlasts timeout_ms).
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id],
+    );
+    const firstDead = await queue.handleWallClockTimeouts(30000);
+    expect(firstDead.length).toBe(1);
+    expect(firstDead[0].status).toBe('dead');
+
+    // Outage clears; operator retries — LONG after the original claim time
+    // (this is the exact scenario that used to dead-letter in <1s: without
+    // the fix, started_at would still be the original claim's timestamp).
+    await queue.retryJob(job.id);
+    const reclaimed = await queue.claim('tok2', 30000, 'default', ['sync']);
+    expect(reclaimed).not.toBeNull();
+    expect(reclaimed!.attempts_made).toBe(0);
+
+    // The sweep must NOT kill it immediately this time — started_at was
+    // re-stamped fresh on re-claim (claim()'s COALESCE(started_at, now())).
+    const stillAlive = await queue.handleWallClockTimeouts(30000);
+    expect(stillAlive.length).toBe(0);
+    expect((await queue.getJob(job.id))!.status).toBe('active');
+  });
+
+  // #2783 repro (stall side): a job dead-lettered by stall exhaustion must
+  // get a fresh stall budget on retry, not immediately re-die on its first
+  // stall after being re-claimed.
+  test('retry survives one stall after re-claim, even after the original stall budget was exhausted', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 2 });
+
+    // Exhaust the stall budget the same way the existing stall test does:
+    // one requeue stall, then one dead-lettering stall.
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    await queue.handleStalled();
+    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    const r2 = await queue.handleStalled();
+    expect(r2.dead.length).toBe(1);
+    expect(r2.dead[0].status).toBe('dead');
+    expect(r2.dead[0].stalled_counter).toBe(2); // == max_stalled — exhausted
+
+    // Operator retries. Without the stalled_counter reset, the very next
+    // stall would immediately satisfy `stalled_counter + 1 >= max_stalled`
+    // and dead-letter again despite "run this fresh".
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.stalled_counter).toBe(0);
+    await queue.claim('tok3', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    const r3 = await queue.handleStalled();
+    expect(r3.requeued.length).toBe(1); // fresh budget — requeued, not dead
+    expect(r3.dead.length).toBe(0);
   });
 });
 
@@ -1205,6 +1393,12 @@ describe('MinionQueue: handleTimeouts', () => {
     const dead = await queue.getJob(job.id);
     expect(dead!.status).toBe('dead');
     expect(dead!.error_text).toBe('timeout exceeded');
+    // #1737 regression: the timed-out run counts as a spent attempt, mirroring
+    // the wall-clock + stall dead-letter paths. Without this the job reads
+    // `attempts: 0/N (started: N)`. Asserted on both the RETURNING row and the
+    // persisted row so a future refactor can't silently drop the increment.
+    expect(timedOut[0].attempts_made).toBe(1);
+    expect(dead!.attempts_made).toBe(1);
   });
 
   test('handleTimeouts ignores stalled jobs (lock_until > now guard)', async () => {
@@ -1771,6 +1965,20 @@ describe('MinionQueue: v0.19.1 maxWaiting — cap correctness + race (D2/H2)', (
     const b = await queue.add('isolate', {}, { maxWaiting: 1, queue: 'shell' });
     expect(b.id).not.toBe(a.id);
     expect(b.queue).toBe('shell');
+  });
+
+  test('cross-source isolation — waiting sync for source A does NOT swallow source B (multi-source regression)', async () => {
+    // Regression: the cap counted all waiting (name, queue) rows regardless
+    // of data.sourceId, so a waiting default-source sync coalesced away every
+    // other source's freshness sync — a secondary source sat 29h stale while
+    // dispatch logs showed its syncs "dispatched".
+    const a = await queue.add('srcsync', { sourceId: 'default' }, { maxWaiting: 1 });
+    const a2 = await queue.add('srcsync', { sourceId: 'default' }, { maxWaiting: 1 });
+    expect(a2.id).toBe(a.id); // same source still coalesces
+    const b = await queue.add('srcsync', { sourceId: 'projects' }, { maxWaiting: 1 });
+    expect(b.id).not.toBe(a.id); // different source MUST get its own row
+    const b2 = await queue.add('srcsync', { sourceId: 'projects' }, { maxWaiting: 1 });
+    expect(b2.id).toBe(b.id); // and its own cap
   });
 
   test('unset maxWaiting — normal submit path, no coalesce, no cap', async () => {

@@ -16,6 +16,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync } from 'fs';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
@@ -29,7 +30,8 @@ import {
   type AuditReport,
   type AuditFix,
 } from '../core/brain-writer.ts';
-import { isSyncable, slugifyPath } from '../core/sync.ts';
+import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
+import { isSyncable, pruneDir, slugifyPath } from '../core/sync.ts';
 
 export async function runFrontmatter(args: string[]): Promise<void> {
   const sub = args[0];
@@ -63,7 +65,7 @@ export async function runFrontmatter(args: string[]): Promise<void> {
   }
   console.error(`Unknown frontmatter subcommand: ${sub}\n`);
   printHelp();
-  process.exitCode = 1;
+  setCliExitVerdict(1);
 }
 
 async function connectEngineForAudit(): Promise<BrainEngine> {
@@ -164,14 +166,14 @@ async function runValidate(rest: string[]): Promise<void> {
   }
   if (!target) {
     console.error('error: gbrain frontmatter validate requires a <path> argument');
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 
   const resolved = resolve(target);
   if (!existsSync(resolved)) {
     console.error(`error: path not found: ${target}`);
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 
@@ -242,16 +244,45 @@ async function runValidate(rest: string[]): Promise<void> {
     }
   }
 
-  process.exitCode = totalErrors > 0 && !flags.fix ? 1 : 0;
+  setCliExitVerdict(totalErrors > 0 && !flags.fix ? 1 : 0);
 }
 
-function collectFiles(target: string): string[] {
+/**
+ * Recursively collect every syncable `.md` file under `target`.
+ *
+ * Uses the canonical `pruneDir(name, parentDir)` gate (sync.ts:258) to
+ * skip vendor / hidden / generated subtrees at descent time. Pre-v0.38.2.0
+ * this walker descended into every subtree and let `isSyncable` filter at
+ * the leaf — paying the IO cost of stat'ing every entry under node_modules,
+ * .git, .obsidian, etc. That was the second instance of the v0.38.2.0 hang
+ * class (the first being brain-writer.ts:walkDir). Codex outside-voice
+ * caught it during plan-eng-review — fixing only walkDir would have left
+ * `gbrain frontmatter validate` (doctor's own remediation hint) hanging
+ * users in the same way.
+ *
+ * Optional `visitDir(dir)` is the test-observability hook: fired once per
+ * directory the walker descends into (post-pruneDir). Production callers
+ * don't pass it; the regression suite uses it to assert descent-time
+ * pruning directly.
+ */
+export function collectFiles(
+  target: string,
+  visitDir?: (dirPath: string) => void,
+): string[] {
   const st = lstatSync(target);
   if (st.isFile()) {
     return [target];
   }
+
+  const gitFiles = collectGitVisibleFiles(target, (rel) => isSyncable(rel, { strategy: 'markdown' }));
+  if (gitFiles) {
+    if (visitDir) visitDir(target);
+    return gitFiles;
+  }
+
   const out: string[] = [];
   const stack = [target];
+  if (visitDir) visitDir(target);
   while (stack.length > 0) {
     const dir = stack.pop()!;
     let entries: string[];
@@ -270,6 +301,10 @@ function collectFiles(target: string): string[] {
       }
       if (entryStat.isSymbolicLink()) continue;
       if (entryStat.isDirectory()) {
+        // Descent-time prune — the actual fix for the second walker bug
+        // class (codex outside-voice C5).
+        if (!pruneDir(name, dir)) continue;
+        if (visitDir) visitDir(full);
         stack.push(full);
       } else if (entryStat.isFile()) {
         const rel = relative(target, full);
@@ -352,7 +387,7 @@ async function runGenerate(args: string[]): Promise<void> {
   if (!targetPath) {
     console.error('error: gbrain frontmatter generate requires a <path> argument');
     console.error('usage: gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]');
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 

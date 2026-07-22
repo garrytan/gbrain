@@ -27,6 +27,7 @@ import {
   MODE_BUNDLES,
   type ResolvedSearchKnobs,
 } from '../../src/core/search/mode.ts';
+import { resolveHardExcludes } from '../../src/core/search/source-boost.ts';
 
 /** Build a baseline resolved knob set with all reranker fields filled. */
 function baseKnobs(): ResolvedSearchKnobs {
@@ -43,12 +44,27 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 3 (1→2 v0.35.0.0 reranker; 2→3 v0.35.6.0 floor_ratio + v0.36 cross-modal + embedding-column appends)', () => {
+  test('version is 12 (…; 9→10 relational recall; 10→11 asymmetric input_type #1400; 11→12 hard-excludes #2825)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
-    // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation),
-    // all appended per CDX2-F13 append-only convention.
-    expect(KNOBS_HASH_VERSION).toBe(3);
+    // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
+    // v0.40.4 (salem) + v0.39 T21 (master): 3→4 to fold graph_signals AND
+    // schema_pack name + version (graph-on cache write cannot be served to
+    // graph-off; cross-pack contamination structurally impossible).
+    // v0.40.3.0 (D8): 4→5 to fold contextual_retrieval + kill switch,
+    // sequenced behind salem's v=4 graph-signals.
+    // v0.41.22.0 (type-unification): 5→6 to fold the alias_resolved
+    // post-fusion boost. Cache rows written before the boost stage
+    // cannot leak past the new stage. T2: 6→7 title_boost. v0.42.3.0: 7→8
+    // autocut. issue #1777: 8→9 archive/ demote (search-exclude policy change
+    // isn't in the hash, so the bump invalidates archive-excluded cache rows).
+    // v0.43: 9→10 relational recall arm (rel=/reld=).
+    // #1400: 10→11 asymmetric input_type fix — embedQuery() now produces
+    // query-side vectors for asymmetric providers, so rows keyed on
+    // pre-fix document-side query vectors must not be served.
+    // #2825: 11→12 to fold the resolved hard-exclude prefix list (hx=) —
+    // cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across processes.
+    expect(KNOBS_HASH_VERSION).toBe(12);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {
@@ -193,5 +209,38 @@ describe('append-only convention (CDX2-F13)', () => {
     const bare = knobsHash(k);
     const explicit = knobsHash(k, { embeddingColumn: 'embedding', embeddingModel: 'default' });
     expect(bare).toBe(explicit);
+  });
+});
+
+describe('v=12 hard-exclude participation (#2825)', () => {
+  test('different exclude lists → different hashes', () => {
+    const k = baseKnobs();
+    const noEnv = knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, undefined) });
+    const withEnv = knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, 'private/') });
+    expect(noEnv).not.toBe(withEnv);
+  });
+
+  test('include (opt-back-in) changes the hash too', () => {
+    const k = baseKnobs();
+    const a = knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, undefined) });
+    const b = knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, ['test/'], undefined) });
+    expect(a).not.toBe(b);
+  });
+
+  test('same prefixes in different input order → SAME hash (normalization)', () => {
+    const k = baseKnobs();
+    const a = knobsHash(k, { hardExcludes: ['a/', 'b/', 'test/'] });
+    const b = knobsHash(k, { hardExcludes: ['test/', 'b/', 'a/'] });
+    expect(a).toBe(b);
+  });
+
+  test('undefined hardExcludes is stable (legacy-caller fallback)', () => {
+    const k = baseKnobs();
+    expect(knobsHash(k)).toBe(knobsHash(k));
+    // ...and distinct from an explicit resolved default list — a legacy
+    // caller can never collide with a policy-carrying cache row.
+    expect(knobsHash(k)).not.toBe(
+      knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, undefined) }),
+    );
   });
 });

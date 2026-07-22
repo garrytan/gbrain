@@ -6,7 +6,22 @@ import type { ParsedModelId, Recipe, TouchpointKind, ChatTouchpoint, EmbeddingTo
 import { getRecipe, RECIPES } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
-/** Split "openai:text-embedding-3-large" into { providerId, modelId }. */
+/**
+ * Split "openai:text-embedding-3-large" or "openai/text-embedding-3-large"
+ * into { providerId, modelId }. Colon takes precedence so OpenRouter nested
+ * ids like "openrouter:anthropic/claude-sonnet-4-6" route as
+ * { providerId: 'openrouter', modelId: 'anthropic/claude-sonnet-4-6' }.
+ *
+ * v0.41.21.0: slash form added so users typing `anthropic/claude-sonnet-4-6`
+ * (the form OpenRouter recipes emit and CLI `--judge-model` accepts) reach
+ * the gateway successfully. Pre-fix the colon-only check threw at every
+ * gateway entry point (chat / embed / rerank), so a slash-form id passed
+ * pricing checks via splitProviderModelId in `src/core/model-id.ts` and
+ * then died here at the gateway resolver. Closes the end-to-end bug class.
+ *
+ * Bare names without ANY separator still throw — `claude-sonnet-4-6` alone
+ * doesn't tell us which provider to route through.
+ */
 export function parseModelId(id: string): ParsedModelId {
   if (!id || typeof id !== 'string') {
     throw new AIConfigError(
@@ -14,15 +29,23 @@ export function parseModelId(id: string): ParsedModelId {
       'Expected format: provider:model (e.g. openai:text-embedding-3-large)',
     );
   }
+  // Colon wins over slash (OpenRouter nested-id semantic).
   const colon = id.indexOf(':');
-  if (colon === -1) {
-    throw new AIConfigError(
-      `Model id "${id}" is missing a provider prefix.`,
-      'Use format provider:model, e.g. openai:text-embedding-3-large',
-    );
+  let sepIdx: number;
+  if (colon !== -1) {
+    sepIdx = colon;
+  } else {
+    const slash = id.indexOf('/');
+    if (slash === -1) {
+      throw new AIConfigError(
+        `Model id "${id}" is missing a provider prefix.`,
+        'Use format provider:model (preferred) or provider/model, e.g. openai:text-embedding-3-large',
+      );
+    }
+    sepIdx = slash;
   }
-  const providerId = id.slice(0, colon).trim().toLowerCase();
-  const modelId = id.slice(colon + 1).trim();
+  const providerId = id.slice(0, sepIdx).trim().toLowerCase();
+  const modelId = id.slice(sepIdx + 1).trim();
   if (!providerId || !modelId) {
     throw new AIConfigError(
       `Model id "${id}" has empty provider or model.`,

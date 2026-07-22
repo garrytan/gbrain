@@ -28,7 +28,7 @@
  *      (excluding the OpenAI canonical fast-path recipe).
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -40,6 +40,15 @@ import {
   __getShrinkStateForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
+
+// The last test in this file leaves the gateway configured with a remote
+// provider + fake key and a REAL embed transport. Without a final reset,
+// that config leaks into whichever test file the shard runs next — the
+// first downstream embed then makes a live HTTP call (broke master shard 6
+// when #3022's new test file reshuffled shard composition). The bunfig
+// legacy-embedding preload only re-applies its default when the gateway is
+// UNCONFIGURED, so a configured-but-stale slot survives file boundaries.
+afterAll(() => resetGateway());
 
 // --------- Test helpers ---------
 
@@ -189,6 +198,21 @@ describe('isTokenLimitError (pure helper)', () => {
 
   test('matches "batch too many tokens" variant', () => {
     expect(isTokenLimitError(new Error('Batch contains too many tokens'))).toBe(true);
+  });
+
+  test('matches OpenAI embeddings "maximum request size" error (regression: PR ###)', () => {
+    // Real error string returned by OpenAI's /v1/embeddings endpoint when the
+    // sum of all input items exceeds 300k tokens. Without this match, gbrain's
+    // recursive-halving safety net never engages on OpenAI and the queue stalls
+    // forever on token-dense pages.
+    const openaiErr = new Error(
+      "Invalid 'input': maximum request size is 300000 tokens per request.",
+    );
+    expect(isTokenLimitError(openaiErr)).toBe(true);
+  });
+
+  test('matches generic "max tokens per request" phrasing', () => {
+    expect(isTokenLimitError(new Error('Exceeded 300000 max tokens per request'))).toBe(true);
   });
 
   test('does not match unrelated errors', () => {

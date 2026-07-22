@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "recipe": "agent-voice",
+  "version": "0.1.0",
+  "install_kind": "copy-into-host-repo",
+  "description": "src → target mapping consumed by `gbrain integrations install agent-voice`. The install command reads this manifest, computes SHA-256 of each source file at copy time, writes the per-file hash to <host>/services/voice-agent/.gbrain-source.json so --refresh can do three-way classification (unchanged-identical / unchanged-stale / locally-modified).",
+  "target_root_relative_to_host_repo": "services/voice-agent",
+  "skills_target_root_relative_to_host_repo": "skills",
+  "files": [
+    { "src": "package.json", "target": "services/voice-agent/package.json", "mode": "0644" },
+    { "src": "code/server.mjs", "target": "services/voice-agent/code/server.mjs", "mode": "0755" },
+    { "src": "code/prompt.mjs", "target": "services/voice-agent/code/prompt.mjs", "mode": "0644" },
+    { "src": "code/tools.mjs", "target": "services/voice-agent/code/tools.mjs", "mode": "0644" },
+    { "src": "code/gbrain-client.mjs", "target": "services/voice-agent/code/gbrain-client.mjs", "mode": "0644" },
+    { "src": "code/lib/personas/personas.mjs", "target": "services/voice-agent/code/lib/personas/personas.mjs", "mode": "0644" },
+    { "src": "code/lib/personas/mars.mjs", "target": "services/voice-agent/code/lib/personas/mars.mjs", "mode": "0644" },
+    { "src": "code/lib/personas/venus.mjs", "target": "services/voice-agent/code/lib/personas/venus.mjs", "mode": "0644" },
+    { "src": "code/lib/personas/private-name-blocklist.json", "target": "services/voice-agent/code/lib/personas/private-name-blocklist.json", "mode": "0644" },
+    { "src": "code/lib/personas/context-builder.contract.md", "target": "services/voice-agent/code/lib/personas/context-builder.contract.md", "mode": "0644" },
+    { "src": "code/lib/context-builder.example.mjs", "target": "services/voice-agent/code/lib/context-builder.example.mjs", "mode": "0644" },
+    { "src": "code/lib/audio-convert.mjs", "target": "services/voice-agent/code/lib/audio-convert.mjs", "mode": "0644" },
+    { "src": "code/lib/gatekeeper.mjs", "target": "services/voice-agent/code/lib/gatekeeper.mjs", "mode": "0644" },
+    { "src": "code/lib/sessions.mjs", "target": "services/voice-agent/code/lib/sessions.mjs", "mode": "0644" },
+    { "src": "code/lib/twilio-bridge.mjs", "target": "services/voice-agent/code/lib/twilio-bridge.mjs", "mode": "0644" },
+    { "src": "code/lib/upstream-classifier.mjs", "target": "services/voice-agent/code/lib/upstream-classifier.mjs", "mode": "0644" },
+    { "src": "code/public/call.html", "target": "services/voice-agent/code/public/call.html", "mode": "0644" },
+    { "src": "tests/unit/personas.test.mjs", "target": "services/voice-agent/tests/unit/personas.test.mjs", "mode": "0644" },
+    { "src": "tests/unit/mars-prompt-shape.test.mjs", "target": "services/voice-agent/tests/unit/mars-prompt-shape.test.mjs", "mode": "0644" },
+    { "src": "tests/unit/venus-prompt-shape.test.mjs", "target": "services/voice-agent/tests/unit/venus-prompt-shape.test.mjs", "mode": "0644" },
+    { "src": "tests/unit/tools-allowlist.test.mjs", "target": "services/voice-agent/tests/unit/tools-allowlist.test.mjs", "mode": "0644" },
+    { "src": "tests/unit/upstream-classifier.test.mjs", "target": "services/voice-agent/tests/unit/upstream-classifier.test.mjs", "mode": "0644" }
+  ],
+  "skills": [
+    { "src": "skills/voice-persona-mars/SKILL.md", "target": "skills/voice-persona-mars/SKILL.md", "mode": "0644" },
+    { "src": "skills/voice-persona-mars/routing-eval.jsonl", "target": "skills/voice-persona-mars/routing-eval.jsonl", "mode": "0644" },
+    { "src": "skills/voice-persona-venus/SKILL.md", "target": "skills/voice-persona-venus/SKILL.md", "mode": "0644" },
+    { "src": "skills/voice-persona-venus/routing-eval.jsonl", "target": "skills/voice-persona-venus/routing-eval.jsonl", "mode": "0644" },
+    { "src": "skills/voice-post-call/SKILL.md", "target": "skills/voice-post-call/SKILL.md", "mode": "0644" },
+    { "src": "skills/voice-post-call/routing-eval.jsonl", "target": "skills/voice-post-call/routing-eval.jsonl", "mode": "0644" }
+  ],
+  "resolver_rows_to_append": [
+    "voice-persona-mars  | \"talk to mars\", \"mars,\", \"demo mode mars\", \"introspective\", \"thought partner\"",
+    "voice-persona-venus | \"venus,\", \"calendar\", \"tasks\", \"executive\", \"schedule\"",
+    "voice-post-call     | \"after the call\", \"call ended\", \"transcript\", \"call summary\""
+  ]
+}

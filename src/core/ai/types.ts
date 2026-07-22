@@ -98,6 +98,17 @@ export interface EmbeddingTouchpoint {
    */
   user_provided_models?: true;
   /**
+   * #2271: trust a user-supplied `--embedding-dimensions` for this recipe even
+   * when it's not in the known-Matryoshka allowlist. Set ONLY on local /
+   * bring-your-own-backend recipes where the user knows their model's native dim
+   * and we can't enumerate every model (ollama, llama-server, litellm). The
+   * provider's `/embeddings` response-dim validation catches a genuine mismatch
+   * pre-storage. Must NOT be set on fixed-dim hosted providers (openai/voyage/
+   * zeroentropy stay fail-closed) or on recipes that declare recipe-wide
+   * `dims_options` (e.g. openrouter, whose Tier-1 options legitimately govern).
+   */
+  trust_custom_dims?: true;
+  /**
    * v0.32 (#779 reworked): explicit opt-out of the missing-max_batch_tokens
    * startup warning. Set to `true` for recipes whose batch capacity is
    * genuinely dynamic (Ollama: depends on user-loaded model; LiteLLM proxy:
@@ -196,6 +207,20 @@ export interface RerankerTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   max_payload_bytes: number;
+  /**
+   * Override the rerank URL path. Defaults to '/models/rerank' (ZeroEntropy's
+   * legacy path; ZE-compatible-wire-shape providers like llama.cpp set
+   * '/v1/rerank').
+   */
+  path?: string;
+  /**
+   * Recipe-level timeout fallback for `gateway.rerank()` and search-mode
+   * resolution. Caller's `input.timeoutMs` and `search.reranker.timeout_ms`
+   * config still win when set. Used to give CPU-only local rerankers (e.g.
+   * llama.cpp serving Qwen3-Reranker-4B) headroom for first-call warmup
+   * without forcing every user to discover the config key.
+   */
+  default_timeout_ms?: number;
 }
 
 export interface ChatTouchpoint {
@@ -312,6 +337,18 @@ export interface Recipe {
     fetch?: typeof fetch;
   };
   /**
+   * Optional inbound-response rewriter for openai-compatible recipes whose wire
+   * shape needs normalizing before the AI SDK adapter parses it. `fetch` wraps
+   * the transport and MUST be fail-open (return the original response on any
+   * error). Used by DeepSeek to promote `reasoning_content` into `content` when
+   * the reasoner returns an empty `content` (the adapter reads only `content`).
+   * Applied by `applyOpenAICompatConfig`; a `resolveOpenAICompatConfig`-provided
+   * fetch takes precedence when both are present.
+   */
+  compat?: {
+    fetch?: typeof fetch;
+  };
+  /**
    * v0.32 (D13=A): optional runtime readiness check for local-server
    * recipes (ollama, llama-server, future lmstudio-recipe). Returns
    * `ready: false` when the local endpoint isn't reachable, with a `hint`
@@ -362,6 +399,8 @@ export interface AIGatewayConfig {
   chat_fallback_chain?: string[];
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
+  /** Optional chat providerOptions overrides keyed by recipe id or "recipe:modelId". */
+  provider_chat_options?: Record<string, Record<string, unknown>>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
 }

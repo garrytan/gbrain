@@ -31,6 +31,12 @@ import { errorFor, serializeError } from '../core/errors.ts';
 import { createInterface } from 'readline';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
+import { withBudgetTracker } from '../core/ai/gateway.ts';
+// v0.41.15.0 (T11, D9): per-batch parallel workers. BudgetExhausted
+// auto-aborts via the worker-pool's D13 bypass.
+import { runSlidingPool } from '../core/worker-pool.ts';
+import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 
 export interface ReindexCodeOpts {
   sourceId?: string;
@@ -41,6 +47,23 @@ export interface ReindexCodeOpts {
   noEmbed?: boolean;
   /** Page batch size. Default 100 (codex Finding 4.4 OOM protection). */
   batchSize?: number;
+  /**
+   * Cap embedding spend in USD. Default undefined = no cap (legacy behavior).
+   * When set, the reindex body runs inside a `withBudgetTracker` scope so
+   * every `gateway.embed()` call inside `importCodeFile` composes with the
+   * cap. Throws BudgetExhausted (reason='cost') when cumulative exceeds the
+   * cap; partial progress is preserved (already-imported pages stay
+   * imported, the throw aborts the remaining batch).
+   */
+  maxCostUsd?: number;
+  /**
+   * v0.41.15.0 (T11, D9): per-batch parallel workers. Default 1.
+   * PGLite clamps to 1. Recommended 4-8 for large code corpora.
+   * BudgetExhausted from any worker aborts the pool via the worker-
+   * pool's D13 bypass — the budget cap stays load-bearing under
+   * concurrency.
+   */
+  workers?: number;
 }
 
 export interface ReindexCodeResult {
@@ -229,51 +252,115 @@ export async function runReindexCode(
   let failed = 0;
   const failures: Array<{ slug: string; error: string }> = [];
   let offset = 0;
+  let budgetExhausted: BudgetExhausted | null = null;
+
+  // F3: when --max-cost is set, run the body inside withBudgetTracker so
+  // every gateway.embed() call inside importCodeFile composes with the cap.
+  // On BudgetExhausted, we catch + persist what's been imported so far,
+  // then surface the throw as a partial-progress result the caller can
+  // re-run. importCodeFile is idempotent (content_hash short-circuit), so
+  // a re-run picks up where the cap fired.
+  const reindexBody = async (): Promise<void> => {
+    try {
+      while (true) {
+        const batch = await fetchCodePages(engine, opts.sourceId, batchSize, offset);
+        if (batch.length === 0) break;
+
+        // v0.41.15.0 (T11): per-batch sliding pool. BudgetExhausted
+        // from any worker propagates up via the helper's D13 bypass
+        // (not caught here) so the outer catch can record partial
+        // progress unchanged.
+        const writersResolved = resolveWorkersWithClamp(
+          engine,
+          opts.workers,
+          'reindex-code',
+          batch.length,
+        );
+        await runSlidingPool({
+          items: batch,
+          workers: writersResolved.workers,
+          failureLabel: (row) => row.slug,
+          onItem: async (row) => {
+            const fm = row.frontmatter ?? {};
+            const relPath = typeof fm.file === 'string' ? fm.file : null;
+            if (!relPath) {
+              failed++;
+              failures.push({ slug: row.slug, error: 'missing frontmatter.file' });
+              reporter.tick();
+              return;
+            }
+            if (!row.compiled_truth) {
+              failed++;
+              failures.push({ slug: row.slug, error: 'missing compiled_truth' });
+              reporter.tick();
+              return;
+            }
+            try {
+              const result = await importCodeFile(engine, relPath, row.compiled_truth, {
+                noEmbed: opts.noEmbed,
+                force: opts.force,
+                sourceId: opts.sourceId,
+              });
+              if (result.status === 'imported') reindexed++;
+              else if (result.status === 'skipped') skipped++;
+              else {
+                failed++;
+                failures.push({ slug: row.slug, error: result.error ?? result.status });
+              }
+            } catch (e: unknown) {
+              // BudgetExhausted bypasses the helper's onError and hard-
+              // aborts the pool (D13). All other errors are captured
+              // per-page so the rest of the batch completes.
+              if (e instanceof BudgetExhausted) throw e;
+              failed++;
+              failures.push({ slug: row.slug, error: e instanceof Error ? e.message : String(e) });
+            }
+            reporter.tick();
+          },
+        });
+
+        offset += batch.length;
+        if (batch.length < batchSize) break;
+      }
+    } finally {
+      reporter.finish();
+    }
+  };
 
   try {
-    while (true) {
-      const batch = await fetchCodePages(engine, opts.sourceId, batchSize, offset);
-      if (batch.length === 0) break;
-
-      for (const row of batch) {
-        const fm = row.frontmatter ?? {};
-        const relPath = typeof fm.file === 'string' ? fm.file : null;
-        if (!relPath) {
-          failed++;
-          failures.push({ slug: row.slug, error: 'missing frontmatter.file' });
-          reporter.tick();
-          continue;
-        }
-        if (!row.compiled_truth) {
-          failed++;
-          failures.push({ slug: row.slug, error: 'missing compiled_truth' });
-          reporter.tick();
-          continue;
-        }
-        try {
-          const result = await importCodeFile(engine, relPath, row.compiled_truth, {
-            noEmbed: opts.noEmbed,
-            force: opts.force,
-            sourceId: opts.sourceId,
-          });
-          if (result.status === 'imported') reindexed++;
-          else if (result.status === 'skipped') skipped++;
-          else {
-            failed++;
-            failures.push({ slug: row.slug, error: result.error ?? result.status });
-          }
-        } catch (e: unknown) {
-          failed++;
-          failures.push({ slug: row.slug, error: e instanceof Error ? e.message : String(e) });
-        }
-        reporter.tick();
-      }
-
-      offset += batch.length;
-      if (batch.length < batchSize) break;
+    if (typeof opts.maxCostUsd === 'number' && opts.maxCostUsd > 0) {
+      const tracker = new BudgetTracker({ maxCostUsd: opts.maxCostUsd, label: 'reindex-code' });
+      await withBudgetTracker(tracker, reindexBody);
+    } else {
+      await reindexBody();
     }
-  } finally {
-    reporter.finish();
+  } catch (e) {
+    if (e instanceof BudgetExhausted) {
+      budgetExhausted = e;
+    } else {
+      throw e;
+    }
+  }
+
+  if (budgetExhausted) {
+    // Partial-progress result: surfaces what got reindexed before the cap
+    // fired. The CLI wrapper translates this into a clear user-facing
+    // message + non-zero exit; the library result lets agent callers see
+    // what happened without grep'ing stderr.
+    return {
+      status: 'ok',
+      codePages: totalPages,
+      reindexed,
+      skipped,
+      failed,
+      totalTokens,
+      costUsd: budgetExhausted.spent,
+      model: getEmbeddingModelName(),
+      failures: [
+        { slug: '(budget)', error: budgetExhausted.message },
+        ...(failures.length > 0 ? failures : []),
+      ],
+    };
   }
 
   return {
@@ -286,6 +373,45 @@ export async function runReindexCode(
     costUsd,
     model: getEmbeddingModelName(),
     failures: failures.length > 0 ? failures : undefined,
+  };
+}
+
+/**
+ * v0.42.11.0 (#1784) — what to print when the cost gate refuses to spend
+ * non-interactively without `--yes`. The REFUSAL (exit 2, no spend) is the
+ * guardrail and is correct; the FORMAT is a separate axis. Pre-#1784 this path
+ * always emitted a JSON envelope even without `--json`, violating the repo's
+ * "human by default" convention. Now: JSON only when `--json` is explicit;
+ * otherwise a human refusal on stderr. Pure + exported so it's unit-testable
+ * without a brain or a real cost preview.
+ */
+export interface CostRefusal {
+  stdout?: string;
+  stderr?: string;
+}
+export function buildCostRefusal(opts: {
+  json: boolean;
+  previewMsg: string;
+  preview: unknown;
+  costUsd: number;
+  model: string;
+}): CostRefusal {
+  if (opts.json) {
+    const envelope = serializeError(errorFor({
+      class: 'ConfirmationRequired',
+      code: 'cost_preview_requires_yes',
+      message: opts.previewMsg,
+      hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
+    }));
+    return {
+      stdout: JSON.stringify({ error: envelope, preview: opts.preview, costUsd: opts.costUsd, model: opts.model }),
+    };
+  }
+  return {
+    stderr:
+      `${opts.previewMsg}\n` +
+      'Refusing to re-embed non-interactively without confirmation. ' +
+      'Pass --yes to proceed, or --dry-run for the preview (exit 0).',
   };
 }
 
@@ -303,8 +429,48 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   const force = args.includes('--force');
   const noEmbed = args.includes('--no-embed');
 
+  // v0.41.15.0 (T11, D9): --workers N for per-batch parallelism.
+  let workers: number | undefined;
+  const workersIdx = args.indexOf('--workers');
+  const concurrencyIdx = args.indexOf('--concurrency');
+  const workersValIdx = workersIdx >= 0 ? workersIdx + 1 : (concurrencyIdx >= 0 ? concurrencyIdx + 1 : -1);
+  if (workersValIdx > 0 && workersValIdx < args.length) {
+    try {
+      workers = parseWorkers(args[workersValIdx]);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exit(2);
+    }
+  }
+
+  // F3: --max-cost / --max-cost-usd both accepted for symmetry with brainstorm.
+  // v0.42.42.0 (#2139): `off`/`unlimited`/`none` → no runtime cap AND an explicit
+  // "cost isn't the constraint" decision that proceeds past the confirmation gate
+  // (like --yes). Numeric must be positive; `0`/garbage is rejected.
+  let maxCostUsd: number | undefined;
+  let maxCostOff = false;
+  for (const flag of ['--max-cost', '--max-cost-usd']) {
+    const idx = args.indexOf(flag);
+    if (idx >= 0) {
+      const v = args[idx + 1];
+      const t = (v ?? '').trim().toLowerCase();
+      if (['off', 'unlimited', 'none'].includes(t)) {
+        maxCostUsd = undefined; // no runtime cap (reindex skips the tracker when unset)
+        maxCostOff = true;
+        break;
+      }
+      const n = v ? parseFloat(v) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(`gbrain reindex --code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
+        process.exit(2);
+      }
+      maxCostUsd = n;
+      break;
+    }
+  }
+
   if (dryRun) {
-    const result = await runReindexCode(engine, { sourceId, dryRun: true, yes, json, force, noEmbed });
+    const result = await runReindexCode(engine, { sourceId, dryRun: true, yes, json, force, noEmbed, maxCostUsd, workers });
     if (json) {
       console.log(JSON.stringify(result));
     } else {
@@ -337,27 +503,41 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     }
 
     if (!yes) {
-      const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
-      if (!isTTY || json) {
-        const envelope = serializeError(errorFor({
-          class: 'ConfirmationRequired',
-          code: 'cost_preview_requires_yes',
-          message: previewMsg,
-          hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
-        }));
-        console.log(JSON.stringify({ error: envelope, preview, costUsd, model: getEmbeddingModelName() }));
-        process.exit(2);
-      }
-      console.log(previewMsg);
-      const answer = await promptYesNo('Proceed? [y/N] ');
-      if (!answer) {
-        console.log('Cancelled.');
-        return;
+      // v0.42.42.0 (#2139): spend.posture=tokenmax makes the gate informational
+      // — print the estimate and proceed (the operator declared cost isn't the
+      // constraint). The spend is still ledgered by the runtime BudgetTracker.
+      const { resolveSpendPosture } = await import('../core/spend-posture.ts');
+      const posture = await resolveSpendPosture(engine);
+      // An explicit `--max-cost off` is the same "cost isn't the constraint"
+      // signal as spend.posture=tokenmax — proceed past the confirmation gate.
+      if (posture === 'tokenmax' || maxCostOff) {
+        const gate = maxCostOff ? 'max_cost_off' : 'posture_tokenmax';
+        if (json) {
+          console.log(JSON.stringify({ status: 'proceeding', gate, codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
+        } else {
+          console.log(`${previewMsg} ${maxCostOff ? '--max-cost off' : 'spend.posture=tokenmax'}: proceeding (informational). docs: docs/operations/spend-controls.md`);
+        }
+      } else {
+        const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+        if (!isTTY || json) {
+          // Guardrail unchanged: refuse + exit 2, no spend. Only the FORMAT splits
+          // on --json now (human refusal on stderr otherwise) — #1784.
+          const refusal = buildCostRefusal({ json, previewMsg, preview, costUsd, model: getEmbeddingModelName() });
+          if (refusal.stdout) console.log(refusal.stdout);
+          if (refusal.stderr) console.error(refusal.stderr);
+          process.exit(2);
+        }
+        console.log(previewMsg);
+        const answer = await promptYesNo('Proceed? [y/N] ');
+        if (!answer) {
+          console.log('Cancelled.');
+          return;
+        }
       }
     }
   }
 
-  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed });
+  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed, maxCostUsd, workers });
   if (json) {
     console.log(JSON.stringify(result));
   } else {

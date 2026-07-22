@@ -444,6 +444,9 @@ export interface StripFactsFenceOpts {
  * Returns the body unchanged when no fence is present.
  */
 export function stripFactsFence(body: string, opts: StripFactsFenceOpts = {}): string {
+  // Pages without a compiled body have nothing to strip. Guard so the privacy
+  // strip is a safe no-op rather than crashing on `undefined.indexOf`.
+  if (typeof body !== 'string') return body;
   const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
   if (beginIdx === -1) return body;
   const endIdx = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);

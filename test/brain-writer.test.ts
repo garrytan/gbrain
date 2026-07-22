@@ -293,7 +293,7 @@ describe('scanBrainSources (PGLite)', () => {
     expect(report.per_source[0]!.total).toBe(0);
   });
 
-  test('AbortSignal mid-scan stops walking', async () => {
+  test('AbortSignal before scan: every source marked skipped (v0.38.2.0 partial-state contract)', async () => {
     const src = join(tmp, 'big');
     mkdirSync(src, { recursive: true });
     for (let i = 0; i < 50; i++) {
@@ -303,7 +303,14 @@ describe('scanBrainSources (PGLite)', () => {
     const ctrl = new AbortController();
     ctrl.abort();
     const report = await scanBrainSources(engine, { signal: ctrl.signal });
-    // Aborted before any source ran; per_source array stays empty (or has zero reports).
-    expect(report.per_source.length).toBe(0);
+    // v0.38.2.0 changed the contract: instead of an empty per_source array
+    // (which hid the fact that sources weren't checked), the report now
+    // includes a 'skipped' entry per source the outer loop never reached.
+    // Doctor renders these as "NOT SCANNED" so the user knows.
+    expect(report.per_source.length).toBe(1);
+    expect(report.per_source[0].status).toBe('skipped');
+    expect(report.per_source[0].files_scanned).toBe(0);
+    expect(report.partial).toBe(true);
+    expect(report.ok).toBe(false);
   });
 });

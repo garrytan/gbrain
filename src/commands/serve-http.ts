@@ -15,18 +15,20 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash, timingSafeEqual } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
+import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
+import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
-import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
+import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
@@ -35,6 +37,14 @@ import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
+import { MinionQueue } from '../core/minions/queue.ts';
+import { isRetryableError } from '../core/retry-matcher.ts';
+import {
+  computeContentHash,
+  validateIngestionEvent,
+  type IngestionContentType,
+  type IngestionEvent,
+} from '../core/ingestion/types.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -80,6 +90,26 @@ export function resolveBootstrapToken(
     };
   }
   return { kind: 'ok', token: trimmed, fromEnv: true };
+}
+
+/**
+ * #2624: decide whether the generated admin bootstrap token is hidden from
+ * the startup banner. Fail-safe default: a generated token is NOT printed
+ * unless stderr is an interactive TTY, so containerized (non-TTY) deploys
+ * never ship the secret to centralized log storage. Env-sourced tokens are
+ * always hidden (operator already holds them). Explicit --suppress hides
+ * everything; --print-admin-token forces the raw value even on a non-TTY.
+ */
+export function shouldSuppressBootstrapPrint(opts: {
+  suppress: boolean;
+  fromEnv: boolean;
+  forcePrint: boolean;
+  isTty: boolean;
+}): boolean {
+  if (opts.suppress) return true;
+  if (opts.fromEnv) return true;
+  if (opts.forcePrint) return false;
+  return !opts.isTty;
 }
 
 export type ProbeHealthResult =
@@ -179,10 +209,83 @@ export async function probeLiveness(
   }
 }
 
+/**
+ * Resolve `GBRAIN_HTTP_TRUST_PROXY` into a value Express's `app.set('trust
+ * proxy', ...)` accepts. Pure function so the test surface is one place,
+ * not the whole Express stack.
+ *
+ * Mapping:
+ *   - unset / empty → 'loopback' (pre-v0.41.3 default; trusts only
+ *     127.0.0.1, ::1, ::ffff:127.0.0.1, fc00::/7)
+ *   - '0' / 'false' → false (trust nothing; req.ip is socket peer regardless
+ *     of X-Forwarded-For)
+ *   - '1' / 'true' → 1 (trust exactly one hop; safe for Fly.io / Render /
+ *     single-layer reverse proxy; matches the legacy transport's '==1' check)
+ *   - other numeric → parseInt (trust N hops)
+ *   - any other string → pass through verbatim (Express accepts named modes
+ *     like 'uniquelocal', 'linklocal', and CIDR/IP lists)
+ *
+ * SECURITY: only set GBRAIN_HTTP_TRUST_PROXY when BOTH (a) gbrain is
+ * reachable only via a trusted reverse proxy, AND (b) the proxy strips
+ * client-supplied X-Forwarded-For headers before re-emitting its own.
+ * Otherwise clients can spoof their IP and defeat the pre-auth IP rate
+ * limit. See SECURITY.md "Reverse-proxy trust" for the full contract.
+ */
+export function resolveTrustProxy(env: string | undefined): string | number | boolean {
+  if (env === undefined || env === '') return 'loopback';
+  if (env === '0' || env === 'false') return false;
+  if (env === '1' || env === 'true') return 1;
+  if (/^\d+$/.test(env)) return parseInt(env, 10);
+  return env;
+}
+
+/**
+ * Parse `GBRAIN_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
+ * endpoints. Mirrors `src/mcp/http-transport.ts:parseCorsAllowlist`. Single
+ * env var so operators don't need to maintain two allowlists.
+ *
+ * Returns null when unset, empty, or whitespace-only — caller MUST treat
+ * null as "deny all cross-origin" (the same posture the legacy transport
+ * already takes).
+ */
+export function parseCorsAllowlistOAuth(): Set<string> | null {
+  const v = process.env.GBRAIN_HTTP_CORS_ORIGIN;
+  if (!v) return null;
+  const origins = v.split(',').map(s => s.trim()).filter(Boolean);
+  return origins.length === 0 ? null : new Set(origins);
+}
+
+/**
+ * Build a `cors.CorsOptions['origin']` value from the allowlist. The cors
+ * package accepts:
+ *   - `false` → reject everything (no Allow-Origin header sent)
+ *   - `(origin, cb) => cb(null, boolean)` → dynamic per-request check
+ * We use the function form when an allowlist is set so the value of the
+ * Allow-Origin header echoes the request Origin (RFC 6454) instead of a
+ * hardcoded string, and so the same options object covers all listed
+ * origins without enumeration in the response.
+ *
+ * Same-origin requests (no Origin header) get `cb(null, true)` which the
+ * cors package translates to "no CORS headers needed" — they're not
+ * cross-origin so they don't trigger the gate.
+ */
+export function resolveCorsOrigin(allowlist: Set<string> | null): cors.CorsOptions['origin'] {
+  if (allowlist === null) return false;
+  return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) return cb(null, true);
+    cb(null, allowlist.has(origin));
+  };
+}
+
 interface ServeHttpOptions {
   port: number;
   tokenTtl: number;
   enableDcr: boolean;
+  /**
+   * #1353: allow the consent-bypassing client_credentials grant on the DCR path.
+   * Off by default; DCR clients default to authorization_code. Implies enableDcr.
+   */
+  enableDcrInsecure?: boolean;
   /**
    * Public URL the server is reachable at (e.g., https://brain.example.com).
    * Used as the OAuth issuer in discovery metadata. Defaults to
@@ -223,10 +326,112 @@ interface ServeHttpOptions {
    * tracking the regenerated value through other means.
    */
   suppressBootstrapToken?: boolean;
+  /**
+   * #2624: force-print the generated admin bootstrap token even on a
+   * non-TTY (containerized) start. By default the raw token is only printed
+   * when stderr is an interactive TTY, so it never lands in centralized log
+   * storage for headless deploys. Set this when you genuinely need the value
+   * captured to a non-interactive log and accept the leak.
+   */
+  printAdminToken?: boolean;
+}
+
+/**
+ * v0.38 Slice 4 — per-OAuth-client agent spend snapshot. Exported so the
+ * admin endpoint and `test/admin-agents-spend.test.ts` share the same SQL
+ * (single source of truth for the spend query shape).
+ *
+ * Returns one row per OAuth client that EITHER has the `agent` scope OR
+ * has at least one `bound_*` column set (the legacy admin client could
+ * also have bindings without scope='agent' on a partially-migrated brain;
+ * we want it visible in the viewer).
+ *
+ * Fields:
+ *   - client_id, client_name
+ *   - cap_usd_per_day: number | null  (daily budget cap; NULL = no cap)
+ *   - spent_cents_today: number  (sum from mcp_spend_log, UTC-day-aligned)
+ *   - pending_cents: number  (sum of in-flight reservations, non-expired)
+ *   - inflight_count: number  (active subagent jobs owned by this client)
+ *
+ * Falls back to `[]` on any SQL error (pre-v0.38 brains where the v82-v84
+ * tables/columns don't yet exist).
+ */
+export interface AgentClientSpend {
+  client_id: string;
+  client_name: string;
+  cap_usd_per_day: number | null;
+  spent_cents_today: number;
+  pending_cents: number;
+  inflight_count: number;
+}
+
+export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentClientSpend[]> {
+  const sql = sqlQueryForEngine(engine);
+  const rows = await sql`
+    SELECT
+      c.client_id,
+      c.client_name,
+      COALESCE(c.budget_usd_per_day, NULL) AS cap_usd_per_day,
+      COALESCE((
+        SELECT SUM(spend_cents)::text
+          FROM mcp_spend_log
+         WHERE client_id = c.client_id
+           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+      ), '0') AS spent_cents_today,
+      COALESCE((
+        SELECT SUM(estimated_cents)::text
+          FROM mcp_spend_reservations
+         WHERE client_id = c.client_id
+           AND status = 'pending'
+           AND expires_at > now()
+      ), '0') AS pending_cents,
+      COALESCE((
+        SELECT COUNT(*)::int
+          FROM minion_jobs
+         WHERE name = 'subagent'
+           AND status IN ('waiting', 'active', 'waiting-children')
+           AND data->>'__owner_client_id' = c.client_id
+      ), 0) AS inflight_count
+    FROM oauth_clients c
+    WHERE c.deleted_at IS NULL
+      AND ('agent' = ANY (string_to_array(c.scope, ' ')) OR c.bound_tools IS NOT NULL)
+    ORDER BY c.client_name ASC
+  `;
+  return rows.map(r => ({
+    client_id: String(r.client_id),
+    client_name: String(r.client_name ?? r.client_id),
+    cap_usd_per_day: r.cap_usd_per_day !== null && r.cap_usd_per_day !== undefined
+      ? parseFloat(String(r.cap_usd_per_day))
+      : null,
+    spent_cents_today: parseFloat(String(r.spent_cents_today ?? '0')),
+    pending_cents: parseFloat(String(r.pending_cents ?? '0')),
+    inflight_count: Number(r.inflight_count ?? 0),
+  }));
+}
+
+/**
+ * Skill-publishing status for the startup banner + operator nudge. When OFF,
+ * connected agents (Codex / Claude Code / Perplexity / Cowork) cannot call
+ * `list_skills` / `get_skill`, so the host's skill catalog is INVISIBLE to them
+ * — the core tools (search / query / get_page / put_page / capture / think /
+ * find_experts) still work. Pure so the banner value + nudge copy are
+ * unit-tested without standing up a server. See `readMcpPublishSkills`
+ * (skill-catalog.ts) for the config resolution this status reflects.
+ */
+export function skillPublishStatus(publishSkills: boolean): { bannerValue: string; nudge: string | null } {
+  if (publishSkills) return { bannerValue: 'published', nudge: null };
+  return {
+    bannerValue: 'not published',
+    nudge:
+      "[serve-http] NOTE: skill publishing is OFF — connected agents can't call " +
+      'list_skills / get_skill, so this brain’s skill catalog is invisible to them ' +
+      '(core tools like search / query / think still work). Enable it with: ' +
+      'gbrain config set mcp.publish_skills true',
+  };
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
@@ -249,6 +454,51 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     );
   }
 
+  // Skill-publishing status for the banner + nudge. Mirrors readMcpPublishSkills
+  // (skill-catalog.ts): the DB plane (`gbrain config set`) wins over the file
+  // plane. When OFF, a connected coding agent can't see the host's skill
+  // catalog — surface that to the operator at startup rather than letting them
+  // discover it via an empty list_skills on the agent side.
+  let publishSkills = false;
+  try {
+    const dbVal = await engine.getConfig('mcp.publish_skills');
+    publishSkills = dbVal != null ? dbVal === 'true' : config?.mcp?.publish_skills === true;
+  } catch {
+    publishSkills = config?.mcp?.publish_skills === true;
+  }
+  const skillStatus = skillPublishStatus(publishSkills);
+  if (skillStatus.nudge) console.error(skillStatus.nudge);
+
+  // Note when this brain ships a brain-resident pack so the operator knows
+  // connecting harnesses will be offered it (only meaningful when publishing
+  // is on — list_brain_skillpack is gated by the same flag). Fail-open.
+  if (publishSkills) {
+    try {
+      const { loadAllSources } = await import('../core/sources-load.ts');
+      const { loadSkillpackManifest } = await import('../core/skillpack/manifest-v1.ts');
+      const { existsSync } = await import('fs');
+      const { join } = await import('path');
+      const srcs = await loadAllSources(engine);
+      let n = 0;
+      for (const s of srcs) {
+        if (!s.local_path || !existsSync(join(s.local_path, 'skillpack.json'))) continue;
+        try {
+          if (loadSkillpackManifest(s.local_path).brain_resident === true) n++;
+        } catch {
+          /* malformed pack → ignore */
+        }
+      }
+      if (n > 0) {
+        console.error(
+          `[serve-http] NOTE: ${n} source${n === 1 ? '' : 's'} ship a brain-resident skillpack — ` +
+            'connecting harnesses can discover it via list_brain_skillpack and will be offered to install it.',
+        );
+      }
+    } catch {
+      /* fail-open: banner is cosmetic */
+    }
+  }
+
   // Engine-aware SQL adapter. Routes through engine.executeRaw on both
   // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
   // a postgres.js singleton, so `gbrain serve --http` works against PGLite
@@ -264,7 +514,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    allowClientCredentialsDcr: enableDcrInsecure === true,
   });
+
+  // #1353: loud stderr security WARN when DCR is enabled. DCR is an
+  // unauthenticated network registration endpoint; surface the posture change
+  // (and the extra blast radius of --enable-dcr-insecure) so it's visible in
+  // logs, not buried in the neutral "DCR: enabled" banner line.
+  if (enableDcr) {
+    console.error(
+      'SECURITY WARNING: Dynamic Client Registration (--enable-dcr) is ON. ' +
+      'Any network caller can self-register an OAuth client. DCR clients default ' +
+      'to the authorization_code (consent-bearing) grant. See SECURITY.md.',
+    );
+    if (enableDcrInsecure) {
+      console.error(
+        'SECURITY WARNING: --enable-dcr-insecure is ON — self-registered DCR ' +
+        'clients may request the client_credentials grant, which BYPASSES the ' +
+        '/authorize consent screen. Only use this on a trusted network.',
+      );
+    }
+  }
 
   // Sweep expired tokens on startup (non-blocking)
   try {
@@ -290,7 +560,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   let bootstrapToken: string = resolved.token;
   let bootstrapFromEnv: boolean = resolved.fromEnv;
   const bootstrapHash = createHash('sha256').update(bootstrapToken).digest('hex');
-  const suppressBootstrapPrint = options.suppressBootstrapToken === true;
+  const suppressBootstrapPrint = shouldSuppressBootstrapPrint({
+    suppress: options.suppressBootstrapToken === true,
+    fromEnv: bootstrapFromEnv,
+    forcePrint: options.printAdminToken === true,
+    isTty: process.stderr.isTTY === true,
+  });
   const adminSessions = new Map<string, number>(); // sessionId → expiresAt
 
   // SSE clients for live activity feed
@@ -306,7 +581,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
-  app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
+  // v0.41.3 (T8): configurable trust-proxy via GBRAIN_HTTP_TRUST_PROXY env.
+  // Default 'loopback' (trust Caddy/Tailscale on the same host) preserves
+  // pre-v0.41.3 behavior. Operators behind Fly.io / Render / Vercel / nginx
+  // set GBRAIN_HTTP_TRUST_PROXY=1 (one hop) so X-Forwarded-For lands as the
+  // real client IP for rate-limiting and req.secure detection. The legacy
+  // transport already reads this env var (src/mcp/http-transport.ts:111)
+  // for the same purpose; T8 makes the Express path agree.
+  app.set('trust proxy', resolveTrustProxy(process.env.GBRAIN_HTTP_TRUST_PROXY));
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
@@ -314,13 +596,37 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use(cookieParser());
 
   // ---------------------------------------------------------------------------
-  // CORS
+  // CORS (v0.41.3, T7 — default-deny on every OAuth endpoint)
   // ---------------------------------------------------------------------------
-  app.use('/mcp', cors());
-  app.use('/token', cors());
-  app.use('/authorize', cors());
-  app.use('/register', cors());
-  app.use('/revoke', cors());
+  // Pre-v0.41.3 every OAuth endpoint used bare `cors()` which defaults to
+  // `Access-Control-Allow-Origin: *` — any web origin could complete a token
+  // exchange from a logged-in operator's browser. The fix parses
+  // GBRAIN_HTTP_CORS_ORIGIN the same way the legacy transport already does
+  // (src/mcp/http-transport.ts:parseCorsAllowlist) and gates every OAuth
+  // surface behind the allowlist. When the env var is unset the OAuth
+  // endpoints reject all cross-origin requests (default deny). Same-origin
+  // requests are unaffected because browsers send no Origin header for them.
+  //
+  // The /admin SPA is the one cross-origin caller we expect on a personal
+  // laptop install; it ships co-located with the brain and uses
+  // same-origin XHR, so the lockdown doesn't break it.
+  const corsAllowlistOAuth = parseCorsAllowlistOAuth();
+  if (!corsAllowlistOAuth && bind === '0.0.0.0') {
+    console.error(
+      '[serve-http] WARNING: --bind 0.0.0.0 is set but GBRAIN_HTTP_CORS_ORIGIN is unset. OAuth endpoints will reject ALL cross-origin requests until you set the env var (comma-separated origins).',
+    );
+  }
+  const corsOAuthOptions: cors.CorsOptions = {
+    origin: resolveCorsOrigin(corsAllowlistOAuth),
+    credentials: false,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  };
+  app.use('/mcp', cors(corsOAuthOptions));
+  app.use('/token', cors(corsOAuthOptions));
+  app.use('/authorize', cors(corsOAuthOptions));
+  app.use('/register', cors(corsOAuthOptions));
+  app.use('/revoke', cors(corsOAuthOptions));
 
   // ---------------------------------------------------------------------------
   // Custom client_credentials handler (before mcpAuthRouter)
@@ -441,6 +747,93 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // The SDK's /revoke handler compares the presented secret with
+  // client.client_secret as plaintext. GBrain stores only a SHA-256 hash, so
+  // confidential clients need the same hash-aware validation used above for
+  // authorization_code and refresh_token exchanges. Public clients present no
+  // secret and continue through to the SDK's PKCE-compatible handler.
+  app.post('/revoke', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+
+    const rawClientId: unknown = req.body?.client_id;
+    const rawBodySecret: unknown = req.body?.client_secret;
+    const authHeader = (req.headers.authorization ?? '').toString();
+
+    // RFC 6749 §2.3: one client-authentication method per request. Reject
+    // duplicates/arrays from express.urlencoded rather than letting them reach
+    // hashToken() as non-strings and become a misleading invalid_client error.
+    const hasBasicAuth = /^Basic\b/i.test(authHeader);
+    if (
+      (rawClientId !== undefined && typeof rawClientId !== 'string') ||
+      (rawBodySecret !== undefined && typeof rawBodySecret !== 'string') ||
+      (hasBasicAuth && (rawClientId !== undefined || rawBodySecret !== undefined))
+    ) {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Malformed or mixed client authentication' });
+      return;
+    }
+
+    let clientId = typeof rawClientId === 'string' ? rawClientId : undefined;
+    let presentedSecret = typeof rawBodySecret === 'string' && rawBodySecret.length > 0
+      ? rawBodySecret
+      : undefined;
+    if (hasBasicAuth) {
+      try {
+        const match = authHeader.match(/^Basic\s+([^\s]+)$/i);
+        if (!match) throw new Error('Malformed Basic authentication');
+        const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+        const idx = decoded.indexOf(':');
+        if (idx < 1) throw new Error('Malformed Basic authentication');
+        clientId = decodeURIComponent(decoded.slice(0, idx).replace(/\+/g, ' '));
+        presentedSecret = decodeURIComponent(decoded.slice(idx + 1).replace(/\+/g, ' '));
+        if (!presentedSecret) throw new Error('Malformed Basic authentication');
+      } catch {
+        res.setHeader('WWW-Authenticate', 'Basic realm="gbrain"');
+        res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client' });
+        return;
+      }
+    }
+    if (!clientId || !presentedSecret) return next();
+
+    const parsedRequest = OAuthTokenRevocationRequestSchema.safeParse(req.body);
+    if (!parsedRequest.success || parsedRequest.data.token.length === 0) {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Valid token required' });
+      return;
+    }
+
+    let client;
+    try {
+      client = await oauthProvider.verifyConfidentialClientSecret(clientId, presentedSecret);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'Invalid client' || msg === 'Client has been revoked') {
+        if (hasBasicAuth) res.setHeader('WWW-Authenticate', 'Basic realm="gbrain"');
+        res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client' });
+        return;
+      }
+      console.error('[serve-http] revoke client verification failed:', msg || 'Unknown error');
+      const retryable = isRetryableError(e);
+      res.status(retryable ? 503 : 500).json({
+        error: retryable ? 'temporarily_unavailable' : 'server_error',
+        error_description: retryable ? 'Token revocation temporarily unavailable' : 'Token revocation failed',
+      });
+      return;
+    }
+
+    try {
+      await oauthProvider.revokeToken(client, parsedRequest.data);
+      // RFC 7009 §2.2: successful revocation, including an unknown token, is 200.
+      res.status(200).end();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      console.error('[serve-http] token revocation failed:', msg);
+      const retryable = isRetryableError(e);
+      res.status(retryable ? 503 : 500).json({
+        error: retryable ? 'temporarily_unavailable' : 'server_error',
+        error_description: retryable ? 'Token revocation temporarily unavailable' : 'Token revocation failed',
+      });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
@@ -492,6 +885,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         if (body?.grant_types_supported && !body.grant_types_supported.includes('client_credentials')) {
           body.grant_types_supported.push('client_credentials');
         }
+        if (body?.token_endpoint_auth_methods_supported) {
+          for (const method of ['client_secret_basic', 'none']) {
+            if (!body.token_endpoint_auth_methods_supported.includes(method)) {
+              body.token_endpoint_auth_methods_supported.push(method);
+            }
+          }
+        }
+        if (body?.revocation_endpoint_auth_methods_supported && !body.revocation_endpoint_auth_methods_supported.includes('client_secret_basic')) {
+          body.revocation_endpoint_auth_methods_supported.push('client_secret_basic');
+        }
         return origJson(body);
       };
     }
@@ -512,17 +915,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
+  // v0.40 D15.5: safeHexEqual extracted to src/core/timing-safe.ts so the new
+  // /webhooks/github HMAC verifier reuses the same constant-time compare.
   // POST /admin/login — JSON body with token (for programmatic/UI login)
-  // Constant-time hex compare. Both inputs are sha256 hex (64 chars),
-  // so they're always equal length. timingSafeEqual throws on length
-  // mismatch — we already short-circuit on non-string above. Catches
-  // would-be timing oracles even though the inputs are pre-hashed
-  // (defense-in-depth on the hash bits).
-  function safeHexEqual(a: string, b: string): boolean {
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
-  }
-
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
     if (!token || typeof token !== 'string') {
@@ -712,6 +1107,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // v0.38 Slice 4 — per-OAuth-client agent spend viewer. Pre-computes today's
+  // spend (committed + pending reservations) per client so the Agents tab
+  // can render a "$X / $Y today" cell. Read-side endpoint only — no mutation.
+  // Falls back to an empty array on pre-v0.38 brains where mcp_spend_log
+  // exists but agent dispatch hasn't recorded anything.
+  app.get('/admin/api/agents/spend', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const rows = await queryAgentClientSpend(engine);
+      res.json(rows);
+    } catch (e) {
+      // Pre-v0.38 brains: tables may not exist yet. Return empty so the UI
+      // renders gracefully instead of erroring.
+      res.json([]);
+    }
+  });
+
   app.get('/admin/api/stats', requireAdmin, async (_req: Request, res: Response) => {
     try {
       const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
@@ -755,6 +1166,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(result.status).json(result.body);
   });
 
+  // v0.41 D2 — live jobs dashboard data. Shares readSnapshot() with the
+  // TTY `gbrain jobs watch` command so the two surfaces stay 1:1.
+  app.get('/admin/api/jobs/watch', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { readSnapshot } = await import('./jobs-watch.ts');
+      const snap = await readSnapshot(engine);
+      res.json(snap);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // v0.36.1.0 (T15 / E6 / D23) — Calibration tab data endpoints.
   // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
   // v0.36.1.0 (TD3) — pattern drill-down. Returns the source takes that
@@ -783,7 +1207,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
       const takes = await engine.executeRaw<{
-        id: number;
+        id: string;
         page_slug: string;
         row_num: number;
         claim: string;
@@ -791,10 +1215,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         resolved_quality: string | null;
         since_date: string | null;
       }>(
-        `SELECT id, page_slug, row_num, claim, weight, resolved_quality, since_date
-           FROM takes
-           WHERE holder = $1 AND active = true AND resolved_at IS NOT NULL
-           ORDER BY weight DESC, since_date DESC
+        // `takes` has no page_slug column — it comes from the joined page.
+        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
+        // raw bigint ("cannot serialize BigInt"), so project it as a string.
+        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC
            LIMIT 25`,
         [holder],
       );
@@ -842,7 +1269,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // proper 90-day time series will read from calibration_profiles
         // generated_at history in v0.37 once we have multiple snapshots.
         const series = profile?.brier !== null && profile?.brier !== undefined
-          ? [{ date: profile.generated_at.slice(0, 10), brier: profile.brier }]
+          // generated_at comes back from the engine as a Date (TIMESTAMPTZ), not
+          // a string — `.slice` would throw. Normalize to a YYYY-MM-DD string.
+          ? [{ date: new Date(profile.generated_at).toISOString().slice(0, 10), brier: profile.brier }]
           : [];
         return res.send(renderBrierTrend({ series }));
       }
@@ -869,12 +1298,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           weight: number;
           since_date: string;
         }>(
-          `SELECT id, page_slug, claim, weight, since_date
-             FROM takes
-             WHERE active = true AND resolved_at IS NULL AND superseded_by IS NULL
-               AND weight >= 0.7
-               AND since_date::date < (now() - INTERVAL '12 months')
-             ORDER BY since_date ASC
+          // `takes` has no page_slug column — it comes from the joined page.
+          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
+          // throws "invalid input syntax for type date", so normalize to the 1st
+          // before casting.
+          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC
              LIMIT 5`,
         );
         const now = new Date();
@@ -994,22 +1428,51 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
+      // v0.39.3.0 WARN-9 + CV12: accept BOTH `scopes` (admin SPA convention)
+      // AND `scope` (OAuth wire-format convention, singular). The pre-fix
+      // code destructured only `scopes` and used `scopes || 'read'` which:
+      //   - Silently ignored `scope` requests (always defaulted to 'read')
+      //   - Threw on array input because registerClientManual's parseScopeString
+      //     calls .split(' ') which arrays don't have
+      //   - Accepted `['read write']` (space-in-element bug shape codex flagged)
+      //     and other malformed inputs
+      // normalizeScopesInput handles all four valid shapes (string, string[],
+      // missing, empty) and rejects the rest with a structured 400.
+      const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
+      const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      let scopeString: string;
+      try {
+        scopeString = normalizeScopesInput(rawScopes);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_scopes',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
       const grants = Array.isArray(grantTypes) && grantTypes.length > 0 ? grantTypes : ['client_credentials'];
       const uris = Array.isArray(redirectUris) ? redirectUris : [];
-      const result = await oauthProvider.registerClientManual(
-        name, grants, scopes || 'read', uris,
-      );
-      // Public client (PKCE-only, no secret): NULL out client_secret_hash and
-      // set auth method so the SDK's clientAuth middleware skips the hash-vs-
-      // plaintext comparison that would otherwise reject the request. This is
-      // the supported pattern for browser-based OAuth (e.g. claude.ai's
-      // Custom Connector flow, which uses authorization_code + PKCE).
-      if (tokenEndpointAuthMethod === 'none') {
-        await sql`UPDATE oauth_clients SET client_secret_hash = NULL, token_endpoint_auth_method = 'none' WHERE client_id = ${result.clientId}`;
-        delete (result as any).clientSecret;
+      // v0.41.3 (T1+T4): validate token_endpoint_auth_method via shared
+      // ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS before reaching the provider.
+      // Pre-v0.41.3 this endpoint did INSERT (confidential) → UPDATE (NULL
+      // out secret_hash) for the 'none' case, which left a confidential
+      // row stranded if the UPDATE failed (codex F4). Atomic now: pass the
+      // method to registerClientManual and let it INSERT the correct row
+      // in a single statement.
+      let validatedAuthMethod: string | undefined;
+      try {
+        validatedAuthMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_token_endpoint_auth_method',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
       }
+      const result = await oauthProvider.registerClientManual(
+        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+      );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
@@ -1425,6 +1888,404 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   });
 
   // ---------------------------------------------------------------------------
+  // v0.38 ingestion substrate — POST /ingest (webhook source)
+  //
+  // The webhook ingestion source lives INSIDE serve --http (NOT in the
+  // ingestion daemon) per the /plan-eng-review E1 decision. This avoids
+  // cross-process IPC: the daemon supervises only daemon-side sources
+  // (file-watcher, inbox-folder, cron-scheduler) while serve --http hosts
+  // the network surface and submits Minion jobs directly.
+  //
+  // Auth: existing OAuth `write` scope. Rate limit: 100 events / 10s per
+  // IP (reuses the IP-keyed pattern from ccRateLimiter; a future tweak
+  // could key on authInfo.clientId for fairer per-agent fairness).
+  // Payload cap: 1 MB default. Content-type allowlist: markdown, plain,
+  // HTML, JSON. Binary content is REJECTED with HTTP 415 in v1 — the
+  // binary-upload flow ships as a separate route in a later wave when
+  // content-type processors land.
+  //
+  // Events always carry untrusted_payload: true because the input came
+  // over the network from an OAuth-authenticated but otherwise untrusted
+  // source (Zapier / IFTTT / Apple Shortcuts). The downstream
+  // ingest_capture handler logs the flag; a future v2 wave wires it
+  // through the put_page op to skip auto-link.
+  // ---------------------------------------------------------------------------
+  const ingestRateLimiter = rateLimit({
+    windowMs: 10_000, // 10 seconds
+    limit: 100, // 100 events per IP per window
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'rate_limit_exceeded', message: 'too many /ingest events; backoff and retry' },
+  });
+
+  // Maximum payload bytes for POST /ingest. Configurable via env. Default 1 MB.
+  const ingestMaxBytes = (() => {
+    const fromEnv = process.env.GBRAIN_INGEST_MAX_BYTES;
+    if (!fromEnv) return 1_048_576;
+    const n = parseInt(fromEnv, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1_048_576;
+  })();
+
+  // Content-type allowlist: text-shaped types only in v1. The handler
+  // routes binary content_types with HTTP 415; a future wave + skillpack
+  // processors will accept image/audio/video/pdf via a separate flow.
+  const INGEST_ALLOWED_CONTENT_TYPES: ReadonlySet<IngestionContentType> = new Set([
+    'text/markdown',
+    'text/plain',
+    'text/html',
+    'application/json',
+  ]);
+
+  // Single MinionQueue instance shared across POST /ingest invocations
+  // (the queue is stateless beyond the engine handle; reusing avoids
+  // per-request construction).
+  const ingestQueue = new MinionQueue(engine);
+
+  app.post(
+    '/ingest',
+    ingestRateLimiter,
+    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'] }),
+    express.raw({ type: '*/*', limit: ingestMaxBytes }),
+    async (req: Request, res: Response) => {
+      const startTime = Date.now();
+      const authInfo = (req as Request & { auth?: AuthInfo }).auth as AuthInfo;
+      const agentName = authInfo.clientName ?? authInfo.clientId;
+
+      // v0.39.3.0 BUG-2: outer try/catch ensures any unexpected throw
+      // returns a JSON envelope instead of leaking express's default HTML
+      // error page. Mirrors the MCP handler's F14 pattern (serve-http.ts
+      // F14 envelope around transport.handleRequest). The `!res.headersSent`
+      // guard (codex F#16) prevents a second-response attempt if the throw
+      // happens after the inner queue.add try/catch already responded.
+      try {
+
+      // v0.39.3.0 BUG-2: explicit null/undefined guard BEFORE body coercion.
+      // When the request has no body at all (no Content-Length header, no
+      // body-parser fed us anything), `req.body` is `undefined`. The pre-fix
+      // code's `else` branch called `Buffer.from(JSON.stringify(undefined),
+      // 'utf8')` — and `JSON.stringify(undefined) === undefined` (the
+      // literal, not the string), which makes `Buffer.from(undefined, 'utf8')`
+      // throw TypeError. Express's default error handler then served an HTML
+      // 500 page. Guard fires first to keep the response shape JSON.
+      if (req.body == null) {
+        res.status(400).json({
+          error: 'empty_body',
+          message: 'POST /ingest requires a non-empty body',
+        });
+        return;
+      }
+
+      // Express raw() returns a Buffer. Decode as UTF-8; reject non-UTF-8
+      // bytes loudly so callers know their payload was garbled.
+      let body: Buffer;
+      if (Buffer.isBuffer(req.body)) {
+        body = req.body;
+      } else if (typeof req.body === 'string') {
+        body = Buffer.from(req.body, 'utf8');
+      } else {
+        // express.json or urlencoded fired earlier in the chain and parsed
+        // for us. Re-serialize so we can hash and forward. The null/undefined
+        // case is already guarded above so JSON.stringify produces a real
+        // string here (objects round-trip, primitives become their JSON form).
+        body = Buffer.from(JSON.stringify(req.body), 'utf8');
+      }
+
+      if (body.length === 0) {
+        res.status(400).json({ error: 'empty_body', message: 'POST /ingest requires a non-empty body' });
+        return;
+      }
+
+      // Detect content_type. Caller can override via the X-Gbrain-Content-Type
+      // header for the JSON case (since the request's Content-Type would say
+      // application/json but the user might intend the body to be markdown).
+      const declared = (req.header('x-gbrain-content-type') || req.header('content-type') || '').toLowerCase();
+      let contentType: IngestionContentType;
+      if (declared.startsWith('text/markdown')) {
+        contentType = 'text/markdown';
+      } else if (declared.startsWith('text/html')) {
+        contentType = 'text/html';
+      } else if (declared.startsWith('text/plain')) {
+        contentType = 'text/plain';
+      } else if (declared.startsWith('application/json')) {
+        contentType = 'application/json';
+      } else if (declared.startsWith('text/')) {
+        // Unknown text/* sub-types pass through as text/plain.
+        contentType = 'text/plain';
+      } else {
+        // Binary or unknown — rejected in v1.
+        res.status(415).json({
+          error: 'unsupported_content_type',
+          message: `content_type '${declared}' not supported. Use one of: ${[...INGEST_ALLOWED_CONTENT_TYPES].join(', ')}. ` +
+            'Binary content (image/audio/video/pdf) is not yet supported via POST /ingest — install a content-type processor skillpack.',
+        });
+        return;
+      }
+
+      if (!INGEST_ALLOWED_CONTENT_TYPES.has(contentType)) {
+        res.status(415).json({
+          error: 'unsupported_content_type',
+          message: `content_type '${contentType}' is in the taxonomy but not currently accepted by POST /ingest`,
+        });
+        return;
+      }
+
+      const content = body.toString('utf8');
+      const contentHash = computeContentHash(content);
+      const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
+      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
+      const callerSlug = req.header('x-gbrain-slug');
+
+      const event: IngestionEvent = {
+        source_id: sourceId,
+        source_kind: 'webhook',
+        source_uri: sourceUri,
+        received_at: new Date().toISOString(),
+        content_type: contentType,
+        content,
+        content_hash: contentHash,
+        untrusted_payload: true, // ALWAYS true for network input
+        metadata: {
+          ip: req.ip,
+          user_agent: req.header('user-agent') ?? '',
+          client_id: authInfo.clientId,
+          ...(callerSlug ? { slug: callerSlug } : {}),
+        },
+      };
+
+      const validationErr = validateIngestionEvent(event);
+      if (validationErr) {
+        res.status(400).json({
+          error: 'invalid_event',
+          message: validationErr.message,
+          field: validationErr.field,
+        });
+        return;
+      }
+
+      try {
+        const job = await ingestQueue.add(
+          'ingest_capture',
+          {
+            event,
+            ...(callerSlug ? { slug: callerSlug } : {}),
+          },
+          {
+            // Idempotency: same content from the same client within the
+            // queue's lifetime is a single job. Different content gets
+            // different jobs. Daemon-side dedup catches the 24h window;
+            // the queue-level idempotency catches simultaneous retries.
+            idempotency_key: `ingest:webhook:${authInfo.clientId}:${contentHash}`,
+            // Cap waiting jobs from a single client so a runaway integration
+            // can't fill the queue.
+            maxWaiting: 50,
+          },
+        );
+
+        const latency = Date.now() - startTime;
+        try {
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+            [authInfo.clientId, agentName, 'webhook_ingest', latency, 'success'],
+            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id }],
+          );
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: 'webhook_ingest',
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'success',
+          timestamp: new Date().toISOString(),
+        });
+
+        res.status(202).json({
+          job_id: job.id,
+          content_hash: contentHash,
+          source_id: sourceId,
+          message: 'Accepted. Event queued for ingestion.',
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('POST /ingest queue submission error:', msg);
+        res.status(500).json({
+          error: 'queue_submission_failed',
+          message: msg,
+        });
+      }
+
+      // v0.39.3.0 BUG-2: outer try/catch close — anything that throws BEFORE
+      // the inner queue.add try/catch lands here. The headersSent guard
+      // (codex F#16) skips the second-response attempt if the inner block
+      // already wrote a response and then threw on a downstream line (e.g.
+      // a logging side-effect after `res.status(202).json(...)`).
+      } catch (outerErr) {
+        const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
+        console.error('POST /ingest unexpected handler error:', msg);
+        if (!res.headersSent) {
+          res.status(500).json({
+            error: 'internal_error',
+            message: msg,
+          });
+        }
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // POST /webhooks/github — push-triggered sync (v0.40 Federated Sync v2)
+  // ---------------------------------------------------------------------------
+  // Anonymous endpoint by necessity (GitHub doesn't carry an OAuth token).
+  // Auth is via per-source HMAC-SHA256 in the X-Hub-Signature-256 header.
+  //
+  // D3: 60 req/min/IP rate limit + pre-DB short-circuit on missing
+  //     signature, so probe traffic doesn't even touch the source-lookup
+  //     query.
+  // D5: event=push AND ref-match against sources.config.tracked_branch.
+  //     Other event types (ping, pull_request, etc.) return 202 'ignored'
+  //     so GitHub doesn't retry.
+  // D15.5: HMAC compare uses the shared safeHexEqual helper.
+  // D18: submits 'sync' job with auto_embed_backfill=true and priority -10
+  //     (above autopilot's 0).
+  // ---------------------------------------------------------------------------
+  const githubWebhookLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'rate_limit_exceeded', message: 'too many GitHub webhook requests' },
+  });
+
+  app.post(
+    '/webhooks/github',
+    githubWebhookLimiter,
+    express.raw({ type: '*/*', limit: '1mb' }),
+    async (req: Request, res: Response) => {
+      // D3 pre-DB short-circuit: missing signature → 401 without any
+      // source lookup. Bot probe traffic ends here.
+      const sigHeader = req.header('X-Hub-Signature-256');
+      if (!sigHeader) {
+        res.status(401).json({ error: 'missing_signature', message: 'X-Hub-Signature-256 header is required' });
+        return;
+      }
+
+      // D5: filter by event header. GitHub fires webhooks for every event
+      // type. Anything other than 'push' is acknowledged with 202 + reason
+      // so GitHub doesn't retry — but no source lookup or job submission.
+      const event = req.header('X-GitHub-Event') ?? '';
+      if (event !== 'push') {
+        res.status(202).json({ status: 'ignored', reason: `event=${event || '(missing)'}` });
+        return;
+      }
+
+      const payload = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body), 'utf8');
+      if (payload.length === 0) {
+        res.status(400).json({ error: 'empty_body' });
+        return;
+      }
+
+      let parsed: { repository?: { full_name?: string }; ref?: string };
+      try {
+        parsed = JSON.parse(payload.toString('utf8'));
+      } catch {
+        res.status(400).json({ error: 'malformed_json' });
+        return;
+      }
+
+      const fullName = parsed.repository?.full_name;
+      const ref = parsed.ref;
+      if (!fullName || !ref) {
+        res.status(400).json({ error: 'missing_fields', message: 'repository.full_name and ref are required' });
+        return;
+      }
+
+      // Source lookup via the v87 partial expression index on
+      // config->>'github_repo'. fast even on large brains.
+      let source: { id: string; config: Record<string, unknown> | string } | null = null;
+      try {
+        const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | string }>(
+          `SELECT id, config FROM sources WHERE config->>'github_repo' = $1 LIMIT 1`,
+          [fullName],
+        );
+        source = rows[0] ?? null;
+      } catch (err) {
+        console.error('webhook: source lookup error:', err);
+        res.status(500).json({ error: 'lookup_failed' });
+        return;
+      }
+      if (!source) {
+        res.status(404).json({ error: 'unknown_repo', repo: fullName });
+        return;
+      }
+
+      const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) as {
+        webhook_secret?: string;
+        tracked_branch?: string;
+      };
+
+      // D5: ref must match the configured tracked branch (default 'main').
+      const trackedBranch = cfg.tracked_branch ?? 'main';
+      const expectedRef = `refs/heads/${trackedBranch}`;
+      if (ref !== expectedRef) {
+        res.status(202).json({
+          status: 'ignored',
+          reason: `ref_mismatch`,
+          received_ref: ref,
+          tracked_branch: trackedBranch,
+        });
+        return;
+      }
+
+      const secret = cfg.webhook_secret;
+      if (!secret || typeof secret !== 'string') {
+        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
+        return;
+      }
+
+      // HMAC verify. GitHub sends "sha256=<hex>" — strip the prefix BEFORE
+      // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
+      // truncates at the first non-hex char (the 's'), leaving both
+      // operands as 0-byte buffers and making every signature "match".
+      // Pinned by test/sources-webhook.test.ts tamper assertions.
+      const { createHmac } = await import('node:crypto');
+      const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
+      const prefix = 'sha256=';
+      if (!sigHeader.startsWith(prefix)) {
+        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256= prefix' });
+        return;
+      }
+      if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
+        res.status(401).json({ error: 'signature_mismatch' });
+        return;
+      }
+
+      // Submit sync job with priority -10 (above autopilot's 0).
+      try {
+        const queue = new MinionQueue(engine);
+        const job = await queue.add(
+          'sync',
+          {
+            sourceId: source.id,
+            auto_embed_backfill: true,
+            embed_reason: 'webhook',
+          },
+          {
+            priority: -10,
+            idempotency_key: `webhook:sync:${source.id}:${Math.floor(Date.now() / 30_000)}`,
+            maxWaiting: 1,
+          },
+        );
+        res.status(202).json({ job_id: job.id, source_id: source.id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('webhook: queue submission error:', msg);
+        res.status(500).json({ error: 'queue_submission_failed', message: msg });
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
   // Start server
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
@@ -1439,17 +2300,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
-║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
+║  DCR:       ${(enableDcr ? (enableDcrInsecure ? 'enabled (INSECURE: client_credentials)' : 'enabled') : 'disabled').padEnd(40)}║
+║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Admin:     http://localhost:${port}/admin${' '.repeat(Math.max(0, 19 - String(port).length))}║
 ║  MCP:       http://localhost:${port}/mcp${' '.repeat(Math.max(0, 21 - String(port).length))}║
 ║  Health:    http://localhost:${port}/health${' '.repeat(Math.max(0, 18 - String(port).length))}║
 ╠══════════════════════════════════════════════════════╣
-${suppressBootstrapPrint
-  ? '║  Admin Token: suppressed (--suppress-bootstrap-token) ║\n╚══════════════════════════════════════════════════════╝'
-  : bootstrapFromEnv
-    ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+${bootstrapFromEnv
+  ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+  : suppressBootstrapPrint
+    ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });

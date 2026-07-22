@@ -32,8 +32,12 @@ start here.
 ## Read this order
 
 1. `./AGENTS.md` (this file) — install + operating protocol.
-2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
-   test layout.
+2. [`./CLAUDE.md`](./CLAUDE.md) — orientation + resolver: architecture, cross-cutting
+   invariants, the reference map, inline ship rules. It routes to on-demand detail docs:
+   [`./docs/architecture/KEY_FILES.md`](./docs/architecture/KEY_FILES.md) (per-file index —
+   read a file's entry before editing it), [`./docs/TESTING.md`](./docs/TESTING.md) (test
+   tiers + isolation lint + E2E lifecycle), and
+   [`./docs/architecture/thin-client.md`](./docs/architecture/thin-client.md) (remote-MCP seam).
 3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
    — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
    query routes on both axes. Read before writing anything that touches brain ops.
@@ -86,7 +90,13 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
-  same data — read scope, visibility-filtered for remote callers.
+  same data — read scope, visibility-filtered for remote callers. **v0.40.2.0:**
+  `gbrain think` now uses this substrate automatically on temporal /
+  knowledge_update intent (default ON; flip `think.trajectory_enabled=false`
+  to opt out). Migration v82 added `facts.event_type` so non-metric event
+  rows (`meeting`, `job_change`, `location_change`) ride through the same
+  pipeline; pass `kind: 'event'` or `'all'` to `find_trajectory` to query
+  them.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.
@@ -94,15 +104,18 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 ## Before shipping
 
 Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
-unit tests with `DATABASE_URL` unset, then all 29 E2E files sequentially against a
-fresh pgvector container) and tears down. Use `bun run ci:local:diff` for the
+guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
+containers plus a transaction-mode PgBouncer; unit phase keeps `DATABASE_URL`
+unset) and tears down. Use `bun run ci:local:diff` for the
 diff-aware subset during fast iteration on a focused branch. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand.
+Ship via the `/ship` skill, not by hand. The full release + contributor process
+(CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
+[`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
 ## Privacy
 
