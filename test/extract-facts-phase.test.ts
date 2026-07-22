@@ -367,6 +367,82 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(rows.rows[0].fact).toBe('forgotten legacy claim');
   });
 
+  test('expired legacy row WITH source_markdown_slug set survives reconcile untouched (#2646 codex P2)', async () => {
+    // Hybrid shape: row_num NULL (legacy — never fence-owned) but
+    // source_markdown_slug matching a live page. Without the
+    // preserveExpiredLegacy filter, the reconcile pass would count it
+    // as "stale", trigger a wipe, hard-delete the forget record, and
+    // reinsert the fence's rows fresh — reviving a forgotten claim as
+    // an active fact.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'forgotten hybrid claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0, now(), 'people/alice')`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | fence fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r1 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    const r2 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r1.guardTriggered).toBe(false);
+    // The expired hybrid row is invisible to the reconcile: the fence
+    // fact inserts normally, nothing is wiped, and re-running stays
+    // idempotent (the hybrid row must not read as perpetually stale).
+    expect(r1.factsInserted).toBe(1);
+    expect(r1.factsDeleted).toBe(0);
+    expect(r2.factsInserted).toBe(0);
+    expect(r2.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, expired_at FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows[0].fact).toBe('forgotten hybrid claim');
+    expect(rows.rows[0].expired_at).not.toBeNull();
+    expect(rows.rows[1].fact).toBe('fence fact');
+    expect(rows.rows[1].expired_at).toBeNull();
+  });
+
+  test('expired legacy hybrid row survives even a stale-row wipe on the same page (#2646 codex P2)', async () => {
+    // Force the wipe path: seed a fence, reconcile, then change the
+    // fence so the old DB row goes stale. The wipe must delete the
+    // stale fence-owned row but preserve the expired legacy hybrid.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'forgotten hybrid claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0, now(), 'people/alice')`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | old fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // Replace the fence content — 'old fact' is now stale in the DB.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | replacement fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.factsDeleted).toBe(1); // only the stale fence-owned row
+    expect(r.factsInserted).toBe(1);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+    );
+    expect(rows.rows.map((row: { fact: string }) => row.fact))
+      .toEqual(['forgotten hybrid claim', 'replacement fact']);
+  });
+
   test('mixed active + expired legacy rows: guard counts only the active ones (#2646)', async () => {
     // One active legacy row + one soft-expired legacy row. The guard
     // must still trigger (an active row is pending backfill) but the

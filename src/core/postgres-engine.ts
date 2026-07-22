@@ -4421,10 +4421,16 @@ export class PostgresEngine implements BrainEngine {
   async deleteFactsForPage(
     slug: string,
     source_id: string,
-    opts?: { excludeSourcePrefixes?: string[] },
+    opts?: { excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean },
   ): Promise<{ deleted: number }> {
     const sql = this.sql;
     const prefixes = opts?.excludeSourcePrefixes;
+    // #2646: keep soft-expired legacy rows (row_num NULL — never
+    // fence-owned) so a fence reconcile can't destroy forget_fact's
+    // legacy DB-only forget record.
+    const expiredLegacyFilter = opts?.preserveExpiredLegacy
+      ? sql`AND NOT (row_num IS NULL AND expired_at IS NOT NULL)`
+      : sql``;
     if (prefixes && prefixes.length > 0) {
       // #1928: keep rows whose `source` matches an excluded prefix (e.g.
       // `cli:` conversation facts). COALESCE so NULL/empty-source fence rows
@@ -4435,11 +4441,12 @@ export class PostgresEngine implements BrainEngine {
         WHERE source_id = ${source_id}
           AND source_markdown_slug = ${slug}
           AND NOT (COALESCE(source, '') LIKE ANY(${patterns}))
+          ${expiredLegacyFilter}
       `;
       return { deleted: result.count ?? 0 };
     }
     const result = await sql`
-      DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug}
+      DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug} ${expiredLegacyFilter}
     `;
     return { deleted: result.count ?? 0 };
   }

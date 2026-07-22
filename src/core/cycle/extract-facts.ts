@@ -93,6 +93,13 @@ function dedupeFactsByContentKey(facts: FenceExtractedFact[]): FenceExtractedFac
  * neither count as "stale" (which would force a wipe every cycle) nor
  * be compared against the fence's row set. Mirrors the
  * excludeSourcePrefixes filter deleteFactsForPage applies on the wipe.
+ *
+ * Also excludes soft-expired legacy rows (#2646: `row_num IS NULL AND
+ * expired_at IS NOT NULL`) — rows that `forget_fact` expired via its
+ * legacy DB-only path. They are not fence-owned (fence rows always
+ * carry a row_num), so they must neither count as "stale" (forcing a
+ * wipe every cycle) nor mask a fence row from insertion. Mirrors the
+ * preserveExpiredLegacy filter deleteFactsForPage applies on the wipe.
  */
 async function listExistingFactsForPage(
   engine: BrainEngine,
@@ -105,6 +112,7 @@ async function listExistingFactsForPage(
       WHERE source_id = $1
         AND source_markdown_slug = $2
         AND COALESCE(source, '') NOT LIKE 'cli:%'
+        AND NOT (row_num IS NULL AND expired_at IS NOT NULL)
       ORDER BY row_num ASC, id ASC`,
     [sourceId, slug],
   );
@@ -345,9 +353,12 @@ export async function runExtractFacts(
         // partial-UNIQUE-index keyspace). #1928: `cli:`-origin facts
         // (conversation facts from extract-conversation-facts) are NOT
         // fence-owned — the page carries no `## Facts` fence to recreate
-        // them — so they MUST survive this reconcile.
+        // them — so they MUST survive this reconcile. #2646: soft-expired
+        // legacy rows (forget_fact's record of the forget) likewise
+        // survive via preserveExpiredLegacy.
         const deleted = await engine.deleteFactsForPage(slug, sourceId, {
           excludeSourcePrefixes: ['cli:'],
+          preserveExpiredLegacy: true,
         });
         result.factsDeleted += deleted.deleted;
       }
@@ -374,10 +385,11 @@ export async function runExtractFacts(
     if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift) {
       // Fall back to the legacy page-level reconcile when old DB rows must
       // be removed. Same delete scoping as above: legacy
-      // NULL-source_markdown_slug rows and `cli:`-origin conversation
-      // facts (#1928) survive.
+      // NULL-source_markdown_slug rows, `cli:`-origin conversation
+      // facts (#1928), and soft-expired legacy rows (#2646) survive.
       const deleted = await engine.deleteFactsForPage(slug, sourceId, {
         excludeSourcePrefixes: ['cli:'],
+        preserveExpiredLegacy: true,
       });
       result.factsDeleted += deleted.deleted;
       toInsert = extracted;
