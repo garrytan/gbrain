@@ -3,6 +3,7 @@ import {
   buildSourceFactorCase,
   buildHardExcludeClause,
   buildVisibilityClause,
+  escapeLikePattern as topLevelEscapeLikePattern,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
 import {
@@ -241,7 +242,7 @@ describe('resolveHardExcludes', () => {
     const r = resolveHardExcludes(undefined, ['test/'], undefined);
     expect(r).not.toContain('test/');
     // Other defaults still present.
-    expect(r).toContain('archive/');
+    expect(r).toContain('attachments/');
   });
 
   test('env GBRAIN_SEARCH_EXCLUDE adds to the union', () => {
@@ -255,6 +256,40 @@ describe('resolveHardExcludes', () => {
   });
 });
 
+// issue #1777 — archive/ moved from hard-exclude to a 0.5 source-boost demote.
+describe('archive demote (issue #1777)', () => {
+  test('archive/ is NOT a default hard-exclude (regression guard)', () => {
+    expect(DEFAULT_HARD_EXCLUDES).not.toContain('archive/');
+    // The genuine-noise prefixes stay excluded.
+    expect(DEFAULT_HARD_EXCLUDES).toContain('test/');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('attachments/');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('.raw/');
+  });
+
+  test('resolveHardExcludes() never includes archive/ by default', () => {
+    expect(resolveHardExcludes()).not.toContain('archive/');
+  });
+
+  test('archive/ is demoted to 0.5 in the boost map', () => {
+    expect(DEFAULT_SOURCE_BOOSTS['archive/']).toBe(0.5);
+    expect(resolveBoostMap()['archive/']).toBe(0.5);
+  });
+
+  test('buildSourceFactorCase emits an archive/ demote branch', () => {
+    const sql = buildSourceFactorCase('p.slug', resolveBoostMap(), undefined);
+    expect(sql).toContain("WHEN p.slug LIKE 'archive/%' THEN 0.5");
+  });
+
+  test('detail=high bypasses the source factor (archive ranks normally)', () => {
+    expect(buildSourceFactorCase('p.slug', resolveBoostMap(), 'high')).toBe('1.0');
+  });
+
+  test('escapeLikePattern is exported at top level (CV-3a contract)', () => {
+    expect(typeof topLevelEscapeLikePattern).toBe('function');
+    expect(topLevelEscapeLikePattern('a_b%c\\d')).toBe('a\\_b\\%c\\\\d');
+  });
+});
+
 // v0.26.5 — visibility clause for soft-deleted pages and archived sources.
 describe('buildVisibilityClause (v0.26.5)', () => {
   test('emits both predicates joined by AND with a leading AND', () => {
@@ -264,10 +299,22 @@ describe('buildVisibilityClause (v0.26.5)', () => {
     // Both predicates present: page-level deleted_at IS NULL + source-level NOT archived.
     expect(clause).toContain('p.deleted_at IS NULL');
     expect(clause).toContain('NOT s.archived');
+    // v0.42 (#1699): also excludes quarantined pages (flagged pages stay visible).
+    expect(clause).toContain("? 'quarantine'");
   });
 
   test('uses the supplied aliases verbatim', () => {
-    expect(buildVisibilityClause('pp', 'src')).toBe('AND pp.deleted_at IS NULL AND NOT src.archived');
+    expect(buildVisibilityClause('pp', 'src')).toBe(
+      "AND pp.deleted_at IS NULL AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
+    );
+  });
+
+  test('drift guard: quarantine fragment comes from quarantine.ts single source of truth', async () => {
+    // buildVisibilityClause MUST consume quarantineFilterFragment so the search
+    // filter and the marker key can't drift (#1699 maintainability finding).
+    const { quarantineFilterFragment } = await import('../src/core/quarantine.ts');
+    expect(buildVisibilityClause('p', 's')).toContain(quarantineFilterFragment('p'));
+    expect(buildVisibilityClause('xx', 's')).toContain(quarantineFilterFragment('xx'));
   });
 
   test('does NOT bypass on detail level — visibility is a contract, not a temporal preference', () => {

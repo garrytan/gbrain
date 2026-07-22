@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS sources (
   -- (id='default') is always trusted regardless of this column.
   contextual_retrieval_mode   TEXT,
   trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT false,
+  -- v0.41.32.0 (supersedes #1623): newest COMMIT timestamp (HEAD committer
+  -- time) recorded at last sync. The REMOTE staleness path reads this instead
+  -- of shelling out to git on a DB-supplied local_path, preserving the
+  -- v0.41.27.0 trust boundary. NULL → reader falls back to wall-clock.
+  newest_content_at TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -123,6 +128,14 @@ CREATE TABLE IF NOT EXISTS pages (
   -- (NOT inside engine methods — internal callers must not pollute the
   -- signal). NULL = never retrieved (LSD prioritizes these first).
   last_retrieved_at     TIMESTAMPTZ,
+  -- v0.42.7 (migration v112): link-extraction freshness watermark. Set when
+  -- link/timeline extraction last ran for this page (inline sync, \`extract
+  -- --source db\`, or \`extract --stale\`). A page is stale for extraction when
+  -- this is NULL, older than LINK_EXTRACTOR_VERSION_TS, or older than
+  -- updated_at (edited-since-extract — the MCP put_page / sync --no-extract
+  -- path). Powers \`gbrain extract --stale\` + the \`links_extraction_lag\` doctor
+  -- check. NULL = never extracted.
+  links_extracted_at    TIMESTAMPTZ,
   -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
   -- merge). contextual_retrieval_mode is what tier the page was last embedded
   -- under (NULL = pre-v90 = treated as 'none' for drift detection).
@@ -151,7 +164,7 @@ CREATE TABLE IF NOT EXISTS pages (
 -- content columns IS DISTINCT FROM (allow-list widened per D6 + codex #3
 -- to include title/type/page_kind/corpus_generation/content_hash) so
 -- read-time mutations don't invalidate every cache row.
-CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger AS \$func\$
+CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger SET search_path = pg_catalog, public AS \$func\$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
     NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
@@ -214,9 +227,26 @@ INSERT INTO page_generation_clock (id, value)
   VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
   ON CONFLICT (id) DO NOTHING;
 
-CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS \$func\$
+-- v0.42.x: contention-free clock. nextval() takes a microsecond LWLock, not a
+-- transaction-length row lock, so concurrent page writers no longer serialize
+-- on one tuple's COMMIT. Load-bearing setval (2-arg -> is_called=true) so the
+-- first write strictly exceeds the seed; floor 1 (sequence MINVALUE). Layer-1
+-- reads last_value. The table + trigger names are retained.
+CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+-- Monotonic seed: GREATEST over the sequence's OWN last_value too, so replaying
+-- this blob on an already-upgraded brain (initSchema is re-runnable) can never
+-- move last_value BACKWARD below a stored query_cache bookmark (which would let
+-- Layer 1 serve stale rows). Mirrors the old table's ON CONFLICT DO NOTHING.
+SELECT setval('page_generation_clock_seq', GREATEST(
+  1,
+  COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+  COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+  COALESCE((SELECT MAX(generation) FROM pages), 0)
+));
+
+CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger SET search_path = pg_catalog, public AS \$func\$
 BEGIN
-  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
 END;
 \$func\$ LANGUAGE plpgsql;
@@ -248,6 +278,15 @@ CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
 -- would miss the NULL branch that LSD prioritizes (codex round 2 #6).
 CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
   ON pages (last_retrieved_at);
+-- v0.42.7 (migration v112): composite B-tree backing \`extract --stale\` and the
+-- \`links_extraction_lag\` doctor check. source_id leads so source-scoped staleness
+-- scans (\`extract --stale --source X\`, \`gbrain doctor --source X\`) are indexed;
+-- the brain-wide COUNT still uses it via the leading column. NOT partial-NULL —
+-- the staleness predicate has a NULL arm AND a \`< \$versionTs\` arm (B-tree sorts
+-- NULLs to one end, covering both). The \`updated_at > links_extracted_at\` arm is
+-- a cross-column filter no index covers; acceptable for a watermark COUNT.
+CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
+  ON pages (source_id, links_extracted_at);
 -- v0.29.1: expression index used by since/until date-range filters that read
 -- COALESCE(effective_date, updated_at). A partial index on effective_date
 -- alone would NOT help — the planner can't use it for the negative side of
@@ -321,7 +360,7 @@ CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
 -- NL queries ("how do we handle errors") rank doc-comment hits above body text.
 -- BEFORE INSERT OR UPDATE OF specific columns — only refires when those change,
 -- not on every chunk update (e.g., embedding refresh doesn't trigger rebuild).
-CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS \$fn\$
+CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER SET search_path = pg_catalog, public AS \$fn\$
 BEGIN
   NEW.search_vector :=
     setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
@@ -368,6 +407,11 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to
   ON code_edges_chunk(to_chunk_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to_symbol
   ON code_edges_chunk(to_symbol_qualified, edge_type);
+-- getCalleesOf filters on from_symbol_qualified; without this index every
+-- callee lookup is a sequential scan, amplified per-BFS-node by the
+-- recursive code walk. Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+  ON code_edges_chunk(from_symbol_qualified);
 
 CREATE TABLE IF NOT EXISTS code_edges_symbol (
   id                    SERIAL PRIMARY KEY,
@@ -385,13 +429,32 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from
   ON code_edges_symbol(from_chunk_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
   ON code_edges_symbol(to_symbol_qualified, edge_type);
+-- getCalleesOf companion to idx_code_edges_chunk_from_symbol above.
+-- Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+  ON code_edges_symbol(from_symbol_qualified);
 
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
--- Provenance model (v0.13):
---   link_source       — 'markdown' | 'frontmatter' | 'manual' | NULL
---                       (NULL = legacy row written before v0.13; unknown source)
+-- Provenance model (v0.13; opened to kebab provenance in v114 / issue #1941):
+--   link_source       — open kebab-case provenance tag, NOT a closed allowlist.
+--                       Format gate (CHECK): ^[a-z][a-z0-9]*(-[a-z0-9]+)*\$ and
+--                       char_length <= 64. NULL = legacy row (pre-v0.13).
+--                       Reconciliation-managed built-ins written internally:
+--                         'markdown'         — body markdown links
+--                         'frontmatter'      — YAML frontmatter edges (see origin_*)
+--                         'mentions'         — auto-linked body-text mentions
+--                         'wikilink-resolved'— opt-in global-basename [[name]] (#972)
+--                       User/tool-facing:
+--                         'manual'           — hand- or tool-created edges (the
+--                                              add_link op default + CLI link-add)
+--                         '<your-tag>'       — external derivers, e.g. 'citation-graph',
+--                                              stamp their own kebab tag (no migration).
+--                       The add_link OP forbids callers from passing the four
+--                       managed built-ins (they imply reconciliation semantics a
+--                       hand-created row can't honor); the DB CHECK still admits
+--                       them because internal writers use them. See operations.ts.
 --   origin_page_id    — for link_source='frontmatter', the page whose YAML
 --                       frontmatter created this edge; scopes reconciliation
 --   origin_field      — the frontmatter field name (e.g. 'key_people')
@@ -399,7 +462,9 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 -- The unique constraint includes link_source + origin_page_id so a manual edge
 -- and a frontmatter-derived edge with the same (from, to, type) tuple coexist.
 -- Reconciliation on put_page filters by (link_source='frontmatter' AND
--- origin_page_id = written_page) — never touches other pages' edges.
+-- origin_page_id = written_page) — never touches other pages' edges. (This is
+-- exactly why a CLI-forged 'frontmatter' row with NULL origin would be a phantom
+-- edge reconciliation never cleans — hence the op-layer guard.)
 CREATE TABLE IF NOT EXISTS links (
   id             SERIAL PRIMARY KEY,
   from_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -409,7 +474,9 @@ CREATE TABLE IF NOT EXISTS links (
   -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
   -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
   -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions')),
+  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
+  -- wikilink resolution (bare [[name]] resolved by slug tail).
+  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*\$' AND char_length(link_source) <= 64)),
   -- v0.41.18.0: nullable link_kind distinguishes "plain body mention" from
   -- "verb-pattern-derived typed link" within link_source='mentions'.
   -- Codex finding #12 design: keep link_source stable; add link_kind
@@ -473,6 +540,13 @@ CREATE TABLE IF NOT EXISTS timeline_entries (
   source   TEXT    NOT NULL DEFAULT '',
   summary  TEXT    NOT NULL,
   detail   TEXT    NOT NULL DEFAULT '',
+  -- v0.42.x (Life Chronicle #2390): when this row is the date-index projection
+  -- of a \`type:event\` page, event_page_id points at that event page; page_id
+  -- stays the depth/meeting page. NULL for ordinary timeline entries. Reads
+  -- hide rows whose event page is soft-deleted; the partial unique index below
+  -- keys dedup on (event_page_id, date) so re-extraction with a changed summary
+  -- updates the row instead of double-inserting.
+  event_page_id INTEGER REFERENCES pages(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -482,6 +556,10 @@ CREATE INDEX IF NOT EXISTS idx_timeline_date ON timeline_entries(date);
 -- include \`source\` so distinct meeting provenance survives. Legacy rows
 -- have source='' (schema default) so legacy dedup behavior is preserved.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup ON timeline_entries(page_id, date, summary, source);
+-- v0.42.x (Life Chronicle): event-projection lookup + dedup. Partial
+-- (event_page_id IS NOT NULL) so ordinary timeline rows are unaffected.
+CREATE INDEX IF NOT EXISTS idx_timeline_event_page ON timeline_entries(event_page_id) WHERE event_page_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_event_dedup ON timeline_entries(event_page_id, date) WHERE event_page_id IS NOT NULL;
 
 -- ============================================================
 -- page_versions: snapshot history for compiled_truth
@@ -639,12 +717,53 @@ CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name,
 CREATE TABLE IF NOT EXISTS op_checkpoints (
   op             TEXT NOT NULL,
   fingerprint    TEXT NOT NULL,
-  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- v0.42.x: must be a JSONB array. The loader runs jsonb_array_elements_text
+  -- over it; a scalar would throw and wipe the whole checkpoint load. CHECK is
+  -- the DB-enforced always-on guard (mirrors migration v119).
+  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT op_checkpoints_completed_keys_array CHECK (jsonb_typeof(completed_keys) = 'array'),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (op, fingerprint)
 );
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);
+
+-- #1794: append-only delta storage. One row per completed path; sync's
+-- appendCompleted INSERTs only the delta instead of rewriting the whole
+-- completed_keys JSONB array each flush (O(N^2) -> O(delta)). FK cascade drops
+-- children with the parent (clearOpCheckpoint + 7-day purge). PK prefix
+-- (op,fingerprint) serves all reads; no separate index. Mirrors migration v115.
+CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+  op          TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint, path),
+  CONSTRAINT op_checkpoint_paths_parent_fk
+    FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+);
+
+-- #2095 push-based context: feedback-loop log of volunteered pages
+-- (volunteer_context op / retrieval-reflex pointers / gbrain watch).
+-- "Used" derives from pages.last_retrieved_at > volunteered_at; rationale is
+-- a deterministic template string, never raw conversation text. 90-day prune
+-- in the dream cycle's purge phase. Mirrors migration v117.
+CREATE TABLE IF NOT EXISTS context_volunteer_events (
+  id             BIGSERIAL PRIMARY KEY,
+  source_id      TEXT NOT NULL,
+  slug           TEXT NOT NULL,
+  confidence     DOUBLE PRECISION NOT NULL,
+  match_arm      TEXT NOT NULL,
+  rationale      TEXT NOT NULL DEFAULT '',
+  channel        TEXT NOT NULL DEFAULT 'op',
+  session_id     TEXT,
+  turn           INTEGER,
+  volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+  ON context_volunteer_events (source_id, volunteered_at DESC);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+  ON context_volunteer_events (source_id, slug);
 
 -- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
 -- because its \`job_id BIGINT REFERENCES minion_jobs(id)\` FK requires
@@ -711,7 +830,13 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
 -- Function to rebuild search_vector for a page
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS \$\$
+-- #2704: compiled_truth (unbounded whole-page body) deliberately NOT
+-- indexed — overflows Postgres's 1MB tsvector cap on large pages.
+-- content_chunks.search_vector (chunk-grain, populated separately) is
+-- what searchKeyword() actually queries. See migrate.ts's v124 migration
+-- for the full rationale; keep in sync with that + reindex-search-vector.ts
+-- + pglite-schema.ts.
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS \$\$
 DECLARE
   timeline_text TEXT;
 BEGIN
@@ -724,7 +849,6 @@ BEGIN
   -- Build weighted tsvector
   NEW.search_vector :=
     setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
     setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
     setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
 
@@ -1250,7 +1374,7 @@ CREATE INDEX IF NOT EXISTS think_ab_results_recent_idx
   ON think_ab_results (source_id, ran_at DESC);
 
 -- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
-CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger AS \$\$
+CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger SET search_path = pg_catalog, public AS \$\$
 BEGIN
   PERFORM pg_notify('minion_jobs', json_build_object(
     'id', NEW.id, 'status', NEW.status, 'name', NEW.name,
@@ -1275,7 +1399,9 @@ DO \$\$
 DECLARE
   has_bypass BOOLEAN;
 BEGIN
-  SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+  -- #1385: recognize superuser + inherited-role BYPASSRLS, not just the role's
+  -- own rolbypassrls (alias \`pr\` avoids any plpgsql record-variable collision).
+  SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass;
   IF has_bypass THEN
     ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
     ALTER TABLE content_chunks ENABLE ROW LEVEL SECURITY;

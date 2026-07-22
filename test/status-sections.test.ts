@@ -14,7 +14,65 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { parseSectionFlag, runStatus } from '../src/commands/status.ts';
+import {
+  parseSectionFlag,
+  parseDeadlineFlag,
+  withSectionDeadline,
+  runStatus,
+  FAST_DEADLINE_MS,
+} from '../src/commands/status.ts';
+
+describe('parseDeadlineFlag (#1984)', () => {
+  test('no flag → undefined (no budget)', () => {
+    expect(parseDeadlineFlag([])).toBeUndefined();
+    expect(parseDeadlineFlag(['--json'])).toBeUndefined();
+  });
+
+  test('--fast applies the preset budget', () => {
+    expect(parseDeadlineFlag(['--fast'])).toBe(FAST_DEADLINE_MS);
+  });
+
+  test('--deadline-ms in both forms', () => {
+    expect(parseDeadlineFlag(['--deadline-ms', '500'])).toBe(500);
+    expect(parseDeadlineFlag(['--deadline-ms=750'])).toBe(750);
+  });
+
+  test('explicit --deadline-ms wins over --fast', () => {
+    expect(parseDeadlineFlag(['--fast', '--deadline-ms=100'])).toBe(100);
+  });
+
+  test('non-positive / non-numeric → usage_error', () => {
+    expect(parseDeadlineFlag(['--deadline-ms', '0'])).toBe('usage_error');
+    expect(parseDeadlineFlag(['--deadline-ms', '-5'])).toBe('usage_error');
+    expect(parseDeadlineFlag(['--deadline-ms', 'soon'])).toBe('usage_error');
+  });
+
+  test('bare --deadline-ms with no value → usage_error (not a silent no-budget fallthrough)', () => {
+    expect(parseDeadlineFlag(['--deadline-ms'])).toBe('usage_error');
+    expect(parseDeadlineFlag(['--fast', '--deadline-ms'])).toBe('usage_error');
+  });
+});
+
+describe('withSectionDeadline (#1984)', () => {
+  test('resolves the value when it beats the budget', async () => {
+    let timedOut = false;
+    const v = await withSectionDeadline(Promise.resolve(42), 1000, () => { timedOut = true; });
+    expect(v).toBe(42);
+    expect(timedOut).toBe(false);
+  });
+
+  test('returns undefined + fires onTimeout when the budget elapses', async () => {
+    let timedOut = false;
+    const v = await withSectionDeadline(new Promise<number>(() => {}), 10, () => { timedOut = true; });
+    expect(v).toBeUndefined();
+    expect(timedOut).toBe(true);
+  });
+
+  test('no budget (undefined/<=0) awaits the promise as-is', async () => {
+    expect(await withSectionDeadline(Promise.resolve('x'), undefined, () => {})).toBe('x');
+    expect(await withSectionDeadline(Promise.resolve('y'), 0, () => {})).toBe('y');
+  });
+});
 
 describe('parseSectionFlag', () => {
   test('no --section flag → undefined (all sections)', () => {
@@ -72,5 +130,15 @@ describe('runStatus exit codes', () => {
     // Without a config + engine, status can't build the local snapshot.
     expect(r.exitCode).toBe(1);
     expect(captured).toMatch(/snapshot failed|no engine connected/);
+  });
+
+  test('#1984: invalid --deadline-ms → exit 2 (usage error)', async () => {
+    let captured = '';
+    const r = await runStatus(null, ['--deadline-ms', '0'], {
+      stdout: () => {},
+      stderr: (s: string) => { captured += s; },
+    });
+    expect(r.exitCode).toBe(2);
+    expect(captured).toContain('--deadline-ms');
   });
 });

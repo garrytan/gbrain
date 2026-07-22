@@ -32,10 +32,15 @@ mock.module('../src/core/embedding.ts', () => ({
       activeEmbedCalls--;
     }
   },
+  // v0.41.31: embedAll/embedAllStale read the current embedding signature to
+  // stamp provenance. The mock returns a stable value; the mock engine's
+  // setPageEmbeddingSignature / invalidateStaleSignatureEmbeddings resolve to
+  // null via the Proxy default, so the signature value is inert here.
+  currentEmbeddingSignature: () => 'test:model:1536',
 }));
 
 // Import AFTER mocking.
-const { runEmbed } = await import('../src/commands/embed.ts');
+const { runEmbed, runEmbedCore } = await import('../src/commands/embed.ts');
 
 // v0.41.6.0 D1: runEmbedCore now preflights embedding credentials. This
 // test stack uses the LEGACY embedBatch mock path, not the gateway,
@@ -103,6 +108,73 @@ describe('runEmbed --all (parallel)', () => {
     expect(maxConcurrentEmbedCalls).toBeGreaterThan(1);
     // And stayed within the configured limit.
     expect(maxConcurrentEmbedCalls).toBeLessThanOrEqual(10);
+  });
+
+  test('v0.41.31: stamps embedding_signature after embedding each page (--all)', async () => {
+    const pages = [{ slug: 'a', source_id: 'default' }, { slug: 'b', source_id: 'default' }];
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
+
+    await runEmbed(engine, ['--all']);
+
+    // The wiring gap this pins: embedAll must CALL setPageEmbeddingSignature
+    // after upsertChunks, with the current signature (mocked to test:model:1536).
+    const stampCalls = (engine as any)._calls.filter((c: any) => c.method === 'setPageEmbeddingSignature');
+    expect(stampCalls.length).toBe(2); // one per page
+    expect(stampCalls[0].args[1]).toEqual({ sourceId: 'default', signature: 'test:model:1536' });
+  });
+
+  // #1737: cooperative abort. A pre-aborted signal must stop the embed loop
+  // BEFORE any embedBatch call, so a job killed by wall-clock/lock-loss frees
+  // the worker (and lets the cycle's finally release gbrain_cycle_locks)
+  // instead of grinding through the full 10-15 min embed phase.
+  test('#1737 --all: pre-aborted signal embeds nothing (no embedBatch call)', async () => {
+    const pages = Array.from({ length: 10 }, (_, i) => ({ slug: `page-${i}`, source_id: 'default' }));
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
+
+    const ac = new AbortController();
+    ac.abort(new Error('wall-clock'));
+    const result = await runEmbedCore(engine, { all: true, signal: ac.signal });
+
+    expect(totalEmbedCalls).toBe(0);
+    expect(result.embedded).toBe(0);
+  });
+
+  test('#1737 --stale: pre-aborted signal breaks the loop before listStaleChunks', async () => {
+    let listStaleCalls = 0;
+    const engine = mockEngine({
+      countStaleChunks: async () => 5, // non-zero so we pass the early return
+      listStaleChunks: async () => { listStaleCalls++; return []; },
+      invalidateStaleSignatureEmbeddings: async () => 0,
+    });
+
+    const ac = new AbortController();
+    ac.abort(new Error('lock-lost'));
+    const result = await runEmbedCore(engine, { stale: true, signal: ac.signal });
+
+    // The top-of-loop abort check fires before the first listStaleChunks page load.
+    expect(listStaleCalls).toBe(0);
+    expect(totalEmbedCalls).toBe(0);
+    expect(result.embedded).toBe(0);
   });
 
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {

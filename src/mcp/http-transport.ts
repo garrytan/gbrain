@@ -29,10 +29,13 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { operations } from '../core/operations.ts';
+import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
+export { parseLegacyTokenScope };
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -74,7 +77,17 @@ interface AuthResult {
    * for narrower scoping.
    */
   sourceId?: string;
+  /**
+   * #1336: AuthInfo carrying the legacy token's stored federated_read grant
+   * (`permissions.source_id` array). Threaded so `sourceScopeOpts` can scope
+   * read ops to the operator-granted sources instead of just scalar `sourceId`.
+   * Bounded to the stored grant — never widened to "all".
+   */
+  auth?: AuthInfo;
 }
+
+/* Legacy token source-scope parsing lives in core/legacy-token-scope.ts and is
+ * re-exported above so the legacy HTTP transport and OAuth provider cannot drift. */
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
 async function readBodyWithCap(req: Request, cap: number): Promise<string | null> {
@@ -193,21 +206,29 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.
-      const perms = (row as { permissions?: { takes_holders?: unknown } }).permissions;
+      const perms = (row as { permissions?: { takes_holders?: unknown; source_id?: unknown } }).permissions;
       const allowList = Array.isArray(perms?.takes_holders)
         ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
         : ['world'];
+      // #1336: honor the operator-set source grant stored on the token.
+      const { sourceId, allowedSources } = parseLegacyTokenScope(perms?.source_id);
+      const auth: AuthInfo = {
+        token,
+        clientId: rowId,
+        clientName: rowName,
+        scopes: [],
+        sourceId,
+        ...(allowedSources ? { allowedSources } : {}),
+      };
       return {
         ok: true,
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
         // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
-        // source. Preserves the pre-v0.34 effective behavior of the
-        // serve-http fallback chain that was removed for OAuth clients
-        // (migration v60 backfills oauth_clients.source_id). This path
-        // is for the older v0.22.7 access_tokens transport.
-        sourceId: 'default',
+        // source unless the token carries an explicit grant (#1336 above).
+        sourceId,
+        auth,
       };
     } catch {
       return { ok: false };
@@ -362,6 +383,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           remote: true,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
+          // #1336: thread the token's federated_read grant so read ops scope
+          // to the operator-granted sources via sourceScopeOpts.
+          auth: auth.auth,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);

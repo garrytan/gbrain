@@ -185,15 +185,14 @@ describe('sync-parallel: head-drift gate (CODEX-3)', () => {
     expect(await engine.getConfig('sync.last_commit')).toBe(head);
   });
 
-  test('vanished-mid-sync file produces a failedFiles entry', async () => {
+  test('vanished-mid-sync added file is skipped, not a failure (v0.42.x #1794)', async () => {
     // First sync: clean state for incremental.
     seedRepoWithMarkdown(repoPath, 3);
     const { performSync } = await import('../src/commands/sync.ts');
     await performSync(engine, { repoPath, noPull: true, noEmbed: true });
 
     // Add a file, commit, then delete the file from disk WITHOUT amending the
-    // commit — diff says it exists at HEAD, but the file is gone. This is the
-    // "checkout/race deleted my file mid-sync" simulation.
+    // commit — diff says it exists at HEAD, but the file is gone.
     writeFileSync(join(repoPath, 'people/will-vanish.md'), [
       '---', 'type: person', 'title: Vanish', '---', '', 'body',
     ].join('\n'));
@@ -203,10 +202,17 @@ describe('sync-parallel: head-drift gate (CODEX-3)', () => {
     const result = await performSync(engine, {
       repoPath, noPull: true, noEmbed: true,
     });
-    // Per CODEX-3 (v0.22.13): vanished files now go into failedFiles
-    // (prior behavior was a benign skip, which let last_commit advance).
-    expect(result.status).toBe('blocked_by_failures');
-    expect(result.failedFiles ?? 0).toBeGreaterThan(0);
+    // v0.42.x (#1794, Codex #3) SUPERSEDES the v0.22.13 CODEX-3 behavior: under
+    // the pinned-target resumable sync, importFile reads the live working tree,
+    // so a file added in lastCommit..pin but deleted from disk by a commit AFTER
+    // the pin is normal forward progress from a concurrent committer — it
+    // genuinely doesn't exist at HEAD, so SKIP it (don't block the run). A real
+    // history REWRITE is caught by the separate pin-reachability gate. The
+    // vanished file is never created; the next sync's pin..HEAD diff shows it
+    // deleted.
+    expect(result.status).toBe('synced');
+    expect(result.failedFiles ?? 0).toBe(0);
+    expect(await engine.getPage('people/will-vanish')).toBeNull();
   });
 });
 

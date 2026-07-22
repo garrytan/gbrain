@@ -46,6 +46,7 @@ ALLOWED=(
   "src/mcp/tool-defs.ts"                        # pure helper; takes ops as parameter, never exposes them
   "src/core/minions/tools/brain-allowlist.ts"   # subagent registry; has its own opt-in allowlist (separate from localOnly)
   "src/commands/capture.ts"                     # local CLI tool; not network-exposed
+  "src/commands/enrich.ts"                       # local CLI tool; calls put_page handler with remote=false, not network-exposed
   "src/commands/book-mirror.ts"                 # local CLI tool; not network-exposed
   "src/commands/tools-json.ts"                  # gbrain --tools-json introspection; full op list IS the purpose
   "src/commands/serve-http.ts"                  # MUST APPLY .filter(op => !op.localOnly) — verified by grep below

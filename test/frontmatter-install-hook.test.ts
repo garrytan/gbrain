@@ -53,6 +53,25 @@ describe('frontmatter install-hook (B13)', () => {
     }
   });
 
+  test('#1840 — generated hook matches .md/.mdx (single-backslash regex, not over-escaped)', () => {
+    installHook(tmp, false);
+    const content = readFileSync(join(tmp, '.githooks', 'pre-commit'), 'utf8');
+    // The shell must see `grep -E '\.mdx?$'`. Pre-fix it emitted `'\\.mdx?$'`
+    // (literal backslash), so the hook matched nothing and silently no-opped.
+    expect(content).toContain("grep -E '\\.mdx?$'");
+    expect(content).not.toContain("grep -E '\\\\.mdx?$'");
+
+    // Prove the emitted pattern actually selects markdown files. Extract the
+    // exact pattern between the single quotes and run it through ripgrep-free
+    // JS regex parity (POSIX ERE `\.mdx?$` == JS `/\.mdx?$/`).
+    const m = content.match(/grep -E '([^']+)'/);
+    expect(m).not.toBeNull();
+    const re = new RegExp(m![1]);
+    expect(re.test('notes/thing.md')).toBe(true);
+    expect(re.test('notes/thing.mdx')).toBe(true);
+    expect(re.test('notes/thing.txt')).toBe(false);
+  });
+
   test('installHook refuses to clobber existing hook without --force', () => {
     const hooksDir = join(tmp, '.githooks');
     mkdirSync(hooksDir, { recursive: true });

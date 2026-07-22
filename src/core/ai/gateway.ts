@@ -21,8 +21,9 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -41,6 +42,7 @@ import type {
   EmbedMultimodalOpts,
   MultimodalBatchResult,
   MultimodalInput,
+  ParsedModelId,
   Recipe,
   TouchpointKind,
 } from './types.ts';
@@ -48,7 +50,47 @@ import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
+import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+import { loadConfig } from '../config.ts';
+import { buildGatewayConfig } from './build-gateway-config.ts';
+
+// ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
+//
+// Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
+// socket makes an `await` never settle — which hangs `gbrain capture`/`search`
+// and, on PGLite, pins the single-writer lock. The AI SDK's `maxRetries` only
+// fires on a SETTLED error; a half-open socket never settles. So we bound at the
+// SDK CALL layer: default an `abortSignal` into every generateText / generateObject
+// / embed call. This (1) covers EVERY provider — including `native-anthropic`
+// (the default chat model + the facts:absorb Haiku), which the AI SDK forwards
+// the signal to as `fetch(url, {signal})`; and (2) bounds the WHOLE call incl.
+// internal retries, not one attempt. Direct-`fetch` paths (multimodal) get the
+// signal explicitly. Rerank is already bounded by its recipe `default_timeout_ms`.
+function resolveAiTimeoutMs(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+/** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). */
+const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
+/** embed sub-batch (per SDK call, NOT per whole import). */
+const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
+/** multimodal per request. */
+const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
+
+/**
+ * Compose a caller signal with a default wall-clock timeout. When the caller
+ * supplies its own (Fix 3's 6s query deadline, the facts queue's shutdown abort,
+ * a budget signal), `AbortSignal.any` makes whichever fires FIRST win — so a
+ * shorter caller deadline always takes precedence over the default backstop.
+ */
+function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
+}
 
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
@@ -76,6 +118,18 @@ const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
+
+/**
+ * Recover the process-global gateway for foreground command entrypoints that
+ * were reached without cli.ts's normal engine-connect initialization (#2590).
+ * Existing configured gateways, including their DB-resolved model overrides,
+ * are deliberately left unchanged.
+ */
+export function configureGatewayIfUninitialized(): void {
+  if (_config) return;
+  const config = loadConfig();
+  if (config) configureGateway(buildGatewayConfig(config));
+}
 
 /**
  * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
@@ -128,6 +182,8 @@ function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> |
  */
 type EmbedManyFn = typeof embedMany;
 let _embedTransport: EmbedManyFn = embedMany;
+type GenerateTextFn = typeof generateText;
+let _generateTextTransport: GenerateTextFn = generateText;
 // v0.41.6.0 D1: tests that install a transport stub also pass the
 // embedding-creds preflight, matching the chat-transport fast-path
 // pattern. Set when __setEmbedTransportForTests is called with a
@@ -338,7 +394,8 @@ export function applyOpenAICompatConfig(
   cfg: AIGatewayConfig,
 ): { baseURL: string; fetch?: typeof fetch } {
   if (recipe.resolveOpenAICompatConfig) {
-    return recipe.resolveOpenAICompatConfig(cfg.env);
+    const resolved = recipe.resolveOpenAICompatConfig(cfg.env);
+    return { ...resolved, fetch: resolved.fetch ?? recipe.compat?.fetch };
   }
   const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseURL) {
@@ -347,14 +404,50 @@ export function applyOpenAICompatConfig(
       recipe.setup_hint,
     );
   }
-  return { baseURL };
+  return { baseURL, fetch: recipe.compat?.fetch };
+}
+
+/**
+ * #1250: native providers (anthropic/openai) are instantiated as
+ * `create<Provider>({ apiKey })` with NO explicit baseURL, so the AI SDK reads
+ * `<PROVIDER>_BASE_URL` verbatim. When a host injects a BARE base URL (Claude
+ * Code sets `ANTHROPIC_BASE_URL=https://api.anthropic.com` with no `/v1`), the
+ * SDK POSTs `<base>/messages` → 404 and every chat/expansion/embedding call
+ * breaks. This normalizes a configured native base URL to carry the `/v1`
+ * suffix and returns it so callers can pass it explicitly.
+ *
+ * Returns undefined when the env provides no base URL, so the SDK's own default
+ * (which already includes `/v1`) is preserved untouched — the happy path is not
+ * altered. Google is intentionally NOT handled here: its native suffix is
+ * unproven (Gemini's OpenAI-compat route is `/v1beta/openai`), so it's deferred
+ * to a follow-up rather than risk a regression on a wrong assumption.
+ *
+ * @internal exported for tests.
+ */
+export function resolveNativeBaseUrl(
+  provider: 'anthropic' | 'openai',
+  cfg: AIGatewayConfig,
+): string | undefined {
+  const envKey = provider === 'anthropic' ? 'ANTHROPIC_BASE_URL' : 'OPENAI_BASE_URL';
+  const raw = cfg.env[envKey];
+  if (!raw || !raw.trim()) return undefined;
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
   _config = {
     embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
-    embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    // #1292/D6: do NOT fabricate a default here. Every gateway-internal reader
+    // already applies `?? DEFAULT_EMBEDDING_DIMENSIONS` (getEmbeddingDimensions,
+    // embedQuery, the dim self-check) or `?? 0` (the multimodal path, which is
+    // designed to SKIP validation when the dim is unknown rather than fabricate
+    // one). Backfilling 1280 here erased the "user never set a dimension" signal,
+    // which (a) defeated that intended skip and (b) let a user-provided recipe
+    // with no explicit dim look fully-configured to diagnoseEmbedding and then
+    // fail with a cryptic wrong-width error at embed time. Keep it honest.
+    embedding_dimensions: config.embedding_dimensions,
     embedding_multimodal_model: config.embedding_multimodal_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
@@ -365,6 +458,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     // wanted it. isAvailable('reranker') returns false when unset.
     reranker_model: config.reranker_model,
     base_urls: config.base_urls,
+    provider_chat_options: config.provider_chat_options,
     env: config.env,
   };
   _modelCache.clear();
@@ -427,6 +521,20 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
+  // ALSO resolve the four tier models and register them as extended models.
+  // assertTouchpoint's contract (model-resolver.ts) says config-chosen models —
+  // `models.default` and `models.tier.*` included — bypass the native recipe
+  // allowlist, but pre-fix only chat/expansion/embedding/reranker were
+  // registered. A model reachable ONLY through a tier (e.g. `models.tier.deep`
+  // set to an Opus newer than the recipe list) failed `probeChatModel` at call
+  // time and silently degraded think/auto_think to the gather-only stub.
+  // Resolving per-tier also honors `models.default` (it sits above tiers in
+  // the resolveModel chain).
+  const tierModels: string[] = [];
+  for (const tier of ['utility', 'reasoning', 'deep', 'subagent'] as const) {
+    tierModels.push(await resolveModel(engine, { tier, fallback: TIER_DEFAULTS[tier] }));
+  }
+
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
   _modelCache.clear();
   _shrinkState.clear();
@@ -438,6 +546,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
     _config.chat_model,
     _config.reranker_model,
     ...(_config.chat_fallback_chain ?? []),
+    ...tierModels,
   ]) {
     if (m) registerExtendedModel(m);
   }
@@ -506,6 +615,7 @@ export function resetGateway(): void {
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
+  _generateTextTransport = generateText;
   _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
@@ -524,6 +634,17 @@ export function resetGateway(): void {
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
   _embedTransportInstalled = fn !== null;
+}
+
+/**
+ * Test-only seam for the chat() SDK call. Unlike __setChatTransportForTests,
+ * this keeps provider resolution and providerOptions assembly live, then
+ * replaces only the final generateText call.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function __setGenerateTextTransportForTests(fn: GenerateTextFn | null): void {
+  _generateTextTransport = fn ?? generateText;
 }
 
 /**
@@ -617,7 +738,7 @@ export type EmbeddingDiagnosis =
   | { ok: false; reason: 'no_model_configured' }
   | { ok: false; reason: 'unknown_provider'; model: string; provider: string; message: string }
   | { ok: false; reason: 'no_touchpoint'; model: string; provider: string; recipeId: string }
-  | { ok: false; reason: 'user_provided_model_unset'; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'user_provided_dims_unset'; model: string; provider: string; recipeId: string }
   | { ok: false; reason: 'missing_env'; model: string; provider: string; recipeId: string; missingEnvVars: string[] };
 
 export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
@@ -665,16 +786,24 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
+  // #1292/D6: a user-provided / proxy embedding recipe that ships no default
+  // dimension (LiteLLM declares default_dims:0) needs an explicit
+  // embedding_dimensions — otherwise embed() silently falls back to a wrong
+  // vector width at write time. Fail closed here with a clear, actionable reason.
+  //
+  // This REPLACES the prior `user_provided_model_unset` guard, which was a
+  // structurally-unreachable "no model picked" check: parseModelId throws on a
+  // bare provider (model-resolver.ts), so by the time we reach here
+  // parsed.modelId is ALWAYS non-empty. That guard only ever false-positived for
+  // a fully-specified litellm:<model> with dims set, silently disabling vector
+  // search. The genuine "picked a user-provided provider but no model" UX is
+  // handled at the config/init layer, where a bare provider string still exists.
   const isUserProvided = (tp as any).user_provided_models === true;
-  if (
-    Array.isArray(tp.models) &&
-    tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
-  ) {
+  const recipeDefaultDims = tp.default_dims ?? 0;
+  if ((isUserProvided || recipeDefaultDims === 0) && !_config!.embedding_dimensions) {
     return {
       ok: false,
-      reason: 'user_provided_model_unset',
+      reason: 'user_provided_dims_unset',
       model: modelStr,
       provider: parsed.providerId,
       recipeId: recipe.id,
@@ -759,6 +888,26 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
 // ---- Embedding ----
 
 /**
+ * Carries the asymmetric-embedding `input_type` ('query' | 'document')
+ * across the AI SDK boundary, from embedSubBatch() to the per-recipe fetch
+ * shims below (#1400).
+ *
+ * Why this exists: `dimsProviderOptions()` correctly emits `input_type`
+ * into `providerOptions.openaiCompatible` for asymmetric models (ZE
+ * zembed-1, Voyage v3+), but the AI SDK's openai-compatible adapter
+ * validates providerOptions against a fixed schema (`dimensions`, `user`)
+ * and silently DROPS every other field before building the wire body. By
+ * the time a compat shim sees the request, the threaded 'query' is gone —
+ * so every embedQuery() was encoded document-side and asymmetric retrieval
+ * silently collapsed to surface-token overlap.
+ *
+ * embedSubBatch() populates the store only when providerOptions actually
+ * threads an input_type; shims that need a default (ZE) apply their own.
+ * Same module-level ALS pattern as `__budgetStore` below.
+ */
+const __embedInputTypeStore = new AsyncLocalStorage<'query' | 'document'>();
+
+/**
  * Voyage AI compatibility shim. Voyage's `/v1/embeddings` endpoint is OpenAI-shaped
  * but diverges on two parameters:
  *   - `encoding_format` only accepts `'base64'` (the AI SDK sends `'float'` by default,
@@ -794,6 +943,15 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
           const dims = parsed.dimensions;
           delete parsed.dimensions;
           if (typeof dims === 'number') parsed.output_dimension = dims;
+          mutated = true;
+        }
+        // Recover the SDK-stripped input_type (#1400) — opt-in, mirroring
+        // the dims.ts Voyage branch: inject only when a caller actually
+        // threaded one; when absent, the field stays off the wire
+        // (pre-v0.35.0.0 behavior preserved).
+        const threadedInputType = __embedInputTypeStore.getStore();
+        if (threadedInputType !== undefined && parsed.input_type === undefined) {
+          parsed.input_type = threadedInputType;
           mutated = true;
         }
         if (mutated) {
@@ -916,6 +1074,30 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
  * float[] (not base64), so the Layer 2 cap compares against the JSON
  * payload size of each embedding rather than a base64 string length.
  */
+/**
+ * NVIDIA NIM compatibility shim. NVIDIA uses the OpenAI embeddings wire
+ * shape but requires asymmetric input_type values: query for retrieval and
+ * passage for indexed documents. The generic gateway store carries
+ * query/document across the AI SDK boundary; map document to passage here.
+ */
+const nvidiaCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = __embedInputTypeStore.getStore() === 'query' ? 'query' : 'passage';
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Preserve the provider response when the SDK body is unexpectedly non-JSON.
+    }
+  }
+  return fetch(input as any, baseInit);
+}) as unknown as typeof fetch;
+
 const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
   // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
@@ -966,10 +1148,13 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
           parsed.encoding_format = 'float';
           mutated = true;
         }
-        // Default input_type when caller didn't thread one (document-side
-        // embedding is the correct default for ingest paths).
+        // Recover the SDK-stripped input_type (#1400): the threaded value
+        // arrives via __embedInputTypeStore because the openai-compatible
+        // adapter drops it from providerOptions before building the body.
+        // Document-side default preserved for paths that didn't thread one
+        // (ingest).
         if (parsed.input_type === undefined) {
-          parsed.input_type = 'document';
+          parsed.input_type = __embedInputTypeStore.getStore() ?? 'document';
           mutated = true;
         }
         if (mutated) {
@@ -1057,6 +1242,56 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   }
 }) as unknown as typeof fetch;
 
+/**
+ * Generic asymmetric-embedding shim for openai-compatible recipes that
+ * ship no compat fetch of their own (llama-server, litellm, ollama, ...).
+ * Those deployments are the canonical local/proxy paths for serving
+ * asymmetric models (e.g. a zembed-1 behind llama.cpp, vLLM, or an
+ * OpenAI-compatible proxy), and they need the same `input_type` signal the
+ * hosted ZE endpoint gets — the serving layer can't apply query-side vs
+ * document-side encoding without it.
+ *
+ * Strictly opt-in at the wire level: when no input_type was threaded (the
+ * model isn't asymmetric — dims.ts threads it by model id, never for
+ * Azure/DashScope/Zhipu-style fixed models — or the caller didn't ask),
+ * the request passes through byte-identical. When one WAS threaded
+ * (recovered from __embedInputTypeStore — see #1400), inject it into the
+ * JSON body; OpenAI-compatible servers that don't understand the field
+ * ignore unknown body keys (llama-server does), and asymmetric-aware
+ * servers/proxies read it. URL + response shape are untouched — these
+ * endpoints are already OpenAI-shaped. Recipes with their own compat
+ * fetch (voyage, zeroentropyai, azure) never reach this shim: the
+ * `compat.fetch ??` precedence in instantiateEmbedding wins.
+ */
+const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const threadedInputType = __embedInputTypeStore.getStore();
+  if (threadedInputType === undefined) return fetch(input as any, init);
+  // Inject only on the string-URL + string-body shape the AI SDK actually
+  // sends. A Request-shaped input may carry its body on the Request object
+  // itself, where a rebuild would silently drop it — pass it through
+  // untouched instead (unreachable via the SDK today; preserves the
+  // byte-identical contract if it ever becomes reachable).
+  if (typeof input !== 'string' && !(input instanceof URL)) {
+    return fetch(input as any, init);
+  }
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = threadedInputType;
+        // Drop Content-Length so fetch recomputes from the new body.
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+  return fetch(typeof input === 'string' ? input : input.toString(), baseInit);
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1079,7 +1314,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         `OpenAI embedding requires OPENAI_API_KEY.`,
         recipe.setup_hint,
       );
-      const client = createOpenAI({ apiKey });
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      const client = createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
@@ -1110,15 +1346,21 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
       // fetch (api-version splice); voyage doesn't — use voyageCompatFetch.
       // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
-      // + response shape rewrite + OOM caps). Same per-recipe-id branch
-      // pattern as voyage so adding a third compat shim is one more case.
+      // + response shape rewrite + OOM caps). Every other openai-compat
+      // recipe (llama-server, litellm, ollama, ...) falls through to
+      // openAICompatAsymmetricFetch so the threaded input_type reaches
+      // asymmetric models there too (#1400) — a strict pass-through when no
+      // input_type was threaded, so symmetric deployments see zero wire
+      // change.
       const fetchWrapper =
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
-          : undefined);
+          : recipe.id === 'nvidia'
+          ? nvidiaCompatFetch
+          : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -1433,16 +1675,26 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
-    const result = await _embedTransport({
+    const callTransport = () => _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
-      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
-      // Undefined fields are ignored by the AI SDK so the call shape stays
-      // identical for production callers that don't opt in.
-      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
+      // v0.42.20.0 — default a per-SUB-BATCH embed timeout (codex #3: bounding
+      // once at embed() top would cap a whole multi-batch import; this is the
+      // per-SDK-call scope). Composes with a caller signal (Fix 3's 6s query
+      // deadline) — shorter wins.
+      abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
+    // Carry the threaded input_type across the SDK boundary via
+    // __embedInputTypeStore (the adapter strips it from providerOptions —
+    // see the store's doc comment). Populated only when dimsProviderOptions
+    // actually emitted one, so non-asymmetric paths run store-empty and the
+    // fetch shims leave their wire bodies untouched.
+    const threadedInputType = providerOpts?.openaiCompatible?.input_type;
+    const result = await (threadedInputType === 'query' || threadedInputType === 'document'
+      ? __embedInputTypeStore.run(threadedInputType, callTransport)
+      : callTransport());
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
@@ -1500,12 +1752,16 @@ export async function embedOne(text: string): Promise<Float32Array> {
  */
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
 ): Promise<Float32Array> {
   const [v] = await embed([text], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
+    // v0.42.20.0 (Fix 3) — forward a caller deadline so the query-time embed
+    // can be bounded BELOW the CLI force-exit; composes with the gateway embed
+    // default via withDefaultTimeout (shorter wins).
+    abortSignal: opts?.abortSignal,
   });
   return v;
 }
@@ -1639,6 +1895,9 @@ export async function embedMultimodal(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
+        // bypasses the SDK abortSignal).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`);
@@ -1781,6 +2040,8 @@ async function embedMultimodalOpenAICompat(
           [authResult.headerName]: authResult.token,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
@@ -1979,7 +2240,8 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      return createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -1989,7 +2251,8 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     case 'native-anthropic': {
       const apiKey = cfg.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AIConfigError(`Anthropic expansion requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('anthropic', cfg);
+      return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2019,11 +2282,21 @@ export async function expand(query: string): Promise<string[]> {
   if (!query || !query.trim()) return [query];
   if (!isAvailable('expansion')) return [query];
 
+  // Guardrail seam: classify the query before the expansion model call.
+  await classifyGatewayGuardrail({
+    hook: 'ai_gateway.expand',
+    content: query,
+    metadata: { query_chars: query.length },
+  });
+
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
+      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
+      // class as chat. Default the chat timeout.
+      abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
       prompt: [
         'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
         'Return ONLY the JSON object. Do NOT include the original query in the result.',
@@ -2074,6 +2347,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const base64 = imageBytes.toString('base64');
   const result = await generateText({
     model,
+    // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
+    abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     messages: [
       {
         role: 'system',
@@ -2167,6 +2442,166 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+/**
+ * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
+ *
+ * The original code passed `opts.messages as any` straight to generateText,
+ * which worked on AI SDK v4/v5 but v6 tightened ModelMessage validation:
+ *   - tool results must be a `role: 'tool'` message (gbrain pushes them as
+ *     `role: 'user'` with tool-result blocks), and
+ *   - each tool-result `output` must be a structured `{ type, value }` part,
+ *     not a bare value.
+ * Without this conversion every multi-turn tool loop (skillopt rollouts AND
+ * production subagent jobs) throws "messages do not match the ModelMessage[]
+ * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
+ */
+/**
+ * Default per-call max output tokens. Thinking-by-default Claude 5 models
+ * (`anthropic:claude-*-5`) burn a large chunk of the budget on internal
+ * reasoning before emitting any text, so a 4096 default leaves them with empty
+ * final text on the subagent tool loop. Give those models headroom; providers
+ * bill actual tokens, not the cap, so it is free for the models that don't use
+ * it. Everything else keeps 4096 on purpose: raising the default blanket-wide
+ * would exceed some openai-compat providers' hard max-output caps (DeepSeek
+ * 8192, gpt-4o 16384) and 400 on them — a regression for exactly the
+ * non-Anthropic subagent users the gateway loop exists to serve.
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
+const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+function defaultMaxOutputTokens(modelStr: string | undefined): number {
+  return modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+    ? THINKING_MODEL_MAX_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/**
+ * Deep-serialize a tool output into a plain JSON value for the AI SDK v6
+ * ModelMessage schema. node-postgres returns `timestamptz` columns as JS
+ * `Date` instances, and AI SDK v6's `JSONValue` schema rejects a raw Date,
+ * throwing "Invalid prompt ... ModelMessage[] schema" the moment a
+ * timestamp-bearing tool result (e.g. `brain_get_page`, `brain_list_pages`)
+ * is fed back — dead-lettering the whole multi-tool loop. The JSON round-trip
+ * runs `Date.prototype.toJSON` (ISO string) recursively and drops `undefined`.
+ * This is a serialization fix at the SDK boundary, NOT a `::jsonb` DB cast —
+ * it never touches Postgres. (BigInt / circular outputs still throw in
+ * JSON.stringify; those aren't LLM-serializable and are out of scope.)
+ */
+function toJsonSafe(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null));
+  } catch {
+    // BigInt / circular output isn't LLM-serializable; degrade to a string
+    // rather than throwing and dead-lettering the whole tool loop.
+    return safeStringify(value);
+  }
+}
+
+/** Stringify that never throws (bigint/circular fall back to String()). */
+function safeStringify(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return String(value);
+  }
+}
+
+export function toModelMessages(messages: ChatMessage[]): unknown[] {
+  return messages.map((m) => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const blocks = m.content;
+    if (blocks.some((b) => b.type === 'tool-result')) {
+      // v6: tool results ride on a dedicated `tool` role with structured output.
+      return {
+        role: 'tool' as const,
+        content: blocks
+          .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+          .map((b) => ({
+            type: 'tool-result' as const,
+            toolCallId: b.toolCallId,
+            toolName: b.toolName,
+            output: b.isError
+              ? { type: 'error-text' as const, value: safeStringify(b.output) }
+              : (typeof b.output === 'string'
+                ? { type: 'text' as const, value: b.output }
+                : { type: 'json' as const, value: toJsonSafe(b.output) as never }),
+          })),
+      };
+    }
+    return {
+      role: m.role,
+      // Drop text blocks whose `text` isn't a string: reasoning models
+      // (DeepSeek v4, etc.) surface `text: null/undefined` thinking parts that
+      // AI SDK v6's Zod schema rejects, poisoning the whole call. `''` is valid
+      // and kept.
+      content: blocks
+        .filter((b) => b.type !== 'text' || typeof b.text === 'string')
+        .map((b) => {
+          if (b.type === 'text') return { type: 'text' as const, text: b.text };
+          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+          return b;
+        }),
+    };
+  });
+}
+
+/**
+ * Last-resort normalization at the `chat()` boundary: back-fill error stubs for
+ * any assistant tool-call that isn't answered by the immediately-following
+ * tool-result turn. The subagent handler already balances its own transcript
+ * (see reconcileGatewayReplay), so this is a no-op there — it exists for the
+ * paths reconcile can't reach: a partially-answered turn, a provider that
+ * duplicates or drops tool-call IDs (local vLLM), or a `finishReason:'length'`
+ * truncation mid-batch. Without it those histories throw
+ * AI_MissingToolResultsError inside `generateText`. No-op on balanced input.
+ *
+ * @internal exported for tests.
+ */
+export function repairToolPairing(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    out.push(m);
+    if (typeof m.content === 'string' || m.role !== 'assistant') continue;
+
+    const calls = m.content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    if (calls.length === 0) continue;
+
+    // v6 only accepts results in the immediately-following message.
+    const next = messages[i + 1];
+    const nextBlocks = next && typeof next.content !== 'string' ? next.content : [];
+    const resolved = new Set(
+      nextBlocks
+        .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+        .map((b) => b.toolCallId),
+    );
+
+    const missing = calls.filter((c) => !resolved.has(c.toolCallId));
+    if (missing.length === 0) continue;
+
+    const stubs: ChatBlock[] = missing.map((c) => ({
+      type: 'tool-result',
+      toolCallId: c.toolCallId,
+      toolName: c.toolName,
+      output: 'tool result unavailable (recovered after interrupted run)',
+      isError: true,
+    }));
+
+    if (resolved.size > 0) {
+      // A tool-result message follows but is incomplete — merge the stubs in.
+      out.push({ role: next!.role, content: [...(nextBlocks as ChatBlock[]), ...stubs] });
+      i++; // the merged message replaces the original; don't emit it twice.
+    } else {
+      // No following tool-result message at all — synthesize one.
+      out.push({ role: 'user', content: stubs });
+    }
+  }
+  return out;
+}
+
 export interface ChatResult {
   /** Final text content concatenated from text blocks. */
   text: string;
@@ -2205,6 +2640,75 @@ export interface ChatOpts {
   cacheSystem?: boolean;
 }
 
+/**
+ * v0.41.x (#1698) — id-validity core. Shared by `runThink`'s explicit-model gate
+ * (via `probeChatModel`) AND `makeJudgeClient` in `cycle/synthesize.ts`.
+ *
+ * Validates that a `provider:model` string resolves to a real recipe AND that the
+ * recipe supports the chat touchpoint (catches typo'd native models like
+ * `anthropic:claude-bogus-9`). Both checks read the recipe REGISTRY, not gateway
+ * `_config`, so this works before `configureGateway()` has run — which is why
+ * `makeJudgeClient` reuses this layer instead of the full `probeChatModel` (whose
+ * `isAvailable` layer would reject non-Anthropic-no-key + unconfigured-gateway).
+ *
+ * Order matters: `resolveRecipe` first (unknown_provider), then `assertTouchpoint`
+ * (unknown_model). `isAvailable` alone collapses both into a bare `false`.
+ */
+export type ModelIdValidity =
+  | { ok: true; parsed: ParsedModelId; recipe: Recipe }
+  | { ok: false; reason: 'unknown_provider' | 'unknown_model'; detail: string; fix?: string };
+
+export function validateModelId(modelStr: string): ModelIdValidity {
+  let parsed: ParsedModelId;
+  let recipe: Recipe;
+  try {
+    ({ parsed, recipe } = resolveRecipe(modelStr));
+  } catch (e) {
+    if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_provider', detail: e.message, fix: e.fix };
+    throw e;
+  }
+  try {
+    assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  } catch (e) {
+    if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_model', detail: e.message, fix: e.fix };
+    throw e;
+  }
+  return { ok: true, parsed, recipe };
+}
+
+/**
+ * v0.41.x (#1698) — full chat-model probe = id-validity + key availability.
+ * Used by `runThink`'s explicit-`--model` gate (where a model the user typed but
+ * can't run SHOULD hard-error, not silently degrade), AND by `tryBuildGatewayClient`
+ * + `makeJudgeClient`. One shared predicate, no drift.
+ *
+ * The key layer uses `hasAnthropicKey` (env OR gbrain config file), which is
+ * gateway-config-INDEPENDENT — it works before `configureGateway()` and in unit
+ * tests, and preserves the historical key-detection source (codex #6; the prior
+ * draft used `isAvailable`, which reads gateway `_config.env` and would have
+ * regressed the builder + broken every test that skips `configureGateway`).
+ * Non-Anthropic providers are checked LAZILY at `gateway.chat()` time (build the
+ * client, let the call surface AIConfigError) — matches the deliberate
+ * per-transcript-degrade contract (test A9: a deepseek judge with no key returns
+ * a client, not null).
+ */
+export type ChatModelProbe =
+  | { ok: true }
+  | { ok: false; reason: 'unknown_provider' | 'unknown_model' | 'unavailable'; detail: string; fix?: string };
+
+export function probeChatModel(modelStr: string): ChatModelProbe {
+  const v = validateModelId(modelStr);
+  if (!v.ok) return { ok: false, reason: v.reason, detail: v.detail, fix: v.fix };
+  if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) {
+    return {
+      ok: false,
+      reason: 'unavailable',
+      detail: 'no Anthropic API key configured (set ANTHROPIC_API_KEY or run: gbrain config set anthropic_api_key ...)',
+    };
+  }
+  return { ok: true };
+}
+
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -2224,7 +2728,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI chat requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      return createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -2234,7 +2739,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
     case 'native-anthropic': {
       const apiKey = cfg.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      const baseURL = resolveNativeBaseUrl('anthropic', cfg);
+      return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2281,11 +2787,186 @@ function mapStopReason(
  * Crash-resumable replay is the caller's responsibility (subagent.ts persists
  * blocks via the provider-neutral schema landing in commit 2a).
  */
+/**
+ * Safely stringify an arbitrary tool-input value for guardrail classification.
+ * Cycle-safe; serializes functions/symbols/bigints to stable placeholders so a
+ * weird tool payload never throws inside the guardrail seam.
+ */
+function stringifyGuardrailValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_key, nested) => {
+      if (typeof nested === 'bigint') return nested.toString();
+      if (typeof nested === 'function') return `[Function${nested.name ? `:${nested.name}` : ''}]`;
+      if (typeof nested === 'symbol') return nested.toString();
+      if (typeof nested === 'object' && nested !== null) {
+        if (seen.has(nested)) return '[Circular]';
+        seen.add(nested);
+      }
+      return nested;
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+/** Flatten a chat message's content blocks into a single guardrail text. */
+function chatContentToGuardrailText(content: ChatMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => (block.type === 'text' ? block.text : stringifyGuardrailValue(block)))
+    .filter((part) => part.trim().length > 0)
+    .join('\n');
+}
+
+/**
+ * Find the latest user message for guardrail classification. Returns null when
+ * there's no non-empty trailing user message (nothing to classify).
+ */
+function lastUserMessageForGuardrail(
+  messages: ChatMessage[],
+): { text: string; index: number } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || message.role !== 'user') continue;
+    const text = chatContentToGuardrailText(message.content);
+    if (text.trim().length === 0) return null;
+    return { text, index: i };
+  }
+  return null;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergeRecords(
+  ...records: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const record of records) {
+    if (!record) continue;
+    for (const [key, value] of Object.entries(record)) {
+      const existing = out[key];
+      if (isPlainObject(existing) && isPlainObject(value)) {
+        out[key] = deepMergeRecords(existing, value);
+      } else {
+        out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
+function applyConfiguredChatProviderOptions(
+  providerOptions: Record<string, any>,
+  cfg: AIGatewayConfig,
+  recipeId: string,
+  modelId: string,
+): void {
+  const providerRaw = cfg.provider_chat_options?.[recipeId];
+  const modelRaw = cfg.provider_chat_options?.[`${recipeId}:${modelId}`];
+  const providerScoped = isPlainObject(providerRaw) ? providerRaw : undefined;
+  const modelScoped = isPlainObject(modelRaw) ? modelRaw : undefined;
+  if (!providerScoped && !modelScoped) return;
+
+  providerOptions[recipeId] = deepMergeRecords(
+    isPlainObject(providerOptions[recipeId]) ? providerOptions[recipeId] : undefined,
+    providerScoped,
+    modelScoped,
+  );
+}
+
+/**
+ * Gateway-side guardrail wrapper. Observe-only, fail-open, never throws into
+ * the gateway. No-op when no guardrail is registered. The guardrail boundary
+ * intentionally sees ONLY the user/query/tool-input text — never system
+ * prompts, assistant/tool messages, full history, tool output, or LLM output.
+ */
+async function classifyGatewayGuardrail(input: {
+  hook: GuardrailHook;
+  content: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  if (!hasGuardrails()) return;
+  const content = input.content.trim();
+  if (!content) return;
+  try {
+    await runGuardrails({ hook: input.hook, content, metadata: input.metadata });
+  } catch {
+    // Fail open. A guardrail must never break inference or tool execution.
+  }
+}
+
+/**
+ * Derive OpenAI's `prompt_cache_key` (the AI SDK's `providerOptions.openai.
+ * promptCacheKey`). It's a ROUTING hint, not a cache breakpoint: OpenAI caches
+ * prefixes automatically, and a stable key makes requests sharing a prefix
+ * land on the same engine, raising the hit rate (OpenAI cites 60%→87%).
+ *
+ * Hash the system prompt + sorted tool names — that's the stable prefix
+ * gbrain's repeated loops (enrich, page-summary, skillopt, subagent) actually
+ * share. Returns undefined when there's no system prompt (nothing stable to
+ * key on), so one-off requests don't get pinned to a single engine. An
+ * explicit key can still be set per provider/model via
+ * `provider_chat_options` config, which overrides the derived key.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function openAIPromptCacheKey(args: {
+  system?: string;
+  toolNames?: string[];
+}): string | undefined {
+  if (!args.system) return undefined;
+  const basis = `${args.system} ${(args.toolNames ?? []).slice().sort().join(',')}`;
+  return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
+}
+
+export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, any> | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.reduce((acc, t) => {
+    acc[t.name] = {
+      description: t.description,
+      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
+      // thunk and call schema(), throwing "schema is not a function". Wrap the
+      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
+      // through the real toolLoop (skillopt rollouts + subagent jobs).
+      inputSchema: jsonSchema(t.inputSchema as any),
+    };
+    return acc;
+  }, {} as Record<string, any>);
+}
+
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
+
+  // Guardrail seam: classify ONLY the latest user message before provider
+  // inference. Observe-only / fail-open; no-op without a registered guardrail.
+  if (hasGuardrails()) {
+    const lastUser = lastUserMessageForGuardrail(opts.messages);
+    if (lastUser) {
+      await classifyGatewayGuardrail({
+        hook: 'ai_gateway.chat',
+        content: lastUser.text,
+        metadata: {
+          model: modelStrEarly,
+          message_index: lastUser.index,
+          message_count: opts.messages.length,
+        },
+      });
+    }
+  }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = opts.maxTokens ?? 4096;
+  const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
   // runtime, or no_pricing (when cap is set). Pre-resolution model id is
@@ -2347,24 +3028,75 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
+  const cfg = requireConfig();
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
 
-  // Build messages. Anthropic prompt-cache markers ride on system + last tool
-  // via providerOptions; the AI SDK accepts the system as a string for
-  // generateText, so cache markers go through providerOptions.anthropic.
-  const tools = (opts.tools ?? []).reduce((acc, t) => {
-    acc[t.name] = {
-      description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
-    };
-    return acc;
-  }, {} as Record<string, any>);
+  const tools = toAISDKTools(opts.tools);
 
   const providerOptions: Record<string, any> = {};
   if (useCache) {
+    // Call-level `providerOptions.anthropic.cacheControl` is NOT a no-op:
+    // @ai-sdk/anthropic 3.0.47+ passes it through as a top-level
+    // `cache_control` field on the Anthropic request body, which the
+    // Messages API resolves as its documented "auto-cache the last
+    // cacheable block in the request" shorthand (see Anthropic's
+    // prompt-caching docs — "top-level auto-caching ... is the simplest
+    // option when you don't need fine-grained placement"). Keep it: it's
+    // what gives a growing multi-turn conversation (toolLoop()) a rolling
+    // cache breakpoint on each turn's tail for free, without us having to
+    // hand-roll the marker-walking logic subagent.ts's raw-SDK path uses.
+    //
+    // But "last cacheable block" is the wrong block for gbrain#2490's
+    // actual callers (page-summary, skillopt, enrich): those are
+    // single-turn calls with a STABLE system prompt and a DIFFERENT user
+    // message every time, so the auto-marker lands on the ever-varying
+    // tail — every call WRITES a fresh cache entry and never READS a prior
+    // one (cache_read_input_tokens stays 0 forever). Caching the stable
+    // prefix needs an EXPLICIT breakpoint on the system block itself,
+    // which is applied below via a `SystemModelMessage` (round-trips its
+    // own `providerOptions`) instead of a bare string.
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
+  }
+  // OpenAI prompt_cache_key (native-openai only): a stable per-prefix routing
+  // hint that keeps requests sharing a system prompt + tool set on the same
+  // inference engine, lifting OpenAI's automatic prefix-cache hit rate. The
+  // openai-compatible path (litellm/azure/groq/...) ignores
+  // providerOptions.openai, so it gets nothing. Applied BEFORE the configured
+  // provider options so `provider_chat_options.openai.promptCacheKey` from
+  // config still overrides the derived key.
+  if (recipe.implementation === 'native-openai') {
+    const promptCacheKey = openAIPromptCacheKey({
+      system: opts.system,
+      toolNames: (opts.tools ?? []).map(t => t.name),
+    });
+    if (promptCacheKey) providerOptions.openai = { promptCacheKey };
+  }
+  applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
+
+  // Derive ONE canonical cache-control value AFTER config merging and reuse
+  // it for every breakpoint (system block, last tool def, call-level). If
+  // `provider_chat_options.anthropic.cacheControl` overrides the TTL (e.g.
+  // `{ type: 'ephemeral', ttl: '1h' }`), that override lands in
+  // `providerOptions.anthropic.cacheControl` via the deep-merge above —
+  // reusing it here (instead of hardcoding `{ type: 'ephemeral' }` per
+  // breakpoint) keeps every marker in the request on the same TTL.
+  const cacheControlValue: { type: 'ephemeral'; ttl?: '5m' | '1h' } | undefined = useCache
+    ? (providerOptions.anthropic?.cacheControl ?? { type: 'ephemeral' })
+    : undefined;
+
+  // Anthropic-only secondary breakpoint: mark the LAST tool def too (mirrors
+  // subagent.ts's raw-SDK path — Anthropic caches everything up to and
+  // including the last `cache_control` block it sees in the request, so
+  // marking the last tool extends the cached prefix through the whole tool
+  // list). `tool.providerOptions.anthropic.cacheControl` is the shape
+  // @ai-sdk/anthropic 3.x reads for tool-def breakpoints.
+  if (cacheControlValue && opts.tools && opts.tools.length > 0 && tools) {
+    const lastTool = tools[opts.tools[opts.tools.length - 1]!.name];
+    if (lastTool) {
+      lastTool.providerOptions = { anthropic: { cacheControl: cacheControlValue } };
+    }
   }
 
   let _budgetRecorded = false;
@@ -2383,14 +3115,34 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   };
 
+  // The actual Anthropic system-prompt cache breakpoint. A bare string
+  // `system` produces `{ role: 'system', content }` with no `providerOptions`
+  // field (ai@6's convertToLanguageModelPrompt), so @ai-sdk/anthropic's
+  // getCacheControl(providerOptions) on that block always resolves to
+  // nothing. Passing a `SystemModelMessage` object instead — the shape `ai`
+  // documents specifically for "additional provider options (e.g. for
+  // caching)" — round-trips `providerOptions` onto that block. Byte-identical
+  // to the old bare-string form when useCache is false. Reuses
+  // `cacheControlValue` (the config-merged value) so this breakpoint's TTL
+  // always matches the last-tool and call-level breakpoints.
+  const systemParam = cacheControlValue && opts.system
+    ? {
+        role: 'system' as const,
+        content: opts.system,
+        providerOptions: { anthropic: { cacheControl: cacheControlValue } },
+      }
+    : opts.system;
+
   try {
-    const result = await generateText({
+    const result = await _generateTextTransport({
       model,
-      system: opts.system,
-      messages: opts.messages as any,
+      system: systemParam,
+      messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-      maxOutputTokens: opts.maxTokens ?? 4096,
-      abortSignal: opts.abortSignal,
+      maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
+      // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
+      abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
     });
 
@@ -2538,6 +3290,14 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the tool-result user turn that closes each tool round, BEFORE it is
+   * appended to the in-memory history. Without this the loop only kept the
+   * tool-result turn in memory, so a resumed job reloaded assistant tool-calls
+   * with no matching results and non-Anthropic providers rejected the
+   * unbalanced history (AI_MissingToolResultsError). Fires per completed round.
+   */
+  onToolResultTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -2572,7 +3332,7 @@ export interface ToolLoopResult {
  */
 export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
-  const maxTokens = opts.maxTokens ?? 4096;
+  const maxTokens = opts.maxTokens ?? defaultMaxOutputTokens(opts.model ?? getChatModel());
   const handlers = opts.toolHandlers;
   const totalUsage: ChatResult['usage'] = {
     input_tokens: 0,
@@ -2676,6 +3436,19 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         continue;
       }
 
+      // Guardrail seam: classify tool input BEFORE pending-persist and BEFORE
+      // tool execution. Observe-only / fail-open. Sends only the tool name +
+      // input — never tool output, LLM output, or full conversation state.
+      await classifyGatewayGuardrail({
+        hook: 'ai_gateway.tool_input',
+        content: stringifyGuardrailValue({ toolName: call.toolName, input: call.input }),
+        metadata: {
+          turn_idx: turnIdx,
+          call_idx: callIdx,
+          tool_name: call.toolName,
+        },
+      });
+
       // Step 2: persist pending row + claim gbrainToolUseId. The caller's
       // callback handles uniqueness contention via ON CONFLICT DO NOTHING +
       // re-read pattern (see persistToolExecPending in subagent.ts).
@@ -2748,9 +3521,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Persist + feed all tool results back as a single user message. The
+    // persist-before-push mirrors onAssistantTurn's write-ordering: a crash
+    // after this leaves a balanced transcript for the next resume.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResultTurn?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;

@@ -48,8 +48,25 @@ export const SECTIONS: DocSection[] = [
       {
         title: "CLAUDE.md",
         description:
-          "Architecture reference. Key files, trust boundaries, engine factory, test layout.",
+          "Orientation + resolver. North Star, two axes, architecture + cross-cutting invariants, the reference map pointing at on-demand docs, and the inline ship IRON RULES.",
         path: "CLAUDE.md",
+      },
+      {
+        title: "docs/architecture/KEY_FILES.md",
+        description:
+          "Per-file index for the gbrain repo: what each src/ file does + its load-bearing invariants. The on-demand detail CLAUDE.md's reference map routes to.",
+        path: "docs/architecture/KEY_FILES.md",
+        // Link-only until compressed to current-state (still large pre-compression).
+        // Flip to inlined once the doc-history compression lands and the bundle
+        // budget is re-measured.
+        includeInFull: false,
+      },
+      {
+        title: "docs/architecture/thin-client.md",
+        description:
+          "The thin-client / remote-MCP / cross-modal routing seam: isThinClient detection, callRemoteTool, SSRF-hardened URL validation, per-command routing.",
+        path: "docs/architecture/thin-client.md",
+        includeInFull: false,
       },
       {
         title: "INSTALL_FOR_AGENTS.md",
@@ -87,6 +104,9 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        // Re-inlined: the CLAUDE.md resolver restructure (per-file index moved to
+        // docs/architecture/KEY_FILES.md, link-only) freed ~530KB of bundle
+        // headroom, so this value-explainer rides the single-fetch bundle again.
         title: "docs/what-schemas-unlock.md",
         description:
           "Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring (v0.40.7.0).",
@@ -130,6 +150,12 @@ export const SECTIONS: DocSection[] = [
         description:
           "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
         path: "docs/guides/scaling-skills.md",
+      },
+      {
+        title: "docs/guides/push-context.md",
+        description:
+          "Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, gbrain watch), config knobs, and the volunteered-vs-used feedback loop.",
+        path: "docs/guides/push-context.md",
       },
       {
         title: "docs/mcp/DEPLOY.md",
@@ -211,6 +237,26 @@ export const SECTIONS: DocSection[] = [
     ],
   },
   {
+    heading: "Contributing",
+    optional: true,
+    entries: [
+      {
+        title: "docs/TESTING.md",
+        description:
+          "Test command tiers, the test-isolation lint (R1-R4), the canonical PGLite block, withEnv, the E2E DB lifecycle, and the file taxonomy. Maintainer-facing.",
+        path: "docs/TESTING.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/RELEASING.md",
+        description:
+          "Full release + contributor process: pre-ship test requirements, the CHANGELOG voice + release-summary template, the 'To take advantage of vX' block, version migrations, GitHub Actions SHA refresh, PR conventions, community-PR-wave. (Ship IRON RULES stay inline in CLAUDE.md.)",
+        path: "docs/RELEASING.md",
+        includeInFull: false,
+      },
+    ],
+  },
+  {
     heading: "Philosophy",
     optional: true,
     entries: [
@@ -255,9 +301,13 @@ export const INLINE_TIPS = [
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
 ];
 
-// Target ~700KB so llms-full.txt fits in ~175k-token contexts with room to spare.
-// Bumped from 600KB in v0.41.9.0 — CLAUDE.md grew past 600KB after the wave's
-// new-file annotations + Conductor branch-name iron-rule landed; the bundle
-// still fits comfortably in modern long-context models.
+// Target ~800KB so llms-full.txt fits in ~200k-token contexts with room to spare.
+// Bumped 600KB→700KB in v0.41.9.0, then 700KB→750KB once CLAUDE.md crossed 700KB,
+// then 750KB→800KB in v0.42.10.0 when the #972 global-basename Key Files annotation
+// (landing alongside master's #1696/#1699 waves) crossed the 750KB line. CLAUDE.md
+// is ~540KB+ (the bulk of the bundle) and grows ~5-15KB per release with each
+// feature's Key Files annotation. CLAUDE.md is the whole point of the one-fetch
+// bundle, so it stays inlined; the budget tracks its legitimate growth. Still fits
+// comfortably in 200k+ context models.
 // Generator prints a WARN if exceeded; ship with includeInFull=false exclusions.
-export const FULL_SIZE_BUDGET = 700_000;
+export const FULL_SIZE_BUDGET = 800_000;

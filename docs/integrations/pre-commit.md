@@ -7,7 +7,7 @@ brain source's repo that runs `gbrain frontmatter validate` against staged
 
 ## What the hook catches
 
-The same seven validation classes the `frontmatter-guard` skill and
+The same eight validation classes the `frontmatter-guard` skill and
 `gbrain doctor`'s `frontmatter_integrity` subcheck report:
 
 | Code              | What it catches                                                     |
@@ -18,6 +18,7 @@ The same seven validation classes the `frontmatter-guard` skill and
 | `SLUG_MISMATCH`   | `slug:` in frontmatter doesn't match path-derived slug              |
 | `NULL_BYTES`      | Binary corruption (`\x00`) anywhere in the content                  |
 | `NESTED_QUOTES`   | `title: "outer "inner" outer"` shape that breaks YAML               |
+| `NON_STRING_FIELD` | `title`/`type`/`slug` is an unquoted non-string scalar (`title: 123`) |
 | `EMPTY_FRONTMATTER` | `---` ... `---` with nothing meaningful between                   |
 
 ## Install
