@@ -543,7 +543,7 @@ export async function runPhaseExtractAtoms(
             content: `Source: ${originLabel}\n\n---\n\n${item.content.slice(0, 50_000)}`,
           },
         ],
-        maxTokens: 2000,
+        maxTokens: 4096,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -711,7 +711,7 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
     if (typeof item !== 'object' || item === null) continue;
     const obj = item as Record<string, unknown>;
     const title = typeof obj.title === 'string' ? obj.title.slice(0, 200) : null;
-    const atomType = typeof obj.atom_type === 'string' ? obj.atom_type : null;
+    const atomType = typeof obj.atom_type === 'string' ? obj.atom_type.trim().toLowerCase() : null;
     const body = typeof obj.body === 'string' ? obj.body : null;
     if (!title || !atomType || !body) continue;
     if (!ATOM_TYPES.includes(atomType as typeof ATOM_TYPES[number])) continue;
