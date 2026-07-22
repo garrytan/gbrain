@@ -12,9 +12,11 @@ import {
   bestPath,
   historyPath,
   loadHistory,
+  proposedPath,
   revertAllPending,
   skillPath,
   versionsDir,
+  writeProposed,
 } from '../../src/core/skillopt/version-store.ts';
 
 let tmpDir: string;
@@ -76,6 +78,19 @@ describe('acceptCandidate (D8 two-phase commit)', () => {
     expect(r1.versionN).toBe(1);
     expect(r2.versionN).toBe(2);
     expect(loadHistory(tmpDir, SKILL)).toHaveLength(2);
+  });
+});
+
+describe('writeProposed', () => {
+  test('writes distinct best and proposed artifacts without mutating SKILL.md (#2635)', () => {
+    const candidate = '---\nname: test\n---\nproposed body\n';
+
+    const written = writeProposed(tmpDir, SKILL, candidate);
+
+    expect(written).toBe(proposedPath(tmpDir, SKILL));
+    expect(fs.readFileSync(bestPath(tmpDir, SKILL), 'utf8')).toBe(candidate);
+    expect(fs.readFileSync(proposedPath(tmpDir, SKILL), 'utf8')).toBe(candidate);
+    expect(fs.readFileSync(skillPath(tmpDir, SKILL), 'utf8')).toContain('baseline body');
   });
 });
 
