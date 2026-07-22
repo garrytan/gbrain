@@ -44,4 +44,19 @@ describe('loadRecommendationContext — extractionLagPages wiring', () => {
     const ctx = await loadRecommendationContext(engine);
     expect(ctx.extractionLagPages).toBeGreaterThan(0);
   });
+
+  it('counts pages stamped before LINK_EXTRACTOR_VERSION_TS (version-bump arm)', async () => {
+    // Backdate p0 so BOTH the NULL arm and the updated_at arm are quiet:
+    // updated_at < links_extracted_at, but links_extracted_at predates the
+    // extractor version stamp. doctor's links_extraction_lag and
+    // `extract --stale` both count this page; the remediation gate must too.
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = '2020-01-01T00:00:00Z'::timestamptz,
+                        links_extracted_at = '2020-01-02T00:00:00Z'::timestamptz
+        WHERE slug = 'p0'`,
+      [],
+    );
+    const ctx = await loadRecommendationContext(engine);
+    expect(ctx.extractionLagPages).toBeGreaterThan(0);
+  });
 });

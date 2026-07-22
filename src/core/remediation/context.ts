@@ -8,6 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { RecommendationContext } from '../brain-score-recommendations.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from '../link-extraction.ts';
 
 // Re-export so consumers can `import { RecommendationContext } from '../remediation'`
 // — the canonical RecommendationContext type still lives in
@@ -74,9 +75,13 @@ export async function loadRecommendationContext(
 
 /**
  * Real extraction-lag count — the SAME staleness `gbrain extract --stale`
- * processes (engine.countStalePagesForExtraction). Drives the sync→extract
- * recommendation pipeline; replaces the legacy `health.stale_pages` proxy
- * that no longer reflected real extraction work after the v10 trigger drop.
+ * processes (engine.countStalePagesForExtraction with
+ * versionTs=LINK_EXTRACTOR_VERSION_TS, matching doctor's links_extraction_lag
+ * check — without versionTs, pages stamped before an extractor version bump
+ * would lag for doctor/extract but never trip this gate). Drives the
+ * sync→extract recommendation pipeline; replaces the legacy
+ * `health.stale_pages` proxy that no longer reflected real extraction work
+ * after the v10 trigger drop.
  *
  * Shared by loadRecommendationContext AND the D7 per-step recheck in
  * runRemediation — the recheck MUST refresh this gate alongside getHealth,
@@ -84,7 +89,7 @@ export async function loadRecommendationContext(
  */
 export async function countExtractionLag(engine: BrainEngine): Promise<number> {
   try {
-    return await engine.countStalePagesForExtraction();
+    return await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS });
   } catch {
     /* counter unavailable (very old brain / mid-migration) — treat as 0 */
     return 0;
