@@ -146,8 +146,9 @@
   "license": "MIT",
   "version": "0.42.64.0",
   "overrides": {
-    "@hono/node-server": "^1.19.13",
-    "fast-uri": "^3.1.2",
+    "@hono/node-server": "^2.0.5",
+    "body-parser": "^2.3.0",
+    "fast-uri": "^3.1.4",
     "fast-xml-builder": "^1.1.7",
     "fast-xml-parser": "^5.7.0",
     "form-data": "^4.0.6",
