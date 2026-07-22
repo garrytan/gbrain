@@ -166,6 +166,55 @@ describe('loadOrDeriveManifest', () => {
     expect(r.skills.map(s => s.name)).toEqual(['apple', 'mango', 'zebra']);
   });
 
+  // #1767 — ClawHub-installed workspace skills are external integrations,
+  // not gbrain-routable skills. The derive path skips them unless they
+  // opt in via `triggers:` frontmatter.
+  it('skips ClawHub-origin skills without triggers frontmatter (#1767)', () => {
+    const dir = scratch();
+    writeSkill(dir, 'query', 'query');
+    writeSkill(dir, 'agentmail', 'agentmail');
+    mkdirSync(join(dir, 'agentmail', '.clawhub'), { recursive: true });
+    writeFileSync(
+      join(dir, 'agentmail', '.clawhub', 'origin.json'),
+      JSON.stringify({ registry: 'https://clawhub.ai', slug: 'agentmail' })
+    );
+    const r = loadOrDeriveManifest(dir);
+    expect(r.derived).toBe(true);
+    expect(r.skills.map(s => s.name)).toEqual(['query']);
+  });
+
+  it('includes ClawHub-origin skills that opt in via triggers frontmatter (#1767)', () => {
+    const dir = scratch();
+    writeSkill(dir, 'agentmail', 'agentmail');
+    mkdirSync(join(dir, 'agentmail', '.clawhub'), { recursive: true });
+    writeFileSync(
+      join(dir, 'agentmail', '.clawhub', 'origin.json'),
+      JSON.stringify({ registry: 'https://clawhub.ai', slug: 'agentmail' })
+    );
+    writeFileSync(
+      join(dir, 'agentmail', 'SKILL.md'),
+      `---\nname: agentmail\ndescription: test\ntriggers:\n  - "send email"\n---\n\n# agentmail\n`
+    );
+    const r = loadOrDeriveManifest(dir);
+    expect(r.derived).toBe(true);
+    expect(r.skills.map(s => s.name)).toEqual(['agentmail']);
+  });
+
+  it('keeps ClawHub-origin skills listed in an explicit manifest.json (#1767)', () => {
+    // Explicit manifest.json is a deliberate declaration — strict checking stays.
+    const dir = scratch();
+    writeSkill(dir, 'agentmail', 'agentmail');
+    mkdirSync(join(dir, 'agentmail', '.clawhub'), { recursive: true });
+    writeFileSync(
+      join(dir, 'agentmail', '.clawhub', 'origin.json'),
+      JSON.stringify({ registry: 'https://clawhub.ai', slug: 'agentmail' })
+    );
+    writeManifest(dir, { skills: [{ name: 'agentmail', path: 'agentmail/SKILL.md' }] });
+    const r = loadOrDeriveManifest(dir);
+    expect(r.derived).toBe(false);
+    expect(r.skills.map(s => s.name)).toEqual(['agentmail']);
+  });
+
   it('treats dirs without SKILL.md as not-a-skill', () => {
     const dir = scratch();
     writeSkill(dir, 'query', 'query');

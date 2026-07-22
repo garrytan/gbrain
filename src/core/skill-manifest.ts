@@ -23,6 +23,15 @@
  * hold conventions and shared rule files, not skills. Files like
  * `_brain-filing-rules.md` live at the root and are not considered
  * skills by either loader.
+ *
+ * ClawHub-installed workspace skills (#1767): a skill dir carrying
+ * `.clawhub/origin.json` is an externally-managed runtime integration
+ * (e.g. an email or catalog skill), not a gbrain-routable skill. The
+ * derive path SKIPS those so `gbrain doctor` resolver_health doesn't
+ * hard-fail on them — UNLESS the skill's SKILL.md frontmatter declares
+ * `triggers:`, which is the explicit opt-in to gbrain routing (and the
+ * same surface that makes it reachable). An explicit manifest.json that
+ * lists a ClawHub skill also keeps strict checking (verbatim path).
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
@@ -61,8 +70,26 @@ function parseSkillName(skillMdPath: string): string | null {
 }
 
 /**
+ * Does the SKILL.md frontmatter declare a `triggers:` key? A ClawHub-
+ * installed skill that ships gbrain `triggers:` has explicitly opted in
+ * to gbrain routing and gets full resolver checks (#1767).
+ */
+function declaresTriggers(skillMdPath: string): boolean {
+  try {
+    const content = readFileSync(skillMdPath, 'utf-8');
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!fmMatch) return false;
+    return /^triggers:/m.test(fmMatch[1]);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Walk skillsDir, return every `<skillsDir>/<dir>/SKILL.md` as a
- * ManifestEntry. Dotfile and underscore-prefixed dirs are skipped.
+ * ManifestEntry. Dotfile and underscore-prefixed dirs are skipped, as
+ * are ClawHub-installed external skills that haven't opted in to gbrain
+ * routing via `triggers:` frontmatter (#1767).
  */
 function deriveManifest(skillsDir: string): ManifestEntry[] {
   const out: ManifestEntry[] = [];
@@ -92,6 +119,12 @@ function deriveManifest(skillsDir: string): ManifestEntry[] {
 
     const skillMd = join(subdirAbs, 'SKILL.md');
     if (!existsSync(skillMd)) continue;
+
+    // ClawHub-installed external skill (#1767): skip unless it opts in
+    // to gbrain routing by declaring `triggers:` in its frontmatter.
+    if (existsSync(join(subdirAbs, '.clawhub', 'origin.json')) && !declaresTriggers(skillMd)) {
+      continue;
+    }
 
     const frontmatterName = parseSkillName(skillMd);
     const name = frontmatterName && frontmatterName !== '' ? frontmatterName : entry;

@@ -382,6 +382,35 @@ describe("DRY detection — checkResolvable", () => {
   });
 });
 
+describe("#1767 — ClawHub workspace skills are not resolver-required", () => {
+  let dir: string;
+  afterEachCleanup(() => dir && rmSync(dir, { recursive: true, force: true }));
+
+  test("ClawHub skill without gbrain metadata produces no unreachable/mece_gap", () => {
+    dir = mkdtempSync(join(tmpdir(), "gbrain-clawhub-"));
+    // Native gbrain skill: routable via frontmatter triggers. No manifest.json
+    // (the OpenClaw derive path from the issue repro).
+    mkdirSync(join(dir, "query"), { recursive: true });
+    writeFileSync(
+      join(dir, "query", "SKILL.md"),
+      `---\nname: query\ndescription: test\ntriggers:\n  - "what do we know"\n---\n\n# query\n`
+    );
+    // ClawHub-installed integration: no triggers, no resolver row.
+    mkdirSync(join(dir, "agentmail", ".clawhub"), { recursive: true });
+    writeFileSync(
+      join(dir, "agentmail", ".clawhub", "origin.json"),
+      JSON.stringify({ registry: "https://clawhub.ai", slug: "agentmail" })
+    );
+    writeFileSync(join(dir, "agentmail", "SKILL.md"), `---\nname: agentmail\ndescription: email integration\n---\n\n# agentmail\n`);
+
+    const report = checkResolvable(dir);
+    const agentmailIssues = report.issues.filter(i => i.skill === "agentmail");
+    expect(agentmailIssues).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.summary.total_skills).toBe(1);
+  });
+});
+
 describe("v0.22.4 regression — actual repo skills/ has 0 errors", () => {
   test("repo skills/ pass check-resolvable cleanly (zero errors AND zero warnings)", () => {
     // The v0.22.4 (Part A) contract was zero warnings AND zero errors.
