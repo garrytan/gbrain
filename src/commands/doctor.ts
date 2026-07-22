@@ -7238,6 +7238,69 @@ export async function buildChecks(
         });
       }
     } catch { /* config table missing on a very old brain — skip */ }
+
+    // issue #2682: image_ocr_stub_ratio — recent-window content check.
+    // `ocr_health` above is a lifetime-cumulative counter: once ANY call has
+    // ever succeeded, it reports 'ok' forever even if OCR starts failing for
+    // every subsequent image (e.g. an API key that goes insufficient-credit
+    // mid-run). This check looks at the last 24h of actual chunk content
+    // instead, so a fresh OCR outage is visible even on a brain with a long
+    // history of healthy OCR. Cheap: single aggregate query, gated on the
+    // same opt-in flag `maybeOcr` reads.
+    progress.heartbeat('image_ocr_stub_ratio');
+    try {
+      if (process.env.GBRAIN_EMBEDDING_IMAGE_OCR !== 'true') {
+        checks.push({
+          name: 'image_ocr_stub_ratio',
+          status: 'ok',
+          message: 'OCR opt-in (embedding_image_ocr) is off — recent-image stub check not applicable.',
+        });
+      } else {
+        const rows = await engine.executeRaw<{ stubs: number; total: number }>(
+          `SELECT
+             count(*) FILTER (WHERE length(chunk_text) < 120)::int AS stubs,
+             count(*)::int AS total
+           FROM content_chunks
+           WHERE chunk_source = 'image_asset'
+             AND created_at > now() - interval '24 hours'`,
+        );
+        const stubs = rows[0]?.stubs ?? 0;
+        const total = rows[0]?.total ?? 0;
+        if (total < 5) {
+          checks.push({
+            name: 'image_ocr_stub_ratio',
+            status: 'ok',
+            message: `${total} image chunk(s) imported in the last 24h — too few to assess OCR health.`,
+          });
+        } else {
+          const pct = ((stubs / total) * 100).toFixed(0);
+          if (stubs / total > 0.5) {
+            checks.push({
+              name: 'image_ocr_stub_ratio',
+              status: 'warn',
+              message: `${stubs}/${total} (${pct}%) image chunks from the last 24h are short filename/stub ` +
+                       `text despite OCR being enabled — this may indicate OCR is failing for new imports, or ` +
+                       `simply a batch of images with little/no visible text (check the import log for actual ` +
+                       `OCR errors, or \`gbrain doctor\`'s ocr_health check, to tell which). If it's a real ` +
+                       `failure: resolve the OCR provider issue (e.g. API credits/key) so NEW images stop ` +
+                       `landing as stubs. There is no separate re-OCR/repair command yet, and gbrain skips ` +
+                       `re-importing files whose bytes are unchanged, so fixing the provider will NOT ` +
+                       `retroactively fix these existing stub chunks on its own — delete and re-add the ` +
+                       `affected page(s) (or otherwise change the image's bytes) if you need real OCR text ` +
+                       `on them.`,
+            });
+          } else {
+            checks.push({
+              name: 'image_ocr_stub_ratio',
+              status: 'ok',
+              message: `${stubs}/${total} (${pct}%) recent image chunks are stubs (below the 50% WARN threshold).`,
+            });
+          }
+        }
+      }
+    } catch {
+      // Pre-image-import brains, or content_chunks not yet populated — quiet skip.
+    }
   }
 
   // Sync freshness check (v0.32 — Check that sources are synced recently)

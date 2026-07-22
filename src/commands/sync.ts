@@ -3483,7 +3483,8 @@ async function performFullSync(
   });
   serr(
     `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
-    `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
+    `imported=${result.imported} skipped=${result.skipped} errors=${result.errors} ` +
+    `ocrWarnings=${result.ocrWarnings}`, // issue #2682
   );
 
   // issue #1939 — gate the full-sync bookmark through the SAME shared ledger as

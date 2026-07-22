@@ -43,6 +43,16 @@ export interface RunImportResult {
   errors: number;
   chunksCreated: number;
   failures: Array<{ path: string; error: string }>;
+  /**
+   * Issue #2682: count of images that imported successfully (status stays
+   * 'imported' — fail-open by design) but whose OCR pass failed, so the
+   * chunk landed as a filename/short stub instead of real OCR text.
+   * Deliberately NOT folded into `errors` — that would gate `sync.last_commit`
+   * and checkpoint clearing on a repair path that doesn't exist yet (no
+   * re-OCR command). Kept as a separate counter so `errors=0` can no longer
+   * hide a broken OCR pipeline.
+   */
+  ocrWarnings: number;
 }
 
 export async function runImport(
@@ -263,8 +273,10 @@ export async function runImport(
   let errors = 0;
   let processed = 0;
   let chunksCreated = 0;
+  let ocrWarnings = 0; // issue #2682
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
+  const ocrWarningCounts: Record<string, number> = {}; // issue #2682 — same suppression shape as errorCounts
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
   const startTime = Date.now();
 
@@ -273,7 +285,7 @@ export async function runImport(
   progress.start('import.files', files.length);
 
   function tickProgress() {
-    progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
+    progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors} ocrWarnings=${ocrWarnings}`);
   }
 
   async function processFile(eng: BrainEngine, filePath: string) {
@@ -305,6 +317,21 @@ export async function runImport(
         importedSlugs.push(result.slug);
         // v0.33.2: path-based checkpoint — record only on success.
         completed.add(relativePath);
+        // issue #2682: OCR failed but the image still imported (fail-open
+        // by design — see maybeOcr). Surface it as a warning distinct from
+        // `errors` so the file isn't silently counted as a clean success,
+        // without gating the checkpoint/sync.last_commit advance on a
+        // repair path that doesn't exist yet.
+        if (result.ocrFailed) {
+          ocrWarnings++;
+          const key = (result.ocrError ?? 'unknown OCR failure').replace(/"[^"]*"/g, '""');
+          ocrWarningCounts[key] = (ocrWarningCounts[key] || 0) + 1;
+          if (ocrWarningCounts[key] <= 5) {
+            console.error(`  Warning: ${relativePath}: ${result.ocrError}`);
+          } else if (ocrWarningCounts[key] === 6) {
+            console.error(`  (suppressing further "${key.slice(0, 60)}..." OCR warnings)`);
+          }
+        }
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
@@ -422,6 +449,12 @@ export async function runImport(
       console.error(`  ${count} files failed: ${err.slice(0, 100)}`);
     }
   }
+  // OCR warning summary (issue #2682) — mirrors the error-summary shape above.
+  for (const [err, count] of Object.entries(ocrWarningCounts)) {
+    if (count > 5) {
+      console.error(`  ${count} image(s) had OCR failures: ${err.slice(0, 100)}`);
+    }
+  }
 
   // Clear checkpoint on clean completion. On error, the path-based checkpoint
   // preserves only the successfully-completed paths, so the next run retries
@@ -437,6 +470,7 @@ export async function runImport(
     console.log(JSON.stringify({
       status: 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
+      ocr_warnings: ocrWarnings, // issue #2682
       total_files: allFiles.length,
     }));
   } else {
@@ -444,6 +478,25 @@ export async function runImport(
     console.log(`  ${imported} pages imported`);
     console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
     console.log(`  ${chunksCreated} chunks created`);
+    if (ocrWarnings > 0) {
+      // issue #2682: OCR failures don't block the import (fail-open by
+      // design) but must not look identical to a clean run. Codex review
+      // (2 rounds): don't tell operators a plain re-run fixes this —
+      // importImageFile's content_hash shortcut means an unchanged file is
+      // skipped before OCR is even attempted, so fixing the provider alone
+      // won't retroactively fix an existing stub. `touch`-ing the file also
+      // does NOT help (mtime isn't part of the hash) — the bytes must
+      // actually change, or the page must be deleted and re-added. There's
+      // no re-OCR/repair command yet (tracked as a follow-up in #2682).
+      console.log(
+        `  ${ocrWarnings} image(s) imported with OCR failures (filename/stub chunk_text only). ` +
+        `There is no re-OCR/repair command yet, and gbrain skips re-importing files whose bytes ` +
+        `are unchanged — fixing the OCR provider will NOT retroactively fix existing stubs on its ` +
+        `own (touching the file's mtime doesn't help either). Once the provider is fixed, delete ` +
+        `and re-add the affected page(s), or otherwise change the image's bytes, to get real OCR ` +
+        `text. Run \`gbrain doctor\` for details.`,
+      );
+    }
   }
 
   // v0.39 T7 — end-of-run schema mismatch warn. Fires ONCE per import,
@@ -524,7 +577,7 @@ export async function runImport(
     await engine.setConfig('sync.repo_path', dir);
   }
 
-  return { imported, skipped, errors, chunksCreated, failures };
+  return { imported, skipped, errors, chunksCreated, failures, ocrWarnings };
 }
 
 /**
