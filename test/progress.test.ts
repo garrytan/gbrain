@@ -216,17 +216,28 @@ describe('progress reporter', () => {
   });
 
   test('only one process-level signal handler installed across many reporters', () => {
-    // Baseline: one handler already installed by prior tests in this file.
-    const installedBefore = __signalHandlerInstalledForTest();
+    // #3235: this guard used to assert an absolute process-level count, which
+    // is order-dependent — `signalHandlerInstalled` and `liveReporters` are
+    // module-level (process-wide) singletons, so whatever ran earlier in this
+    // worker (other tests in this file, or other test files sharing the same
+    // CI shard) can leave non-zero baseline state. Assert THIS test's own
+    // delta instead of a global absolute.
+    const liveBefore = __liveReporterCountForTest();
     const { stream } = sink(false);
     for (let i = 0; i < 50; i++) {
       const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
       p.start(`phase_${i}`, 1);
       p.finish();
     }
-    // After 50 reporter lifecycles, still exactly one handler and zero leaked live entries.
-    expect(__signalHandlerInstalledForTest()).toBe(installedBefore || true);
-    expect(__liveReporterCountForTest()).toBe(0);
+    // The signal-handler singleton is a monotonic latch (false -> true, never
+    // back), and this test's own loop starts 50 reporters — so it must be
+    // installed by now regardless of whatever ran before this test.
+    expect(__signalHandlerInstalledForTest()).toBe(true);
+    // Each of the 50 start/finish lifecycles above must register and then
+    // deregister itself, so this test's own net contribution to the shared
+    // live-reporter set is zero — independent of whatever baseline (0 or
+    // otherwise) prior tests/files left behind.
+    expect(__liveReporterCountForTest()).toBe(liveBefore);
   });
 
   test('startHeartbeat() fires heartbeats and stop() clears', async () => {
