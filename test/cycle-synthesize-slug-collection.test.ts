@@ -174,6 +174,25 @@ describe('#2285: orchestrator-owned deterministic transcript frontmatter', () =>
     }
   });
 
+  test('slug collision across children attributes the LAST writer (matches surviving putPage)', async () => {
+    const db = (engine as any).db;
+    // Jobs 1001 then 1002 write the same slug; the pages row would hold
+    // 1002's content (last put_page wins), so the ref must carry jobId 1002.
+    await db.query(
+      `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, status, input)
+       VALUES (1001, 9, 'tool_dup_a', 'brain_put_page', 'complete', $1::jsonb)`,
+      [JSON.stringify({ slug: 'wiki/agents/test/collision', body: 'first' })],
+    );
+    await db.query(
+      `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, status, input)
+       VALUES (1002, 9, 'tool_dup_b', 'brain_put_page', 'complete', $1::jsonb)`,
+      [JSON.stringify({ slug: 'wiki/agents/test/collision', body: 'second' })],
+    );
+    const refs = await collectChildPutPageSlugs(engine as any, [1001, 1002], new Map());
+    const hit = refs.find((r: { slug: string }) => r.slug === 'wiki/agents/test/collision');
+    expect(hit?.jobId).toBe(1002);
+  });
+
   test('stampDreamProvenance merges the transcript metadata into DB frontmatter', async () => {
     const slug = 'wiki/originals/ideas/2026-07-17-transcript-meta-abc123';
     await engine.putPage(slug, {

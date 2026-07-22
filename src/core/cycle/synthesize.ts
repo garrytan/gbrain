@@ -1139,7 +1139,8 @@ async function collectChildPutPageSlugs(
        FROM subagent_tool_executions
       WHERE job_id = ANY($1::int[])
         AND tool_name = 'brain_put_page'
-        AND status = 'complete'`,
+        AND status = 'complete'
+      ORDER BY id`,
     [childIds],
   );
   const rewritten = new Map<string, number>();
@@ -1149,7 +1150,10 @@ async function collectChildPutPageSlugs(
     const finalSlug = meta && meta.chunkTotal > 1
       ? rewriteChunkedSlug(r.slug, meta.hash6, meta.idx)
       : r.slug;
-    if (!rewritten.has(finalSlug)) rewritten.set(finalSlug, r.job_id);
+    // Last writer wins, in execution-row order (ORDER BY id): if two children
+    // collide on a final slug, the pages row holds the LAST put_page write, so
+    // the stamp must attribute that child's transcript — not an arbitrary one.
+    rewritten.set(finalSlug, r.job_id);
   }
   return [...rewritten.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
