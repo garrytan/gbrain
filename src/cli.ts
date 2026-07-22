@@ -827,6 +827,12 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
  * ambient env/dotfile scope with nowhere to send it is ignored, matching the
  * pre-fix behavior for non-scopeable ops. Exported for tests.
  */
+// Ops whose `source_id` wire param is NOT read-scope semantics: get_skill's
+// source_id flips the lookup from host catalog to brain-resident-pack
+// (getResidentSkillDetail). Ambient env/dotfile scope must never leak into
+// these; an explicit --source-id still passes through untouched above.
+const NON_SCOPE_SOURCE_ID_OPS = new Set(['get_skill']);
+
 export function applyThinClientSourceScope(
   op: Operation,
   params: Record<string, unknown>,
@@ -846,11 +852,13 @@ export function applyThinClientSourceScope(
   }
   const resolved = resolveSourceIdEngineFree(explicit, cwd);
   if (!resolved) return;
-  if (!('source_id' in op.params)) {
+  if (!('source_id' in op.params) || NON_SCOPE_SOURCE_ID_OPS.has(op.name)) {
     if (explicit) {
+      const hint = NON_SCOPE_SOURCE_ID_OPS.has(op.name)
+        ? `(its source_id parameter is not a scope filter; pass --source-id explicitly if you mean it)`
+        : `(the remote op has no source_id parameter; the server scopes it to your grant)`;
       throw new Error(
-        `gbrain ${op.cliHints?.name || op.name} does not accept --source on a thin-client install ` +
-        `(the remote op has no source_id parameter; the server scopes it to your grant).`,
+        `gbrain ${op.cliHints?.name || op.name} does not accept --source on a thin-client install ${hint}.`,
       );
     }
     return; // ambient env/dotfile scope with nowhere to send it

@@ -105,6 +105,33 @@ describe('applyThinClientSourceScope (#2098)', () => {
     });
   });
 
+  test('get_skill: ambient scope never leaks into its non-scope source_id param', async () => {
+    await withEnv({ GBRAIN_SOURCE: 'wiki' }, () => {
+      const op = operationsByName.get_skill;
+      expect('source_id' in op.params).toBe(true); // has the param, but it is a mode switch
+      const params: Record<string, unknown> = { name: 'ingest' };
+      applyThinClientSourceScope(op, params, '/');
+      expect(params.source_id).toBeUndefined(); // would flip host catalog → brain-pack lookup
+    });
+  });
+
+  test('get_skill: explicit --source errors instead of masquerading as --source-id', async () => {
+    await withEnv({ GBRAIN_SOURCE: undefined }, () => {
+      const op = operationsByName.get_skill;
+      const params: Record<string, unknown> = { name: 'ingest', source: 'wiki' };
+      expect(() => applyThinClientSourceScope(op, params, '/')).toThrow(/--source-id/);
+    });
+  });
+
+  test('get_skill: explicit --source-id passes through untouched', async () => {
+    await withEnv({ GBRAIN_SOURCE: 'gstack' }, () => {
+      const op = operationsByName.get_skill;
+      const params: Record<string, unknown> = { name: 'ingest', source_id: 'wiki' };
+      applyThinClientSourceScope(op, params, '/');
+      expect(params.source_id).toBe('wiki');
+    });
+  });
+
   test('no scope from any tier leaves params unchanged', async () => {
     await withEnv({ GBRAIN_SOURCE: undefined }, () => {
       const params = parseOpArgs(queryOp, ['find things']);
