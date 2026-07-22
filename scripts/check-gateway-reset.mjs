@@ -169,13 +169,16 @@ function lex(src) {
   let depth = 0;
   let mode = 'code'; // code | line | block | sq | dq | tpl | regex
   let regexInClass = false;
-  // lastWord: the most recently completed contiguous run of [A-Za-z0-9_$],
-  // surviving intervening whitespace (so `return /foo/` still sees
-  // `return` when it reaches the slash — whitespace must NOT clear this,
-  // only a real punctuation character does). lastSignificant: the most
-  // recent non-whitespace character emitted as real code.
+  // lastWord: the SINGLE most recently completed contiguous run of
+  // [A-Za-z0-9_$], surviving intervening whitespace (so `return /foo/`
+  // still sees `return` when it reaches the slash) — but whitespace ends a
+  // word (inWord=false); the NEXT alnum char starts a brand-new lastWord
+  // rather than appending to the old one, so `return typeof /x/` sees
+  // `typeof`, never the concatenated `returntypeof`. lastSignificant: the
+  // most recent non-whitespace character emitted as real code.
   let lastWord = '';
   let lastSignificant = '';
+  let inWord = false;
 
   const put = (i, ch) => {
     masked[i] = ch;
@@ -210,7 +213,7 @@ function lex(src) {
     if (mode === 'sq' || mode === 'dq' || mode === 'tpl') {
       const quote = mode === 'sq' ? "'" : mode === 'dq' ? '"' : '`';
       if (c === '\\') { blank(i); if (i + 1 < src.length) { i++; blank(i); } continue; }
-      if (c === quote) { blank(i); mode = 'code'; lastSignificant = quote; lastWord = ''; continue; }
+      if (c === quote) { blank(i); mode = 'code'; lastSignificant = quote; lastWord = ''; inWord = false; continue; }
       blank(i);
       continue;
     }
@@ -227,6 +230,7 @@ function lex(src) {
         i = j - 1;
         lastSignificant = '/';
         lastWord = '';
+        inWord = false;
         continue;
       }
       blank(i);
@@ -250,6 +254,7 @@ function lex(src) {
         put(i, c); // keep the opening slash itself as real code (harmless)
         lastSignificant = '/';
         lastWord = '';
+        inWord = false;
         continue;
       }
       // division operator: fall through, keep as real code.
@@ -259,13 +264,21 @@ function lex(src) {
     if (c === '{') depth++;
     else if (c === '}') depth--;
     if (/[A-Za-z0-9_$]/.test(c)) {
-      lastWord += c;
+      // Continuing the current word only if we were already mid-word;
+      // otherwise this is the start of a brand-new word, discarding
+      // whatever word preceded the last whitespace/punctuation boundary
+      // (this is what makes `return typeof /x/` see `typeof`, not the
+      // wrongly-concatenated `returntypeof`).
+      lastWord = inWord ? lastWord + c : c;
+      inWord = true;
       lastSignificant = c;
-    } else if (!/\s/.test(c)) {
+    } else if (/\s/.test(c)) {
+      inWord = false; // word ended, but lastWord itself survives for lookback
+    } else {
+      inWord = false;
       lastWord = '';
       lastSignificant = c;
     }
-    // whitespace: deliberately leave lastWord/lastSignificant untouched.
   }
   return { masked: masked.join(''), comments: comments.join(''), braceDepth };
 }
@@ -284,31 +297,57 @@ function findSpan(masked, openIdx) {
 }
 
 const DESCRIBE_RE = /\bdescribe\(/g;
+const TEST_OR_IT_RE = /\b(?:test|it)\(/g;
 
 /** Every teardown-hook span whose enclosing scope is genuinely file-wide, as
  *  [start, end) offsets into `masked`. "File-wide" means either true module
  *  scope (braceDepth 0) OR — the extremely common convention of wrapping a
- *  file's entire suite in one outer describe(...) — depth 1 when the file
- *  has EXACTLY ONE top-level describe(. In that shape a depth-1 hook still
- *  covers every test in the file (there is nothing else at depth 0 for it
- *  to miss); with two or more sibling top-level describes, a depth-1 hook
- *  only covers its own describe's tests, so depth 0 is required. A hook
- *  nested two or more levels deep (inside a NESTED describe, or inside a
- *  function) is never treated as file-wide. */
+ *  file's entire suite in one outer describe(...) — depth 1 INSIDE THAT
+ *  SPECIFIC DESCRIBE's own call span, but ONLY when: (a) the file has
+ *  EXACTLY ONE top-level describe( (with two or more siblings, a depth-1
+ *  hook only covers its own describe's tests), AND (b) there is no
+ *  top-level test(/it( OUTSIDE that describe (such a sibling test would run
+ *  without ever being covered by a hook nested inside the describe). Both
+ *  conditions are checked from real position data, not assumed from the
+ *  count alone — a hook merely sitting at depth 1 somewhere in the file
+ *  (e.g. inside a dead, never-invoked top-level helper function) does NOT
+ *  qualify unless its position actually falls inside the sole describe's
+ *  span. A hook nested two or more levels deep (inside a NESTED describe,
+ *  or inside a function) is never treated as file-wide. */
 function fileWideTeardownSpans(masked, braceDepth) {
   DESCRIBE_RE.lastIndex = 0;
-  let topLevelDescribeCount = 0;
+  const topLevelDescribeSpans = [];
   let dm;
   while ((dm = DESCRIBE_RE.exec(masked))) {
-    if (braceDepth[dm.index] === 0) topLevelDescribeCount++;
+    if (braceDepth[dm.index] !== 0) continue;
+    const openIdx = dm.index + dm[0].length - 1;
+    topLevelDescribeSpans.push(findSpan(masked, openIdx));
   }
-  const maxFileWideDepth = topLevelDescribeCount === 1 ? 1 : 0;
+
+  let soleDescribeSpan = null;
+  if (topLevelDescribeSpans.length === 1) {
+    const [ds, de] = topLevelDescribeSpans[0];
+    TEST_OR_IT_RE.lastIndex = 0;
+    let hasOutsideTest = false;
+    let tm;
+    while ((tm = TEST_OR_IT_RE.exec(masked))) {
+      if (braceDepth[tm.index] === 0 && !(tm.index >= ds && tm.index < de)) {
+        hasOutsideTest = true;
+        break;
+      }
+    }
+    if (!hasOutsideTest) soleDescribeSpan = topLevelDescribeSpans[0];
+  }
 
   const spans = [];
   TEARDOWN_HOOK_RE.lastIndex = 0;
   let m;
   while ((m = TEARDOWN_HOOK_RE.exec(masked))) {
-    if (braceDepth[m.index] > maxFileWideDepth) continue;
+    const d = braceDepth[m.index];
+    const isFileWide =
+      d === 0 ||
+      (d === 1 && soleDescribeSpan !== null && m.index >= soleDescribeSpan[0] && m.index < soleDescribeSpan[1]);
+    if (!isFileWide) continue;
     const openIdx = m.index + m[0].length - 1;
     spans.push(findSpan(masked, openIdx));
   }
