@@ -365,7 +365,11 @@ export function chatBootWarning(chatAvailable: boolean): string | null {
   if (chatAvailable) return null;
   return (
     '[autopilot] WARNING: no chat provider available — LLM phases (extract, dream, enrich) will no-op. ' +
-    'Set a key via `gbrain config set anthropic_api_key <key>` or export it in ~/.gbrain/env (sourced by the daemon wrapper).'
+    // NOT `gbrain config set anthropic_api_key`: that writes the DB plane,
+    // which the gateway never reads (isAvailable('chat') stays false) — the
+    // split-brain class build-gateway-config.ts documents. File plane or env
+    // are the two paths that actually resolve.
+    'Export ANTHROPIC_API_KEY in ~/.gbrain/env (sourced by the daemon wrapper) or set "anthropic_api_key" in ~/.gbrain/config.json.'
   );
 }
 
