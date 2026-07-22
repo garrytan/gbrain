@@ -22,6 +22,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createAuditWriter, resolveAuditDir, computeIsoWeekFilename } from './audit-writer.ts';
+import { redactConnectionInfo } from './redact-connection-info.ts';
 import type { BatchAuditSite } from '../retry.ts';
 
 export interface BatchRetryAuditEvent {
@@ -205,10 +206,18 @@ export function pruneOldBatchRetryAuditFiles(
   return { removed, kept };
 }
 
-/** Truncate error messages to 200 chars + strip newlines (privacy + grep-friendly). */
+/**
+ * Truncate error messages to 200 chars + strip newlines (privacy +
+ * grep-friendly). Routes through `redactConnectionInfo` (v0.41.22.2,
+ * D9 privacy backfill) BEFORE truncation so DSNs / hostnames /
+ * credentials / IPv4 octets can't leak into operator-shared JSONL
+ * dumps. Order matters: redaction MUST happen before truncation, or a
+ * partially-truncated DSN could leak.
+ */
 function summarizeError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return raw.replace(/\s+/g, ' ').slice(0, 200);
+  const redacted = redactConnectionInfo(raw);
+  return redacted.replace(/\s+/g, ' ').slice(0, 200);
 }
 
 /** Pull Postgres SQLSTATE if present (e.g. '57014' for statement_timeout). */

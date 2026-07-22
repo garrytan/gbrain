@@ -82,13 +82,21 @@ describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
   });
 
   it('warns when distinct types exceed declared+5', async () => {
-    // gbrain-base declares 24 types. warn threshold = 29.
+    // Threshold-relative (v0.42.56.0): compute `declared` from the active pack
+    // the same way checkTypeProliferation does, then seed declared+6 so the
+    // test keeps passing when the base pack grows (e.g. #2390 added
+    // event + diary and silently moved the fixed threshold).
+    const { loadActivePack } = await import('../src/core/schema-pack/load-active.ts');
+    const dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
+    const active = await loadActivePack({ cfg: null, remote: false, dbConfig }).catch(() => null);
+    const declared = active ? active.manifest.page_types.length : 15;
+    const seedCount = declared + 6; // one past the warn threshold (declared+5)
     const types: string[] = [];
-    for (let i = 0; i < 32; i++) types.push(`custom-type-${i}`);
+    for (let i = 0; i < seedCount; i++) types.push(`custom-type-${i}`);
     await seedPages(types);
     const result = await checkTypeProliferation(engine);
     expect(result.check.status).toBe('warn');
-    expect(result.check.message).toMatch(/32 distinct/);
+    expect(result.check.message).toMatch(new RegExp(`${seedCount} distinct`));
   });
 });
 

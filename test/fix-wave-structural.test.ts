@@ -20,19 +20,19 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 
-describe('v0.36.1.x #1125 — query drain cache writes before CLI exit', () => {
-  test("cli.ts awaits awaitPendingSearchCacheWrites for the 'query' op", () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    // Sequence: 'query' op match → import the drain → await
-    expect(src).toMatch(/op\.name\s*===\s*'query'[\s\S]{0,200}awaitPendingSearchCacheWrites/);
-    expect(src).toMatch(/await\s+awaitPendingSearchCacheWrites\(\)/);
-  });
-
-  test('hybrid.ts exports the drain helper + trackCacheWrite', () => {
+describe('v0.42.20.0 — search-cache drained via the background-work registry', () => {
+  // Supersedes the v0.36.1.x #1125 query-only drain: search-cache now registers
+  // a registry drainer (drained for BOTH search and query, bounded), and cli.ts
+  // drains the whole registry rather than calling awaitPendingSearchCacheWrites
+  // directly for the 'query' op only.
+  test('hybrid.ts registers a bounded search-cache drainer', () => {
     const src = readFileSync('src/core/search/hybrid.ts', 'utf8');
     expect(src).toMatch(/export async function awaitPendingSearchCacheWrites/);
     expect(src).toMatch(/pendingCacheWrites\.add\(promise\)/);
     expect(src).toMatch(/trackCacheWrite\(/);
+    // Now bounded (was an unbounded Promise.allSettled) + registered.
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'search-cache'/);
+    expect(src).toMatch(/Promise\.race/);
   });
 });
 
@@ -95,11 +95,16 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
   });
 });
 
-describe('v0.36.1.x #1100 — PGLite v0.11.0 phaseASchema routes in-process', () => {
-  test('phaseASchema branches on pglite and calls initSchema directly', () => {
+describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL engines', () => {
+  test('phaseASchema calls runMigrateOnlyCore (in-process) + is awaited', () => {
+    // Supersedes #1100's PGLite-only in-process branch. v0.41.37.0 #1605 routes
+    // EVERY engine through runMigrateOnlyCore (no execSync subprocess at all),
+    // which is strictly stronger: PGLite still never subprocesses, AND the
+    // Windows+Postgres getaddrinfo-ENOTFOUND spawn bug is closed too.
+    // The eng.initSchema() call moved into src/commands/migrations/in-process.ts.
     const src = readFileSync('src/commands/migrations/v0_11_0.ts', 'utf8');
-    expect(src).toMatch(/cfg\?\.engine\s*===\s*'pglite'/);
-    expect(src).toMatch(/eng\.initSchema\(\)/);
+    expect(src).toContain('runMigrateOnlyCore()');
+    expect(src).not.toContain("execSync('gbrain init --migrate-only'");
     expect(src).toMatch(/await\s+phaseASchema/);
   });
 
@@ -118,57 +123,114 @@ describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => 
   });
 });
 
-describe('v0.41.8.0 #1247/#1269/#1290 — drain last-retrieved before CLI disconnect', () => {
-  test('cli.ts imports awaitPendingLastRetrievedWrites', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    // Allow additional type-imports from the same module (e.g. `type DrainOutcome`)
-    expect(src).toMatch(/import\s+\{[^}]*\bawaitPendingLastRetrievedWrites\b[^}]*\}\s*from\s+['"]\.\/core\/last-retrieved\.ts['"]/);
+describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
+  // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
+  // last-retrieved is one of four registry sinks. #2084 moved the registry
+  // drain out of cli.ts's inline finallys into finishCliTeardown
+  // (cli-force-exit.ts), which every cli.ts teardown site routes through —
+  // the drain-before-disconnect invariant is pinned there (and behaviorally
+  // by test/cli-finish-teardown.test.ts).
+  test('cli-force-exit.ts imports + drains the registry inside finishCliTeardown', () => {
+    const src = readFileSync('src/core/cli-force-exit.ts', 'utf8');
+    expect(src).toMatch(/import\s+\{\s*drainAllBackgroundWorkForCliExit[\s\S]*?\}\s*from\s+['"]\.\/background-work\.ts['"]/);
+    expect(src).toMatch(/export async function finishCliTeardown/);
   });
 
-  test('last-retrieved.ts exports the drain + tracks promises in a module-scoped Set', () => {
+  test('last-retrieved.ts still exports the bounded drain + registers a drainer', () => {
     const src = readFileSync('src/core/last-retrieved.ts', 'utf8');
     expect(src).toMatch(/export async function awaitPendingLastRetrievedWrites/);
     expect(src).toMatch(/pendingLastRetrievedWrites\s*=\s*new\s+Set/);
-    expect(src).toMatch(/pendingLastRetrievedWrites\.add\(promise\)/);
-    // Per D5+D8: snapshot pattern (Codex finding #3) + bounded timeout
     expect(src).toMatch(/Promise\.race/);
-    expect(src).toMatch(/drain timed out/);
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'last-retrieved'/);
   });
 
-  test('cli.ts behavioral positioning: drain appears BEFORE engine.disconnect in op-dispatch', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    // Per D5+D8: replaces the brittle literal-output regex from PR #1259
-    // with a behavioral-positioning assertion. The drain CALL must appear
-    // textually before the disconnect CALL in the local-engine path.
-    // Match `await fn(` not bare names — bare names also appear in
-    // comments and would false-match the comment ordering.
-    const localPath = src.match(/\/\/ Local engine path \(unchanged behavior[\s\S]+?^\}/m);
-    expect(localPath).not.toBeNull();
-    const block = localPath![0];
-    const drainCallRe = /await\s+awaitPendingLastRetrievedWrites\s*\(/;
-    const disconnectCallRe = /await\s+engine\.disconnect\s*\(/;
-    expect(block).toMatch(drainCallRe);
-    expect(block).toMatch(disconnectCallRe);
-    const drainMatch = block.match(drainCallRe);
-    const disconnectMatch = block.match(disconnectCallRe);
-    const drainIdx = block.indexOf(drainMatch![0]);
-    const disconnectIdx = block.indexOf(disconnectMatch![0]);
-    expect(drainIdx).toBeGreaterThan(-1);
-    expect(disconnectIdx).toBeGreaterThan(-1);
+  test('all four sinks register a drainer', () => {
+    expect(readFileSync('src/core/facts/queue.ts', 'utf8'))
+      .toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'facts'[\s\S]*?abort:/);
+    expect(readFileSync('src/core/search/hybrid.ts', 'utf8'))
+      .toMatch(/name:\s*'search-cache'/);
+    expect(readFileSync('src/core/last-retrieved.ts', 'utf8'))
+      .toMatch(/name:\s*'last-retrieved'/);
+    expect(readFileSync('src/core/eval-capture.ts', 'utf8'))
+      .toMatch(/name:\s*'eval-capture'/);
+  });
+
+  test('finishCliTeardown positioning: registry drain appears BEFORE engine disconnect', () => {
+    // #2084: the invariant moved from cli.ts's inline finallys into the shared
+    // helper. The drain must run against a live engine (facts abort-path
+    // logIngest, #1762) before disconnect tears the pools down.
+    const src = readFileSync('src/core/cli-force-exit.ts', 'utf8');
+    const drainCallRe = /await\s+drain\s*\(\s*\{\s*timeoutMs:\s*drainTimeoutMs\s*\}\s*\)/;
+    const disconnectCallRe = /await\s+opts\.engine\.disconnect\s*\(/;
+    expect(src).toMatch(drainCallRe);
+    expect(src).toMatch(disconnectCallRe);
+    const drainIdx = src.indexOf(src.match(drainCallRe)![0]);
+    const disconnectIdx = src.indexOf(src.match(disconnectCallRe)![0]);
     expect(drainIdx).toBeLessThan(disconnectIdx);
   });
 
-  test('cli.ts uses shouldForceExitAfterMain only on the timeout path', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/import\s+\{\s*shouldForceExitAfterMain\s*\}\s*from\s+['"]\.\/core\/cli-force-exit\.ts['"]/);
-    // The force-exit gate MUST be conditioned on drainResult.outcome ==='timeout'
-    expect(src).toMatch(/drainResult\.outcome\s*===\s*['"]timeout['"]/);
+  test('background-work.ts: Map registry, ordered drain, awaited abort, test seam', () => {
+    const src = readFileSync('src/core/background-work.ts', 'utf8');
+    expect(src).toMatch(/new\s+Map<string,\s*BackgroundWorkDrainer>/);
+    expect(src).toMatch(/sort\(\s*\(a,\s*b\)\s*=>\s*a\.order\s*-\s*b\.order/);
+    expect(src).toMatch(/if\s*\(unfinished\s*>\s*0\s*&&\s*d\.abort\)\s*\{[\s\S]*?await\s+d\.abort\(\)/);
+    expect(src).toMatch(/export function __registerDrainerForTest/);
   });
 
   test('cli-force-exit.ts daemon guard excludes "serve"', () => {
     const src = readFileSync('src/core/cli-force-exit.ts', 'utf8');
     expect(src).toMatch(/export function shouldForceExitAfterMain/);
     expect(src).toMatch(/DAEMON_COMMANDS[\s\S]*serve/);
+  });
+});
+
+describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', () => {
+  test('no bare awaited engine disconnects remain in cli.ts', () => {
+    // The awaited forms are the call-site contract (comments never use the
+    // awaited literal, so this is comment-proof — eng-review D13.2). A bare
+    // disconnect skips the bounded drain + computed-deadline backstop and
+    // reopens the lingering-socket hang class.
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).not.toContain('await engine.disconnect()');
+    expect(src).not.toContain('await eng.disconnect()');
+  });
+
+  test('the pre-handler hard-deadline timer is gone (handler time is not teardown budget)', () => {
+    // Pre-#2084 the op-dispatch timer armed BEFORE the op handler, so any op
+    // slower than 10s was force-killed mid-run with exit 0 and truncated
+    // output. The deadline now arms inside finishCliTeardown, at teardown
+    // start only.
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).not.toContain('DISCONNECT_HARD_DEADLINE_MS');
+  });
+
+  test('all nine swept sites route through finishCliTeardown; one exit seam', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    const calls = src.match(/await finishCliTeardown\(/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(9);
+    // The single process-exit seam: flushThenExit in the import.meta.main
+    // block, fed by currentExitCode().
+    expect(src).toMatch(/import\.meta\.main/);
+    expect(src).toMatch(/flushThenExit\(currentExitCode\(\)\)/);
+  });
+
+  test('pglite-engine contains the Emscripten process.exitCode hijack', () => {
+    // PGLite's WASM runtime writes its own status into process.exitCode (99
+    // alive / exit status on close) and ignores `undefined` assignment. The
+    // create call runs inside preservingProcessExitCode to keep the global
+    // tidy; close is deliberately unwrapped (see below) — the CLI's verdict
+    // is immune either way via the owned channel.
+    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    expect(src).toMatch(/preservingProcessExitCode\(\(\)\s*=>\s*\n?\s*PGlite\.create/);
+    // close stays UNWRAPPED by design: its status write is baseline behavior
+    // test runners depend on; the CLI's verdict is immune because it lives in
+    // the gbrain-owned channel, never read back from process.exitCode.
+    const helper = readFileSync('src/core/cli-force-exit.ts', 'utf8');
+    expect(helper).toMatch(/let cliVerdict: number \| null = null/);
+    expect(helper).toMatch(/return cliVerdict \?\? 0/);
+    // The op-dispatch catch must set the verdict through the owned channel.
+    const cli = readFileSync('src/cli.ts', 'utf8');
+    expect(cli).toMatch(/setCliExitVerdict\(1\);/);
   });
 });
 
@@ -186,5 +248,22 @@ describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
     const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
     expect(src).toMatch(/classifyPgliteInitError\(original\)/);
     expect(src).toMatch(/buildPgliteInitErrorMessage\(verdict, original\)/);
+  });
+});
+
+describe('v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)', () => {
+  test('volunteer-events registers a background-work drainer (order 4)', () => {
+    // Deleting this registration would silently drop volunteer events on
+    // every CLI exit with no behavioral test failing — same pin class as the
+    // other four sinks above.
+    const src = readFileSync('src/core/context/volunteer-events.ts', 'utf8');
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'volunteer-events'/);
+    expect(src).toMatch(/order:\s*4/);
+  });
+
+  test("the dream cycle's purge phase invokes purgeStaleVolunteerEvents and reports the count", () => {
+    const src = readFileSync('src/core/cycle.ts', 'utf8');
+    expect(src).toMatch(/purgeStaleVolunteerEvents\(engine\)/);
+    expect(src).toMatch(/purged_volunteer_events_count/);
   });
 });

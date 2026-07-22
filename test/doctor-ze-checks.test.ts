@@ -11,7 +11,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   checkZeEmbeddingHealth,
   checkEmbeddingWidthConsistency,
@@ -58,8 +58,10 @@ describe('checkZeEmbeddingHealth', () => {
       embedding_dimensions: 1280,
       env: { ...process.env, ZEROENTROPY_API_KEY: undefined as any },
     });
-    // Clear the env var for the no-key path (user's real env may have it set).
-    await withEnv({ ZEROENTROPY_API_KEY: undefined }, async () => {
+    // Clear the env var AND isolate GBRAIN_HOME for the no-key path: the check
+    // reads ZEROENTROPY_API_KEY from env OR the gbrain config file, so a dev
+    // machine whose real ~/.gbrain/config.json holds the key needs both cleared.
+    await withEnv({ ZEROENTROPY_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       const check = await checkZeEmbeddingHealth(engine);
       expect(check.status).toBe('warn');
       expect(check.message).toContain('ZEROENTROPY_API_KEY');

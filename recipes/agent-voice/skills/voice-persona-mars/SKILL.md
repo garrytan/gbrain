@@ -32,6 +32,16 @@ The depth of the conversation is the signal. If it's surface-level scheduling, r
 
 This skill is invoked by the host agent's resolver when the operator's voice or text input matches the triggers above. The voice agent (`services/voice-agent/code/server.mjs`) consumes the persona key (`mars`) at session start via `?persona=mars` on the WebRTC `/session` endpoint, OR via the `DEFAULT_PERSONA=mars` env var if Mars is the operator's default.
 
+### Summoning Mars into a topic (#1851)
+
+To call Mars *from inside* a specific conversation topic, mint a per-topic call link by adding `topicId` (a strict slug, `^[a-z0-9][a-z0-9-]*$`) and an optional `topicName`:
+
+```
+/call?persona=mars&topicId=real-estate&topicName=Real%20Estate
+```
+
+Mars boots already knowing the topic's recent conversation. Only the `topicId` crosses the wire — the server resolves the recent-conversation context from `$BRAIN_ROOT/topics/<topicId>.md`. **Never put topic content in the URL** (prompt injection + a leak into history/referrers/logs). No `topicId` → Mars uses his generic live context (unchanged behavior).
+
 ## Mode detection (inside the persona)
 
 Mars detects mode from conversational signals:

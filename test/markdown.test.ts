@@ -302,3 +302,44 @@ Some content.`;
     expect(parseMarkdown('', 'projects/blog/writing/essay.md').type).toBe('writing');
   });
 });
+
+// issue #1939 — js-yaml parses `title: 2024-06-01` as a Date and `title: 1458`
+// as a number. The old `(frontmatter.title as string)` cast was a compile-time
+// lie; at runtime downstream `.toLowerCase()` threw and wedged sync. Coercion
+// must be non-throwing AND deterministic (UTC ISO for dates, no timezone drift).
+describe('issue #1939 — non-string frontmatter coercion', () => {
+  test('date title coerces to its UTC ISO date string', () => {
+    const parsed = parseMarkdown('---\ntitle: 2024-06-01\n---\nbody\n', 'apple-notes/x.md');
+    expect(parsed.title).toBe('2024-06-01');
+    expect(typeof parsed.title).toBe('string');
+  });
+
+  test('number title coerces to its string form', () => {
+    const parsed = parseMarkdown('---\ntitle: 1458\n---\nbody\n', 'apple-notes/x.md');
+    expect(parsed.title).toBe('1458');
+  });
+
+  test('date title is timezone-independent (UTC) — repro file shape', () => {
+    // sources/apple-notes/YC/Talks YC/2023-04-25 1458.md style page.
+    const parsed = parseMarkdown('---\ntitle: 2023-04-25\n---\nnotes\n', 'apple-notes/2023-04-25 1458.md');
+    expect(parsed.title).toBe('2023-04-25'); // never "Mon Apr 24 2023 ...GMT-0700"
+  });
+
+  test('date/number slug + type coerce without throwing', () => {
+    const parsed = parseMarkdown('---\nslug: 2024-06-01\ntype: 2024\n---\nbody\n', 'x.md');
+    expect(typeof parsed.slug).toBe('string');
+    expect(parsed.slug).toBe('2024-06-01');
+    expect(typeof parsed.type).toBe('string');
+  });
+
+  test('missing/empty title falls back to inferred title (no throw)', () => {
+    const parsed = parseMarkdown('---\ntype: note\n---\nbody\n', 'people/alice-example.md');
+    expect(typeof parsed.title).toBe('string');
+    expect(parsed.title.length).toBeGreaterThan(0);
+  });
+
+  test('string title still passes through unchanged', () => {
+    const parsed = parseMarkdown('---\ntitle: A Normal Title\n---\nbody\n', 'x.md');
+    expect(parsed.title).toBe('A Normal Title');
+  });
+});

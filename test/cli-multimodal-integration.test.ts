@@ -33,6 +33,7 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: c.provider_base_urls,
+    provider_chat_options: c.provider_chat_options,
     env: { ...process.env },
   };
 }

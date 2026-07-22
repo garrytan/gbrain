@@ -21,6 +21,8 @@ import {
   inspectLock,
   listStaleLocks,
   deleteLockRow,
+  liveSyncStatus,
+  syncLockId,
 } from '../src/core/db-lock.ts';
 
 let engine: PGLiteEngine;
@@ -180,6 +182,42 @@ describe('deleteLockRow', () => {
     // Calling again is a no-op (idempotent).
     const r2 = await deleteLockRow(engine, 'gbrain-sync:atomic-test', process.pid);
     expect(r2.deleted).toBe(false);
+    await handle!.release();
+  });
+});
+
+describe('liveSyncStatus (#1950)', () => {
+  test('returns null when the source holds no lock (idle)', async () => {
+    const live = await liveSyncStatus(engine, 'never-synced');
+    expect(live).toBeNull();
+  });
+
+  test('returns the holder when a live (non-expired) sync lock is held', async () => {
+    const handle = await tryAcquireDbLock(engine, syncLockId('busy-source'));
+    expect(handle).not.toBeNull();
+    const live = await liveSyncStatus(engine, 'busy-source');
+    expect(live).not.toBeNull();
+    expect(live!.holder_pid).toBe(process.pid);
+    expect(typeof live!.holder_host).toBe('string');
+    expect(live!.holder_host.length).toBeGreaterThan(0);
+    await handle!.release();
+  });
+
+  test('returns null for a stale (TTL-expired) lock — structurally available, not running', async () => {
+    await (engine as any).db.query(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ($1, $2, $3, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour')`,
+      [syncLockId('wedged-dead'), 31337, 'old-host'],
+    );
+    const live = await liveSyncStatus(engine, 'wedged-dead');
+    expect(live).toBeNull();
+  });
+
+  test('is scoped per source — one source live does not mark another running', async () => {
+    const handle = await tryAcquireDbLock(engine, syncLockId('source-a'));
+    expect(handle).not.toBeNull();
+    expect(await liveSyncStatus(engine, 'source-a')).not.toBeNull();
+    expect(await liveSyncStatus(engine, 'source-b')).toBeNull();
     await handle!.release();
   });
 });

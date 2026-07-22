@@ -170,6 +170,19 @@ export interface PatternEntry {
    * uses `DEFAULT_SPEAKER_CLEAN`.
    */
   speaker_clean?: RegExp;
+  /**
+   * v0.41.29.0: when true, the orchestrator recomputes this pattern's
+   * acceptance score over the FULL body (not just the head window)
+   * before applying SCORING_MIN_ACCEPTANCE. Set on broad no-time
+   * patterns (`bold-name-no-time`) whose regex matches a common prose
+   * idiom (`**Label:** text`): without it, a notes page with a few bold
+   * labels CLUSTERED in its first 10 lines scores 0.3 on the head pass,
+   * skips the `< SCORING_HEAD_TRIGGER_THRESHOLD` rescore, and clears the
+   * 0.05 floor — mis-parsing prose as a conversation. Full-body scoring
+   * drops that page below the floor (3/200 ≈ 0.015 → no_match) while a
+   * real transcript stays ~1.0.
+   */
+  score_full_body?: boolean;
   /** D7: module-load validation — known-positive sample lines. */
   test_positive: string[];
   /** D7: module-load validation — known-negative sample lines. */

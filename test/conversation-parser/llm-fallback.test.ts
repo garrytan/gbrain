@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, test, beforeEach } from 'bun:test';
-import { withEnv } from '../helpers/with-env.ts';
+import { withEnv, emptyHome } from '../helpers/with-env.ts';
 import { runLlmFallback } from '../../src/core/conversation-parser/llm-fallback.ts';
 import { _resetLlmCacheForTests } from '../../src/core/conversation-parser/llm-base.ts';
 import { makeChatResult } from './helpers.ts';
@@ -71,7 +71,7 @@ describe('runLlmFallback', () => {
 
   test('provider unavailable: returns null without calling transport', async () => {
     await withEnv(
-      { ANTHROPIC_API_KEY: undefined as unknown as string },
+      { ANTHROPIC_API_KEY: undefined as unknown as string, GBRAIN_HOME: emptyHome() },
       async () => {
         let calls = 0;
         const result = await runLlmFallback({

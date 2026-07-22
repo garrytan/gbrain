@@ -22,6 +22,8 @@ import {
   type BiasTagsGenerator,
 } from '../src/core/cycle/calibration-profile.ts';
 import type { VoiceGateJudge } from '../src/core/calibration/voice-gate.ts';
+import { TIER_DEFAULTS } from '../src/core/model-config.ts';
+import { parseModelId } from '../src/core/ai/model-resolver.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine, TakesScorecard } from '../src/core/engine.ts';
 
@@ -237,6 +239,33 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(insert!.params[9]).toBe(true); // voice_gate_passed
     expect(insert!.params[10]).toBe(1); // voice_gate_attempts
     expect(insert!.params[11]).toEqual(['over-confident-geography']); // active_bias_tags
+  });
+
+  test('default model is a provider-prefixed id, persisted to model_id (#2451)', async () => {
+    const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
+    const patternsGenerator: PatternStatementsGenerator = async () => [
+      'You call early-stage tactics well — 8 of 10 held up.',
+    ];
+    await runPhaseCalibrationProfile(buildCtx(engine), {
+      patternsGenerator,
+      biasTagsGenerator: async () => [],
+      voiceGateJudge: passJudge,
+    });
+    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    expect(insert).toBeDefined();
+    // Pre-fix this was a bare 'claude-sonnet-4-6' → gateway.chat() throws
+    // "missing a provider prefix". The fix routes the default through TIER_DEFAULTS.
+    expect(insert!.params).toContain(TIER_DEFAULTS.reasoning);
+    expect(parseModelId(TIER_DEFAULTS.reasoning).providerId).toBe('anthropic');
+  });
+
+  test('calibration + voice-gate tier defaults are provider-prefixed (#2451)', () => {
+    // calibration default (reasoning) + voice-gate judge default (utility) both
+    // route through TIER_DEFAULTS; a bare id would throw "missing a provider prefix".
+    for (const m of [TIER_DEFAULTS.reasoning, TIER_DEFAULTS.utility]) {
+      expect(() => parseModelId(m)).not.toThrow();
+      expect(parseModelId(m).providerId).toBe('anthropic');
+    }
   });
 
   test('voice gate rejects both attempts → template fallback written, voice_gate_passed=false', async () => {

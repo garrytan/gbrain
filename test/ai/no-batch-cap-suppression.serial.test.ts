@@ -28,8 +28,8 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     resetGateway();
   });
 
-  test('Ollama, LiteLLM, llama-server all declare no_batch_cap: true', () => {
-    for (const id of ['ollama', 'litellm', 'llama-server']) {
+  test('Ollama, LiteLLM declare no_batch_cap: true', () => {
+    for (const id of ['ollama', 'litellm']) {
       const r = getRecipe(id);
       expect(r, `${id} not registered`).toBeDefined();
       expect(
@@ -37,6 +37,16 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
         `${id} should declare no_batch_cap: true`,
       ).toBe(true);
     }
+  });
+
+  test('llama-server declares a hard item-count cap (max_batch_items: 32)', () => {
+    // llama.cpp enforces a request-COUNT cap equal to its launch --batch-size
+    // (default 32); declaring max_batch_items both bounds batches AND suppresses
+    // the missing-max_batch_tokens warning. Replaces the prior no_batch_cap flag.
+    const r = getRecipe('llama-server');
+    expect(r, 'llama-server not registered').toBeDefined();
+    expect(r!.touchpoints.embedding?.max_batch_items).toBe(32);
+    expect(r!.touchpoints.embedding?.no_batch_cap).toBeUndefined();
   });
 
   test('configureGateway does NOT warn for ollama/litellm/llama-server', () => {

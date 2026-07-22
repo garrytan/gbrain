@@ -94,6 +94,31 @@ describe('runPhaseAutoThink', () => {
     await engine.setConfig('dream.auto_think.enabled', 'false');
   });
 
+  // #1698 (codex #5): an empty synthesis must NOT count as complete or advance the
+  // cooldown — otherwise auto-think silently reports success and suppresses retry until
+  // the cooldown expires. An empty-answer stub drives runThink's synthesisOk=false path.
+  test('empty synthesis → partial, 0 synthesized, cooldown NOT advanced', async () => {
+    await engine.setConfig('dream.auto_think.enabled', 'true');
+    await engine.setConfig('dream.auto_think.questions', JSON.stringify(['Q-empty']));
+    await engine.setConfig('dream.auto_think.max_per_cycle', '1');
+    await engine.setConfig('dream.auto_think.budget', '10.0');
+    await engine.setConfig('dream.auto_think.auto_commit', 'false');
+    await engine.setConfig('dream.auto_think.cooldown_days', '30');
+    await engine.setConfig('dream.auto_think.last_completion_ts', '');
+    const r = await runPhaseAutoThink(engine, {
+      dryRun: false,
+      client: makeStubClient(''),  // empty answer → synthesisOk=false
+      auditPath: join(tmpDir, 'b-empty.jsonl'),
+    });
+    expect(r.status).toBe('partial');
+    expect((r.totals as { synthesized?: number }).synthesized).toBe(0);
+    // Cooldown must stay empty so the next cycle retries (no silent success).
+    const ts = await engine.getConfig('dream.auto_think.last_completion_ts');
+    expect(ts ?? '').toBe('');
+    await engine.setConfig('dream.auto_think.enabled', 'false');
+    await engine.setConfig('dream.auto_think.cooldown_days', '0');
+  });
+
   test('cooldown skips next run', async () => {
     await engine.setConfig('dream.auto_think.enabled', 'true');
     await engine.setConfig('dream.auto_think.questions', JSON.stringify(['Q1']));
