@@ -9,7 +9,10 @@
  * Source-of-truth contract: the fence is canonical. For each page in
  * the affected slug set, this phase:
  *   1. Reads the markdown body (DB-side fetch via engine.getPage).
- *   2. Parses the `## Facts` fence with parseFactsFence.
+ *   2. Parses the `## Facts` fence with parseFactsFence. A
+ *      warning-bearing parse (FACTS_TABLE_MALFORMED etc.) is
+ *      non-authoritative: the page is skipped entirely — no wipe, no
+ *      insert — so a parse defect never becomes a deletion vector.
  *   3. Maps ParsedFact → FenceExtractedFact via extractFactsFromFenceText.
  *   4. De-dupes rows by canonical (claim, source) content key.
  *   5. Reconciles the page-scoped DB index: no-op when already in sync,
@@ -137,6 +140,12 @@ export interface ExtractFactsResult {
   factsDeleted: number;
   legacyRowsPending: number;
   guardTriggered: boolean;
+  /**
+   * TODOS P2 — pages whose fence parse emitted warnings and were
+   * therefore skipped entirely (non-authoritative parse: no wipe, no
+   * insert). The per-page warning in `warnings` names each one.
+   */
+  pagesSkippedMalformed: number;
   warnings: string[];
   /** v0.35.5: phantom-redirect pre-pass counts. */
   phantomsScanned: number;
@@ -164,6 +173,7 @@ export async function runExtractFacts(
     factsDeleted: 0,
     legacyRowsPending: 0,
     guardTriggered: false,
+    pagesSkippedMalformed: 0,
     warnings: [],
     phantomsScanned: 0,
     phantomsRedirected: 0,
@@ -303,6 +313,23 @@ export async function runExtractFacts(
       result.warnings.push(
         ...parsed.warnings.map(w => `${slug}: ${w}`),
       );
+      // TODOS P2 — skip-wipe-on-warnings: a warning-bearing parse is
+      // non-authoritative for this page. The parser demonstrably failed
+      // to read at least part of the fence, so the parsed row set can't
+      // be trusted as the complete truth: wiping against it would turn
+      // any future parse defect into a deletion vector (rows the parser
+      // couldn't read get wiped with nothing to reinsert), and inserting
+      // from it risks row_num collisions with the unread rows. Mirror
+      // the empty-fence legacy-row guard's posture: touch nothing,
+      // surface a warn, resume once the fence is fixed. Fence-less
+      // pages are unaffected (parseFactsFence returns zero warnings
+      // for a body with no fence markers).
+      result.pagesSkippedMalformed += 1;
+      result.warnings.push(
+        `${slug}: fence parse emitted warnings — page skipped, DB facts left untouched ` +
+        `(non-authoritative parse; fix the fence rows above to resume reconciliation)`,
+      );
+      continue;
     }
 
     if (parsed.facts.length > 0) result.pagesWithFacts += 1;
