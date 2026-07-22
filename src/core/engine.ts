@@ -1916,8 +1916,14 @@ export interface BrainEngine {
    * preserved via stable page_id). `opts.sourceId` scopes the UPDATE — without
    * it, the bare `WHERE slug = old` matches every row across every source and
    * would either rename them all OR violate the (source_id, slug) UNIQUE.
+   *
+   * Returns the number of rows moved. 0 means the old slug had no row in the
+   * scoped source — an UPDATE that matches nothing does NOT throw, so callers
+   * that need to know whether the rename actually happened (e.g. the sync
+   * rename path, #3056) must check the return value rather than rely on the
+   * catch block.
    */
-  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void>;
+  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
   /**

@@ -5414,15 +5414,18 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Sync
-  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void> {
+  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number> {
     newSlug = validateSlug(newSlug);
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (mirrors postgres-engine.ts).
-    await this.db.query(
+    const result = await this.db.query(
       `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3`,
       [newSlug, oldSlug, sourceId]
     );
+    // #3056: report rows moved so callers can distinguish a real rename from
+    // a zero-row no-op (old slug absent), which UPDATE does not throw on.
+    return result.affectedRows ?? 0;
   }
 
   async rewriteLinks(_oldSlug: string, _newSlug: string): Promise<void> {

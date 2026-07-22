@@ -199,6 +199,15 @@ export interface SyncResult {
   pagesAffected: string[];
   failedFiles?: number; // count of parse failures (Bug 9)
   /**
+   * #3056: renames whose cheap path (updateSlug) did not move a row — either
+   * the UPDATE matched nothing (old slug absent in the scoped source) or it
+   * threw (destination slug occupied, invalid slug). Each one fell back to
+   * add semantics; where the stale old row could be located it was reconciled
+   * (deleted after a successful import), otherwise a warn names both slugs.
+   * 0 / absent = every rename took the cheap page_id-preserving path.
+   */
+  renameFallbacks?: number;
+  /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
    *
    * D-V3-1 (honest scope): --timeout aborts ONLY in pre-bookmark phases
@@ -2785,10 +2794,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // v0.41.19.0 (T4): pre-batched slug resolution per Phase 3 of the plan.
   // Renames' per-file cost is dominated by importFile() (file IO + chunking
   // + embedding), so the per-iteration updateSlug + importFile loop stays;
-  // only the upfront slug-resolve N+1 gets batched. The try/catch around
-  // updateSlug for slug-doesn't-exist preserves verbatim.
+  // only the upfront slug-resolve N+1 gets batched. #3056: a failed/no-op
+  // updateSlug is no longer silently swallowed — see the fallback handling
+  // inside the loop.
   // v0.42.x (#1794): resume-filter renames on the destination path.
   const renamesToDo = filtered.renamed.filter(r => !completed.has(r.to));
+  // #3056: renames that fell off the cheap updateSlug path (zero-row match or
+  // throw). Surfaced in SyncResult.renameFallbacks + a per-file warn so a
+  // rename that didn't actually rename is visible without reading the DB.
+  let renameFallbacks = 0;
   if (renamesToDo.length > 0) {
     progress.start('sync.renames', renamesToDo.length);
     // v0.18.0+ multi-source: scope updateSlug so the rename only touches the
@@ -2836,11 +2850,32 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         : await resolveSlugByPathOrSourcePath(engine, from, undefined);
       // The new path doesn't yet have a row, so resolve from path only.
       const newSlug = resolveSlugForPath(to);
+      // #3056: the cheap rename is OBSERVED, not assumed. A zero-row UPDATE
+      // doesn't throw, and a thrown collision used to be swallowed by an
+      // empty catch — both fell through to importFile, which created/updated
+      // the row at the new path while the old row stayed behind live
+      // (0 chunks after the next embed pass, slug occupied, page count
+      // unchanged: invisible to every existing signal). Now both shapes are
+      // warned with enough context to self-diagnose, counted in
+      // renameFallbacks, and — where the stale row can be located — the
+      // reconcile below removes it after a successful import.
+      let renameApplied = false;
       try {
-        await engine.updateSlug(oldSlug, newSlug, renameOpts);
-      } catch {
-        // Slug doesn't exist or collision, treat as add
+        renameApplied = (await engine.updateSlug(oldSlug, newSlug, renameOpts)) > 0;
+        if (!renameApplied) {
+          serr(
+            `  [sync] rename fallback: updateSlug matched no row for ` +
+            `${oldSlug} -> ${newSlug} (${from} -> ${to}); treating as add.`,
+          );
+        }
+      } catch (err) {
+        serr(
+          `  [sync] rename fallback: updateSlug failed for ${oldSlug} -> ${newSlug} ` +
+          `(${from} -> ${to}): ${err instanceof Error ? err.message : String(err)}; ` +
+          `treating as add.`,
+        );
       }
+      if (!renameApplied) renameFallbacks++;
       // Reimport at new path (picks up content changes). Wrapped to match the
       // deletes/adds loops: a malformed renamed file is recorded to failedFiles
       // and skipped, NOT thrown uncaught. importFile still throws on content
@@ -2852,6 +2887,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // NAV-1 TOCTOU: refuse a destination that realpath-resolves outside the
       // repo (committed symlink pointing out).
       const filePath = join(gitContextRoot, to);
+      let importOk = false;
       if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
         try {
           const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
@@ -2859,8 +2895,28 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
           }
+          importOk = result.status === 'imported' ||
+            (result.status === 'skipped' && !(result as { error?: string }).error);
         } catch (e: unknown) {
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      // #3056 reconcile: the rename fell back to add semantics, so any row
+      // still sitting at oldSlug is the stale half of the rename (git reported
+      // the old path gone; a plain delete of that path would remove this row
+      // — same delete-and-add posture the F-C rename-to-unsyncable path
+      // already takes). Only after a successful import, so a failed import
+      // never widens into losing the old row too; deletePage is a scoped
+      // single-row primitive and a no-op when the row cannot be found (the
+      // divergent-stored-slug case, which the warn above already surfaced).
+      if (!renameApplied && importOk && oldSlug !== newSlug) {
+        try {
+          await engine.deletePage(oldSlug, renameOpts);
+        } catch (e: unknown) {
+          serr(
+            `  [sync] rename fallback: could not reconcile stale row ${oldSlug}: ` +
+            `${e instanceof Error ? e.message : String(e)}`,
+          );
         }
       }
       pagesAffected.push(newSlug);
@@ -2869,6 +2925,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       progress.tick(1, newSlug);
     }
     progress.finish();
+    if (renameFallbacks > 0) {
+      serr(
+        `  [sync] ${renameFallbacks} rename(s) fell back to add semantics ` +
+        `(updateSlug did not move a row; see warnings above).`,
+      );
+    }
   }
 
   // Process adds and modifies.
@@ -3366,6 +3428,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       pagesAffected,
       failedFiles: failedFiles.length,
       bankedFiles,
+      ...(renameFallbacks > 0 ? { renameFallbacks } : {}),
     };
   }
 
@@ -3391,7 +3454,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     source_type: 'git_sync',
     source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
     pages_updated: pagesAffected,
-    summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms`,
+    summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms` +
+      (renameFallbacks > 0 ? `, ${renameFallbacks} rename fallback(s)` : ''),
   });
 
   // Auto-extract links + timeline (cheap CPU, but skip-inline for LARGE syncs).
@@ -3528,6 +3592,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     chunksCreated,
     embedded,
     pagesAffected,
+    ...(renameFallbacks > 0 ? { renameFallbacks } : {}),
   };
 }
 
