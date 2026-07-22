@@ -6,7 +6,8 @@
 //   - Missing all three of image_path/url/data is rejected
 //   - Multiple of image_path/url/data is rejected
 //   - D23-#6 spend cap blocks at budget; allows under budget
-//   - Spend log records on successful call
+//   - Successful calls settle atomically into the spend log
+//   - Ambiguous provider failures settle a pessimistic fixed-price charge
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -135,22 +136,54 @@ describe('search_by_image op — D23-#6 spend cap', () => {
       { image_data: PNG_BYTES.toString('base64') },
     ).catch((e: any) => e as Error);
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toContain('Daily Voyage spend cap reached');
+    expect((err as Error).message).toContain('budget exceeded for client client_a');
   });
 
   test('allows remote call when under budget', async () => {
     await engine.setConfig('search.image_query.daily_budget_usd_per_client', '5');
     // No prior spend recorded.
     const results = await op().handler(
-      { engine, remote: true, auth: { token: 't', clientId: 'client_b', scopes: ['read'] } } as any,
+      { engine, remote: true, auth: { token: 't', clientId: 'client_b', clientName: 'image-token', scopes: ['read'] } } as any,
       { image_data: PNG_BYTES.toString('base64') },
     );
     expect(Array.isArray(results)).toBe(true);
-    // Verify spend was recorded after the call.
-    // (Allow a small tick for the async best-effort recordSpend.)
-    await new Promise(r => setTimeout(r, 20));
+    // Settlement completes before the operation returns.
     const spent = await getTodaySpendCents(engine, 'client_b');
     expect(spent).toBeGreaterThan(0);
+    const rows = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT r.status, l.token_name
+         FROM mcp_spend_reservations r
+         JOIN mcp_spend_log l ON l.client_id = r.client_id
+        WHERE r.client_id = 'client_b'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe('settled');
+    expect(rows[0]?.token_name).toBe('image-token');
+  });
+
+  test('settles pessimistic spend when provider outcome is ambiguous', async () => {
+    await engine.setConfig('search.image_query.daily_budget_usd_per_client', '5');
+    fetchHandler = async () => { throw new Error('provider connection lost'); };
+
+    const err = await op().handler(
+      { engine, remote: true, auth: { token: 't', clientId: 'client_c', scopes: ['read'] } } as any,
+      { image_data: PNG_BYTES.toString('base64') },
+    ).catch((e: any) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+
+    const reservations = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT status, estimated_cents::text AS estimated
+         FROM mcp_spend_reservations
+        WHERE client_id = 'client_c'`,
+    );
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0]?.status).toBe('settled');
+    expect(Number(reservations[0]?.estimated)).toBeGreaterThan(0);
+    expect(await getTodaySpendCents(engine, 'client_c')).toBeGreaterThan(0);
+    const logs = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT operation FROM mcp_spend_log WHERE client_id = 'client_c'`,
+    );
+    expect(logs[0]?.operation).toBe('search_by_image_error_pessimistic');
   });
 
   test('local CLI calls bypass budget gate (ctx.remote=false, no clientId)', async () => {
