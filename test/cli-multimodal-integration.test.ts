@@ -28,6 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  resetGateway(); // don't leak this file's gateway config into shard siblings
   await engine.disconnect();
 });
 
