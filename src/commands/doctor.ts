@@ -209,7 +209,7 @@ export async function fastDatabaseConnectionCheck(
       const message = connectionError instanceof Error
         ? connectionError.message
         : String(connectionError);
-      const source = dbSource ? ` (URL from ${dbSource})` : '';
+      const source = dbSource ? ` (database config from ${dbSource})` : '';
       return {
         name: 'connection',
         status: 'fail',
@@ -220,7 +220,7 @@ export async function fastDatabaseConnectionCheck(
       return {
         name: 'connection',
         status: 'warn',
-        message: `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`,
+        message: `Could not connect to configured DB (database config from ${dbSource}); filesystem checks only`,
       };
     }
     return {
@@ -235,7 +235,7 @@ export async function fastDatabaseConnectionCheck(
     return { name: 'connection', status: 'ok', message: 'Connected' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const source = dbSource ? ` (URL from ${dbSource})` : '';
+    const source = dbSource ? ` (database config from ${dbSource})` : '';
     return {
       name: 'connection',
       status: 'fail',
@@ -4280,6 +4280,12 @@ export async function buildChecks(
 ): Promise<Check[]> {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
+  // Fast mode still runs the complete filesystem prelude, but none of the
+  // mixed DB-backed checks in that prelude may observe the configured engine.
+  // Retain the original only for the single connection query at the fast-mode
+  // return point below.
+  const fastProbeEngine = fastMode ? engine : null;
+  if (fastMode) engine = null;
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
   // v0.41.19.0 — `--scope=brain` SKIPS the SKILL check group (which walks the
@@ -5255,13 +5261,13 @@ export async function buildChecks(
   // --- DB checks ---
 
   if (fastMode) {
-    checks.push(await fastDatabaseConnectionCheck(engine, dbSource, connectionError));
+    checks.push(await fastDatabaseConnectionCheck(fastProbeEngine, dbSource, connectionError));
     return checks;
   }
 
   if (!engine) {
     const message = dbSource
-      ? `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`
+      ? `Could not connect to configured DB (database config from ${dbSource}); filesystem checks only`
       : 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
     checks.push({ name: 'connection', status: 'warn', message });
     // Early return: caller renders the partial check list + decides exit code.
@@ -7414,6 +7420,7 @@ export async function runDoctor(
   connectionError?: unknown,
 ) {
   const jsonOutput = args.includes('--json');
+  const fastMode = args.includes('--fast');
   const locksMode = args.includes('--locks');
 
   // --locks is a focused diagnostic: it runs the same pg_stat_activity
@@ -7428,7 +7435,7 @@ export async function runDoctor(
   const hasFail = outputResults(checks, jsonOutput);
 
   // Features teaser (non-JSON, non-failing only)
-  if (!jsonOutput && !hasFail && engine) {
+  if (!fastMode && !jsonOutput && !hasFail && engine) {
     try {
       const { featuresTeaserForDoctor } = await import('./features.ts');
       const teaser = await featuresTeaserForDoctor(engine);

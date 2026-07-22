@@ -1,7 +1,31 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+
+function makeInstrumentedFastDoctorEngine(): {
+  engine: import('../src/core/engine.ts').BrainEngine;
+  calls: Array<{ method: string; args: unknown[] }>;
+} {
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+  const engine = new Proxy({ kind: 'postgres' } as Record<string, unknown>, {
+    get(target, property) {
+      if (property in target) return target[property as string];
+      if (typeof property !== 'string') return undefined;
+      return async (...args: unknown[]) => {
+        calls.push({ method: property, args });
+        if (property === 'getHealth') {
+          return { missing_embeddings: 0, dead_links: 0 };
+        }
+        if (property === 'getStats') {
+          return { page_count: 0 };
+        }
+        return [];
+      };
+    },
+  }) as unknown as import('../src/core/engine.ts').BrainEngine;
+  return { engine, calls };
+}
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -129,6 +153,64 @@ describe('doctor command', () => {
     expect(statements).toEqual(['SELECT 1 AS ok']);
   });
 
+  test('real PostgresEngine probe-only connect defers the first network query to fast doctor', async () => {
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PostgresEngine();
+
+    try {
+      // Port 1 is deliberately unreachable. A probe-only connect can still
+      // construct the real postgres.js pool because it performs no eager SQL.
+      await engine.connect(
+        {
+          engine: 'postgres',
+          database_url: 'postgresql://postgres:postgres@127.0.0.1:1/gbrain_test',
+          poolSize: 1,
+        },
+        { skipConnectionProbe: true },
+      );
+
+      // The fast-doctor query is the first real network round trip and reports
+      // the expected connection failure instead of hiding it during connect.
+      const result = await fastDatabaseConnectionCheck(engine);
+      expect(result.status).toBe('fail');
+      expect(result.message).toMatch(/connect|refused|ECONNREFUSED/i);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('buildChecks fast mode exposes the engine only to the one connection probe', async () => {
+    const { buildChecks } = await import('../src/commands/doctor.ts');
+    const { engine, calls } = makeInstrumentedFastDoctorEngine();
+
+    await buildChecks(engine, ['--fast']);
+
+    expect(calls).toEqual([
+      { method: 'executeRaw', args: ['SELECT 1 AS ok'] },
+    ]);
+  });
+
+  test('runDoctor fast mode adds no engine calls in JSON or human output', async () => {
+    const { runDoctor } = await import('../src/commands/doctor.ts');
+    const { _resetCliExitVerdictForTests } = await import('../src/core/cli-force-exit.ts');
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      for (const args of [['--fast', '--json'], ['--fast']]) {
+        const { engine, calls } = makeInstrumentedFastDoctorEngine();
+        await runDoctor(engine, args);
+        expect(calls).toEqual([
+          { method: 'executeRaw', args: ['SELECT 1 AS ok'] },
+        ]);
+        _resetCliExitVerdictForTests();
+      }
+    } finally {
+      logSpy.mockRestore();
+      _resetCliExitVerdictForTests();
+    }
+  });
+
   test('fast database check reports connectEngine failures with URL source', async () => {
     const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
     const result = await fastDatabaseConnectionCheck(
@@ -140,6 +222,28 @@ describe('doctor command', () => {
     expect(result.status).toBe('fail');
     expect(result.message).toContain('configured database is unreachable');
     expect(result.message).toContain('env:GBRAIN_DATABASE_URL');
+  });
+
+  test('fast database failures describe non-URL config sources neutrally', async () => {
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const connectFailure = await fastDatabaseConnectionCheck(
+      null,
+      'config-file-path',
+      new Error('configured database is unreachable'),
+    );
+    const queryFailure = await fastDatabaseConnectionCheck(
+      {
+        executeRaw: async () => {
+          throw new Error('configured database is unreachable');
+        },
+      } as unknown as import('../src/core/engine.ts').BrainEngine,
+      'config-file-path',
+    );
+
+    for (const result of [connectFailure, queryFailure]) {
+      expect(result.message).toContain('database config from config-file-path');
+      expect(result.message).not.toContain('URL from config-file-path');
+    }
   });
 
   test('fast database check keeps unconfigured installs filesystem-only', async () => {
