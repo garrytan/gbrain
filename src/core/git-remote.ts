@@ -161,7 +161,11 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     }
   }
 
-  const args: string[] = [...GIT_SSRF_FLAGS, 'clone'];
+  const args: string[] = [
+    ...GIT_SSRF_GLOBAL_FLAGS,
+    'clone',
+    ...GIT_SSRF_SUBCOMMAND_FLAGS,
+  ];
   if (opts.depth !== 0) {
     args.push(`--depth=${opts.depth ?? 1}`);
   }

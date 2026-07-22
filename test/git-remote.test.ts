@@ -220,7 +220,7 @@ describe('parseRemoteUrl — CGNAT 100.64/10 (Tailscale)', () => {
 // ---------------------------------------------------------------------------
 
 describe('cloneRepo', () => {
-  test('happy path: invokes git with GIT_SSRF_FLAGS + --depth=1 + url + dest', async () => {
+  test('places --no-recurse-submodules after clone for Git 2.39 compatibility', async () => {
     const dest = join(FAKE_GIT_DIR, 'clone-target');
     rmSync(dest, { recursive: true, force: true });
     await withEnv({ PATH: fakePath() }, async () => {
@@ -229,12 +229,16 @@ describe('cloneRepo', () => {
     const calls = readArgvLog();
     expect(calls.length).toBe(1);
     const argv = calls[0];
-    // Pin the SSRF flags before the 'clone' verb (codex Q2 invariant).
-    expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('clone');
-    expect(argv).toContain('--depth=1');
-    expect(argv).toContain('https://example.com/repo');
-    expect(argv[argv.length - 1]).toBe(dest);
+    expect(argv).toEqual([
+      '-c', 'http.followRedirects=false',
+      '-c', 'protocol.file.allow=never',
+      '-c', 'protocol.ext.allow=never',
+      'clone',
+      '--no-recurse-submodules',
+      '--depth=1',
+      'https://example.com/repo',
+      dest,
+    ]);
   });
 
   test('depth=0 means no --depth flag (full clone)', async () => {
