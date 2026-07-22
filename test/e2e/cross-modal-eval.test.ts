@@ -45,7 +45,7 @@ afterEach(() => {
 
 function makeChatStub(scoresBySlot: Record<string, number[]>) {
   let callIdx = 0;
-  const order = ['openai:gpt-4o', 'anthropic:claude-opus-4-7', 'google:gemini-1.5-pro'];
+  const order = ['openai:gpt-5.2', 'anthropic:claude-opus-4-8', 'google:gemini-3-pro'];
   return mock(async (opts: { model?: string }) => {
     const model = opts.model ?? '';
     callIdx++;
@@ -74,9 +74,9 @@ function makeChatStub(scoresBySlot: Record<string, number[]>) {
 describe('gbrain eval cross-modal — runner verdict contract', () => {
   test('PASS: 3 happy responses, all dims >=7', async () => {
     const chatStub = makeChatStub({
-      'openai:gpt-4o': [9, 8],
-      'anthropic:claude-opus-4-7': [8, 7],
-      'google:gemini-1.5-pro': [8, 8],
+      'openai:gpt-5.2': [9, 8],
+      'anthropic:claude-opus-4-8': [8, 7],
+      'google:gemini-3-pro': [8, 8],
     });
     mock.module('../../src/core/ai/gateway.ts', () => ({
       chat: chatStub,
@@ -105,9 +105,9 @@ describe('gbrain eval cross-modal — runner verdict contract', () => {
 
   test('FAIL: one dim mean below 7', async () => {
     const chatStub = makeChatStub({
-      'openai:gpt-4o': [9, 6],
-      'anthropic:claude-opus-4-7': [8, 6],
-      'google:gemini-1.5-pro': [8, 6],
+      'openai:gpt-5.2': [9, 6],
+      'anthropic:claude-opus-4-8': [8, 6],
+      'google:gemini-3-pro': [8, 6],
     });
     mock.module('../../src/core/ai/gateway.ts', () => ({
       chat: chatStub,
@@ -130,9 +130,9 @@ describe('gbrain eval cross-modal — runner verdict contract', () => {
 
   test('FAIL: min-score floor caught when one model scores <5 (Q2)', async () => {
     const chatStub = makeChatStub({
-      'openai:gpt-4o': [9, 8],
-      'anthropic:claude-opus-4-7': [8, 8],
-      'google:gemini-1.5-pro': [4, 8], // goal=4 trips the floor
+      'openai:gpt-5.2': [9, 8],
+      'anthropic:claude-opus-4-8': [8, 8],
+      'google:gemini-3-pro': [4, 8], // goal=4 trips the floor
     });
     mock.module('../../src/core/ai/gateway.ts', () => ({
       chat: chatStub,
@@ -155,7 +155,7 @@ describe('gbrain eval cross-modal — runner verdict contract', () => {
 
   test('INCONCLUSIVE: 2 of 3 mock 5xx -> exit 2 contract (Q3)', async () => {
     const chatStub = mock(async (opts: { model?: string }) => {
-      if (opts.model === 'openai:gpt-4o') {
+      if (opts.model === 'openai:gpt-5.2') {
         return {
           text: JSON.stringify({
             scores: { goal: { score: 8 } },
