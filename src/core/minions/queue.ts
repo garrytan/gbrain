@@ -1350,8 +1350,19 @@ export class MinionQueue {
     return rows.length > 0;
   }
 
-  /** Replay a completed/failed/dead job with optional data overrides. Creates a new job. */
-  async replayJob(id: number, dataOverrides?: Record<string, unknown>): Promise<MinionJob | null> {
+  /**
+   * Replay a completed/failed/dead job with optional data overrides. Creates
+   * a new job.
+   *
+   * #2786 (codex review round 10) — replaying a job re-submits it via
+   * `add()`, which rejects PROTECTED_JOB_NAMES without
+   * `{allowProtectedSubmit: true}`. Without threading `trusted` through here,
+   * a trusted local caller (CLI `gbrain jobs replay`, doctor --remediate)
+   * couldn't replay a protected job (e.g. chronicle_extract) even though
+   * they were trusted enough to submit it in the first place — same
+   * trusted-passthrough shape as retryJob's caller in operations.ts.
+   */
+  async replayJob(id: number, dataOverrides?: Record<string, unknown>, trusted?: TrustedSubmitOpts): Promise<MinionJob | null> {
     const source = await this.getJob(id);
     if (!source) return null;
     if (!['completed', 'failed', 'dead'].includes(source.status)) return null;
@@ -1367,7 +1378,7 @@ export class MinionQueue {
       backoff_type: source.backoff_type,
       backoff_delay: source.backoff_delay,
       backoff_jitter: source.backoff_jitter,
-    });
+    }, trusted);
   }
 
   /** Remove a child's dependency on its parent. */

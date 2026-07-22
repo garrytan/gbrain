@@ -234,11 +234,34 @@ export async function findMisroutedPages(
  * filesystem access, no walk, just an indexed-by-value lookup.
  *
  * "Mirror" here means an EXACT content copy: the same slug exists (and is
- * not soft-deleted) under a different source AND its `content_hash` matches
- * byte-for-byte. That precision matters — same-slug-DIFFERENT-content across
- * sources is the supported multi-tenant case (see
- * `multi-source-drift.test.ts` "healthy same-slug-across-sources" / OV4) and
- * must NOT be flagged as a mirror. Only a literal duplicate counts.
+ * not soft-deleted) under a different source, its `content_hash` matches
+ * byte-for-byte, AND its `effective_date` also matches (`IS NOT DISTINCT
+ * FROM`, so NULL-vs-NULL still counts as a match) — UNLESS either side's
+ * `effective_date_source` is `'fallback'` (no real date could be inferred,
+ * so the column holds an import-time timestamp with no content meaning; two
+ * fallback-dated copies imported at different times are still the same
+ * mirror, not a date mismatch — codex review round 6). The date check
+ * matters because `content_hash` (title/type/compiled_truth/timeline/
+ * frontmatter, see `utils.ts`) does NOT cover `effective_date` — two pages
+ * with identical body text but a DIFFERENT, genuinely-inferred meeting date
+ * would otherwise hash identically and wrongly be treated as the same
+ * mirror, silently skipping the correctly-dated derivation at the DB-only
+ * source (codex review round 4).
+ *
+ * The candidate mirror must also be a DURABLE, canonical home — `default`
+ * or an active (non-archived), file-backed source (`local_path IS NOT
+ * NULL`) — not just "any other source with the same content". Without this,
+ * two non-canonical DB-only sources holding the same identical page would
+ * each see the OTHER as "the mirror" and both refuse to derive, so NEITHER
+ * gets an event (codex review P2). Restricting the candidate side to a
+ * durable home means: if the only other copy is itself a throwaway/archived
+ * DB-only source, there's nothing safe to defer to, so derivation proceeds
+ * normally at the scoped source.
+ *
+ * Same-slug-DIFFERENT-content across sources is the supported multi-tenant
+ * case (see `multi-source-drift.test.ts` "healthy same-slug-across-sources"
+ * / OV4) and must NOT be flagged as a mirror. Only a literal, same-date
+ * duplicate at a durable home counts.
  *
  * Returns the `source_id`s of any such duplicate. Empty `contentHash` (a
  * page whose hash was never computed) short-circuits to `[]` rather than
@@ -249,12 +272,48 @@ export async function findMirrorSources(
   slug: string,
   sourceId: string,
   contentHash: string | undefined,
+  effectiveDate: Date | string | null,
+  effectiveDateSource: string | null,
 ): Promise<string[]> {
   if (!contentHash) return [];
+  // codex review round 6 (P1): a page whose date could never be inferred
+  // from real content (no frontmatter date/event_date/published/filename)
+  // gets `effective_date` STAMPED FROM ITS OWN IMPORT-TIME `updated_at`
+  // (`effective_date_source = 'fallback'`, see backfill-effective-date.ts /
+  // import-file.ts). Two byte-identical copies imported at different wall-
+  // clock times would then carry two DIFFERENT fallback timestamps despite
+  // being the exact same mirror — enforcing exact-date-equality in that case
+  // reintroduces the original #2786 bug (extraction proceeds under the
+  // disposable mirror source) instead of fixing the P2 false-positive it was
+  // meant to close. Only enforce the date check when NEITHER side's date is
+  // a fallback (i.e., both are real, content-derived dates); if either side
+  // has no real date, fall back to content_hash-only matching (the
+  // pre-date-check #2786 semantics).
+  //
+  // NULL effective_date_source (codex review round 7 P1) is treated the SAME
+  // as 'fallback', not as "has a real date": a legacy row that predates the
+  // v0.29.1 effective_date/effective_date_source backfill has NULL for both
+  // columns even though it may be byte-identical to a durable copy that DOES
+  // have a real, populated date. Without this, every arm of the OR below
+  // evaluates false for that pairing (NULL is never NOT DISTINCT FROM a
+  // real date, and neither side's source is literally the string
+  // 'fallback'), so the guard silently returns [] and extraction proceeds
+  // under the disposable source — recreating the exact data-loss bug this
+  // guard exists to prevent.
   const rows = await engine.executeRaw<{ source_id: string }>(
-    `SELECT source_id FROM pages
-      WHERE slug = $1 AND source_id <> $2 AND deleted_at IS NULL AND content_hash = $3`,
-    [slug, sourceId, contentHash],
+    `SELECT p.source_id FROM pages p
+       JOIN sources s ON s.id = p.source_id
+      WHERE p.slug = $1
+        AND p.source_id <> $2
+        AND p.deleted_at IS NULL
+        AND p.content_hash = $3
+        AND (
+          $5::text IS NULL OR $5::text = 'fallback'
+          OR p.effective_date_source IS NULL OR p.effective_date_source = 'fallback'
+          OR p.effective_date IS NOT DISTINCT FROM $4
+        )
+        AND (p.source_id = 'default' OR (s.local_path IS NOT NULL AND s.archived = false))`,
+    [slug, sourceId, contentHash, effectiveDate, effectiveDateSource],
   );
   return rows.map((r) => r.source_id);
 }

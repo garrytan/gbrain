@@ -43,13 +43,26 @@ export interface ChronicleExtractResult {
   slug: string;
   status: 'extracted' | 'no_events' | 'skipped';
   events_written: number;
-  reason?: string;
   /**
-   * #2786 — populated when `reason === 'mirrored_source_slug'`: the other
-   * source_id(s) holding a byte-identical copy of this page's slug. The
-   * scoped source is where derivation was REFUSED, not where it happened.
+   * `'mirrored_source_slug'` — this page is a byte-identical copy (same
+   * content_hash + effective_date) of a page living at a DIFFERENT, durable
+   * source; derivation was refused rather than forking a disposable copy of
+   * the derived history under this source (#2786).
+   *
+   * Deliberately carries NO count or identifier of the other source(s)
+   * (codex review round 7, following rounds 3-6): this result is persisted
+   * in `minion_jobs.result`, and `get_job`/`list_jobs` don't source-scope
+   * job results for ANY job kind (a repo-wide, pre-existing gap — see
+   * chronicle_extract's PROTECTED registration in `protected-names.ts` for
+   * the submission-side half of this story). Protecting submission stops an
+   * unauthorized caller from TRIGGERING this job, but doesn't stop a
+   * source-restricted admin-scoped caller from later reading back a
+   * LEGITIMATELY-submitted job's result — even a bare count would confirm
+   * to such a reader that SOME inaccessible source holds an exact copy of
+   * this slug/content, so the reason string alone (no count, no IDs) is the
+   * full extent of what this field ever reveals.
    */
-  mirror_sources?: string[];
+  reason?: string;
 }
 
 const KIND_VOCAB = new Set([
@@ -138,25 +151,52 @@ export async function runChronicleExtract(
   // legitimate homes in their own right). A non-default, non-file-backed
   // source is exactly the "legacy artifacts" shape from the bug report: the
   // kind of source most likely to be torn down later. Only skip when this
-  // page is a byte-identical copy of a page living at a different source —
-  // same-slug-DIFFERENT-content across sources is the supported multi-tenant
-  // case and must proceed normally (there's nothing to fork against).
+  // page is a byte-identical (content_hash AND effective_date) copy of a page
+  // living at ANOTHER durable, canonical source (`default` or an active
+  // file-backed one) — same-slug-DIFFERENT-content across sources is the
+  // supported multi-tenant case and must proceed normally, and two
+  // non-canonical mirrors of EACH OTHER must not mutually block (there's
+  // nothing durable to defer to in that case, so both derive). See
+  // `findMirrorSources` in `multi-source-drift.ts` for the full rationale.
   if (sourceId !== 'default') {
-    const srcRows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = $1`,
+    // codex review round 6 (P2): a source that WAS file-backed but has since
+    // been archived (`sources archive`) is no longer a durable home — its
+    // scheduled purge (72h) would delete events derived here right along
+    // with it, the same data-loss shape this whole guard exists to prevent.
+    // A job queued while the source was still active and file-backed, but
+    // that runs AFTER the archive, must not treat it as safe just because
+    // `local_path` is still set on the row.
+    const srcRows = await engine.executeRaw<{ local_path: string | null; archived: boolean }>(
+      `SELECT local_path, archived FROM sources WHERE id = $1`,
       [sourceId],
     );
-    const fileBacked = !!srcRows[0]?.local_path;
+    const fileBacked = !!srcRows[0]?.local_path && srcRows[0]?.archived !== true;
     if (!fileBacked) {
+      // `page` (from `engine.getPage()`) does NOT carry `effective_date` —
+      // BOTH engines' getPage() SELECT projection omits it (codex review
+      // round 4: confirmed via postgres-engine.ts/pglite-engine.ts). Fetching
+      // it here as its own targeted query rather than widening the shared
+      // getPage() projection (which many other callers also use) keeps this
+      // fix's blast radius to exactly what the mirror guard needs.
+      const edRows = await engine.executeRaw<{ effective_date: Date | string | null; effective_date_source: string | null }>(
+        `SELECT effective_date, effective_date_source FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [opts.slug, sourceId],
+      );
       const { findMirrorSources } = await import('../multi-source-drift.ts');
-      const mirrorSources = await findMirrorSources(engine, opts.slug, sourceId, page.content_hash);
+      const mirrorSources = await findMirrorSources(
+        engine,
+        opts.slug,
+        sourceId,
+        page.content_hash,
+        edRows[0]?.effective_date ?? null,
+        edRows[0]?.effective_date_source ?? null,
+      );
       if (mirrorSources.length > 0) {
         return {
           slug: opts.slug,
           status: 'skipped',
           events_written: 0,
           reason: 'mirrored_source_slug',
-          mirror_sources: mirrorSources,
         };
       }
     }

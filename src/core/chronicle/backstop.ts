@@ -30,7 +30,12 @@ export async function runChronicleBackstop(
   try {
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId });
+    // #2786 — chronicle_extract is PROTECTED (its mirror guard can leak
+    // cross-source facts through unscoped job-result reads if an untrusted
+    // caller could submit it directly). This backstop only fires for
+    // trusted/local put_page writes (see the docstring above), so it's safe
+    // to assert the flag here.
+    await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId }, undefined, { allowProtectedSubmit: true });
     return { enqueued: true };
   } catch {
     return { enqueued: false, skipped: 'enqueue_error' };
