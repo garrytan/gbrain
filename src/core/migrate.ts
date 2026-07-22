@@ -129,11 +129,14 @@ async function dropInvalidConcurrentIndex(
   version: number,
   indexName: string,
 ): Promise<boolean> {
+  // to_regclass() resolves the unqualified name through search_path — the same
+  // resolution the unqualified DROP below relies on — instead of matching
+  // pg_class.relname bare, which could hit a same-named index in a different
+  // schema on a non-default search_path (codex review, #1178).
   const rows = await engine.executeRaw<{ invalid: boolean }>(
     `SELECT NOT i.indisvalid AS invalid
        FROM pg_index i
-       JOIN pg_class c ON c.oid = i.indexrelid
-      WHERE c.relname = $1`,
+      WHERE i.indexrelid = to_regclass($1)`,
     [indexName],
   );
   const isInvalid = rows.some((r) => r.invalid);

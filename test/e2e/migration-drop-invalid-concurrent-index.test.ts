@@ -42,6 +42,13 @@ async function isIndexValid(indexName: string): Promise<boolean | null> {
   return !rows[0].invalid;
 }
 
+/** OID of the index relation — used to prove a "no-op" run didn't silently drop+recreate (a recreated index gets a new OID under the same name). */
+async function indexOid(indexName: string): Promise<string | null> {
+  const conn = getConn();
+  const rows = await conn<Array<{ oid: string }>>`SELECT to_regclass(${indexName})::oid::text AS oid`;
+  return rows[0]?.oid ?? null;
+}
+
 /** Simulates a prior failed `CREATE INDEX CONCURRENTLY` per the issue's repro. */
 async function plantInvalidIndex(indexName: string, createSQL: string): Promise<void> {
   const conn = getConn();
@@ -78,10 +85,15 @@ describeE2E('migration invalid-remnant recovery (#1178)', () => {
 
   test('re-running the migration when the index is already valid is a no-op (no spurious drop/recreate)', async () => {
     expect(await isIndexValid('idx_chunks_embedding_null')).toBe(true);
+    const oidBefore = await indexOid('idx_chunks_embedding_null');
+    expect(oidBefore).not.toBeNull();
 
     const v66 = MIGRATIONS.find(m => m.version === 66);
     await v66!.handler!(getEngine());
 
     expect(await isIndexValid('idx_chunks_embedding_null')).toBe(true);
+    // Same OID proves the valid index survived untouched — validity alone
+    // wouldn't catch a spurious drop+recreate (codex review, #1178).
+    expect(await indexOid('idx_chunks_embedding_null')).toBe(oidBefore);
   });
 });
