@@ -13,8 +13,8 @@ import { resolveImageAssetPath } from '../src/commands/doctor.ts';
 
 describe('resolveImageAssetPath (#1835)', () => {
   test('posix absolute path passes through', () => {
-    expect(resolveImageAssetPath('/data/brain/img.png', '/repo', 'linux')).toBe(
-      '/data/brain/img.png',
+    expect(resolveImageAssetPath('/srv/assets/img.png', '/repo', 'linux')).toBe(
+      '/srv/assets/img.png',
     );
   });
 
