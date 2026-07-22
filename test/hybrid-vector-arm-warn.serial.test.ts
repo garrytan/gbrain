@@ -12,13 +12,27 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
-import { __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import {
+  __setEmbedTransportForTests,
+  configureGateway,
+  resetGateway,
+} from '../src/core/ai/gateway.ts';
 import { _resetWarnOnceForTests } from '../src/core/utils.ts';
 
 let engine: PGLiteEngine;
 const origWarn = console.warn;
 
 beforeAll(async () => {
+  // Pin the gateway to OpenAI with a stub key (put-page-provenance pattern):
+  // embed() runs instantiateEmbedding — which requires OPENAI_API_KEY — BEFORE
+  // the stubbed transport is reached. Without this, a keyless CI environment
+  // throws the config error instead of the transport's, and the assertion on
+  // the swallowed reason fails. The key never leaves the process.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env, OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test-stub' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -32,6 +46,7 @@ beforeAll(async () => {
 afterAll(async () => {
   console.warn = origWarn;
   __setEmbedTransportForTests(null);
+  resetGateway();
   await engine.disconnect();
 });
 
