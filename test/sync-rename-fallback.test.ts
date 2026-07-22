@@ -181,6 +181,76 @@ describe('#3056: failed updateSlug in the sync rename path', () => {
     expect(await engine.getPage('people/carol-divergent')).not.toBeNull();
   });
 
+  test('dedup-skip against the old row must NOT reconcile (codex P1): the only copy survives', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // frontmatter.id gives identity dedup a handle: the import at the new
+    // path can skip as "identical to <old row>" — in which case NOTHING
+    // landed at the destination and deleting the old row would destroy the
+    // only copy of the content.
+    const md = ['---', 'type: person', 'title: Carol', 'id: ext-3056', '---', '', 'Carol is a person.'].join('\n');
+    const repo = mkRepo({ 'people/carol.md': md });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('people/carol')).not.toBeNull();
+
+    // Destination occupied → updateSlug throws → fallback path.
+    await engine.putPage('people/dana', {
+      type: 'person', title: 'Dana (stale)', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+
+    execSync('git mv people/carol.md people/dana.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename carol to dana"', { cwd: repo, stdio: 'pipe' });
+
+    const { result } = await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+    expect(result.status).toBe('synced');
+    expect(result.renameFallbacks).toBe(1);
+
+    // The import skipped against the OLD row (identity dedup), so the
+    // destination never materialized — the reconcile must not have deleted
+    // the old row, which still holds the only copy of the content.
+    const carol = await engine.getPage('people/carol');
+    expect(carol).not.toBeNull();
+    expect(carol!.compiled_truth).toContain('Carol is a person.');
+  });
+
+  test('reconcile never deletes by slug guess (codex P1): unrelated manual row survives', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // The file's real row drifts to a divergent slug with no source_path
+    // (unlocatable), and an UNRELATED manually-curated page happens to sit at
+    // the path-derived slug the fallback resolution will guess.
+    await engine.executeRaw(
+      `UPDATE pages SET slug = 'people/carol-divergent', source_path = NULL
+       WHERE source_id = 'default' AND slug = 'people/carol'`,
+    );
+    await engine.putPage('people/carol', {
+      type: 'person', title: 'Manual Carol', compiled_truth: 'hand-authored, not from the file',
+    }, { sourceId: 'default' });
+    // Destination occupied → updateSlug throws UNIQUE instead of moving the
+    // manual row → fallback path.
+    await engine.putPage('people/dana', {
+      type: 'person', title: 'Dana (stale)', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+
+    execSync('git mv people/carol.md people/dana.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename carol to dana"', { cwd: repo, stdio: 'pipe' });
+
+    const { result } = await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+    expect(result.status).toBe('synced');
+    expect(result.renameFallbacks).toBe(1);
+
+    // The destination materialized with the file's content...
+    const dana = await engine.getPage('people/dana');
+    expect(dana).not.toBeNull();
+    expect(dana!.compiled_truth).toContain('Carol is a person.');
+    // ...but no row had source_path = from, so the reconcile deleted NOTHING:
+    // the unrelated manual row at the guessed slug survives.
+    const manual = await engine.getPage('people/carol');
+    expect(manual).not.toBeNull();
+    expect(manual!.compiled_truth).toContain('hand-authored');
+  });
+
   test('happy path: clean git mv rename keeps page_id and reports zero fallbacks', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });

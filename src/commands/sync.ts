@@ -2887,7 +2887,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // NAV-1 TOCTOU: refuse a destination that realpath-resolves outside the
       // repo (committed symlink pointing out).
       const filePath = join(gitContextRoot, to);
-      let importOk = false;
+      // #3056: "destination materialized" = the new path's row demonstrably
+      // exists with the file's content. A bare errorless `skipped` is NOT
+      // enough — identity dedup can skip against the OLD row (result.slug ===
+      // oldSlug), in which case nothing landed at newSlug and reconciling
+      // would delete the only copy.
+      let destMaterialized = false;
       if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
         try {
           const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
@@ -2895,33 +2900,54 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
           }
-          importOk = result.status === 'imported' ||
-            (result.status === 'skipped' && !(result as { error?: string }).error);
+          destMaterialized = result.status === 'imported' ||
+            (result.status === 'skipped' && !result.error && result.slug === newSlug);
         } catch (e: unknown) {
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
         }
       }
-      // #3056 reconcile: the rename fell back to add semantics, so any row
-      // still sitting at oldSlug is the stale half of the rename (git reported
-      // the old path gone; a plain delete of that path would remove this row
-      // — same delete-and-add posture the F-C rename-to-unsyncable path
-      // already takes). Only after a successful import, so a failed import
-      // never widens into losing the old row too; deletePage is a scoped
-      // single-row primitive and a no-op when the row cannot be found (the
-      // divergent-stored-slug case, which the warn above already surfaced).
-      if (!renameApplied && importOk && oldSlug !== newSlug) {
+      // #3056 reconcile: the rename fell back to add semantics, so the row
+      // that still represents the OLD path is the stale half of the rename
+      // (git reported the old path gone; a plain delete of that path would
+      // remove this row — same delete-and-add posture the F-C
+      // rename-to-unsyncable path already takes). The stale row is located
+      // POSITIVELY by `source_path = from`, never by the oldSlug guess: after
+      // a destination collision, a path-derived fallback slug could name an
+      // unrelated (e.g. manually curated) row. No source_path match → nothing
+      // is deleted and the warn above stands as the only trace. Runs only
+      // after the destination demonstrably materialized, so a failed import
+      // never widens into losing the old row too.
+      let reconcileFailed = false;
+      if (!renameApplied && destMaterialized) {
         try {
-          await engine.deletePage(oldSlug, renameOpts);
+          const staleMap = await engine.resolveSlugsByPaths([from], {
+            sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID,
+          });
+          const staleSlug = staleMap.get(from);
+          if (staleSlug !== undefined && staleSlug !== newSlug) {
+            await engine.deletePage(staleSlug, renameOpts);
+            serr(`  [sync] rename fallback: reconciled stale row ${staleSlug} (source_path ${from}).`);
+          } else if (staleSlug === undefined) {
+            serr(
+              `  [sync] rename fallback: no row has source_path ${from}; ` +
+              `a stale row (if any) could not be located for reconcile.`,
+            );
+          }
         } catch (e: unknown) {
-          serr(
-            `  [sync] rename fallback: could not reconcile stale row ${oldSlug}: ` +
-            `${e instanceof Error ? e.message : String(e)}`,
-          );
+          // Surface through failedFiles so the failure gate blocks the
+          // bookmark and the next run retries the rename — a warn alone
+          // would checkpoint past the duplicate permanently.
+          reconcileFailed = true;
+          failedFiles.push({
+            path: to,
+            error: `rename reconcile failed (stale row for ${from} not removed): ` +
+              `${e instanceof Error ? e.message : String(e)}`,
+          });
         }
       }
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
-      await markCompleted(to);
+      if (!reconcileFailed) await markCompleted(to);
       progress.tick(1, newSlug);
     }
     progress.finish();
