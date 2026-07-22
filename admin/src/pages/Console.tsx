@@ -644,6 +644,29 @@ function saveNaturalWorkspace(state: NaturalWorkspaceState) {
   sessionStorage.setItem(NATURAL_WORKSPACE_KEY, JSON.stringify(state));
 }
 
+interface ImportEmbeddingSkip {
+  bytes: number | null;
+}
+
+function getImportEmbeddingSkip(run: ConsoleRun): ImportEmbeddingSkip | null {
+  const text = [run.error, run.stderr, run.stdout].filter(Boolean).join('\n');
+  if (!/content-sanity soft-block:/i.test(text) || !/embedding skipped/i.test(text)) return null;
+  const bytesMatch = text.match(/content-sanity soft-block:[^\n]*\((\d+) bytes\)/i);
+  return { bytes: bytesMatch ? Number(bytesMatch[1]) : null };
+}
+
+function summarizeImportEmbeddingSkip(skip: ImportEmbeddingSkip): string {
+  const sizeReason = skip.bytes && Number.isFinite(skip.bytes)
+    ? `转换后的正文约 ${skip.bytes.toLocaleString('zh-CN')} 字节，超过当前内容安全阈值`
+    : '转换后的正文超过当前内容安全阈值';
+  return [
+    '导入仅部分完成。',
+    '- 正文已保存到知识库',
+    '- 未生成切片，也未进行向量化',
+    `- 原因：${sizeReason}`,
+    '- 处理方法：按工作表、地区或主题拆分成多个较小文件，删除不需要的空行或列后重新导入。',
+  ].join('\n');
+}
 function summarizeRunResult(preview: IntentPreview, run: ConsoleRun): string {
   const intent = preview.intent;
   if (run.status === 'running') return '任务正在执行中，请稍候...';
@@ -726,6 +749,9 @@ function summarizeRunResult(preview: IntentPreview, run: ConsoleRun): string {
 function summarizeRunLog(run: ConsoleRun, fallback: string): string {
   const text = [run.error, run.stderr, run.stdout].filter(Boolean).join('\n');
   if (!text.trim()) return fallback;
+
+  const embeddingSkip = getImportEmbeddingSkip(run);
+  if (embeddingSkip) return summarizeImportEmbeddingSkip(embeddingSkip);
 
   const latestProgress = Array.from(text.matchAll(/imported=(\d+)\s+skipped=(\d+)\s+errors=(\d+)/g)).pop();
   const totalMatch = text.match(/files=(\d+)/);
@@ -1103,6 +1129,7 @@ function NaturalLanguagePanel({
     return () => clearInterval(timer);
   }, [run?.id, run?.status, activeHistoryId]);
 
+  const importEmbeddingSkip = preview?.intent === 'import_path' && run ? getImportEmbeddingSkip(run) : null;
   const summary = preview && run ? summarizeRunResult(preview, run) : null;
   const searchWarning = preview?.intent === 'search_brain' && run
     ? getThinkRetrievalWarning(run.stderr)
@@ -1251,13 +1278,13 @@ function NaturalLanguagePanel({
         )}
         {run && (
           <div className="nl-result">
-            <div className="nl-summary">
+            <div className={`nl-summary ${importEmbeddingSkip ? 'is-partial' : ''}`}>
               <div className="nl-summary-text">
                 {summary && <MarkdownArticle markdown={summary} />}
                 {completenessNote && <div className="nl-completeness-note">{completenessNote}</div>}
               </div>
-              <span className={`pm-pill run-pill run-${run.status}`}>
-                {searchWarning ? '检索超时' : run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'running' ? '执行中' : '排队中'}
+              <span className={`pm-pill run-pill ${importEmbeddingSkip ? 'run-partial' : `run-${run.status}`}`}>
+                {searchWarning ? '检索超时' : importEmbeddingSkip ? '部分完成' : run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'running' ? '执行中' : '排队中'}
               </span>
             </div>
             <details className="nl-details">

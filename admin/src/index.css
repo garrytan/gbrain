@@ -476,18 +476,78 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   font-size: 16px;
 }
 
-.wecom-panel p {
-  margin: 0 0 12px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-  font-size: 13px;
-}
-
 .wecom-panel span {
   color: var(--text-muted);
   font-size: 12px;
 }
 
+.wecom-panel-copy {
+  min-width: 0;
+}
+
+.donation-invite {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.donation-invite p,
+.donation-panel p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.donation-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.donation-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.donation-panel {
+  display: grid;
+  grid-template-columns: 166px minmax(0, 1fr);
+  grid-template-areas:
+    "qr copy"
+    "qr back";
+  gap: 14px 22px;
+  align-items: center;
+  text-align: left;
+}
+
+.donation-panel > div {
+  grid-area: copy;
+}
+
+.donation-panel h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.donation-qr {
+  grid-area: qr;
+  width: 154px;
+  max-width: 100%;
+  max-height: 210px;
+  justify-self: center;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  object-fit: contain;
+  box-shadow: 0 8px 20px rgba(34, 45, 72, 0.1);
+}
+
+.donation-back {
+  grid-area: back;
+  justify-self: start;
+}
 /* Drawer */
 .drawer-overlay {
   position: fixed;
@@ -1472,6 +1532,10 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   font-size: 14px;
 }
 
+.nl-summary.is-partial {
+  background: #fffbeb;
+  border-color: #f4d58d;
+}
 .nl-input-meta {
   display: flex;
   align-items: center;
@@ -1619,6 +1683,7 @@ pre {
   color: var(--success);
 }
 
+.run-partial,
 .run-running,
 .pm-warn {
   color: var(--warning);
@@ -2638,9 +2703,19 @@ pre {
   }
   .mcp-guide-strip,
   .mcp-difference-card,
-  .wecom-panel {
+  .wecom-panel,
+  .donation-panel {
     grid-template-columns: 1fr;
   }
+  .donation-panel {
+    grid-template-areas:
+      "copy"
+      "qr"
+      "back";
+    justify-items: center;
+    text-align: center;
+  }
+  .donation-back { justify-self: center; }
   .take-card-head {
     display: grid;
   }
@@ -3718,6 +3793,7 @@ html[data-theme="dark"] .nl-history-list button:hover,
 html[data-theme="dark"] .nl-history-list button.active,
 html[data-theme="dark"] .nl-summary,
 html[data-theme="dark"] .pm-ghost { color: var(--text-primary); border-color: var(--border); background: var(--bg-tertiary); }
+html[data-theme="dark"] .nl-summary.is-partial { color: var(--text-primary); border-color: rgba(245, 158, 11, .42); background: rgba(245, 158, 11, .1); }
 html[data-theme="dark"] .pm-secondary-action { color: var(--text-primary); background: var(--bg-secondary); }
 html[data-theme="dark"] .pm-kv { border-color: var(--border); }
 html[data-theme="dark"] .pm-bar-row div,

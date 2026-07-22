@@ -33,7 +33,7 @@ import {
 } from './lib/theme';
 import {
   BookOpenText, Bot, BrainCircuit, Cable,
-  Database, FileClock, FolderKanban, LayoutDashboard,
+  Database, FileClock, FolderKanban, HeartHandshake, LayoutDashboard,
   SlidersHorizontal, type LucideIcon,
 } from 'lucide-react';
 
@@ -76,8 +76,9 @@ function BrandMark() {
 export function App() {
   const [page, setPage] = useState<Page>(getPage);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
-  const [supportPanel, setSupportPanel] = useState<'wecom' | null>(null);
+  const [supportPanel, setSupportPanel] = useState<'wecom' | 'donate' | null>(null);
   const wecomQrSrc = `${import.meta.env.BASE_URL}wecom-helper.jpg`;
+  const donationQrSrc = `${import.meta.env.BASE_URL}wechat-donation.jpg`;
   const navSections: Array<{ title: string; items: Array<{ page: Page; label: string; icon: NavIconName }> }> = useMemo(() => [
     { title: '知识', items: [
       { page: 'import', label: '知识工作台', icon: 'workspace' },
@@ -245,11 +246,32 @@ export function App() {
                 <div className="modal-title">企微助手</div>
                 <div className="wecom-panel">
                   <img className="wecom-qr" src={wecomQrSrc} alt="PMBrain 企微助手二维码" />
-                  <div>
-                    <h3>扫码添加 PMBrain 企微助手</h3>
-                    <p>用于获取管理员登录链接、MCP 接入帮助和常见运维问题支持。</p>
-                    <span>打开企业微信或微信扫码添加。</span>
+                  <div className="wecom-panel-copy">
+                    <h3>扫码关注开发者公众号，获取最新信息</h3>
+                    <span>打开微信扫码关注。</span>
+                    <div className="donation-invite">
+                      <p>认为产品还不错的话可进行打赏，你的支持是产品更新的动力。</p>
+                      <button type="button" className="pm-ghost donation-button" onClick={() => setSupportPanel('donate')}>
+                        <HeartHandshake aria-hidden="true" />
+                        打赏支持
+                      </button>
+                    </div>
                   </div>
+                </div>
+              </>
+            )}
+            {supportPanel === 'donate' && (
+              <>
+                <div className="modal-title">支持 PMBrain</div>
+                <div className="donation-panel">
+                  <div>
+                    <h3>如果你愿意支持</h3>
+                    <p>认为产品还不错的话可进行打赏，你的支持是产品更新的动力。</p>
+                  </div>
+                  <img className="donation-qr" src={donationQrSrc} alt="微信支付收款二维码" />
+                  <button type="button" className="pm-ghost donation-back" onClick={() => setSupportPanel('wecom')}>
+                    返回公众号二维码
+                  </button>
                 </div>
               </>
             )}

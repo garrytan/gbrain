@@ -101,6 +101,14 @@ describe('Admin knowledge assistant attachment contract', () => {
   });
 });
 
+  test('shows a partial-completion warning when oversized converted content is not chunked or embedded', () => {
+    expect(consoleSource).toContain('content-sanity soft-block:');
+    expect(consoleSource).toContain('导入仅部分完成。');
+    expect(consoleSource).toContain('未生成切片，也未进行向量化');
+    expect(consoleSource).toContain('按工作表、地区或主题拆分成多个较小文件');
+    expect(consoleSource).toContain("importEmbeddingSkip ? '部分完成'");
+    expect(stylesSource).toContain('.nl-summary.is-partial');
+  });
 describe('Admin local attachment staging safety contract', () => {
   test('caps an individual upload at 50 MiB', () => {
     expect(ADMIN_UPLOAD_MAX_BYTES).toBe(50 * 1024 * 1024);

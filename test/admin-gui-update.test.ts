@@ -11,6 +11,13 @@ const adminStyles = readFileSync(join(process.cwd(), 'admin/src/index.css'), 'ut
 const serveHttpSource = readFileSync(join(process.cwd(), 'src/commands/serve-http.ts'), 'utf8');
 
 describe('Admin GUI update contract', () => {
+  test('support modal promotes the developer account and opens a donation QR view', () => {
+    expect(appSource).toContain('扫码关注开发者公众号，获取最新信息');
+    expect(appSource).not.toContain('用于获取管理员登录链接、MCP 接入帮助和常见运维问题支持。');
+    expect(appSource).toContain('认为产品还不错的话可进行打赏，你的支持是产品更新的动力。');
+    expect(appSource).toContain("setSupportPanel('donate')");
+    expect(appSource).toContain('wechat-donation.jpg');
+  });
   test('theme defaults to system and supports explicit overrides', () => {
     expect(readThemeMode()).toBe('system');
     expect(readStoredThemeMode()).toBeNull();
