@@ -10,18 +10,15 @@
  * an idle remote worker; probe failures fail OPEN.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { describe, test, expect } from 'bun:test';
+import { mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+import { withEnv } from './helpers/with-env.ts';
 import { hasLiveJobsWorker } from '../src/core/remediation/run.ts';
 import { registerWorker } from '../src/core/minions/worker-registry.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-
-let tmp: string;
-let envHome: string | undefined;
-let envAssume: string | undefined;
 
 function stubEngine(activeCount: string | Error): BrainEngine {
   return {
@@ -33,52 +30,62 @@ function stubEngine(activeCount: string | Error): BrainEngine {
   } as unknown as BrainEngine;
 }
 
-beforeEach(() => {
-  envHome = process.env.GBRAIN_HOME;
-  envAssume = process.env.GBRAIN_REMEDIATION_ASSUME_WORKER;
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-liveness-'));
-  process.env.GBRAIN_HOME = tmp; // empty worker registry
-  delete process.env.GBRAIN_REMEDIATION_ASSUME_WORKER;
-});
-
-afterEach(() => {
-  if (envHome === undefined) delete process.env.GBRAIN_HOME;
-  else process.env.GBRAIN_HOME = envHome;
-  if (envAssume === undefined) delete process.env.GBRAIN_REMEDIATION_ASSUME_WORKER;
-  else process.env.GBRAIN_REMEDIATION_ASSUME_WORKER = envAssume;
-  try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
-});
+/** Fresh empty GBRAIN_HOME (empty worker registry) + no assume-worker escape
+ * hatch, restored via withEnv. Tmp dir is intentionally leaked (OS reaps),
+ * same as test/helpers/with-env.ts emptyHome(). */
+function inEmptyHome<T>(
+  fn: () => T | Promise<T>,
+  extra: Record<string, string | undefined> = {},
+): Promise<T> {
+  const tmp = mkdtempSync(join(tmpdir(), 'gbrain-liveness-'));
+  return withEnv(
+    { GBRAIN_HOME: tmp, GBRAIN_REMEDIATION_ASSUME_WORKER: undefined, ...extra },
+    fn,
+  );
+}
 
 describe('hasLiveJobsWorker (#2116)', () => {
   test('false when registry empty and no active locked jobs — the fix', async () => {
-    expect(await hasLiveJobsWorker(stubEngine('0'))).toBe(false);
+    await inEmptyHome(async () => {
+      expect(await hasLiveJobsWorker(stubEngine('0'))).toBe(false);
+    });
   });
 
   test('true when DB shows an active job with a live lock (busy remote worker)', async () => {
-    expect(await hasLiveJobsWorker(stubEngine('2'))).toBe(true);
+    await inEmptyHome(async () => {
+      expect(await hasLiveJobsWorker(stubEngine('2'))).toBe(true);
+    });
   });
 
   test('true when a local worker is registered (this-host ground truth)', async () => {
-    const cleanup = registerWorker({
-      pid: process.pid,
-      queue: 'default',
-      nice_requested: null,
-      nice_effective: null,
-      started_at: Date.now(),
+    await inEmptyHome(async () => {
+      const cleanup = registerWorker({
+        pid: process.pid,
+        queue: 'default',
+        nice_requested: null,
+        nice_effective: null,
+        started_at: Date.now(),
+      });
+      try {
+        expect(await hasLiveJobsWorker(stubEngine('0'))).toBe(true);
+      } finally {
+        cleanup();
+      }
     });
-    try {
-      expect(await hasLiveJobsWorker(stubEngine('0'))).toBe(true);
-    } finally {
-      cleanup();
-    }
   });
 
   test('GBRAIN_REMEDIATION_ASSUME_WORKER=1 skips the probe (remote idle worker)', async () => {
-    process.env.GBRAIN_REMEDIATION_ASSUME_WORKER = '1';
-    expect(await hasLiveJobsWorker(stubEngine(new Error('should not be called')))).toBe(true);
+    await inEmptyHome(
+      async () => {
+        expect(await hasLiveJobsWorker(stubEngine(new Error('should not be called')))).toBe(true);
+      },
+      { GBRAIN_REMEDIATION_ASSUME_WORKER: '1' },
+    );
   });
 
   test('fails OPEN when the DB probe throws', async () => {
-    expect(await hasLiveJobsWorker(stubEngine(new Error('relation minion_jobs missing')))).toBe(true);
+    await inEmptyHome(async () => {
+      expect(await hasLiveJobsWorker(stubEngine(new Error('relation minion_jobs missing')))).toBe(true);
+    });
   });
 });
