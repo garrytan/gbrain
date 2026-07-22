@@ -349,9 +349,9 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     const { engine } = buildMockEngine({
       scorecard: { total_bets: 0, resolved: 0, correct: 0, incorrect: 0, partial: 0,
         accuracy: null, brier: null, partial_rate: null, unresolvable_count: 0, unresolvable_rate: null },
-      userHolder: 'people/tyler-singletary',
+      userHolder: 'people/charlie-example',
     });
     const result = await runPhaseCalibrationProfile(buildCtx(engine), {});
-    expect(result.summary).toContain('holder=people/tyler-singletary');
+    expect(result.summary).toContain('holder=people/charlie-example');
   });
 });

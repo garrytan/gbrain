@@ -16,12 +16,12 @@ describe('owner-holder', () => {
   });
 
   test('uses config value when set and no override', () => {
-    expect(resolveOwnerHolder({ configValue: 'people/tyler-singletary' }))
-      .toBe('people/tyler-singletary');
+    expect(resolveOwnerHolder({ configValue: 'people/charlie-example' }))
+      .toBe('people/charlie-example');
   });
 
   test('override beats config and default', () => {
-    expect(resolveOwnerHolder({ override: 'world', configValue: 'people/tyler-singletary' }))
+    expect(resolveOwnerHolder({ override: 'world', configValue: 'people/charlie-example' }))
       .toBe('world');
   });
 });
