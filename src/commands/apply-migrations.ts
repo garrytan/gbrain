@@ -419,7 +419,9 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
         schemaBehind = await resolveSchemaBehind({
           schemaVer,
           latest: LATEST_VERSION,
-          autoApply: (cli.yes || cli.nonInteractive) && !cli.dryRun,
+          // --list and --dry-run are read-only surfaces: never mutate schema
+          // even when combined with --yes/--non-interactive.
+          autoApply: (cli.yes || cli.nonInteractive) && !cli.dryRun && !cli.list,
           run: () => runMigrations(eng),
         });
         await eng.disconnect();
