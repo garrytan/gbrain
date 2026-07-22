@@ -39,6 +39,7 @@ import { runSkillOpt } from '../../src/core/skillopt/orchestrator.ts';
 import {
   bestPath,
   loadHistory,
+  proposedPath,
   skillPath,
 } from '../../src/core/skillopt/version-store.ts';
 import { loadRejectedBuffer } from '../../src/core/skillopt/rejected-buffer.ts';
@@ -741,7 +742,7 @@ describe('skillopt T3 — F11 held-out gate, ablation opts, no-DB-pollution', ()
     } finally { fixture.cleanup(); }
   });
 
-  test('--no-mutate writes proposed.md (best.md), leaves SKILL.md untouched', async () => {
+  test('--no-mutate writes proposed.md and best.md, leaves SKILL.md untouched', async () => {
     const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
     try {
       installStub({
@@ -753,10 +754,9 @@ describe('skillopt T3 — F11 held-out gate, ablation opts, no-DB-pollution', ()
           const result = await runOnce(fixture, { noMutate: true });
           expect(result.outcome).toBe('accepted');
           expect(result.mutatedSkillFile).toBe(false);
-          expect(result.proposedPath).toBeDefined();
-          // proposed.md (best.md) exists and carries the improvement.
-          expect(fs.existsSync(result.proposedPath!)).toBe(true);
+          expect(result.proposedPath).toBe(proposedPath(fixture.skillsDir, SKILL));
           expect(fs.readFileSync(result.proposedPath!, 'utf8')).toContain('## Citations');
+          expect(fs.readFileSync(bestPath(fixture.skillsDir, SKILL), 'utf8')).toContain('## Citations');
           // SKILL.md on disk is UNCHANGED (still People-only).
           const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
           expect(skill).not.toContain('## Citations');
