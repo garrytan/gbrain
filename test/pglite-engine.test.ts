@@ -951,11 +951,18 @@ describe('PGLiteEngine: Stats & Health', () => {
   });
 
   test('getStats returns correct counts', async () => {
-    const stats = await engine.getStats();
-    expect(stats.page_count).toBe(1);
-    expect(stats.chunk_count).toBe(1);
-    expect(stats.tag_count).toBe(1);
-    expect(stats.pages_by_type.concept).toBe(1);
+    await engine.putPage('test/stats-deleted', { ...testPage, title: 'Deleted stats page' });
+    await engine.softDeletePage('test/stats-deleted');
+
+    try {
+      const stats = await engine.getStats();
+      expect(stats.page_count).toBe(1);
+      expect(stats.chunk_count).toBe(1);
+      expect(stats.tag_count).toBe(1);
+      expect(stats.pages_by_type.concept).toBe(1);
+    } finally {
+      await engine.deletePage('test/stats-deleted');
+    }
   });
 
   test('getHealth returns coverage metrics', async () => {

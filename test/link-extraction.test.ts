@@ -403,6 +403,77 @@ describe('extractPageLinks', () => {
     expect(candidates).toEqual([]);
   });
 
+  test('path-qualified wikilink outside DIR_PATTERN queries by final segment', async () => {
+    // `[[notes/struktura]]` (dir not in DIR_PATTERN) falls to the generic
+    // pass. The resolver's basename index is keyed by final path segments,
+    // so the lookup must strip the dirname — mirroring the FS path
+    // (resolveSlugAll). Regression: the raw literal was passed through,
+    // which never matched, so these links silently dropped.
+    const seen: string[] = [];
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => {
+        seen.push(name);
+        return name === 'struktura' ? ['notes/struktura'] : [];
+      },
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(seen).toContain('struktura');
+    expect(seen).not.toContain('notes/struktura');
+    expect(candidates.map(c => c.targetSlug)).toEqual(['notes/struktura']);
+    expect(candidates[0].linkType).toBe('wikilink_basename');
+    expect(candidates[0].linkSource).toBe('wikilink-resolved');
+  });
+
+  test('path-qualified wikilink keeps only matches ending with the written path', async () => {
+    // The written path disambiguates: `[[notes/struktura]]` must never
+    // attach to `wiki/struktura` even though both share the basename.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['notes/struktura', 'wiki/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['notes/struktura']);
+  });
+
+  test('path-qualified wikilink matches a deeper real slug by path suffix', async () => {
+    // The page lives at vault/notes/struktura; the author wrote the shorter
+    // tail `[[notes/struktura]]`. Suffix matching connects them, while the
+    // basename-only sibling `wiki/struktura` stays excluded.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['vault/notes/struktura', 'wiki/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['vault/notes/struktura']);
+  });
+
+  test('path-qualified self-link is dropped like the bare form', async () => {
+    // `[[notes/struktura]]` written on notes/struktura itself must not
+    // produce a self-loop (same guard as the bare `[[own-tail]]` case).
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['notes/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'notes/struktura', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates).toEqual([]);
+  });
+
   test('bare wikilink resolution does not interfere with DIR_PATTERN wikilinks', async () => {
     // 2b refs (people/alice) take the verb-inferred type;
     // 2c refs (struktura) take wikilink_basename. Same call.
@@ -1265,3 +1336,29 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
   });
 });
 
+
+describe('parseTimelineEntries — Format 3: inline [Source: ..., YYYY-MM-DD] citations', () => {
+  test('extracts an entry from a dated citation', () => {
+    const entries = parseTimelineEntries('Closed the seed round. [Source: board notes, 2025-04-02]');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-04-02');
+    expect(entries[0].summary).toBe('Closed the seed round.');
+    expect(entries[0].detail).toBe('Source: board notes');
+  });
+
+  test('keeps commas inside the citation source', () => {
+    const entries = parseTimelineEntries('Alice joined. [Source: email re: offer, signed, 2025-05-10]');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe('Source: email re: offer, signed');
+  });
+
+  test('does not double-extract a timeline bullet carrying its own citation', () => {
+    const entries = parseTimelineEntries('- **2025-03-18** | Meeting notes [Source: notes, 2025-03-18]');
+    expect(entries).toHaveLength(1); // bullet pass only
+  });
+
+  test('skips invalid calendar dates and bare citations', () => {
+    expect(parseTimelineEntries('Claim. [Source: memo, 2026-13-45]')).toHaveLength(0);
+    expect(parseTimelineEntries('[Source: import batch, 2025-07-01]')).toHaveLength(0);
+  });
+});

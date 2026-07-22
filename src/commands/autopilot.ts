@@ -17,7 +17,7 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -109,7 +109,21 @@ function logError(phase: string, e: unknown) {
  */
 export function resolveGbrainCliPath(): string {
   try {
-    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // #2747: `env: process.env` is required under Bun. Bun's execSync
+    // snapshots process.env at Bun's OWN startup, not at call time — a
+    // runtime PATH mutation (dotenv/config loading, shell-profile sourcing
+    // in a wrapper, etc.) happening between Bun boot and this call is
+    // invisible to `which` without explicitly forwarding the current env.
+    // This is why "which gbrain" succeeds when run standalone (fresh Bun
+    // process, no prior mutation) but can fail from inside autopilot's own
+    // process at this exact call site. Same fix already applied to
+    // detectTini() in spawn-helpers.ts (see its comment) — this call site
+    // was missed.
+    const which = execSync('which gbrain', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: process.env,
+    }).trim();
     if (which) return which;
   } catch { /* not on $PATH — fall through */ }
 
@@ -123,11 +137,49 @@ export function resolveGbrainCliPath(): string {
     return arg1;
   }
 
-  throw new Error('Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH (e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly.');
+  // #2747: include what we actually saw so an operator (or a future bug
+  // report) doesn't have to guess whether PATH/execPath/argv[1] looked
+  // sane at the moment of failure.
+  throw new Error(
+    'Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH ' +
+      '(e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly. ' +
+      `Debug: PATH=${JSON.stringify(process.env.PATH ?? '')} execPath=${JSON.stringify(exec)} argv1=${JSON.stringify(arg1)}`,
+  );
 }
 
 export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
+}
+
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export function decideLockAcquisition(
+  lockPath: string,
+  currentPid: number,
+): { action: 'acquire' } | { action: 'exit'; holderPid: number } | { action: 'takeover'; reason: string } {
+  if (!existsSync(lockPath)) return { action: 'acquire' };
+
+  let raw = '';
+  try {
+    raw = readFileSync(lockPath, 'utf-8').trim();
+  } catch {
+    // An unreadable lock cannot prove another process is alive.
+  }
+
+  const holderPid = Number.parseInt(raw, 10);
+  const sameProcess = Number.isFinite(holderPid) && holderPid === currentPid;
+  const alive = !sameProcess && isPidAlive(holderPid);
+
+  if (alive) return { action: 'exit', holderPid };
+  return { action: 'takeover', reason: `dead pid ${raw || '<empty>'}` };
 }
 
 // ── Self-upgrade silent channel (v0.42; opt-in, supervisor-relaunch) ─────────
@@ -351,14 +403,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const lockPath = gbrainHomePath('autopilot.lock');
   try {
     mkdirSync(gbrainHomePath(), { recursive: true });
-    if (existsSync(lockPath)) {
-      const stat = require('fs').statSync(lockPath);
-      const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
-        console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
-        process.exit(0);
-      }
-      console.log('Stale lock file found (>10 min). Taking over.');
+    const decision = decideLockAcquisition(lockPath, process.pid);
+    if (decision.action === 'exit') {
+      console.error(`Another autopilot instance is running (pid ${decision.holderPid}). Exiting.`);
+      process.exit(0);
+    }
+    if (decision.action === 'takeover') {
+      console.log(`Stale autopilot lock found (${decision.reason}). Taking over.`);
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }
@@ -1212,7 +1263,14 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');
     mkdirSync(agentsDir, { recursive: true });
-    writeFileSync(plistPath(), plist);
+    writeFileSync(plistPath(), plist, { mode: 0o644 });
+    // launchd rejects group/world-writable agent plists: bootstrap/load fails
+    // with the opaque "Bootstrap failed: 5: Input/output error" and the login
+    // scan skips the file silently. writeFileSync's mode only applies on
+    // create — a reinstall over an existing plist keeps the old bits (a 0666
+    // plist written under an umask-0 parent stays 0666 forever) — so
+    // normalize unconditionally.
+    chmodSync(plistPath(), 0o644);
     execSync(`launchctl load "${plistPath()}"`, { stdio: 'pipe' });
     console.log('Installed launchd service: com.gbrain.autopilot');
     console.log(`  Repo: ${repoPath}`);
@@ -1302,7 +1360,11 @@ export function migrateSystemdUnitToRestartAlways(): { rewritten: boolean; reaso
     return { rewritten: false, reason: 'hand-edited' };
   }
   try {
-    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]));
+    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]), { mode: 0o644 });
+    // This path always rewrites an EXISTING unit, so writeFileSync's mode
+    // never applies — chmod is the only thing that normalizes a unit born
+    // 0666 under a umask-0 parent (systemd warns on world-writable units).
+    chmodSync(unitPath, 0o644);
     try {
       execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
     } catch {
@@ -1319,7 +1381,10 @@ function installSystemd(wrapperPath: string, repoPath: string) {
   try {
     const unitPath = systemdUnitPath();
     mkdirSync(join(process.env.HOME || '', '.config', 'systemd', 'user'), { recursive: true });
-    writeFileSync(unitPath, unit);
+    writeFileSync(unitPath, unit, { mode: 0o644 });
+    // Same umask-0 hardening as the launchd path (systemd warns on
+    // world-writable units); mode only applies on create, so normalize.
+    chmodSync(unitPath, 0o644);
     execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
     execSync('systemctl --user enable --now gbrain-autopilot.service', { stdio: 'pipe', timeout: 15_000 });
     console.log('Installed systemd user service: gbrain-autopilot.service');

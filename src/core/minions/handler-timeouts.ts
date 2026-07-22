@@ -24,6 +24,7 @@
  */
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
+const TEN_MIN_MS = 10 * 60 * 1000;
 
 /**
  * Default wall-clock budget (ms) for long-running handler types. A handler
@@ -37,6 +38,10 @@ export const HANDLER_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = {
   // #2194 fix #3: brain-wide maintenance (embed-all/orphans/purge/…) can run
   // longer than a single source cycle; give it the same 30-min budget.
   'autopilot-global-maintenance': THIRTY_MIN_MS,
+  // v0.42.x (#2390) — Life Chronicle: one page = one LLM extraction call + a
+  // few writes. Generous 10-min budget (vs the tight null-default) covers a
+  // slow gateway without the 30-min loop budget.
+  chronicle_extract: TEN_MIN_MS,
 };
 
 /**

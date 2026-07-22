@@ -92,6 +92,7 @@ async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: Min
     data: { prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools },
     attempts_made: 0,
     signal: abortCtrl.signal,
+    deadlineAtMs: null,
     shutdownSignal: shutdownCtrl.signal,
     updateProgress: async () => {},
     updateTokens: async (t) => { tokenSink.push(t); },

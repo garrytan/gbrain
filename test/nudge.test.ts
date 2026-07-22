@@ -57,7 +57,7 @@ function buildTake(overrides: Partial<Take> = {}): Take {
 
 function buildProfile(activeBiasTags: string[], holder = 'garry'): CalibrationProfileRow {
   return {
-    id: 1,
+    id: '1',
     source_id: 'default',
     holder,
     wave_version: 'v0.36.1.0',

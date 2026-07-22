@@ -57,6 +57,14 @@ import {
 export interface ConversationFactsBackfillPhaseOpts {
   dryRun?: boolean;
   signal?: AbortSignal;
+  /**
+   * issue #2860 — `gbrain dream --phase conversation_facts_backfill --once`.
+   * Bypasses the `cycle.conversation_facts_backfill.enabled` gate for THIS
+   * call only; never reads or writes config. Per-source + brain-wide cost/
+   * walltime caps still apply — the override lifts the on/off switch, not
+   * the spend guards.
+   */
+  once?: boolean;
 }
 
 /** Phase return shape (matches PhaseResult contract from cycle.ts). */
@@ -155,17 +163,23 @@ export async function runPhaseConversationFactsBackfill(
   const cfg = await loadCfg(engine);
 
   if (!cfg.enabled) {
-    return {
-      phase: 'conversation_facts_backfill',
-      status: 'skipped',
-      duration_ms: 0,
-      summary: 'cycle.conversation_facts_backfill.enabled=false (default OFF)',
-      details: {
-        reason: 'disabled',
-        enable_hint:
-          'gbrain config set cycle.conversation_facts_backfill.enabled true',
-      },
-    };
+    if (!opts.once) {
+      return {
+        phase: 'conversation_facts_backfill',
+        status: 'skipped',
+        duration_ms: 0,
+        summary: 'cycle.conversation_facts_backfill.enabled=false (default OFF)',
+        details: {
+          reason: 'disabled',
+          enable_hint:
+            'gbrain config set cycle.conversation_facts_backfill.enabled true',
+        },
+      };
+    }
+    process.stderr.write(
+      '[dream] --once: cycle.conversation_facts_backfill.enabled is false but ' +
+      '--phase conversation_facts_backfill --once forces this run (config untouched)\n',
+    );
   }
 
   const startedAt = Date.now();

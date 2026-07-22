@@ -52,11 +52,18 @@ export interface ModelPricing {
  */
 export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // ── Anthropic ──────────────────────────────────────────────────────────
+  // Fable 5: Anthropic's top tier, above Opus. $10 in / $50 out.
+  'anthropic:claude-fable-5':             { input: 10.00, output: 50.00 },
   // Opus 4.x: $5 in / $25 out. 4.8 (released 2026-05-28) shares 4.7's
   // per-token rate — closes gbrain#1819.
   'anthropic:claude-opus-4-8':            { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-7':            { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-6':            { input:  5.00, output: 25.00 },
+  // Sonnet 5 (released 2026-06-29): same $3/$15 sticker as 4.6. The launch
+  // intro discount ($2/$10 through 2026-08-31) is deliberately NOT modeled —
+  // the table carries standard rates so estimates stay conservative and
+  // don't need a time-bombed edit when the promo lapses.
+  'anthropic:claude-sonnet-5':            { input:  3.00, output: 15.00 },
   'anthropic:claude-sonnet-4-6':          { input:  3.00, output: 15.00 },
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.
   'anthropic:claude-haiku-4-5':           { input:  1.00, output:  5.00 },

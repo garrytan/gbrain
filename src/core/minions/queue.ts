@@ -163,24 +163,36 @@ export class MinionQueue {
       if (opts?.maxWaiting !== undefined) {
         const maxWaiting = Math.max(1, Math.floor(opts.maxWaiting));
         const backpressureQueue = opts?.queue ?? 'default';
+        // Multi-source scope: jobs of the same (name, queue) but different
+        // data.sourceId are independent workstreams (per-source sync/cycle).
+        // Counting them together made a waiting default-source sync swallow
+        // every other source's freshness sync — a secondary source sat 29h stale
+        // while dispatch logs showed its syncs "dispatched" (coalesced into
+        // the default row). Key the lock and the count on sourceId when the
+        // submission carries one; NULL keeps legacy single-scope behavior.
+        const bpSourceId = typeof (data as Record<string, unknown> | undefined)?.sourceId === 'string'
+          ? (data as Record<string, unknown>).sourceId as string
+          : null;
         await tx.executeRaw(
-          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2))`,
-          [jobName, backpressureQueue]
+          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2 || ':' || coalesce($3, '')))`,
+          [jobName, backpressureQueue, bpSourceId]
         );
         const waitingCountRows = await tx.executeRaw<{ count: string }>(
           `SELECT count(*)::text AS count
            FROM minion_jobs
-           WHERE name = $1 AND queue = $2 AND status = 'waiting'`,
-          [jobName, backpressureQueue]
+           WHERE name = $1 AND queue = $2 AND status = 'waiting'
+             AND ($3::text IS NULL OR data->>'sourceId' IS NOT DISTINCT FROM $3)`,
+          [jobName, backpressureQueue, bpSourceId]
         );
         const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
         if (waitingCount >= maxWaiting) {
           const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
             `SELECT * FROM minion_jobs
              WHERE name = $1 AND queue = $2 AND status = 'waiting'
+               AND ($3::text IS NULL OR data->>'sourceId' IS NOT DISTINCT FROM $3)
              ORDER BY created_at DESC, id DESC
              LIMIT 1`,
-            [jobName, backpressureQueue]
+            [jobName, backpressureQueue, bpSourceId]
           );
           if (existingWaiting.length > 0) {
             const coalesced = rowToMinionJob(existingWaiting[0]);
@@ -471,12 +483,34 @@ export class MinionQueue {
     });
   }
 
-  /** Re-queue a failed or dead job for retry. */
+  /**
+   * Re-queue a failed or dead job for retry.
+   *
+   * #2783: an explicit `jobs retry` is an operator asserting "run this
+   * fresh" — so it clears `started_at` (re-stamped on re-claim via
+   * `claim()`'s `COALESCE(started_at, now())`, `queue.ts:620`) and resets
+   * `attempts_made`/`attempts_started` to 0. Without this, `started_at`
+   * kept the ORIGINAL first-claim time, so `handleWallClockTimeouts()`
+   * (anchored on `now() - started_at`, `queue.ts:729-749`) could measure
+   * from long before the retry — a retry issued more than `timeout_ms * 2`
+   * after the original claim was dead-lettered again in under a second,
+   * with `attempts_made` already past `max_attempts`. This made retry
+   * useless for exactly the case it exists for: recovering work after an
+   * outage that outlasted the job's timeout.
+   *
+   * Also resets `stalled_counter` (Codex review): `handleStalled()`
+   * dead-letters once `stalled_counter + 1 >= max_stalled` (`queue.ts:1190`).
+   * A job dead-lettered BY stall exhaustion, left un-reset, would hit that
+   * same threshold on its very first lock expiry after retry — a job
+   * killed by 3 stalls doesn't get a fresh stall budget, contradicting
+   * "run this fresh" the same way the unreset attempt counters did.
+   */
   async retryJob(id: number): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
         lock_token = NULL, lock_until = NULL, delay_until = NULL,
-        finished_at = NULL, updated_at = now()
+        finished_at = NULL, started_at = NULL, attempts_made = 0,
+        attempts_started = 0, stalled_counter = 0, updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'dead')
        RETURNING *`,
       [id]
