@@ -52,8 +52,8 @@ describe('autoFixFrontmatter', () => {
     expect(fixes).toEqual([]);
   });
 
-  test('does not corrupt a `#` inside a quoted YAML string value before the closer', () => {
-    const input = `${fence}\ntitle: "Chapter #1 recap"\ntype: concept\n${fence}\nBody`;
+  test('does not corrupt closed frontmatter with an indented `#` line inside a YAML block scalar', () => {
+    const input = `${fence}\ndescription: |\n  # not a heading, just literal block-scalar text\ntitle: ok\n${fence}\nBody`;
     const { content, fixes } = autoFixFrontmatter(input);
     expect(content).toBe(input);
     expect(fixes).toEqual([]);
