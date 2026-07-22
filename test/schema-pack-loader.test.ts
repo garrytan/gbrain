@@ -364,6 +364,15 @@ page_types:
     expect(result.page_types[0].name).toBe('meeting');
   });
 
+  test('block scalar keeps # as literal content, not a comment', () => {
+    const yaml = `description: |
+  See issue #2029 for context.
+name: hashy`;
+    const result = parseYamlMini(yaml) as Record<string, unknown>;
+    expect(result.description).toBe('See issue #2029 for context.');
+    expect(result.name).toBe('hashy');
+  });
+
   test('strips comments', () => {
     const result = parseYamlMini('# top comment\nname: value # inline comment') as Record<string, unknown>;
     expect(result.name).toBe('value');

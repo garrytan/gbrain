@@ -164,15 +164,16 @@ export function parseYamlMini(content: string): unknown {
     const out: string[] = [];
     while (i < lines.length) {
       const raw = lines[i];
-      if (isBlank(raw)) {
+      // Inside a block scalar everything is literal content — '#' is NOT a
+      // comment here, so use the raw line (no stripComment / isBlank).
+      if (raw.trim() === '') {
         out.push('');
         i++;
         continue;
       }
       const indent = indentOf(raw);
       if (indent <= parentIndent) break;
-      const withoutComment = stripComment(raw);
-      out.push(withoutComment.slice(Math.min(contentIndent, indent)));
+      out.push(raw.slice(Math.min(contentIndent, indent)));
       i++;
     }
     if (folded) {
