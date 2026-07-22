@@ -159,15 +159,21 @@ describe('apply-migrations drift-repair lane (#2646)', () => {
                now(), 'mcp:put_page', 1.0)`,
     );
 
+    const logged: string[] = [];
+    const realLog = console.log;
+    console.log = (...args: unknown[]) => { logged.push(args.join(' ')); };
     let sentinel: ExitSentinel | null = null;
     try {
       await runApplyMigrations([...ARGS, '--dry-run']);
     } catch (e) {
       if (e instanceof ExitSentinel) sentinel = e;
       else throw e;
+    } finally {
+      console.log = realLog;
     }
     expect(sentinel).not.toBeNull();
     expect(sentinel!.code).toBe(0);
+    expect(logged.some(l => l.includes('Would REPAIR'))).toBe(true);
 
     // No side effects: row unstamped, no page written.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,15 +183,22 @@ describe('apply-migrations drift-repair lane (#2646)', () => {
   });
 
   test('no drift → plain up-to-date exit 0, repair lane stays silent', async () => {
+    const logged: string[] = [];
+    const realLog = console.log;
+    console.log = (...args: unknown[]) => { logged.push(args.join(' ')); };
     let sentinel: ExitSentinel | null = null;
     try {
       await runApplyMigrations([...ARGS]);
     } catch (e) {
       if (e instanceof ExitSentinel) sentinel = e;
       else throw e;
+    } finally {
+      console.log = realLog;
     }
     expect(sentinel).not.toBeNull();
     expect(sentinel!.code).toBe(0);
+    // No repair messaging on the silent path.
+    expect(logged.some(l => /repair/i.test(l))).toBe(false);
   });
 });
 
