@@ -26,6 +26,11 @@ import { isSearchMode } from './search/mode.ts';
 import { stampEvidence } from './search/evidence.ts';
 import type { SearchResult } from './types.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
+import {
+  acceptTakeProposal,
+  listTakeProposals,
+  rejectTakeProposal,
+} from './take-proposals.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -1782,6 +1787,65 @@ const takes_search: Operation = {
   cliHints: { name: 'takes-search', positional: ['query'] },
 };
 
+const takes_propose_list: Operation = {
+  name: 'takes_propose_list',
+  description: 'List pending reviewed take proposals before promotion into canonical takes.',
+  scope: 'read',
+  params: {
+    limit: { type: 'number', description: 'Max rows (default 50, cap 500)' },
+    offset: { type: 'number', description: 'Skip first N rows' },
+    status: { type: 'string', description: 'pending | accepted | rejected | superseded (default pending)' },
+  },
+  handler: async (ctx, p) => {
+    return listTakeProposals(ctx.engine, {
+      limit: p.limit as number | undefined,
+      offset: p.offset as number | undefined,
+      status: p.status as never,
+      // Source-isolation invariant: always route through sourceScopeOpts
+      // (federated array > scalar > nothing) — never gate on ctx.remote.
+      ...sourceScopeOpts(ctx),
+    });
+  },
+};
+
+const takes_propose_accept: Operation = {
+  name: 'takes_propose_accept',
+  description: 'Accept one reviewed take proposal, append it to the source markdown takes fence, mirror it to DB, and stamp the proposal accepted.',
+  scope: 'write',
+  mutating: true,
+  // localOnly: accept writes the source markdown file under sync.repo_path —
+  // same class as `sync` (filesystem mutation), and D17 says operator opt-in
+  // via the local CLI is the only queue→canonical-fence path.
+  localOnly: true,
+  params: {
+    proposal_id: { type: 'number', required: true },
+  },
+  handler: async (ctx, p) => {
+    return acceptTakeProposal(ctx.engine, p.proposal_id as number, {
+      actedBy: ctx.auth?.clientName ?? 'mcp',
+      ...sourceScopeOpts(ctx),
+    });
+  },
+};
+
+const takes_propose_reject: Operation = {
+  name: 'takes_propose_reject',
+  description: 'Reject one take proposal so review-first queues do not re-offer it.',
+  scope: 'write',
+  mutating: true,
+  params: {
+    proposal_id: { type: 'number', required: true },
+    reason: { type: 'string', description: 'Operator note. Current schema records acted_by/acted_at, not a reason column.' },
+  },
+  handler: async (ctx, p) => {
+    return rejectTakeProposal(ctx.engine, p.proposal_id as number, {
+      actedBy: ctx.auth?.clientName ?? 'mcp',
+      reason: p.reason as string | undefined,
+      ...sourceScopeOpts(ctx),
+    });
+  },
+};
+
 /**
  * v0.30.0 (Slice A1): aggregate calibration scorecard. Pure SQL aggregation.
  *
@@ -1866,7 +1930,7 @@ const think: Operation = {
     // forwards to findTrajectory. CLI callers don't go through this op
     // and get default scope + remote=false from runThink's CLI path.
     const thinkScope = thinkSourceScopeOpts(ctx);
-    const { runThink, persistSynthesis } = await import('./think/index.ts');
+    const { runThink, persistSynthesis, persistThinkTake } = await import('./think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
       anchor: p.anchor ? String(p.anchor) : undefined,
@@ -1885,15 +1949,30 @@ const think: Operation = {
       ...thinkScope,
       remote: ctx.remote === true,
     });
+    if (remote && (Boolean(p.save) || Boolean(p.take))) {
+      result.warnings.push('REMOTE_PERSISTED_BLOCKED');
+    }
 
     // Persist if --save was passed locally
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
+    let takeRow: number | null = null;
+    let takeInserted = 0;
     if (safeSave) {
       const persisted = await persistSynthesis(ctx.engine, result);
       savedSlug = persisted.slug;
       evidenceInserted = persisted.evidenceInserted;
       for (const w of persisted.warnings) result.warnings.push(w);
+    }
+    if (safeTake) {
+      const persistedTake = await persistThinkTake(ctx.engine, result, {
+        anchor: p.anchor ? String(p.anchor) : undefined,
+        ...(thinkScope.sourceId !== undefined ? { sourceId: thinkScope.sourceId } : {}),
+        ...(thinkScope.allowedSources !== undefined ? { sourceIds: thinkScope.allowedSources } : {}),
+      });
+      takeRow = persistedTake.rowNum;
+      takeInserted = persistedTake.inserted;
+      for (const w of persistedTake.warnings) result.warnings.push(w);
     }
 
     return {
@@ -1902,6 +1981,8 @@ const think: Operation = {
       // falsy) to null so callers never see an empty-string "slug".
       saved_slug: savedSlug || null,
       evidence_inserted: evidenceInserted,
+      take_row: takeRow,
+      take_inserted: takeInserted,
       remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
     };
   },
@@ -5402,7 +5483,7 @@ export const operations: Operation[] = [
   // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
   get_calibration_profile,
   // v0.28: Takes + think
-  takes_list, takes_search, think,
+  takes_list, takes_search, takes_propose_list, takes_propose_accept, takes_propose_reject, think,
   // v0.30: calibration aggregates over takes
   takes_scorecard, takes_calibration,
   // v0.28: whoami + scoped sources management
