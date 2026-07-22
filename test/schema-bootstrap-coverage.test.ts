@@ -158,6 +158,19 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // pages_generation_idx (CREATE INDEX ON pages (generation)) so bootstrap
   // probes guard pre-v91 brains.
   { kind: 'column', table: 'pages', column: 'generation' },
+  // v0.41.31 (v108) — pages.embedding_signature TEXT for real stale
+  // semantics. No SCHEMA_SQL index references it; bootstrap probe is
+  // defense-in-depth (and satisfies the MIGRATIONS ADD COLUMN coverage gate).
+  { kind: 'column', table: 'pages', column: 'embedding_signature' },
+  // v0.42.7 (v112) — forward-referenced by `CREATE INDEX
+  // pages_links_extracted_at_idx ON pages (source_id, links_extracted_at)`.
+  // Pre-v112 brains have pages without this column; bootstrap adds it before
+  // SCHEMA_SQL replay creates the index. Powers `gbrain extract --stale` + the
+  // `links_extraction_lag` doctor check.
+  { kind: 'column', table: 'pages', column: 'links_extracted_at' },
+  // v121 — referenced by the timeline event lookup and dedup indexes before
+  // the numbered migration can add the column on an existing brain.
+  { kind: 'column', table: 'timeline_entries', column: 'event_page_id' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -655,6 +668,15 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
 // ─────────────────────────────────────────────────────────────────
 
 const COLUMN_EXEMPTIONS = new Set<string>([
+  // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
+  // is created entirely by migration v57 (not in the schema blob), so the v57+v111
+  // chain handles fresh + upgrade; no CREATE INDEX references these columns, so
+  // there's no forward reference for the bootstrap to cover.
+  'search_telemetry.sum_rank1_score',
+  'search_telemetry.count_rank1',
+  'search_telemetry.rank1_lt_solid',
+  'search_telemetry.rank1_solid',
+  'search_telemetry.rank1_high',
   // Schema-blob-not-yet-refreshed: each of these columns is added by a
   // migration but NOT (yet) referenced by `PGLITE_SCHEMA_SQL` (neither in a
   // CREATE TABLE body nor in any CREATE INDEX). Bootstrap doesn't need to
@@ -711,6 +733,17 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // brains is invisible to them). Migration is column-only, no FK,
   // no index — bootstrap probe would be pure overhead.
   'facts.event_type',
+  // v0.42.56.0 (migration v122, #2390) — Life Chronicle ontology columns.
+  // Same precedent as facts.claim_metric et al: the `facts` table itself is
+  // migration-created (absent from PGLITE_SCHEMA_SQL), so no schema-blob
+  // forward reference can exist; the partial indexes (idx_facts_dimension,
+  // idx_facts_ontology_dedup) live INSIDE the same v122 migration. Every
+  // reader filters `dimension IS NOT NULL`, so NULL on old brains is
+  // invisible. Column-only, no bootstrap probe needed.
+  'facts.dimension',
+  'facts.value',
+  'facts.value_hash',
+  'facts.dim_status',
   // v0.39.1.0 (migration v88) — schema-pack provenance per-source captured as
   // inline canonical closure snapshot on every eval_candidates row. NULL by
   // default; no index in PGLITE_SCHEMA_SQL references it. Migration handles

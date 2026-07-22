@@ -76,6 +76,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
+  // gbrain connect — raw-bearer MCP smoke probe exercised end-to-end against
+  // a real serve --http (PGLite), so changes to either feed it.
+  "src/commands/connect.ts": ["test/e2e/connect-bearer.test.ts"],
+  "src/core/connect-probe.ts": ["test/e2e/connect-bearer.test.ts"],
   // Upgrade chains migration ledger; touches both runners.
   "src/commands/upgrade.ts": [
     "test/e2e/upgrade.test.ts",

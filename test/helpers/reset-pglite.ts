@@ -50,7 +50,12 @@
  */
 import type { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
-const PRESERVE_TABLES = new Set(['schema_version']);
+// v0.41.21.0: `page_generation_clock` is single-row infrastructure (like
+// schema_version) and must survive resetPgliteState. The row is seeded at
+// initSchema time by PGLITE_SCHEMA_SQL; TRUNCATEing the table breaks
+// page_generation_counter.test.ts AND any test that reads the clock value
+// after a reset. Production never truncates the clock table.
+const PRESERVE_TABLES = new Set(['schema_version', 'page_generation_clock']);
 
 export async function resetPgliteState(engine: PGLiteEngine): Promise<void> {
   const rows = await engine.executeRaw<{ tablename: string }>(

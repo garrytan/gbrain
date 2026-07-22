@@ -39,7 +39,9 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { writeReceipt } from '../extract/receipt-writer.ts';
+import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import type { Page, PageFilters } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
@@ -328,6 +330,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
     }
 
+    const modelId = opts.model ?? getChatModel();
+
     for (const page of pages) {
       result.pages_scanned += 1;
       this.tick(opts);
@@ -357,7 +361,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
+        modelId,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -406,7 +410,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
+            modelId,
           ],
         );
         result.proposals_inserted += 1;
@@ -414,6 +418,34 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     if (opts.reporter) opts.reporter.finish();
+
+    // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
+    // via the read scope. Receipt only when proposals actually written.
+    const sourceIdForReceipt = scope.sourceId ?? 'default';
+    if (result.proposals_inserted > 0) {
+      try {
+        await writeReceipt(engine, {
+          kind: 'takes.proposed',
+          source_id: sourceIdForReceipt,
+          run_id: proposalRunId,
+          round: 'single',
+          extracted_at: new Date().toISOString(),
+          total_rows: result.proposals_inserted,
+          cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
+          summary:
+            `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
+            `(${result.cache_hits} cached).`,
+        });
+      } catch (err) {
+        console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
+      }
+    }
+    await upsertExtractRollup(engine, {
+      kind: 'takes.proposed',
+      source_id: sourceIdForReceipt,
+      round_completed_delta: result.budget_exhausted ? 0 : 1,
+      halt_delta: result.budget_exhausted ? 1 : 0,
+    });
 
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,

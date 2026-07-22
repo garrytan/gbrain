@@ -171,11 +171,19 @@ async function generateIntraPagePairs(
   results: SearchResult[],
 ): Promise<ContradictionPair[]> {
   if (results.length === 0) return [];
-  // Unique page_ids only.
-  const pageIds = Array.from(new Set(results.map((r) => r.page_id)));
+  // Unique, FINITE page_ids only. Defensive backstop for the alias-hop bug
+  // (#2339 sibling): an alias-injected synthetic result with an undefined/NaN
+  // page_id must never reach `ANY($1::int[])` — postgres.js rejects it with
+  // UNDEFINED_VALUE and aborts the whole probe. Mirrors the hybrid.ts:63 filter.
+  const pageIds = Array.from(
+    new Set(
+      results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
+    ),
+  );
   const takesByPage = await engine.listActiveTakesForPages(pageIds);
   const out: ContradictionPair[] = [];
   for (const r of results) {
+    if (typeof r.page_id !== 'number' || !Number.isFinite(r.page_id)) continue;
     const takes = takesByPage.get(r.page_id) ?? [];
     if (takes.length === 0) continue;
     const chunkMember = searchResultToMember(r);

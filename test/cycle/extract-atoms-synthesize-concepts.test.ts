@@ -104,10 +104,13 @@ describe('v0.41 T5: parseAtomsResponse', () => {
 });
 
 describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
-  test('no-op when no transcripts provided', async () => {
-    const result = await runPhaseExtractAtoms(engine, { _transcripts: [] });
+  test('no-op when no transcripts AND no pages provided', async () => {
+    // v0.41.2.1: _pages:[] suppresses page-discovery so this matches the
+    // pre-v0.41.2.1 "transcript-only no-op" path. Reason changed from
+    // 'no_transcripts' to 'no_work' to reflect the dual-source design.
+    const result = await runPhaseExtractAtoms(engine, { _transcripts: [], _pages: [] });
     expect(result.status).toBe('skipped');
-    expect(result.details?.reason).toBe('no_transcripts');
+    expect(result.details?.reason).toBe('no_work');
   });
 
   test('extracts atoms from transcript via stub chat', async () => {
@@ -117,6 +120,7 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     ]`);
     const result = await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath: '/fake/meeting.txt', content: 'content', contentHash: 'abc123def' }],
+      _pages: [], // suppress page discovery — transcript-only test
       _chat: chat,
     });
     expect(result.status).toBe('ok');
@@ -134,6 +138,7 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     const chat = stubChat(`[{"title":"x","atom_type":"insight","body":"b"}]`);
     const result = await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath: '/x.txt', content: 'c', contentHash: 'h' }],
+      _pages: [],
       _chat: chat,
       dryRun: true,
     });
@@ -164,11 +169,41 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
         { filePath: '/a.txt', content: 'a', contentHash: 'ha' },
         { filePath: '/b.txt', content: 'b', contentHash: 'hb' },
       ],
+      _pages: [],
       _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
     });
     expect(result.status).toBe('warn');
     expect(result.details?.atoms_extracted).toBe(1);
     expect((result.details?.failures as unknown[]).length).toBe(1);
+  });
+
+  // v0.41.2.1 regression case (D9 #14 wording): with _pages:[] and same
+  // _transcripts, all PRE-EXISTING PhaseResult.details fields match
+  // pre-fix values byte-for-byte. The new fields (pages_processed,
+  // pages_total, pages_skipped_budget, duplicates_skipped) exist but
+  // are zeros. Closes the "transcript path silently regresses" risk.
+  test('legacy transcript-only fields unchanged when _pages:[] (regression guard)', async () => {
+    const chat = stubChat(`[{"title":"r","atom_type":"insight","body":"b"}]`);
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/regression.txt', content: 'c', contentHash: 'rH' }],
+      _pages: [],
+      _chat: chat,
+    });
+    expect(result.status).toBe('ok');
+    // Pre-existing fields — must keep their pre-fix values verbatim
+    expect(result.details?.atoms_extracted).toBe(1);
+    expect(result.details?.transcripts_processed).toBe(1);
+    expect(result.details?.transcripts_total).toBe(1);
+    expect(result.details?.transcripts_skipped_budget).toBe(0);
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.budget_usd).toBe(0.3);
+    expect(result.details?.source_id).toBe('default');
+    expect(result.details?.dry_run).toBe(false);
+    // New additive fields — zero when no page work
+    expect(result.details?.pages_processed).toBe(0);
+    expect(result.details?.pages_total).toBe(0);
+    expect(result.details?.pages_skipped_budget).toBe(0);
+    expect(result.details?.duplicates_skipped).toBe(0);
   });
 });
 
@@ -280,5 +315,33 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       `SELECT compiled_truth FROM pages WHERE slug = 'concepts/theme'`,
     );
     expect(rows[0].compiled_truth).toContain('Custom synthesized narrative');
+  });
+
+  // #2163: concept pages must enter the retrieval surface. The write routes
+  // through importFromContent (the same parse→chunk pipeline put_page uses),
+  // so content_chunks rows exist and source-boost's 1.3× 'concepts/' weight
+  // has something to boost. (Embeddings are skipped in this env — no
+  // provider — but chunks + search_vector land regardless.)
+  test('concept pages are chunked (#2163)', async () => {
+    const atoms = Array.from({ length: 12 }, (_, i) => ({
+      slug: `c${i}`,
+      title: `Chunk atom ${i}`,
+      body: `Chunky body ${i}.`,
+      concept_refs: ['chunked-concept'],
+    }));
+    const chat = stubChat('A concept narrative long enough to produce at least one chunk.');
+    await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat });
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n
+         FROM content_chunks c JOIN pages p ON p.id = c.page_id
+        WHERE p.slug = 'concepts/chunked-concept'`,
+    );
+    expect(Number(rows[0].n)).toBeGreaterThan(0);
+    // Page metadata survives the importFromContent round-trip.
+    const page = await engine.executeRaw<{ type: string; fm: Record<string, unknown> }>(
+      `SELECT type, frontmatter AS fm FROM pages WHERE slug = 'concepts/chunked-concept'`,
+    );
+    expect(page[0].type).toBe('concept');
+    expect((page[0].fm as Record<string, unknown>).tier).toBe('T1');
   });
 });

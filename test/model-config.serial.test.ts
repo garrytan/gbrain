@@ -220,6 +220,19 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(isAnthropicProvider('')).toBe(false);
   });
 
+  test('v0.41.20.0: isAnthropicProvider classifies slash-form (subagent-guard fix)', () => {
+    // Pre-fix: 'anthropic/claude-sonnet-4-6' had no colon and didn't start
+    // with 'claude-' (started with 'anthropic') → returned false → silent
+    // subagent-guard bypass → fall back to TIER_DEFAULTS.subagent without
+    // honoring the user's explicit slash-form config.
+    expect(isAnthropicProvider('anthropic/claude-sonnet-4-6')).toBe(true);
+    expect(isAnthropicProvider('anthropic/claude-opus-4-7')).toBe(true);
+    // Non-Anthropic slash forms STILL return false (don't accidentally
+    // widen the guard).
+    expect(isAnthropicProvider('openai/gpt-5')).toBe(false);
+    expect(isAnthropicProvider('google/gemini-3-pro')).toBe(false);
+  });
+
   test('alias-chain conflict: forward + reverse for same id (Codex F6)', async () => {
     // Codex F6: if both forward and reverse aliases exist, depth cap (2)
     // prevents infinite loop. Canonicalization is deterministic — terminates

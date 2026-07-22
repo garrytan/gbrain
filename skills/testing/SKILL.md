@@ -57,6 +57,8 @@ This mode guarantees:
 - `skills/manifest.json` lists every skill directory
 - `skills/RESOLVER.md` references every skill in the manifest
 - `openclaw.plugin.json` `skills[]` round-trips with both
+- `openclaw.plugin.json` keeps OpenClaw install-required native plugin fields
+  (`id`, object `configSchema`, and `contracts.contextEngines` when applicable)
 - No MECE violations (duplicate triggers across skills)
 
 ### Phases
@@ -72,7 +74,7 @@ This mode guarantees:
 ### Automation
 
 ```bash
-bun test test/skills-conformance.test.ts test/resolver.test.ts
+bun test test/skills-conformance.test.ts test/resolver.test.ts test/openclaw-plugin-manifest.test.ts
 ```
 
 The CI-gated check is the package.json `test` script.

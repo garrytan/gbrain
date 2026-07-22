@@ -96,6 +96,11 @@ fi
 # against recipes/ all reference the banned name by necessity.
 ALLOW_LIST=(
   'scripts/check-privacy.sh'
+  # v0.41.16.0: sibling rule-enforcement script for test/fixtures/
+  # conversation-formats/. Same meta-exception as check-privacy.sh
+  # itself — the script's BANNED_TOKENS array literally names the
+  # tokens it forbids.
+  'scripts/check-fixture-privacy.sh'
   'CLAUDE.md'
   'llms-full.txt'
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md'
