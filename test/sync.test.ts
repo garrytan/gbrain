@@ -1004,3 +1004,117 @@ describe('v0.42.52.0: 0-changes sync bumps last_sync_at heartbeat (D4 invariant 
     expect(lastCommitRows[0]?.last_commit).toEqual(lastCommit);
   });
 });
+
+describe('#1430: failed git pull suppresses last_sync_at freshness', () => {
+  let engine: PGLiteEngine;
+  const repos: string[] = [];
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  afterEach(() => {
+    while (repos.length) {
+      const d = repos.pop();
+      if (d) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  function personMd(title: string, body: string): string {
+    return ['---', 'type: person', `title: ${title}`, '---', '', body].join('\n');
+  }
+
+  function mkRepo(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-pullfail-'));
+    repos.push(dir);
+    execSync('git init', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: dir, stdio: 'pipe' });
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(join(dir, rel, '..'), { recursive: true });
+      writeFileSync(join(dir, rel), content);
+    }
+    execSync('git add -A && git commit -m "initial"', { cwd: dir, stdio: 'pipe' });
+    return dir;
+  }
+
+  const BASE_OPTS = { noEmbed: true, noExtract: true, sourceId: 'default' } as const;
+
+  async function sourceRow(): Promise<{ last_sync_at: string | null; last_commit: string | null }> {
+    const rows = await engine.executeRaw<{ last_sync_at: string | null; last_commit: string | null }>(
+      `SELECT last_sync_at, last_commit FROM sources WHERE id = 'default'`,
+    );
+    return rows[0] ?? { last_sync_at: null, last_commit: null };
+  }
+
+  test('up_to_date sync with a failed pull does NOT advance last_sync_at', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    // Origin points nowhere so a pull is ATTEMPTED and FAILS (non-timeout).
+    execSync('git remote add origin /nonexistent/repo.git', { cwd: repo, stdio: 'pipe' });
+
+    // Seed with --no-pull so the first sync succeeds and stamps freshness.
+    await performSync(engine, { repoPath: repo, ...BASE_OPTS, noPull: true });
+    const before = await sourceRow();
+    expect(before.last_sync_at).not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // Pull attempted (no noPull) → fails → up_to_date heartbeat suppressed.
+    const result = await performSync(engine, { repoPath: repo, ...BASE_OPTS });
+    expect(result.status).toBe('up_to_date');
+    const after = await sourceRow();
+    expect(after.last_sync_at).toEqual(before.last_sync_at);
+  });
+
+  test('incremental sync with a failed pull advances last_commit but NOT last_sync_at', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    execSync('git remote add origin /nonexistent/repo.git', { cwd: repo, stdio: 'pipe' });
+
+    await performSync(engine, { repoPath: repo, ...BASE_OPTS, noPull: true });
+    const before = await sourceRow();
+    expect(before.last_sync_at).not.toBeNull();
+
+    // Local commit so the next sync takes the incremental import path.
+    writeFileSync(join(repo, 'people/bob.md'), personMd('Bob', 'Bob is a person.'));
+    execSync('git add -A && git commit -m "add bob"', { cwd: repo, stdio: 'pipe' });
+    const newHead = execSync('git rev-parse HEAD', { cwd: repo, encoding: 'utf-8' }).trim();
+
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const result = await performSync(engine, { repoPath: repo, ...BASE_OPTS });
+    expect(result.status).toBe('synced');
+    const after = await sourceRow();
+    // Local import converged: bookmark advances. Remote never observed:
+    // freshness does not.
+    expect(after.last_commit).toBe(newHead);
+    expect(after.last_sync_at).toEqual(before.last_sync_at);
+  });
+
+  test('dry-run on an up-to-date source does NOT advance last_sync_at', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+
+    await performSync(engine, { repoPath: repo, ...BASE_OPTS, noPull: true });
+    const before = await sourceRow();
+    expect(before.last_sync_at).not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const result = await performSync(engine, { repoPath: repo, ...BASE_OPTS, noPull: true, dryRun: true });
+    expect(result.status).toBe('up_to_date');
+    const after = await sourceRow();
+    expect(after.last_sync_at).toEqual(before.last_sync_at);
+  });
+});

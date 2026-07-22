@@ -474,7 +474,11 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   const entries: ExtractedTimelineEntry[] = [];
 
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
+  // The separator is an em/en dash (optionally spaced, as before) OR a plain
+  // hyphen that MUST be surrounded by whitespace. A bare `-` with `\s*` on
+  // both sides split hyphenated slugs mid-word (`acme-consulting-group` →
+  // source "acme"), mangling timelines on every extract pass (#1341).
+  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)(?:\s*[—–]\s*|\s+-\s+)(.+)$/gm;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
     entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });

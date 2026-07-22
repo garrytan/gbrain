@@ -1096,7 +1096,10 @@ export function configDir(): string {
     }
     return join(trimmed, '.gbrain');
   }
-  return join(homedir(), '.gbrain');
+  // Prefer $HOME over os.homedir(): Bun caches homedir()'s initial value and
+  // ignores later process.env.HOME mutations, which breaks test isolation and
+  // any workflow that runs against a specific $HOME (CI, scripted installs).
+  return join(process.env.HOME || homedir(), '.gbrain');
 }
 
 export function configPath(): string {

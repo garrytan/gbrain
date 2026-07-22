@@ -1245,22 +1245,31 @@ async function writeSyncAnchor(
   // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
   // the legacy 2-column write; `null` clears the column (git unavailable).
   newestContentEpochMs?: number | null,
+  // #1430: when the upstream pull was attempted and FAILED this run, advance
+  // last_commit (the local import still converged) but do NOT stamp
+  // last_sync_at — doctor's sync_freshness must not read the source as
+  // "fresh" when we never observed remote state (network partition, revoked
+  // credentials, diverged remote). Operator-skipped offline modes (--no-pull,
+  // detached HEAD, no origin) are NOT failures and pass false.
+  pullFailed = false,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
-    // last_sync_at bookmarked on every last_commit advance.
+    // last_sync_at bookmarked on every last_commit advance — unless the pull
+    // failed this run (#1430).
     if (which === 'last_commit') {
+      const syncAt = pullFailed ? '' : ', last_sync_at = now()';
       if (newestContentEpochMs !== undefined) {
         const iso = newestContentEpochMs === null
           ? null
           : new Date(newestContentEpochMs).toISOString();
         await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+          `UPDATE sources SET last_commit = $1${syncAt}, newest_content_at = $3 WHERE id = $2`,
           [value, sourceId, iso],
         );
       } else {
         await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+          `UPDATE sources SET last_commit = $1${syncAt} WHERE id = $2`,
           [value, sourceId],
         );
       }
@@ -1948,6 +1957,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     });
   }
 
+  // #1430: distinguishes a true pull FAILURE (network/credentials/diverged)
+  // from operator-skipped offline modes. Only a real failure suppresses the
+  // last_sync_at freshness stamp on the anchor writes below; the pull_timeout
+  // path early-returns a partial before any anchor write.
+  let pullAttemptedAndFailed = false;
+
   if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     serr(`[gbrain phase] sync.git_pull start`);
@@ -1995,6 +2010,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       } else {
         serr(`Warning: git pull failed: ${msg.slice(0, 100)}`);
       }
+      pullAttemptedAndFailed = true; // #1430: suppress last_sync_at below
     }
   }
 
@@ -2077,7 +2093,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // back to the authoritative full reconcile (which now also purges stale
       // pages for deleted files; see performFullSync's delete-reconcile pass).
       serr(`Sync anchor ${lastCommit.slice(0, 8)} object missing (gc'd after history rewrite). Running full reimport.`);
-      return performFullSync(engine, fullSyncRoots, headCommit, opts);
+      return performFullSync(engine, fullSyncRoots, headCommit, opts, pullAttemptedAndFailed);
     }
 
     // Observability only — NOT control flow. A non-ancestor bookmark is still
@@ -2100,7 +2116,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // First sync
   if (!lastCommit) {
-    return performFullSync(engine, fullSyncRoots, headCommit, opts);
+    return performFullSync(engine, fullSyncRoots, headCommit, opts, pullAttemptedAndFailed);
   }
 
   // v0.42.x (#1794): resumable incremental sync — resolve the PINNED target.
@@ -2170,7 +2186,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // reads it), separate from the import-converged bookmark. Without this,
     // a cron-driven `*/15 sync` over a quiet vault leaves last_sync_at pinned
     // to the last real commit, so doctor falsely flags the source as stale.
-    if (opts.sourceId) {
+    // #1430: suppress the heartbeat when the pull was attempted and FAILED —
+    // we never observed remote state, so stamping freshness would mask the
+    // failure. `!opts.dryRun`: a preview must never write.
+    if (opts.sourceId && !pullAttemptedAndFailed && !opts.dryRun) {
       await engine.executeRaw(
         `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
         [opts.sourceId],
@@ -2192,7 +2211,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `[sync] chunker_version gate: stored=${storedVersion ?? 'unset'}, current=${currentVersion}. ` +
       `Forcing full re-chunk pass (git HEAD unchanged but pipeline version advanced).`,
     );
-    const result = await performFullSync(engine, fullSyncRoots, headCommit, opts);
+    const result = await performFullSync(engine, fullSyncRoots, headCommit, opts, pullAttemptedAndFailed);
     await writeChunkerVersion(engine, opts.sourceId, currentVersion);
     return result;
   }
@@ -2221,7 +2240,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `[sync] delta ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} unavailable ` +
       `(${delta.reason}) — falling back to full reconcile.`,
     );
-    return performFullSync(engine, fullSyncRoots, headCommit, opts);
+    return performFullSync(engine, fullSyncRoots, headCommit, opts, pullAttemptedAndFailed);
   }
   const manifest = delta.manifest;
 
@@ -2352,7 +2371,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
     // completes cleanly here).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), pullAttemptedAndFailed);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
@@ -3175,7 +3194,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // "fresh". The checkpoint rows clear here — CONVERGENCE CONTRACT: sync
     // convergence == IMPORT convergence; downstream extract/facts/embed is
     // decoupled (its own resumable stale sweeps).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), pullAttemptedAndFailed);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
@@ -3413,6 +3432,9 @@ async function performFullSync(
   roots: { gitContextRoot: string; syncScopeRoot: string; anchorPath: string },
   headCommit: string,
   opts: SyncOpts,
+  // #1430: a full reimport triggered after a failed pull still must not mark
+  // the source "fresh" — threaded into the last_commit anchor write.
+  pullFailed = false,
 ): Promise<SyncResult> {
   const { gitContextRoot, syncScopeRoot, anchorPath } = roots;
   // Scoped sync → slugs/source_path are git-root-relative (matches the
@@ -3500,7 +3522,7 @@ async function performFullSync(
   const advanceFull = async (): Promise<void> => {
     // Persist sync state so the next sync is incremental. Routed through
     // writeSyncAnchor so --source pins the right sources row.
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot), pullFailed);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));

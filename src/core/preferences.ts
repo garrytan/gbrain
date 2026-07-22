@@ -9,40 +9,22 @@
  */
 
 import { readFileSync, writeFileSync, renameSync, chmodSync, mkdtempSync, rmSync, existsSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-
-function home(): string {
-  // `os.homedir()` in Bun caches its initial value and ignores later
-  // `process.env.HOME` mutations, which breaks test isolation and any
-  // workflow that needs to run against a specific $HOME (CI, scripted installs).
-  // Prefer the env var; fall back to the cached OS value. Matches the existing
-  // `src/commands/upgrade.ts` pattern.
-  //
-  // NOTE: prefsDir() and migrationsDir() route through gbrainPath() (which
-  // honors GBRAIN_HOME), so this fallback is only used by code paths that
-  // want $HOME directly (none in this file as of v0.30.3).
-  return process.env.HOME || homedir();
-}
+import { join, dirname } from 'path';
+import { configDir } from './config.ts';
 
 /**
- * GBRAIN_HOME-aware override for the .gbrain directory. When the env var
- * is set, this returns it directly (so the directory is GBRAIN_HOME itself,
- * matching the convention `src/core/config.ts:gbrainPath` enforces).
- * When unset, falls back to `<home>/.gbrain` so legacy callers and the
- * doctor's filesystem-only checks keep working.
- *
- * Without this, `~/.gbrain/migrations/completed.jsonl` is the only path
- * doctor reads on filesystem checks — the test isolation contract that
- * `gbrainPath()` provides for everywhere else doesn't extend here.
+ * GBRAIN_HOME-aware override for the .gbrain directory. Delegates to
+ * `configDir()` so the GBRAIN_HOME contract is defined in exactly one
+ * place — pre-this-fix, this helper diverged from `configDir()` by
+ * returning `GBRAIN_HOME` directly instead of `GBRAIN_HOME/.gbrain`,
+ * which meant `~/.gbrain/migrations/completed.jsonl` (read by doctor)
+ * and `~/.gbrain/config.json` (read by loadConfig) lived in different
+ * directories whenever a test or operator set GBRAIN_HOME. The
+ * documented convention is "GBRAIN_HOME is a parent dir; we append
+ * `.gbrain`" — see configDir() docstring in src/core/config.ts.
  */
 function gbrainDir(): string {
-  const override = process.env.GBRAIN_HOME;
-  if (override) {
-    const trimmed = override.trim();
-    if (trimmed) return trimmed;
-  }
-  return join(home(), '.gbrain');
+  return configDir();
 }
 
 export type MinionMode = 'always' | 'pain_triggered' | 'off';
@@ -84,9 +66,38 @@ const VALID_MODES: ReadonlyArray<MinionMode> = ['always', 'pain_triggered', 'off
 // `$HOME/.gbrain` directly, which leaked the developer's local migration
 // ledger into E2E tests and CI runs even when GBRAIN_HOME was set.
 function prefsDir(): string { return gbrainDir(); }
-function prefsPath(): string { return join(prefsDir(), 'preferences.json'); }
+function prefsPath(): string {
+  const p = join(prefsDir(), 'preferences.json');
+  adoptLegacyFile(p, 'preferences.json');
+  return p;
+}
 function migrationsDir(): string { return join(gbrainDir(), 'migrations'); }
-function completedJsonlPath(): string { return join(migrationsDir(), 'completed.jsonl'); }
+function completedJsonlPath(): string {
+  const p = join(migrationsDir(), 'completed.jsonl');
+  adoptLegacyFile(p, 'migrations', 'completed.jsonl');
+  return p;
+}
+
+/**
+ * One-time legacy-path adoption. Before the gbrainDir()→configDir()
+ * unification, this module wrote preferences.json + migrations/completed.jsonl
+ * to `$GBRAIN_HOME/...` directly (no `.gbrain` suffix) whenever GBRAIN_HOME
+ * was set. Silently switching the read path would orphan an existing
+ * preferences file and — worse — an existing migration ledger, making every
+ * completed migration look pending again. So on first access after upgrade,
+ * move the legacy file into the new location. Best-effort: a failed move
+ * falls back to a fresh file (the pre-fix behavior for the new path).
+ */
+function adoptLegacyFile(newPath: string, ...legacySegments: string[]): void {
+  const override = process.env.GBRAIN_HOME?.trim();
+  if (!override) return; // GBRAIN_HOME unset → legacy and new paths were identical
+  const legacyPath = join(override, ...legacySegments);
+  if (legacyPath === newPath || existsSync(newPath) || !existsSync(legacyPath)) return;
+  try {
+    mkdirSync(dirname(newPath), { recursive: true });
+    renameSync(legacyPath, newPath);
+  } catch { /* best-effort */ }
+}
 
 /** Validate that a value is a recognized minion mode. Throws with the allowed list. */
 export function validateMinionMode(value: unknown): asserts value is MinionMode {
