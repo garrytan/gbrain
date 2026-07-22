@@ -662,6 +662,22 @@ describe('runCycle — multi-source sync (#1079)', () => {
     expect(syncCalls.map(c => c.sourceId)).toEqual(['wiki', undefined]);
   });
 
+  test('inline extract stays ON for non-brainDir targets when extract phase is scheduled', async () => {
+    // The cycle's extract phase walks brainDir only (runPhaseExtract), so
+    // dedupe (noExtract: true) is only valid for the brainDir target.
+    // Other sources' checkouts are invisible to the extract phase — their
+    // sync must keep inline extract or links/timeline are never extracted.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES
+        ('wiki', 'wiki', '/tmp/brain-1079-i'),
+        ('code', 'code', '/tmp/brain-1079-j')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-1079-i', phases: ['sync', 'extract'] });
+    const byId = new Map(syncCalls.map(c => [c.sourceId, c.noExtract]));
+    expect(byId.get('wiki')).toBe(true);  // covered by the extract phase — dedupe
+    expect(byId.get('code')).toBe(false); // NOT covered — inline extract must run
+  });
+
   test('explicit --source keeps the cycle single-source (#1503)', async () => {
     await (sharedEngine as any).db.query(
       `INSERT INTO sources (id, name, local_path) VALUES

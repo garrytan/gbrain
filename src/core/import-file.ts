@@ -1078,10 +1078,17 @@ export async function importCodeFile(
   // previously-imported file BECAME empty, delete the stale page (chunks
   // cascade) so it doesn't ghost in search — mirrors the markdown importer's
   // empty-content branch, which deletes stale chunks.
+  //
+  // NO `error` on the result: sync treats skipped-with-error as a parse
+  // failure (sync.ts pushes it into failedFiles → applySyncFailureGate
+  // BLOCKS last_commit on fresh failures). Empty files are benign and
+  // common (`__init__.py`, barrel stubs) — they must skip like the
+  // content-hash short-circuit (banked/checkpointed, never ledgered),
+  // not block the bookmark.
   if (byteLength === 0) {
     const stale = await engine.getPage(slug, txOpts);
     if (stale) await engine.deletePage(slug, txOpts);
-    return { slug, status: 'skipped', chunks: 0, error: 'empty code file' };
+    return { slug, status: 'skipped', chunks: 0 };
   }
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the

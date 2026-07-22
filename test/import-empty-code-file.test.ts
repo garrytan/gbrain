@@ -5,7 +5,7 @@
  * compiled_truth, which then failed every subsequent `gbrain reindex-code`
  * pass with `missing compiled_truth`. Empty files are legitimate in real
  * repos (stub/placeholder files committed during refactors); the importer
- * skips them the same way it skips files over MAX_FILE_SIZE — and when a
+ * skips them the same way it skips unchanged content (benign, no error) — and when a
  * previously-imported file BECOMES empty, the stale page is deleted (chunks
  * cascade) instead of ghosting in search, mirroring the markdown importer's
  * empty-content branch.
@@ -33,7 +33,11 @@ describe('importCodeFile — empty file guard (#840)', () => {
 
     expect(result.status).toBe('skipped');
     expect(result.chunks).toBe(0);
-    expect(result.error).toBe('empty code file');
+    // NO error on the result: sync treats skipped-with-error as a parse
+    // failure and applySyncFailureGate would BLOCK last_commit on any repo
+    // containing an empty file. Empty files skip like the content-hash
+    // short-circuit — benign, banked, never ledgered.
+    expect(result.error).toBeUndefined();
 
     // The skip must short-circuit before any page row is written, otherwise
     // reindex-code will still trip on the missing compiled_truth.
@@ -48,7 +52,7 @@ describe('importCodeFile — empty file guard (#840)', () => {
 
     const second = await importCodeFile(engine, 'src/becomes-empty.ts', '', { noEmbed: true });
     expect(second.status).toBe('skipped');
-    expect(second.error).toBe('empty code file');
+    expect(second.error).toBeUndefined(); // benign skip — must not enter the sync failure ledger
 
     // Stale page (and its chunks, via FK cascade) must be gone.
     expect(await engine.getPage(first.slug)).toBeNull();

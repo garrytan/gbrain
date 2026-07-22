@@ -978,10 +978,17 @@ async function runPhaseSync(
           sourceId: t.sourceId,
           dryRun,
           noPull: !pull,
-          noEmbed: true,                       // embed is a separate phase
-          noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
-                                               // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
-                                               // sync's inline extract still runs to preserve prior behavior.
+          noEmbed: true,                       // embed is a separate phase (runEmbedCore --stale is brain-wide,
+                                               // so it covers every target here)
+          // Dedupe inline extract ONLY for the target the cycle's extract
+          // phase will actually cover: extract walks brainDir under
+          // cycleSourceId (runPhaseExtract), so slugs synced from OTHER
+          // checkouts are invisible to it — disabling their inline extract
+          // would silently drop link/timeline extraction for every
+          // non-brainDir source. If extract isn't scheduled at all (e.g.
+          // `gbrain dream --phase sync`), inline extract runs everywhere
+          // to preserve prior behavior.
+          noExtract: willRunExtractPhase && t.repoPath === brainDir,
         });
         synced++;
         added += result.added;
