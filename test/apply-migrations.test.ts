@@ -210,8 +210,11 @@ describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
   test('source contains process.exit(0) on list/dry-run/up-to-date branches', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
-    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed\);\s*process\.exit\(0\);/);
-    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed\);\s*process\.exit\(0\);/);
+    // #2646: the list/dry-run blocks may print a drift-repair notice
+    // between the plan print and the exit — the invariant is that each
+    // block still terminates with process.exit(0).
+    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed\);[\s\S]{0,800}?process\.exit\(0\);/);
+    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed\);[\s\S]{0,800}?process\.exit\(0\);/);
     expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
   });
 });

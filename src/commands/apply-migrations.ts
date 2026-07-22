@@ -16,6 +16,7 @@ import { VERSION } from '../version.ts';
 import { loadConfig } from '../core/config.ts';
 import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
 import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
+import { v0_32_2, detectV0_32_2Drift } from './migrations/v0_32_2.ts';
 
 /** Bug 3 — max consecutive partials before we wedge a migration. */
 const MAX_CONSECUTIVE_PARTIALS = 3;
@@ -397,6 +398,24 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   const idx = indexCompleted(completed);
   const plan = buildPlan(idx, installed, cli.specificMigration);
 
+  // ── Targeted drift-repair lane (#2646) ─────────────────────────
+  // "v0.32.2 complete" is a statement about the ledger, not a permanent
+  // DB post-condition: a lingering pre-fence writer can insert
+  // v0.31-shape rows AFTER the backfill completed. Those rows trip the
+  // extract_facts legacy-row guard forever, and the completed marker
+  // means a normal run no-ops. When the migration is complete AND
+  // active legacy rows exist, re-run the v0_32_2 orchestrator as a
+  // REPAIR. The ledger is never touched: completion and drift are
+  // different concepts. Detection is best-effort (null = unreachable
+  // DB / no override) and scoped to runs that would consider v0.32.2
+  // at all (no --migration filter pointing elsewhere).
+  let v0_32_2RepairDrift = 0;
+  const considers0322 = !cli.specificMigration || cli.specificMigration === '0.32.2';
+  if (considers0322 && statusForVersion('0.32.2', idx) === 'complete') {
+    const drift = await detectV0_32_2Drift();
+    if (drift !== null && drift > 0) v0_32_2RepairDrift = drift;
+  }
+
   // Bug 3 — surface wedged migrations as a loud, actionable error.
   if (plan.wedged.length > 0) {
     for (const m of plan.wedged) {
@@ -415,13 +434,35 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if (cli.list) { printList(plan, installed); process.exit(0); }
-  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
+  if (cli.list) {
+    printList(plan, installed);
+    if (v0_32_2RepairDrift > 0) {
+      console.log(
+        `\nDrift repair needed: v0.32.2 is applied, but ${v0_32_2RepairDrift} active legacy ` +
+        `fact row(s) postdate the backfill (a pre-fence writer inserted them after the ` +
+        `migration ran). Run \`gbrain apply-migrations --yes\` to repair.`,
+      );
+    }
+    process.exit(0);
+  }
+  if (cli.dryRun) {
+    printDryRun(plan, installed);
+    if (v0_32_2RepairDrift > 0) {
+      console.log(
+        `Would REPAIR: v0.32.2 backfill drift — ${v0_32_2RepairDrift} active legacy fact ` +
+        `row(s) postdate the completed migration (ledger marker stays untouched).`,
+      );
+    }
+    process.exit(0);
+  }
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
-  if (toRun.length === 0) {
+  if (toRun.length === 0 && v0_32_2RepairDrift === 0) {
     console.log('All migrations up to date.');
     process.exit(0);
+  }
+  if (toRun.length === 0) {
+    console.log('All migrations applied; running v0.32.2 drift repair only.');
   }
 
   // Run each orchestrator in registry order. An orchestrator failure aborts
@@ -499,6 +540,46 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       } catch { /* swallow ledger-write failure on throw path */ }
       failed = true;
       break;
+    }
+  }
+
+  // ── Run the v0.32.2 drift repair (#2646) ───────────────────────
+  // After the normal chain so a pending/partial v0.32.2 run (which
+  // does the same work and DOES own the ledger) always wins. The
+  // repair reuses the orchestrator verbatim — phase B is idempotent
+  // and active-only — but never writes the ledger: the migration
+  // stays 'complete' throughout; only the DB post-condition is being
+  // re-established. A repair that leaves rows behind (dirty tree,
+  // missing local_path, interruption) just reports the remainder —
+  // the next run picks it up from the drift check.
+  if (!failed && v0_32_2RepairDrift > 0) {
+    console.log(
+      `\n=== Repairing v0.32.2 backfill drift: ${v0_32_2RepairDrift} active legacy ` +
+      `fact row(s) postdate the completed migration ===`,
+    );
+    try {
+      const result = await v0_32_2.orchestrator(orchestratorOptsFrom(cli));
+      if (result.status === 'failed') {
+        console.error('v0.32.2 drift repair reported status=failed. Fix the reported phase and re-run.');
+        failed = true;
+      } else {
+        const remaining = await detectV0_32_2Drift();
+        if (remaining !== null && remaining > 0) {
+          console.log(
+            `Drift repair finished with ${remaining} active legacy row(s) still pending ` +
+            `(see the fence_facts detail — e.g. skipped_no_local_path). Progress is ` +
+            `preserved; re-run \`gbrain apply-migrations --yes\` after resolving.`,
+          );
+        } else {
+          console.log(
+            'Drift repair complete: no active legacy rows remain. ' +
+            'The extract_facts guard will release on the next cycle.',
+          );
+        }
+      }
+    } catch (e) {
+      console.error(`v0.32.2 drift repair threw: ${e instanceof Error ? e.message : String(e)}`);
+      failed = true;
     }
   }
 
