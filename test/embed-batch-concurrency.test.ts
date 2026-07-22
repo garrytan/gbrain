@@ -24,6 +24,7 @@ import {
   __setEmbedTransportForTests,
 } from '../src/core/ai/gateway.ts';
 import { embedBatch } from '../src/core/embedding.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const DIMS = 1536;
 
@@ -69,7 +70,6 @@ describe('embedBatch bounded parallelism (#1818)', () => {
   });
   afterEach(() => {
     __setEmbedTransportForTests(null);
-    delete process.env.GBRAIN_EMBED_BATCH_CONCURRENCY;
   });
 
   test('default pool dispatches sub-batches in parallel, order preserved', async () => {
@@ -92,9 +92,10 @@ describe('embedBatch bounded parallelism (#1818)', () => {
   });
 
   test('GBRAIN_EMBED_BATCH_CONCURRENCY env bounds the pool when option unset', async () => {
-    process.env.GBRAIN_EMBED_BATCH_CONCURRENCY = '2';
     const tracker = installTrackingTransport();
-    await embedBatch(texts, { onBatchComplete: () => {} });
+    await withEnv({ GBRAIN_EMBED_BATCH_CONCURRENCY: '2' }, async () => {
+      await embedBatch(texts, { onBatchComplete: () => {} });
+    });
     expect(tracker.maxInFlight()).toBeGreaterThan(1);
     expect(tracker.maxInFlight()).toBeLessThanOrEqual(2);
   });
