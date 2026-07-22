@@ -19,7 +19,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
-import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.ts';
+import { runGather, renderPagesBlock, takesHitToTakeForPrompt, envInt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
@@ -160,9 +160,15 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
 const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
 export function maxOutputTokensFor(modelStr: string): number {
-  return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
-    ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
-    : DEFAULT_MAX_OUTPUT_TOKENS;
+  // GBRAIN_THINK_MAX_OUTPUT_TOKENS overrides both defaults: conflict-dense
+  // syntheses (e.g. drift probes over a brain with many divergent sources)
+  // can truncate mid-JSON at 4000 — raise the cap per-install (#2479).
+  return envInt(
+    'GBRAIN_THINK_MAX_OUTPUT_TOKENS',
+    THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+      ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
+      : DEFAULT_MAX_OUTPUT_TOKENS,
+  );
 }
 
 function inferIntent(question: string, anchor?: string): string {

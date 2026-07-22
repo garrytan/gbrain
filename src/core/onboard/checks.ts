@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
+import { loadConfig } from '../config.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -393,7 +394,10 @@ export async function checkPackUpgradeAvailable(
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* engine.config may not exist on very old brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    // Pass the file-plane config (tier 6) so a schema_pack written by
+    // `gbrain schema use` to ~/.gbrain/config.json resolves here; cfg:null
+    // silently fell back to the default pack (#2469).
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
       .catch(() => null);
     if (!active) {
       return {
@@ -467,7 +471,9 @@ export async function checkTypeProliferation(
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* tolerate pre-config brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    // File-plane config (tier 6) so `gbrain schema use` selections resolve
+    // instead of always falling back to the default pack (#2469).
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
       .catch(() => null);
     if (active) declared = active.manifest.page_types.length;
   } catch {

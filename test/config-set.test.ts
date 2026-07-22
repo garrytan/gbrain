@@ -30,6 +30,17 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('contains the cycle_freshness tuning keys (#2505)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.warn_hours');
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.fail_hours');
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.source_allowlist');
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.source_ignorelist');
+  });
+
+  test('contains schema_pack (#2469 — `gbrain config set schema_pack` is a known key)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('schema_pack');
+  });
+
   test('contains the dream synthesize timeout keys (#1594)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_timeout_ms');
     expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_wait_timeout_ms');
