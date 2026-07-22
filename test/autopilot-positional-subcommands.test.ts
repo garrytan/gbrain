@@ -67,6 +67,20 @@ describe('translatePositionalSubcommands — flag/positional interleaving', () =
     if (r.ok) expect(r.args).toEqual(['--interval', '300', '--install']);
   });
 
+  test('`--install --target linux-cron` does not mis-classify the target as positional', () => {
+    // --target is installDaemon's value flag; its value must never be read
+    // as a positional subcommand (regression guard for the review fix).
+    const r = translatePositionalSubcommands(['--install', '--target', 'linux-cron']);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args).toEqual(['--install', '--target', 'linux-cron']);
+  });
+
+  test('`install --target macos` keeps the alias translation and the target value', () => {
+    const r = translatePositionalSubcommands(['install', '--target', 'macos']);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args).toEqual(['--install', '--target', 'macos']);
+  });
+
   test('value-flag at end of argv with missing value passes through (so parseArg can report it)', () => {
     const r = translatePositionalSubcommands(['--repo']);
     expect(r.ok).toBe(true);

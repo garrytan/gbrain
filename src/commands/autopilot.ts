@@ -172,7 +172,10 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
  *     the unknown-positional error with the canonical alternatives.
  *   - At most one positional allowed; multiple positionals fail loud.
  */
-const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval']);
+// Every flag that consumes the NEXT argv token. Missing one here makes the
+// translator misread the flag's value as a positional subcommand and exit 2
+// (e.g. `--install --target linux-cron`). Keep in sync with parseArg call sites.
+const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target']);
 const AUTOPILOT_POSITIONAL_ALIASES: Record<string, string | null> = {
   status: '--status',
   install: '--install',
