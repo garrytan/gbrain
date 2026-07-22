@@ -12,7 +12,7 @@
  * insufficient against a wedged provider), and that a shared/elapsed deadline
  * makes a second embed fail FAST (worst case ~one timeout, not two).
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -93,21 +93,24 @@ describe('embedQueryBounded — query-embed deadline', () => {
 describe('hybridSearch meta.degraded_reason (#2028)', () => {
   let engine: import('../../src/core/pglite-engine.ts').PGLiteEngine;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    await engine.putPage('notes/hello', {
+      type: 'note' as any,
+      title: 'hello',
+      compiled_truth: 'hello world content',
+      timeline: '',
+      frontmatter: {},
+    });
+  });
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+  beforeEach(() => {
     resetGateway();
-    if (!engine) {
-      const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
-      engine = new PGLiteEngine();
-      await engine.connect({});
-      await engine.initSchema();
-      await engine.putPage('notes/hello', {
-        type: 'note' as any,
-        title: 'hello',
-        compiled_truth: 'hello world content',
-        timeline: '',
-        frontmatter: {},
-      });
-    }
   });
   afterEach(async () => {
     __setEmbedTransportForTests(null);
