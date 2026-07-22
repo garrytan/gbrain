@@ -49,6 +49,7 @@ function makeFakeJobCtx(data: Record<string, unknown>): MinionJobContext {
     data,
     attempts_made: 1,
     signal: new AbortController().signal,
+    deadlineAtMs: null,
     shutdownSignal: new AbortController().signal,
     updateProgress: async () => {},
     updateTokens: async () => {},

@@ -15,6 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway } from '../src/core/ai/gateway.ts';
 import {
   detectRegressions,
   computeDriftScore,
@@ -26,6 +27,17 @@ import type { TrajectoryPoint } from '../src/core/engine.ts';
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // This file hardcodes 1536-d vectors (vecForMetric). initSchema sizes the
+  // facts halfvec column from the AMBIENT gateway state, and a beforeAll runs
+  // before the legacy-embedding-preload's per-test restore — so a preceding
+  // file in the shard that left the gateway reset or non-1536 would seed a
+  // 1280-d schema and every insert here would fail with a width mismatch.
+  // Pin the schema shape explicitly (the pattern bunfig's preload documents).
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();

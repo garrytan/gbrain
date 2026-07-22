@@ -310,7 +310,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   // do this after submission because each add() returns the committed
   // row's id; the aggregator's seed started with an empty array.
   await engine.executeRaw(
-    `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', $1::jsonb) WHERE id = $2`,
+    `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', $1::text::jsonb) WHERE id = $2`,
     [JSON.stringify(childIds), aggregator.id],
   );
 

@@ -29,6 +29,9 @@ import {
   isOpenAITextEmbedding3Model,
   isValidOpenAITextEmbedding3Dim,
   maxOpenAITextEmbedding3Dim,
+  nvidiaEmbeddingDim,
+  nvidiaEmbeddingDimOptions,
+  supportsNvidiaEmbeddingDimension,
 } from './ai/dims.ts';
 
 /**
@@ -366,7 +369,9 @@ function validateDimAgainstTouchpoint(
   dimsOptions: number[] | undefined,
   requestedDims: number | undefined,
 ): ResolveSchemaDimResult {
-  const dim = requestedDims ?? defaultDims;
+  const nvidiaNaturalDims = recipe.id === 'nvidia' ? nvidiaEmbeddingDim(modelId) : undefined;
+  const effectiveDefaultDims = nvidiaNaturalDims ?? defaultDims;
+  const dim = requestedDims ?? effectiveDefaultDims;
 
   if (!Number.isInteger(dim) || dim <= 0) {
     return {
@@ -396,7 +401,7 @@ function validateDimAgainstTouchpoint(
     dim,
     model: `${recipe.id}:${modelId}`,
     provider: recipe.id,
-    recipeDefault: defaultDims,
+    recipeDefault: effectiveDefaultDims,
   };
 }
 
@@ -411,6 +416,22 @@ function isCustomDimValidForProvider(
   requestedDims: number,
   dimsOptions: number[] | undefined,
 ): CustomDimCheck {
+  // NVIDIA models are mixed: some fixed-dim, one Matryoshka-style. Handle
+  // them before generic recipe dims_options so llama-nemotron can use 1280d.
+  if (recipe.id === 'nvidia') {
+    const naturalDims = nvidiaEmbeddingDim(modelId);
+    if (naturalDims !== undefined && requestedDims === naturalDims) return { valid: true, error: '' };
+    if (supportsNvidiaEmbeddingDimension(modelId, requestedDims)) return { valid: true, error: '' };
+    const options = nvidiaEmbeddingDimOptions(modelId);
+    return {
+      valid: false,
+      error:
+        `NVIDIA model "${modelId}" does not support dimensions ${requestedDims}. ` +
+        `Natural dimensions: ${naturalDims ?? 'unknown'}. ` +
+        (options ? `Supported overrides: ${options.join(', ')}.` : 'No dimension overrides are supported for this NVIDIA model.'),
+    };
+  }
+
   // Tier 1: recipe-declared dims_options.
   if (dimsOptions && dimsOptions.length > 0) {
     if (dimsOptions.includes(requestedDims)) return { valid: true, error: '' };
@@ -449,6 +470,18 @@ function isCustomDimValidForProvider(
       error:
         `OpenAI ${modelId} accepts dimensions 1..${maxDim}, got ${requestedDims}.`,
     };
+  }
+
+  // Passthrough tier (#2271): local / bring-your-own-backend recipes (ollama,
+  // llama-server, litellm) flag trust_custom_dims because the user knows their
+  // model's native dim and we can't enumerate every locally-pulled model. Trust
+  // the requested dim; the provider's /embeddings response-dim validation catches
+  // a genuine mismatch pre-storage. Runs AFTER Tier 1 (recipe dims_options) and
+  // Tier 2 (provider Matryoshka allowlists) so a recipe that DOES declare fixed
+  // options (e.g. openrouter) is still governed by those, and fixed-dim hosted
+  // providers (openai/voyage/zeroentropy) never reach here as valid.
+  if (recipe.touchpoints.embedding?.trust_custom_dims === true) {
+    return { valid: true, error: '' };
   }
 
   // Tier 3: provider not known to support custom dims at all.

@@ -90,6 +90,36 @@ describe('brain-commit-push.sh (D13 guarantee)', () => {
     } catch (e: any) { code = e.status ?? 1; }
     expect(code).toBe(2);
   });
+
+  test('#2426 — commits a MODIFIED tracked file even when the remote advanced (commit before pull)', () => {
+    // Pre-fix, the helper ran `git pull --rebase` BEFORE staging, so any dirty
+    // tree (a modified/enriched page — exactly the write-through case) aborted
+    // with 'cannot pull with rebase: You have unstaged changes' (exit 3). The
+    // helper could only ever commit untracked-NEW files, never modifications.
+    // Remove the post-commit hook so its background push can't race the
+    // helper's own push (macOS has no flock to serialize them) — this test
+    // targets the HELPER's ordering; hook behavior is covered below.
+    rmSync(join(work, '.git', 'hooks', 'post-commit'));
+    // Advance the remote from a second clone so a pull is genuinely needed.
+    const other = mkdtempSync(join(root, 'other-'));
+    execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, other], { stdio: 'ignore' });
+    git(other, 'config', 'user.email', 'o@o.o'); git(other, 'config', 'user.name', 'other');
+    writeFileSync(join(other, 'remote.md'), 'from other\n');
+    git(other, 'add', 'remote.md'); git(other, 'commit', '-qm', 'remote change'); git(other, 'push', '-q', 'origin', 'main');
+
+    // Dirty MODIFICATION of a tracked file in the hardened clone (write-through shape).
+    writeFileSync(join(work, 'README.md'), 'modified by write-through\n');
+    execFileSync('bash', [join(work, 'scripts', 'brain-commit-push.sh'), 'wt: README', 'README.md'], {
+      cwd: work, stdio: ['ignore', 'pipe', 'pipe'], env: process.env,
+    });
+
+    // Both the remote's commit and ours are on origin/main.
+    const subjects = git(bare, 'log', '--format=%s', 'main');
+    expect(subjects).toContain('wt: README');
+    expect(subjects).toContain('remote change');
+    // Working tree is clean — the modification was committed, not stranded.
+    expect(git(work, 'status', '--porcelain', 'README.md')).toBe('');
+  });
 });
 
 describe('post-commit hook (D9 local, D7 self-contained)', () => {
