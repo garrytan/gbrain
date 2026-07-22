@@ -14,9 +14,9 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
-const savedKey = process.env.OPENAI_API_KEY;
 
 const FIXTURE: Array<{ slug: string; type: string; title: string; body: string }> = [
   {
@@ -73,18 +73,18 @@ beforeAll(async () => {
       context: '',
     })),
   );
-  // Keyword-only path: no embedding provider.
-  delete process.env.OPENAI_API_KEY;
 }, 60_000);
 
 afterAll(async () => {
-  if (savedKey) process.env.OPENAI_API_KEY = savedKey;
   await engine.disconnect();
 });
 
 describe('exact-name page vs backlink-magnet concept page (#895)', () => {
   test('"Who is Zhang San" ranks people/zhangsan first, with finite scores', async () => {
-    const results = await hybridSearch(engine, 'Who is Zhang San', { limit: 5 });
+    // Keyword-only path: no embedding provider during the search call.
+    const results = await withEnv({ OPENAI_API_KEY: undefined }, () =>
+      hybridSearch(engine, 'Who is Zhang San', { limit: 5 }),
+    );
     expect(results.length).toBeGreaterThan(1);
     expect(results[0].slug).toBe('people/zhangsan');
     for (const r of results) {
