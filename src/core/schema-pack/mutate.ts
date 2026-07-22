@@ -93,7 +93,22 @@ export class SchemaPackMutationError extends Error {
   }
 }
 
-export const BUNDLED_PACK_NAMES = new Set(['gbrain-base', 'gbrain-recommended', 'gbrain-base-v2']);
+/**
+ * Single registry of bundled packs. Every entry ships a real YAML at
+ * src/core/schema-pack/base/<name>.yaml. load-active.ts's pack locator and
+ * the schema CLI both consume this set — add a new bundled pack HERE only.
+ */
+export const BUNDLED_PACK_NAMES = new Set([
+  'gbrain-base',
+  'gbrain-recommended',
+  // v0.41 T4 — lens packs: creator, investor, engineer, everything.
+  'gbrain-creator',
+  'gbrain-investor',
+  'gbrain-engineer',
+  'gbrain-everything',
+  // v0.42 type-unification: 15-type canonical successor to gbrain-base.
+  'gbrain-base-v2',
+]);
 
 export interface MutateResult {
   /** Pack name that was mutated. */

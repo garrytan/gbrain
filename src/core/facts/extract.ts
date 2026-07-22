@@ -173,16 +173,19 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   cleaned = cleaned.trim();
   if (!cleaned) return [];
 
-  if (!isAvailable('chat')) {
-    // No chat gateway → no extraction. Caller still inserts facts via direct
-    // `gbrain take add` paths.
-    return [];
-  }
-
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
   const maxTokens = await getFactsExtractionMaxTokens(input.engine);
   const model = input.model ?? defaultModel;
+
+  if (!isAvailable('chat', model)) {
+    // No chat gateway for the EFFECTIVE facts-extraction model → no
+    // extraction. Probing the global chat model here silently no-ops
+    // extraction whenever facts route through a different provider than
+    // chat (e.g. chat on Anthropic, facts on a private openai-compatible
+    // endpoint). Caller still inserts facts via direct `gbrain take add`.
+    return [];
+  }
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`

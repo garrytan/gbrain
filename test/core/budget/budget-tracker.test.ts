@@ -170,6 +170,37 @@ describe('BudgetTracker.reserve', () => {
     ).not.toThrow();
   });
 
+  test('non-Anthropic chat model under --max-cost prices via the canonical table (no no_pricing throw)', () => {
+    // Pre-fix: chat lookup consulted only ANTHROPIC_PRICING, so any
+    // openai:/google:/deepseek: chat model hit TX2 no_pricing BEFORE the
+    // provider call whenever a cost cap was set (takeover of #2127).
+    const t = new BudgetTracker({ maxCostUsd: 10.0, label: 'test', auditPath });
+    for (const modelId of ['openai:gpt-5', 'google:gemini-2.0-flash', 'deepseek:deepseek-chat']) {
+      expect(() =>
+        t.reserve({
+          modelId,
+          estimatedInputTokens: 100,
+          maxOutputTokens: 100,
+          kind: 'chat',
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  test('openrouter-prefixed chat model still TX2 no_pricing-fails under cap (canonical MISS contract)', () => {
+    // canonicalLookup intentionally misses openrouter:* ids (markup != native
+    // pricing); the budget gate must stay fail-closed for them.
+    const t = new BudgetTracker({ maxCostUsd: 10.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'openrouter:anthropic/claude-sonnet-4-6',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      }),
+    ).toThrow(BudgetExhausted);
+  });
+
   test('no cap + unknown pricing: warns once per process, no throw', () => {
     const t = new BudgetTracker({ label: 'test', auditPath });
     expect(() =>
