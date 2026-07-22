@@ -109,7 +109,13 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number; command?: string }) {
+  function writeHolder(fields: {
+    pid: number;
+    acquiredAgoMs: number;
+    refreshedAgoMs: number;
+    command?: string;
+    subcommand?: string;
+  }) {
     const lockDir = join(TEST_DIR, '.gbrain-lock');
     mkdirSync(lockDir, { recursive: true });
     const now = Date.now();
@@ -118,10 +124,29 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
       acquired_at: now - fields.acquiredAgoMs,
       refreshed_at: now - fields.refreshedAgoMs,
       command: fields.command ?? 'test holder',
+      ...(fields.subcommand === undefined ? {} : { subcommand: fields.subcommand }),
     }));
   }
 
-  test('a live gbrain serve owner fails fast with a clear process-conflict explanation', async () => {
+  test('a live gbrain serve owner with global flags fails fast with a clear explanation', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path with spaces/gbrain/src/cli.ts --quiet serve',
+      subcommand: 'serve',
+    });
+
+    const startedAt = Date.now();
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 5_000 })).rejects.toThrow(
+      /already open through `gbrain serve`.*Stop `gbrain serve`, then retry this CLI command.*use its MCP tools instead.*will not remove/s,
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('legacy serve lock metadata is still recognized', async () => {
     writeHolder({
       pid: process.pid,
       acquiredAgoMs: 60_000,
@@ -129,12 +154,22 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
       command: '/path/to/gbrain/src/cli.ts serve',
     });
 
-    const startedAt = Date.now();
     await expect(acquireLock(TEST_DIR, { timeoutMs: 5_000 })).rejects.toThrow(
-      /already open through `gbrain serve`.*separate CLI process cannot open it at the same time.*healthy lock; do not delete/s,
+      /already open through `gbrain serve`/,
     );
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
 
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  test('a search for the word serve is not mistaken for the MCP server', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/compiled/gbrain search serve',
+      subcommand: 'search',
+    });
+
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 100 })).rejects.toThrow(/Timed out/);
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 
@@ -144,6 +179,7 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
       acquiredAgoMs: 60_000,
       refreshedAgoMs: 0,
       command: '/path/to/gbrain/src/cli.ts serve',
+      subcommand: 'serve',
     });
 
     const lock = await acquireLock(TEST_DIR, { timeoutMs: 2_000 });

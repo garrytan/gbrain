@@ -16,6 +16,7 @@
 
 import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
+import { parseGlobalFlags } from './cli-options.ts';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
 const LOCK_FILE = 'lock';
@@ -26,12 +27,16 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 
 class LiveServeLockError extends Error {}
 
-function isServeCommand(command: unknown): boolean {
+function isServeCommand(lockData: { subcommand?: unknown; command?: unknown }): boolean {
+  // New lock files store the command after the same global-flag parsing used
+  // by cli.ts. This survives paths with spaces and forms such as
+  // `gbrain --quiet serve` without confusing `gbrain search serve`.
+  if (typeof lockData.subcommand === 'string') return lockData.subcommand === 'serve';
+
+  const command = lockData.command;
   if (typeof command !== 'string') return false;
   const parts = command.trim().split(/\s+/);
-  // Source runs store "<path>/cli.ts serve"; compiled runs may store just
-  // "serve". Only inspect the command position so a search for the word
-  // "serve" is not mistaken for the server itself.
+  // Backward compatibility for locks created before `subcommand` was stored.
   return parts[0] === 'serve' || parts[1] === 'serve';
 }
 
@@ -43,9 +48,9 @@ function isServeCommand(command: unknown): boolean {
 // Reaping it (the old #2058 grace window) let a second OS process open the same
 // data dir and corrupt the catalog + pgvector extension state (58P01 /
 // internal_load_library / `type "vector" does not exist`), recoverable only by
-// wipe+restore. Only a DEAD PID is reaped now; a wedged-but-alive or PID-reused
-// holder makes the acquire time out with a message naming the PID (the user
-// removes the lock explicitly) rather than risk corruption.
+// wipe+restore. Only a DEAD PID is reaped now. A live serve-tagged holder gets
+// the immediate process-conflict explanation below; other wedged-but-alive or
+// PID-reused holders time out. Neither path steals the lock.
 
 export interface LockHandle {
   lockDir: string;
@@ -156,12 +161,13 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
           // Holder process is gone — reap and try to acquire.
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
         } else {
-          if (isServeCommand(lockData.command)) {
+          if (isServeCommand(lockData)) {
             throw new LiveServeLockError(
               `GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${lockPid}). ` +
               `This brain uses PGLite, so a separate CLI process cannot open it at the same time. ` +
-              `Stop \`gbrain serve\` or use its MCP tools, then try again. ` +
-              `This is a healthy lock; do not delete ${lockDir}.`,
+              `Stop \`gbrain serve\`, then retry this CLI command. ` +
+              `Or keep it running and use its MCP tools instead. ` +
+              `A process with the recorded PID is still running, so GBrain will not remove ${lockDir} automatically.`,
             );
           }
           // Other live holders may be short-lived, so wait and retry. If one is
@@ -191,6 +197,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         acquired_at: now,
         refreshed_at: now,
         command: process.argv.slice(1).join(' '),
+        subcommand: parseGlobalFlags(process.argv.slice(2)).rest[0] ?? null,
       }), { mode: 0o644 });
 
       const ownerToken = tokenOf({ pid: process.pid, acquired_at: now });
