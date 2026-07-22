@@ -24,7 +24,6 @@ import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
-import { LINKABLE_EXCLUDE_LIKE, LINKABLE_EXCLUDE_EXACT, LINKABLE_EXCLUDE_FIRST_SEGMENTS } from './linkable-scope.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { getFtsLanguage } from './fts-language.ts';
 import type {
@@ -58,6 +57,8 @@ import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -2323,6 +2324,10 @@ export class PGLiteEngine implements BrainEngine {
     // v0.40.3.0 D24 NULL→non-NULL race fix mirrors postgres-engine.ts. Two writers
     // racing on the same chunk previously raced last-write-wins; the fix lets the
     // fresher `embedded_at` win in the text-unchanged branch.
+    //
+    // Code-chunk metadata columns follow the same chunk_text-gated CASE pattern as `embedding`
+    // (#769). Re-chunk trusts EXCLUDED outright; pure re-embed COALESCEs so a caller carrying
+    // only embedding-shaped fields doesn't clobber metadata to NULL.
     await this.db.query(
       `INSERT INTO content_chunks ${cols} VALUES ${rowParts.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
@@ -2346,14 +2351,14 @@ export class PGLiteEngine implements BrainEngine {
                 THEN EXCLUDED.embedded_at
            ELSE content_chunks.embedded_at
          END,
-         language = EXCLUDED.language,
-         symbol_name = EXCLUDED.symbol_name,
-         symbol_type = EXCLUDED.symbol_type,
-         start_line = EXCLUDED.start_line,
-         end_line = EXCLUDED.end_line,
-         parent_symbol_path = EXCLUDED.parent_symbol_path,
-         doc_comment = EXCLUDED.doc_comment,
-         symbol_name_qualified = EXCLUDED.symbol_name_qualified,
+         language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END,
+         symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END,
+         symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END,
+         start_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.start_line ELSE COALESCE(EXCLUDED.start_line, content_chunks.start_line) END,
+         end_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.end_line ELSE COALESCE(EXCLUDED.end_line, content_chunks.end_line) END,
+         parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END,
+         doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END,
+         symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END,
          modality = EXCLUDED.modality,
          embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`,
       params
@@ -5200,49 +5205,30 @@ export class PGLiteEngine implements BrainEngine {
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
-    // orphan_pages and timeline coverage are computed over LINKABLE pages
-    // (src/core/linkable-scope.ts) — the same scope the orphans audit uses —
-    // so brain_score and `gbrain orphans` / doctor's orphan_ratio cannot
-    // disagree on what counts. Archive (raw/), generated, and daily-log
-    // pages are not expected to participate in the curated graph.
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
-      ), linkable_pages AS (
-        SELECT id FROM pages
-        WHERE slug NOT LIKE ALL($1)
-          AND NOT (slug = ANY($2))
-          AND NOT (split_part(slug, '/', 1) = ANY($3))
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
-        (SELECT count(*) FROM linkable_pages) as linkable_page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
-        (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
-        ) as stale_pages,
-        -- Bug 11 — orphan = islanded (no inbound AND no outbound).
-        -- See BrainHealth.orphan_pages docstring; docs updated to match this.
-        (SELECT count(*) FROM linkable_pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
-           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
-        ) as orphan_pages,
+        0 as stale_pages,
+        -- Bug 11 — orphan = islanded (no inbound AND no outbound). The raw
+        -- list is filtered in TS using the shared orphan-reporting policy.
+        0 as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
-        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
-         WHERE te.page_id IN (SELECT id FROM linkable_pages)) as linkable_pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
-    `, [LINKABLE_EXCLUDE_LIKE, LINKABLE_EXCLUDE_EXACT, LINKABLE_EXCLUDE_FIRST_SEGMENTS]);
+    `);
 
     // Top 5 most connected entities by total link count (in + out).
     const { rows: connected } = await this.db.query(`
@@ -5254,17 +5240,39 @@ export class PGLiteEngine implements BrainEngine {
       LIMIT 5
     `);
 
+    // Per-page flags for the linkable scope: orphan_pages and the
+    // no-orphans / timeline-coverage DENOMINATORS are all computed over
+    // pages the shared orphan-reporting policy considers linkable (the same
+    // scope `gbrain orphans` and doctor's orphan_ratio use), so one doctor
+    // report cannot carry two contradictory orphan/coverage numbers.
+    // Archive (raw/), generated, and daily-log pages are not expected to
+    // participate in the curated graph. Filtered in TS because the policy
+    // includes per-brain config overrides.
+    const { rows: pageScopeRows } = await this.db.query(`
+      SELECT p.slug,
+             (NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+              AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)) as islanded,
+             EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = p.id) as has_timeline
+      FROM pages p
+    `);
+
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);
-    const linkablePageCount = Number(r.linkable_page_count);
     const embedCoverage = Number(r.embed_coverage);
-    const orphanPages = Number(r.orphan_pages);
+    const stalePages = await this.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const orphanOverrides = await loadOrphanPolicyOverrides(this);
+    const linkablePages = (pageScopeRows as { slug: string; islanded: boolean; has_timeline: boolean }[])
+      .filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides));
+    const linkablePageCount = linkablePages.length;
+    const orphanPages = linkablePages.filter(row => row.islanded).length;
+    const linkableTimelinePages = linkablePages.filter(row => row.has_timeline).length;
     const deadLinks = Number(r.dead_links);
     const linkCount = Number(r.link_count);
-    const pagesWithTimeline = Number(r.pages_with_timeline);
-    const linkableTimelinePages = Number(r.linkable_pages_with_timeline);
 
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
+    // linkablePageCount === 0 gets full marks for the orphan / timeline
+    // components (same vacuous-truth rule as the empty-brain fix below):
+    // an all-archive brain has no curated graph to penalize.
     const timelineCoverageDensity =
       linkablePageCount > 0 ? Math.min(linkableTimelinePages / linkablePageCount, 1) : 1;
     const noOrphans = linkablePageCount > 0 ? 1 - (orphanPages / linkablePageCount) : 1;
@@ -5278,9 +5286,6 @@ export class PGLiteEngine implements BrainEngine {
     // pre-fix "empty = 0" caused fresh-init brains to score as critically
     // unhealthy on `gbrain doctor`, which was a structural surprise to users
     // who'd just successfully run init.
-    // The same rule extends to linkablePageCount === 0 for the orphan /
-    // timeline components: an all-archive brain has no curated graph to
-    // penalize.
     const embedCoverageScore = pageCount === 0 ? 35 : Math.round(embedCoverage * 35);
     const linkDensityScore = pageCount === 0 ? 25 : Math.round(linkDensity * 25);
     const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineCoverageDensity * 15);
@@ -5292,7 +5297,7 @@ export class PGLiteEngine implements BrainEngine {
       page_count: pageCount,
       linkable_page_count: linkablePageCount,
       embed_coverage: embedCoverage,
-      stale_pages: Number(r.stale_pages),
+      stale_pages: stalePages,
       orphan_pages: orphanPages,
       missing_embeddings: Number(r.missing_embeddings),
       brain_score: brainScore,

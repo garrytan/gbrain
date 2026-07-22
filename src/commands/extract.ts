@@ -1651,7 +1651,7 @@ async function extractTimelineFromDB(
  * make re-extraction idempotent). EVERY processed page is stamped, including
  * zero-link pages — they WERE processed.
  */
-async function extractStaleFromDB(
+export async function extractStaleFromDB(
   engine: BrainEngine,
   opts: {
     dryRun: boolean;

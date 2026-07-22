@@ -93,7 +93,13 @@ import { resolveLrSchedule } from './lr-schedule.ts';
 import { preflight, formatPreflightReport } from './preflight.ts';
 import { isRejected, loadRejectedBuffer, makeRejectedEntry, saveRejectedBuffer } from './rejected-buffer.ts';
 import { runReflect, runOneShotRewrite, describeJudges } from './reflect.ts';
-import { acceptCandidate, bestPath, revertAllPending, skillPath, writeProposed } from './version-store.ts';
+import {
+  acceptCandidate,
+  proposedPath as proposedFilePath,
+  revertAllPending,
+  skillPath,
+  writeProposed,
+} from './version-store.ts';
 import { runValidationGate, scoreSkillOnTasks } from './validate-gate.ts';
 import { ROLLOUT_SUCCESS_THRESHOLD } from './types.ts';
 import type { SkillOptOpts, EditOp, RunReceipt, BenchmarkTask } from './types.ts';
@@ -702,9 +708,9 @@ async function runOptimizationLoop(
   // to the catch's assignment values only (it can't prove the async callback ran).
   const finalOutcome = outcome as 'accepted' | 'no_improvement' | 'aborted' | 'errored';
   if (!mutateDecision.mutate && finalOutcome === 'accepted') {
-    // best.md was written by writeProposed() in the accept branch (no-mutate
-    // path); it doubles as proposed.md for human review. SKILL.md untouched.
-    proposedPath = bestPath(skillsDir, skillName);
+    // writeProposed() emitted both the best pointer and the stable review
+    // artifact in the accept branch. SKILL.md remains untouched.
+    proposedPath = proposedFilePath(skillsDir, skillName);
   } else if (mutateDecision.mutate) {
     mutatedSkillFile = finalOutcome === 'accepted';
   }

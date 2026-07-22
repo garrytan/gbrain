@@ -15,7 +15,11 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { shouldExcludeFromLinkableScope } from '../core/linkable-scope.ts';
+import {
+  shouldExcludeFromOrphanReporting,
+  loadOrphanPolicyOverrides,
+  type OrphanPolicyOverrides,
+} from '../core/orphan-policy.ts';
 
 // --- Types ---
 
@@ -34,18 +38,13 @@ export interface OrphanResult {
 }
 
 // --- Filter logic ---
-//
-// The exclusion constants and predicate moved to src/core/linkable-scope.ts
-// so the orphans audit and brain_score's no-orphans / timeline components
-// evaluate the SAME page scope (they previously disagreed inside one doctor
-// report). Re-exported here for the existing public surface.
 
 /**
  * Returns true if a slug should be excluded from orphan reporting by default.
  * These are pages where having no inbound links is expected / not a content problem.
  */
-export function shouldExclude(slug: string): boolean {
-  return shouldExcludeFromLinkableScope(slug);
+export function shouldExclude(slug: string, overrides?: OrphanPolicyOverrides): boolean {
+  return shouldExcludeFromOrphanReporting(slug, overrides);
 }
 
 /**
@@ -83,10 +82,10 @@ export async function queryOrphanPages(
  * v0.42.0.0 (D1 from /plan-eng-review): this is the canonical pure data
  * fn for "what counts as an orphan in this brain." Re-exported as
  * `getOrphansData` for the doctor `orphan_ratio` check and any other
- * consumer that needs the same exclusion logic (now centralized in
- * src/core/linkable-scope.ts, which getHealth's brain_score also uses).
- * All consumers sharing one definition = doctor, `gbrain orphans`, and
- * brain_score cannot disagree on the orphan count.
+ * consumer that needs the same exclusion logic (AUTO_SUFFIX_PATTERNS,
+ * PSEUDO_SLUGS, RAW_SEGMENT, DENY_PREFIXES, FIRST_SEGMENT_EXCLUSIONS).
+ * Two consumers sharing one definition = doctor and `gbrain orphans`
+ * cannot disagree on the orphan count.
  */
 export async function findOrphans(
   engine: BrainEngine,
@@ -111,6 +110,7 @@ export async function findOrphans(
   let allOrphans: { slug: string; title: string; domain: string | null }[];
   let total: number;
   let excludedAll: number;
+  const overrides = includePseudo ? undefined : await loadOrphanPolicyOverrides(engine);
   try {
     allOrphans = await engine.findOrphanPages(
       sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
@@ -139,7 +139,7 @@ export async function findOrphans(
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0
-      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug) ? 1 : 0), 0);
+      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug, overrides) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
@@ -147,7 +147,7 @@ export async function findOrphans(
 
   const filtered = includePseudo
     ? allOrphans
-    : allOrphans.filter(row => !shouldExclude(row.slug));
+    : allOrphans.filter(row => !shouldExclude(row.slug, overrides));
 
   const orphans: OrphanPage[] = filtered.map(row => ({
     slug: row.slug,

@@ -1423,7 +1423,7 @@ export interface BrainStats {
 export interface BrainHealth {
   page_count: number;
   /**
-   * Pages inside the linkable scope (src/core/linkable-scope.ts) — the
+   * Pages inside the linkable scope (src/core/orphan-policy.ts) — the
    * pages expected to participate in the curated link graph. Excludes
    * archive (raw/), generated, and daily-log pages; the same scope the
    * orphans audit uses. Denominator for the no-orphans and
