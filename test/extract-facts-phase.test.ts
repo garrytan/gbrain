@@ -334,6 +334,67 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(r.factsInserted).toBe(1);
   });
 
+  test('soft-expired legacy rows do NOT trigger the guard (#2646 — forget_fact drains the backlog)', async () => {
+    // A legacy row that forget_fact already soft-expired. Before #2646
+    // the guard counted it forever: apply-migrations no-ops (migration
+    // marked applied) and forget_fact only sets expired_at, so the
+    // phase was permanently blocked with no sanctioned way out.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at)
+       VALUES ('default', 'people/alice', 'forgotten legacy claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0, now())`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | new fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    expect(r.factsInserted).toBe(1);
+
+    // The expired legacy row itself is untouched (soft-expire is the
+    // record of the forget; the phase must not hard-delete it).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE row_num IS NULL AND expired_at IS NOT NULL`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].fact).toBe('forgotten legacy claim');
+  });
+
+  test('mixed active + expired legacy rows: guard counts only the active ones (#2646)', async () => {
+    // One active legacy row + one soft-expired legacy row. The guard
+    // must still trigger (an active row is pending backfill) but the
+    // pending count must exclude the expired row — so each forget_fact
+    // visibly drains the counter toward release.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at)
+       VALUES
+         ('default', 'people/alice', 'active legacy claim', 'fact', 'private', 'medium',
+          now(), 'mcp:put_page', 1.0, NULL),
+         ('default', 'people/alice', 'expired legacy claim', 'fact', 'private', 'medium',
+          now(), 'mcp:put_page', 1.0, now())`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | new fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.guardTriggered).toBe(true);
+    expect(r.legacyRowsPending).toBe(1);
+    expect(r.factsInserted).toBe(0);
+    expect(r.factsDeleted).toBe(0);
+  });
+
   test('NULL entity_slug legacy rows do NOT trigger the guard (they are structurally unfenceable)', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (engine as any).db.query(

@@ -23,11 +23,12 @@
  * page coordinate only; legacy NULL-source_markdown_slug rows survive
  * because deleteFactsForPage targets source_markdown_slug = slug only.
  *
- * Empty-fence guard (Codex R2-#7; #2484): the phase refuses to do its
- * destructive reconciliation pass when genuinely-backfillable legacy
+ * Empty-fence guard (Codex R2-#7; #2484; #2646): the phase refuses to do
+ * its destructive reconciliation pass when genuinely-backfillable legacy
  * rows still exist — `row_num IS NULL` (never fenced) AND `entity_slug`
  * resolves to a live page in this source (so the v0_32_2 migration's
- * Phase B could fence them). Status returns `warn` with a hint to run
+ * Phase B could fence them) AND the row is not soft-expired
+ * (`expired_at IS NULL`). Status returns `warn` with a hint to run
  * `gbrain apply-migrations --yes`. Without the guard, an interrupted
  * upgrade where v0_32_2 hasn't run could leave the cycle silently
  * misreporting "0 facts on people/alice" while legacy rows linger.
@@ -41,6 +42,10 @@
  * the phase jams forever (~16/day observed). Requiring a backing page
  * keeps genuine pre-v0.32.2 rows (whose entity page exists) gating
  * while excluding the inline-writer's permanent-unfenceable rows.
+ *
+ * Soft-expired rows don't count either (#2646): they're what
+ * `forget_fact` produces, so excluding them lets operators drain the
+ * backlog through the sanctioned removal path instead of raw SQL.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -173,7 +178,7 @@ export async function runExtractFacts(
     phantomsMorePending: false,
   };
 
-  // ── Empty-fence guard (Codex R2-#7; #2484) ─────────────────────
+  // ── Empty-fence guard (Codex R2-#7; #2484; #2646) ──────────────
   // Pre-check: if any genuinely-backfillable legacy fact rows exist,
   // refuse to run the destructive reconciliation pass — the v0_32_2
   // orchestrator must fence them first.
@@ -181,12 +186,13 @@ export async function runExtractFacts(
   // A row is a real backfill candidate only when `row_num IS NULL`
   // (never fenced) AND its `entity_slug` resolves to a LIVE page in
   // this source (the migration's Phase B only fences rows whose
-  // entity_slug maps to a writable page). #2484: the original
-  // predicate was just `row_num IS NULL AND entity_slug IS NOT NULL`,
-  // which ALSO matched structurally-unfenceable hot-memory rows the
-  // inline writer keeps producing post-migration: the legacy DB-only
-  // fallback (backstop.ts) writes `entity_slug` (a resolved slug, e.g.
-  // a slugify-floor or stub-guard-blocked unprefixed slug like
+  // entity_slug maps to a writable page) AND it is not soft-expired.
+  // #2484: the original predicate was just `row_num IS NULL AND
+  // entity_slug IS NOT NULL`, which ALSO matched
+  // structurally-unfenceable hot-memory rows the inline writer keeps
+  // producing post-migration: the legacy DB-only fallback
+  // (backstop.ts) writes `entity_slug` (a resolved slug, e.g. a
+  // slugify-floor or stub-guard-blocked unprefixed slug like
   // `people-jane-doe`) with `row_num` NULL whenever the slug has no
   // fenceable page. Those rows can never satisfy the migration's exit
   // condition (no page to fence onto, and `apply-migrations` is a
@@ -194,12 +200,17 @@ export async function runExtractFacts(
   // — ~16/day, mislabeled "v0.31 pending backfill." We now require a
   // live backing page, which both genuine pre-v0.32.2 rows (their
   // entity page exists) satisfy and inline-writer unfenceable rows do
-  // not.
+  // not. #2646: soft-expired rows (`expired_at IS NOT NULL`) are also
+  // excluded — `forget_fact`, the officially sanctioned removal path,
+  // soft-expires legacy rows rather than deleting them, so counting
+  // expired rows would leave the guard permanently stuck with no
+  // supported way to drain the backlog.
   const legacy = await engine.executeRaw<{ n: string }>(
     `SELECT COUNT(*) AS n
        FROM facts f
       WHERE f.row_num IS NULL
         AND f.entity_slug IS NOT NULL
+        AND f.expired_at IS NULL
         AND EXISTS (
           SELECT 1 FROM pages p
            WHERE p.source_id = f.source_id
