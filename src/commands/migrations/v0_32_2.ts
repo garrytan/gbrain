@@ -660,15 +660,20 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   return finalizeResult(phases, overallStatus, engine);
 }
 
-function finalizeResult(
+async function finalizeResult(
   phases: OrchestratorPhaseResult[],
   status: 'complete' | 'partial' | 'failed',
   engine: BrainEngine | null,
-): OrchestratorResult {
+): Promise<OrchestratorResult> {
   // Best-effort disconnect of the engine we created. testEngineOverride
-  // is owned by the test, never disconnected here.
+  // is owned by the test, never disconnected here. AWAITED (#2646 codex
+  // round-2 P2): the apply-migrations repair lane opens another engine
+  // right after the orchestrator returns (the post-repair recount); a
+  // fire-and-forget disconnect races the PGLite single-writer lock
+  // release and can turn a successful repair into a false
+  // "could not be verified" exit 1.
   if (engine && !testEngineOverride) {
-    engine.disconnect().catch(() => { /* best-effort */ });
+    try { await engine.disconnect(); } catch { /* best-effort */ }
   }
   return {
     version: '0.32.2',
