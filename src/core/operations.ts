@@ -1422,6 +1422,7 @@ const list_pages: Operation = {
     });
     return pages.map(pg => ({
       slug: pg.slug,
+      source_id: pg.source_id,
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
