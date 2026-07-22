@@ -218,16 +218,23 @@ export function willEmbedSynchronously(opts: {
 }
 
 /**
- * Pure cost-gate decision. The gate BLOCKS (prompt in TTY, exit 2 envelope
- * in non-TTY) only when embed runs inline AND the estimated spend exceeds
- * the floor. Deferred mode NEVER blocks — the backfill cap is the real
- * money gate, and blocking the cheap markdown import for cost the import
- * doesn't synchronously incur is the bug this fix removes.
+ * Pure cost-gate decision. The gate BLOCKS (prompt in TTY, auto-defer in
+ * non-TTY) only when embed runs inline AND the estimated spend exceeds the
+ * floor. Deferred mode NEVER blocks — the backfill cap is the real money gate,
+ * and blocking the cheap markdown import for cost the import doesn't
+ * synchronously incur is the bug this fix removes.
+ *
+ * v0.42.42.0 (#2139): `spend.posture=tokenmax` makes the gate INFORMATIONAL —
+ * the operator has declared cost isn't the constraint, so it never blocks
+ * (the caller prints the estimate and proceeds inline). An `off`/`unlimited`
+ * floor (Infinity) is likewise never exceeded.
  */
 export function shouldBlockSync(
   costUsd: number,
   floorUsd: number,
   mode: SyncEmbedMode,
+  posture: 'gated' | 'tokenmax' = 'gated',
 ): boolean {
+  if (posture === 'tokenmax') return false;
   return mode === 'inline' && costUsd > floorUsd;
 }

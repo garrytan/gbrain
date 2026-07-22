@@ -219,3 +219,38 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// #2084 — preservingProcessExitCode behavioral containment
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: Emscripten process.exitCode containment (#2084)', () => {
+  test('connect() leaves process.exitCode pinned at 0, not the Emscripten 99', async () => {
+    const prev = process.exitCode;
+    const eng = new PGLiteEngine();
+    try {
+      await eng.connect({ engine: 'pglite' });
+      // Emscripten writes 99 during create; the wrapper pins explicit 0 when
+      // nothing was set before (undefined cannot be restored — the accessor
+      // falls back to the WASM status).
+      expect(Number(process.exitCode)).toBe(0);
+    } finally {
+      await eng.disconnect();
+      process.exitCode = prev;
+    }
+  }, 60_000);
+
+  test('a pre-call verdict survives the create-throw path (finally restores)', async () => {
+    const prev = process.exitCode;
+    const eng = new PGLiteEngine();
+    try {
+      process.exitCode = 3;
+      // A dataDir under a regular FILE cannot be created — PGlite.create rejects.
+      await expect(
+        eng.connect({ engine: 'pglite', database_path: '/dev/null/nope/brain' }),
+      ).rejects.toThrow();
+      expect(Number(process.exitCode)).toBe(3);
+    } finally {
+      process.exitCode = prev;
+    }
+  }, 60_000);
+});

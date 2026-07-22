@@ -48,14 +48,34 @@ describe('postgres-engine / search path timeout isolation', () => {
     expect(bare).toBeNull();
   });
 
-  test('searchKeyword wraps its query in sql.begin()', () => {
+  test('searchKeyword wraps its query in a transaction (via withScopedReadTransaction alwaysTransaction)', () => {
+    // Post-RLS-scope-binding invariant: the search methods route through
+    // withScopedReadTransaction with alwaysTransaction: true, which
+    // guarantees a sql.begin() wrap in BOTH modes — flag off (identical to
+    // master's pre-helper wrap) and flag on (scoped transaction with
+    // set_config). See the helper tests in
+    // test/postgres-engine-rls-scope.test.ts for the behavioral pins.
     const fn = extractMethod(SRC, 'searchKeyword');
-    expect(fn).toMatch(/sql\.begin\s*\(\s*async\s+sql\s*=>/);
+    expect(fn).toMatch(/withScopedReadTransaction\s*\(/);
+    expect(fn).toMatch(/alwaysTransaction:\s*true/);
   });
 
-  test('searchVector wraps its query in sql.begin()', () => {
+  test('searchVector wraps its query in a transaction (via withScopedReadTransaction alwaysTransaction)', () => {
     const fn = extractMethod(SRC, 'searchVector');
-    expect(fn).toMatch(/sql\.begin\s*\(\s*async\s+sql\s*=>/);
+    expect(fn).toMatch(/withScopedReadTransaction\s*\(/);
+    expect(fn).toMatch(/alwaysTransaction:\s*true/);
+  });
+
+  test('withScopedReadTransaction owns the sql.begin() wrap (and only opens it when needed)', () => {
+    // (extractMethod can't grab this one: `private async ...<T>(`.)
+    const stripped = stripComments(SRC);
+    // The transaction lives in the helper...
+    expect(stripped).toMatch(/this\.sql\.begin\s*\(/);
+    // ...and the flag-off / non-alwaysTransaction path is a true
+    // pass-through on the shared pool — no per-read transaction hold.
+    expect(stripped).toMatch(
+      /if\s*\(!this\.rlsScopeBindingEnabled\s*&&\s*!opts\?\.alwaysTransaction\)\s*\{\s*return\s+await\s+callback\(this\.sql\);/,
+    );
   });
 
   test('both search methods use SET LOCAL for the timeout', () => {
@@ -94,10 +114,28 @@ describe('postgres-engine / search path timeout isolation', () => {
   });
 });
 
+describe('postgres-engine / search date filtering', () => {
+  test('search paths filter since/until on effective_date before import-time fallback', () => {
+    const expectedDateExpr = 'COALESCE(p.effective_date, p.updated_at, p.created_at)';
+    const staleDatePredicate = /COALESCE\(p\.updated_at,\s*p\.created_at\)\s*[<>]\s*\$/;
+
+    for (const methodName of ['searchKeyword', 'searchKeywordChunks', 'searchVector']) {
+      const fn = stripComments(extractMethod(SRC, methodName));
+
+      expect(countOccurrences(fn, expectedDateExpr)).toBe(2);
+      expect(fn).not.toMatch(staleDatePredicate);
+    }
+  });
+});
+
 function stripComments(s: string): string {
   return s
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+}
+
+function countOccurrences(s: string, needle: string): number {
+  return s.split(needle).length - 1;
 }
 
 // extractMethod grabs the body of a class method by brace-matching from

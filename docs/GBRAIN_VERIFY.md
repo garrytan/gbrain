@@ -88,14 +88,15 @@ find /data/brain -name '*.md' \
 Some difference is normal (files added since last sync), but if page count is
 less than half the file count, sync is silently skipping pages.
 
-**If page count is way too low:** The #1 cause is the connection pooler bug.
-Check your `DATABASE_URL`:
-- If it contains `pooler.supabase.com:6543`, verify it's using **Session mode**,
-  not Transaction mode.
-- Transaction mode breaks `engine.transaction()` and causes `.begin() is not a
-  function` errors.
-- Fix: switch to Session mode pooler string, then run `gbrain sync --full`
-  to reimport everything.
+**If page count is way too low:** The #1 cause is an unreachable direct
+connection on an IPv4-only host. GBrain uses the Transaction pooler (port 6543)
+for reads, but routes migrations, DDL, and sync transactions to a derived direct
+connection (`db.<ref>.supabase.co:5432`), which is IPv6-only.
+- On an IPv4-only host, reads work but sync transactions fail and silently skip
+  pages.
+- Fix: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port
+  5432 on the `pooler.supabase.com` host, IPv4), or enable Supabase's IPv4
+  add-on. Then run `gbrain sync --full` to reimport everything.
 
 ### 4b. Embed Check
 
@@ -142,7 +143,8 @@ gbrain search "<text from the correction>"
 - Is `gbrain sync --watch` still alive (if using watch mode)?
 - Run `gbrain config get sync.last_run` to see when sync last ran.
 - Run `gbrain sync --repo /data/brain` manually and check for errors.
-- If you see `.begin() is not a function`, fix the pooler (see 4a above).
+- If sync errors mention an unreachable host or connection timeout, the direct
+  connection isn't reachable on IPv4 (see 4a above).
 
 ---
 

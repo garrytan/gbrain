@@ -27,6 +27,7 @@
 
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { TIER_DEFAULTS } from '../model-config.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
@@ -228,7 +229,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? 'claude-sonnet-4-6';
+    const modelId = opts.model ?? TIER_DEFAULTS.reasoning;
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
@@ -356,7 +357,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
          active_bias_tags, model_id, cost_usd, judge_model_agreement
        ) VALUES ($1, $2, now(), false,
                  $3, $4, $5, $6, $7,
-                 $8::jsonb, $9::text[],
+                 $8::text::jsonb, $9::text[],
                  $10, $11,
                  $12::text[], $13, NULL, NULL)`,
       [

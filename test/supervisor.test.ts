@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { readSupervisorEvents, computeSupervisorAuditFilename } from '../src/core/minions/handlers/supervisor-audit.ts';
-import { calculateBackoffMs } from '../src/core/minions/supervisor.ts';
+import { calculateBackoffMs, resolveHardStopMaxCrashes } from '../src/core/minions/supervisor.ts';
 
 const TEST_PID_FILE = '/tmp/gbrain-supervisor-test.pid';
 
@@ -58,6 +58,16 @@ function spawnSupervisor(h: IntegrationHarness, overrides: Record<string, string
     SUP_HEALTH_INTERVAL_MS: '999999',   // effectively off
     ...overrides,
   };
+  // issue #1994: the soft crash budget now DEGRADES (retry-with-backoff) rather
+  // than permanently giving up; permanent give-up fires at a much-higher hard
+  // ceiling (maxCrashes × 10). These integration tests assert the give-up
+  // LIFECYCLE (audit events, exit code, pidfile cleanup), so pin the hard
+  // ceiling to the soft budget by default — the degraded path is unit-tested in
+  // child-worker-supervisor.test.ts. Tests that want true degraded behavior
+  // pass GBRAIN_SUPERVISOR_HARD_STOP_CRASHES explicitly.
+  if (env.GBRAIN_SUPERVISOR_HARD_STOP_CRASHES === undefined) {
+    env.GBRAIN_SUPERVISOR_HARD_STOP_CRASHES = env.SUP_MAX_CRASHES;
+  }
 
   const child = spawn('bun', [join(import.meta.dir, 'fixtures/supervisor-runner.ts')], {
     env,
@@ -104,6 +114,31 @@ async function waitFor(pred: () => boolean, timeoutMs: number, tickMs = 20): Pro
 }
 
 describe('MinionSupervisor', () => {
+  describe('resolveHardStopMaxCrashes (issue #1994)', () => {
+    const KEY = 'GBRAIN_SUPERVISOR_HARD_STOP_CRASHES';
+    afterEach(() => { delete process.env[KEY]; });
+
+    it('defaults to maxCrashes × 10 when no override', () => {
+      delete process.env[KEY];
+      expect(resolveHardStopMaxCrashes(10)).toBe(100);
+      expect(resolveHardStopMaxCrashes(3)).toBe(30);
+    });
+
+    it('honors a valid non-negative integer override', () => {
+      process.env[KEY] = '0'; // 0 = disable permanent give-up
+      expect(resolveHardStopMaxCrashes(10)).toBe(0);
+      process.env[KEY] = '5';
+      expect(resolveHardStopMaxCrashes(10)).toBe(5);
+    });
+
+    it('ignores a negative or non-integer override (falls back to default)', () => {
+      process.env[KEY] = '-1';
+      expect(resolveHardStopMaxCrashes(10)).toBe(100);
+      process.env[KEY] = 'abc';
+      expect(resolveHardStopMaxCrashes(10)).toBe(100);
+    });
+  });
+
   describe('calculateBackoffMs', () => {
     it('returns ~1s for first crash', () => {
       const backoff = calculateBackoffMs(0);
@@ -197,6 +232,8 @@ describe('MinionSupervisor', () => {
       // hit max-crashes, then exit via shutdown() with code 1.
       const h = makeHarness('max-crashes', 'exit 1');
       try {
+        // hard ceiling defaults to SUP_MAX_CRASHES in the harness (see
+        // spawnSupervisor) so this give-up lifecycle still fires at 3 (#1994).
         const sup = spawnSupervisor(h, { SUP_MAX_CRASHES: '3' });
         const { code } = await sup.exited;
 

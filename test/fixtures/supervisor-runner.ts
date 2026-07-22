@@ -23,9 +23,17 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 
 // Mock engine: healthCheck() calls engine.executeRaw; return empty rows so
 // the query path exercises without needing Postgres.
+//
+// #1849: start() now acquires the queue-scoped DB singleton lock via
+// tryAcquireDbLock, which uses the postgres `sql` tagged-template escape hatch.
+// The stub returns a single row from every call so acquire succeeds (length 1
+// → acquired) and refresh/release are no-ops. Each spawned runner is a fresh
+// process, so there's no cross-test lock state to clean up.
+const sqlStub = (..._args: unknown[]) => Promise.resolve([{ id: 'supervisor-lock' }]);
 const mockEngine: Partial<BrainEngine> = {
   kind: 'postgres' as const,
   executeRaw: async () => [],
+  sql: sqlStub,
 } as unknown as BrainEngine;
 
 const pidFile = process.env.SUP_PID_FILE;

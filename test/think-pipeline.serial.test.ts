@@ -5,6 +5,7 @@ import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/thi
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather } from '../src/core/think/gather.ts';
+import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -207,15 +208,30 @@ describe('runThink (with stub client)', () => {
   });
 
   test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
+    // Hermetic: neutralize BOTH the env var AND ~/.gbrain config key, else a
+    // developer/CI machine with a configured key fires a real LLM call and this
+    // assertion flips to LLM_OUTPUT_NOT_JSON.
+    const result = await withoutAnthropicKey(() => runThink(engine, { question: 'no key test' }));
+    expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+    expect(result.answer).toContain('no LLM available');
+    expect(result.rounds).toBe(0);
+  });
+
+  test('labels an unusable CONFIGURED model honestly (MODEL_NOT_USABLE, not NO_ANTHROPIC_API_KEY)', async () => {
+    // Regression guard: a configured model the recipe rejects (unknown_model)
+    // used to be stamped NO_ANTHROPIC_API_KEY, sending operators to debug
+    // env/keychain when the fix was the model id. Model validity beats the key
+    // check in probeChatModel, so the honest label holds even keyless.
+    await engine.setConfig('models.think', 'anthropic:claude-bogus-9');
     try {
-      const result = await runThink(engine, { question: 'no key test' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
-      expect(result.answer).toContain('no LLM available');
+      const result = await withoutAnthropicKey(() => runThink(engine, { question: 'bad model test' }));
+      expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_model');
+      expect(result.warnings).not.toContain('NO_ANTHROPIC_API_KEY');
+      expect(result.answer).toContain('not usable');
       expect(result.rounds).toBe(0);
+      expect(result.synthesisOk).toBe(false);
     } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+      await engine.unsetConfig('models.think');
     }
   });
 
@@ -285,16 +301,14 @@ describe('runThink — #1698 explicit-model hard error', () => {
   });
 
   test('NON-explicit bad model does NOT throw — graceful degrade (no modelExplicit)', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      // model present but modelExplicit unset → early gate skipped; builder returns null.
-      const result = await runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
-      expect(result.synthesisOk).toBe(false);
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    // model present but modelExplicit unset → early gate skipped; builder returns null.
+    // Hermetic no-key so the assertion can't be perturbed by a configured key.
+    // Post-honest-labeling: an unknown PROVIDER is a model problem, not a key
+    // problem — the warning names it instead of the old NO_ANTHROPIC_API_KEY
+    // catch-all. The graceful no-throw contract is unchanged.
+    const result = await withoutAnthropicKey(() => runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' }));
+    expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_provider');
+    expect(result.synthesisOk).toBe(false);
   });
 });
 
@@ -373,15 +387,11 @@ describe('think MCP op — #1698 C3 + #10', () => {
 
   test('#10: local save with no synthesis → saved_slug is null, not "" + warning surfaced', async () => {
     const op = operationsByName['think'];
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      // Local (remote:false), save:true, no key → graceful stub → persist-skip.
-      const res: any = await op.handler(baseCtx(false) as any, { question: 'op empty save test', save: true });
-      expect(res.saved_slug).toBeNull();
-      expect(res.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    // Hermetic no-key: synthesisOk=false → persistSynthesis returns
+    // SYNTHESIS_EMPTY_NOT_PERSISTED deterministically (was previously at the
+    // mercy of whatever a live LLM returned for this prompt).
+    const res: any = await withoutAnthropicKey(() => op.handler(baseCtx(false) as any, { question: 'op empty save test', save: true }));
+    expect(res.saved_slug).toBeNull();
+    expect(res.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
   });
 });

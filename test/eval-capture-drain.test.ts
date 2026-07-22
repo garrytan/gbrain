@@ -72,6 +72,9 @@ describe('awaitPendingEvalCaptures', () => {
     const r = await awaitPendingEvalCaptures(150);
     const elapsed = Date.now() - start;
     expect(r.unfinished).toBe(1);
-    expect(elapsed).toBeLessThan(1000);
+    // Bound proves "bounded, not a hang" — the alternative is infinite. 2s
+    // (13x the 150ms budget) absorbs CI shard-load timer jitter; the old 1s
+    // bound flaked at 1023ms on a loaded GitHub runner.
+    expect(elapsed).toBeLessThan(2000);
   });
 });

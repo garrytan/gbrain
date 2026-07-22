@@ -19,8 +19,14 @@ import { mkdtempSync, existsSync, readdirSync, statSync, rmSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 
-// Save original env so we don't leak between tests.
+// Save original env so we don't leak between tests. #2823: GBRAIN_AUDIT_DIR
+// must be captured too — the shared test bootstrap (test/helpers/audit-dir-preload.ts)
+// sets a process-global scratch dir before any test file runs, so "restore"
+// here means "put back the preload's value," not "delete the var and let
+// it fall through to the real ~/.gbrain/audit for every test file that
+// runs after this one in the same shard process."
 const ORIG_GBRAIN_HOME = process.env.GBRAIN_HOME;
+const ORIG_GBRAIN_AUDIT_DIR = process.env.GBRAIN_AUDIT_DIR;
 
 function fresh(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-home-isolation-'));
@@ -134,7 +140,11 @@ describe('GBRAIN_HOME write-side isolation', () => {
       expect(resolveAuditDir()).toBe(auditTmp);
     } finally {
       process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
-      delete process.env.GBRAIN_AUDIT_DIR;
+      if (ORIG_GBRAIN_AUDIT_DIR === undefined) {
+        delete process.env.GBRAIN_AUDIT_DIR;
+      } else {
+        process.env.GBRAIN_AUDIT_DIR = ORIG_GBRAIN_AUDIT_DIR;
+      }
       rmSync(tmp, { recursive: true, force: true });
       rmSync(auditTmp, { recursive: true, force: true });
     }

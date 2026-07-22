@@ -311,14 +311,22 @@ describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
     // can classify the triggering error for the pool-recovery audit. Match the
     // prefix so both `reconnect()` and `reconnect(ctx?)` satisfy the contract.
     expect(src).toContain('async reconnect(');
-    expect(src).toContain('await this.disconnect()');
+    // #1593 build-then-swap: reconnect() no longer disconnect()-then-connect()s
+    // on the instance-pool path (that nulled _sql, so a connect() failure during
+    // a transient blip left the engine permanently dead → worker respawn loop).
+    // It now snapshots the live pool, builds a fresh one, and ends the OLD pool
+    // only once the new one validates — restoring it on failure. Assert the
+    // old-pool teardown, which is the recovery contract this test guards.
+    expect(src).toContain('await oldSql.end(');
   });
 
   it('Supervisor still has the 3-strikes-then-reconnect path', () => {
     const src = readFileSync(resolve('src/core/minions/supervisor.ts'), 'utf-8');
     expect(src).toContain('consecutiveHealthFailures');
-    // Supervisor invokes reconnect via a typed cast after 3 consecutive failures.
-    expect(src).toMatch(/reconnect\(\): Promise<void>/);
+    // #2034: reconnect() is now a first-class BrainEngine method, so the
+    // supervisor calls it directly after 3 consecutive failures (the prior
+    // `(engine as unknown as { reconnect(): Promise<void> })` cast was removed).
+    expect(src).toContain('this.engine.reconnect(');
     expect(src).toContain('this.consecutiveHealthFailures >= 3');
   });
 });

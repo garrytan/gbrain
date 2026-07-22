@@ -84,4 +84,69 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       },
     );
   });
+
+  test('provider_chat_options passes through unchanged', async () => {
+    await withEnv(envFor(null), async () => {
+      const options = {
+        anthropic: { thinking: { type: 'disabled' } },
+        'anthropic:claude-sonnet-4-6': { thinking: { budget_tokens: 256 } },
+      };
+      const cfg = buildGatewayConfig({
+        provider_chat_options: options,
+      } as unknown as GBrainConfig);
+      expect(cfg.provider_chat_options).toBe(options);
+    });
+  });
+});
+
+describe('buildGatewayConfig config-plane API-key folding', () => {
+  test('openrouter_api_key folds into gateway env as OPENROUTER_API_KEY', async () => {
+    await withEnv({ OPENROUTER_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        openrouter_api_key: 'sk-or-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.OPENROUTER_API_KEY).toBe('sk-or-config-plane');
+    });
+  });
+
+  test('a real OPENROUTER_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ OPENROUTER_API_KEY: 'sk-or-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        openrouter_api_key: 'sk-or-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.OPENROUTER_API_KEY).toBe('sk-or-env-plane');
+    });
+  });
+});
+
+describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
+  test('an empty-string process.env value does NOT clobber a valid config-plane key', async () => {
+    // Claude Code injects ANTHROPIC_API_KEY='' to neuter subprocess LLM calls.
+    await withEnv({ ANTHROPIC_API_KEY: '' }, async () => {
+      const cfg = buildGatewayConfig({
+        anthropic_api_key: 'sk-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.ANTHROPIC_API_KEY).toBe('sk-config-plane');
+    });
+  });
+
+  test('a real process.env value still wins over the config-plane fallback', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        anthropic_api_key: 'sk-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.ANTHROPIC_API_KEY).toBe('sk-env-plane');
+    });
+  });
+
+  test("legitimate falsy-but-present values ('0' / 'false') are preserved, not dropped", async () => {
+    await withEnv(
+      { GBRAIN_TEST_ZERO_VAL: '0', GBRAIN_TEST_FALSE_VAL: 'false' },
+      async () => {
+        const cfg = buildGatewayConfig(baseConfig);
+        expect(cfg.env.GBRAIN_TEST_ZERO_VAL).toBe('0');
+        expect(cfg.env.GBRAIN_TEST_FALSE_VAL).toBe('false');
+      },
+    );
+  });
 });

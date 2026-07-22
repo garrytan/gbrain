@@ -71,6 +71,9 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.42.3.0 autocut
   autocut: 'Score-discontinuity result-sizing (cuts at the rerank-score cliff; no-op without a reranker)',
   autocut_jump: 'Autocut sensitivity: min normalized score gap that counts as a cliff (0..1, 0.20 default)',
+  // v0.43 relational recall
+  relationalRetrieval: 'Typed-edge relational recall arm (relational queries walk the graph; no-op otherwise)',
+  relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
 };
 
 interface SearchModesReport {

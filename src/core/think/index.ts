@@ -152,6 +152,19 @@ export interface ThinkResult {
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 
+// Thinking-by-default Claude 5 models (`anthropic:claude-*-5`) spend a large
+// share of the output budget on internal reasoning before emitting any answer,
+// so the 4000 default leaves `think` with empty or truncated text. Give those
+// models headroom; providers bill actual tokens, not the cap. Everything else
+// keeps 4000.
+const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
+const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+export function maxOutputTokensFor(modelStr: string): number {
+  return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+    ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 function inferIntent(question: string, anchor?: string): string {
   if (anchor) return 'entity';
   const q = question.toLowerCase();
@@ -270,6 +283,8 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
   });
 
   // Render evidence blocks for the prompt
@@ -439,13 +454,31 @@ export async function runThink(
     // Closes #952 (think over MCP returns "no LLM available").
     const client = opts.client ?? await tryBuildGatewayClient(modelUsed, { explicitModel: opts.modelExplicit });
     if (!client) {
-      warnings.push('NO_ANTHROPIC_API_KEY');
+      // Label the failure honestly: a missing key and an unusable model id are
+      // different incidents with different fixes. Pre-fix EVERY null client was
+      // stamped NO_ANTHROPIC_API_KEY, which sent operators chasing env/keychain
+      // problems when the real cause was a model id the recipe didn't know
+      // (e.g. a tier-configured model newer than the recipe list). The re-probe
+      // is pure and cheap (no IO): same predicate tryBuildGatewayClient used.
+      const probe = probeChatModel(normalizeModelId(modelUsed));
+      const modelProblem = !probe.ok && probe.reason !== 'unavailable';
+      warnings.push(
+        modelProblem ? `MODEL_NOT_USABLE:${(probe as { reason: string }).reason}` : 'NO_ANTHROPIC_API_KEY',
+      );
+      const detail = !probe.ok ? probe.detail : '';
+      const fix = !probe.ok && probe.fix ? ` Fix: ${probe.fix}` : '';
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
       return {
         question: opts.question,
-        answer: '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
+        answer: modelProblem
+          ? `(model "${modelUsed}" not usable — ${detail}${fix})`
+          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
         citations: [],
-        gaps: ['no LLM available; gather succeeded but synthesis skipped'],
+        gaps: [
+          modelProblem
+            ? `model "${modelUsed}" not usable (${(probe as { reason: string }).reason}); gather succeeded but synthesis skipped`
+            : 'no LLM available; gather succeeded but synthesis skipped',
+        ],
         pagesGathered: gather.pages.length,
         takesGathered: gather.takes.length,
         graphHits: gather.graphSlugs.length,
@@ -463,7 +496,7 @@ export async function runThink(
     }
     const result = await client.create({
       model: modelUsed,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)),
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });

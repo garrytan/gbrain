@@ -90,6 +90,38 @@ export function isValidOpenAITextEmbedding3Dim(modelId: string, dims: number): b
   return Number.isInteger(dims) && dims >= 1 && dims <= max;
 }
 
+// NVIDIA NIM hosted embedding models use asymmetric input_type values. Most
+// emit fixed natural dimensions, but llama-nemotron-embed-1b-v2 accepts
+// Matryoshka-style dimension overrides (e.g. matching an existing 1280d
+// brain column without re-embedding through another provider).
+const NVIDIA_EMBEDDING_DIMS: Record<string, number> = {
+  'nvidia/nv-embedqa-e5-v5': 1024,
+  'nvidia/llama-nemotron-embed-1b-v2': 2048,
+  'nvidia/nv-embed-v1': 4096,
+  'nvidia/nv-embedcode-7b-v1': 4096,
+};
+
+const NVIDIA_EMBEDDING_DIM_OPTIONS: Record<string, number[]> = {
+  'nvidia/llama-nemotron-embed-1b-v2': [1024, 1280, 1536, 2048],
+};
+
+export function isNvidiaEmbeddingModel(modelId: string): boolean {
+  return modelId in NVIDIA_EMBEDDING_DIMS;
+}
+
+export function nvidiaEmbeddingDim(modelId: string): number | undefined {
+  return NVIDIA_EMBEDDING_DIMS[modelId];
+}
+
+export function nvidiaEmbeddingDimOptions(modelId: string): number[] | undefined {
+  return NVIDIA_EMBEDDING_DIM_OPTIONS[modelId];
+}
+
+export function supportsNvidiaEmbeddingDimension(modelId: string, dims: number): boolean {
+  const options = nvidiaEmbeddingDimOptions(modelId);
+  return !!options && options.includes(dims);
+}
+
 /**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
@@ -194,6 +226,17 @@ export function dimsProviderOptions(
           },
         };
       }
+      // NVIDIA NIM hosted embeddings are OpenAI-compatible but require
+      // asymmetric input_type. Use passage for indexing/document-side vectors
+      // and query for search-side vectors. Only llama-nemotron-embed-1b-v2
+      // supports a dimensions override; fixed-dim models reject it.
+      if (isNvidiaEmbeddingModel(modelId)) {
+        const opts: Record<string, any> = {
+          input_type: inputType === 'query' ? 'query' : 'passage',
+        };
+        if (supportsNvidiaEmbeddingDimension(modelId, dims)) opts.dimensions = dims;
+        return { openaiCompatible: opts };
+      }
       // OpenAI text-embedding-3 family on the openai-compatible adapter
       // (Azure OpenAI hosts these via its OpenAI-compatible /embeddings
       // endpoint). The provider defaults to the model's native size (3072
@@ -218,6 +261,15 @@ export function dimsProviderOptions(
       // silently ignored and the provider returns its default size.
       // Symmetric retrieval — inputType ignored.
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
+        return { openaiCompatible: { dimensions: dims } };
+      }
+      // Qwen3-Embedding family on Ollama (and any other openai-compatible
+      // provider serving it) supports Matryoshka truncation via `dimensions`.
+      // Native sizes: 0.6B=1024, 4B=2560, 8B=4096. Without `dimensions`,
+      // Ollama returns the native size and brains configured for narrower
+      // widths hard-fail with a dim-mismatch error. Pattern match the bare
+      // model name + any `:tag` (e.g. `qwen3-embedding:4b`, `qwen3-embedding:0.6b`).
+      if (modelId === 'qwen3-embedding' || modelId.startsWith('qwen3-embedding:')) {
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric

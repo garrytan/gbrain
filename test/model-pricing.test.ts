@@ -43,6 +43,14 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-7']).toEqual({ input: 5.0, output: 25.0 });
   });
 
+  test('Sonnet 5 present at $3/$15 (standard rate, intro discount not modeled)', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5']).toEqual({ input: 3.0, output: 15.0 });
+  });
+
+  test('Fable 5 present at $10/$50', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-fable-5']).toEqual({ input: 10.0, output: 50.0 });
+  });
+
   test('Gemini 2.0 Flash reconciled to $0.10/$0.40; legacy alias agrees', () => {
     expect(CANONICAL_PRICING['google:gemini-2.0-flash']).toEqual({ input: 0.1, output: 0.4 });
     expect(CANONICAL_PRICING['google:gemini-2-flash']).toEqual(

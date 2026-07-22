@@ -34,6 +34,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, spawnSync } from 'child_process';
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -152,12 +153,13 @@ afterAll(() => {
 function runWithTimeout(
   args: string[],
   timeoutMs: number,
+  envOverride?: Record<string, string>,
 ): Promise<{ code: number | null; stdout: string; stderr: string; durationMs: number }> {
   return new Promise((resolveOut) => {
     const t0 = Date.now();
     const child = spawn(SHIM_PATH, args, {
       cwd: REPO_ROOT,
-      env: runEnv,
+      env: envOverride ? { ...runEnv, ...envOverride } : runEnv,
     });
     let stdout = '';
     let stderr = '';
@@ -173,6 +175,13 @@ function runWithTimeout(
   });
 }
 
+/**
+ * #2084: the teardown backstop banner must NEVER appear on a healthy run —
+ * it now means a teardown component violated its own bound, not "this
+ * command was slower than 10s end-to-end" (the pre-#2084 misfire).
+ */
+const TEARDOWN_BANNER = 'did not return within';
+
 describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290)', () => {
   test('gbrain search "foxtrot" exits 0 within 15s', async () => {
     const { code, stdout, stderr, durationMs } = await runWithTimeout(
@@ -185,6 +194,7 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
           `STDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
       );
     }
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
     expect(code).toBe(0);
     // Must have actually returned a hit — else bumpLastRetrievedAt
     // would have early-returned on empty pageIds and the bug wouldn't
@@ -203,6 +213,7 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
           `STDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
       );
     }
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
     expect(code).toBe(0);
     expect(stdout).toContain('foxtrot');
   }, 30_000);
@@ -258,6 +269,7 @@ describe('v0.42.20.0 — gbrain capture (CLI_ONLY) exits cleanly + frees the loc
 
     // The real lock-pin symptom: the NEXT command times out waiting for the
     // PGLite lock. Assert a subsequent read runs cleanly and quickly.
+    expect(cap.stderr).not.toContain(TEARDOWN_BANNER);
     const next = await runWithTimeout(['get', 'meetings/capture-test'], 15_000);
     expect(next.durationMs).toBeLessThan(15_000);
     expect(next.stderr).not.toContain('Timed out waiting for PGLite lock');
@@ -265,6 +277,136 @@ describe('v0.42.20.0 — gbrain capture (CLI_ONLY) exits cleanly + frees the loc
       expect(next.stdout.toLowerCase()).toContain('foxtrot');
     }
   }, 60_000);
+});
+
+describe('#2084 — explicit-exit teardown: every swept site exits clean, exit codes report the op', () => {
+  // D6C hardening: mutating commands run against a throwaway COPY of the
+  // seeded GBRAIN_HOME so a remediation/dream pass can't contaminate the
+  // brain the other tests share.
+  function copyBrainHome(label: string): string {
+    const copy = mkdtempSync(join(tmpdir(), `gbrain-2084-${label}-`));
+    cpSync(tmpHome, copy, { recursive: true });
+    return copy;
+  }
+
+  test('D5: failed op exits 1 with the error on stderr (exit code = op outcome)', async () => {
+    const { code, stderr, durationMs } = await runWithTimeout(
+      ['get', 'nonexistent-slug-2084'],
+      15_000,
+    );
+    expect(durationMs).toBeLessThan(15_000);
+    expect(code).toBe(1);
+    expect(stderr.length).toBeGreaterThan(0);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+  }, 30_000);
+
+  test('search stats (dashboard path, Site C) exits 0, no banner', async () => {
+    const { code, stdout, stderr } = await runWithTimeout(['search', 'stats'], 20_000);
+    expect(code).toBe(0);
+    expect(stdout.length).toBeGreaterThan(0);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+  }, 30_000);
+
+  test('sources list (read-only timeout path, Site D) exits 0, no banner', async () => {
+    const { code, stderr } = await runWithTimeout(['sources', 'list'], 20_000);
+    expect(code).toBe(0);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+  }, 30_000);
+
+  test('doctor (Site G — leak-fix shape) exits without hanging, no banner', async () => {
+    const { code, durationMs, stderr } = await runWithTimeout(['doctor'], 45_000);
+    expect(durationMs).toBeLessThan(45_000);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+    // Keyless CI may surface advisory findings; doctor's exit code reflects
+    // brain health, not teardown health. The pin is: exits, no banner.
+    expect(code).not.toBeNull();
+  }, 60_000);
+
+  test('doctor --remediation-plan (Site F) exits without hanging, no banner', async () => {
+    const { code, durationMs, stderr } = await runWithTimeout(
+      ['doctor', '--remediation-plan'],
+      30_000,
+    );
+    expect(durationMs).toBeLessThan(30_000);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+    expect(code).not.toBeNull();
+  }, 45_000);
+
+  test('doctor --remediate (Site F, mutating) runs on a brain copy, exits, no banner', async () => {
+    const copy = copyBrainHome('remediate');
+    try {
+      const { code, durationMs, stderr } = await runWithTimeout(
+        ['doctor', '--remediate'],
+        45_000,
+        { GBRAIN_HOME: copy },
+      );
+      expect(durationMs).toBeLessThan(45_000);
+      expect(stderr).not.toContain(TEARDOWN_BANNER);
+      expect(code).not.toBeNull();
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('dream --dry-run (Site E — the overnight-cron TODO site) exits, no banner', async () => {
+    const copy = copyBrainHome('dream');
+    try {
+      const { code, durationMs, stderr } = await runWithTimeout(
+        ['dream', '--dry-run'],
+        60_000,
+        { GBRAIN_HOME: copy },
+      );
+      // Keyless CI: LLM-dependent phases degrade; the IRON rule is exits + no
+      // banner. A hang here is the silent-overnight-zombie regression.
+      expect(durationMs).toBeLessThan(60_000);
+      expect(stderr).not.toContain(TEARDOWN_BANNER);
+      expect(code).not.toBeNull();
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  test('ze-switch --dry-run (Site H) exits without hanging, no banner', async () => {
+    const { code, durationMs, stderr } = await runWithTimeout(
+      ['ze-switch', '--dry-run'],
+      30_000,
+    );
+    expect(durationMs).toBeLessThan(30_000);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+    expect(code).not.toBeNull();
+  }, 45_000);
+
+  test('D11: teardown deadline does NOT cover handler time (slow-handler regression)', async () => {
+    // Post-fix the deadline arms at teardown start, so a 500ms deadline cannot
+    // touch the handler: results print in full regardless. NOTE the falsification
+    // story is forward-looking, not historical — pre-#2084 code had no env knob
+    // (a static 10s constant), so this spawn would pass there too; the guard
+    // against re-hoisting the timer above the handler is the structural pin on
+    // DISCONNECT_HARD_DEADLINE_MS absence in fix-wave-structural.test.ts. This
+    // test pins that the env override is honored AND output survives a deadline
+    // far smaller than handler time.
+    const { code, stdout, durationMs } = await runWithTimeout(
+      ['search', 'foxtrot', '--limit', '3'],
+      15_000,
+      { GBRAIN_TEARDOWN_DEADLINE_MS: '500' },
+    );
+    expect(durationMs).toBeLessThan(15_000);
+    expect(code).toBe(0);
+    expect(stdout.length).toBeGreaterThan(0); // output intact = handler wasn't killed
+  }, 30_000);
+
+  test('D10: piped --json output parses complete (no exit truncation)', async () => {
+    // `search stats --json` emits a pure JSON document (the shared-op search
+    // path renders human format regardless of --json). A truncated-by-exit
+    // pipe fails to parse — the #1959 class, end-to-end.
+    const { code, stdout, stderr } = await runWithTimeout(
+      ['search', 'stats', '--json'],
+      20_000,
+    );
+    expect(code).toBe(0);
+    expect(stderr).not.toContain(TEARDOWN_BANNER);
+    expect(() => JSON.parse(stdout)).not.toThrow();
+  }, 30_000);
 });
 
 describe('v0.41.8.0 — daemon survival (regression guard for narrow force-exit)', () => {

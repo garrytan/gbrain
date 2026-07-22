@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -99,6 +102,43 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'raw_data'.*col:\s*'data'/);
     expect(source).toMatch(/table:\s*'ingest_log'.*col:\s*'pages_updated'/);
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
+  });
+
+  test('pgvector and jsonb_integrity checks use the active PGLite engine', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { pgvectorCheck, jsonbIntegrityCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const pgvector = await pgvectorCheck(engine);
+      expect(pgvector.name).toBe('pgvector');
+      expect(pgvector.status).toBe('ok');
+
+      const jsonb = await jsonbIntegrityCheck(engine);
+      expect(jsonb.name).toBe('jsonb_integrity');
+      expect(jsonb.status).toBe('ok');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('skill conformance derives a valid host manifest when manifest.json is absent', async () => {
+    const { skillConformanceCheck } = await import('../src/commands/doctor.ts');
+    const skillsDir = join(tmpdir(), `gbrain-doctor-skills-${crypto.randomUUID()}`);
+    mkdirSync(join(skillsDir, 'host-only'), { recursive: true });
+    writeFileSync(
+      join(skillsDir, 'host-only', 'SKILL.md'),
+      '---\nname: host-only\ndescription: host-owned skill\n---\n\n# Host-only\n',
+    );
+    try {
+      const check = skillConformanceCheck(skillsDir);
+      expect(check).toMatchObject({ name: 'skill_conformance', status: 'ok' });
+      expect(check.message).toContain('1/1 skills pass');
+      expect(check.message).toContain('derived from SKILL.md files');
+    } finally {
+      rmSync(skillsDir, { recursive: true, force: true });
+    }
   });
 
   // v0.31.2 — facts_extraction_health check added in PR1 commit 12.
@@ -1328,5 +1368,116 @@ describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
     // Each emits a named check.
     expect(source).toMatch(/name: 'quarantined_pages'/);
     expect(source).toMatch(/name: 'flagged_pages'/);
+  });
+});
+
+// ============================================================================
+// BUG 4 (v0.42.x) — doctor reports an actively-running sync via the live lock,
+// not stale freshness. Uses a REAL PGLiteEngine so inspectLock/syncLockId run
+// against actual gbrain_cycle_locks rows (the stub engine can't model a lock).
+// ============================================================================
+describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => {
+  let engine: any;
+  let syncLockId: (s: string) => string;
+
+  beforeAll(async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    ({ syncLockId } = await import('../src/core/db-lock.ts'));
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    const { resetPgliteState } = await import('./helpers/reset-pglite.ts');
+    await resetPgliteState(engine);
+    await engine.executeRaw(`DELETE FROM gbrain_cycle_locks`);
+  });
+
+  const staleDate = () => new Date(Date.now() - 5 * 24 * 60 * 60 * 1000); // 5d ago
+
+  async function addSource(id: string, lastSyncAt: Date | null) {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, last_sync_at, config)
+       VALUES ($1, $1, $2, $3, '{"federated":true}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at`,
+      [id, `/tmp/${id}`, lastSyncAt],
+    );
+  }
+
+  // ttlMinutes > 0 → live lock; <= 0 → already-expired (wedged) holder.
+  async function holdLock(sourceId: string, ttlMinutes: number) {
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+       VALUES ($1, 4242, 'testhost', now(), now() + ($2 || ' minutes')::interval, now())`,
+      [syncLockId(sourceId), String(ttlMinutes)],
+    );
+  }
+
+  test('stale source with NO live lock → fail (blocked/wedged is not masked)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain(`'wiki'`);
+  });
+
+  test('stale source WITH a live (non-expired) lock → ok (sync in progress)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    await holdLock('wiki', 30);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('ok');
+    expect(result.details?.synced_recently_count).toBe(1);
+    expect(result.details?.stale_count).toBe(0);
+    // BUG 4: operator sees the in-progress holder, not silence.
+    expect(result.message).toContain('sync in progress');
+    expect(result.message).toContain('pid 4242');
+  });
+
+  test('never-synced source WITH a live lock → ok (initial sync in progress)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', null);
+    await holdLock('wiki', 30);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('ok');
+    expect(result.details?.synced_recently_count).toBe(1);
+    expect(result.message).toContain('sync in progress');
+  });
+
+  test('never-synced source with NO lock → fail (unchanged behavior)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', null);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('never been synced');
+  });
+
+  test('expired-TTL lock does NOT mask staleness (wedged-but-not-refreshing holder)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    await holdLock('wiki', -5); // ttl_expires_at 5 min in the past
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+  });
+
+  test('blocked source with banked checkpoint rows but NO live lock → still fail', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    // A blocked sync banks the good files then exits without an anchor and
+    // without a held lock. Banking must NOT be read as "in progress".
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ('sync', 'fp-blocked', '[]'::jsonb, now())`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoint_paths (op, fingerprint, path) VALUES ('sync', 'fp-blocked', 'banked.md')`,
+    );
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
   });
 });
