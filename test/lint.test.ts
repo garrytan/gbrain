@@ -97,6 +97,27 @@ describe('fixContent', () => {
     expect(fixed).toContain('# Title');
   });
 
+  test('removes wrapping code fences when file has a trailing newline', () => {
+    const fixed = fixContent('```markdown\n# T\n```\n');
+    expect(fixed).toBe('# T\n');
+  });
+
+  test('preserves a normal document ending in a fenced example', () => {
+    const input = '# Format Guide\n\n## Example\n\n```yaml\nkind: Example\n```\n';
+    expect(fixContent(input)).toBe(input);
+  });
+
+  test('preserves multiple fenced examples', () => {
+    const input = '# Examples\n\n```json\n{"ok":true}\n```\n\n```yaml\nok: true\n```\n';
+    expect(fixContent(input)).toBe(input);
+  });
+
+  test('does not flag code-fence-wrap for a document ending in a fenced example', () => {
+    const input = '# Format Guide\n\n## Example\n\n```yaml\nkind: Example\n```\n';
+    const issues = lintContent(input, 'test.md');
+    expect(issues.some(i => i.rule === 'code-fence-wrap')).toBe(false);
+  });
+
   test('cleans up excessive blank lines after fix', () => {
     const input = 'Of course. Here is the brain page.\n\n\n\n# Title\n\nContent.';
     const fixed = fixContent(input);
