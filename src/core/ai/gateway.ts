@@ -23,7 +23,7 @@
 
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -2740,6 +2740,23 @@ function safeStringify(value: unknown): string {
   }
 }
 
+/**
+ * Some Anthropic-compatible providers (notably z.ai/GLM) occasionally return a
+ * tool-call part WITHOUT a `toolCallId`. AI SDK v6's ModelMessage schema requires
+ * `toolCallId: z.string()`, so an undefined id is invisible on the turn it is
+ * produced but throws "The messages do not match the ModelMessage[] schema" the
+ * moment that assistant turn is replayed as history on the next tool-loop turn —
+ * permanently wedging the job (observed as ~528 identical autopilot failures).
+ * Synthesize a stable, unique id AT THE SOURCE (`chat()` block-normalization) so
+ * the SAME id flows to both the persisted tool-call block and its matching
+ * tool-result block within a turn. Also used defensively in `toModelMessages` to
+ * keep any already-persisted poisoned rows from throwing on replay.
+ */
+function ensureToolCallId(id: unknown, toolName: string): string {
+  if (typeof id === 'string' && id.length > 0) return id;
+  return `glmfix-${toolName}-${randomUUID()}`;
+}
+
 export function toModelMessages(messages: ChatMessage[]): unknown[] {
   return messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content };
@@ -2772,7 +2789,10 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
         .filter((b) => b.type !== 'text' || typeof b.text === 'string')
         .map((b) => {
           if (b.type === 'text') return { type: 'text' as const, text: b.text };
-          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+          // ensureToolCallId here is the defensive half: rows persisted before
+          // the chat()-side fix can still carry an undefined id, and replaying
+          // one would throw on the ModelMessage schema.
+          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: ensureToolCallId(b.toolCallId, b.toolName), toolName: b.toolName, input: b.input };
           return b;
         }),
     };
@@ -3428,7 +3448,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
         else if (part.type === 'tool-call') {
           blocks.push({
             type: 'tool-call',
-            toolCallId: part.toolCallId,
+            toolCallId: ensureToolCallId(part.toolCallId, part.toolName),
             toolName: part.toolName,
             input: part.input ?? part.args,
           });
@@ -3442,7 +3462,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       for (const tc of (result as any).toolCalls ?? []) {
         blocks.push({
           type: 'tool-call',
-          toolCallId: tc.toolCallId,
+          toolCallId: ensureToolCallId(tc.toolCallId, tc.toolName),
           toolName: tc.toolName,
           input: tc.input ?? tc.args,
         });

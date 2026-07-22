@@ -93,4 +93,29 @@ describe('gateway tool schema + message shape (real AI SDK v6)', () => {
       generateText({ model: model as any, tools: tools as any, messages: preFixMessages as any }),
     ).rejects.toThrow();
   });
+
+  it('FIX: a tool-call with undefined toolCallId (GLM omission) is coerced to a non-empty string', () => {
+    // The exact poisoned shape z.ai/GLM produced: a tool-call part with NO
+    // toolCallId. Replayed as assistant history on turn N+1, pre-fix this threw
+    // "The messages do not match the ModelMessage[] schema" (toolCallId: z.string())
+    // and wedged the job across all 528 autopilot retries. ensureToolCallId()
+    // synthesizes a stable id so the v6 ModelMessage schema no longer rejects it.
+    // (chat() applies the SAME coercion at the source, so the id it emits flows
+    // to BOTH the assistant tool-call block AND its matching tool-result block —
+    // a complete matched conversation is covered by the first test above.)
+    const poisoned: ChatMessage[] = [
+      { role: 'user', content: 'find foo' },
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: undefined as unknown as string, toolName: 'search', input: { q: 'foo' } }] },
+    ];
+    const converted = toModelMessages(poisoned) as any[];
+    const asst = converted.find((m) => m.role === 'assistant');
+    const toolCallPart = asst.content.find((p: any) => p.type === 'tool-call');
+    expect(typeof toolCallPart.toolCallId).toBe('string');
+    expect(toolCallPart.toolCallId.length).toBeGreaterThan(0);
+    // An empty-string id must also be coerced (not just undefined).
+    const emptyId = toModelMessages([
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: '', toolName: 'search', input: {} }] },
+    ]) as any[];
+    expect(emptyId[0].content[0].toolCallId.length).toBeGreaterThan(0);
+  });
 });
