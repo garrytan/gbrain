@@ -28,7 +28,7 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-21T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -80,10 +80,10 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  * Directory prefix whitelist. These are the top-level slug dirs the extractor
  * recognizes as entity references. Upstream canonical + our extensions:
  *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
- *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
+ *   - Our domain extensions: tech, finance, personal, openclaw, ops (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities|ops)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -880,7 +880,16 @@ export function queryBasenameIndex(idx: Map<string, string[]>, name: string): st
   if (!name || typeof name !== 'string') return [];
   const trimmed = name.trim();
   if (!trimmed) return [];
-  const hit = idx.get(trimmed) ?? idx.get(trimmed.toLowerCase()) ?? idx.get(normalizeBasename(trimmed));
+  let hit = idx.get(trimmed) ?? idx.get(trimmed.toLowerCase()) ?? idx.get(normalizeBasename(trimmed));
+  // Issue #2576 bug 2: path-style refs (`runbooks/2026-05-01-x`) from dirs
+  // outside DIR_PATTERN reach here, but normalizeBasename strips slashes
+  // into a garbage key (`runbooks2026-05-01-x`) that can never hit the
+  // tail-keyed index. Fall back to the path tail so qualified refs resolve
+  // by basename like everything else.
+  if (!hit && trimmed.includes('/')) {
+    const tail = trimmed.slice(trimmed.lastIndexOf('/') + 1).trim();
+    if (tail) hit = idx.get(tail) ?? idx.get(tail.toLowerCase()) ?? idx.get(normalizeBasename(tail));
+  }
   return hit ? [...hit].sort(basenameSort) : [];
 }
 

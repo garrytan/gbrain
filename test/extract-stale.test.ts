@@ -209,6 +209,24 @@ describe('gbrain extract --stale', () => {
     expect(usRows[0]?.eq).toBe(true);
   });
 
+  test('version-arm floor: page edited BEFORE LINK_EXTRACTOR_VERSION_TS clears after --stale (issue #2576 bug 3)', async () => {
+    // A page whose updated_at predates the version watermark used to be
+    // stamped at its updated_at (< versionTs), so the version arm re-fired
+    // every run — permanently stale. The sweep now floors the stamp at
+    // versionTs. (The #1768 test above also covers this since the v0.42.x
+    // VERSION_TS bump moved its date below the watermark, but this pins the
+    // behavior explicitly so a date "repair" there can't drop coverage.)
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2000-01-01T00:00:00Z' WHERE slug = 'people/alice'`);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(1);
+
+    await runExtract(engine, ['--stale']);
+    // Pre-floor this stayed 1 forever (stamp < versionTs → version arm re-fires).
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+    await runExtract(engine, ['--stale']);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+  });
+
   test('CDX-4 (D2): a link-flush throw aborts the sweep and leaves pages UNSTAMPED', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) founded [Acme](companies/acme).'));
