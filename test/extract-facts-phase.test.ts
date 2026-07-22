@@ -536,6 +536,41 @@ describe('runExtractFacts — skip-wipe-on-warnings (TODOS P2)', () => {
     expect(rows.rows).toHaveLength(1);
   });
 
+  test('dry-run counter semantics: malformed page counts as scanned + skipped, not pagesWithFacts', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | Broken | UNPARSEABLE-KIND | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'], dryRun: true });
+    expect(r.pagesScanned).toBe(1);
+    expect(r.pagesWithFacts).toBe(0);
+    expect(r.pagesSkippedMalformed).toBe(1);
+    expect(r.factsInserted).toBe(0);
+    expect(r.factsDeleted).toBe(0);
+  });
+
+  test('mixed batch: valid pages reconcile, malformed pages skip, counters split correctly', async () => {
+    await putPage('people/valid', FACT_FENCE(
+      `| 1 | Good fact | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await putPage('people/broken', FACT_FENCE(
+      `| 1 | Bad fact | UNPARSEABLE-KIND | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/valid', 'people/broken'] });
+    expect(r.pagesScanned).toBe(2);
+    expect(r.pagesWithFacts).toBe(1);
+    expect(r.pagesSkippedMalformed).toBe(1);
+    expect(r.factsInserted).toBe(1);
+    expect(r.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, source_markdown_slug FROM facts ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]).toMatchObject({ fact: 'Good fact', source_markdown_slug: 'people/valid' });
+  });
+
   test('fence-less pages are NOT skipped — the empty-fence wipe still works', async () => {
     // Regression guard for the skip itself: a page with no fence at all
     // produces zero parse warnings, so removing a fence entirely must

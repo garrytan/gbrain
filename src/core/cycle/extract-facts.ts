@@ -449,7 +449,10 @@ export async function runExtractFacts(
         cost_usd: 0,
         summary:
           `Reconciled ${result.factsInserted} facts (and deleted ${result.factsDeleted}) ` +
-          `across ${result.pagesScanned} scanned pages.`,
+          `across ${result.pagesScanned} scanned pages.` +
+          (result.pagesSkippedMalformed > 0
+            ? ` ${result.pagesSkippedMalformed} page(s) skipped on malformed fence parse.`
+            : ''),
       });
     } catch (err) {
       console.error(`[extract_facts] receipt write failed: ${(err as Error).message}`);
