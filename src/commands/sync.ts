@@ -213,7 +213,7 @@ export interface SyncResult {
    * cron operators can disambiguate timeout vs pull-timeout in monitoring.
    */
   filesImported?: number;
-  reason?: 'timeout' | 'pull_timeout' | 'stall_timeout' | 'checkpoint_unavailable';
+  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable';
   /**
    * v0.42.x (#1794): cumulative file paths durably banked to the checkpoint
    * across THIS run + prior resumed runs. Surfaced on every partial/blocked
@@ -1717,7 +1717,7 @@ function buildPartialResult(opts: {
   modified: number;
   deleted: number;
   renamed: number;
-  reason: 'timeout' | 'pull_timeout' | 'stall_timeout' | 'checkpoint_unavailable';
+  reason: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable';
   bankedFiles?: number;
 }): SyncResult {
   return {
@@ -1948,6 +1948,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     });
   }
 
+  // #3068: remember a warn-and-continue pull failure. The fall-through-to-
+  // working-tree design stays (local commits still import when the remote is
+  // unreachable), but a ZERO-import sync after a failed pull must not report
+  // `up_to_date` / bump the freshness heartbeat — that is what made a
+  // permanently-failing pull (e.g. a local-path origin rejected by
+  // protocol.file.allow=never, #1315) invisible forever: every nightly run
+  // exited 0 with "Already up to date" and doctor's sync_freshness never
+  // fired because last_sync_at kept advancing.
+  let pullFailed = false;
   if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     serr(`[gbrain phase] sync.git_pull start`);
@@ -1990,6 +1999,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           reason: 'pull_timeout',
         });
       }
+      pullFailed = true;
       if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
         serr(`Warning: git pull failed (remote diverged). Syncing from local state.`);
       } else {
@@ -2164,6 +2174,29 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // #3068: the pull failed and nothing local advanced — this run imported
+    // NOTHING and the remote may hold commits we could not fetch. Reporting
+    // `up_to_date` here (and bumping the heartbeat below) is exactly the
+    // silent-wedge from the issue: every scheduled sync exits 0 forever while
+    // the source is stale. Return `partial` instead (not a clean status, and
+    // last_sync_at stays frozen so doctor/sources-status staleness fires).
+    // The anchor is untouched; the next sync retries the pull from the same
+    // bookmark.
+    if (pullFailed) {
+      serr(
+        `[sync] git pull failed and no local changes imported — reporting partial ` +
+        `(not up_to_date); sync anchor unchanged at ${lastCommit.slice(0, 8)}.`,
+      );
+      return buildPartialResult({
+        fromCommit: lastCommit,
+        toCommit: lastCommit,
+        filesImported: 0,
+        pagesAffected: [],
+        chunksCreated: 0,
+        added: 0, modified: 0, deleted: 0, renamed: 0,
+        reason: 'pull_failed',
+      });
+    }
     // v0.42.52.0 (PR #22xx): bump last_sync_at as a heartbeat on every successful
     // 0-changes sync. D4 invariant ("never advance last_commit on partial") is
     // preserved: last_sync_at is a monitoring signal (doctor sync_freshness
@@ -2348,6 +2381,27 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   if (totalChanges === 0) {
+    // #3068: same guard as the git-HEAD-equality gate above — a failed pull
+    // plus zero imports must not produce a clean `up_to_date` (and must not
+    // advance the anchor past commits this run never looked at remotely).
+    // Reached when local-only commits landed with no syncable content while
+    // the pull kept failing. Nothing is written; the next sync re-diffs the
+    // same trivial range and retries the pull.
+    if (pullFailed) {
+      serr(
+        `[sync] git pull failed and no syncable changes imported — reporting partial ` +
+        `(not up_to_date); sync anchor unchanged at ${lastCommit.slice(0, 8)}.`,
+      );
+      return buildPartialResult({
+        fromCommit: lastCommit,
+        toCommit: lastCommit,
+        filesImported: 0,
+        pagesAffected: [],
+        chunksCreated: 0,
+        added: 0, modified: 0, deleted: 0, renamed: 0,
+        reason: 'pull_failed',
+      });
+    }
     // Update sync state even with no syncable changes (git advanced). v0.42.x
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
@@ -5360,6 +5414,17 @@ function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.
       write(`  Fix the files then re-run 'gbrain sync', or 'gbrain sync --skip-failed' to move on.`);
       break;
     case 'partial':
+      // #3068: a failed (non-timeout) pull with zero imports gets its own
+      // message — "imported 0 of 0" reads like success, but the local
+      // checkout may be behind a remote we could not fetch.
+      if (result.reason === 'pull_failed') {
+        write(
+          `Sync INCOMPLETE at ${result.fromCommit?.slice(0, 8) ?? '<initial>'}: ` +
+          `git pull failed — the local checkout may be behind its remote.`,
+        );
+        write(`  Fix the pull (see the warning above), then re-run 'gbrain sync' (last_commit unchanged; safe to retry).`);
+        break;
+      }
       // v0.41.13.0 (T7 / D-V3-5): --timeout fired before the bookmark write
       // so last_commit is UNCHANGED. The next sync re-walks the same diff
       // and content_hash short-circuits already-imported files at ~10ms each.
