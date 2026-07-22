@@ -355,6 +355,9 @@ describe('PGLite: embed --stale converges on an alt-column brain (#1262)', () =>
       // the alt-column predicate does not.
       expect(await local.countStaleChunks()).toBe(1);
       expect(await local.countStaleChunks({ embeddingColumn: descriptor })).toBe(0);
+      // sumStaleChunkChars feeds the sync cost gate — same predicate contract.
+      expect(await local.sumStaleChunkChars()).toBeGreaterThan(0);
+      expect(await local.sumStaleChunkChars({ embeddingColumn: descriptor })).toBe(0);
       expect(await local.listStaleChunks({ embeddingColumn: descriptor, batchSize: 100 })).toHaveLength(0);
       expect(await local.listStaleChunks({ batchSize: 100 })).toHaveLength(1);
 

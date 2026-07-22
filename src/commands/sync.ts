@@ -576,9 +576,16 @@ async function runInlineCostGate(
 
   // Stale backlog: cheap single SQL; fail-open to 0 so a transient DB hiccup
   // never blocks the sync. Signature-aware (model/dims swap surfaces here).
+  // #1262: follow the write-side embedding column — otherwise an alt-column
+  // brain's fully-embedded corpus counts as phantom backlog on every gate.
   let staleChars = 0;
   try {
-    staleChars = await engine.sumStaleChunkChars({ signature: currentEmbeddingSignature() });
+    const { resolveWriteColumnForEngine } = await import('../core/search/embedding-column.ts');
+    const embeddingColumn = await resolveWriteColumnForEngine(engine);
+    staleChars = await engine.sumStaleChunkChars({
+      signature: currentEmbeddingSignature(),
+      ...(embeddingColumn && { embeddingColumn }),
+    });
   } catch {
     staleChars = 0;
   }

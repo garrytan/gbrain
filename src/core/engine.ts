@@ -1031,8 +1031,13 @@ export interface BrainEngine {
    * model signature (a model/dims swap). NULL signature is GRANDFATHERED
    * (never counted) so the post-migration corpus isn't flagged en masse.
    * Omit `signature` for the legacy `embedding IS NULL`-only count.
+   *
+   * `opts.embeddingColumn` switches the staleness predicate to the resolved
+   * write-side column (#1262) — same contract as countStaleChunks — so the
+   * sync cost gate doesn't count an alt-column brain's fully-embedded corpus
+   * as phantom backlog.
    */
-  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string }): Promise<number>;
+  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; embeddingColumn?: ResolvedColumn }): Promise<number>;
   /**
    * Stamp `pages.embedding_signature = signature` for one page. Called after
    * a page's chunks are (re)embedded so a later model swap can detect it as
