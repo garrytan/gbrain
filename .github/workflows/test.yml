@@ -206,7 +206,11 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20 (was 15): shard 4 runs ~14.5 min on master (dream.test.ts ~29s/test
+    # dominates it) and hits the 15-min ceiling on slower runners, cancelling
+    # mid-run with 0 test failures. Rebalancing via
+    # scripts/mine-shard-weights.ts is the real fix; this stops the bleeding.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
