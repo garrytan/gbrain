@@ -47,11 +47,11 @@ describe('doctor command', () => {
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     // runDoctor should accept null engine — it runs filesystem checks only.
-    // Signature is (engine, args, dbSource?) — third param is optional and
-    // used by --fast to distinguish "no config" from "user skipped DB check".
+    // Optional database source and connection-error parameters let fast mode
+    // distinguish an unconfigured install from a failed configured probe.
     // Function.length counts required params only (JS ignores ?-marked).
     expect(runDoctor.length).toBeGreaterThanOrEqual(2);
-    expect(runDoctor.length).toBeLessThanOrEqual(3);
+    expect(runDoctor.length).toBeLessThanOrEqual(4);
   });
 
   // Bug 7 — --fast should differentiate "no config anywhere" from "user
@@ -74,13 +74,72 @@ describe('doctor command', () => {
     }
   });
 
-  test('doctor --fast emits source-specific message when URL present', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
-    // The source-aware message must reference the variable name so users
-    // know where their URL is coming from.
-    expect(source).toContain('Skipping DB checks (--fast mode, URL present from');
-    // The null-source fallback must still mention both config + env paths.
-    expect(source).toContain('GBRAIN_DATABASE_URL');
+  test('fast database check runs one lightweight query and reports ok', async () => {
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const statements: string[] = [];
+    const engine = {
+      executeRaw: async (sql: string) => {
+        statements.push(sql);
+        return [{ ok: 1 }];
+      },
+      getStats: async () => {
+        throw new Error('expensive checks must not run');
+      },
+    } as unknown as import('../src/core/engine.ts').BrainEngine;
+
+    const result = await fastDatabaseConnectionCheck(engine);
+
+    expect(result).toEqual({
+      name: 'connection',
+      status: 'ok',
+      message: 'Connected',
+    });
+    expect(statements).toEqual(['SELECT 1 AS ok']);
+  });
+
+  test('fast database check reports a configured connection failure', async () => {
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const engine = {
+      executeRaw: async () => {
+        throw new Error('Cannot connect to database. Fix: check the configured URL.');
+      },
+    } as unknown as import('../src/core/engine.ts').BrainEngine;
+
+    const result = await fastDatabaseConnectionCheck(engine, 'config-file');
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('Cannot connect to database');
+  });
+
+  test('fast database check reports connectEngine failures', async () => {
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const result = await fastDatabaseConnectionCheck(
+      null,
+      'env:GBRAIN_DATABASE_URL',
+      new Error('configured database is unreachable'),
+    );
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('configured database is unreachable');
+    expect(result.message).toContain('env:GBRAIN_DATABASE_URL');
+  });
+
+  test('fast database check keeps unconfigured installs filesystem-only', async () => {
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const result = await fastDatabaseConnectionCheck(null);
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('No database configured');
+  });
+
+  test('doctor CLI uses a probe-only engine for fast mode', async () => {
+    const source = await Bun.file(new URL('../src/cli.ts', import.meta.url)).text();
+    const start = source.indexOf("if (command === 'doctor')");
+    const end = source.indexOf("if (command === 'smoke-test')", start);
+    const doctorBlock = source.slice(start, end);
+
+    expect(doctorBlock).toContain('connectEngine({ probeOnly: true })');
+    expect(doctorBlock).not.toContain('Skipping DB checks');
   });
 
   // v0.12.2 reliability wave — doctor detects JSONB double-encode + truncated

@@ -885,13 +885,20 @@ async function handleCliOnly(command: string, args: string[]) {
     }
 
     // Doctor runs filesystem checks first (no DB needed), then DB checks.
-    // --fast skips DB checks entirely.
+    // --fast runs only a cheap configured-DB connection probe.
     const { runDoctor } = await import('./commands/doctor.ts');
     const { getDbUrlSource } = await import('./core/config.ts');
     if (args.includes('--fast')) {
-      // Pass the DB URL source so doctor can tell "no config at all" from
-      // "user chose --fast while config is present".
-      await runDoctor(null, args, getDbUrlSource());
+      if (!cfgForDoctor) {
+        await runDoctor(null, args);
+      } else {
+        try {
+          const eng = await connectEngine({ probeOnly: true });
+          await runDoctor(eng, args);
+        } catch (error) {
+          await runDoctor(null, args, getDbUrlSource(), error);
+        }
+      }
     } else {
       try {
         const eng = await connectEngine();

@@ -53,6 +53,42 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
   return { schema_version: 2, status, health_score: score, checks };
 }
 
+export async function fastDatabaseConnectionCheck(
+  engine: BrainEngine | null,
+  dbSource?: DbUrlSource,
+  connectionError?: unknown,
+): Promise<Check> {
+  if (!engine) {
+    if (connectionError) {
+      const message = connectionError instanceof Error
+        ? connectionError.message
+        : String(connectionError);
+      const source = dbSource ? ` (URL from ${dbSource})` : '';
+      return {
+        name: 'connection',
+        status: 'fail',
+        message: `Could not connect to configured DB${source}: ${message}`,
+      };
+    }
+    return {
+      name: 'connection',
+      status: 'warn',
+      message: 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.',
+    };
+  }
+
+  try {
+    await engine.executeRaw('SELECT 1 AS ok');
+    return { name: 'connection', status: 'ok', message: 'Connected' };
+  } catch (error) {
+    return {
+      name: 'connection',
+      status: 'fail',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /**
  * Focused doctor for `run_doctor` MCP op + `gbrain remote doctor` CLI.
  *
@@ -697,7 +733,12 @@ export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
  * user has no DB configured anywhere; otherwise the caller chose --fast or
  * we failed to connect despite a configured URL.
  */
-export async function runDoctor(engine: BrainEngine | null, args: string[], dbSource?: DbUrlSource) {
+export async function runDoctor(
+  engine: BrainEngine | null,
+  args: string[],
+  dbSource?: DbUrlSource,
+  connectionError?: unknown,
+) {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
@@ -1115,26 +1156,22 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Filesystem read failure is non-fatal.
   }
 
-  // --- DB checks (skip if --fast or no engine) ---
+  // --- DB checks ---
 
-  if (fastMode || !engine) {
-    if (!engine) {
-      // Pick the precise message. When dbSource is provided, we know
-      // whether a URL exists (env or config-file) — the caller simply
-      // skipped the connection. When null, there really is no config
-      // anywhere.
-      let msg: string;
-      if (fastMode && dbSource) {
-        msg = `Skipping DB checks (--fast mode, URL present from ${dbSource})`;
-      } else if (!fastMode && dbSource) {
-        msg = `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`;
-      } else {
-        msg = 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
-      }
-      checks.push({ name: 'connection', status: 'warn', message: msg });
-    }
-    const earlyFail1 = outputResults(checks, jsonOutput);
-    process.exit(earlyFail1 ? 1 : 0);
+  if (fastMode) {
+    checks.push(await fastDatabaseConnectionCheck(engine, dbSource, connectionError));
+    const fastFail = outputResults(checks, jsonOutput);
+    process.exit(fastFail ? 1 : 0);
+    return;
+  }
+
+  if (!engine) {
+    const message = dbSource
+      ? `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`
+      : 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
+    checks.push({ name: 'connection', status: 'warn', message });
+    const earlyFail = outputResults(checks, jsonOutput);
+    process.exit(earlyFail ? 1 : 0);
     return;
   }
 
