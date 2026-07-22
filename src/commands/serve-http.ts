@@ -29,6 +29,7 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
+import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
@@ -1438,7 +1439,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       //     and other malformed inputs
       // normalizeScopesInput handles all four valid shapes (string, string[],
       // missing, empty) and rejects the rest with a structured 400.
-      const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
+      const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod, source, federatedRead } = req.body;
       const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       let scopeString: string;
@@ -1470,8 +1471,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         });
         return;
       }
+      // v0.41.x: honor optional `source` (write source_id) and `federatedRead`
+      // (read source set) from the request body, mirroring the CLI's
+      // `--source` / `--federated-read` flags. Omitting both preserves the
+      // historical behavior (source_id='default', federated_read=[source_id]).
+      // Pre-fix this endpoint hardcoded 'default'/undefined, so an admin SPA or
+      // a proxy could never mint a client bound to a non-default brain source
+      // over HTTP — only the CLI could. Validated here for a structured 400.
+      let sourceId: string;
+      let federatedReadIds: string[] | undefined;
+      try {
+        sourceId = normalizeSourceInput(source);
+        federatedReadIds = normalizeFederatedReadInput(federatedRead);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_source',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
       const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+        name, grants, scopeString, uris, sourceId, federatedReadIds, validatedAuthMethod,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
