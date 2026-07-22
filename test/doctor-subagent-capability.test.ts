@@ -70,4 +70,19 @@ describe('subagent_capability: explicit models.subagent precedence (#2112 residu
     expect(check.status).toBe('ok');
     expect(check.message).toContain('Subagent model resolves to "anthropic:claude-sonnet-4-6"');
   });
+
+  test('degraded:no_caching via models.default → fix hint recommends scoped models.subagent, not models.default', async () => {
+    // openai:gpt-5.2 supports tool calling but not prompt caching → degraded:no_caching.
+    // Neither models.subagent nor models.tier.subagent set, so this falls through to
+    // models.default. The fix hint must not tell the operator to overwrite the global
+    // default model — it should recommend the scoped models.subagent override instead.
+    await engine.setConfig('models.default', 'openai:gpt-5.2');
+
+    const check = await checkSubagentCapability(engine);
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.default is "openai:gpt-5.2"');
+    expect(check.message).toContain('gbrain config set models.subagent anthropic:claude-sonnet-4-6');
+    expect(check.message).not.toContain('gbrain config set models.default');
+  });
 });
