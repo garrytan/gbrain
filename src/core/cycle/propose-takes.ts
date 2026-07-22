@@ -473,11 +473,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
         console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
       }
     }
+    // A deadline-hit run halted mid-list the same way a budget-exhausted one
+    // does — record it as a halt, not a completed round.
+    const halted = result.budget_exhausted || result.deadline_hit === true;
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
-      round_completed_delta: result.budget_exhausted ? 0 : 1,
-      halt_delta: result.budget_exhausted ? 1 : 0,
+      round_completed_delta: halted ? 0 : 1,
+      halt_delta: halted ? 1 : 0,
     });
 
     return {

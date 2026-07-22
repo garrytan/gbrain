@@ -373,7 +373,7 @@ New prose appended here.`;
       buildPage({ slug: 'wiki/slow-a', body: 'page a' }),
       buildPage({ slug: 'wiki/slow-b', body: 'page b' }),
     ];
-    const { engine } = buildMockEngine({ pages });
+    const { engine, captured } = buildMockEngine({ pages });
     let extractorCalls = 0;
     const extractor: ProposeTakesExtractor = async () => {
       extractorCalls++;
@@ -390,6 +390,13 @@ New prose appended here.`;
     expect(details.pages_scanned).toBe(1);
     expect(extractorCalls).toBe(1);
     expect((details.warnings as string[]).some(w => w.includes('phase deadline hit'))).toBe(true);
+
+    // Rollup records the deadline break as a halt, not a completed round
+    // (same posture as budget exhaustion). Params: $5 = halt, $8 = completed.
+    const rollup = captured.find((c) => c.sql.includes('extract_rollup_7d'));
+    expect(rollup).toBeDefined();
+    expect(rollup!.params[4]).toBe(1); // halt_count delta
+    expect(rollup!.params[7]).toBe(0); // round_completed delta
   });
 
   test('default deadline does not fire on a fast run', async () => {
