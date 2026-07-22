@@ -288,7 +288,7 @@ export async function runThink(
   });
 
   // Render evidence blocks for the prompt
-  const pagesBlock = renderPagesBlock(gather.pages);
+  const pagesBlock = renderPagesBlock(gather.pages, 600, opts.question);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
