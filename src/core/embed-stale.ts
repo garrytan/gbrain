@@ -20,6 +20,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput } from './types.ts';
 import { embedBatchWithBackoff } from '../commands/embed.ts';
+import { resolveEmbeddingModelLabel } from './embedding.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
 
@@ -200,11 +201,17 @@ export async function embedStaleForSource(
         for (let j = 0; j < stale.length; j++) {
           staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
         }
+        // #1717: label re-embedded chunks with the model that produced the
+        // vector; preserved chunks keep their existing model. Without this,
+        // upsertChunks falls back to DEFAULT_EMBEDDING_MODEL for every chunk
+        // (the same mislabel the embed.ts paths fixed).
+        const embedModelLabel = resolveEmbeddingModelLabel();
         const merged: ChunkInput[] = existing.map((c) => ({
           chunk_index: c.chunk_index,
           chunk_text: c.chunk_text,
           chunk_source: c.chunk_source,
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+          model: staleIdxToEmbedding.has(c.chunk_index) && embedModelLabel ? embedModelLabel : c.model,
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           // Carry through per-chunk metadata. upsertChunks writes these as
           // EXCLUDED.<col> (not COALESCE), so omitting them here resets image

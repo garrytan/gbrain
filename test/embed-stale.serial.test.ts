@@ -15,6 +15,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { embedStaleForSource } from '../src/core/embed-stale.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -275,5 +276,50 @@ describe('embedStaleForSource', () => {
     expect(txtRow.symbol_name_qualified).toBe('mod::kept_symbol');
     // The stale text row actually got its embedding.
     expect(txtRow.embedded_at).not.toBeNull();
+  });
+
+  // #1717: the backfill path must label re-embedded chunks with the model
+  // that produced the vector, and preserve the existing label on chunks it
+  // did not touch (before the fix, both were reset to the engine default).
+  test('labels re-embedded chunks with the gateway model, preserves untouched labels (#1717)', async () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      env: { OPENAI_API_KEY: 'sk-test-embed-stale-1717' },
+    });
+    try {
+      await engine.putPage('notes/model-label', {
+        type: 'note',
+        title: 'model-label',
+        compiled_truth: '# model-label\n\nseeded',
+      });
+      await engine.upsertChunks('notes/model-label', [
+        {
+          chunk_index: 0,
+          chunk_text: 'already embedded elsewhere',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(1536).fill(0.01),
+          model: 'voyage:voyage-3',
+          token_count: 4,
+        },
+        {
+          chunk_index: 1,
+          chunk_text: 'stale chunk needing embed',
+          chunk_source: 'compiled_truth',
+          token_count: 5,
+          embedding: undefined, // stale
+        },
+      ]);
+
+      const result = await embedStaleForSource(engine, 'default', { embedFn: fakeEmbedFn });
+      expect(result.embedded).toBe(1);
+
+      const after = await engine.getChunks('notes/model-label');
+      const preserved = after.find((c) => c.chunk_index === 0)!;
+      const reembedded = after.find((c) => c.chunk_index === 1)!;
+      expect(reembedded.model).toBe('openai:text-embedding-3-large');
+      expect(preserved.model).toBe('voyage:voyage-3');
+    } finally {
+      resetGateway();
+    }
   });
 });
