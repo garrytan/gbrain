@@ -85,42 +85,47 @@ describe('embedStaleTakes (#2089)', () => {
 });
 
 describe('migration v125: takes.embedding dim align (#2089)', () => {
-  test('retypes an all-NULL 1536 column to the configured dims', async () => {
-    // Fresh engine so the column is untouched (all NULL).
-    const e2 = new PGLiteEngine();
+  // Fresh engine so the column is untouched (all NULL).
+  let e2: PGLiteEngine;
+
+  beforeAll(async () => {
+    e2 = new PGLiteEngine();
     await e2.connect({});
     await e2.initSchema();
-    try {
-      await e2.executeRaw(`UPDATE config SET value = '8' WHERE key = 'embedding_dimensions'`);
-      const v125 = MIGRATIONS.find((m) => m.version === 125);
-      expect(v125?.handler).toBeDefined();
-      await v125!.handler!(e2);
+  });
 
-      const rows = await e2.executeRaw<{ formatted: string }>(
-        `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
-           FROM pg_attribute a
-           JOIN pg_class c ON c.oid = a.attrelid
-           JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = 'public' AND c.relname = 'takes'
-            AND a.attname = 'embedding' AND NOT a.attisdropped`,
-      );
-      expect(rows[0].formatted).toBe('vector(8)');
+  afterAll(async () => {
+    await e2.disconnect();
+  });
 
-      // And the write path works at the new dims.
-      const page = await e2.putPage('companies/acme-example', {
-        title: 'Acme', type: 'company' as const, compiled_truth: 'Acme.\n',
-      });
-      await e2.addTakesBatch([
-        { page_id: page.id, row_num: 1, claim: 'B2B SaaS', kind: 'fact', holder: 'world', weight: 1 },
-      ]);
-      const updated = await e2.updateTakeEmbeddings([
-        { take_id: (await e2.listStaleTakes())[0].take_id, embedding: new Float32Array([1, 0, 0, 0, 0, 0, 0, 0]) },
-      ]);
-      expect(updated).toBe(1);
-      expect(await e2.countStaleTakes()).toBe(0);
-    } finally {
-      await e2.disconnect();
-    }
+  test('retypes an all-NULL 1536 column to the configured dims', async () => {
+    await e2.executeRaw(`UPDATE config SET value = '8' WHERE key = 'embedding_dimensions'`);
+    const v125 = MIGRATIONS.find((m) => m.version === 125);
+    expect(v125?.handler).toBeDefined();
+    await v125!.handler!(e2);
+
+    const rows = await e2.executeRaw<{ formatted: string }>(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'takes'
+          AND a.attname = 'embedding' AND NOT a.attisdropped`,
+    );
+    expect(rows[0].formatted).toBe('vector(8)');
+
+    // And the write path works at the new dims.
+    const page = await e2.putPage('companies/acme-example', {
+      title: 'Acme', type: 'company' as const, compiled_truth: 'Acme.\n',
+    });
+    await e2.addTakesBatch([
+      { page_id: page.id, row_num: 1, claim: 'B2B SaaS', kind: 'fact', holder: 'world', weight: 1 },
+    ]);
+    const updated = await e2.updateTakeEmbeddings([
+      { take_id: (await e2.listStaleTakes())[0].take_id, embedding: new Float32Array([1, 0, 0, 0, 0, 0, 0, 0]) },
+    ]);
+    expect(updated).toBe(1);
+    expect(await e2.countStaleTakes()).toBe(0);
   });
 
   test('no-op when column dims already match config', async () => {
