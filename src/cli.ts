@@ -59,6 +59,7 @@ export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgra
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
 const CLI_ONLY_SELF_HELP = new Set([
+  'init',
   'upgrade', 'post-upgrade', 'check-update',
   'embed', 'config',
   'skillpack', 'skillpack-check',
