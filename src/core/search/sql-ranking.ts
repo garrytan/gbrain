@@ -146,7 +146,7 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
  *                      responsible for joining `sources` so this alias resolves.
  *
  * @returns raw SQL fragment, e.g.
- *   `AND p.deleted_at IS NULL AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')`
+ *   `AND p.deleted_at IS NULL AND NOT s.archived AND (jsonb_typeof(COALESCE(p.frontmatter, '{}'::jsonb)) = 'object' AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine'))`
  */
 export function buildVisibilityClause(pageAlias: string, sourceAlias: string): string {
   // Single source of truth for the quarantine SQL lives in quarantine.ts so
