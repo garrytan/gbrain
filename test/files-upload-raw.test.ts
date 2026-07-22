@@ -15,16 +15,17 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runFiles } from '../src/commands/files.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let repoDir: string;
 let srcDir: string;
-let savedEnvSource: string | undefined;
+
+// resolveSourceId env tier could leak from the harness — pin it off per call.
+const runFilesNoEnvSource = (engine: PGLiteEngine, args: string[]) =>
+  withEnv({ GBRAIN_SOURCE: undefined }, () => runFiles(engine, args));
 
 beforeAll(async () => {
-  // resolveSourceId env tier could leak from the harness — pin it off.
-  savedEnvSource = process.env.GBRAIN_SOURCE;
-  delete process.env.GBRAIN_SOURCE;
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -38,7 +39,6 @@ afterAll(async () => {
   await engine.disconnect();
   rmSync(repoDir, { recursive: true, force: true });
   rmSync(srcDir, { recursive: true, force: true });
-  if (savedEnvSource !== undefined) process.env.GBRAIN_SOURCE = savedEnvSource;
 });
 
 describe('files upload-raw — small text file stays in git (#2297)', () => {
@@ -46,7 +46,7 @@ describe('files upload-raw — small text file stays in git (#2297)', () => {
     const input = join(srcDir, 'notes.txt');
     writeFileSync(input, 'raw provenance content');
 
-    await runFiles(engine, ['upload-raw', input, '--page', 'people/alice-example', '--type', 'notes']);
+    await runFilesNoEnvSource(engine, ['upload-raw', input, '--page', 'people/alice-example', '--type', 'notes']);
 
     const dest = join(repoDir, 'people/alice-example/.raw/notes.txt');
     expect(existsSync(dest)).toBe(true);
@@ -65,7 +65,7 @@ describe('files upload-raw — small text file stays in git (#2297)', () => {
     const input = join(srcDir, 'loose.txt');
     writeFileSync(input, 'loose content');
 
-    await runFiles(engine, ['upload-raw', input]);
+    await runFilesNoEnvSource(engine, ['upload-raw', input]);
 
     expect(existsSync(join(repoDir, 'unsorted/.raw/loose.txt'))).toBe(true);
     const rows = await engine.executeRaw<{ storage_path: string }>(
@@ -79,7 +79,7 @@ describe('files upload-raw — small text file stays in git (#2297)', () => {
     const input = join(srcDir, 'notes.txt');
     writeFileSync(input, 'raw provenance content v2');
 
-    await runFiles(engine, ['upload-raw', input, '--page', 'people/alice-example']);
+    await runFilesNoEnvSource(engine, ['upload-raw', input, '--page', 'people/alice-example']);
 
     const dest = join(repoDir, 'people/alice-example/.raw/notes.txt');
     expect(readFileSync(dest, 'utf8')).toBe('raw provenance content v2');
