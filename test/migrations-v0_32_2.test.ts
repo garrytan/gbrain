@@ -17,7 +17,10 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { v0_32_2, __setTestEngineOverride, __testing } from '../src/commands/migrations/v0_32_2.ts';
+import {
+  v0_32_2, __setTestEngineOverride, __testing,
+  countActiveLegacyRows, detectV0_32_2Drift,
+} from '../src/commands/migrations/v0_32_2.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
 
 let engine: PGLiteEngine;
@@ -55,12 +58,16 @@ async function seedLegacyFact(input: {
   source_id?: string;
   visibility?: 'private' | 'world';
   notability?: 'high' | 'medium' | 'low';
+  /** #2646: seed as soft-expired (what forget_fact leaves behind). */
+  expired?: boolean;
+  /** #2646: override the `source` column (dedup key half). */
+  source?: string;
 }): Promise<number> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const r = await (engine as any).db.query(
     `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
-                        valid_from, source, confidence)
-     VALUES ($1, $2, $3, 'fact', $4, $5, now(), 'mcp:put_page', 1.0)
+                        valid_from, source, confidence, expired_at)
+     VALUES ($1, $2, $3, 'fact', $4, $5, now(), $6, 1.0, $7)
      RETURNING id`,
     [
       input.source_id ?? 'default',
@@ -68,6 +75,8 @@ async function seedLegacyFact(input: {
       input.fact,
       input.visibility ?? 'private',
       input.notability ?? 'medium',
+      input.source ?? 'mcp:put_page',
+      input.expired ? new Date() : null,
     ],
   );
   return r.rows[0].id;
@@ -285,6 +294,170 @@ describe('phaseBFenceFacts — dirty-tree refusal scoping (#927)', () => {
   });
 });
 
+describe('phaseBFenceFacts — active-only predicate (#2646)', () => {
+  test('soft-expired legacy rows are NOT fenced (forget_fact removals stay removed)', async () => {
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Active claim' });
+    const expiredId = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Forgotten claim', expired: true });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('scanned=1');
+    expect(r.detail).toContain('fenced=1');
+
+    const body = readFileSync(join(brainDir, 'people/alice.md'), 'utf-8');
+    expect(body).toContain('Active claim');
+    expect(body).not.toContain('Forgotten claim');
+
+    // The expired row stays in the legacy keyspace, untouched.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (engine as any).db.query(
+      `SELECT row_num, source_markdown_slug, expired_at FROM facts WHERE id = $1`, [expiredId],
+    );
+    expect(row.rows[0].row_num).toBeNull();
+    expect(row.rows[0].source_markdown_slug).toBeNull();
+    expect(row.rows[0].expired_at).not.toBeNull();
+  });
+
+  test('dry-run counts exclude expired rows (predicate parity with the fetch)', async () => {
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Active' });
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Expired', expired: true });
+    await seedLegacyFact({ entity_slug: null, fact: 'Unparented expired', expired: true });
+
+    const r = await __testing.phaseBFenceFacts(engine, DRY_OPTS);
+    expect(r.detail).toContain('would fence 1 rows');
+    expect(r.detail).toContain('0 unfenceable');
+  });
+});
+
+describe('phaseBFenceFacts — duplicate legacy rows (#2646)', () => {
+  test('duplicate (claim, source) rows: one stamped, extras soft-expired, no UNIQUE violation', async () => {
+    const id1 = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim' });
+    const id2 = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim' });
+    const id3 = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim' });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('fenced=1');
+    expect(r.detail).toContain('expired_duplicates=2');
+
+    // Fence carries the claim once.
+    const parsed = parseFactsFence(readFileSync(join(brainDir, 'people/alice.md'), 'utf-8'));
+    expect(parsed.facts).toHaveLength(1);
+
+    // First row stamped; the duplicates soft-expired (never hard-deleted).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT id, row_num, expired_at FROM facts ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(3);
+    expect(rows.rows[0]).toMatchObject({ id: id1, row_num: 1 });
+    expect(rows.rows[0].expired_at).toBeNull();
+    for (const dup of [rows.rows[1], rows.rows[2]]) {
+      expect([id2, id3]).toContain(dup.id);
+      expect(dup.row_num).toBeNull();
+      expect(dup.expired_at).not.toBeNull();
+    }
+
+    // The guard's backlog is fully drained.
+    expect(await countActiveLegacyRows(engine)).toBe(0);
+
+    // Idempotent: a re-run finds nothing to do.
+    const r2 = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r2.status).toBe('complete');
+    expect(r2.detail).toContain('scanned=0');
+  });
+
+  test('same claim under different sources is NOT a duplicate (two fence rows)', async () => {
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim', source: 'src-a' });
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim', source: 'src-b' });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.detail).toContain('fenced=2');
+    expect(r.detail).not.toContain('expired_duplicates');
+
+    const parsed = parseFactsFence(readFileSync(join(brainDir, 'people/alice.md'), 'utf-8'));
+    expect(parsed.facts).toHaveLength(2);
+  });
+});
+
+describe('phaseBFenceFacts — interrupted-run resume (#2646)', () => {
+  test('resume after rename succeeded but DB stamps never ran (fence row_nums consumed as a queue)', async () => {
+    // The exact interruption the verdict flags: the atomic rename
+    // committed the fence, then the process died before ANY UPDATE.
+    // Simulate by running phase B fully, then clearing every stamp.
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'First' });
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Second' });
+    await __testing.phaseBFenceFacts(engine, OPTS);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE facts SET row_num = NULL, source_markdown_slug = NULL`,
+    );
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('fenced=2');
+
+    // No duplicate fence rows appended; each DB row re-claimed its
+    // fence row_num exactly once.
+    const parsed = parseFactsFence(readFileSync(join(brainDir, 'people/alice.md'), 'utf-8'));
+    expect(parsed.facts).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT row_num FROM facts ORDER BY row_num`,
+    );
+    expect(rows.rows.map((r: { row_num: number }) => r.row_num)).toEqual([1, 2]);
+    expect(await countActiveLegacyRows(engine)).toBe(0);
+  });
+
+  test('resume mid-stamp with duplicate claims: remaining rows drain without UNIQUE violation', async () => {
+    // Duplicate-claim group interrupted after the rename + the FIRST
+    // stamp: one row owns fence row_num 1, its duplicate is still
+    // active-legacy. The re-run must soft-expire the leftover (the
+    // fence row is already backed) instead of re-assigning row_num 1
+    // and violating the partial UNIQUE index.
+    const id1 = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim' });
+    const id2 = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Same claim' });
+    await __testing.phaseBFenceFacts(engine, OPTS);
+    // Undo the duplicate's soft-expire to reconstruct the mid-stamp state:
+    // id1 stamped, id2 active-legacy, fence already carries the claim.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE facts SET expired_at = NULL WHERE id = $1`, [id2],
+    );
+    expect(await countActiveLegacyRows(engine)).toBe(1);
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('expired_duplicates=1');
+    expect(await countActiveLegacyRows(engine)).toBe(0);
+
+    // id1's stamp is untouched; the fence still carries the claim once.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row1 = await (engine as any).db.query(
+      `SELECT row_num, expired_at FROM facts WHERE id = $1`, [id1],
+    );
+    expect(row1.rows[0].row_num).toBe(1);
+    expect(row1.rows[0].expired_at).toBeNull();
+    const parsed = parseFactsFence(readFileSync(join(brainDir, 'people/alice.md'), 'utf-8'));
+    expect(parsed.facts).toHaveLength(1);
+  });
+});
+
+describe('drift detection (#2646 repair lane)', () => {
+  test('detectV0_32_2Drift counts only active legacy rows with an entity', async () => {
+    expect(await detectV0_32_2Drift()).toBe(0);
+
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Active drift' });
+    await seedLegacyFact({ entity_slug: 'people/bob', fact: 'Forgotten', expired: true });
+    await seedLegacyFact({ entity_slug: null, fact: 'Unparented' });
+    expect(await detectV0_32_2Drift()).toBe(1);
+
+    // Running the backfill drains the drift to zero.
+    await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(await detectV0_32_2Drift()).toBe(0);
+  });
+});
+
 describe('phaseCVerify', () => {
   test('returns complete when fence + DB row counts match', async () => {
     await seedLegacyFact({ entity_slug: 'people/alice', fact: 'F1' });
@@ -313,6 +486,40 @@ describe('phaseCVerify', () => {
     expect(r.status).toBe('failed');
     expect(r.detail).toContain('drifted');
     expect(r.detail).toContain('people/alice');
+  });
+
+  test('touched-pages scoping (#2646): pre-existing drift on an untouched page does not fail the run', async () => {
+    // A page with fence↔DB drift that THIS run never touched.
+    mkdirSync(join(brainDir, 'people'), { recursive: true });
+    writeFileSync(
+      join(brainDir, 'people/stale.md'),
+      `---\ntype: person\ntitle: Stale\nslug: people/stale\n---\n\n# Stale\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | drifted row | fact | 1.0 | world | medium | 2026-01-01 |  | manual |  |\n| 2 | second drifted row | fact | 1.0 | world | medium | 2026-01-01 |  | manual |  |\n<!--- gbrain:facts:end -->\n`,
+      'utf-8',
+    );
+    // DB knows only ONE fenced row for people/stale → count mismatch.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, row_num, source_markdown_slug)
+       VALUES ('default', 'people/stale', 'drifted row', 'fact', 'private', 'medium',
+               now(), 'manual', 1.0, 1, 'people/stale')`,
+    );
+
+    // This run touches only people/alice.
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Fresh claim' });
+    const b = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(b.status).toBe('complete');
+
+    // Scoped verify: complete despite the stale page's drift.
+    const scoped = await __testing.phaseCVerify(engine, OPTS, b.touchedPages);
+    expect(scoped.status).toBe('complete');
+    expect(scoped.detail).toContain('pages_checked=1');
+    expect(scoped.detail).toContain('active_legacy_remaining=0');
+
+    // Unscoped verify (legacy behavior) still sees it.
+    const full = await __testing.phaseCVerify(engine, OPTS);
+    expect(full.status).toBe('failed');
+    expect(full.detail).toContain('people/stale');
   });
 });
 
