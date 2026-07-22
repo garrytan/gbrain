@@ -24,6 +24,11 @@
     "./search/hybrid": "./src/core/search/hybrid.ts",
     "./search/expansion": "./src/core/search/expansion.ts",
     "./ai/gateway": "./src/core/ai/gateway.ts",
+    "./ai/config": "./src/core/ai/build-gateway-config.ts",
+    "./ai/probes": "./src/core/ai/probes.ts",
+    "./budget/tracker": "./src/core/budget/budget-tracker.ts",
+    "./budget/ledger": "./src/core/enrichment/budget.ts",
+    "./budget/mcp": "./src/core/minions/budget-meter.ts",
     "./extract": "./src/commands/extract.ts",
     "./ingestion": "./src/core/ingestion/index.ts",
     "./ingestion/test-harness": "./src/core/ingestion/test-harness.ts"

@@ -168,6 +168,12 @@ export const SECTIONS: DocSection[] = [
     heading: "AI providers",
     entries: [
       {
+        title: "docs/guides/downstream-ai-runtime.md",
+        description:
+          "Supported package exports for downstream gateway configuration, provider probes, BudgetTracker scopes, and durable spend reservations.",
+        path: "docs/guides/downstream-ai-runtime.md",
+      },
+      {
         title: "docs/ai-providers/zeroentropy.md",
         description:
           "ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config.",
