@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "concept-startup-market-dynamics.md",
+    "synthetic": true,
+    "notes": "Ground-truth gradeable-claims labels for the propose_takes F1 gate. Each claim should be extracted by a tuned prompt. Conviction is inferred from hedging language; F1 target >= 0.85 on training corpus per plan D19."
+  },
+  "claims": [
+    {
+      "claim_text": "Post-PMF vertical-AI startups will compound faster than horizontal SaaS over the next 18 months",
+      "kind": "prediction",
+      "domain": "market",
+      "conviction": 0.85,
+      "since_date": "2024-01-12",
+      "rationale": "High conviction language explicit"
+    },
+    {
+      "claim_text": "Vertical-AI pivot was the right strategic call given market shift toward narrow workflows",
+      "kind": "judgment",
+      "domain": "strategy",
+      "conviction": 0.7,
+      "since_date": "2024-02-08",
+      "rationale": "I think + obvious by mid-2025 = moderate-strong"
+    },
+    {
+      "claim_text": "Cold-start liquidity problems are usually positioning problems, not marketplace mechanics",
+      "kind": "judgment",
+      "domain": "marketplaces",
+      "conviction": 0.6,
+      "since_date": "2024-04-19",
+      "rationale": "Explicit modest conviction stamp"
+    },
+    {
+      "claim_text": "widget-co plateau is a marketing problem not a product problem",
+      "kind": "judgment",
+      "domain": "company-specific",
+      "conviction": 0.8,
+      "since_date": "2024-06-22",
+      "rationale": "Strong conviction explicit"
+    },
+    {
+      "claim_text": "At least three fund-a portfolio companies will hit revenue milestones in 2025",
+      "kind": "prediction",
+      "domain": "fund-portfolio",
+      "conviction": 0.7,
+      "since_date": "2024-09-11",
+      "rationale": "Specific prediction with date"
+    },
+    {
+      "claim_text": "AI hype cycle runs hotter for 12 more months before first major correction",
+      "kind": "prediction",
+      "domain": "market-cycle",
+      "conviction": 0.75,
+      "since_date": "2024-12-03",
+      "rationale": "Strong prediction language"
+    },
+    {
+      "claim_text": "Vertical-AI valuations re-rate by late 2025 due to retention gap",
+      "kind": "prediction",
+      "domain": "valuations",
+      "conviction": 0.7,
+      "since_date": "2025-03-14",
+      "rationale": "Specific prediction with date"
+    },
+    {
+      "claim_text": "fund-c late-stage pivot is a mistake at their fund size",
+      "kind": "judgment",
+      "domain": "fund-strategy",
+      "conviction": 0.55,
+      "since_date": "2025-08-30",
+      "rationale": "Modest conviction explicit"
+    },
+    {
+      "claim_text": "acme-example hits meaningful ARR milestone before end of 2026",
+      "kind": "bet",
+      "domain": "company-specific",
+      "conviction": 0.7,
+      "since_date": "2026-04-24",
+      "rationale": "Explicit bet language under ## Bets heading"
+    },
+    {
+      "claim_text": "widget-co pivot announcement comes within 6 months",
+      "kind": "bet",
+      "domain": "company-specific",
+      "conviction": 0.65,
+      "since_date": "2026-04-24",
+      "rationale": "Bet language with concrete timeline"
+    }
+  ]
+}

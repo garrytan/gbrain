@@ -31,6 +31,7 @@ import {
 } from './receipt-name.ts';
 import type { TakesQualityReceipt } from './receipt.ts';
 import { estimateCost, getPricing, PricingNotFoundError } from './pricing.ts';
+import { DEFAULT_CYCLES_NONTTY } from '../eval/cycle-default.ts';
 
 export const DEFAULT_MODEL_PANEL = [
   'openai:gpt-4o',
@@ -145,7 +146,10 @@ async function callOneModel(
 
 export async function runEval(engine: BrainEngine, opts: RunOpts = {}): Promise<RunResult> {
   const limit = opts.limit ?? 100;
-  const cycles = opts.cycles ?? (process.stdout.isTTY ? 3 : 1);
+  // Library core stays TTY-agnostic (#1784): default to the cost-conservative
+  // value. The CLI layer (eval-takes-quality.ts) owns the TTY=3 upgrade + the
+  // banner annotation; it always passes an explicit `cycles` down.
+  const cycles = opts.cycles ?? DEFAULT_CYCLES_NONTTY;
   const models = opts.models ?? DEFAULT_MODEL_PANEL;
   const budgetUsd = opts.budgetUsd ?? null;
   const source = opts.source ?? 'db';

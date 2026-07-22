@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
-import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
-import type { Take, TakeKind } from './engine.ts';
+import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
+import type { Take, TakeKind, TakeHit } from './engine.ts';
 
 /**
  * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
@@ -19,10 +19,35 @@ export function generateToken(prefix: string): string {
 /**
  * Validate and normalize a slug. Slugs are lowercased repo-relative paths.
  * Rejects empty slugs, path traversal (..), and leading /.
+ *
+ * SECURITY (#1647-slug / codex #6): also rejects a small set of dangerous
+ * characters that survive the `..` check but can still produce a hostile
+ * filename at the write-through FS sink or hide the real target — NUL/control
+ * bytes, Unicode bidirectional/RTL overrides, backslashes, and URL-encoded
+ * path separators/traversal. None appear in legitimate slugs (lowercase
+ * alphanumerics, hyphens, dots, underscores, slashes, unicode letters, and CJK
+ * all still pass), so this is pure hardening, not a behavior change. This is the
+ * shared chokepoint for both `putPage` and `updateSlug` on both engines.
  */
 export function validateSlug(slug: string): string {
   if (!slug || /(^|\/)\.\.($|\/)/.test(slug) || /^\//.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". Slugs cannot be empty, start with /, or contain path traversal.`);
+  }
+  // Control / NUL bytes (C0 + DEL + C1).
+  if (/[\x00-\x1f\x7f-\x9f]/.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}". Slugs cannot contain control characters.`);
+  }
+  // Unicode bidirectional / RTL overrides (visual-spoofing of the real path).
+  if (/[\u202a-\u202e\u2066-\u2069]/.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}". Slugs cannot contain bidirectional/RTL override characters.`);
+  }
+  // Backslash (Windows-style separator / escape).
+  if (slug.includes('\\')) {
+    throw new Error(`Invalid slug: "${slug}". Backslashes are not allowed in slugs.`);
+  }
+  // URL-encoded path separators / traversal (%2e=., %2f=/, %5c=\).
+  if (/%2e|%2f|%5c/i.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}". URL-encoded path separators are not allowed in slugs.`);
   }
   return slug.toLowerCase();
 }
@@ -44,21 +69,23 @@ export function contentHash(page: PageInput): string {
 }
 
 /**
- * v0.32.8: validate a `source_id` is safe for use as a filesystem path
- * segment AND as a SQL identifier value. Used by the per-source disk-layout
- * fix in patterns.ts/synthesize.ts before any `join(brainDir, source_id, ...)`
+ * Validate a `source_id` is safe for use as a filesystem path segment AND
+ * as a SQL identifier value. Used by the per-source disk-layout code in
+ * patterns.ts/synthesize.ts before any `join(brainDir, source_id, ...)`
  * call, and at `putSource()` time so invalid ids never make it into the DB.
  *
- * Allows lowercase ASCII letters, digits, underscore, and hyphen. Rejects
- * `..`, `/`, spaces, dots, and any non-ASCII character. Path-traversal and
- * SQL-injection safe by construction.
+ * **v0.38 (codex r2 P1-C, P1-D):** consolidated to import from
+ * `src/core/source-id.ts` (dependency-free canonical module). The regex
+ * TIGHTENED from the permissive `^[a-z0-9_-]+$` to the strict kebab-case
+ * `^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$` — same regex `sources-ops` has
+ * always enforced at creation time. Closes the drift between path-safety
+ * and creation-time validation; no production source IDs break (none had
+ * underscores, since `sources-ops` always rejected them).
+ *
+ * Re-exported here for back-compat with the pre-v0.38 `validateSourceId`
+ * import. New code should import directly from `source-id.ts`.
  */
-const SOURCE_ID_RE = /^[a-z0-9_-]+$/;
-export function validateSourceId(id: string): void {
-  if (!SOURCE_ID_RE.test(id)) {
-    throw new Error(`Invalid source_id "${id}" — must match ${SOURCE_ID_RE}`);
-  }
-}
+export { assertValidSourceId as validateSourceId } from './source-id.ts';
 
 function readOptionalDate(raw: unknown): Date | null | undefined {
   // Three-state read for columns that may or may not be in the SELECT
@@ -75,10 +102,18 @@ export function rowToPage(row: Record<string, unknown>): Page {
   const salienceTouchedAt = readOptionalDate(row.salience_touched_at);
   const effectiveDateSource = row.effective_date_source as Page['effective_date_source'] | undefined;
   const importFilename = row.import_filename as string | null | undefined;
+  // v0.39.3.0 CV5 — three-state read for provenance columns. Matches the
+  // v0.26.5 deleted_at pattern: undefined when the SELECT projection didn't
+  // include the column (older code paths); null when the column is NULL
+  // (historical pre-v0.38 row); populated when v0.38+ ingestion stamped it.
+  const sourceKind = row.source_kind === undefined ? undefined : (row.source_kind as string | null);
+  const sourceUri = row.source_uri === undefined ? undefined : (row.source_uri as string | null);
+  const ingestedVia = row.ingested_via === undefined ? undefined : (row.ingested_via as string | null);
+  const ingestedAt = readOptionalDate(row.ingested_at);
   return {
     id: row.id as number,
     slug: row.slug as string,
-    type: row.type as PageType,
+    type: row.type as string,
     title: row.title as string,
     compiled_truth: row.compiled_truth as string,
     timeline: row.timeline as string,
@@ -94,6 +129,12 @@ export function rowToPage(row: Record<string, unknown>): Page {
     ...(effectiveDateSource !== undefined && { effective_date_source: effectiveDateSource }),
     ...(importFilename !== undefined && { import_filename: importFilename }),
     ...(salienceTouchedAt !== undefined && { salience_touched_at: salienceTouchedAt }),
+    // v0.39.3.0 (columns added in migration v81 — WARN-8 + CV5). Three-state
+    // optional read; absent SELECT projections compile unchanged.
+    ...(sourceKind !== undefined && { source_kind: sourceKind }),
+    ...(sourceUri !== undefined && { source_uri: sourceUri }),
+    ...(ingestedVia !== undefined && { ingested_via: ingestedVia }),
+    ...(ingestedAt !== undefined && { ingested_at: ingestedAt }),
     // v0.31.12: propagate source_id so downstream callers (embed, reconcile-links)
     // can thread it through getChunks / upsertChunks without defaulting to 'default'.
     // v0.32.8: Page.source_id is required. Every SELECT feeding rowToPage now
@@ -102,6 +143,34 @@ export function rowToPage(row: Record<string, unknown>): Page {
     // an upstream caller bypassed the projection check; better to surface than
     // silently mis-attribute).
     source_id: (row.source_id as string | undefined) ?? 'default',
+  };
+}
+
+/**
+ * v0.42.7 (#1696) — map a DB row to a StalePageRow for the extraction
+ * freshness sweep. Shared by both engines so frontmatter JSONB parsing can't
+ * drift. Mirrors rowToPage's `typeof === 'string' ? JSON.parse` idiom; tolerates
+ * NULL compiled_truth/timeline/frontmatter (empty-string / {} fallback).
+ */
+export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
+  const fm = row.frontmatter;
+  return {
+    id: row.id as number,
+    slug: row.slug as string,
+    source_id: (row.source_id as string | undefined) ?? 'default',
+    type: row.type as string,
+    title: (row.title as string | null) ?? '',
+    compiled_truth: (row.compiled_truth as string | null) ?? '',
+    timeline: (row.timeline as string | null) ?? '',
+    frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
+    updated_at: new Date(row.updated_at as string),
+    // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
+    // Fallback derives an ISO string from the Date — NEVER String(Date), which
+    // yields "Mon Jun 02 2026 …" that `::timestamptz` misparses. Pre-#1768
+    // callers that don't project the column still get a valid (ms) ISO value.
+    updated_at_iso: row.updated_at_iso != null
+      ? String(row.updated_at_iso)
+      : new Date(row.updated_at as string).toISOString(),
   };
 }
 
@@ -177,6 +246,46 @@ export function isUndefinedColumnError(error: unknown, column: string): boolean 
   return message.includes(column) && /does not exist|no such column|undefined column/i.test(message);
 }
 
+/**
+ * v0.42 (T1 sibling): undefined-table predicate for defense-in-depth on
+ * pre-migration brains. Matches SQLSTATE `42P01` (postgres) plus the common
+ * "relation ... does not exist" / "no such table" message variants (PGLite +
+ * driver-wrapped paths). Use on read paths where a missing table should
+ * degrade to "no rows" rather than crash (e.g. resolveSlugWithAlias on
+ * pre-v104 brains, dangling_aliases doctor check on pre-v104 brains).
+ *
+ * Anything else falls through and caller MUST re-throw.
+ */
+export function isUndefinedTableError(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : '';
+  if (code === '42P01') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /relation .* does not exist|no such table|undefined table/i.test(message);
+}
+
+const _warnedKeys = new Set<string>();
+
+/**
+ * v0.42 (T2): emit a stderr warning at most once per process-key. Used by
+ * `resolveSlugWithAlias` to surface multi-source alias ambiguity without
+ * spamming hot paths.
+ *
+ * Test seam: `_resetWarnOnceForTests()` clears the set so per-process
+ * warn-once contracts can be reasserted across test cases.
+ */
+export function warnOncePerProcess(key: string, message: string): void {
+  if (_warnedKeys.has(key)) return;
+  _warnedKeys.add(key);
+  console.warn(message);
+}
+
+/** @internal test seam */
+export function _resetWarnOnceForTests(): void {
+  _warnedKeys.clear();
+}
+
 let _tryParseEmbeddingWarned = false;
 
 /**
@@ -220,6 +329,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     parent_symbol_path: (row.parent_symbol_path as string[] | null | undefined) ?? null,
     doc_comment: (row.doc_comment as string | null | undefined) ?? null,
     symbol_name_qualified: (row.symbol_name_qualified as string | null | undefined) ?? null,
+    modality: (row.modality as 'text' | 'image' | undefined) ?? undefined,
   };
 }
 
@@ -228,7 +338,7 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     slug: row.slug as string,
     page_id: row.page_id as number,
     title: row.title as string,
-    type: row.type as PageType,
+    type: row.type as string,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
     chunk_id: row.chunk_id as number,
@@ -297,7 +407,7 @@ export function takeRowToTake(row: Record<string, unknown>): Take {
     page_slug: String(row.page_slug ?? ''),
     row_num: Number(row.row_num),
     claim: String(row.claim),
-    kind: row.kind as TakeKind,
+    kind: row.kind as string,
     holder: String(row.holder),
     weight: Number(row.weight),
     since_date: dateOrNull(row.since_date),
@@ -309,12 +419,33 @@ export function takeRowToTake(row: Record<string, unknown>): Take {
     resolved_outcome: row.resolved_outcome == null ? null : Boolean(row.resolved_outcome),
     resolved_quality: row.resolved_quality == null
       ? null
-      : (String(row.resolved_quality) as 'correct' | 'incorrect' | 'partial'),
+      : (String(row.resolved_quality) as 'correct' | 'incorrect' | 'partial' | 'unresolvable'),
     resolved_value: row.resolved_value == null ? null : Number(row.resolved_value),
     resolved_unit: row.resolved_unit == null ? null : String(row.resolved_unit),
     resolved_source: row.resolved_source == null ? null : String(row.resolved_source),
     resolved_by: row.resolved_by == null ? null : String(row.resolved_by),
     created_at: isoOrNull(row.created_at) ?? '',
     updated_at: isoOrNull(row.updated_at) ?? '',
+  };
+}
+
+/**
+ * Convert a takes search-hit SQL row to the `TakeHit` shape. The Postgres
+ * driver returns int8 columns (`take_id`/`page_id` are BIGSERIAL-backed) as
+ * native BigInt, which crashes JSON.stringify at the MCP/CLI serialization
+ * boundary (#2450-class). Number() is the same 2^53 envelope takeRowToTake
+ * already accepts for these ids.
+ */
+export function takeHitRowToHit(row: Record<string, unknown>): TakeHit {
+  return {
+    take_id: Number(row.take_id),
+    page_id: Number(row.page_id),
+    page_slug: String(row.page_slug ?? ''),
+    row_num: Number(row.row_num),
+    claim: String(row.claim),
+    kind: row.kind as TakeKind,
+    holder: String(row.holder),
+    weight: Number(row.weight),
+    score: Number(row.score),
   };
 }

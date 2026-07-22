@@ -96,6 +96,11 @@ fi
 # against recipes/ all reference the banned name by necessity.
 ALLOW_LIST=(
   'scripts/check-privacy.sh'
+  # v0.41.16.0: sibling rule-enforcement script for test/fixtures/
+  # conversation-formats/. Same meta-exception as check-privacy.sh
+  # itself — the script's BANNED_TOKENS array literally names the
+  # tokens it forbids.
+  'scripts/check-fixture-privacy.sh'
   'CLAUDE.md'
   'llms-full.txt'
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md'
@@ -145,6 +150,24 @@ ALLOW_LIST=(
   # meta-rule-enforcement exception as scripts/check-privacy.sh and
   # CHANGELOG.md — describing what the rule forbids requires naming it.
   'skills/functional-area-resolver/SKILL.md'
+  # v0.36.0.0: the gbrain skillpack harvest privacy linter's whole job
+  # is to catch the banned literal leaking into gbrain. The regex
+  # pattern in harvest-lint.ts is `\bWintermute\b` by necessity; the
+  # tests verify that pattern fires by feeding it the banned string;
+  # the harvest skill markdown describes the substitution policy
+  # ("Wintermute → your OpenClaw") as part of the genericization
+  # checklist. Same meta-rule-enforcement exception as the privacy
+  # checks themselves.
+  'src/core/skillpack/harvest-lint.ts'
+  'test/skillpack-harvest-lint.test.ts'
+  'test/skillpack-harvest.test.ts'
+  'test/e2e/skillpack-flow.test.ts'
+  'skills/skillpack-harvest/SKILL.md'
+  # v0.40.1.0 Track D / T5: the qrels gate test contains a privacy-grep
+  # regression guard whose block list names the banned literal to assert
+  # it's NOT in the qrels fixture. Same meta-rule-enforcement exception
+  # as the other test entries above.
+  'test/eval-replay-gate.test.ts'
 )
 
 is_allowed() {

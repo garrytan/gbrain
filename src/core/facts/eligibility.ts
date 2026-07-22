@@ -46,8 +46,33 @@ export type EligibilityResult = { ok: true } | { ok: false; reason: string };
  */
 const RESCUE_SLUG_PREFIXES = ['meetings/', 'personal/', 'daily/'] as const;
 
+// v0.41.22 (T21, codex F-ELIGIBLE finding): UNION of gbrain-base's hardcoded
+// types AND gbrain-base-v2's canonical extractable types. Pre-rebase plan
+// deferred pack-aware ELIGIBLE_TYPES to v0.43+; codex outside voice caught
+// it as a blocker — changing the default taxonomy to gbrain-base-v2 while
+// `eligibility.ts:49` hardcodes only gbrain-base's types means post-unify
+// `media` (subtype: article), `tweet`, `atom`, `analysis` pages would
+// silently drop out of facts extraction.
+//
+// `concept` is DELIBERATELY excluded: v0.41.11 documented its `extractable:
+// true` flag in gbrain-base.yaml as "cosmetic on the backstop path because
+// backstop uses hardcoded ELIGIBLE_TYPES" and the pre-existing test suite
+// pins `kind:concept` rejection. Concept extraction stays out of the
+// backstop; the schema-pack flag remains a forward-compatibility marker.
+//
+// The union here is safe for both packs:
+//   - gbrain-base brains: all original types still eligible (back-compat)
+//   - gbrain-base-v2 brains: post-unify canonical types also eligible
+//
+// Pack-aware async lookup via extractableTypesFromPack(pack) deferred to
+// v0.43+ once an async eligibility-check signature is feasible across all
+// call sites (operations.ts + import-file.ts + others).
 const ELIGIBLE_TYPES: PageType[] = [
+  // gbrain-base (legacy) types
   'note', 'meeting', 'slack', 'email', 'calendar-event', 'source', 'writing',
+  // gbrain-base-v2 canonical types declared extractable in the pack
+  // (concept deliberately omitted — see above)
+  'media', 'tweet', 'atom', 'analysis',
 ];
 
 const MIN_BODY_CHARS = 80;

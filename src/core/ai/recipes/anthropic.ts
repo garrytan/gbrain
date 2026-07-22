@@ -17,13 +17,16 @@ export const anthropic: Recipe = {
   touchpoints: {
     // No embedding model available.
     expansion: {
-      models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
+      models: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-sonnet-4-6'],
       cost_per_1m_tokens_usd: 0.25,
       price_last_verified: '2026-05-10',
     },
     chat: {
       models: [
+        'claude-fable-5',
+        'claude-opus-4-8',
         'claude-opus-4-7',
+        'claude-sonnet-5',
         'claude-sonnet-4-6',
         'claude-haiku-4-5-20251001',
       ],

@@ -37,7 +37,7 @@
  */
 
 import postgres from 'postgres';
-import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize } from './db.ts';
+import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, endPoolBounded } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 
@@ -142,16 +142,22 @@ export function deriveDirectUrl(url: string): string | null {
     const decodedUser = decodeURIComponent(user);
     const refMatch = decodedUser.match(/^postgres\.([a-z0-9]+)$/i);
     let directHost = hostname;
+    let directUser = parsed.username;
     if (refMatch && refMatch[1] && isPoolerHost) {
       directHost = `db.${refMatch[1]}.supabase.co`;
+      // Supabase direct connections use bare `postgres`; the `postgres.<ref>`
+      // form is pooler-only (Supavisor uses the suffix for tenant routing).
+      // Without this strip, direct auth fails with `password authentication
+      // failed for user "postgres.<ref>"` even though the password is correct.
+      directUser = 'postgres';
     }
     // Compose direct URL by swapping host + port. Preserve auth, db, query.
     parsed.hostname = directHost;
     parsed.port = '5432';
     // Reconstruct with the original scheme.
     const scheme = url.match(/^postgres(?:ql)?:\/\//i)?.[0] ?? 'postgres://';
-    const auth = parsed.username
-      ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+    const auth = directUser
+      ? `${directUser}${parsed.password ? `:${parsed.password}` : ''}@`
       : '';
     const search = parsed.search ?? '';
     const path = parsed.pathname ?? '';
@@ -394,15 +400,21 @@ export class ConnectionManager {
    * (db.ts singleton path). Direct pool is always ours.
    */
   async disconnect(): Promise<void> {
+    // #1972: end both pools concurrently with a gbrain-owned hard bound, so the
+    // per-pool drains don't STACK (sequential 2s waits → ~4-6s once the
+    // instance/module pool is added downstream) and neither can hang teardown
+    // past the CLI's 10s force-exit. endPoolBounded never throws.
+    const ends: Promise<void>[] = [];
     if (this._directPool) {
-      try { await this._directPool.end(); } catch { /* idempotent */ }
+      ends.push(endPoolBounded(this._directPool));
       this._directPool = null;
       this._directInit = null;
     }
     if (this._readPool && !this._readPoolOwnedExternally) {
-      try { await this._readPool.end(); } catch { /* idempotent */ }
+      ends.push(endPoolBounded(this._readPool));
       this._readPool = null;
     }
+    await Promise.all(ends);
   }
 
   /**

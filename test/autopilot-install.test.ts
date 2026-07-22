@@ -78,3 +78,24 @@ describe('detectInstallTarget', () => {
   // existsSync + execSync which is awkward in-process. Those branches are
   // exercised by the E2E test (Task 14) against a stubbed host.
 });
+
+// v0.36.1.x (cherry-pick #966): the autopilot wrapper script must source
+// ~/.zshenv BEFORE ~/.zshrc. zshenv is the canonical place for env vars in
+// non-interactive zsh; zshrc only fires for interactive shells, so vars
+// exported in zshrc never reach the LaunchAgent subprocess. Operators who
+// exported GBRAIN_DATABASE_URL or {OPENAI,ANTHROPIC}_API_KEY in zshrc and
+// expected autopilot to inherit them hit silent missing-secret failures.
+describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () => {
+  test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    const zshenvIdx = src.indexOf('~/.zshenv');
+    const zshrcIdx = src.indexOf('~/.zshrc');
+    expect(zshenvIdx).toBeGreaterThan(0);
+    expect(zshrcIdx).toBeGreaterThan(0);
+    expect(zshenvIdx).toBeLessThan(zshrcIdx);
+    // Both should appear inside writeWrapperScript's heredoc as `source ~/.foo`
+    expect(src).toMatch(/source\s+~\/\.zshenv/);
+    expect(src).toMatch(/source\s+~\/\.zshrc/);
+  });
+});

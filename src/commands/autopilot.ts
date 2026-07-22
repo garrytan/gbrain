@@ -17,13 +17,63 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+import { VERSION } from '../version.ts';
+import {
+  canSelfUpdate,
+  decideSelfUpgrade,
+  isCacheFresh,
+  readUpdateCache,
+  reconcileBreadcrumb,
+  resolveSelfUpgradeMode,
+} from '../core/self-upgrade.ts';
+import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
+import { detectInstallMethod } from './upgrade.ts';
+import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
+import { inspectLock } from '../core/db-lock.ts';
+
+/**
+ * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
+ *
+ * `recoverable` (network blip, Supabase 503, pool saturated, connection
+ * refused on a port that may be coming up): retry with backoff up to
+ * `GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS` (default 30).
+ *
+ * `unrecoverable` (`database_url` unset/empty/malformed, auth failure,
+ * config file unreadable): exit immediately so launchd's 60s
+ * `ThrottleInterval` backs off the relaunch instead of thrashing.
+ *
+ * Exported (string-based signature) so tests drive it without needing
+ * a real reconnect error.
+ */
+export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecoverable' {
+  const msg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  if (msg.includes('database_url') && (msg.includes('undefined') || msg.includes('missing') || msg.includes('empty') || msg.includes('not set'))) {
+    return 'unrecoverable';
+  }
+  if (msg.includes('invalid url') || msg.includes('malformed') || msg.includes('parse url')) {
+    return 'unrecoverable';
+  }
+  // Auth failures: postgres prints `role "name" does not exist` (with the
+  // role name in quotes between role and does), so use a skeleton match.
+  if (msg.includes('password authentication failed') || msg.includes('authentication failed')) {
+    return 'unrecoverable';
+  }
+  if (msg.includes('role') && msg.includes('does not exist')) {
+    return 'unrecoverable';
+  }
+  if (msg.includes('no brain configured') || msg.includes('config not found')) {
+    return 'unrecoverable';
+  }
+  return 'recoverable';
+}
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -59,7 +109,21 @@ function logError(phase: string, e: unknown) {
  */
 export function resolveGbrainCliPath(): string {
   try {
-    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // #2747: `env: process.env` is required under Bun. Bun's execSync
+    // snapshots process.env at Bun's OWN startup, not at call time — a
+    // runtime PATH mutation (dotenv/config loading, shell-profile sourcing
+    // in a wrapper, etc.) happening between Bun boot and this call is
+    // invisible to `which` without explicitly forwarding the current env.
+    // This is why "which gbrain" succeeds when run standalone (fresh Bun
+    // process, no prior mutation) but can fail from inside autopilot's own
+    // process at this exact call site. Same fix already applied to
+    // detectTini() in spawn-helpers.ts (see its comment) — this call site
+    // was missed.
+    const which = execSync('which gbrain', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: process.env,
+    }).trim();
     if (which) return which;
   } catch { /* not on $PATH — fall through */ }
 
@@ -73,11 +137,223 @@ export function resolveGbrainCliPath(): string {
     return arg1;
   }
 
-  throw new Error('Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH (e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly.');
+  // #2747: include what we actually saw so an operator (or a future bug
+  // report) doesn't have to guess whether PATH/execPath/argv[1] looked
+  // sane at the moment of failure.
+  throw new Error(
+    'Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH ' +
+      '(e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly. ' +
+      `Debug: PATH=${JSON.stringify(process.env.PATH ?? '')} execPath=${JSON.stringify(exec)} argv1=${JSON.stringify(arg1)}`,
+  );
 }
 
 export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
+}
+
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export function decideLockAcquisition(
+  lockPath: string,
+  currentPid: number,
+): { action: 'acquire' } | { action: 'exit'; holderPid: number } | { action: 'takeover'; reason: string } {
+  if (!existsSync(lockPath)) return { action: 'acquire' };
+
+  let raw = '';
+  try {
+    raw = readFileSync(lockPath, 'utf-8').trim();
+  } catch {
+    // An unreadable lock cannot prove another process is alive.
+  }
+
+  const holderPid = Number.parseInt(raw, 10);
+  const sameProcess = Number.isFinite(holderPid) && holderPid === currentPid;
+  const alive = !sameProcess && isPidAlive(holderPid);
+
+  if (alive) return { action: 'exit', holderPid };
+  return { action: 'takeover', reason: `dead pid ${raw || '<empty>'}` };
+}
+
+// ── Self-upgrade silent channel (v0.42; opt-in, supervisor-relaunch) ─────────
+
+/**
+ * Reconcile the pre-swap breadcrumb at daemon boot (the post-swap attribution
+ * gate). If we're running the version we attempted, the swap+relaunch worked;
+ * if not, the new binary failed to launch and we record it as a known-bad
+ * version so the auto channel never retries it. Best-effort.
+ */
+function reconcileSelfUpgradeAtBoot(): void {
+  try {
+    const cfg = loadConfig();
+    if (!cfg) return;
+    const { state, transition } = reconcileBreadcrumb(cfg.self_upgrade, VERSION);
+    if (!transition) return;
+    cfg.self_upgrade = state;
+    saveConfig(cfg);
+    logSelfUpgrade({
+      channel: 'autopilot',
+      action: 'apply',
+      current: VERSION,
+      outcome: transition === 'applied' ? 'applied' : 'failed',
+      reason:
+        transition === 'applied'
+          ? 'breadcrumb matched running version'
+          : 'crash-on-launch: attempted version != running version (recorded known-bad)',
+    });
+    if (transition === 'applied') {
+      console.log(`[autopilot] self-upgrade confirmed: now running ${VERSION}.`);
+    } else {
+      console.error('[autopilot] self-upgrade did not take (running an older version); recorded known-bad.');
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Conservative idle: no cycle running AND (Postgres) no active/waiting jobs.
+ * Any ambiguity / error → NOT idle (we'd rather skip an upgrade window). */
+async function computeAutopilotIdle(engine: BrainEngine, engineType: string): Promise<boolean> {
+  try {
+    const cycle = await inspectLock(engine, 'gbrain-cycle');
+    if (cycle) return false; // a cycle (sync/extract/embed/...) is running
+    if (engineType === 'postgres') {
+      const rows = await (engine as any).executeRaw?.(
+        `SELECT count(*)::int AS n FROM minion_jobs WHERE status IN ('active','waiting')`,
+      );
+      const busy = Number((rows as Array<{ n: number }>)?.[0]?.n ?? 0);
+      return busy === 0;
+    }
+    return true; // pglite: no separate worker queue; cycle-lock-free is the signal
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The autopilot silent self-upgrade channel. Opt-in (`self_upgrade.mode=auto`).
+ * Fires only when behind + idle + in quiet hours + the install can self-update
+ * and the target isn't known-bad. On apply: write the breadcrumb, run
+ * `gbrain upgrade --swap-only` (fast; defers post-upgrade to the relaunch),
+ * then unlink the autopilot lock and exit(0) so the supervisor relaunches the
+ * new binary (no in-process re-exec — Bun has no execve). Never throws.
+ */
+async function attemptAutopilotSelfUpgrade(
+  engine: BrainEngine,
+  engineType: string,
+  lockPath: string,
+): Promise<void> {
+  try {
+    const cfg = loadConfig();
+    if (!cfg) return;
+    if (resolveSelfUpgradeMode(cfg) !== 'auto') return;
+
+    // latestVersion from the shared cache; refresh when stale (TTL throttles fetch).
+    let entry = readUpdateCache();
+    if (!entry || !isCacheFresh(entry, Date.now())) {
+      try {
+        const { refreshUpdateCache } = await import('./check-update.ts');
+        await refreshUpdateCache();
+        entry = readUpdateCache();
+      } catch {
+        /* fail-open */
+      }
+    }
+    if (!entry || entry.marker.kind !== 'upgrade_available' || !entry.marker.latest) return;
+    const latestVersion = entry.marker.latest;
+
+    const idle = await computeAutopilotIdle(engine, engineType);
+    const qh = cfg.self_upgrade?.quiet_hours;
+    const tz = qh?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const verdict = evaluateQuietHours({ start: qh?.start ?? 23, end: qh?.end ?? 8, tz }, new Date());
+    const installMethod = detectInstallMethod();
+
+    const decision = decideSelfUpgrade({
+      mode: 'auto',
+      channel: 'autopilot',
+      currentVersion: VERSION,
+      latestVersion,
+      failedVersions: cfg.self_upgrade?.failed_versions ?? [],
+      idle,
+      inQuietHours: verdict !== 'allow',
+      canSelfUpdate: canSelfUpdate(installMethod),
+      throttledByInterval: false, // cache TTL is the fetch throttle
+    });
+
+    if (decision.action !== 'apply') {
+      if (['unsupported_install', 'known_bad'].includes(decision.action)) {
+        logSelfUpgrade({
+          channel: 'autopilot',
+          action: decision.action,
+          current: VERSION,
+          latest: latestVersion,
+          outcome: 'skipped',
+          reason: decision.reason,
+        });
+      }
+      return;
+    }
+
+    // Apply. Breadcrumb first so a crash-on-launch is attributable.
+    cfg.self_upgrade = { ...(cfg.self_upgrade ?? {}), attempting_version: latestVersion };
+    saveConfig(cfg);
+    logSelfUpgrade({ channel: 'autopilot', action: 'apply', current: VERSION, latest: latestVersion, reason: decision.reason });
+    console.log(`[autopilot] self-upgrade: applying ${VERSION} -> ${latestVersion} (idle, quiet hours).`);
+
+    try {
+      execSync('gbrain upgrade --swap-only', {
+        stdio: 'inherit',
+        timeout: 300_000,
+        env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      });
+    } catch (e) {
+      const fresh = loadConfig();
+      if (fresh) {
+        const failed = new Set(fresh.self_upgrade?.failed_versions ?? []);
+        failed.add(latestVersion);
+        fresh.self_upgrade = { ...(fresh.self_upgrade ?? {}), failed_versions: [...failed] };
+        delete fresh.self_upgrade.attempting_version;
+        saveConfig(fresh);
+      }
+      logSelfUpgrade({
+        channel: 'autopilot',
+        action: 'apply',
+        current: VERSION,
+        latest: latestVersion,
+        outcome: 'failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
+      console.error(`[autopilot] self-upgrade swap failed; staying on ${VERSION}.`);
+      return;
+    }
+
+    // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the
+    // supervisor relaunches the NEW binary, which reconciles the breadcrumb.
+    logSelfUpgrade({
+      channel: 'autopilot',
+      action: 'apply',
+      current: VERSION,
+      latest: latestVersion,
+      outcome: 'applied',
+      reason: 'swapped; exiting for supervisor relaunch',
+    });
+    console.log('[autopilot] self-upgrade swapped; exiting for relaunch.');
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      /* already gone */
+    }
+    process.exit(0);
+  } catch {
+    /* the self-upgrade channel must never break the tick */
+  }
 }
 
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
@@ -118,18 +394,22 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  // Lock file to prevent concurrent instances (#14)
-  const lockPath = join(process.env.HOME || '', '.gbrain', 'autopilot.lock');
+  // Lock file to prevent concurrent instances (#14).
+  // v0.37.7.0 #1226: route through gbrainPath() so the lockfile lives
+  // under GBRAIN_HOME when set, not the hardcoded ~/.gbrain. Pre-fix,
+  // two brains sharing GBRAIN_HOME=different-paths still wrote to the
+  // same global lockfile and one would silently respawn the other
+  // forever.
+  const lockPath = gbrainHomePath('autopilot.lock');
   try {
-    mkdirSync(join(process.env.HOME || '', '.gbrain'), { recursive: true });
-    if (existsSync(lockPath)) {
-      const stat = require('fs').statSync(lockPath);
-      const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
-        console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
-        process.exit(0);
-      }
-      console.log('Stale lock file found (>10 min). Taking over.');
+    mkdirSync(gbrainHomePath(), { recursive: true });
+    const decision = decideLockAcquisition(lockPath, process.pid);
+    if (decision.action === 'exit') {
+      console.error(`Another autopilot instance is running (pid ${decision.holderPid}). Exiting.`);
+      process.exit(0);
+    }
+    if (decision.action === 'takeover') {
+      console.log(`Stale autopilot lock found (${decision.reason}). Taking over.`);
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }
@@ -145,17 +425,26 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const useMinionsDispatch = mode !== 'off' && engineType === 'postgres' && !forceInline;
   const spawnManagedWorker = useMinionsDispatch && !noWorker;
 
+  // v0.42 self-upgrade: if a prior tick swapped the binary and exited for
+  // relaunch, we're now the relaunched process — reconcile the breadcrumb so a
+  // crash-on-launch is recorded known-bad and a success is confirmed.
+  reconcileSelfUpgradeAtBoot();
+
   let stopping = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
 
   if (spawnManagedWorker) {
     const cliPath = resolveGbrainCliPath();
-    // Inject the RSS watchdog default (2048 MB) for the autopilot-supervised
-    // worker. Bare `gbrain jobs work` has no default; the supervisor and
-    // autopilot are the production paths that opt in.
+    // Cgroup-aware auto-sized RSS watchdog cap (issue #1678). The old flat
+    // 2048MB killed legit embed work (~10GB) on every cycle → silent
+    // ~400×/24h respawn loop. resolveDefaultMaxRssMb clamps 0.5×min(cgroup,
+    // RAM) to [4096,16384]. Bare `gbrain jobs work` resolves the same default;
+    // we pass it explicitly so the spawn log + child agree.
+    const { resolveDefaultMaxRssMb } = await import('../core/minions/rss-default.ts');
+    const autopilotMaxRssMb = resolveDefaultMaxRssMb();
     childSupervisor = new ChildWorkerSupervisor({
       cliPath,
-      args: ['jobs', 'work', '--max-rss', '2048'],
+      args: ['jobs', 'work', '--max-rss', String(autopilotMaxRssMb)],
       // process.env clone; autopilot doesn't gate shell jobs the way the
       // standalone supervisor does (autopilot is the operator-trust path).
       env: { ...process.env },
@@ -171,7 +460,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // existing logs see the same lines.
         if (event.kind === 'worker_spawned') {
           console.log(
-            `[autopilot] Minions worker spawned (pid: ${event.pid}, watchdog: 2048MB${event.tini ? ', tini: active' : ''})`,
+            `[autopilot] Minions worker spawned (pid: ${event.pid}, watchdog: ${autopilotMaxRssMb}MB${event.tini ? ', tini: active' : ''})`,
           );
         } else if (event.kind === 'worker_spawn_failed') {
           console.error(
@@ -238,6 +527,14 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   process.on('SIGINT',  () => { void shutdown('SIGINT'); });
 
   let consecutiveErrors = 0;
+  // v0.37.7.0 #1162 — counter for consecutive reconnect failures.
+  // Reset on every successful health probe or reconnect. Threshold
+  // controlled by GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS env (default 30).
+  let autopilotReconnectFails = 0;
+  const AUTOPILOT_MAX_RECONNECT_FAILS = Math.max(
+    1,
+    Number(process.env.GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS) || 30,
+  );
   // Peer-worker liveness for --no-worker mode. The probe is a proxy, not
   // ground truth: SELECT count(*) of active jobs with a recent lock_until
   // refresh. A queue with only waiting jobs and a healthy idle worker
@@ -250,6 +547,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // before the queue piles up.
   const NO_WORKER_WARN_TICKS = 3;
   let noWorkerConsecutiveIdle = 0;
+  // v0.36+ T8: track time since last full cycle for the 60-min floor.
+  // Initialized to "long ago" so the first tick on a healthy brain still
+  // runs the full cycle (phase-coupling exercise) before settling into
+  // targeted-submit mode.
+  let lastFullCycleAt = 0;
 
   while (!stopping) {
     const cycleStart = Date.now();
@@ -259,15 +561,63 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // declare the instance stale after 10 minutes (Codex C).
     try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
 
-    // DB health check (reconnect if needed)
+    // DB health check (reconnect if needed).
+    //
+    // v0.37.7.0 #1162: classify reconnect failures. Pre-fix, the
+    // catch logged the error and looped forever — when `database_url`
+    // was unset/malformed the loop spammed `config.database_url
+    // undefined` until launchd was killed manually. Now:
+    //   - Recoverable transient (network blip, pool saturated, 503) →
+    //     log + retry next tick. Up to GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS
+    //     consecutive failures before exit (default 30 = ~5min at
+    //     10s ticks).
+    //   - Unrecoverable (database_url unset, malformed URL, auth
+    //     failure) → exit immediately with a clear stderr line.
+    //     ThrottleInterval=60 in the launchd plist (v0.37.7.0) ensures
+    //     launchd's KeepAlive backoff actually backs off instead of
+    //     thrashing.
     try {
       await engine.getConfig('version');
-    } catch {
+      autopilotReconnectFails = 0; // reset on success
+    } catch (probeErr) {
       try {
-        await engine.disconnect();
-        await (engine as any).connect?.();
-      } catch (e) { logError('reconnect', e); }
+        // #2034: use reconnect() — it restores the config captured at connect()
+        // and avoids the null-connection window. The previous
+        // `disconnect()` + bare `connect()` lost the config (throwing
+        // `database_url undefined` on every retry → FATAL restart-loop on any
+        // transient DB blip) AND tore down the pool postgres.js can otherwise
+        // self-heal.
+        await engine.reconnect({ error: probeErr });
+        autopilotReconnectFails = 0;
+      } catch (e) {
+        logError('reconnect', e);
+        autopilotReconnectFails++;
+        const klass = classifyReconnectError(e);
+        if (klass === 'unrecoverable') {
+          console.error(
+            `[autopilot] FATAL: unrecoverable DB error (${(e as Error).message ?? 'unknown'}). ` +
+            `Exiting so launchd ThrottleInterval can apply backoff.`,
+          );
+          stopping = true;
+          setCliExitVerdict(1);
+          break;
+        }
+        if (autopilotReconnectFails >= AUTOPILOT_MAX_RECONNECT_FAILS) {
+          console.error(
+            `[autopilot] FATAL: ${autopilotReconnectFails} consecutive reconnect failures. ` +
+            `Last error: ${(e as Error).message ?? 'unknown'}. Exiting.`,
+          );
+          stopping = true;
+          setCliExitVerdict(1);
+          break;
+        }
+      }
     }
+
+    // v0.42 self-upgrade silent channel (opt-in self_upgrade.mode=auto). Runs
+    // each tick; cache TTL throttles the actual GitHub fetch. On apply it swaps
+    // + exits for supervisor relaunch (never returns). No-op unless mode=auto.
+    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath);
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
     // (single SELECT). See NO_WORKER_WARN_TICKS comment above for caveats.
@@ -307,35 +657,348 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     }
 
     if (useMinionsDispatch) {
-      // Submit ONE autopilot-cycle job per cycle slot. The idempotency key
-      // dedupes overrun submissions — if a cycle's job runs longer than
-      // the interval, the next submission is a no-op at the DB layer
-      // (ON CONFLICT DO NOTHING on the unique partial index).
+      // v0.36+ brain-health-100 wave (T8): targeted-submit loop.
+      //
+      // Pre-fix: every tick submitted ONE autopilot-cycle job, full phase
+      // set, regardless of brain state. On a healthy brain this was pure
+      // overhead. On a degraded brain it bundled fast wins (embed) with
+      // slow phases (synthesize) so the user waited for the slowest.
+      //
+      // New logic: compute the remediation plan (cheap; no full doctor
+      // walk), then route to the right level of intervention:
+      //   - Score >= 95 + empty plan: full cycle every 60min (phase-
+      //     coupling exercise), otherwise sleep.
+      //   - Small plan (<=3 steps, <5min): submit individual handlers.
+      //   - Large plan or low score: full autopilot-cycle (the hammer).
+      //
+      // D10 cycle-lock invariant ensures targeted-submit and
+      // autopilot-cycle can never run concurrently (both acquire
+      // gbrain-cycle), so the "60-min floor double-processes queued
+      // targeted jobs" failure mode is closed by the lock.
+      //
+      // v0.40 D17 layered on top: per-source freshness check fires BEFORE
+      // the score gate so a healthy brain that happens to have a stale
+      // federated source still picks up new commits. brain_score reflects
+      // internal data quality (embed coverage, link density, orphans),
+      // NOT whether GitHub has new commits on the source repo. Decoupling
+      // the two closes the silent-stale-source bug class on
+      // poll-only deployments.
       try {
         const { MinionQueue } = await import('../core/minions/queue.ts');
+        const { computeRecommendations, embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import('../core/brain-score-recommendations.ts');
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
         const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
-        const job = await queue.add('autopilot-cycle',
-          { repoPath },
-          {
-            queue: 'default',
-            idempotency_key: `autopilot-cycle:${slot}`,
-            max_attempts: 2,
-            timeout_ms: timeoutMs,
-            // Submission backpressure: when the worker is dead or wedged,
-            // idempotency_key only dedupes within a slot; cross-slot pile-up
-            // is what produced the 28+ waiting-jobs production incident.
-            // maxWaiting: 1 caps at 1 active + 1 waiting; queue.add coalesces
-            // the 3rd+ submission and writes a backpressure-audit JSONL line.
-            maxWaiting: 1,
-          },
-        );
-        if (jsonMode) {
-          process.stderr.write(JSON.stringify({ event: 'dispatched', job_id: job.id, slot }) + '\n');
+
+        // ── v0.40 D17: per-source freshness check ────────────────────
+        // Runs first; independent of score gate. Submits a 'sync' job per
+        // source whose last_sync_at is older than the interval. The sync
+        // handler (T6/T7) auto-enqueues embed-backfill on completion if
+        // pages changed.
+        try {
+          const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
+          if (await isFederatedV2Enabled(engine)) {
+            const { loadAllSources } = await import('../core/sources-load.ts');
+            const sources = await loadAllSources(engine);
+            const intervalMs = baseInterval * 1000;
+            const now = Date.now();
+            for (const src of sources) {
+              if (!src.local_path) continue;
+              const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
+              const ageMs = now - lastSyncMs;
+              if (ageMs < intervalMs) continue; // fresh enough
+              try {
+                const job = await queue.add(
+                  'sync',
+                  {
+                    sourceId: src.id,
+                    repoPath: src.local_path,
+                    auto_embed_backfill: true,
+                    embed_reason: 'autopilot_freshness',
+                  },
+                  {
+                    queue: 'default',
+                    idempotency_key: `autopilot-sync:${src.id}:${slot}`,
+                    max_attempts: 2,
+                    timeout_ms: timeoutMs,
+                    maxWaiting: 1,
+                  },
+                );
+                if (jsonMode) {
+                  process.stderr.write(JSON.stringify({
+                    event: 'dispatched', job_id: job.id, mode: 'freshness',
+                    source_id: src.id, age_ms: ageMs,
+                  }) + '\n');
+                } else {
+                  console.log(`[dispatch] job #${job.id} sync (freshness: ${src.id}; age=${Math.floor(ageMs / 60000)}min)`);
+                }
+              } catch (e) {
+                logError('dispatch.freshness', e);
+              }
+            }
+          }
+        } catch (e) {
+          logError('dispatch.freshness-gate', e);
+        }
+
+        // ── #1685 GAP D: per-source extract_atoms auto-drain ───────────────
+        // The silent-backlog incident: a pack that doesn't declare extract_atoms
+        // never runs the phase in the routine cycle, so the atom backlog grows
+        // invisibly. Auto-submit a bounded, PROTECTED drain per source when the
+        // backlog exceeds the threshold AND the active pack doesn't declare the
+        // phase. Default-ON, daily-spend-capped, time-sloted key so a new slot
+        // opens each UTC day (CODEX #1/#2/#3, DECISION 3C). Postgres-only —
+        // PGLite has no multi-process worker to run the job.
+        if (engine.kind === 'postgres') {
+          try {
+            const enabled = (await engine.getConfig('autopilot.auto_drain.enabled')) !== 'false';
+            if (enabled) {
+              const { packDeclaresPhase } = await import('../core/cycle.ts');
+              // packDeclaresPhase reads the active pack (brain-wide, not
+              // per-source). If the pack declares extract_atoms the routine
+              // cycle already drains it for every source — nothing to do.
+              const declares = await packDeclaresPhase(engine, 'extract_atoms');
+              if (!declares) {
+                const parsePosInt = (v: string | null, d: number): number => {
+                  if (v == null) return d;
+                  const n = parseInt(v, 10);
+                  return Number.isFinite(n) && n > 0 ? n : d;
+                };
+                const parseNonNegFloat = (v: string | null, d: number): number => {
+                  if (v == null) return d;
+                  const n = parseFloat(v);
+                  return Number.isFinite(n) && n >= 0 ? n : d;
+                };
+                const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
+                const windowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
+                const maxUsdPerDay = parseNonNegFloat(await engine.getConfig('autopilot.auto_drain.max_usd_per_day'), 2.0);
+                // Each drain run is BudgetTracker-capped at ~$0.30; bound the
+                // brain-wide daily count instead of a real-time spend ledger.
+                const PER_RUN_USD = 0.3;
+                const maxJobsToday = Math.max(0, Math.floor(maxUsdPerDay / PER_RUN_USD));
+                const utcDay = new Date().toISOString().slice(0, 10);
+
+                let submittedToday = 0;
+                try {
+                  const rows = await engine.executeRaw<{ cnt: number }>(
+                    `SELECT count(*)::int AS cnt FROM minion_jobs WHERE name = 'extract-atoms-drain' AND created_at >= $1::timestamptz`,
+                    [`${utcDay}T00:00:00Z`],
+                  );
+                  submittedToday = rows[0]?.cnt ?? 0;
+                } catch {
+                  // count is best-effort; treat as 0 (cap still bounds submits this tick).
+                }
+
+                if (submittedToday < maxJobsToday) {
+                  const { loadAllSources } = await import('../core/sources-load.ts');
+                  const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+                  const sources = await loadAllSources(engine);
+                  for (const src of sources) {
+                    if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
+                    if (!src.local_path) continue;
+                    const backlog = await countExtractAtomsBacklog(engine, src.id);
+                    if (backlog === null || backlog <= threshold) continue;
+                    // Time-sloted key (CODEX #2): a static key would block the
+                    // source FOREVER once the first job completes. A new UTC-day
+                    // slot reopens it each day.
+                    const idemKey = `autopilot-extract-atoms-drain:${src.id}:${utcDay}`;
+                    try {
+                      // CODEX (impl review #4): DO NOT use maxWaiting here — it
+                      // coalesces by (name, queue), NOT by source, so source B's
+                      // submit would return source A's waiting row, B would never
+                      // queue, and the cap counter would over-count. The per-source
+                      // idempotency key is the correct dedup. Pre-check it so we
+                      // submit + count only genuinely-new sources (queue.add returns
+                      // the existing row on an idempotency hit with no created flag,
+                      // which would otherwise over-count the daily cap). The
+                      // single-instance autopilot lock + the unique idempotency
+                      // index make this pre-check race-free.
+                      const dupe = await engine.executeRaw<{ one: number }>(
+                        `SELECT 1 AS one FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1`,
+                        [idemKey],
+                      );
+                      if (dupe.length > 0) continue; // already queued/drained for this source today
+                      const job = await queue.add(
+                        'extract-atoms-drain',
+                        { sourceId: src.id, window: windowSeconds, repoPath: src.local_path },
+                        {
+                          queue: 'default',
+                          idempotency_key: idemKey,
+                          max_attempts: 1,
+                          timeout_ms: timeoutMs,
+                        },
+                        { allowProtectedSubmit: true },
+                      );
+                      submittedToday++;
+                      if (jsonMode) {
+                        process.stderr.write(JSON.stringify({
+                          event: 'dispatched', job_id: job.id, mode: 'auto-drain',
+                          source_id: src.id, backlog,
+                        }) + '\n');
+                      } else {
+                        console.log(`[dispatch] job #${job.id} extract-atoms-drain (auto-drain: ${src.id}; backlog=${backlog})`);
+                      }
+                    } catch (e) {
+                      logError('dispatch.auto-drain', e);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            logError('dispatch.auto-drain-gate', e);
+          }
+        }
+
+        // Cheap path: engine.getHealth() is a single SQL count query.
+        const health = await engine.getHealth();
+        const score = health.brain_score;
+        // v0.40.x: recipe-aware embedding-provider check shared with doctor.ts.
+        // Resolve the configured model (gateway → DB fallback), then pre-await
+        // the handful of hosted-key config values so the resolveKey closure
+        // passed to embeddingProviderConfigured() can stay synchronous.
+        let embeddingModel: string | undefined;
+        try {
+          const gw = await import('../core/ai/gateway.ts');
+          embeddingModel = gw.getEmbeddingModel();
+        } catch {
+          embeddingModel = (await engine.getConfig('embedding_model')) ?? undefined;
+        }
+        const embedKeyCfg: Record<string, string | null> = {};
+        for (const field of Object.values(HOSTED_EMBED_KEY_CONFIG)) {
+          embedKeyCfg[field] = await engine.getConfig(field);
+        }
+        const ctx = {
+          repoPath,
+          embeddingModel,
+          embeddingProviderConfigured: embeddingProviderConfigured(embeddingModel, (envVar) => {
+            const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
+            return !!(process.env[envVar] || (cfgField ? embedKeyCfg[cfgField] : undefined));
+          }),
+          hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+        };
+        // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
+        // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new
+        // checks (embed_staleness, link_coverage, timeline_coverage,
+        // takes_count) supply extraRemediations into computeRecommendations.
+        // Per A19 fail-open: any throw in the onboard path falls through
+        // to legacy doctor-only plan (no crash).
+        let extraRemediations: ReturnType<typeof computeRecommendations> = [];
+        try {
+          const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
+          const onboardResults = await runAllOnboardChecks(engine);
+          extraRemediations = onboardResults.flatMap((r) => r.remediations);
+        } catch (err) {
+          process.stderr.write(
+            `[autopilot] onboard checks failed (fail-open per A19): ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+        const plan = computeRecommendations(health, ctx, extraRemediations).filter((r) => r.status === 'remediable');
+        const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
+
+        // Track time since last full cycle for the 60-min floor.
+        const FULL_CYCLE_FLOOR_MIN = 60;
+        const minutesSinceLastFull = (Date.now() - lastFullCycleAt) / 60000;
+
+        const shouldFullCycle =
+          (score >= 95 && plan.length === 0 && minutesSinceLastFull >= FULL_CYCLE_FLOOR_MIN) ||
+          plan.length > 3 ||
+          estTotal >= 300 ||
+          score < 70;
+
+        const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN;
+
+        if (shouldSleep) {
+          if (jsonMode) {
+            process.stderr.write(JSON.stringify({ event: 'skip_healthy', score, plan_size: 0 }) + '\n');
+          }
+        } else if (shouldFullCycle) {
+          // v0.38: per-source fan-out replaces the single-job dispatch.
+          // dispatchPerSource enumerates sources via listAllSources
+          // ({ localPathOnly: true }), gates each on per-source
+          // `last_full_cycle_at` from sources.config JSONB, and fans out
+          // up to `fanoutMax` per tick (default 4 Postgres, 1 PGLite per
+          // codex P1-3). Fresh-install brains with no sources rows fall
+          // back to the legacy single autopilot-cycle so existing
+          // behavior is preserved.
+          const { dispatchPerSource, dispatchGlobalMaintenance, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
+          // #2194 fix #1: clamp fan-out to the worker's effective concurrency
+          // (reserve ≥1 slot), gated on a LIVE supervisor so a stale audit row
+          // can't shrink throughput (codex #9/D5). autopilot-cycle jobs run on
+          // the 'default' queue, so that's the concurrency we compare against.
+          const fanoutMax = await resolveEffectiveFanoutMax(engine, 'default');
+          const result = await dispatchPerSource(engine, queue, {
+            repoPath,
+            slot,
+            timeoutMs,
+            fanoutMax,
+            jsonMode,
+          });
+          // #2194 fix #3 / #2227 bug #3: dispatch the single brain-wide
+          // maintenance job (embed/orphans/purge/…) once per window — the per-
+          // source cycles above no longer run global phases, so this is where
+          // the brain-wide work happens (single-flight, no RSS blowout). Only on
+          // the per-source path (legacy single-source still runs everything).
+          if (!result.legacy_fallback) {
+            try {
+              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
+            } catch (e) {
+              if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
+            }
+          }
+          if (result.dispatched.length > 0 || result.legacy_fallback) {
+            lastFullCycleAt = Date.now();
+          }
+          if (jsonMode) {
+            process.stderr.write(JSON.stringify({
+              event: 'fanout_summary',
+              dispatched: result.dispatched,
+              skipped_fresh: result.skipped_fresh,
+              skipped_cap: result.skipped_cap,
+              skipped_cooldown: result.skipped_cooldown,
+              legacy_fallback: result.legacy_fallback,
+              fanout_max: fanoutMax,
+              score,
+            }) + '\n');
+          } else if (!result.legacy_fallback) {
+            console.log(
+              `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
+              `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
+              `${result.skipped_cooldown.length} cooldown ` +
+              `(score=${score}, max=${fanoutMax})`,
+            );
+          }
         } else {
-          console.log(`[dispatch] job #${job.id} autopilot-cycle slot=${slot}`);
+          // Small targeted plan — submit individual handlers per step.
+          // D9 content-hash idempotency keys (from computeRecommendations).
+          // maxWaiting:1 per submit per codex #17 (closes the backpressure
+          // gap the prior implementation had for targeted submits).
+          for (const step of plan) {
+            try {
+              const isProtected = !!step.protected;
+              const submitOpts = {
+                queue: 'default',
+                idempotency_key: step.idempotency_key,
+                max_attempts: 2,
+                timeout_ms: timeoutMs,
+                maxWaiting: 1,
+              };
+              const job = await queue.add(
+                step.job,
+                step.params,
+                submitOpts,
+                isProtected ? { allowProtectedSubmit: true } : undefined,
+              );
+              if (jsonMode) {
+                process.stderr.write(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'targeted', step: step.id, score, plan_size: plan.length }) + '\n');
+              } else {
+                console.log(`[dispatch] job #${job.id} ${step.job} (targeted: ${step.id}; score=${score})`);
+              }
+            } catch (e) {
+              logError('dispatch.step', e);
+            }
+          }
         }
       } catch (e) { logError('dispatch', e); cycleOk = false; }
     } else {
@@ -355,7 +1018,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             await new Promise(r => setImmediate(r));
           },
         });
-        if (report.status === 'failed' || report.status === 'partial') {
+        // Only 'failed' (every attempted phase failed) trips the autopilot
+        // circuit breaker. 'partial' means at least one phase warned or
+        // failed while others ran — that's a soft signal, not a fatal
+        // condition. Treating 'partial' as failure here caused respawn
+        // storms under KeepAlive=true on brains where a single phase
+        // (typically `orphans`) emits a 'warn' every cycle in steady state.
+        if (report.status === 'failed') {
           cycleOk = false;
         }
         if (jsonMode) {
@@ -394,6 +1063,36 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         void shutdown('cycle-failure-cap');
         break;
       }
+    }
+
+    // 4.5 — Nightly quality probe (v0.41).
+    // Per D10: trust the phase's internal 24h rate-limit (via shouldRunNightly
+    // reading the audit JSONL). No scheduler-side precheck — one source of
+    // truth for the rate-limit. Feature flag gates the probe entirely.
+    // Wrapped in try/catch — a probe failure NEVER crashes the autopilot
+    // loop. Probe runs even when cycleOk=false (probe may surface signal
+    // explaining why the cycle is failing).
+    try {
+      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      if (probeEnabled) {
+        const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
+        const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
+        const { isAvailable } = await import('../core/ai/gateway.ts');
+        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        await runNightlyQualityProbe({
+          isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
+          hasEmbeddingProvider: () => isAvailable('embedding'),
+          resolveMaxUsd: () => maxUsd,
+          resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
+          runLongMemEval: runLongMemEvalForProbe,
+          runCrossModalBatch: runCrossModalBatchForProbe,
+          now: () => new Date(),
+        });
+      }
+    } catch (e) {
+      logError('autopilot.nightly_probe', e);
+      // Intentional: do NOT bump consecutiveErrors. Probe failure is
+      // informational; autopilot loop continues.
     }
 
     // Wait for next cycle
@@ -480,7 +1179,12 @@ function writeWrapperScript(repoPath: string): string {
   const safeGbrainPath = gbrainPath.replace(/'/g, "'\\''");
   const wrapper = `#!/bin/bash
 # Auto-generated by gbrain autopilot --install
-# Sources shell profile for API keys, then runs autopilot
+# Sources shell profile for API keys, then runs autopilot.
+# zshenv is the canonical place for env vars in zsh on macOS (zshrc is for
+# interactive shells only — vars defined there don't reach this non-interactive
+# subprocess). Source it first so secrets like GBRAIN_DATABASE_URL or any
+# OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
+[ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
 exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
@@ -524,8 +1228,10 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
   }
 }
 
-function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+// v0.37.7.0 #1162 — pure function for plist generation so tests can
+// assert ThrottleInterval/KeepAlive shape without an installed daemon.
+export function generateLaunchdPlist(wrapperPath: string, home: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -535,15 +1241,36 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <!--
+    v0.37.7.0 #1162: ThrottleInterval=60 forces launchd to wait at
+    least 60s between relaunches. Combined with the in-process
+    classifier (recoverable vs unrecoverable in the supervisor loop),
+    this prevents the spinning respawn pattern where an unrecoverable
+    error (missing database_url, malformed config) immediately
+    relaunched and re-hit the same error. ThrottleInterval is a hard
+    floor; launchd would have applied a default of 10s if unset.
+  -->
+  <key>ThrottleInterval</key><integer>60</integer>
   <key>StandardOutPath</key><string>${escapeXml(home)}/.gbrain/autopilot.log</string>
   <key>StandardErrorPath</key><string>${escapeXml(home)}/.gbrain/autopilot.err</string>
 </dict>
 </plist>`;
+}
+
+function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
+  const plist = generateLaunchdPlist(wrapperPath, home);
 
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');
     mkdirSync(agentsDir, { recursive: true });
-    writeFileSync(plistPath(), plist);
+    writeFileSync(plistPath(), plist, { mode: 0o644 });
+    // launchd rejects group/world-writable agent plists: bootstrap/load fails
+    // with the opaque "Bootstrap failed: 5: Input/output error" and the login
+    // scan skips the file silently. writeFileSync's mode only applies on
+    // create — a reinstall over an existing plist keeps the old bits (a 0666
+    // plist written under an umask-0 parent stays 0666 forever) — so
+    // normalize unconditionally.
+    chmodSync(plistPath(), 0o644);
     execSync(`launchctl load "${plistPath()}"`, { stdio: 'pipe' });
     console.log('Installed launchd service: com.gbrain.autopilot');
     console.log(`  Repo: ${repoPath}`);
@@ -560,15 +1287,30 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
   }
 }
 
-function installSystemd(wrapperPath: string, repoPath: string) {
-  const unit = `[Unit]
+/**
+ * Generate the gbrain-autopilot systemd user unit.
+ *
+ * v0.42: `Restart=always` (was `on-failure`). The self-upgrade silent channel
+ * does swap-only + `exit(0)` and relies on the supervisor to relaunch the new
+ * binary — there is no in-process re-exec (Bun has no `execve`). `on-failure`
+ * would NOT relaunch on a clean exit, silently killing the daemon after it
+ * upgraded itself. `StartLimitIntervalSec`/`StartLimitBurst` cap a clean-exit
+ * respawn storm (systemd's analog to the launchd `ThrottleInterval=60`).
+ *
+ * Exported so the v0.42 migration can recognize the prior generated shape and
+ * rewrite existing `on-failure` units in place.
+ */
+export function generateSystemdUnit(wrapperPath: string): string {
+  return `[Unit]
 Description=GBrain Autopilot
 After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
 ExecStart=${wrapperPath}
-Restart=on-failure
+Restart=always
 RestartSec=30
 StandardOutput=append:%h/.gbrain/autopilot.log
 StandardError=append:%h/.gbrain/autopilot.err
@@ -576,10 +1318,73 @@ StandardError=append:%h/.gbrain/autopilot.err
 [Install]
 WantedBy=default.target
 `;
+}
+
+/**
+ * v0.42 migration: rewrite an existing `Restart=on-failure` autopilot systemd
+ * unit to `Restart=always` so the self-upgrade silent channel's clean
+ * exit-for-relaunch actually respawns. HARD-GUARDED: only rewrites a unit that
+ * matches the known gbrain-generated shape (never a hand-edited one), only
+ * user-level units (never system, never needs root), Linux only. Idempotent:
+ * a no-op once already `Restart=always`. Best-effort; called from runPostUpgrade.
+ */
+export function migrateSystemdUnitToRestartAlways(): { rewritten: boolean; reason: string } {
+  if (process.platform !== 'linux') return { rewritten: false, reason: 'not-linux' };
+  let unitPath: string;
+  try {
+    unitPath = systemdUnitPath();
+  } catch {
+    return { rewritten: false, reason: 'no-unit-path' };
+  }
+  if (!existsSync(unitPath)) return { rewritten: false, reason: 'no-unit' };
+  let content: string;
+  try {
+    content = readFileSync(unitPath, 'utf8');
+  } catch {
+    return { rewritten: false, reason: 'unreadable' };
+  }
+  if (!content.includes('Restart=on-failure')) {
+    return { rewritten: false, reason: 'already-migrated' };
+  }
+  // Hard guard: must look like OUR generated unit, not a hand-edited one.
+  const execMatch = content.match(/ExecStart=(\S+)/);
+  const looksGenerated =
+    content.includes('Description=GBrain Autopilot') &&
+    content.includes('StandardOutput=append:%h/.gbrain/autopilot.log') &&
+    !!execMatch;
+  if (!looksGenerated) {
+    process.stderr.write(
+      '[gbrain] autopilot systemd unit looks hand-edited; NOT rewriting Restart=on-failure. ' +
+        'Set Restart=always manually so self-upgrade relaunch works.\n',
+    );
+    return { rewritten: false, reason: 'hand-edited' };
+  }
+  try {
+    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]), { mode: 0o644 });
+    // This path always rewrites an EXISTING unit, so writeFileSync's mode
+    // never applies — chmod is the only thing that normalizes a unit born
+    // 0666 under a umask-0 parent (systemd warns on world-writable units).
+    chmodSync(unitPath, 0o644);
+    try {
+      execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+    } catch {
+      /* daemon-reload best-effort */
+    }
+    return { rewritten: true, reason: 'rewritten' };
+  } catch (e) {
+    return { rewritten: false, reason: e instanceof Error ? e.message : 'write-failed' };
+  }
+}
+
+function installSystemd(wrapperPath: string, repoPath: string) {
+  const unit = generateSystemdUnit(wrapperPath);
   try {
     const unitPath = systemdUnitPath();
     mkdirSync(join(process.env.HOME || '', '.config', 'systemd', 'user'), { recursive: true });
-    writeFileSync(unitPath, unit);
+    writeFileSync(unitPath, unit, { mode: 0o644 });
+    // Same umask-0 hardening as the launchd path (systemd warns on
+    // world-writable units); mode only applies on create, so normalize.
+    chmodSync(unitPath, 0o644);
     execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
     execSync('systemctl --user enable --now gbrain-autopilot.service', { stdio: 'pipe', timeout: 15_000 });
     console.log('Installed systemd user service: gbrain-autopilot.service');

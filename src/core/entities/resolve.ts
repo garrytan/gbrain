@@ -10,15 +10,15 @@
  * Lives under `src/core/entities/` so signal-detector can reuse it for the
  * Sonnet pass too without circular import through facts/.
  *
- * Prefix-expansion step lives between fuzzy match and slugify fallback.
+ * Bare-name prefix expansion lives before fuzzy match and slugify fallback.
  * Bare first names like "Alice" score too low on pg_trgm (short strings
  * have terrible trigram overlap), so without this step they fall through
  * to slugify("Alice") → "alice", which spawns a phantom `people/alice.md`
  * stub at brain root instead of resolving to the existing
  * `people/alice-example` page. The fix queries `slug LIKE 'people/X-%'`
  * (then `companies/X-%`) when fuzzy fails on a single-word bare name, and
- * uses connection count (links + chunks) as the tiebreaker when multiple
- * candidates match.
+ * resolves only a single candidate; collisions fall through to the guarded
+ * unprefixed holding path rather than guessing from connection count.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -29,9 +29,10 @@ import type { BrainEngine } from '../engine.ts';
  * Resolution order:
  *   1. If `raw` is already a page slug shape (contains a "/" or matches an
  *      exact pages.slug row in this source), return it untouched.
- *   2. Try fuzzy match against pages.slug + pages.title within the source
- *      (case-insensitive). Pick the highest-trgm-score match if any.
- *   3. Fall back to a deterministic slugify: lowercase-no-spaces with
+ *   2. Resolve a bare name only when prefix expansion finds one candidate.
+ *   3. For multi-token input, require a high-specificity fuzzy match against
+ *      pages.slug + pages.title within the source (case-insensitive).
+ *   4. Fall back to a deterministic slugify: lowercase-no-spaces with
  *      hyphen-collapse. NOT prefixed with a directory — caller decides
  *      whether to prefix `people/`, `companies/`, etc.
  *
@@ -54,21 +55,22 @@ export async function resolveEntitySlug(
     if (exact) return exact;
   }
 
-  // 2. Fuzzy match against existing pages within the source. Match either
-  //    on slug fragment or on title.
-  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
-  if (fuzzy) return fuzzy;
-
-  // 3. Prefix-expansion match: when the input looks like a bare first name
+  // 2. Prefix-expansion match: when the input looks like a bare first name
   //    (no slash, no prefix, slugifies to a single short token), try
   //    `people/<token>-%` then `companies/<token>-%`. Short bare names
   //    score terribly on pg_trgm — similarity('alice', 'alice-example')
-  //    is below the 0.4 threshold — so this is the layer that catches
+  //    is below the fuzzy threshold — so this is the layer that catches
   //    `"Alice"` → `people/alice-example` before we phantom-stub a bare
   //    `people/alice.md`.
   if (isBareName(trimmed)) {
-    const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
+    const expanded = await tryUnambiguousPrefixExpansion(engine, source_id, slugify(trimmed));
     if (expanded) return expanded;
+  } else {
+    // 3. Fuzzy match against existing pages within the source. Bare names
+    //    deliberately skip this arm: a shared first name is not specific
+    //    enough to choose one person by trigram score or popularity.
+    const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+    if (fuzzy) return fuzzy;
   }
 
   // 4. Fallback: deterministic slugify.
@@ -95,6 +97,159 @@ function isBareName(raw: string): boolean {
 }
 
 const PREFIX_EXPANSION_DIRS = ['people', 'companies'] as const;
+
+/**
+ * v0.40.2.0 — resolution-source-tagged variant for trajectory routing.
+ *
+ * Same resolution chain as `resolveEntitySlug` but returns the source
+ * (`exact_page` | `fuzzy_match` | `fallback_slugify`) alongside the slug
+ * so trajectory callers can gate on `resolution_source !==
+ * 'fallback_slugify'` — querying findTrajectory on an invented slug
+ * always returns [] and wastes a SQL round-trip. Codex Problem 5 from
+ * v0.40.2.0 outside-voice review.
+ *
+ * The original `resolveEntitySlug` keeps its existing contract (returns
+ * just the slug) for all pre-v0.40 call sites — no caller-side churn.
+ */
+export type ResolutionSource = 'exact_page' | 'fuzzy_match' | 'fallback_slugify';
+
+export interface ResolveResult {
+  slug: string;
+  source: ResolutionSource;
+}
+
+export async function resolveEntitySlugWithSource(
+  engine: BrainEngine,
+  source_id: string,
+  raw: string,
+): Promise<ResolveResult | null> {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Mirror resolveEntitySlug's resolution chain but tag each branch.
+  if (looksLikeSlug(trimmed)) {
+    const exact = await tryExactSlug(engine, source_id, trimmed);
+    if (exact) return { slug: exact, source: 'exact_page' };
+  }
+
+  if (isBareName(trimmed)) {
+    const expanded = await tryUnambiguousPrefixExpansion(engine, source_id, slugify(trimmed));
+    if (expanded) return { slug: expanded, source: 'fuzzy_match' };
+  } else {
+    const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+    if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
+  }
+
+  return { slug: slugify(trimmed), source: 'fallback_slugify' };
+}
+
+/**
+ * v0.35.5 — phantom-canonical resolver. Variant of `resolveEntitySlug` that
+ * SKIPS the exact-slug step at the top: a phantom slug like `'alice'` would
+ * always exact-match itself (the phantom page exists as that exact slug),
+ * which made the original phantom-redirect handler a no-op (codex #1).
+ *
+ * Resolution order for phantoms:
+ *   1. Fuzzy match against `pages.title` / `pages.slug` within the source
+ *      — catches Liz → Elizabeth-Warren style fuzzy title hits when no
+ *      prefix-expansion candidate exists (round-22 case).
+ *   2. Prefix expansion: `people/<token>-*` then `companies/<token>-*`.
+ *   3. Returns null if neither path finds a prefixed canonical.
+ *
+ * The output is filtered to require `result !== phantomSlug AND result.includes('/')`
+ * so a fuzzy match that bounces back to the phantom itself (e.g. fuzzy on
+ * its own bare title) doesn't trigger a self-redirect. Caller treats null
+ * as `'no_canonical'`.
+ */
+export async function resolvePhantomCanonical(
+  engine: BrainEngine,
+  source_id: string,
+  phantomSlug: string,
+): Promise<string | null> {
+  if (!phantomSlug) return null;
+  const trimmed = phantomSlug.trim();
+  if (!trimmed) return null;
+  // The phantom slug is the input; we treat it as the search term too,
+  // because phantom slugs ARE the lowercased bare name a fuzzy / prefix
+  // lookup would naturally target.
+  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+  if (fuzzy && fuzzy !== phantomSlug && fuzzy.includes('/')) return fuzzy;
+
+  const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
+  if (expanded && expanded !== phantomSlug && expanded.includes('/')) return expanded;
+
+  return null;
+}
+
+/**
+ * v0.35.5 — standalone candidate query for ambiguity detection (codex #11).
+ *
+ * `tryPrefixExpansion` returns top-1-per-directory and short-circuits on
+ * the first non-empty directory. That's correct for the resolver hot path
+ * (we want the most likely match, not all of them) but wrong for the
+ * phantom-redirect handler which needs to KNOW whether multiple canonicals
+ * could absorb the phantom. This query returns every prefixed page across
+ * every configured dir whose slug matches `<dir>/<token>` OR `<dir>/<token>-*`,
+ * so the caller can count candidates and refuse to redirect when ambiguous.
+ *
+ * Returns rows ordered by `connection_count DESC, slug ASC` (deterministic
+ * tiebreaker for test pinning). Cap of 10 — beyond that we treat the input
+ * as too generic anyway and the caller skips with audit.
+ */
+export async function findPrefixCandidates(
+  engine: BrainEngine,
+  source_id: string,
+  token: string,
+): Promise<Array<{ slug: string; connection_count: number }>> {
+  if (!token) return [];
+  // Build LIKE pattern set for each configured directory:
+  //   people/<token>      (bare child — covers `people/alice` exactly)
+  //   people/<token>-%    (suffixed child — covers `people/alice-example`)
+  //   ... same for companies/
+  // We deliberately do NOT use `people/<token>%` (no hyphen) because that
+  // also matches `people/aliceberg` for token="alice" — a false positive.
+  const patterns: string[] = [];
+  for (const dir of PREFIX_EXPANSION_DIRS) {
+    patterns.push(`${dir}/${token}`);
+    patterns.push(`${dir}/${token}-%`);
+  }
+  try {
+    const rows = await engine.executeRaw<{
+      slug: string;
+      connection_count: number;
+    }>(
+      `SELECT p.slug,
+              ((SELECT COUNT(*)::int FROM links WHERE to_page_id = p.id)
+               + (SELECT COUNT(*)::int FROM links WHERE from_page_id = p.id)
+               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                AS connection_count
+       FROM pages p
+       WHERE p.source_id = $1
+         AND p.deleted_at IS NULL
+         AND p.slug LIKE ANY($2::text[])
+       ORDER BY connection_count DESC, p.slug ASC
+       LIMIT 10`,
+      [source_id, patterns],
+    );
+    return rows;
+  } catch {
+    // Defensive: any SQL hiccup returns "no candidates" so the caller's
+    // ambiguity gate doesn't crash the cycle. The downstream
+    // `resolvePhantomCanonical` runs the per-dir tryPrefixExpansion path
+    // separately and will surface its own errors.
+    return [];
+  }
+}
+
+async function tryUnambiguousPrefixExpansion(
+  engine: BrainEngine,
+  source_id: string,
+  token: string,
+): Promise<string | null> {
+  const candidates = await findPrefixCandidates(engine, source_id, token);
+  return candidates.length === 1 ? candidates[0].slug : null;
+}
 
 /**
  * Look up pages whose slug starts with `<dir>/<token>-` for each known
@@ -215,7 +370,11 @@ async function tryFuzzyMatch(
        LIMIT 3`,
       [source_id, lc, fragment],
     );
-    if (rows.length > 0 && rows[0].score >= 0.4) return rows[0].slug;
+    // 0.4 confidently misattributes names that share only a generic company
+    // token (for example "Beacon Capital" → "Benton Capital"). Keep fuzzy
+    // typo tolerance, but require high-specificity overlap before writing a
+    // fact to an existing entity.
+    if (rows.length > 0 && rows[0].score >= 0.7) return rows[0].slug;
   } catch {
     // pg_trgm functions might not be available on every engine config;
     // fall through to slugify.

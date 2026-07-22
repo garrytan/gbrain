@@ -23,6 +23,8 @@ import {
   isAvailable,
   getChatModel,
   getChatFallbackChain,
+  chat,
+  __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
@@ -217,5 +219,105 @@ describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', ()
     // body is just a runtime touch.
     const mod = await import('../../src/core/ai/gateway.ts');
     expect(mod).toBeDefined();
+  });
+});
+
+describe('chat touchpoint — provider_chat_options passthrough', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  async function captureProviderOptions(
+    config: Parameters<typeof configureGateway>[0],
+    opts: Partial<Parameters<typeof chat>[0]> = {},
+  ): Promise<Record<string, any> | undefined> {
+    let captured: Record<string, any> | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      captured = args.providerOptions;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway(config);
+    await chat({
+      model: config.chat_model ?? 'anthropic:claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hello' }],
+      ...opts,
+    });
+    return captured;
+  }
+
+  test('provider-scoped option reaches generateText providerOptions[recipe.id]', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'disabled' } },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: { thinking: { type: 'disabled' } },
+    });
+  });
+
+  test('model-scoped option overrides provider-scoped option', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: {
+          thinking: { type: 'enabled', budget_tokens: 1024 },
+          temperature: 0.2,
+        },
+        'anthropic:claude-sonnet-4-6': {
+          thinking: { type: 'disabled' },
+        },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        thinking: { type: 'disabled', budget_tokens: 1024 },
+        temperature: 0.2,
+      },
+    });
+  });
+
+  test('no provider_chat_options keeps providerOptions undefined when cache is off', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toBeUndefined();
+  });
+
+  test('anthropic cacheControl survives provider_chat_options merging', async () => {
+    // gbrain#2490: this call-level cacheControl is real (not a no-op) —
+    // @ai-sdk/anthropic serializes it as the Anthropic API's documented
+    // top-level "auto-cache the last cacheable block" shorthand. It's kept
+    // alongside the fix (an explicit breakpoint on the system message's own
+    // providerOptions — see test/ai/gateway-cache-breakpoint.test.ts) because
+    // it's what gives toolLoop()'s growing multi-turn conversation a rolling
+    // cache breakpoint on each turn's tail. See gateway.ts's `useCache` block
+    // for the full explanation of why both markers are needed.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'disabled' } },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    }, { cacheSystem: true });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        cacheControl: { type: 'ephemeral' },
+        thinking: { type: 'disabled' },
+      },
+    });
   });
 });

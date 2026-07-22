@@ -7,6 +7,7 @@
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
@@ -33,21 +34,63 @@ interface ProviderOption {
 
 function configureFromEnv(): void {
   const config = loadConfig();
-  configureGateway({
-    embedding_model: config?.embedding_model,
-    embedding_dimensions: config?.embedding_dimensions,
-    expansion_model: config?.expansion_model,
-    chat_model: config?.chat_model,
-    chat_fallback_chain: config?.chat_fallback_chain,
-    base_urls: config?.provider_base_urls,
-    env: { ...process.env },
-  });
+  // Route through buildGatewayConfig — the single ownership seam that folds
+  // file-plane API keys (openrouter_api_key, zeroentropy_api_key, ...) into
+  // the gateway env — instead of hand-assembling AIGatewayConfig field by
+  // field. Hand-building it here let this diagnostic report a provider as
+  // missing env even when ~/.gbrain/config.json had it and the real gateway
+  // path resolved it fine (#2728). Pre-init (no file-plane config yet) falls
+  // back to a bare env passthrough so the command still works before
+  // `gbrain init`.
+  if (config) {
+    configureGateway(buildGatewayConfig(config));
+    return;
+  }
+  configureGateway({ env: { ...process.env } });
 }
 
-function envReady(recipe: Recipe): boolean {
+export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
   const required = recipe.auth_env?.required ?? [];
   if (required.length === 0) return true; // e.g. local Ollama
-  return required.every(k => !!process.env[k]);
+  return required.every(k => !!env[k]);
+}
+
+/**
+ * Pure formatter for the recipe matrix shown by `gbrain providers list` and
+ * the new `init-provider-picker` (D1+D2 — picker reuses this so its display
+ * stays in sync with `providers list` and can't drift).
+ *
+ * Returns the multi-line string (joined with `\n`). Callers handle stdout vs.
+ * stderr routing themselves.
+ */
+export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = process.env): string {
+  const rows: string[] = [];
+  // Dynamic column width: longest recipe id + 1 space, floor at 14 (the
+  // historical default). v0.40.6.1 introduced `llama-server-reranker` (21 chars)
+  // which overflowed the static 14-char column and made the row start with the
+  // tier name (no space delimiter), breaking `each recipe appears at most once`
+  // in test/providers.test.ts. Auto-widening keeps the contract — every row's
+  // id is followed by at least one space — without per-recipe column tuning.
+  const idCol = Math.max(14, ...recipes.map(r => r.id.length + 1));
+  const totalWidth = idCol + 18 + 8 + 8 + 8 + 16; // tier+embed+expand+chat+status
+  rows.push('PROVIDER'.padEnd(idCol) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
+  rows.push('-'.repeat(totalWidth));
+  for (const r of recipes) {
+    const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
+    const hasExpand = !!r.touchpoints.expansion;
+    const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
+    const ready = envReady(r, env);
+    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    rows.push(
+      r.id.padEnd(idCol) +
+      r.tier.padEnd(18) +
+      (hasEmbed ? 'yes' : '—').padEnd(8) +
+      (hasExpand ? 'yes' : '—').padEnd(8) +
+      (hasChat ? 'yes' : '—').padEnd(8) +
+      status,
+    );
+  }
+  return rows.join('\n');
 }
 
 export async function runProviders(subcommand: string | undefined, args: string[]): Promise<void> {
@@ -98,26 +141,12 @@ EXAMPLES
 }
 
 function runList(_args: string[]): void {
-  const recipes = listRecipes();
-  const rows: string[] = [];
-  rows.push('PROVIDER'.padEnd(14) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
-  rows.push('-'.repeat(78));
-  for (const r of recipes) {
-    const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
-    const hasExpand = !!r.touchpoints.expansion;
-    const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
-    const ready = envReady(r);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
-    rows.push(
-      r.id.padEnd(14) +
-      r.tier.padEnd(18) +
-      (hasEmbed ? 'yes' : '—').padEnd(8) +
-      (hasExpand ? 'yes' : '—').padEnd(8) +
-      (hasChat ? 'yes' : '—').padEnd(8) +
-      status,
-    );
-  }
-  console.log(rows.join('\n'));
+  // Same env the gateway actually sees (file-plane keys folded in), not bare
+  // process.env — keeps this table's STATUS column honest with what
+  // `providers test` (and the real init/gateway path) would report.
+  const cfg = loadConfig();
+  const env = cfg ? buildGatewayConfig(cfg).env : process.env;
+  console.log(formatRecipeTable(listRecipes(), env));
 }
 
 async function runTest(args: string[]): Promise<void> {
@@ -137,19 +166,64 @@ async function runTest(args: string[]): Promise<void> {
     const [providerId, ...modelParts] = modelArg.split(':');
     const modelId = modelParts.join(':');
     const recipe = getRecipe(providerId);
+
+    // codex finding #10: when `--model` is passed, the user is probing a
+    // model in isolation. They may be misled into thinking the test result
+    // validates their brain's actual configured path. Loud stderr line names
+    // the divergence at the top of the test so the recovery experience
+    // doesn't repeat the bug-reporter's "providers test ✓ but import still
+    // broken" trap.
+    //
+    // #2863: `cfg` is lifted out of the try block (not just used for the
+    // warning) so the configureGateway calls below can reuse it. Before this
+    // fix, the --model override only forwarded embedding_model/chat_model +
+    // env, dropping config.provider_base_urls entirely — a probe against a
+    // custom endpoint (e.g. a regional DashScope base URL) would silently
+    // fall back to the recipe's hardcoded default endpoint and fail with a
+    // misleading "Incorrect API key" error even though the key was valid for
+    // the configured endpoint.
+    let cfg: ReturnType<typeof loadConfig> | null = null;
+    try {
+      cfg = loadConfig();
+      const configuredModel = tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
+      if (!configuredModel) {
+        console.error(
+          `Note: tested ${modelArg} in isolation; this brain has no configured ${tpArg}_model yet. ` +
+          `\`providers test\` does NOT verify your brain's active path. ` +
+          `Set the active provider with \`gbrain config set ${tpArg}_model <id>\` after running init.`,
+        );
+      } else if (configuredModel !== modelArg) {
+        console.error(
+          `Note: tested ${modelArg} in isolation; gbrain's configured ${tpArg} is ${configuredModel}. ` +
+          `\`providers test\` does NOT verify your brain's active path.`,
+        );
+      }
+    } catch { /* loadConfig throws when no brain configured — first-time install path; the no-config branch above handles it. */ }
+
+    // Reuse the SAME resolver the production path uses (buildGatewayConfig —
+    // also used by cli.ts#connectEngine and init-embed-check.ts) so the probe
+    // sees the identical base_urls / provider_chat_options / folded API keys
+    // that a real `gbrain import`/`gbrain query` call would. Only the
+    // touchpoint's model (+ embedding dims) is overridden on top, so an
+    // isolated `--model` probe still targets exactly the requested model —
+    // it just resolves that model's endpoint the way the brain actually
+    // would. Falls back to bare env when no brain is configured yet (cfg is
+    // null on first-time install, matching the old behavior for that case).
+    const baseGatewayConfig = cfg ? buildGatewayConfig(cfg) : { env: { ...process.env } };
     if (tpArg === 'embedding') {
       const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
       configureGateway({
+        ...baseGatewayConfig,
         embedding_model: modelArg,
         embedding_dimensions: dims,
-        env: { ...process.env },
       });
     } else {
       configureGateway({
+        ...baseGatewayConfig,
         chat_model: modelArg,
-        env: { ...process.env },
       });
     }
+    void modelId; // intentionally unused but preserved for readability
   }
 
   if (!gwIsAvailable(tpArg)) {
