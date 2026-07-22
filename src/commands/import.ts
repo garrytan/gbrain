@@ -170,10 +170,14 @@ export async function runImport(
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
-  const { parseWorkers } = await import('../core/sync-concurrency.ts');
-  let workerCount: number;
+  const { parseWorkers, autoConcurrency } = await import('../core/sync-concurrency.ts');
+  // #1207: undefined (no --workers flag) defers to autoConcurrency below —
+  // the shared sync/import policy (PGLite → 1, >100 files → 4) — instead of
+  // hardcoding serial. Large Postgres imports stop paying one embedding
+  // round-trip per file in sequence.
+  let workerCount: number | undefined;
   try {
-    workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
+    workerCount = parseWorkers(workersArg ?? undefined);
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
@@ -252,8 +256,9 @@ export async function runImport(
   }
   const files = resumeFilter(allFiles, dir, completed);
 
-  // Determine actual worker count
-  const actualWorkers = workerCount > 1 ? workerCount : 1;
+  // Determine actual worker count. Explicit --workers wins; otherwise the
+  // shared autoConcurrency policy decides from engine kind + file count.
+  const actualWorkers = autoConcurrency(engine, files.length, workerCount);
   if (actualWorkers > 1) {
     console.log(`Using ${actualWorkers} parallel workers`);
   }

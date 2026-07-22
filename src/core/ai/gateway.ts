@@ -1513,12 +1513,21 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 
   const embedding = recipe.touchpoints?.embedding;
   const maxBatchTokens = embedding?.max_batch_tokens;
+  const maxBatchCount = embedding?.max_batch_count;
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
-  // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
-    ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
+  // Pre-split is gated on max_batch_tokens / max_batch_count. Recipes with
+  // neither (e.g. OpenAI) ride the fast path: one embedMany call, no
+  // recursion safety net.
+  const batches = (maxBatchTokens || maxBatchCount)
+    ? splitByTokenBudget(
+        truncated,
+        maxBatchTokens
+          ? Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe))
+          : Number.MAX_SAFE_INTEGER,
+        charsPerToken,
+        maxBatchCount,
+      )
     : [truncated];
 
   const allEmbeddings: Float32Array[] = [];
@@ -1568,6 +1577,9 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
  *   responsible for applying any safety-factor shrink before passing in.
  * @param charsPerToken - Provider-specific character density. Defaults to
  *   `DEFAULT_CHARS_PER_TOKEN` (4) when omitted, matching OpenAI tiktoken.
+ * @param maxBatchCount - #1199: optional cap on INPUTS per sub-batch, for
+ *   providers that reject batches by count (DashScope: 10). When omitted,
+ *   only the token budget governs.
  *
  * @internal exported for tests; not part of the public gateway API.
  */
@@ -1575,15 +1587,17 @@ export function splitByTokenBudget(
   texts: string[],
   budgetTokens: number,
   charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
+  maxBatchCount?: number,
 ): string[][] {
   const ratio = charsPerToken > 0 ? charsPerToken : DEFAULT_CHARS_PER_TOKEN;
+  const maxCount = maxBatchCount !== undefined && maxBatchCount > 0 ? maxBatchCount : Infinity;
   const batches: string[][] = [];
   let current: string[] = [];
   let currentTokens = 0;
 
   for (const text of texts) {
     const estTokens = Math.ceil(text.length / ratio);
-    if (current.length > 0 && currentTokens + estTokens > budgetTokens) {
+    if (current.length > 0 && (currentTokens + estTokens > budgetTokens || current.length >= maxCount)) {
       batches.push(current);
       current = [];
       currentTokens = 0;
@@ -1609,7 +1623,11 @@ export function isTokenLimitError(err: unknown): boolean {
     /token.*limit.*exceeded/i.test(msg) ||
     // OpenAI embeddings: "Invalid 'input': maximum request size is 300000 tokens per request."
     /maximum request size.*tokens/i.test(msg) ||
-    /max.*tokens.*per.*request/i.test(msg)
+    /max.*tokens.*per.*request/i.test(msg) ||
+    // DashScope: "batch size is invalid, it should not be larger than 10." (#1199)
+    // Count-cap error, but recursive halving shrinks count too, so the same
+    // safety net converges.
+    /batch size is invalid/i.test(msg)
   );
 }
 

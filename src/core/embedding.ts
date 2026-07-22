@@ -79,15 +79,34 @@ export interface EmbedBatchOptions {
    * and amplify rate-limit pressure.
    */
   maxRetries?: number;
+  /**
+   * #1818: bounded parallelism across BATCH_SIZE sub-batches. Defaults to
+   * `GBRAIN_EMBED_BATCH_CONCURRENCY` env, else 4. Results are
+   * index-addressed so output order always matches input order. Set 1 to
+   * force the pre-v0.42 serial dispatch.
+   */
+  concurrency?: number;
 }
 
 /**
  * Embed a batch of texts via the gateway. Sub-batches of 100 so upstream
  * progress callbacks fire incrementally on large imports. The gateway owns
  * adaptive batch splitting and per-recipe token-budget logic; this paginator
- * is purely about progress-callback granularity.
+ * owns progress-callback granularity and (#1818) bounded parallel dispatch
+ * of the sub-batches — the embed-stale.ts worker-pool pattern, scoped down.
  */
 const BATCH_SIZE = 100;
+const DEFAULT_EMBED_BATCH_CONCURRENCY = 4;
+
+function resolveEmbedBatchConcurrency(options: EmbedBatchOptions): number {
+  if (options.concurrency !== undefined) {
+    return Math.max(1, Math.floor(options.concurrency));
+  }
+  const env = Number(process.env.GBRAIN_EMBED_BATCH_CONCURRENCY);
+  if (Number.isFinite(env) && env >= 1) return Math.floor(env);
+  return DEFAULT_EMBED_BATCH_CONCURRENCY;
+}
+
 export async function embedBatch(
   texts: string[],
   options: EmbedBatchOptions = {},
@@ -103,13 +122,44 @@ export async function embedBatch(
   if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {
     return gatewayEmbed(texts, gwOpts);
   }
-  const results: Float32Array[] = [];
+  // #1818: dispatch sub-batches through a bounded worker pool instead of a
+  // serial loop. Results are written into a preallocated index-addressed
+  // array so output order matches input order regardless of completion
+  // order; onBatchComplete reports a monotonic completed-embedding count.
+  const slices: Array<{ start: number; texts: string[] }> = [];
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-    const slice = texts.slice(i, i + BATCH_SIZE);
-    const out = await gatewayEmbed(slice, gwOpts);
-    results.push(...out);
-    options.onBatchComplete?.(results.length, texts.length);
+    slices.push({ start: i, texts: texts.slice(i, i + BATCH_SIZE) });
   }
+  const results = new Array<Float32Array>(texts.length);
+  let next = 0;
+  let done = 0;
+  const numWorkers = Math.min(resolveEmbedBatchConcurrency(options), slices.length);
+  // Once any sub-batch fails, `failed` stops the surviving workers from
+  // dispatching FURTHER slices — the whole call is rejecting anyway, so
+  // continuing would burn real provider spend in the background and fire
+  // onBatchComplete after the caller already saw the failure (worst with
+  // embedBatchWithBackoff, whose 429 backoff assumes nothing is in flight).
+  // In-flight sibling calls still run to completion (bounded by numWorkers-1).
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < slices.length) {
+      // NOTE: no local aborted-check here — an aborted signal makes the next
+      // gatewayEmbed call throw (SDK-side), which rejects the pool. Returning
+      // silently instead would resolve with holes in `results`.
+      const slice = slices[next++];
+      let out: Float32Array[];
+      try {
+        out = await gatewayEmbed(slice.texts, gwOpts);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
+      for (let j = 0; j < out.length; j++) results[slice.start + j] = out[j];
+      done += out.length;
+      if (!failed) options.onBatchComplete?.(done, texts.length);
+    }
+  };
+  await Promise.all(Array.from({ length: numWorkers }, () => worker()));
   return results;
 }
 

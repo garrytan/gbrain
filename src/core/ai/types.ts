@@ -47,6 +47,16 @@ export interface EmbeddingTouchpoint {
    */
   chars_per_token?: number;
   /**
+   * #1199: maximum number of INPUTS per embedding request, for providers
+   * that hard-cap batch size by count rather than (or in addition to)
+   * tokens — DashScope text-embedding-v3 rejects batches > 10 with
+   * `InvalidParameter`, Gemini batchEmbedContents caps at 100 requests.
+   * When set, the gateway's pre-split flushes a sub-batch at this count
+   * even if the token budget still has room. Independent of
+   * `max_batch_tokens`; either alone triggers the pre-split.
+   */
+  max_batch_count?: number;
+  /**
    * Budget-utilization ceiling in (0, 1]. The gateway pre-splits at
    * `safety_factor × max_batch_tokens` to leave headroom for tokenizer
    * variance. Defaults to 0.8. Voyage-style providers with dense payloads

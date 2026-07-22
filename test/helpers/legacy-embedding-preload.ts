@@ -19,7 +19,7 @@
  * overwrites this preload.
  */
 import { configureGateway, getEmbeddingDimensions } from '../../src/core/ai/gateway.ts';
-import { beforeEach } from 'bun:test';
+import { afterEach, beforeEach } from 'bun:test';
 
 const LEGACY_CONFIG = {
   embedding_model: 'openai:text-embedding-3-large',
@@ -52,7 +52,7 @@ applyLegacy();
 //   2. file-local beforeAll → may overwrite to ZE/1280
 // Since beforeAll runs once per file BEFORE the first beforeEach,
 // file-local beforeAll wins for that file's tests. ✓
-beforeEach(() => {
+function applyLegacyIfEmpty() {
   try {
     // Only re-apply if the gateway was reset (or never configured).
     // Tests that explicitly configured a different model in their
@@ -62,4 +62,28 @@ beforeEach(() => {
   } catch {
     applyLegacy();
   }
-});
+}
+
+beforeEach(applyLegacyIfEmpty);
+
+// PR #3130 shard-order fix: beforeEach alone leaves ONE window open — a file
+// whose LAST afterEach calls resetGateway() poisons the NEXT file's
+// beforeAll, which runs BEFORE any beforeEach fires. A beforeAll there that
+// does engine.initSchema() then sizes the embedding column from the gateway
+// DEFAULTS (zembed-1/1280d) instead of the pinned legacy 1536, and every
+// 1536-d Float32Array fixture in that file dies with
+// "expected 1280 dimensions, not 1536". Which file pair collides is a
+// function of shard composition, so adding/removing ANY test file can
+// surface it (that is exactly how it bit shard 9).
+//
+// Preload hooks are registered before any file-local hooks, and bun runs
+// after-hooks inside-out (file-local afterEach first, then this one), so
+// this repairs the empty slot immediately after the poisoning reset —
+// before the next file's beforeAll can observe it.
+//
+// Known remaining window: a file whose afterAll() resets the gateway (no
+// hook runs between its afterAll and the next file's beforeAll). Files
+// that reset in afterAll and can precede a schema-creating file should
+// re-apply their own config, or the victim file should configureGateway()
+// explicitly in its beforeAll.
+afterEach(applyLegacyIfEmpty);

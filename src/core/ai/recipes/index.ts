@@ -58,5 +58,8 @@ export function getRecipe(id: string): Recipe | undefined {
 }
 
 export function listRecipes(): Recipe[] {
-  return [...ALL];
+  // Read the map (not ALL) so there is one source of truth — getRecipe,
+  // model-resolver, and listRecipes all see the same registry, and tests
+  // can inject a synthetic recipe via RECIPES to exercise registry walks.
+  return [...RECIPES.values()];
 }

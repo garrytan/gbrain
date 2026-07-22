@@ -16,6 +16,15 @@ export const google: Recipe = {
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
+      // #970: Gemini's documented limits are per-INPUT (2048 tokens,
+      // silently truncated beyond) and per-REQUEST count (batchEmbedContents
+      // caps at 100 inputs). There is no separate per-request token cap, so
+      // the token budget is derived: 100 inputs × 2048 tokens. The count cap
+      // binds first for typical chunk sizes. Do NOT copy the 2048 per-input
+      // limit into max_batch_tokens — that would over-split 50×.
+      max_batch_tokens: 204_800,
+      chars_per_token: 4,
+      max_batch_count: 100,
     },
     expansion: {
       models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite'],
