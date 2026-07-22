@@ -47,10 +47,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await engine.disconnect();
-  // #3066: resetGateway() first so the guard sees a clean teardown, then
-  // restore the preload-equivalent gateway for sibling files in this shard.
+  // #3066: resetGateway() first (before the async disconnect) so gateway
+  // state is cleared immediately, then restore the preload-equivalent
+  // gateway for sibling files in this shard.
   resetGateway();
+  await engine.disconnect();
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: DIM,
