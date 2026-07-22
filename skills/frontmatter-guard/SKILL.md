@@ -24,7 +24,7 @@ mutating: true
 ## Contract
 
 This skill guarantees:
-- Every brain page is scanned against the seven canonical frontmatter validation classes
+- Every brain page is scanned against the eight canonical frontmatter validation classes
 - Mechanical errors (nested quotes, missing closing `---`, null bytes, slug mismatch) are auto-repairable on demand with `.bak` backups
 - Validation logic is shared with `gbrain doctor`'s `frontmatter_integrity` subcheck — single source of truth
 - Reports per source (gbrain is multi-source since v0.18.0); never silently audits the wrong root
@@ -50,6 +50,7 @@ Without a guard, these accumulate silently until `gbrain sync` chokes or search 
 | `SLUG_MISMATCH` | Frontmatter `slug:` differs from path-derived slug | Yes (removes the field) |
 | `NULL_BYTES` | Binary corruption (`\x00`) | Yes |
 | `NESTED_QUOTES` | `title: "outer "inner" outer"` shape | Yes |
+| `NON_STRING_FIELD` | `title`/`type`/`slug` is an unquoted non-string scalar (e.g. `title: 123`, `slug: 2024-06-01`) | No (quote the value) |
 | `EMPTY_FRONTMATTER` | Open + close present but nothing between | No (needs human) |
 
 ## Phases
@@ -166,6 +167,57 @@ JSON envelope (when `--json` is passed):
 ```
 
 `gbrain frontmatter validate <path> --json` returns a similar envelope keyed on per-file results instead of per-source.
+
+## Prevention — Writing Valid Frontmatter
+
+**This is the most important section.** Fixing broken frontmatter is good. Not writing broken frontmatter in the first place is better.
+
+### YAML arrays (the historical #1 error source)
+
+```yaml
+# Correct: single-quoted YAML flow (canonical form gbrain emits)
+tags: ['yc', 'w2025', 'ai']
+
+# Correct: unquoted scalars (fine when values have no special chars)
+tags: [yc, w2025, ai]
+
+# Correct: block style
+tags:
+  - yc
+  - w2025
+
+# Tolerated post-v0.37.5.0 but non-canonical: JSON-style double quotes
+tags: ["yc", "w2025"]
+
+# Broken: mixed JSON objects and strings (invalid YAML)
+tags: [{"name": "sports"}, "posterous"]
+```
+
+**Why this used to break:** before v0.37.5.0, the validator counted unescaped `"` characters and flagged any line with 3+. A flow sequence like `tags: ["yc", "w2025"]` has 4 unescaped `"` by design — it's valid YAML, but the dumb counter flagged it anyway. One brain saw 6,981 of these on a single doctor run. v0.37.5.0 parses suspicious values with `js-yaml.safeLoad` before flagging, so JSON-style arrays no longer trigger NESTED_QUOTES.
+
+**Why you should still write the canonical form:** the auto-fix engine (`gbrain frontmatter validate --fix`) and the inferred-frontmatter serializer both emit single-quoted YAML for `tags:` / `aliases:`. Writing the canonical form in new content keeps the source files stylistically consistent and makes diffs against `--fix` runs empty.
+
+**The classic LLM trap:** code like `tags: [${items.map(t => JSON.stringify(t)).join(', ')}]` produces `tags: ["yc", "w2025"]`. Use single quotes with an apostrophe fallback: `tags: [${items.map(t => t.includes("'") ? JSON.stringify(t) : "'" + t + "'").join(', ')}]`. Or use a YAML library that knows how to emit canonical YAML.
+
+### Quoted scalars
+
+```yaml
+# Correct: single quotes for values with special chars
+title: 'My "Quoted" Title'
+
+# Correct: double quotes when value has apostrophes
+title: "Men's Fashion Guide"
+
+# Broken: double quotes wrapping inner double quotes
+title: "My "Quoted" Title"
+```
+
+### When to quote at all
+
+- **Unquoted** is fine for simple values: `type: person`, `batch: w2025`
+- **Quote** when the value contains `: " ' # [ ] { } | > & * ! ? ,` or starts with `@`
+- **Single quotes** are the default safe choice
+- **Double quotes** only when the value itself contains apostrophes
 
 ## Anti-Patterns
 

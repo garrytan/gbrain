@@ -18,6 +18,8 @@
  * concurrency + dropping under load.
  */
 
+import { registerBackgroundWorkDrainer } from '../background-work.ts';
+
 export interface FactsQueueCounters {
   enqueued: number;
   completed: number;
@@ -121,6 +123,55 @@ export class FactsQueue {
   }
 
   /**
+   * v0.41.25.0 (#1570) — wait for currently pending + in-flight jobs to
+   * settle naturally. **Semantically distinct from `shutdown()`** — drain
+   * does NOT abort in-flight work, does NOT drop pending, and does NOT
+   * disable future enqueues. It just blocks until the queue reaches
+   * (pending=0 AND inflight=0) OR the timeout fires.
+   *
+   * Per codex finding 9 from /codex review of the v0.41.25 plan: the
+   * original "reuse shutdown" idea was wrong because shutdown aborts
+   * in-flight (`this.internalAbort.abort()`), which means the very
+   * facts:absorb worker that's trying to log its post-completion
+   * absorb event gets aborted mid-write. That preserves the bug class
+   * we're trying to fix.
+   *
+   * Per codex finding 10: this is bounded by `opts.timeout` (default
+   * 1000ms) so commands that don't enqueue facts pay only one fast
+   * 0ms check before exit. Capture / import / sync that DO enqueue
+   * pay up to 1s while in-flight Haiku calls finish.
+   *
+   * Returns `{drained, unfinished}` so callers can log the outcome
+   * for debugging (no stderr writes; that's the caller's choice).
+   * `unfinished > 0` means timeout fired with work still pending —
+   * those jobs aren't aborted, they just continue running while the
+   * caller proceeds to exit (the singleton-still-alive contract in
+   * the post-pivot architecture means they'll still be able to write
+   * their logs).
+   */
+  async drainPending(
+    opts: { timeout?: number } = {},
+  ): Promise<{ drained: number; unfinished: number }> {
+    const timeout = opts.timeout ?? 1000;
+    const initiallyPending = this.pending.length;
+    const initiallyInflight = this.inflightTotal;
+    if (initiallyPending === 0 && initiallyInflight === 0) {
+      return { drained: 0, unfinished: 0 };
+    }
+    const start = Date.now();
+    while (
+      (this.pending.length > 0 || this.inflightTotal > 0) &&
+      Date.now() - start < timeout
+    ) {
+      // 25ms poll interval matches shutdown() below; consistent rhythm.
+      await sleep(25);
+    }
+    const unfinished = this.pending.length + this.inflightTotal;
+    const drained = initiallyPending + initiallyInflight - unfinished;
+    return { drained, unfinished };
+  }
+
+  /**
    * Begin shutdown. Returns a promise that resolves once the queue has either
    * fully drained in-flight (under shutdownGraceMs) OR the grace expired. After
    * this resolves, all pending jobs are dropped with `dropped_shutdown` count.
@@ -204,3 +255,17 @@ export function getFactsQueue(opts?: FactsQueueOpts): FactsQueue {
 export function __resetFactsQueueForTests(): void {
   _singleton = null;
 }
+
+// v0.42.20.0 — register as a background-work sink (order 0 — drained FIRST so
+// its abort-path DB logIngest gets the freshest live-engine window). `abort` =
+// shutdown(): sets shuttingDown=true (pump short-circuits) + fires internalAbort
+// (the facts:absorb job forwards it to gateway.chat, cancelling a hung Haiku the
+// drain-only fix can't). Registry AWAITS the abort so logIngest settles against
+// a live engine before disconnect (#1762). `drainPending` itself stays
+// non-aborting — the abort is the registry's separate post-drain step.
+registerBackgroundWorkDrainer({
+  name: 'facts',
+  order: 0,
+  drain: (ms) => getFactsQueue().drainPending({ timeout: ms }).then((r) => ({ unfinished: r.unfinished })),
+  abort: () => getFactsQueue().shutdown(),
+});

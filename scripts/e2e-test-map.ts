@@ -76,6 +76,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
+  // gbrain connect — raw-bearer MCP smoke probe exercised end-to-end against
+  // a real serve --http (PGLite), so changes to either feed it.
+  "src/commands/connect.ts": ["test/e2e/connect-bearer.test.ts"],
+  "src/core/connect-probe.ts": ["test/e2e/connect-bearer.test.ts"],
   // Upgrade chains migration ledger; touches both runners.
   "src/commands/upgrade.ts": [
     "test/e2e/upgrade.test.ts",
@@ -85,4 +89,20 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/doctor.ts": ["test/e2e/doctor-progress.test.ts"],
   // Knowledge graph layer feeds graph-quality.
   "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts"],
+  // v0.38 ingestion substrate. POST /ingest lives inside serve-http.ts
+  // (per the plan-eng-review E1 decision); the daemon + built-in sources
+  // + ingest_capture Minion handler all feed the in-process roundtrip
+  // E2E AND the HTTP contract E2E for the webhook route.
+  "src/commands/serve-http.ts": [
+    "test/e2e/serve-http-ingest-webhook.test.ts",
+    "test/e2e/serve-http-oauth.test.ts",
+  ],
+  "src/core/ingestion/**": [
+    "test/e2e/ingestion-roundtrip.test.ts",
+    "test/e2e/serve-http-ingest-webhook.test.ts",
+  ],
+  "src/core/minions/handlers/ingest-capture.ts": [
+    "test/e2e/ingestion-roundtrip.test.ts",
+    "test/e2e/serve-http-ingest-webhook.test.ts",
+  ],
 };

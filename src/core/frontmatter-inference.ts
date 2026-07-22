@@ -28,7 +28,8 @@
  *   - **Deterministic.** Same file always produces the same frontmatter. No LLM calls, no network.
  *   - **Extensible via rules.** The `DIRECTORY_RULES` table maps path patterns to type + source + tags.
  *     Adding a new directory convention = adding one rule.
- *   - **Safe.** `.bak` files on write, `--dry-run` by default in CLI, idempotent.
+ *   - **Safe.** centralized backups on write, `--dry-run` by default in CLI,
+ *     idempotent.
  *
  * ## How it fits in the pipeline
  *
@@ -177,6 +178,22 @@ export const DIRECTORY_RULES: DirectoryRule[] = [
     titleStrategy: 'filename',
   },
 
+  // Documentation/workspace repos. These make generated frontmatter useful
+  // instead of flattening everything to the catch-all `note` type.
+  { pathPrefix: 'docs/runbooks/', type: 'guide', source: 'docs', tags: ['runbook'], titleStrategy: 'heading' },
+  { pathPrefix: 'runbooks/', type: 'guide', source: 'docs', tags: ['runbook'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/guides/', type: 'guide', source: 'docs', tags: ['guide'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/policies/', type: 'guide', source: 'docs', tags: ['policy'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/projects/', type: 'project', source: 'docs', tags: ['project'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/audits/', type: 'analysis', source: 'docs', tags: ['audit'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/research/', type: 'analysis', source: 'docs', tags: ['research'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/evaos/', type: 'architecture', source: 'docs', tags: ['evaos'], titleStrategy: 'heading' },
+  { pathPrefix: 'docs/architecture/', type: 'architecture', source: 'docs', titleStrategy: 'heading' },
+  { pathPrefix: 'docs/providers/', type: 'source', source: 'docs', tags: ['provider'], titleStrategy: 'heading' },
+  { pathPrefix: 'security/', type: 'guide', source: 'docs', tags: ['security'], titleStrategy: 'heading' },
+  { pathPrefix: 'support/', type: 'source', source: 'docs', tags: ['support'], titleStrategy: 'heading' },
+  { pathPrefix: 'notes/', type: 'note', titleStrategy: 'heading' },
+
   // Personal sections
   {
     pathPrefix: 'personal/therapy/',
@@ -233,7 +250,9 @@ export const DIRECTORY_RULES: DirectoryRule[] = [
   { pathPrefix: 'meetings/', type: 'meeting', titleStrategy: 'heading', datePattern: 'filename' },
   { pathPrefix: 'media/', type: 'media', titleStrategy: 'heading' },
 
-  // Catch-all for any remaining files
+  // Catch-all for any remaining files. The CLI does not write this rule by
+  // default; users must pass --include-catch-all so `type: note` means an
+  // intentional fallback instead of "the script did not know what this was".
   { pathPrefix: '', type: 'note', titleStrategy: 'heading' },
 ];
 
@@ -389,7 +408,11 @@ export function serializeFrontmatter(fm: InferredFrontmatter): string {
   }
 
   if (fm.tags && fm.tags.length > 0) {
-    lines.push(`tags: [${fm.tags.map(t => JSON.stringify(t)).join(', ')}]`);
+    // Single-quoted YAML flow is the canonical form (matches the auto-fix
+    // engine's step 3a output and v0.37.5.0's YAML-aware validator). Fall
+    // back to JSON.stringify (double quotes) only when the value contains an
+    // apostrophe — YAML's single-quote escaping (`''`) reads poorly.
+    lines.push(`tags: [${fm.tags.map(t => t.includes("'") ? JSON.stringify(t) : `'${t}'`).join(', ')}]`);
   }
 
   lines.push('---');

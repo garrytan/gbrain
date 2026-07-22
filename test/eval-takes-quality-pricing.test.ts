@@ -20,6 +20,18 @@ describe('getPricing — fail-closed contract', () => {
     expect(() => getPricing('unknown:gpt-99')).toThrow(PricingNotFoundError);
   });
 
+  test('opus 4.7 priced at $5/$25 (regression: was a stale $15/$75) — gbrain#1819', () => {
+    const p = getPricing('anthropic:claude-opus-4-7');
+    expect(p.input_per_1m).toBeCloseTo(5.0, 5);
+    expect(p.output_per_1m).toBeCloseTo(25.0, 5);
+  });
+
+  test('opus 4.8 is supported and priced $5/$25 — gbrain#1819', () => {
+    const p = getPricing('anthropic:claude-opus-4-8');
+    expect(p.input_per_1m).toBeCloseTo(5.0, 5);
+    expect(p.output_per_1m).toBeCloseTo(25.0, 5);
+  });
+
   test('error message names the model AND points to the file', () => {
     try {
       getPricing('foo:bar');

@@ -28,6 +28,7 @@ import {
   type ParsedTake,
 } from '../core/takes-fence.ts';
 import { withPageLock } from '../core/page-lock.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 
 // --- Helpers ---
 
@@ -83,16 +84,35 @@ function ensureFloat(raw: string | undefined, fallback: number): number {
   return n;
 }
 
-async function getPageId(engine: BrainEngine, slug: string): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
-    [slug],
-  );
+async function getPageId(engine: BrainEngine, slug: string, sourceId?: string): Promise<number> {
+  const rows = sourceId
+    ? await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 LIMIT 1`,
+        [slug, sourceId],
+      )
+    : await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
+        [slug],
+      );
   if (!rows[0]) {
-    console.error(`Page not found in brain: ${slug}. Run \`gbrain sync\` first.`);
+    console.error(`Page not found in brain: ${slug}${sourceId ? ` (source=${sourceId})` : ''}. Run \`gbrain sync\` first.`);
     process.exit(1);
   }
   return rows[0].id;
+}
+
+// Fail-closed (#2698 residual, TODOS.md): `resolveSourceId` only ever
+// throws when a source WAS explicitly in play — an invalid or
+// unregistered `GBRAIN_SOURCE`, a `.gbrain-source` dotfile pointing at a
+// source that doesn't exist, or a genuine DB error — never for "nothing
+// configured" (that path resolves cleanly to the seeded `'default'`
+// source, tier 6 of resolveSourceId). Swallowing those errors here used
+// to fall back to the unscoped slug-only page lookup, silently
+// reintroducing the pre-#2698 cross-source write bug whenever resolution
+// merely errored instead of resolving cleanly. Let it propagate so the
+// write is blocked instead of silently unscoped.
+async function resolveTakesSourceId(engine: BrainEngine): Promise<string> {
+  return resolveSourceId(engine, null);
 }
 
 function readBodyOrEmpty(path: string): string {
@@ -115,7 +135,7 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const json = flagPresent(args, '--json');
   const holder = flagValue(args, '--who');
-  const kind = flagValue(args, '--kind') as TakeKind | undefined;
+  const kind = flagValue(args, '--kind') as string | undefined;
   const sort = flagValue(args, '--sort') as 'weight' | 'since_date' | 'created_at' | undefined;
   const expired = flagPresent(args, '--expired');
 
@@ -169,7 +189,7 @@ async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
   }
 }
 
-async function cmdAdd(engine: BrainEngine, args: string[]): Promise<void> {
+async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
   const slug = args[0];
   if (!slug) {
     console.error('Usage: gbrain takes add <slug> --claim "..." --kind <k> --who <h> [--weight 0.5] [--source "..."] [--since YYYY-MM]');
@@ -195,7 +215,7 @@ async function cmdAdd(engine: BrainEngine, args: string[]): Promise<void> {
     writeBody(path, nextBody);
 
     // Mirror to DB. Page may not be in DB yet if not synced — caller must run sync first.
-    const pageId = await getPageId(engine, slug);
+    const pageId = await getPageId(engine, slug, sourceId);
     await engine.addTakesBatch([{
       page_id: pageId, row_num: rowNum, claim, kind, holder, weight,
       since_date: since, source, active: true, superseded_by: null,
@@ -204,7 +224,7 @@ async function cmdAdd(engine: BrainEngine, args: string[]): Promise<void> {
   });
 }
 
-async function cmdUpdate(engine: BrainEngine, args: string[]): Promise<void> {
+async function cmdUpdate(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
   const slug = args[0];
   const rowNumStr = flagValue(args, '--row');
   if (!slug || !rowNumStr) {
@@ -223,7 +243,7 @@ async function cmdUpdate(engine: BrainEngine, args: string[]): Promise<void> {
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
   await withPageLock(slug, async () => {
-    const pageId = await getPageId(engine, slug);
+    const pageId = await getPageId(engine, slug, sourceId);
     await engine.updateTake(pageId, rowNum, fields);
 
     // Sync the markdown table: read fence, find row, apply field updates, re-render.
@@ -254,7 +274,7 @@ async function cmdUpdate(engine: BrainEngine, args: string[]): Promise<void> {
   });
 }
 
-async function cmdSupersede(engine: BrainEngine, args: string[]): Promise<void> {
+async function cmdSupersede(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
   const slug = args[0];
   const rowNumStr = flagValue(args, '--row');
   if (!slug || !rowNumStr) {
@@ -268,7 +288,7 @@ async function cmdSupersede(engine: BrainEngine, args: string[]): Promise<void> 
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
   await withPageLock(slug, async () => {
-    const pageId = await getPageId(engine, slug);
+    const pageId = await getPageId(engine, slug, sourceId);
 
     // Read existing row to inherit kind/holder unless overridden
     const existing = await engine.listTakes({ page_id: pageId, active: false, limit: 500 });
@@ -302,13 +322,13 @@ async function cmdSupersede(engine: BrainEngine, args: string[]): Promise<void> 
   });
 }
 
-async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
+async function cmdResolve(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
   const slug = args[0];
   const rowNumStr = flagValue(args, '--row');
   const qualityStr = flagValue(args, '--quality');
   const outcomeStr = flagValue(args, '--outcome');
   if (!slug || !rowNumStr || (!qualityStr && !outcomeStr)) {
-    console.error('Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]');
+    console.error('Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial|unresolvable [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]');
     console.error('       (back-compat) gbrain takes resolve <slug> --row N --outcome true|false [...]');
     process.exit(1);
   }
@@ -319,12 +339,13 @@ async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
   const rowNum = parseInt(rowNumStr, 10);
 
   // v0.30.0: --quality is the new primary input. --outcome stays as a back-compat
-  // alias auto-mapping true→correct / false→incorrect; cannot express partial.
-  let quality: 'correct' | 'incorrect' | 'partial' | undefined;
+  // alias auto-mapping true→correct / false→incorrect; cannot express partial
+  // or unresolvable (v0.36.1.1).
+  let quality: 'correct' | 'incorrect' | 'partial' | 'unresolvable' | undefined;
   let outcome: boolean | undefined;
   if (qualityStr) {
-    if (qualityStr !== 'correct' && qualityStr !== 'incorrect' && qualityStr !== 'partial') {
-      console.error(`Invalid --quality "${qualityStr}". Expected: correct, incorrect, partial.`);
+    if (qualityStr !== 'correct' && qualityStr !== 'incorrect' && qualityStr !== 'partial' && qualityStr !== 'unresolvable') {
+      console.error(`Invalid --quality "${qualityStr}". Expected: correct, incorrect, partial, unresolvable.`);
       process.exit(1);
     }
     quality = qualityStr;
@@ -346,7 +367,7 @@ async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
   const resolvedBy = flagValue(args, '--by') ?? 'garry';
   const dirArg = flagValue(args, '--dir');
 
-  const pageId = await getPageId(engine, slug);
+  const pageId = await getPageId(engine, slug, sourceId);
   await engine.resolveTake(pageId, rowNum, {
     quality,
     outcome,
@@ -432,29 +453,46 @@ async function cmdScorecard(engine: BrainEngine, args: string[]): Promise<void> 
     return;
   }
 
-  if (card.resolved === 0) {
+  // v0.37.2.0: don't hide the unresolvable signal. A brain with only unresolvable
+  // verdicts still has a story to tell — "your judge tried but couldn't decide" —
+  // and the spec's whole headline ("50% of your tech calls land unresolvable")
+  // depends on this output rendering when resolved=0 but unresolvable_count>0.
+  const unresolvableCount = card.unresolvable_count ?? 0;
+  if (card.resolved === 0 && unresolvableCount === 0) {
     console.log(`No resolved bets yet${holder ? ` for ${holder}` : ''}.`);
     return;
   }
-  const fmt = (n: number | null, digits = 3) => n === null ? '—' : n.toFixed(digits);
+  const fmt = (n: number | null | undefined, digits = 3) =>
+    n === null || n === undefined ? '—' : n.toFixed(digits);
   console.log(`# Scorecard${holder ? ` — ${holder}` : ''}`);
   if (domainPrefix) console.log(`Scope: domain=${domainPrefix}`);
   if (since || until) console.log(`Window: ${since ?? 'all'} → ${until ?? 'now'}`);
   console.log('');
-  console.log(`  total bets:    ${card.total_bets}`);
-  console.log(`  resolved:      ${card.resolved}`);
-  console.log(`  correct:       ${card.correct}`);
-  console.log(`  incorrect:     ${card.incorrect}`);
-  console.log(`  partial:       ${card.partial}`);
-  console.log(`  accuracy:      ${fmt(card.accuracy)}`);
-  console.log(`  Brier:         ${fmt(card.brier, 4)}   (correct ∨ incorrect only; lower is better; 0.25 = always-50% baseline)`);
-  console.log(`  partial_rate:  ${fmt(card.partial_rate)}`);
+  console.log(`  total bets:        ${card.total_bets}`);
+  console.log(`  resolved:          ${card.resolved}`);
+  console.log(`  correct:           ${card.correct}`);
+  console.log(`  incorrect:         ${card.incorrect}`);
+  console.log(`  partial:           ${card.partial}`);
+  if (unresolvableCount > 0 || card.unresolvable_rate !== undefined) {
+    console.log(`  unresolvable:      ${unresolvableCount}`);
+  }
+  console.log(`  accuracy:          ${fmt(card.accuracy)}`);
+  console.log(`  Brier:             ${fmt(card.brier, 4)}   (correct ∨ incorrect only; lower is better; 0.25 = always-50% baseline)`);
+  console.log(`  partial_rate:      ${fmt(card.partial_rate)}`);
+  if (unresolvableCount > 0 || card.unresolvable_rate !== undefined && card.unresolvable_rate !== null) {
+    console.log(`  unresolvable_rate: ${fmt(card.unresolvable_rate)}   (unresolvable / (resolved + unresolvable); high = weak evidence retrieval)`);
+  }
   if (card.partial_rate !== null && card.partial_rate > PARTIAL_RATE_WARNING_THRESHOLD) {
     console.log('');
     console.log(`  [!] partial_rate is high (>${(PARTIAL_RATE_WARNING_THRESHOLD * 100).toFixed(0)}%) — calibration may be optimistic.`);
     console.log(`      Hedged bets escape the Brier denominator. Resolve them more decisively if the data supports it.`);
   }
-  if (card.resolved < 100) {
+  if (card.unresolvable_rate !== null && card.unresolvable_rate !== undefined && card.unresolvable_rate > 0.30) {
+    console.log('');
+    console.log(`  [!] unresolvable_rate is high (>${(0.30 * 100).toFixed(0)}%) — most grade attempts are running into evidence gaps.`);
+    console.log(`      The judge is working; retrieval isn't producing enough context to decide. Look at evidence-retrieval coverage, not prediction accuracy.`);
+  }
+  if (card.resolved < 100 && card.resolved > 0) {
     console.log('');
     console.log(`  Note: n=${card.resolved} is small. Brier is noisy below ~100 resolved bets.`);
   }
@@ -546,14 +584,127 @@ Common flags:
 
   switch (sub) {
     case 'search':      return cmdSearch(engine, rest);
-    case 'add':         return cmdAdd(engine, rest);
-    case 'update':      return cmdUpdate(engine, rest);
-    case 'supersede':   return cmdSupersede(engine, rest);
-    case 'resolve':     return cmdResolve(engine, rest);
+    case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
+    case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));
+    case 'supersede':   return cmdSupersede(engine, rest, await resolveTakesSourceId(engine));
+    case 'resolve':     return cmdResolve(engine, rest, await resolveTakesSourceId(engine));
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
+    case 'revisit':     return cmdRevisit(engine, rest);
+    case 'extract':     return cmdExtract(engine, rest);
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
   }
+}
+
+/**
+ * v0.41.18.0 (A12, A24, T9) — `gbrain takes extract --from-pages` runs
+ * Haiku over concept/atom/lore/briefing/writing/originals pages and
+ * lifts gradeable claims into the takes fence.
+ *
+ * Two-gate consent: requires `takes.bootstrap_enabled=true` in config
+ * AND explicit --yes flag for any non-dryRun run. Refuses LLM-bearing
+ * extraction without both.
+ */
+async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
+  const sub = rest[0];
+  if (sub !== '--from-pages') {
+    process.stderr.write(
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
+      'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
+    );
+    process.exit(1);
+  }
+  const dryRun = rest.includes('--dry-run');
+  const skipConfirm = rest.includes('--yes');
+  const sourceIdx = rest.indexOf('--source-id');
+  const sourceIdFilter = sourceIdx >= 0 ? rest[sourceIdx + 1] : undefined;
+  const maxIdx = rest.indexOf('--max-pages');
+  const maxPagesRaw = maxIdx >= 0 ? rest[maxIdx + 1] : undefined;
+  const maxPages = maxPagesRaw ? Math.max(1, Math.min(1000, parseInt(maxPagesRaw, 10) || 50)) : 50;
+  const holderIdx = rest.indexOf('--holder');
+  const holder = holderIdx >= 0 ? rest[holderIdx + 1] : 'system';
+  const includeCovered = rest.includes('--include-covered');
+
+  // A12 consent gate.
+  const bootstrapEnabledCfg = await engine.getConfig('takes.bootstrap_enabled');
+  const bootstrapEnabled = bootstrapEnabledCfg === 'true' || bootstrapEnabledCfg === '1';
+  if (!bootstrapEnabled) {
+    process.stderr.write(
+      `takes-bootstrap is opt-in. Enable with:\n  gbrain config set takes.bootstrap_enabled true\nThen re-run with --yes.\n`,
+    );
+    process.exit(2);
+  }
+  if (!dryRun && !skipConfirm) {
+    process.stderr.write(
+      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to Haiku.\n` +
+      `Pass --yes to proceed (or --dry-run to preview).\n`,
+    );
+    process.exit(1);
+  }
+
+  const { extractTakesFromPages } = await import('../core/extract-takes-from-pages.ts');
+  const result = await extractTakesFromPages(engine, {
+    bootstrapEnabled: true,
+    dryRun,
+    sourceIdFilter,
+    maxPages,
+    includeCovered,
+    holder,
+  });
+  if (result.llm_unavailable) {
+    process.stderr.write(`[takes extract] chat gateway unavailable (no API key configured).\n`);
+    process.exit(2);
+  }
+  process.stdout.write(
+    `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
+    (dryRun ? ' (dry-run)' : '') + '\n',
+  );
+}
+
+/**
+ * v0.36.1.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
+ * the source page so the user can write a follow-up immediately. The
+ * action the admin SPA's "revisit now" link triggers (via a small
+ * route handler that dispatches into this CLI command).
+ *
+ * Inserts a `<!-- gbrain:revisit -->` cursor marker at the bottom of the
+ * page body so the editor opens with intent visible.
+ */
+async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
+  const slug = rest[0];
+  if (!slug) {
+    process.stderr.write('Usage: gbrain takes revisit <slug>\n');
+    process.exit(1);
+  }
+  const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { loadConfig } = await import('../core/config.ts');
+  const cfg = loadConfig();
+  const repoPath = (cfg as { sync?: { repo_path?: string } } | null)?.sync?.repo_path;
+  if (!repoPath) {
+    process.stderr.write('No brain repo configured. Run `gbrain config set sync.repo_path /path/to/brain`.\n');
+    process.exit(1);
+  }
+  const filePath = join(repoPath, `${slug}.md`);
+  if (!existsSync(filePath)) {
+    process.stderr.write(`Page not found: ${filePath}\n`);
+    process.exit(1);
+  }
+  // Append a cursor marker if not already present.
+  const existing = readFileSync(filePath, 'utf8');
+  const marker = '\n<!-- gbrain:revisit -->\n';
+  if (!existing.includes('<!-- gbrain:revisit -->')) {
+    writeFileSync(filePath, existing + marker);
+  }
+  const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+  process.stderr.write(`Opening ${filePath} in ${editor}...\n`);
+  // Use spawnSync with stdio:'inherit' so the editor takes the terminal.
+  const result = spawnSync(editor, [filePath], { stdio: 'inherit' });
+  if (result.status !== 0) {
+    process.stderr.write(`Editor exited with status ${result.status ?? 'unknown'}\n`);
+  }
+  void execFileSync;
 }

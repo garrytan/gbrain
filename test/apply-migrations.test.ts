@@ -166,3 +166,17 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     expect(plan.skippedFuture).toEqual([]);
   });
 });
+
+// v0.36.1.x (cherry-pick #1062): list, dry-run, and "all migrations up to
+// date" paths must exit 0 so shell scripts gating on the exit code work.
+// Pre-fix, these `return` statements left the CLI dispatcher's implicit
+// non-zero exit code in place when callers checked $?.
+describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
+  test('source contains process.exit(0) on list/dry-run/up-to-date branches', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
+    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed\);\s*process\.exit\(0\);/);
+    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed\);\s*process\.exit\(0\);/);
+    expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
+  });
+});

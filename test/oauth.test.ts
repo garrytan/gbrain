@@ -2,9 +2,17 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
-import { GBrainOAuthProvider, coerceTimestamp } from '../src/core/oauth-provider.ts';
+import {
+  GBrainOAuthProvider,
+  coerceTimestamp,
+  ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS,
+  validateTokenEndpointAuthMethod,
+  InvalidTokenEndpointAuthMethodError,
+} from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
+import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import type { AuthInfo as CoreAuthInfo } from '../src/core/operations.ts';
 
 // ---------------------------------------------------------------------------
 // Test setup: in-memory PGLite with OAuth tables
@@ -131,6 +139,31 @@ describe('client registration', () => {
       sql`INSERT INTO oauth_clients (client_id, client_name, scope) VALUES (${clientId}, ${'dup'}, ${'read'})`,
     ).rejects.toThrow();
   });
+
+  test('registerClientManual persists submit_agent bindings when supplied', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'bound-agent', ['client_credentials'], 'read agent', [], 'default', undefined, undefined, {
+        boundTools: ['search', 'get_page'],
+        boundSourceId: 'dept-x',
+        boundBrainId: 'brain-a',
+        boundSlugPrefixes: ['wiki/agents/bound-agent/'],
+        boundMaxConcurrent: 2,
+        budgetUsdPerDay: '7.50',
+      },
+    );
+
+    const rows = await sql`
+      SELECT bound_tools, bound_source_id, bound_brain_id, bound_slug_prefixes,
+             bound_max_concurrent, budget_usd_per_day::text AS budget
+        FROM oauth_clients WHERE client_id = ${clientId}
+    `;
+    expect(rows[0].bound_tools).toEqual(['search', 'get_page']);
+    expect(rows[0].bound_source_id).toBe('dept-x');
+    expect(rows[0].bound_brain_id).toBe('brain-a');
+    expect(rows[0].bound_slug_prefixes).toEqual(['wiki/agents/bound-agent/']);
+    expect(Number(rows[0].bound_max_concurrent)).toBe(2);
+    expect(rows[0].budget).toBe('7.50');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -146,6 +179,7 @@ describe('client credentials', () => {
       'cc-test-agent', ['client_credentials'], 'read write',
     );
     clientId = result.clientId;
+    if (!result.clientSecret) throw new Error('test bug: expected confidential client to have secret');
     clientSecret = result.clientSecret;
   });
 
@@ -193,7 +227,7 @@ describe('verifyAccessToken', () => {
     const { clientId, clientSecret } = await provider.registerClientManual(
       'verify-test', ['client_credentials'], 'read write',
     );
-    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
     const authInfo = await provider.verifyAccessToken(tokens.access_token);
 
     expect(authInfo.clientId).toBe(clientId);
@@ -215,6 +249,35 @@ describe('verifyAccessToken', () => {
 
   test('unknown token is rejected', async () => {
     await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow('Invalid token');
+  });
+
+  // v0.36.1.x #935: the SDK's requireBearerAuth middleware only returns 401
+  // on InvalidTokenError; bare Error falls through to 500. Lock in the class.
+  test('verifyAccessToken throws InvalidTokenError (not bare Error) on expired token', async () => {
+    const expiredToken = generateToken('gbrain_at_');
+    const hash = hashToken(expiredToken);
+    const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
+    await sql`
+      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+      VALUES (${hash}, ${'access'}, ${firstClient.client_id as string}, ${'{read}'}, ${Math.floor(Date.now() / 1000) - 100})
+    `;
+    let caught: unknown;
+    try {
+      await provider.verifyAccessToken(expiredToken);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(InvalidTokenError);
+  });
+
+  test('verifyAccessToken throws InvalidTokenError (not bare Error) on unknown token', async () => {
+    let caught: unknown;
+    try {
+      await provider.verifyAccessToken('nonexistent-token');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(InvalidTokenError);
   });
 
   test('NULL expires_at is treated as expired (fail-closed)', async () => {
@@ -240,7 +303,7 @@ describe('verifyAccessToken', () => {
     const { clientId, clientSecret } = await provider.registerClientManual(
       'cascade-test', ['client_credentials'], 'read',
     );
-    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
     await sql`DELETE FROM oauth_clients WHERE client_id = ${clientId}`;
     await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toThrow('Invalid token');
   });
@@ -252,7 +315,7 @@ describe('verifyAccessToken', () => {
     const { clientId, clientSecret } = await provider.registerClientManual(
       'typeof-test', ['client_credentials'], 'read',
     );
-    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
     const authInfo = await provider.verifyAccessToken(tokens.access_token);
 
     expect(typeof authInfo.expiresAt).toBe('number');
@@ -273,6 +336,33 @@ describe('verifyAccessToken', () => {
     expect(authInfo.clientId).toBe('legacy-agent');
     expect(authInfo.scopes).toEqual(['read', 'write', 'admin']); // grandfathered full access
   });
+
+  test('legacy access_tokens fallback honors permissions.source_id array grants', async () => {
+    // oauth.test.ts initializes the static PGLite schema blob, not the full
+    // migration stack. Add the v38 permissions column here so the row matches
+    // a modern brain carrying a legacy-token source grant.
+    await sql`
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb
+    `;
+
+    const legacyToken = generateToken('gbrain_');
+    const hash = hashToken(legacyToken);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, permissions)
+      VALUES (
+        ${crypto.randomUUID()},
+        ${'legacy-federated-agent'},
+        ${hash},
+        ${JSON.stringify({ source_id: ['default', 'src-a', 'src-b'] })}::jsonb
+      )
+    `;
+
+    const authInfo = await provider.verifyAccessToken(legacyToken) as CoreAuthInfo;
+    expect(authInfo.clientId).toBe('legacy-federated-agent');
+    expect(authInfo.sourceId).toBe('default');
+    expect(authInfo.allowedSources).toEqual(['default', 'src-a', 'src-b']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -284,7 +374,7 @@ describe('revokeToken', () => {
     const { clientId, clientSecret } = await provider.registerClientManual(
       'revoke-test', ['client_credentials'], 'read',
     );
-    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
 
     // Verify token works
     const authInfo = await provider.verifyAccessToken(tokens.access_token);
@@ -573,21 +663,23 @@ describe('operation scope annotations', () => {
     for (const op of operations) {
       expect(op.scope, `${op.name} missing scope`).toBeDefined();
       // v0.28 added sources_admin and users_admin to the union.
+      // v0.38 added 'agent' for submit_agent (D13).
       expect([
-        'read', 'write', 'admin', 'sources_admin', 'users_admin',
+        'read', 'write', 'admin', 'sources_admin', 'users_admin', 'agent',
       ]).toContain(op.scope);
     }
   });
 
-  test('mutating operations are write/admin/sources_admin/users_admin scoped', () => {
+  test('mutating operations are write/admin/sources_admin/users_admin/agent scoped', () => {
     const { operations } = require('../src/core/operations.ts');
     for (const op of operations) {
       if (op.mutating) {
         // v0.28: sources_admin permits sources_add / sources_remove (mutating
         // sources, not pages); read scope is the only thing too narrow for
-        // any mutating op.
+        // any mutating op. v0.38: 'agent' is a mutating-axis scope for
+        // submit_agent (creates jobs, spends money, but contained by bindings).
         expect(
-          ['write', 'admin', 'sources_admin', 'users_admin'],
+          ['write', 'admin', 'sources_admin', 'users_admin', 'agent'],
           `${op.name} is mutating but not a write-axis scope`,
         ).toContain(op.scope);
       }
@@ -756,7 +848,7 @@ describe('F1/F4 cross-client isolation', () => {
     const { clientId: attackerId } = await provider.registerClientManual(
       'revoke-attacker-test', ['client_credentials'], 'read',
     );
-    const tokens = await provider.exchangeClientCredentials(ownerId, ownerSecret, 'read');
+    const tokens = await provider.exchangeClientCredentials(ownerId, ownerSecret!, 'read');
     const attacker = (await provider.clientsStore.getClient(attackerId))!;
 
     // Attacker tries to revoke owner's token. revokeToken returns void
@@ -1249,5 +1341,223 @@ describe('PKCE DCR public-client gate (#909)', () => {
     // SDK normalizes token_type per RFC 6750 §6.1.1 (case-insensitive);
     // implementations may emit "bearer" lowercase.
     expect(String(tokens.token_type).toLowerCase()).toBe('bearer');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.41.3 — T1: ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS + validator
+// ---------------------------------------------------------------------------
+
+describe('v0.41.3 ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS', () => {
+  test('Set contains exactly the three SDK-advertised methods', () => {
+    expect(ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS.size).toBe(3);
+    expect(ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS.has('client_secret_post')).toBe(true);
+    expect(ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS.has('client_secret_basic')).toBe(true);
+    expect(ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS.has('none')).toBe(true);
+  });
+
+  test('client_secret_basic is included — codex F3 regression', () => {
+    // The codex outside-voice review caught that omitting client_secret_basic
+    // would break operators using HTTP Basic for confidential client auth at
+    // the /token endpoint (server already supports it at serve-http.ts:468).
+    expect(ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS.has('client_secret_basic')).toBe(true);
+  });
+});
+
+describe('v0.41.3 validateTokenEndpointAuthMethod', () => {
+  test('undefined → "client_secret_post" (RFC 7591 default)', () => {
+    expect(validateTokenEndpointAuthMethod(undefined)).toBe('client_secret_post');
+  });
+
+  test('null → "client_secret_post"', () => {
+    expect(validateTokenEndpointAuthMethod(null)).toBe('client_secret_post');
+  });
+
+  test('empty string → "client_secret_post"', () => {
+    expect(validateTokenEndpointAuthMethod('')).toBe('client_secret_post');
+  });
+
+  test('"client_secret_post" → "client_secret_post"', () => {
+    expect(validateTokenEndpointAuthMethod('client_secret_post')).toBe('client_secret_post');
+  });
+
+  test('"client_secret_basic" → "client_secret_basic"', () => {
+    expect(validateTokenEndpointAuthMethod('client_secret_basic')).toBe('client_secret_basic');
+  });
+
+  test('"none" → "none" (public PKCE client)', () => {
+    expect(validateTokenEndpointAuthMethod('none')).toBe('none');
+  });
+
+  test('unknown method throws InvalidTokenEndpointAuthMethodError', () => {
+    expect(() => validateTokenEndpointAuthMethod('frobnicate')).toThrow(InvalidTokenEndpointAuthMethodError);
+  });
+
+  test('error message names the bad value + all allowed methods', () => {
+    try {
+      validateTokenEndpointAuthMethod('frobnicate');
+      throw new Error('should have thrown');
+    } catch (e: any) {
+      expect(e.message).toContain('frobnicate');
+      expect(e.message).toContain('client_secret_post');
+      expect(e.message).toContain('client_secret_basic');
+      expect(e.message).toContain('none');
+    }
+  });
+
+  test('non-string input throws', () => {
+    expect(() => validateTokenEndpointAuthMethod(123 as any)).toThrow(InvalidTokenEndpointAuthMethodError);
+    expect(() => validateTokenEndpointAuthMethod({} as any)).toThrow(InvalidTokenEndpointAuthMethodError);
+    expect(() => validateTokenEndpointAuthMethod([] as any)).toThrow(InvalidTokenEndpointAuthMethodError);
+  });
+
+  test('InvalidTokenEndpointAuthMethodError has stable error code', () => {
+    try {
+      validateTokenEndpointAuthMethod('xyz');
+      throw new Error('should have thrown');
+    } catch (e: any) {
+      expect(e.code).toBe('invalid_token_endpoint_auth_method');
+      expect(e.name).toBe('InvalidTokenEndpointAuthMethodError');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.41.3 — T2: registerClientManual tokenEndpointAuthMethod parameter
+// ---------------------------------------------------------------------------
+
+describe('v0.41.3 registerClientManual tokenEndpointAuthMethod', () => {
+  test('omitted → confidential client with secret (back-compat)', async () => {
+    const result = await provider.registerClientManual(
+      'v413-default-test', ['client_credentials'], 'read',
+    );
+    expect(result.clientId).toStartWith('gbrain_cl_');
+    expect(result.clientSecret).toBeDefined();
+    expect(result.clientSecret!).toStartWith('gbrain_cs_');
+  });
+
+  test('explicit client_secret_post → confidential client with secret', async () => {
+    const result = await provider.registerClientManual(
+      'v413-csp-test', ['client_credentials'], 'read', [], 'default', undefined, 'client_secret_post',
+    );
+    expect(result.clientSecret).toBeDefined();
+  });
+
+  test('explicit client_secret_basic → confidential client with secret', async () => {
+    const result = await provider.registerClientManual(
+      'v413-csb-test', ['client_credentials'], 'read', [], 'default', undefined, 'client_secret_basic',
+    );
+    expect(result.clientSecret).toBeDefined();
+  });
+
+  test('"none" → public client with NO secret (T2 atomic INSERT)', async () => {
+    // The pre-v0.41.3 admin endpoint did INSERT (confidential) → UPDATE
+    // (NULL out secret_hash) for the 'none' case, leaving a confidential
+    // row stranded if the UPDATE failed (codex F4). T2 moves this into
+    // registerClientManual itself as a single atomic INSERT.
+    const result = await provider.registerClientManual(
+      'v413-public-test', ['authorization_code'], 'read',
+      ['https://example.test/cb'], 'default', undefined, 'none',
+    );
+    expect(result.clientId).toStartWith('gbrain_cl_');
+    expect(result.clientSecret).toBeUndefined();
+
+    // Verify the stored row has client_secret_hash = NULL (public client shape)
+    const client = await provider.clientsStore.getClient(result.clientId);
+    expect(client).toBeDefined();
+    expect(client!.client_secret).toBeUndefined();
+    expect(client!.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('unknown auth method throws InvalidTokenEndpointAuthMethodError at registration boundary', async () => {
+    await expect(
+      provider.registerClientManual(
+        'v413-bad-test', ['client_credentials'], 'read', [], 'default', undefined, 'frobnicate',
+      ),
+    ).rejects.toThrow(InvalidTokenEndpointAuthMethodError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.41.3 — T5: DCR /register handler applies the same validator
+// ---------------------------------------------------------------------------
+
+describe('v0.41.3 DCR validator (T5)', () => {
+  test('DCR rejects unknown token_endpoint_auth_method — closes --enable-dcr loose path', async () => {
+    // Pre-v0.41.3 the DCR registration handler defaulted to 'client_secret_post'
+    // for any unknown value, silently swallowing typos. T5 throws so the bad
+    // input fails loud — same gate as CLI + admin paths.
+    await expect(
+      provider.clientsStore.registerClient!({
+        client_name: 'dcr-bad-test',
+        grant_types: ['authorization_code'],
+        scope: 'read',
+        redirect_uris: ['https://example.test/cb'],
+        token_endpoint_auth_method: 'frobnicate',
+      } as any),
+    ).rejects.toThrow(InvalidTokenEndpointAuthMethodError);
+  });
+
+  test('DCR accepts "none" → public PKCE client', async () => {
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'dcr-public-test',
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      redirect_uris: ['https://example.test/cb'],
+      token_endpoint_auth_method: 'none',
+    } as any);
+    expect(reg.client_id).toStartWith('gbrain_cl_');
+    // RFC 7591 §3.2.1: public clients MUST NOT receive a client_secret
+    expect(reg.client_secret).toBeUndefined();
+  });
+
+  test('DCR accepts "client_secret_basic" — codex F3 regression', async () => {
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'dcr-basic-test',
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      redirect_uris: ['https://example.test/cb'],
+      token_endpoint_auth_method: 'client_secret_basic',
+    } as any);
+    expect(reg.client_id).toStartWith('gbrain_cl_');
+    expect(reg.client_secret).toStartWith('gbrain_cs_');
+  });
+});
+
+describe('#1353 DCR default-grant hardening', () => {
+  test('DCR rejects explicit client_credentials by default', async () => {
+    await expect(
+      provider.clientsStore.registerClient!({
+        client_name: 'cc-default-test',
+        grant_types: ['client_credentials'],
+        scope: 'read',
+        redirect_uris: [],
+        token_endpoint_auth_method: 'client_secret_post',
+      } as any),
+    ).rejects.toThrow(InvalidClientMetadataError);
+  });
+
+  test('DCR defaults to authorization_code when grant_types unspecified', async () => {
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'no-grant-test',
+      scope: 'read',
+      redirect_uris: ['https://example.test/cb'],
+      token_endpoint_auth_method: 'none',
+    } as any);
+    const stored = await provider.clientsStore.getClient(reg.client_id);
+    expect(stored?.grant_types).toEqual(['authorization_code']);
+  });
+
+  test('--enable-dcr-insecure (allowClientCredentialsDcr) permits client_credentials', async () => {
+    const insecure = new GBrainOAuthProvider({ sql, allowClientCredentialsDcr: true });
+    const reg = await insecure.clientsStore.registerClient!({
+      client_name: 'cc-allowed-test',
+      grant_types: ['client_credentials'],
+      scope: 'read',
+      redirect_uris: [],
+      token_endpoint_auth_method: 'client_secret_post',
+    } as any);
+    const stored = await insecure.clientsStore.getClient(reg.client_id);
+    expect(stored?.grant_types).toEqual(['client_credentials']);
   });
 });

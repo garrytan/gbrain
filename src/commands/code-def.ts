@@ -15,6 +15,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
+import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 
 export interface CodeDefResult {
   slug: string;
@@ -32,7 +33,14 @@ export async function findCodeDef(
   opts: { limit?: number; language?: string } = {},
 ): Promise<CodeDefResult[]> {
   const limit = opts.limit ?? 20;
-  const DEF_TYPES = ['function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract'];
+  // v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
+  // trigger) are first-class definitions in the SQL sense. The chunker's
+  // normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
+  // kinds here is what makes `gbrain code-def users` work against SQL.
+  const DEF_TYPES = [
+    'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
+    'table', 'view', 'index', 'procedure', 'schema', 'database', 'trigger',
+  ];
   const params: unknown[] = [symbol, limit];
   let whereLang = '';
   if (opts.language) {
@@ -111,11 +119,21 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
   const language = parseFlag(args, '--lang');
   try {
     const results = await findCodeDef(engine, sym, { limit, language });
+    // code-def is brain-wide (not source-scoped); readiness is 'symbol' grain.
+    const readiness = await resolveCodeReadiness(engine, { kind: 'symbol', count: results.length });
     if (shouldEmitJson(args)) {
-      console.log(JSON.stringify({ symbol: sym, count: results.length, results }, null, 2));
+      console.log(JSON.stringify({
+        symbol: sym,
+        count: results.length,
+        status: readiness.status,
+        ready: readiness.ready,
+        results,
+      }, null, 2));
     } else {
       if (results.length === 0) {
         console.log(`No definitions found for "${sym}"`);
+        const hint = readinessHint(readiness);
+        if (hint) console.log(hint);
       } else {
         console.log(`Found ${results.length} definition(s) for "${sym}":`);
         for (const r of results) {

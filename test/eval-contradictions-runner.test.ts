@@ -62,8 +62,15 @@ function mkResult(slug: string, page_id: number, chunk_id: number, text: string,
 
 /** Stubbed judge that returns a fixed verdict pattern. */
 function stubJudge(opts: {
+  /**
+   * v0.34 / Lane A2: `verdict` replaces `contradicts`. Legacy `contradicts:
+   * true` maps to verdict='contradiction'; `contradicts: false` to
+   * verdict='no_contradiction'. Callers can pass either field; verdict wins
+   * when both are set.
+   */
+  verdict?: 'no_contradiction' | 'contradiction' | 'temporal_supersession' | 'temporal_regression' | 'temporal_evolution' | 'negation_artifact';
   contradicts?: boolean;
-  severity?: 'low' | 'medium' | 'high';
+  severity?: 'info' | 'low' | 'medium' | 'high';
   confidence?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -75,9 +82,11 @@ function stubJudge(opts: {
     if (opts.throwOn && opts.throwOn(idx)) {
       throw new Error('stub: simulated transient 503');
     }
+    const resolvedVerdict =
+      opts.verdict ?? (opts.contradicts === false ? 'no_contradiction' : 'contradiction');
     return {
       verdict: {
-        contradicts: opts.contradicts ?? true,
+        verdict: resolvedVerdict,
         severity: opts.severity ?? 'medium',
         axis: 'stub axis',
         confidence: opts.confidence ?? 0.85,
@@ -374,7 +383,7 @@ describe('runContradictionProbe', () => {
         // Yield to let the abort fire.
         await new Promise((r) => setTimeout(r, 1));
         return {
-          verdict: { contradicts: false, severity: 'low', axis: '', confidence: 0.3, resolution_kind: null },
+          verdict: { verdict: 'no_contradiction', severity: 'info', axis: '', confidence: 0.3, resolution_kind: null },
           usage: { inputTokens: 1, outputTokens: 1 },
         };
       },
@@ -418,7 +427,7 @@ describe('runContradictionProbe', () => {
     const recordOrder = (out: string[]): JudgeFn => async (input) => {
       out.push(`${input.a.slug}|${input.b.slug}`);
       return {
-        verdict: { contradicts: false, severity: 'low', axis: '', confidence: 0.4, resolution_kind: null },
+        verdict: { verdict: 'no_contradiction', severity: 'info', axis: '', confidence: 0.4, resolution_kind: null },
         usage: { inputTokens: 1, outputTokens: 1 },
       };
     };
@@ -431,5 +440,88 @@ describe('runContradictionProbe', () => {
       budgetUsd: 5, noCache: true,
     });
     expect(order1).toEqual(order2);
+  });
+
+  // ---- Lane D: R4 regression — runner emits findings for every non-no_contradiction verdict ----
+  // Without the runner.ts:307-ish emit-rule change from Lane A2, the new
+  // verdicts (temporal_supersession, temporal_regression, temporal_evolution,
+  // negation_artifact) would silently vanish from the report. This test
+  // pins the broadened emit predicate one verdict at a time.
+
+  for (const verdict of [
+    'contradiction',
+    'temporal_supersession',
+    'temporal_regression',
+    'temporal_evolution',
+    'negation_artifact',
+  ] as const) {
+    test(`R4 regression: verdict='${verdict}' surfaces as a finding`, async () => {
+      const idA = await seedPage(`a/${verdict}`, 'A');
+      const idB = await seedPage(`b/${verdict}`, 'B');
+      const out = await runContradictionProbe({
+        engine,
+        queries: [`q-${verdict}`],
+        judgeFn: stubJudge({ verdict, severity: 'medium', confidence: 0.85 }),
+        searchFn: async () => [
+          mkResult(`a/${verdict}`, idA, 1, `text-a-${verdict}`, 1.0),
+          mkResult(`b/${verdict}`, idB, 2, `text-b-${verdict}`, 0.5),
+        ],
+        budgetUsd: 5,
+        noCache: true,
+      });
+      expect(out.report.total_contradictions_flagged).toBe(1);
+      expect(out.report.per_query[0].contradictions.length).toBe(1);
+      expect(out.report.per_query[0].contradictions[0].verdict).toBe(verdict);
+      // Only verdict='contradiction' counts toward the strict
+      // queries_with_contradiction metric (Wilson-CI denominator).
+      if (verdict === 'contradiction') {
+        expect(out.report.queries_with_contradiction).toBe(1);
+      } else {
+        expect(out.report.queries_with_contradiction).toBe(0);
+      }
+      // Every non-no_contradiction verdict counts toward queries_with_any_finding.
+      expect(out.report.queries_with_any_finding).toBe(1);
+      // Per-verdict breakdown tallies correctly.
+      expect(out.report.verdict_breakdown[verdict]).toBe(1);
+    });
+  }
+
+  test(`R4 regression: verdict='no_contradiction' produces ZERO findings`, async () => {
+    const idA = await seedPage('a/noc', 'A');
+    const idB = await seedPage('b/noc', 'B');
+    const out = await runContradictionProbe({
+      engine,
+      queries: ['q-noc'],
+      judgeFn: stubJudge({ verdict: 'no_contradiction', severity: 'info', confidence: 0.85 }),
+      searchFn: async () => [
+        mkResult('a/noc', idA, 1, 'no contradiction here', 1.0),
+        mkResult('b/noc', idB, 2, 'also no contradiction', 0.5),
+      ],
+      budgetUsd: 5,
+      noCache: true,
+    });
+    expect(out.report.total_contradictions_flagged).toBe(0);
+    expect(out.report.per_query[0].contradictions.length).toBe(0);
+    expect(out.report.queries_with_contradiction).toBe(0);
+    expect(out.report.queries_with_any_finding).toBe(0);
+    expect(out.report.verdict_breakdown.no_contradiction).toBe(1);
+  });
+
+  // ---- Lane D: R5 regression — cache key tuple shape stays 5 fields ----
+  // Lane A1 bumped PROMPT_VERSION 1→2 (invalidates cache) but kept the key
+  // shape unchanged. Adding a 6th field would silently break every operator's
+  // brain (no migration path).
+
+  test('R5 regression: cache key tuple shape is exactly 5 fields', async () => {
+    const { buildCacheKey } = await import('../src/core/eval-contradictions/cache.ts');
+    const key = buildCacheKey({ textA: 'a', textB: 'b', modelId: 'haiku' });
+    const keys = Object.keys(key).sort();
+    expect(keys).toEqual([
+      'chunk_a_hash',
+      'chunk_b_hash',
+      'model_id',
+      'prompt_version',
+      'truncation_policy',
+    ]);
   });
 });

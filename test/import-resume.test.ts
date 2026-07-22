@@ -20,7 +20,7 @@
  *     `afterAll`) per CLAUDE.md test-isolation rules R3 + R4.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -52,7 +52,9 @@ beforeEach(async () => {
   gbrainHomeDir = join(workspace, '.gbrain');
   mkdirSync(gbrainHomeDir, { recursive: true });
   cpPath = join(gbrainHomeDir, 'import-checkpoint.json');
-  brainDir = mkdtempSync(join(tmpdir(), 'gbrain-import-resume-brain-'));
+  // #1728: realpath so planted checkpoints match runImport's canonicalized
+  // dir (macOS tmpdir is a /var → /private/var symlink).
+  brainDir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-import-resume-brain-')));
 });
 
 afterEach(() => {

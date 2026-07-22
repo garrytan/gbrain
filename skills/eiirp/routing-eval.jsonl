@@ -1,0 +1,9 @@
+{"intent": "let's do EIIRP on what we just built", "expected_skill": "eiirp"}
+{"intent": "time for EIIRP — wrap this all up", "expected_skill": "eiirp"}
+{"intent": "I want everything in its right place after today", "expected_skill": "eiirp"}
+{"intent": "let's get everything in its right place before EOD", "expected_skill": "eiirp"}
+{"intent": "make this re-doable for next quarter", "expected_skill": "eiirp"}
+{"intent": "let's DRY this up across our skills", "expected_skill": "eiirp"}
+{"intent": "please file all of this properly", "expected_skill": "eiirp"}
+{"intent": "organize all of this work so it's findable later", "expected_skill": "eiirp"}
+{"intent": "archive this research thread once we're done", "expected_skill": "eiirp", "ambiguous_with": ["data-research"]}

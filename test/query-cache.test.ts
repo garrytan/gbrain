@@ -18,6 +18,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SemanticQueryCache, cacheRowId } from '../src/core/search/query-cache.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { SearchResult, HybridSearchMeta } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -79,6 +80,18 @@ const META: HybridSearchMeta = {
 };
 
 beforeAll(async () => {
+  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
+  // This test hardcodes DIM=1536 in its embeddings. If another test file in
+  // the same shard configured the gateway before us, initSchema() would size
+  // query_cache.embedding at vector(1280) and every insert below would fail
+  // with "expected 1280 dimensions, not 1536". Pin the gateway to 1536d
+  // explicitly so this file is hermetic regardless of cross-file state.
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -86,6 +99,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   try { await engine.disconnect(); } catch { /* ignore */ }
+  resetGateway();
 });
 
 beforeEach(async () => {

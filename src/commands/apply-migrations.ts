@@ -364,17 +364,27 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     const { createEngine } = await import('../core/engine-factory.ts');
     const cfg = lc();
     if (cfg) {
-      const eng = await createEngine(toEngineConfig(cfg));
-      await eng.connect(toEngineConfig(cfg));
-      const verStr = await eng.getConfig('version');
-      const schemaVer = parseInt(verStr || '1', 10);
-      await eng.disconnect();
-      if (schemaVer < LATEST_VERSION) {
-        console.warn(
-          `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
-          `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
-          `   To run them now: gbrain init --migrate-only\n`,
-        );
+      // v0.36.x #1100: skip the pre-flight warning on PGLite. The probe
+      // briefly holds the single-writer lock; if a downstream orchestrator
+      // phase spawns `gbrain init --migrate-only` as a subprocess (the
+      // legacy v0.11.0 phase A path), the child can race the parent's
+      // lock release and hit a 30s timeout. The orchestrators handle
+      // schema lifecycle internally on PGLite (phase A routes in-process),
+      // so the warning here adds no information for PGLite users.
+      const skipPreflight = cfg.engine === 'pglite';
+      if (!skipPreflight) {
+        const eng = await createEngine(toEngineConfig(cfg));
+        await eng.connect(toEngineConfig(cfg));
+        const verStr = await eng.getConfig('version');
+        const schemaVer = parseInt(verStr || '1', 10);
+        await eng.disconnect();
+        if (schemaVer < LATEST_VERSION) {
+          console.warn(
+            `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
+            `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
+            `   To run them now: gbrain init --migrate-only\n`,
+          );
+        }
       }
     }
   } catch {
@@ -404,13 +414,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if (cli.list) { printList(plan, installed); return; }
-  if (cli.dryRun) { printDryRun(plan, installed); return; }
+  if (cli.list) { printList(plan, installed); process.exit(0); }
+  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {
     console.log('All migrations up to date.');
-    return;
+    process.exit(0);
   }
 
   // Run each orchestrator in registry order. An orchestrator failure aborts

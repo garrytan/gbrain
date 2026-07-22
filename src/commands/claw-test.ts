@@ -170,8 +170,11 @@ async function runScripted(
   childEnv.GBRAIN_FRICTION_RUN_ID = ctx.runId;
 
   const phases: { name: string; argv: string[] }[] = [];
-  // Phase 2: install_brain
-  phases.push({ name: 'install_brain', argv: ['init', '--pglite'] });
+  // Phase 2: install_brain. `--no-embedding` defers embedding setup so the
+  // claw-test runs without API keys (v0.37.10.0+ requires an embedding
+  // provider OR the deferral flag); this harness exercises CLI ergonomics,
+  // not embedding pipelines.
+  phases.push({ name: 'install_brain', argv: ['init', '--pglite', '--no-embedding'] });
 
   // Phase 3: import (only when scenario has a brain dir)
   // Capture brainDir for downstream phases that need an explicit --dir

@@ -25,7 +25,9 @@ import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
+import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
+import { normalizeMetricLabel } from './extract-from-fence.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -60,8 +62,26 @@ export async function getFactsExtractionModel(engine?: BrainEngine): Promise<str
     fallback: 'anthropic:claude-sonnet-4-6',
   });
   // resolveModel returns bare model ids when resolving via tier defaults; ensure
-  // the result keeps a provider prefix so gateway.chat() can route it.
-  return resolved.includes(':') ? resolved : `anthropic:${resolved}`;
+  // the result keeps a provider prefix so gateway.chat() can route it (and slash
+  // form normalizes to colon — #1698).
+  return normalizeModelId(resolved);
+}
+
+/**
+ * #2113: output-token cap for the extractor call. The pre-fix hardcoded 1500
+ * silently truncated output on mandatory-reasoning models (thinking tokens
+ * count toward the cap), so the JSON never parsed and extraction returned
+ * zero facts with no signal. Configurable via
+ * `gbrain config set facts.extraction_max_tokens <n>`; default 4000.
+ */
+export const DEFAULT_EXTRACTION_MAX_TOKENS = 4000;
+
+export async function getFactsExtractionMaxTokens(engine?: BrainEngine): Promise<number> {
+  if (!engine) return DEFAULT_EXTRACTION_MAX_TOKENS;
+  const raw = await engine.getConfig('facts.extraction_max_tokens').catch(() => null);
+  if (raw == null || raw.trim() === '') return DEFAULT_EXTRACTION_MAX_TOKENS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_EXTRACTION_MAX_TOKENS;
 }
 
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
@@ -101,7 +121,9 @@ const EXTRACTOR_SYSTEM = [
   'Output strictly one JSON object on a single line:',
   '{"facts":[{"fact":"<terse claim>","kind":"event|preference|commitment|belief|fact",',
   '"entity":"<canonical slug or display name or null>","confidence":<0..1>,',
-  '"notability":"high|medium|low"}]}.',
+  '"notability":"high|medium|low",',
+  '"metric":"<lowercase snake_case or null>","value":<number or null>,',
+  '"unit":"<USD|people|pct|... or null>","period":"<monthly|annual|quarterly|null>"}]}.',
   'No prose, no code fences. Empty facts array is valid when nothing claim-worthy was said.',
   '',
   'Rules:',
@@ -124,6 +146,19 @@ const EXTRACTOR_SYSTEM = [
   '    Can wait for batch processing.',
   '  * "low": Logistical noise, restaurant orders, routine scheduling, "we\'re at X place".',
   '    Skip entirely — not worth storing.',
+  '',
+  '- Typed-claim fields (metric/value/unit/period) — emit ONLY when the claim',
+  '  carries a quantitative metric assertion. Examples:',
+  '  * "MRR: $50K (Jan 2026)" → metric=mrr, value=50000, unit=USD, period=monthly',
+  '  * "ARR: $2M" → metric=arr, value=2000000, unit=USD, period=annual',
+  '  * "Team size: 12" → metric=team_size, value=12, unit=people, period=null',
+  '  * "Closed Series A: $15M" → metric=fundraise, value=15000000, unit=USD, period=null',
+  '  * "User churn: 5%" → metric=churn_rate, value=0.05, unit=pct, period=null',
+  '  Use lowercase snake_case for metric. Common labels: mrr, arr, revenue,',
+  '  runway, burn_rate, cash, gross_margin, team_size, headcount, users, mau,',
+  '  dau, cac, ltv, churn_rate, fundraise. For non-metric claims (preferences,',
+  '  events, beliefs), set all four to null. Numeric values: emit the raw',
+  '  number after currency/scale normalization (50000 not "$50K"; 0.05 not "5%").',
 ].join('\n');
 
 const MAX_TURN_TEXT_CHARS = 8000;
@@ -146,24 +181,46 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
 
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
+  const maxTokens = await getFactsExtractionMaxTokens(input.engine);
+  const model = input.model ?? defaultModel;
+  const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
+    input.entityHints && input.entityHints.length
+      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
+      : ''
+  }`;
   let result: ChatResult;
   try {
     result = await chat({
-      model: input.model ?? defaultModel,
+      model,
       system: EXTRACTOR_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
-            input.entityHints && input.entityHints.length
-              ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
-              : ''
-          }`,
-        },
-      ],
-      maxTokens: 1500,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens,
       abortSignal: input.abortSignal,
     });
+    // #2113: never checked pre-fix — a truncated response (stopReason
+    // 'length', e.g. reasoning tokens eating the cap on mandatory-reasoning
+    // models) produced unparseable JSON and silently extracted zero facts.
+    // Retry ONCE at double the cap, then surface the truncation loudly.
+    if (result.stopReason === 'length') {
+      process.stderr.write(
+        `[facts-extract] WARN: extractor output truncated at maxTokens=${maxTokens} ` +
+        `(model=${model}); retrying once at ${maxTokens * 2}\n`,
+      );
+      result = await chat({
+        model,
+        system: EXTRACTOR_SYSTEM,
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: maxTokens * 2,
+        abortSignal: input.abortSignal,
+      });
+      if (result.stopReason === 'length') {
+        process.stderr.write(
+          `[facts-extract] WARN: extractor output STILL truncated at maxTokens=${maxTokens * 2} ` +
+          `(model=${model}); facts for this turn are likely lost. ` +
+          `Raise the cap: gbrain config set facts.extraction_max_tokens <n>\n`,
+        );
+      }
+    }
   } catch (err) {
     // Re-throw aborts; absorb other errors as "no extraction" — caller's
     // `put_page` backstop will still record the page itself.
@@ -207,6 +264,15 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       embedding = null;
     }
 
+    // v0.35.4 (D-CDX-2) — typed-claim threading. Normalize the metric label
+    // here so all storage paths see canonical lowercase snake_case names.
+    // Value is already a finite number from parseExtractorJson; unit and
+    // period are stored verbatim.
+    const claimMetric = normalizeMetricLabel(candidate.metric ?? undefined) ?? null;
+    const claimValue  = candidate.value ?? null;
+    const claimUnit   = candidate.unit ?? null;
+    const claimPeriod = candidate.period ?? null;
+
     facts.push({
       fact: factText,
       kind,
@@ -216,6 +282,10 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       confidence,
       notability,
       embedding,
+      claim_metric: claimMetric,
+      claim_value:  claimValue,
+      claim_unit:   claimUnit,
+      claim_period: claimPeriod,
     });
   }
 
@@ -228,6 +298,12 @@ interface RawExtracted {
   entity?: string | null;
   confidence?: number;
   notability?: string;
+  // v0.35.4 (D-CDX-2) — typed-claim fields. All optional; emit only for
+  // metric-shaped claims. See EXTRACTOR_SYSTEM rules above.
+  metric?: string | null;
+  value?: number | null;
+  unit?: string | null;
+  period?: string | null;
 }
 
 /**
@@ -266,6 +342,14 @@ function tryArrayShape(s: string): RawExtracted[] | null {
         entity: typeof o.entity === 'string' ? o.entity : null,
         confidence: typeof o.confidence === 'number' ? o.confidence : 1.0,
         notability: typeof o.notability === 'string' ? o.notability : undefined,
+        // v0.35.4 (D-CDX-2) — typed-claim fields. Strict shape: metric/unit/period
+        // must be string-or-null; value must be a finite number-or-null. Anything
+        // else falls through to undefined so the downstream pipeline treats it
+        // as "no metric set" rather than corrupted data.
+        metric: typeof o.metric === 'string' ? o.metric : null,
+        value:  (typeof o.value === 'number' && Number.isFinite(o.value)) ? o.value : null,
+        unit:   typeof o.unit === 'string' ? o.unit : null,
+        period: typeof o.period === 'string' ? o.period : null,
       });
     }
     return out;
