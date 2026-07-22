@@ -13,4 +13,9 @@ timeout = 60_000
 # fixtures still match the schema. v0.37's production default is ZE/1280;
 # tests that want the new default call configureGateway() explicitly in
 # their own beforeAll.
-preload = ["./test/helpers/legacy-embedding-preload.ts"]
+#
+# #2823: redirect GBRAIN_AUDIT_DIR to a per-run scratch dir BEFORE any test
+# runs, so audit-emitting code paths (content-sanity, shell-audit, etc.)
+# can't leak fixture events into the operator's real ~/.gbrain/audit/. See
+# test/helpers/audit-dir-preload.ts for the full rationale.
+preload = ["./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts"]

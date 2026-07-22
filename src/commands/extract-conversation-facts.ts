@@ -35,9 +35,10 @@
  *     `listPages({type, sourceId, limit: PAGE_LIST_BATCH})` so worst
  *     case is BATCH × 25MB per batch (currently 10 × 25MB = 250MB
  *     bounded). Per-page body cap drops oversize before parsing.
- *   - Body read covers compiled_truth + timeline. parseMarkdown splits
- *     conversation imports across both columns; reading only
- *     compiled_truth silently drops half on iMessage/Slack imports.
+ *   - Body read prefers frontmatter.raw_transcript when present, then
+ *     falls back to compiled_truth + timeline. Meeting pages often
+ *     store the real turn-by-turn transcript in a sidecar file while
+ *     compiled_truth is just the human summary.
  *   - Page-global row_num accumulator. facts table unique index is
  *     (source_id, source_markdown_slug, row_num); per-segment row_num
  *     would collide on segment 2. Per-page counter increments across
@@ -70,7 +71,7 @@ import {
   extractFactsFromTurn,
   isFactsExtractionEnabled,
 } from '../core/facts/extract.ts';
-import { isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
+import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -80,7 +81,6 @@ import {
 } from '../core/op-checkpoint.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions, maybeBackground } from '../core/cli-options.ts';
-import { loadConfig } from '../core/config.ts';
 import { createHash } from 'crypto';
 // v0.41.15.0 (T5): worker-pool primitive + per-source-clamp wrapper +
 // per-page advisory lock + delete-orphans-first replay safety. See plan
@@ -140,7 +140,14 @@ export const DEFAULT_MAX_COST_USD = 5.0;
  * `--types` flag is an explicit per-run override; cycle config is
  * the single source of truth.
  */
-export const ALLOWED_TYPES = ['conversation', 'meeting', 'slack', 'email'] as const;
+export const ALLOWED_TYPES = [
+  'conversation',
+  'meeting',
+  'slack',
+  'email',
+  'imessage',
+  'imessage-daily',
+] as const;
 export type AllowedType = (typeof ALLOWED_TYPES)[number];
 
 /**
@@ -286,6 +293,7 @@ import {
   parseConversation,
   type ParseConversationOpts as OrchestratorParseOpts,
 } from '../core/conversation-parser/parse.ts';
+import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
 
 /**
  * v0.41.13.0 — back-compat shape for direct callers + the existing
@@ -472,16 +480,6 @@ function pageBodyBytes(page: Page): number {
   const compiled = page.compiled_truth ?? '';
   const timeline = page.timeline ?? '';
   return Buffer.byteLength(compiled, 'utf8') + Buffer.byteLength(timeline, 'utf8');
-}
-
-function readPageBody(page: Page): string {
-  // F1: read BOTH compiled_truth AND timeline; iMessage importers
-  // place chronological message stream in timeline.
-  const compiled = page.compiled_truth ?? '';
-  const timeline = page.timeline ?? '';
-  if (!compiled) return timeline;
-  if (!timeline) return compiled;
-  return `${compiled}\n\n${timeline}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -682,7 +680,7 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  const body = readPageBody(page);
+  const body = await readConversationBodyForParsing(state.engine, page);
   // v0.41.13.0: thread the full Page through the orchestrator so D8
   // date-derivation chain (frontmatter.date > effective_date >
   // '1970-01-01') AND timezone_policy warnings apply. The historical
@@ -765,6 +763,12 @@ async function processPage(
         source_markdown_slug: page.slug,
         source: PER_SEGMENT_SOURCE_PREFIX,
         source_session: sessionId,
+        // Preserve the conversation's valid time instead of defaulting every
+        // extracted fact to extraction time. Epoch-anchored parses have no
+        // trustworthy date, so they retain the existing now() fallback.
+        ...(seg.startIso && !seg.startIso.startsWith('1970-')
+          ? { valid_from: new Date(seg.startIso) }
+          : {}),
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));
@@ -1077,7 +1081,8 @@ export async function runExtractConversationFactsCore(
       }
       // Fall through to receipt+rollup write so the partial run is
       // still observable in extract_health doctor + extracts/ pages.
-      await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
+      // ...but not under --dry-run: a preview must not persist cache state.
+      if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
       // Return partial result — caller (CLI / Minion) decides how to
       // surface. NOT a thrown failure.
       return result;
@@ -1089,7 +1094,9 @@ export async function runExtractConversationFactsCore(
   // (queryable + citable per D-EXTRACT-17/19) AND UPSERTs the per-day
   // rollup row (best-effort cache per F-OUT-19). Both are best-effort —
   // failures stderr-warn but never fail the parent operation.
-  await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
+  // --dry-run must not persist cache/knowledge state: skip the rollup UPSERT +
+  // receipt-page write so a preview leaves no extract cache row behind.
+  if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
 
   return result;
 }
@@ -1359,7 +1366,9 @@ export async function runExtractConversationFacts(
     process.exit(1);
   }
 
-  // Chat gateway is required for non-dry-run.
+  // Chat gateway is required for non-dry-run. Recover a cold singleton before
+  // reporting an availability error (#2590).
+  if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
     console.error('Chat gateway unavailable. Configure an Anthropic or compatible chat model, or pass --dry-run to preview segmentation.');
     process.exit(1);

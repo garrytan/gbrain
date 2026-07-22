@@ -174,6 +174,21 @@ describe('scanBrainSources partial-scan state', () => {
     expect(report.aborted_at_source).toBe('src-a');
   });
 
+  // #2946: the deadline race's timeout arm resolves a SENTINEL, not null —
+  // a COUNT that legitimately resolves null (failed/absent count) before the
+  // deadline must NOT be mistaken for a deadline hit: the source still gets
+  // scanned, with db_page_count simply unavailable.
+  test('COUNT resolving null before the deadline is not a deadline verdict — source still scans', async () => {
+    const start = Date.now();
+    const report = await scanBrainSources(engine, {
+      deadline: start + 5_000,
+      dbPageCountForSource: async () => null,
+    });
+    const firstSource = report.per_source.find(r => r.source_id === 'src-a')!;
+    expect(firstSource.status).toBe('scanned');
+    expect(firstSource.db_page_count == null).toBe(true);
+  });
+
   // Codex adversarial #4 regression: even when dbPageCountForSource itself
   // would hang indefinitely, the Promise.race against the deadline must
   // resolve null and the scan must abort cleanly.

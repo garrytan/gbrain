@@ -15,6 +15,7 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   addSource,
@@ -301,6 +302,41 @@ describe('listSources', () => {
 // ---------------------------------------------------------------------------
 
 describe('removeSource — clone-cleanup', () => {
+  test('counts soft-deleted pages for destructive removal while list/status show active pages', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, { id: 'soft-only', localPath: '/tmp/soft-only-fixture' });
+      await engine.putPage(
+        'notes/recoverable',
+        {
+          type: 'note',
+          title: 'Recoverable',
+          compiled_truth: 'still recoverable during the soft-delete window',
+          timeline: '',
+          frontmatter: {},
+        },
+        { sourceId: 'soft-only' },
+      );
+      expect(await engine.softDeletePage('notes/recoverable', { sourceId: 'soft-only' }))
+        .toEqual({ slug: 'notes/recoverable' });
+
+      const listed = await listSources(engine);
+      expect(listed.find((s) => s.id === 'soft-only')?.page_count).toBe(0);
+      const status = await getSourceStatus(engine, 'soft-only');
+      expect(status.page_count).toBe(0);
+
+      const dryRun = await removeSource(engine, { id: 'soft-only', dryRun: true });
+      expect(dryRun.pages_deleted).toBe(1);
+
+      try {
+        await removeSource(engine, { id: 'soft-only' });
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).message).toContain('with 1 pages');
+      }
+    });
+  });
+
   test('removes clone IFF managed (local_path under $GBRAIN_HOME/clones/ + remote_url set)', async () => {
     await withEnv2(async () => {
       const row = await addSource(engine, {
@@ -323,7 +359,10 @@ describe('removeSource — clone-cleanup', () => {
       const userPath = join(GBRAIN_HOME, 'user-managed-fixture');
       mkdirSync(userPath, { recursive: true });
       writeFileSync(join(userPath, 'file'), 'hi');
-      await addSource(engine, { id: 'cleanup-no', localPath: userPath });
+      // #2707: this fixture is intentionally not a git repo (unrelated to
+      // what this test covers — clone-cleanup ownership) — force past the
+      // registration-time git check.
+      await addSource(engine, { id: 'cleanup-no', localPath: userPath, force: true });
       const result = await removeSource(engine, {
         id: 'cleanup-no',
         confirmDestructive: true,
@@ -450,8 +489,10 @@ describe('getSourceStatus', () => {
       // path-only source still gets validateRepoState — but with no expected
       // URL, it just probes existence + .git. Path exists with no .git → 'no-git'.
       // To match contract docstring we'd want 'not-applicable' only when
-      // local_path is null. Test the truthful behavior:
-      await addSource(engine, { id: 'status-no-url', localPath: userPath });
+      // local_path is null. Test the truthful behavior. #2707: this fixture
+      // is deliberately no-git (that's what's under test for getSourceStatus)
+      // — force past the registration-time git check to construct it.
+      await addSource(engine, { id: 'status-no-url', localPath: userPath, force: true });
       const s = await getSourceStatus(engine, 'status-no-url');
       // local_path set but no .git: returns 'no-git'
       expect(s.clone_state).toBe('no-git');
@@ -776,6 +817,252 @@ describe('addSource --url — writes ownership marker', () => {
       expect(recloned).toBe(true);
       expect(existsSync(join(externalClone, '.git'))).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addSource --path — #2707 git-repo validation at registration time
+//
+// Deliberately does NOT run under withEnv2 (the fake-git harness above):
+// writeFakeGit()'s catch-all `exit 0` would make `rev-parse --show-toplevel`
+// (and therefore isInsideGitRepo) succeed unconditionally for any path,
+// which defeats the point of these tests. Real system git applies here.
+// ---------------------------------------------------------------------------
+
+describe('addSource --path — #2707 git-repo validation', () => {
+  const SANDBOX = join(tmpdir(), `gbrain-2707-git-validate-${process.pid}`);
+
+  beforeEach(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+    mkdirSync(SANDBOX, { recursive: true });
+  });
+  afterAll(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  });
+
+  test('rejects an existing non-git directory with an actionable error', async () => {
+    const plainDir = join(SANDBOX, 'plain');
+    mkdirSync(plainDir, { recursive: true });
+    writeFileSync(join(plainDir, 'notes.md'), 'not committed anywhere');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'plain-src', localPath: plainDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+    expect(threw?.message).toContain(plainDir);
+    expect(threw?.message).toContain('--force');
+    expect(threw?.message).toMatch(/git .*init/);
+
+    // Source was never registered — no partial row left behind.
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = 'plain-src'`,
+    );
+    expect(rows.length).toBe(0);
+  });
+
+  test('rejects a git-initialized directory with zero commits (codex round 1)', async () => {
+    const unbornDir = join(SANDBOX, 'unborn');
+    mkdirSync(unbornDir, { recursive: true });
+    execFileSync('git', ['-C', unbornDir, 'init', '-q']);
+    // No `git add` / `git commit` — isInsideGitRepo alone would pass this.
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'unborn-src', localPath: unbornDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('rejects an empty-commit repo whose files are untracked (codex round 2)', async () => {
+    // git commit --allow-empty gives a resolvable HEAD (so a bare "has a
+    // commit" check would wrongly pass this) but the tree is empty; files
+    // written afterward are untracked and invisible to the sync walker.
+    const emptyCommitDir = join(SANDBOX, 'empty-commit');
+    mkdirSync(emptyCommitDir, { recursive: true });
+    execFileSync('git', ['-C', emptyCommitDir, 'init', '-q']);
+    execFileSync('git', ['-C', emptyCommitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', emptyCommitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', emptyCommitDir, 'commit', '--allow-empty', '-q', '-m', 'empty']);
+    writeFileSync(join(emptyCommitDir, 'notes.md'), 'never committed');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'empty-commit-src', localPath: emptyCommitDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('rejects an untracked subdirectory of an otherwise-real git repo (codex round 2)', async () => {
+    const parent = join(SANDBOX, 'partial-repo');
+    const trackedFile = join(parent, 'README.md');
+    const untrackedSub = join(parent, 'untracked-sub');
+    mkdirSync(untrackedSub, { recursive: true });
+    writeFileSync(trackedFile, '# fixture');
+    execFileSync('git', ['-C', parent, 'init', '-q']);
+    execFileSync('git', ['-C', parent, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', parent, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', parent, 'add', 'README.md']);
+    execFileSync('git', ['-C', parent, 'commit', '-q', '-m', 'initial import']);
+    writeFileSync(join(untrackedSub, 'x.md'), 'never git add-ed');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'partial-repo-src', localPath: untrackedSub });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('registers a repo with many tracked entries without buffer-size false rejection (codex round 3)', async () => {
+    // Codex round 3 (P2): the earlier `git ls-tree` listing implementation
+    // buffered the whole tree and could exceed execFileSync's default 1 MiB
+    // maxBuffer on a large repo, causing an incorrect rejection. The
+    // rev-parse HEAD:./ + empty-tree-SHA-comparison implementation reads a
+    // fixed ~40-byte SHA regardless of tree size — this locks that in.
+    const bigDir = join(SANDBOX, 'many-entries');
+    mkdirSync(bigDir, { recursive: true });
+    for (let i = 0; i < 300; i++) {
+      writeFileSync(join(bigDir, `file-${i}.md`), `# entry ${i}`);
+    }
+    execFileSync('git', ['-C', bigDir, 'init', '-q']);
+    execFileSync('git', ['-C', bigDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', bigDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', bigDir, 'add', '-A']);
+    execFileSync('git', ['-C', bigDir, 'commit', '-q', '-m', 'many files']);
+
+    const row = await addSource(engine, { id: 'many-entries-src', localPath: bigDir });
+    expect(row.local_path).toBe(bigDir);
+  });
+
+  // Codex round 4 (P2): the empty-tree OID is hash-algorithm-specific — a
+  // hardcoded SHA-1 constant silently mismatched (and so accepted) an empty
+  // SHA-256 repo. --object-format=sha256 needs git 2.29+; skip rather than
+  // hard-fail on an older CI git.
+  const SHA256_SUPPORTED = (() => {
+    try {
+      const probe = join(tmpdir(), `gbrain-2707-sha256-probe-${process.pid}`);
+      mkdirSync(probe, { recursive: true });
+      execFileSync('git', ['-C', probe, 'init', '-q', '--object-format=sha256'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      rmSync(probe, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  test.skipIf(!SHA256_SUPPORTED)(
+    'rejects an empty-commit SHA-256 repo the same as a SHA-1 one (codex round 4)',
+    async () => {
+      const sha256Dir = join(SANDBOX, 'sha256-empty');
+      mkdirSync(sha256Dir, { recursive: true });
+      execFileSync('git', ['-C', sha256Dir, 'init', '-q', '--object-format=sha256']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', sha256Dir, 'commit', '--allow-empty', '-q', '-m', 'empty']);
+      writeFileSync(join(sha256Dir, 'notes.md'), 'never committed');
+
+      let threw: SourceOpError | undefined;
+      try {
+        await addSource(engine, { id: 'sha256-empty-src', localPath: sha256Dir });
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw).toBeInstanceOf(SourceOpError);
+      expect(threw?.code).toBe('not_a_git_repo');
+    },
+  );
+
+  test.skipIf(!SHA256_SUPPORTED)(
+    'registers a SHA-256 repo with real committed content (no regression)',
+    async () => {
+      const sha256Dir = join(SANDBOX, 'sha256-real');
+      mkdirSync(sha256Dir, { recursive: true });
+      writeFileSync(join(sha256Dir, 'README.md'), '# fixture');
+      execFileSync('git', ['-C', sha256Dir, 'init', '-q', '--object-format=sha256']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', sha256Dir, 'add', '-A']);
+      execFileSync('git', ['-C', sha256Dir, 'commit', '-q', '-m', 'initial import']);
+
+      const row = await addSource(engine, { id: 'sha256-real-src', localPath: sha256Dir });
+      expect(row.local_path).toBe(sha256Dir);
+    },
+  );
+
+  test('quotes a path with a space in the remediation command (codex round 1)', async () => {
+    const spacedDir = join(SANDBOX, 'has space here');
+    mkdirSync(spacedDir, { recursive: true });
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'spaced-src', localPath: spacedDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw?.message).toContain(`'${spacedDir}'`);
+  });
+
+  test('--force bypasses the check and registers the plain directory as-is', async () => {
+    const plainDir = join(SANDBOX, 'plain-forced');
+    mkdirSync(plainDir, { recursive: true });
+
+    const row = await addSource(engine, {
+      id: 'plain-forced-src',
+      localPath: plainDir,
+      force: true,
+    });
+    expect(row.local_path).toBe(plainDir);
+  });
+
+  test('an already git-initialized directory registers unaffected (no regression)', async () => {
+    const gitDir = join(SANDBOX, 'gitrepo');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(gitDir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', gitDir, 'init', '-q']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', gitDir, 'add', '-A']);
+    execFileSync('git', ['-C', gitDir, 'commit', '-q', '-m', 'initial import']);
+
+    const row = await addSource(engine, { id: 'gitrepo-src', localPath: gitDir });
+    expect(row.local_path).toBe(gitDir);
+  });
+
+  test('a subdirectory of a git repo registers unaffected (#753/#774 parity with sync-time discovery)', async () => {
+    const gitDir = join(SANDBOX, 'gitrepo-parent');
+    const subDir = join(gitDir, 'sub');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', gitDir, 'init', '-q']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', gitDir, 'add', '-A']);
+    execFileSync('git', ['-C', gitDir, 'commit', '-q', '-m', 'initial import']);
+
+    const row = await addSource(engine, { id: 'subdir-src', localPath: subDir });
+    expect(row.local_path).toBe(subDir);
+  });
+
+  test('a not-yet-created path is unaffected (pre-existing lenient behavior, out of #2707 scope)', async () => {
+    const missingDir = join(SANDBOX, 'does-not-exist-yet');
+    expect(existsSync(missingDir)).toBe(false);
+
+    const row = await addSource(engine, { id: 'missing-src', localPath: missingDir });
+    expect(row.local_path).toBe(missingDir);
   });
 });
 

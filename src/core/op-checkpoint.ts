@@ -122,17 +122,39 @@ export async function loadOpCheckpoint(
     // dedupes, so we skip a server-side dedup sort over up to 204K rows on every
     // resume. `jsonb_array_elements_text` expands the legacy array server-side,
     // which also removes the old postgres.js-vs-PGLite string/array handling.
-    const rows = await engine.executeRaw<{ ckey: unknown }>(
-      `SELECT path AS ckey FROM op_checkpoint_paths
+    //
+    // v0.42.x (BUG 3 guard): the legacy arm is gated on
+    // `jsonb_typeof(completed_keys) = 'array'`. Without it a non-array (scalar)
+    // parent row makes jsonb_array_elements_text throw "cannot extract elements
+    // from a scalar", which kills the WHOLE union — including the valid child
+    // rows — and loses all checkpoint progress for the key. Skipping the scalar
+    // keeps the child rows; the third arm flags the corruption so we log it once
+    // (migration v119's CHECK makes this impossible going forward; a hit implies
+    // schema drift / disabled constraint / an out-of-band writer).
+    const rows = await engine.executeRaw<{ ckey: unknown; corrupt: number }>(
+      `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
          WHERE op = $1 AND fingerprint = $2
        UNION ALL
-       SELECT jsonb_array_elements_text(completed_keys) AS ckey FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2`,
+       SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
+         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
+       UNION ALL
+       SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
+         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
       [key.op, key.fingerprint],
     );
     const set = new Set<string>();
+    let corruptParent = false;
     for (const r of rows) {
+      if (Number(r.corrupt) === 1) {
+        corruptParent = true;
+        continue;
+      }
       if (typeof r.ckey === 'string') set.add(r.ckey);
+    }
+    if (corruptParent) {
+      console.error(
+        `[op-checkpoint] WARNING: op_checkpoints.completed_keys for (${key.op}, ${key.fingerprint}) is a non-array (scalar) and was skipped to protect the load — child op_checkpoint_paths rows still applied. This implies schema drift, a disabled CHECK constraint, or an out-of-band writer.`,
+      );
     }
     return [...set];
   } catch (e) {
@@ -157,15 +179,22 @@ export async function recordCompleted(
   // REPLACE semantics (kept deliberately — #1794 V3). Callers like
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
-  // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // set lands in the parent `completed_keys` JSONB column via a single UPSERT.
+  // #2339: bind through `$3::text::jsonb`, NOT `$3::jsonb`. Under postgres.js
+  // `.unsafe(sql, params)` (executeRawDirect's path) a JS string bound to a
+  // `$N::jsonb` param double-encodes — the text→jsonb cast wraps the already-JSON
+  // string into a jsonb *string scalar*, which fails the v119
+  // `op_checkpoints_completed_keys_array CHECK (jsonb_typeof = 'array')` and aborts
+  // every sync on real Postgres (PGLite parses it silently, which hid the bug).
+  // Casting through `text` first binds it as a plain text param so the text→jsonb
+  // cast parses it into a genuine jsonb array. This is the positional-param form of
+  // the CLAUDE.md double-encode trap (the grep guard only caught the template form).
+  // Sync uses `appendCompleted` (below, `unnest($3::text[])`) instead, never this.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+       VALUES ($1, $2, $3::text::jsonb, now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,

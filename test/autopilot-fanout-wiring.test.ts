@@ -28,8 +28,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     );
   });
 
-  test('imports resolveFanoutMax (so PGLite gets fanoutMax=1 per codex P1-3)', () => {
-    expect(AUTOPILOT_SRC).toMatch(/resolveFanoutMax/);
+  test('imports resolveEffectiveFanoutMax (clamps to worker concurrency; PGLite base still 1)', () => {
+    // #2194 fix #1: autopilot now resolves the CLAMPED fan-out (gated on a live
+    // supervisor) instead of the raw resolveFanoutMax. The clamp wraps
+    // resolveFanoutMax, so PGLite's base-1 still holds (codex P1-3).
+    expect(AUTOPILOT_SRC).toMatch(/resolveEffectiveFanoutMax/);
   });
 
   test('calls dispatchPerSource within the shouldFullCycle branch', () => {

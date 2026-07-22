@@ -158,7 +158,7 @@ gbrain serve --http --port 3131 --bind 0.0.0.0
 
 The `--bind 0.0.0.0` is important. By default the server binds to localhost only, which is correct for a personal install but blocks remote teammates. Setting `0.0.0.0` accepts connections from any interface.
 
-The server prints an admin bootstrap token to stderr on first start. Save it. You'll use it once for the admin dashboard.
+The server prints an admin bootstrap token to stderr on first start when run in an interactive terminal. Save it. You'll use it once for the admin dashboard. On a non-TTY start (systemd, Docker, piped logs) the token is hidden from logs — set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` yourself or pass `--print-admin-token` on a trusted terminal instead.
 
 For development, tunnel the local server out via ngrok:
 

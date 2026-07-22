@@ -194,6 +194,39 @@ export function matchesSlugAllowList(slug: string, prefixes: readonly string[]):
 }
 
 /**
+ * Subagent slug-fence enforcement, shared by every mutating op a subagent
+ * can reach (put_page, add_timeline_entry). FAIL-CLOSED: `viaSubagent=true`
+ * enforces the check even if the dispatcher forgot to populate `subagentId`.
+ *
+ *   - Trusted-workspace path (ctx.allowedSlugPrefixes set by cycle.ts under
+ *     PROTECTED_JOB_NAMES \u2014 MCP cannot reach it): slug must match the
+ *     allow-list globs.
+ *   - Legacy default: slug must live under `wiki/agents/<subagentId>/...`
+ *     (anchored, slash-boundary \u2014 `wiki/agents/12evil/*` can't impersonate
+ *     subagent 12).
+ */
+function enforceSubagentSlugFence(ctx: OperationContext, slug: string, opName: string): void {
+  if (ctx.viaSubagent !== true) return;
+  if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
+    throw new OperationError('permission_denied', `${opName} via subagent requires ctx.subagentId`);
+  }
+  const allowList = ctx.allowedSlugPrefixes;
+  if (allowList && allowList.length > 0) {
+    if (!matchesSlugAllowList(slug, allowList)) {
+      throw new OperationError(
+        'permission_denied',
+        `${opName} slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
+      );
+    }
+  } else {
+    const prefix = `wiki/agents/${ctx.subagentId}/`;
+    if (!slug.startsWith(prefix) || slug.length === prefix.length) {
+      throw new OperationError('permission_denied', `${opName} via subagent must write under '${prefix}...'`);
+    }
+  }
+}
+
+/**
  * Allowlist validator for uploaded file basenames. Rejects control chars, backslashes,
  * RTL overrides (\u202E), leading dot (hidden files) and leading dash (CLI flag confusion).
  * Allows extension dots and underscores. Max 255 chars.
@@ -423,6 +456,19 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   if (allowed && allowed.length > 0) return { sourceIds: allowed };
   if (ctx.sourceId) return { sourceId: ctx.sourceId };
   return {};
+}
+
+/** Map the operation-layer scope names onto runThink's public options. */
+export function thinkSourceScopeOpts(ctx: OperationContext): {
+  sourceId?: string;
+  allowedSources?: string[];
+} {
+  const scope = sourceScopeOpts(ctx);
+  return scope.sourceIds !== undefined
+    ? { allowedSources: scope.sourceIds }
+    : scope.sourceId !== undefined
+      ? { sourceId: scope.sourceId }
+      : {};
 }
 
 /**
@@ -771,37 +817,9 @@ const put_page: Operation = {
     }
 
     // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
-    // short-circuit so preview calls surface the same rejection. Confines
-    // LLM-driven writes to wiki/agents/<subagentId>/... — no leading slash
-    // (slug grammar rejects that), anchored, slash-boundary to defeat prefix
-    // collisions like `wiki/agents/12evil/*` impersonating subagent 12.
-    //
-    // FAIL-CLOSED: `viaSubagent=true` enforces the check even if the
-    // dispatcher forgot to populate `subagentId`. Agent-originated writes
-    // without an owning subagent id are rejected outright.
-    if (ctx.viaSubagent === true) {
-      if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
-        throw new OperationError('permission_denied', 'put_page via subagent requires ctx.subagentId');
-      }
-      const allowList = ctx.allowedSlugPrefixes;
-      if (allowList && allowList.length > 0) {
-        // Trusted-workspace path: explicit allow-list bounds writes.
-        // Set only by cycle.ts (synthesize/patterns) which submits subagent
-        // jobs under PROTECTED_JOB_NAMES — MCP cannot reach this branch.
-        if (!matchesSlugAllowList(slug, allowList)) {
-          throw new OperationError(
-            'permission_denied',
-            `put_page slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
-          );
-        }
-      } else {
-        // Legacy default: agent-namespace confinement.
-        const prefix = `wiki/agents/${ctx.subagentId}/`;
-        if (!slug.startsWith(prefix) || slug.length === prefix.length) {
-          throw new OperationError('permission_denied', `put_page via subagent must write under '${prefix}...'`);
-        }
-      }
-    }
+    // short-circuit so preview calls surface the same rejection. See
+    // enforceSubagentSlugFence for the fail-closed policy.
+    enforceSubagentSlugFence(ctx, slug, 'put_page');
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     // Skip embedding when the AI gateway has no embedding provider configured.
@@ -1034,6 +1052,34 @@ const put_page: Operation = {
       factsQueued = { skipped: 'backstop_error' };
     }
 
+    // v0.42.x (#2390): Life Chronicle backstop. ONLY on a real import
+    // (status==='imported' — a skipped/unchanged rewrite still carries
+    // parsedPage, so gating on parsedPage alone would re-enqueue forever),
+    // behind the SAME trust gate as auto-link/timeline + the auto_chronicle
+    // flag. Enqueues a chronicle_extract job; never blocks the write.
+    let chronicleQueued: { queued: boolean } | { skipped: string } | undefined;
+    if (result.status !== 'imported') {
+      chronicleQueued = { skipped: 'not_imported' };
+    } else if (ctx.remote !== false && !trustedWorkspace) {
+      chronicleQueued = { skipped: 'remote' };
+    } else if (result.parsedPage) {
+      try {
+        const { runChronicleBackstop } = await import('./chronicle/backstop.ts');
+        const r = await runChronicleBackstop(
+          {
+            slug,
+            type: result.parsedPage.type,
+            compiled_truth: result.parsedPage.compiled_truth,
+            frontmatter: result.parsedPage.frontmatter,
+          },
+          { engine: ctx.engine, sourceId: ctx.sourceId ?? 'default' },
+        );
+        chronicleQueued = r.enqueued ? { queued: true } : { skipped: r.skipped ?? 'skipped' };
+      } catch {
+        chronicleQueued = { skipped: 'backstop_error' };
+      }
+    }
+
     // Post-write validator lint (PR 2.5): feature-flag-gated, non-blocking.
     // When `writer.lint_on_put_page` is enabled, runs the BrainWriter's
     // validators on the freshly-written page and logs findings to
@@ -1063,6 +1109,7 @@ const put_page: Operation = {
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
       ...(factsQueued ? { facts_backstop: factsQueued } : {}),
+      ...(chronicleQueued ? { chronicle_backstop: chronicleQueued } : {}),
       ...(writeThrough ? { write_through: writeThrough } : {}),
     };
   },
@@ -1699,6 +1746,8 @@ const takes_list: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.listTakes({
+      // #2200-class: honor federated/source scope (via the take's page.source_id).
+      ...sourceScopeOpts(ctx),
       page_slug: p.page_slug as string | undefined,
       holder: p.holder as string | undefined,
       kind: p.kind as never,
@@ -1725,6 +1774,7 @@ const takes_search: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.searchTakes(p.query as string, {
+      ...sourceScopeOpts(ctx),
       limit: p.limit as number | undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
     });
@@ -1753,6 +1803,7 @@ const takes_scorecard: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.getScorecard(
       {
+        ...sourceScopeOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
         since: p.since as string | undefined,
@@ -1779,6 +1830,7 @@ const takes_calibration: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.getCalibrationCurve(
       {
+        ...sourceScopeOpts(ctx),
         holder: p.holder as string | undefined,
         bucketSize: p.bucket_size as number | undefined,
       },
@@ -1813,7 +1865,7 @@ const think: Operation = {
     // present) OR the scalar; we pass both through to runThink which
     // forwards to findTrajectory. CLI callers don't go through this op
     // and get default scope + remote=false from runThink's CLI path.
-    const scope = sourceScopeOpts(ctx);
+    const thinkScope = thinkSourceScopeOpts(ctx);
     const { runThink, persistSynthesis } = await import('./think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
@@ -1830,8 +1882,7 @@ const think: Operation = {
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-      ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
-      ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
+      ...thinkScope,
       remote: ctx.remote === true,
     });
 
@@ -2103,6 +2154,11 @@ const add_timeline_entry: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    // #2778: same fail-closed slug fence as put_page. add_timeline_entry is
+    // subagent-allowlisted (brain-allowlist.ts), so timeline writes must be
+    // confined to the same namespace/allow-list as page writes. Runs before
+    // the dry-run short-circuit so preview calls surface the same rejection.
+    enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     // Reject anything that isn't a strict YYYY-MM-DD with year 1900-2199 and
@@ -2135,14 +2191,27 @@ const add_timeline_entry: Operation = {
 
 const get_timeline: Operation = {
   name: 'get_timeline',
-  description: 'Get timeline entries for a page',
+  description: 'Get timeline entries for a page, optionally filtered by date window',
   params: {
     slug: { type: 'string', required: true },
+    after: { type: 'string', description: 'Return entries on or after this date (YYYY-MM-DD)' },
+    before: { type: 'string', description: 'Return entries on or before this date (YYYY-MM-DD)' },
+    since: { type: 'string', description: 'Alias for after; accepted for agent callers' },
+    until: { type: 'string', description: 'Alias for before; accepted for agent callers' },
+    limit: { type: 'number', description: 'Maximum number of timeline entries to return' },
   },
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
-    return ctx.engine.getTimeline(p.slug as string, sourceScopeOpts(ctx));
+    const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
+    const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
+    const limit = typeof p.limit === 'number' ? p.limit : undefined;
+    return ctx.engine.getTimeline(p.slug as string, {
+      ...sourceScopeOpts(ctx),
+      ...(after ? { after } : {}),
+      ...(before ? { before } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },
@@ -2417,7 +2486,10 @@ const get_status_snapshot: Operation = {
     }
     const sync = await buildSyncStatusReport(ctx.engine, sources);
     const cycle = await buildCycleSnapshot(ctx.engine);
-    return { schema_version: 1 as const, sync, cycle };
+    // #1984: report the brain server's version so a thin-client `gbrain status`
+    // can surface remote_version alongside its own local CLI version.
+    const { VERSION } = await import('../version.ts');
+    return { schema_version: 1 as const, version: VERSION, sync, cycle };
   },
   scope: 'admin',
   localOnly: false,
@@ -2642,10 +2714,16 @@ const file_list: Operation = {
   handler: async (_ctx, p) => {
     const sql = db.getConnection();
     const slug = p.slug as string | undefined;
-    if (slug) {
-      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`;
-    }
-    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    const rows = slug
+      ? await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`
+      : await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
+    // throws on those, breaking MCP callers. PGLite returns Number already.
+    // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
+    return rows.map((r: Record<string, unknown>) => ({
+      ...r,
+      size_bytes: r.size_bytes == null ? null : Number(r.size_bytes),
+    }));
   },
 };
 
@@ -5016,6 +5094,271 @@ const run_skillopt: Operation = {
   },
 };
 
+// ── v0.42.x — Life Chronicle (#2390) timeline read ops ───────────────────
+// CLI names avoid the existing `timeline` (get_timeline, a page's own timeline):
+// `gbrain day <date>` / `gbrain since <date>` / `gbrain last-seen <entity>`.
+// All route through sourceScopeOpts(ctx) so reads honor source isolation.
+const chronicle_day: Operation = {
+  name: 'chronicle_day',
+  description:
+    'Life Chronicle: events + timeline entries on a given day (or its ISO week when week=true), ' +
+    "ordered chronologically; each row backlinks to its depth page. Distinct from `get_timeline`/" +
+    "`gbrain timeline <slug>`, which shows ONE page's timeline. CLI: `gbrain day <date>`.",
+  scope: 'read',
+  params: {
+    date: { type: 'string', required: true, description: 'Day as YYYY-MM-DD.' },
+    week: { type: 'boolean', description: 'Expand to the ISO week (Mon–Sun) containing the date.' },
+    limit: { type: 'number', description: 'Max rows (default 200).' },
+    narrative: { type: 'boolean', description: 'Also return a prose day-by-day narrative.' },
+  },
+  handler: async (ctx, p) => {
+    const rows = await ctx.engine.getTimelineForDate(String(p.date), {
+      week: p.week === true,
+      limit: typeof p.limit === 'number' ? p.limit : undefined,
+      ...sourceScopeOpts(ctx),
+    });
+    if (p.narrative === true) {
+      const { renderTimelineNarrative } = await import('./chronicle/narrative.ts');
+      return { date: String(p.date), narrative: renderTimelineNarrative(rows), events: rows };
+    }
+    return rows;
+  },
+  cliHints: { name: 'day', positional: ['date'] },
+};
+
+const chronicle_on_this_day: Operation = {
+  name: 'chronicle_on_this_day',
+  description:
+    'Life Chronicle: events from the same calendar day in PRIOR years ("on this day"). ' +
+    'CLI: `gbrain on-this-day [--date YYYY-MM-DD]`.',
+  scope: 'read',
+  params: {
+    date: { type: 'string', description: 'Anchor day YYYY-MM-DD (default today); matches its month-day in prior years.' },
+    limit: { type: 'number', description: 'Max rows (default 50).' },
+  },
+  handler: async (ctx, p) => ctx.engine.getOnThisDay({
+    date: typeof p.date === 'string' ? p.date : undefined,
+    limit: typeof p.limit === 'number' ? p.limit : undefined,
+    ...sourceScopeOpts(ctx),
+  }),
+  cliHints: { name: 'on-this-day' },
+};
+
+const chronicle_since: Operation = {
+  name: 'chronicle_since',
+  description:
+    'Life Chronicle: events + timeline entries on or after a date, optionally filtered by event kind. ' +
+    'CLI: `gbrain since <date> [--kind commitment]`.',
+  scope: 'read',
+  params: {
+    date: { type: 'string', required: true, description: 'Lower-bound day as YYYY-MM-DD (inclusive).' },
+    kind: { type: 'string', description: "Filter event projections by event.kind (e.g. 'commitment')." },
+    limit: { type: 'number', description: 'Max rows (default 200).' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.getSince(String(p.date), {
+      kind: typeof p.kind === 'string' ? p.kind : undefined,
+      limit: typeof p.limit === 'number' ? p.limit : undefined,
+      ...sourceScopeOpts(ctx),
+    });
+  },
+  cliHints: { name: 'since', positional: ['date'] },
+};
+
+const chronicle_last_seen: Operation = {
+  name: 'chronicle_last_seen',
+  description:
+    "Life Chronicle: when an entity was last seen — its own timeline rows OR an event's `who`. " +
+    'Returns last_date, the event slug, and days_ago. CLI: `gbrain last-seen <entity-slug>`.',
+  scope: 'read',
+  params: {
+    entity: { type: 'string', required: true, description: 'Entity page slug (e.g. people/sarah-chen).' },
+    asof: { type: 'string', description: 'Reference day YYYY-MM-DD for days_ago (default today).' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.getLastSeen(String(p.entity), {
+      asof: typeof p.asof === 'string' ? p.asof : undefined,
+      ...sourceScopeOpts(ctx),
+    });
+  },
+  cliHints: { name: 'last-seen', positional: ['entity'] },
+};
+
+const ontology_get: Operation = {
+  name: 'ontology_get',
+  description:
+    "Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` " +
+    "(default now), with provenance + confidence + validity. CLI: `gbrain ontology <entity> [--asof YYYY-MM-DD]`.",
+  scope: 'read',
+  params: {
+    entity: { type: 'string', required: true, description: 'Entity page slug (e.g. people/sarah-chen).' },
+    asof: { type: 'string', description: 'Valid-time as-of day YYYY-MM-DD (time-travel; default now).' },
+    min_confidence: { type: 'number', description: 'Only return observations at/above this confidence (0..1).' },
+    include_quarantined: { type: 'boolean', description: 'Include quarantined novel dimensions (default false).' },
+  },
+  handler: async (ctx, p) => {
+    const rows = await ctx.engine.getOntology(String(p.entity), {
+      asof: typeof p.asof === 'string' ? p.asof : undefined,
+      minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
+      includeQuarantined: p.include_quarantined === true,
+      ...sourceScopeOpts(ctx),
+    });
+    // Remote redaction: never surface diary-sourced ontology to untrusted callers.
+    return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
+  },
+  cliHints: { name: 'ontology', positional: ['entity'] },
+};
+
+const ontology_propose: Operation = {
+  name: 'ontology_propose',
+  description:
+    'Life Chronicle: record one ontology observation (entity has dimension=value), sourced + ' +
+    'confidence-weighted + bi-temporal. Idempotent on (entity,dimension,value,source). A new value ' +
+    'supersedes the prior; a backdated conflict is flagged not rewritten. CLI: `gbrain ontology-add <entity> <dimension> <value>`.',
+  scope: 'write',
+  mutating: true,
+  params: {
+    entity: { type: 'string', required: true, description: 'Entity page slug.' },
+    dimension: { type: 'string', required: true, description: 'Dimension (e.g. role, risk_tolerance). Normalized at write.' },
+    value: { type: 'string', required: true, description: 'The resolved value (e.g. advisor).' },
+    confidence: { type: 'number', description: '0..1; default 0.7.' },
+    source: { type: 'string', description: 'Provenance (page slug / uri); default "manual".' },
+    valid_from: { type: 'string', description: 'ISO date the value became true (default: now).' },
+    valid_to: { type: 'string', description: 'ISO date the value stopped being true (default: open).' },
+    visibility: { type: 'string', enum: ['private', 'world'], description: 'Default private.' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.mergeOntologyFact({
+      entitySlug: String(p.entity),
+      dimension: String(p.dimension),
+      value: String(p.value),
+      confidence: typeof p.confidence === 'number' ? p.confidence : undefined,
+      source: typeof p.source === 'string' && p.source ? p.source : 'manual',
+      validFrom: typeof p.valid_from === 'string' ? p.valid_from : undefined,
+      validTo: typeof p.valid_to === 'string' ? p.valid_to : undefined,
+      visibility: p.visibility === 'world' ? 'world' : 'private',
+      sourceId: ctx.sourceId,
+    });
+  },
+  cliHints: { name: 'ontology-add', positional: ['entity', 'dimension', 'value'] },
+};
+
+const ontology_dimensions: Operation = {
+  name: 'ontology_dimensions',
+  description:
+    'Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with ' +
+    'entity + observation counts. CLI: `gbrain ontology-dimensions`.',
+  scope: 'read',
+  params: {},
+  handler: async (ctx) => ctx.engine.discoverOntologyDimensions(sourceScopeOpts(ctx)),
+  cliHints: { name: 'ontology-dimensions' },
+};
+
+const ontology_conflicts: Operation = {
+  name: 'ontology_conflicts',
+  description:
+    'Life Chronicle: dimensions with ≥2 distinct current values from ≥2 provenances (genuine ' +
+    'disagreement, not temporal supersession). CLI: `gbrain ontology-contradictions`.',
+  scope: 'read',
+  params: {
+    min_confidence: { type: 'number', description: 'Only consider observations at/above this confidence (0..1).' },
+  },
+  handler: async (ctx, p) => {
+    const conflicts = await ctx.engine.findOntologyConflicts({
+      minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
+      ...sourceScopeOpts(ctx),
+    });
+    if (ctx.remote === false) return conflicts;
+    // Remote: redact diary-sourced values; drop conflicts that no longer have
+    // ≥2 distinct values once diary provenance is removed (no leak via conflicts).
+    return conflicts
+      .map((c) => ({ ...c, values: c.values.filter((v) => !(v.source ?? '').startsWith('life/diary/')) }))
+      .filter((c) => new Set(c.values.map((v) => v.value)).size >= 2);
+  },
+  cliHints: { name: 'ontology-contradictions' },
+};
+
+const volunteer_chronicle: Operation = {
+  name: 'volunteer_chronicle',
+  description:
+    'Life Chronicle agent-orientation: the recent timeline (last N days) + the current ' +
+    'validity-resolved ontology for the named entities, in one zero-LLM payload, so an agent ' +
+    'orients before acting. Diary-sourced ontology is redacted for remote callers. ' +
+    'CLI: `gbrain orient [--days 7] [--entities people/a,people/b]`.',
+  scope: 'read',
+  params: {
+    days: { type: 'number', description: 'Recent-timeline lookback in days (default 7).' },
+    entities: { type: 'string', description: 'Comma-separated entity slugs to resolve ontology for.' },
+    limit: { type: 'number', description: 'Max timeline rows (default 50).' },
+  },
+  handler: async (ctx, p) => {
+    const { loadChronicleContext } = await import('./context/chronicle-context.ts');
+    const entities = typeof p.entities === 'string'
+      ? p.entities.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    return loadChronicleContext(ctx.engine, {
+      days: typeof p.days === 'number' ? p.days : undefined,
+      entities,
+      limit: typeof p.limit === 'number' ? p.limit : undefined,
+      remote: ctx.remote !== false,
+      ...sourceScopeOpts(ctx),
+    });
+  },
+  cliHints: { name: 'orient' },
+};
+
+const chronicle_backfill: Operation = {
+  name: 'chronicle_backfill',
+  description:
+    'Life Chronicle: sweep existing meeting/conversation/calendar pages into timeline events by ' +
+    'enqueuing chronicle_extract jobs (one per eligible page). --dry-run counts without enqueuing. ' +
+    'Local-only bulk op. CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--limit N] [--dry-run]`.',
+  scope: 'admin',
+  mutating: true,
+  localOnly: true,
+  params: {
+    since: { type: 'string', description: 'Only pages updated on/after this date (YYYY-MM-DD).' },
+    limit: { type: 'number', description: 'Max pages per type to sweep (default 1000).' },
+    dry_run: { type: 'boolean', description: 'Count eligible pages without enqueuing.' },
+  },
+  handler: async (ctx, p) => {
+    const { isChronicleEligible } = await import('./chronicle/eligibility.ts');
+    const TYPES = ['meeting', 'conversation', 'calendar-event'] as const;
+    const limit = typeof p.limit === 'number' ? p.limit : 1000;
+    const updated_after = typeof p.since === 'string' ? p.since : undefined;
+    const dryRun = p.dry_run === true;
+    const scope = sourceScopeOpts(ctx);
+    type QueueLike = { add: (n: string, d: Record<string, unknown>) => Promise<unknown> };
+    let queue: QueueLike | null = null;
+    if (!dryRun) {
+      const { MinionQueue } = await import('./minions/queue.ts');
+      queue = new MinionQueue(ctx.engine) as unknown as QueueLike;
+    }
+    let scanned = 0, eligible = 0, enqueued = 0;
+    const errors: { slug: string; error: string }[] = [];
+    for (const type of TYPES) {
+      const pages = await ctx.engine.listPages({ type, updated_after, limit, ...scope });
+      for (const page of pages) {
+        scanned++;
+        const dreamGenerated = (page.frontmatter as Record<string, unknown> | undefined)?.dream_generated === true;
+        const elig = isChronicleEligible({ type: page.type, slug: page.slug, body: page.compiled_truth, dreamGenerated });
+        if (!elig.ok) continue;
+        eligible++;
+        if (dryRun || !queue) continue;
+        try {
+          await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId ?? 'default' });
+          enqueued++;
+        } catch (e) {
+          // Never swallow — surface per-page failures (the #2057 no-swallow pattern).
+          errors.push({ slug: page.slug, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+    return { scanned, eligible, enqueued, dry_run: dryRun, errors };
+  },
+  cliHints: { name: 'chronicle-backfill' },
+};
+
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -5066,6 +5409,10 @@ export const operations: Operation[] = [
   whoami, sources_add, sources_list, sources_remove, sources_status,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
+  // v0.42.x (#2390): Life Chronicle timeline reads
+  chronicle_day, chronicle_on_this_day, chronicle_since, chronicle_last_seen,
+  ontology_get, ontology_propose, ontology_dimensions, ontology_conflicts,
+  volunteer_chronicle, chronicle_backfill,
   // v0.43 (#2095): push-based context
   volunteer_context,
   // v0.31: hot memory (facts table)

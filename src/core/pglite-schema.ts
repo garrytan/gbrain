@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS pages (
 -- bookmark gate fires for any cache row stored before the new page existed.
 -- UPDATE: bumps only when content columns IS DISTINCT FROM (allow-list of
 -- 10 widened per D6) so read-time mutations don't invalidate every cache.
-CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger AS $func$
+CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger SET search_path = pg_catalog, public AS $func$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
     NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
@@ -164,9 +164,24 @@ INSERT INTO page_generation_clock (id, value)
   VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
   ON CONFLICT (id) DO NOTHING;
 
-CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+-- v0.42.x: contention-free clock. nextval() takes a microsecond LWLock, not a
+-- transaction-length row lock. Load-bearing setval (2-arg -> is_called=true) so
+-- the first write strictly exceeds the seed; floor 1 (sequence MINVALUE).
+-- Layer-1 reads last_value. Table + trigger names retained.
+CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+-- Monotonic seed: GREATEST over the sequence's OWN last_value too, so replaying
+-- this blob on an already-upgraded brain (initSchema is re-runnable) can never
+-- move last_value BACKWARD below a stored query_cache bookmark.
+SELECT setval('page_generation_clock_seq', GREATEST(
+  1,
+  COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+  COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+  COALESCE((SELECT MAX(generation) FROM pages), 0)
+));
+
+CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger SET search_path = pg_catalog, public AS $func$
 BEGIN
-  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
 END;
 $func$ LANGUAGE plpgsql;
@@ -356,6 +371,9 @@ CREATE TABLE IF NOT EXISTS timeline_entries (
   source   TEXT    NOT NULL DEFAULT '',
   summary  TEXT    NOT NULL,
   detail   TEXT    NOT NULL DEFAULT '',
+  -- v0.42.x (Life Chronicle #2390): event-projection pointer. NULL for
+  -- ordinary rows. See src/schema.sql for the full rationale.
+  event_page_id INTEGER REFERENCES pages(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -365,6 +383,9 @@ CREATE INDEX IF NOT EXISTS idx_timeline_date ON timeline_entries(date);
 -- v0.41.18.0 (codex finding #11): widened to include source so distinct
 -- meeting provenance survives. Legacy rows have source='' (schema default).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup ON timeline_entries(page_id, date, summary, source);
+-- v0.42.x (Life Chronicle): event-projection lookup + dedup (partial).
+CREATE INDEX IF NOT EXISTS idx_timeline_event_page ON timeline_entries(event_page_id) WHERE event_page_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_event_dedup ON timeline_entries(event_page_id, date) WHERE event_page_id IS NOT NULL;
 
 -- ============================================================
 -- page_versions: snapshot history
@@ -924,7 +945,11 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 CREATE TABLE IF NOT EXISTS op_checkpoints (
   op             TEXT NOT NULL,
   fingerprint    TEXT NOT NULL,
-  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- v0.42.x: must be a JSONB array. The loader runs jsonb_array_elements_text
+  -- over it; a scalar would throw and wipe the whole checkpoint load. CHECK is
+  -- the DB-enforced always-on guard (mirrors migration v119).
+  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT op_checkpoints_completed_keys_array CHECK (jsonb_typeof(completed_keys) = 'array'),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (op, fingerprint)
 );
@@ -997,7 +1022,13 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS $$
+-- #2704: compiled_truth (unbounded whole-page body) deliberately NOT
+-- indexed — overflows Postgres's 1MB tsvector cap on large pages.
+-- content_chunks.search_vector (chunk-grain, populated separately) is
+-- what searchKeyword() actually queries. See migrate.ts's v124 migration
+-- for the full rationale; keep in sync with that + reindex-search-vector.ts
+-- + schema-embedded.ts.
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $$
 DECLARE
   timeline_text TEXT;
 BEGIN
@@ -1008,7 +1039,6 @@ BEGIN
 
   NEW.search_vector :=
     setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
     setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
     setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
 

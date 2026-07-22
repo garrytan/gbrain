@@ -16,6 +16,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { BUILTIN_PATTERNS } from '../core/conversation-parser/builtins.ts';
+import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
 import { parseConversation } from '../core/conversation-parser/parse.ts';
 import type { BrainEngine } from '../core/engine.ts';
 
@@ -170,8 +171,7 @@ async function runScan(
     process.exit(2);
   }
 
-  // Concatenate compiled_truth + timeline (matches the real parser's body shape).
-  const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`.trim();
+  const body = await readConversationBodyForParsing(engine, page);
 
   const result = parseConversation(body, { page, diagnostic: true });
 

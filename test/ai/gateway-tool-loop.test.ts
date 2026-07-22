@@ -150,6 +150,47 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(events[4]).toBe('onAssistantTurn(1)'); // final assistant turn
   });
 
+  it('persists the tool-result user turn via onToolResultTurn before the next chat', async () => {
+    let turn = 0;
+    __setChatTransportForTests(async () => {
+      turn++;
+      if (turn === 1) {
+        return {
+          text: '',
+          blocks: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: { q: 'x' } }] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        };
+      }
+      return {
+        text: 'done',
+        blocks: [{ type: 'text', text: 'done' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      };
+    });
+
+    const resultTurns: Array<{ turnIdx: number; messageIdx: number; blocks: ChatBlock[] }> = [];
+    await toolLoop({
+      initialMessages: [{ role: 'user', content: 'go' }],
+      tools: [{ name: 'search', description: 's', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['search', { idempotent: true, async execute() { return { hits: 1 }; } }]]),
+      onToolResultTurn: async (turnIdx, messageIdx, blocks) => {
+        resultTurns.push({ turnIdx, messageIdx, blocks });
+      },
+    });
+
+    // Fired exactly once, for the single tool round, carrying the tool-result.
+    expect(resultTurns).toHaveLength(1);
+    expect(resultTurns[0].turnIdx).toBe(0);
+    expect(resultTurns[0].blocks[0].type).toBe('tool-result');
+    expect((resultTurns[0].blocks[0] as Extract<ChatBlock, { type: 'tool-result' }>).toolCallId).toBe('tc1');
+  });
+
   it('replay short-circuits a complete prior tool execution', async () => {
     let chatCalls = 0;
     __setChatTransportForTests(async () => {
@@ -228,6 +269,30 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
         },
       }),
     ).rejects.toThrow(/non-idempotent.*pending/i);
+  });
+
+  it('defaults max output tokens per model: 4096 for non-thinking, 32000 for Claude 5', async () => {
+    const seen: Array<number | undefined> = [];
+    __setChatTransportForTests(async (opts) => {
+      seen.push(opts.maxTokens);
+      return {
+        text: 'ok',
+        blocks: [{ type: 'text', text: 'ok' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: opts.model ?? 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      };
+    });
+
+    await toolLoop({ model: 'openai:gpt-4o', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
+    await toolLoop({ model: 'anthropic:claude-sonnet-4-6', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
+    await toolLoop({ model: 'anthropic:claude-sonnet-5', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
+    await toolLoop({ model: 'anthropic:claude-fable-5', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
+
+    // Non-thinking / non-Claude-5 stay 4096 (safe under openai-compat caps);
+    // thinking-by-default Claude 5 models get 32000 headroom.
+    expect(seen).toEqual([4096, 4096, 32000, 32000]);
   });
 
   it('hits max_turns when the model keeps calling tools', async () => {

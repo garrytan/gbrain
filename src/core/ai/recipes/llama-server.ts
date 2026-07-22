@@ -32,6 +32,7 @@ export const llamaServer: Recipe = {
       models: [], // user-driven; whatever model the server was launched with
       user_provided_models: true,
       default_dims: 0, // forces explicit --embedding-dimensions
+      trust_custom_dims: true, // #2271: user knows the launched model's native dim
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-05-10',
       // llama-server's batch capacity is set by `--ctx-size` at launch

@@ -58,6 +58,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'brain_score',
   'calibration_freshness',
   'child_table_orphans',
+  'chronicle_projection_health',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
   'contradictions',
@@ -127,6 +128,7 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
  */
 export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'alternative_providers',
+  'autopilot_fanout_concurrency',
   'autopilot_lock_scope',
   'batch_retry_health',
   'brainstorm_health',

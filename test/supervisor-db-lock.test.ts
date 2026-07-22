@@ -14,9 +14,26 @@ import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { tryAcquireDbLock } from '../src/core/db-lock.ts';
-import { MinionSupervisor, ExitCodes, supervisorLockId, classifySupervisorSingleton } from '../src/core/minions/supervisor.ts';
-import type { DbLockHandle } from '../src/core/db-lock.ts';
+import { tryAcquireDbLock, inspectLock, isLockHolderLive } from '../src/core/db-lock.ts';
+import { MinionSupervisor, ExitCodes, supervisorLockId, classifySupervisorSingleton, SUPERVISOR_LOCK_TTL_MIN } from '../src/core/minions/supervisor.ts';
+import type { DbLockHandle, LockSnapshot } from '../src/core/db-lock.ts';
+
+// Build a LockSnapshot fixture for the isLockHolderLive matrix. Only ttl_expired
+// and ms_since_last_refresh are consulted; the rest are filled for shape.
+function snap(over: Partial<LockSnapshot>): LockSnapshot {
+  return {
+    id: 'gbrain-supervisor:default',
+    holder_pid: 4242,
+    holder_host: 'box',
+    acquired_at: new Date(),
+    ttl_expires_at: new Date(),
+    age_ms: 1000,
+    ttl_expired: false,
+    last_refreshed_at: new Date(),
+    ms_since_last_refresh: 0,
+    ...over,
+  };
+}
 
 let engine: PGLiteEngine;
 
@@ -145,6 +162,48 @@ describe('#1849 LOCK_HELD path does not strand the pidfile', () => {
     }
   });
 
+});
+
+describe('#2227 isLockHolderLive — PID-reuse-safe supervisor liveness', () => {
+  test('fresh TTL → live (the normal running case)', () => {
+    expect(isLockHolderLive(snap({ ttl_expired: false }), SUPERVISOR_LOCK_TTL_MIN)).toBe(true);
+  });
+
+  test('expired TTL but refreshed within the steal grace → live (starved-but-alive #1794)', () => {
+    // ttl lapsed but the holder heartbeat is recent → it is alive, just starved.
+    expect(isLockHolderLive(snap({ ttl_expired: true, ms_since_last_refresh: 5_000 }), SUPERVISOR_LOCK_TTL_MIN)).toBe(true);
+  });
+
+  test('expired TTL and stale heartbeat → dead (a gone supervisor stops refreshing)', () => {
+    expect(isLockHolderLive(snap({ ttl_expired: true, ms_since_last_refresh: 36_000_000 }), SUPERVISOR_LOCK_TTL_MIN)).toBe(false);
+  });
+
+  test('expired TTL and no heartbeat column → dead', () => {
+    expect(isLockHolderLive(snap({ ttl_expired: true, ms_since_last_refresh: null }), SUPERVISOR_LOCK_TTL_MIN)).toBe(false);
+  });
+
+  test('liveness NEVER consults process.kill (PID reuse cannot false-positive)', () => {
+    // A row whose holder_pid happens to be a live, unrelated process (PID reuse)
+    // but whose lock is stale must read as NOT live — proving freshness, not the
+    // PID probe, is the signal. holder_pid=1 (init, always alive) + expired/stale.
+    expect(isLockHolderLive(snap({ holder_pid: 1, ttl_expired: true, ms_since_last_refresh: 36_000_000 }), SUPERVISOR_LOCK_TTL_MIN)).toBe(false);
+  });
+});
+
+describe('#2227 status detects a live supervisor via the DB lock (split-$HOME)', () => {
+  test('a live queue lock with no local pidfile reads as running via inspectLock', async () => {
+    // Simulate the keeper holding the queue lock under a different $HOME: there
+    // is a live lock row but the local pidfile path is empty.
+    const holder = await tryAcquireDbLock(engine, supervisorLockId('default'), SUPERVISOR_LOCK_TTL_MIN);
+    expect(holder).not.toBeNull();
+    const live = await inspectLock(engine, supervisorLockId('default'));
+    expect(live).not.toBeNull();
+    expect(isLockHolderLive(live!, SUPERVISOR_LOCK_TTL_MIN)).toBe(true);
+    await holder!.release();
+    // After release the row is gone → not running.
+    const gone = await inspectLock(engine, supervisorLockId('default'));
+    expect(gone).toBeNull();
+  });
 });
 
 describe('#1849 refresh-failure fails safe (F1A)', () => {

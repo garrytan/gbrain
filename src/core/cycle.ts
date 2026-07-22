@@ -243,6 +243,25 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
 };
 
 /**
+ * #2194 fix #3 / #2227 bug #3 — the cycle split.
+ *
+ * Per-source autopilot cycles run ONLY the source-scoped (and mixed) phases;
+ * the brain-wide `global` phases (embed, orphans, purge, resolve_symbol_edges,
+ * grade_takes, calibration_profile, synthesize_concepts, skillopt) run ONCE in
+ * a separate `autopilot-global-maintenance` job instead of N times concurrently
+ * across per-source cycles (the 4→10GB RSS blowout). Single-flight is
+ * structural: one global job, not a skip-and-pretend-fresh hack (codex #1/#2).
+ *
+ * GLOBAL_PHASES ∪ NON_GLOBAL_PHASES == ALL_PHASES, with no overlap — pinned by
+ * test/autopilot-global-maintenance.test.ts.
+ */
+export const GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'global');
+export const NON_GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] !== 'global');
+
+/** Config key holding the ISO timestamp of the last successful global-maintenance run. */
+export const LAST_GLOBAL_AT_KEY = 'autopilot.last_global_at';
+
+/**
  * Phases that mutate state (filesystem or DB) and therefore should
  * coordinate via the cycle lock. Only orphans is truly read-only
  * and skips the lock. patterns mutates DB (writes pattern pages) so
@@ -460,6 +479,37 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /**
+   * issue #2860 — one-shot per-invocation bypass of a phase's own
+   * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate. Wired
+   * from `gbrain dream --phase <name> --once`.
+   *
+   * Deliberately typed as the SINGLE named `CyclePhase`, not a boolean —
+   * each gated phase's dispatch block below only honors the override when
+   * `onceForPhase` matches ITS OWN phase name, so the bypass can never leak
+   * to a different phase even if a caller passes a wider `phases` array
+   * than the CLI does (the CLI always restricts to `phases: [phase]`).
+   *
+   * Never reads or writes config — the phase still evaluates its config
+   * gate every call; this only overrides the boolean OUTCOME for that one
+   * call. Applies to: patterns, synthesize, conversation_facts_backfill,
+   * enrich_thin, skillopt (the phases that gate on a `.enabled` config
+   * key read inside the phase's own module). Does NOT apply to
+   * extract_atoms / synthesize_concepts — those are pack-gated via
+   * `packDeclaresPhase`, a different mechanism with its own existing
+   * one-shot escape hatch (`--drain` for extract_atoms).
+   */
+  onceForPhase?: CyclePhase;
+  /**
+   * Absolute wall-clock deadline (epoch ms) of the enclosing minion job,
+   * from `MinionJobContext.deadlineAtMs` (the claim-time `timeout_at`
+   * stamp). Phases that spawn bounded sub-work (patterns' subagent) clamp
+   * their own timeouts to the REMAINING time so one phase's fixed
+   * worst-case can't blow past the job budget and dead-letter the whole
+   * cycle mid-phase (#2781). Unset for direct callers (`gbrain dream`) —
+   * phases then use their configured timeouts unchanged.
+   */
+  deadlineAtMs?: number | null;
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -937,6 +987,12 @@ async function runPhaseExtract(
   dryRun: boolean,
   changedSlugs?: string[],
   signal?: AbortSignal,
+  // #1503: the brain source the cycle is scoped to (cycleSourceId — explicit
+  // --source or resolved from brainDir). Threaded to runExtractCore so
+  // fs-walk link/timeline rows carry source_id; without it addLinksBatch maps
+  // missing → 'default' and its pages JOIN drops every row on a federated
+  // brain ("Links: created 0 from N pages" every cycle).
+  sourceId?: string,
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
@@ -959,6 +1015,7 @@ async function runPhaseExtract(
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
       signal,
+      sourceId,
     });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
@@ -1656,6 +1713,10 @@ export async function runCycle(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
+          // #1586: scope synthesized writes to the cycle's resolved source
+          // (explicit --source wins, else derived from the checkout dir).
+          sourceId: cycleSourceId,
+          once: opts.onceForPhase === 'synthesize',
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1687,7 +1748,7 @@ export async function runCycle(
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal, cycleSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1859,6 +1920,8 @@ export async function runCycle(
           brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
+          once: opts.onceForPhase === 'patterns',
+          deadlineAtMs: opts.deadlineAtMs ?? null,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2074,7 +2137,11 @@ export async function runCycle(
         progress.start('cycle.conversation_facts_backfill');
         const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+          runPhaseConversationFactsBackfill(engine, {
+            dryRun,
+            signal: opts.signal,
+            once: opts.onceForPhase === 'conversation_facts_backfill',
+          }),
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2102,7 +2169,11 @@ export async function runCycle(
         progress.start('cycle.enrich_thin');
         const { runPhaseEnrichThin } = await import('./cycle/enrich-thin.ts');
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseEnrichThin(engine, { dryRun, signal: opts.signal }),
+          runPhaseEnrichThin(engine, {
+            dryRun,
+            signal: opts.signal,
+            once: opts.onceForPhase === 'enrich_thin',
+          }),
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2133,6 +2204,7 @@ export async function runCycle(
           runPhaseSkillopt({
             engine,
             dryRun,
+            once: opts.onceForPhase === 'skillopt',
             ...(opts.signal ? { signal: opts.signal } : {}),
           }),
         );
@@ -2305,12 +2377,21 @@ export async function runCycle(
   // the cost of missing a successful write (next cycle will redo work).
   if (opts.sourceId && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
+      const nowIso = new Date().toISOString();
+      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
+      // for per-source dispatch (source-scoped phases done). We ALSO keep
+      // `last_full_cycle_at` current so doctor's cycle-freshness check and any
+      // legacy reader stay valid — it's no longer a *gate* for the brain-wide
+      // phases (those gate on autopilot.last_global_at), so writing it on a
+      // source-only cycle does not re-introduce the freshness poisoning codex
+      // flagged in the rejected skip-based design.
       await engine.updateSourceConfig(opts.sourceId, {
-        last_full_cycle_at: new Date().toISOString(),
+        last_source_cycle_at: nowIso,
+        last_full_cycle_at: nowIso,
       });
     } catch (e) {
       // Best-effort; cycle already succeeded by the time we get here.
-      console.warn(`[cycle] failed to write last_full_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

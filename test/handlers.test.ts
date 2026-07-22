@@ -13,6 +13,7 @@ import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
+import { configureGateway, getChatModel, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 let worker: MinionWorker;
@@ -122,6 +123,65 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
 });
 
 describe('autopilot-cycle handler — phase passthrough', () => {
+  test('refreshes DB-backed chat model config before a queued cycle runs', async () => {
+    const handler = (worker as any).handlers.get('autopilot-cycle');
+    expect(handler).toBeDefined();
+
+    const oldModel = await engine.getConfig('models.chat');
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'stale-key', OPENAI_API_KEY: 'fresh-key' },
+    });
+    await engine.setConfig('models.chat', 'openai:gpt-5');
+
+    try {
+      const result = await handler({
+        data: { phases: ['orphans'], pull: false },
+        signal: { aborted: false } as any,
+        job: { id: 9, name: 'autopilot-cycle' } as any,
+      });
+
+      expect(result).toBeDefined();
+      expect(getChatModel()).toBe('openai:gpt-5');
+    } finally {
+      resetGateway();
+      if (oldModel === null) {
+        await engine.unsetConfig('models.chat');
+      } else {
+        await engine.setConfig('models.chat', oldModel);
+      }
+    }
+  });
+
+  test('refreshes DB-backed chat model config before gateway-backed handlers validate job data', async () => {
+    const handler = (worker as any).handlers.get('enrich');
+    expect(handler).toBeDefined();
+
+    const oldModel = await engine.getConfig('models.chat');
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'stale-key', OPENAI_API_KEY: 'fresh-key' },
+    });
+    await engine.setConfig('models.chat', 'openai:gpt-5');
+
+    try {
+      await expect(handler({
+        data: {},
+        signal: { aborted: false } as any,
+        job: { id: 10, name: 'enrich' } as any,
+      })).rejects.toThrow('enrich Minion job requires data.sourceId');
+
+      expect(getChatModel()).toBe('openai:gpt-5');
+    } finally {
+      resetGateway();
+      if (oldModel === null) {
+        await engine.unsetConfig('models.chat');
+      } else {
+        await engine.setConfig('models.chat', oldModel);
+      }
+    }
+  });
+
   test('job.data.phases restricts which phases run', async () => {
     const fs = await import('fs');
     const { execSync } = await import('child_process');

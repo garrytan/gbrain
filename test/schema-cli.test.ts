@@ -36,7 +36,13 @@ function gbrain(
   // bun's spawnSync does NOT inherit env mutations done via process.env = ...,
   // so pass env explicitly. CLAUDE.md flags this pattern as load-bearing for
   // any subprocess test that needs GBRAIN_HOME isolation.
-  const env = { ...process.env, GBRAIN_HOME: DEFAULT_GBRAIN_HOME, ...extraEnv };
+  const env = {
+    ...process.env,
+    GBRAIN_DATABASE_URL: '',
+    DATABASE_URL: '',
+    GBRAIN_HOME: DEFAULT_GBRAIN_HOME,
+    ...extraEnv,
+  };
   const result = spawnSync('bun', ['run', 'src/cli.ts', ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
@@ -73,7 +79,11 @@ describe('gbrain schema CLI (Phase C)', () => {
     // `conversation` and `atom` into gbrain-base.
     // v0.41.23.0: extended to 25 by adding `extract_receipt` for the
     // unified extract receipt-writer surface (D-EXTRACT-19 belt+suspenders).
-    expect(r.stdout).toContain('Page types (25)');
+    // v0.42.56.0 (#2390): extended to 27 by adding the Life Chronicle
+    // `event` + `diary` temporal types (life/events/, life/diary/).
+    expect(r.stdout).toContain('Page types (27)');
+    expect(r.stdout).toContain('event :: temporal');
+    expect(r.stdout).toContain('diary :: temporal');
     expect(r.stdout).toContain('Link verbs (12)');
     expect(r.stdout).toContain('Takes kinds: fact, take, bet, hunch');
     expect(r.stdout).toContain('person :: entity');

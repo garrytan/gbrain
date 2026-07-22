@@ -59,9 +59,14 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
 - **Source isolation.** Every read-side op routes through `sourceScopeOpts(ctx)`; precedence
   is federated array (`ctx.auth.allowedSources`) > scalar (`ctx.sourceId`) > nothing. Don't
   hand-roll source filtering — a missed thread is a cross-source data leak.
-- **JSONB: never `JSON.stringify` into a `::jsonb` cast.** postgres.js double-encodes it;
-  PGLite hides the bug. Pass raw objects to `engine.executeRaw`, or use `executeRawJsonb`.
-  Guarded by `scripts/check-jsonb-pattern.sh`.
+- **JSONB: never `JSON.stringify` into a `::jsonb` cast.** postgres.js double-encodes it (a jsonb
+  string scalar); PGLite hides the bug. This bites BOTH spellings — the template form
+  (`${JSON.stringify(x)}::jsonb`) AND the positional form (`executeRaw(\`…$N::jsonb\`, [JSON.stringify(x)])`,
+  the #2339 class that aborted every sync). Fix: pass a raw object to `engine.executeRaw` / use
+  `executeRawJsonb` / `sql.json()`; or for the positional path bind through `$N::text::jsonb` (binds as
+  text, the cast parses it). Guarded by `scripts/check-jsonb-pattern.sh` (template grep) +
+  `scripts/check-jsonb-params.mjs` (positional AST scanner); the real backstop is the DATABASE_URL-gated
+  e2e parity tests, since PGLite can't surface the bug. Full rule in `docs/ENGINES.md`.
 - **Engine parity.** `src/core/postgres-engine.ts` and `src/core/pglite-engine.ts` move in
   lockstep — a new method/SQL shape lands in BOTH, pinned by `test/e2e/engine-parity.test.ts`.
   Forward-referenced columns/indexes go in the bootstrap probe set (guarded by
@@ -390,7 +395,7 @@ Progress banks into the append-only `op_checkpoint_paths` table (one row per dra
 path, written via the direct session pool so it survives `EMAXCONNSESSION`); a killed
 run resumes from the checkpoint and `last_commit` only advances on true completion. The
 per-source lock heartbeats through the direct pool and refuses to steal a live,
-recently-refreshed holder. Five env knobs tune it (all env-only, incident-time escape
+recently-refreshed holder. Six env knobs tune it (all env-only, incident-time escape
 hatches — no config-dashboard surface by design):
 
 | Env var | Default | What it does |
@@ -400,6 +405,7 @@ hatches — no config-dashboard surface by design):
 | `GBRAIN_SYNC_MAX_CHECKPOINT_FAILURES` | 3 | Consecutive failed flushes (each already retried ~12s) before the run aborts with `reason: 'checkpoint_unavailable'` instead of importing work it can never bank. |
 | `GBRAIN_SYNC_YIELD_EVERY` | 64 | Yield the event loop (`setTimeout(0)`, NOT `setImmediate` — Bun starves the timers phase under a tight setImmediate loop) every N files so the lock-refresh `setInterval` heartbeat fires mid-import. |
 | `GBRAIN_LOCK_STEAL_GRACE_SECONDS` | derived (~600 at 30min TTL) | A holder that refreshed within this window is NOT stolen even if its TTL lapsed (starved-but-alive). Dead holders stop refreshing, age past the grace, and become stealable; TTL stays the backstop. |
+| `GBRAIN_SYNC_STALL_ABORT_SECONDS` | 900 | Progress-aware stall watchdog (#1950): if the import drain makes no forward progress (keyed on file-import progress, NOT the lock heartbeat) for N seconds, abort the run and release the per-source lock so the next `gbrain sync` resumes from the checkpoint. Reports `reason: 'stall_timeout'`. Observed BETWEEN files; a hang inside one file's import isn't interrupted until it returns (the wall-clock hard deadline is that backstop). 0 disables. |
 
 ## Pace Mode (DB-contention-aware backfill pacing)
 

@@ -23,13 +23,18 @@ import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+import { getFtsLanguage } from './fts-language.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
+  ChronicleTimelineRow, ChronicleTimelineOpts, LastSeenResult,
+  OntologyObservationInput, OntologyMergeResult, OntologyValue, OntologyDimensionStat,
+  OntologyConflict, OntologyReadOpts,
   RawData,
   PageVersion,
   BrainStats, BrainHealth,
@@ -42,15 +47,16 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
+import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -146,18 +152,32 @@ export function computeSnapshotSchemaHash(
  * `macos-26-3` — the pre-existing #223 hint signature (early macOS
  *   26.3 builds shipped a broken WASM runtime).
  *
- * `unknown` — falls through to a generic hint that still names the
- *   doctor command and the most-common-cause link.
+ * `unknown` — falls through to a generic hint that names the doctor
+ *   command; the macOS 26.3 link is offered only on darwin (#2674).
  *
  * Regex tightened per Codex eng-review finding #9: don't match
  * generic `pglite.data` substring (could fire on unrelated PGLite
  * errors). Match the literal `$$bunfs` marker OR ENOENT+pglite.data
  * co-occurrence.
  */
-export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'unknown';
+export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'corrupt' | 'unknown';
+
+// #2674: non-Error rejections (Emscripten aborts can throw plain objects)
+// used to stringify as "[object Object]" — prefer .message when present.
+export function stringifyPgliteInitError(err: unknown): string {
+  return String((err as { message?: unknown })?.message ?? err);
+}
 
 export function classifyPgliteInitError(message: string): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
+  // #2348: a corrupted PGLite data dir (two OS processes opened it concurrently
+  // and trashed the catalog/extension state) surfaces as a 58P01 internal error
+  // loading the pgvector library, or the vector type / a core relation gone
+  // missing. Distinct, actionable cause — must beat the generic wasm-runtime
+  // match below so the user is pointed at recovery, not the macOS WASM bug.
+  if (/58P01|internal_load_library|type "?vector"? does not exist|relation "?content_chunks"? does not exist/i.test(message)) {
+    return 'corrupt';
+  }
   if (/abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
     return 'macos-26-3';
   }
@@ -167,6 +187,9 @@ export function classifyPgliteInitError(message: string): PgliteInitFailure {
 export function buildPgliteInitErrorMessage(
   verdict: PgliteInitFailure,
   original: string,
+  // #2674: threaded (defaulted) so tests can exercise both branches without
+  // monkey-patching process.platform.
+  platform: NodeJS.Platform = process.platform,
 ): string {
   const header = 'PGLite failed to initialize its WASM runtime.';
   let hint: string;
@@ -184,12 +207,30 @@ export function buildPgliteInitErrorMessage(
         '  This is most commonly the macOS 26.3 WASM bug:\n' +
         '  https://github.com/garrytan/gbrain/issues/223';
       break;
+    case 'corrupt':
+      hint =
+        '  Your PGLite store looks corrupted (the catalog or the pgvector\n' +
+        '  extension cannot load). This happens when two processes opened the\n' +
+        '  same brain at once — now prevented (#2348), but an already-damaged\n' +
+        '  store cannot be repaired in place. Recover:\n' +
+        '    1. Restore a backup of the brain.pglite directory if you have one, OR\n' +
+        '    2. Rebuild from your brain repo:\n' +
+        '       gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>\n' +
+        '       (wipes + re-inits + re-syncs; DB-only state is re-derived).\n' +
+        '  Deleting .gbrain-lock/ or postmaster.pid does NOT fix this.';
+      break;
     case 'unknown':
     default:
-      hint =
-        '  Most common cause: the macOS 26.3 WASM bug\n' +
-        '  (https://github.com/garrytan/gbrain/issues/223).\n' +
-        '  Run `gbrain doctor` for a full diagnosis.';
+      // #2674: only blame the macOS 26.3 WASM bug on macOS. On other
+      // platforms, point at the causes that are actually plausible there.
+      hint = platform === 'darwin'
+        ? '  Possible cause: the macOS 26.3 WASM bug\n' +
+          '  (https://github.com/garrytan/gbrain/issues/223).\n' +
+          '  Run `gbrain doctor` for a full diagnosis.'
+        : '  Possible causes: another gbrain process holding the database\n' +
+          '  (lock contention), or a damaged PGLite data directory.\n' +
+          '  Run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
+          '  damaged, `gbrain reinit-pglite` rebuilds it from your brain repo.';
       break;
   }
   return `${header}\n${hint}\n  Original error: ${original}`;
@@ -285,7 +326,7 @@ export class PGLiteEngine implements BrainEngine {
       // read-only on older macOS + Bun 1.3.x, so PGLite can't extract its
       // pglite.data WASM payload). Route the hint by failure shape so
       // users get the right next step.
-      const original = err instanceof Error ? err.message : String(err);
+      const original = stringifyPgliteInitError(err); // #2674
       const verdict = classifyPgliteInitError(original);
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
       // Release the lock so a fresh process can try again; leaking the lock
@@ -494,7 +535,11 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='pages' AND column_name='embedding_signature') AS pages_embedding_signature_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='pages' AND column_name='links_extracted_at') AS pages_links_extracted_at_exists
+                WHERE table_schema='public' AND table_name='pages' AND column_name='links_extracted_at') AS pages_links_extracted_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='timeline_entries') AS timeline_entries_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='timeline_entries' AND column_name='event_page_id') AS timeline_event_page_id_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -537,6 +582,8 @@ export class PGLiteEngine implements BrainEngine {
       pages_generation_exists: boolean;
       pages_embedding_signature_exists: boolean;
       pages_links_extracted_at_exists: boolean;
+      timeline_entries_exists: boolean;
+      timeline_event_page_id_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -613,6 +660,8 @@ export class PGLiteEngine implements BrainEngine {
     // it; pre-v112 brains crash without the column, so bootstrap adds it before
     // the CREATE INDEX runs. v112 runs later via runMigrations and is idempotent.
     const needsPagesLinksExtractedAt = probe.pages_exists && !probe.pages_links_extracted_at_exists;
+    // v121: schema-blob indexes reference event_page_id before migrations run.
+    const needsTimelineEventPageId = probe.timeline_entries_exists && !probe.timeline_event_page_id_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
@@ -624,7 +673,8 @@ export class PGLiteEngine implements BrainEngine {
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
         && !needsPagesEmbeddingSignature
-        && !needsPagesLinksExtractedAt) return;
+        && !needsPagesLinksExtractedAt
+        && !needsTimelineEventPageId) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -871,6 +921,14 @@ export class PGLiteEngine implements BrainEngine {
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS links_extracted_at TIMESTAMPTZ;
       `);
     }
+
+    if (needsTimelineEventPageId) {
+      // Add only the forward-referenced column. Migration v121 remains the
+      // source of truth for the FK and indexes and runs idempotently afterward.
+      await this.db.exec(`
+        ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
+      `);
+    }
   }
 
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
@@ -978,7 +1036,7 @@ export class PGLiteEngine implements BrainEngine {
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date().toISOString() : null;
     const { rows } = await this.db.query(
       `INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now(), $10::timestamptz, $11, $12, COALESCE($13, 1), $14, $15, $16, $17, $18::timestamptz)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now(), $10::timestamptz, $11, $12, COALESCE($13, ${MARKDOWN_CHUNKER_VERSION}), $14, $15, $16, $17, $18::timestamptz)
        ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
          page_kind = EXCLUDED.page_kind,
@@ -1569,20 +1627,24 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
-    const { rows } = await this.db.query(
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = getFtsLanguage();
+
+    const keywordSql =
       `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
            ) THEN true ELSE false END AS stale
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
            -- v0.27.1: hide image rows from default text-keyword search so
            -- OCR text doesn't drown text-page hits. Image-similarity queries
            -- run a separate vector path on embedding_image.
@@ -1593,10 +1655,140 @@ export class PGLiteEngine implements BrainEngine {
        ${buildBestPerPagePoolCte('ranked')}
        SELECT * FROM best_per_page
        ORDER BY score DESC, page_id ASC, chunk_id ASC
-       LIMIT $3 OFFSET $4`,
-      params
-    );
+       LIMIT $3 OFFSET $4`;
 
+    let { rows } = await this.db.query(keywordSql, params);
+    // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
+    // grain mean one non-co-occurring token zeroes keyword recall. When the
+    // strict query returns nothing, retry ONCE with OR-of-terms. Strict-AND
+    // results always win when non-empty (no change for working queries).
+    // Opt-in via SearchOpts.orFallback (Reviewer F1): only hybridSearch's
+    // recall arm relaxes; precision consumers (countMentions,
+    // link-extraction, eval) keep the strict-AND contract.
+    if (rows.length === 0 && opts?.orFallback) {
+      const orQuery = buildOrFallbackWebsearchQuery(query);
+      if (orQuery) {
+        const fallbackParams = [...params];
+        fallbackParams[0] = orQuery;
+        ({ rows } = await this.db.query(keywordSql, fallbackParams));
+      }
+    }
+
+    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+  }
+
+  /**
+   * fix/title-retrieval-arm (D1): page-grain title candidate arm. See the
+   * BrainEngine interface doc for the full contract. Queries
+   * pages.search_vector (title weight 'A' dominates ts_rank_cd by
+   * construction) with the same page-grain filters the keyword arm applies
+   * (type/types/excludeSlugs/date/source scoping, hard-excludes,
+   * visibility), joined to one representative chunk per page. Applies the
+   * same AND→OR recall fallback as searchKeyword. NO query-length gate —
+   * long exact-title queries are the case this arm exists for.
+   *
+   * CJK queries fall through to websearch FTS here (a single-token CJK
+   * query CAN exact-match a single-token CJK title); the richer CJK ILIKE
+   * fallback stays keyword-arm-only.
+   */
+  async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    // language/symbolKind are chunk-grain code filters with no page-grain
+    // meaning; a code-scoped query gets no title candidates rather than
+    // rows that silently violate the caller's filter.
+    if (opts?.language || opts?.symbolKind) return [];
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+    const detailLow = opts?.detail === 'low';
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
+
+    const boostMap = resolveBoostMap();
+    const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
+    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    const visibilityClause = buildVisibilityClause('p', 's');
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = getFtsLanguage();
+
+    const params: unknown[] = [query, limit, offset];
+    let extraFilter = '';
+    if (opts?.type) {
+      params.push(opts.type);
+      extraFilter += ` AND p.type = $${params.length}`;
+    }
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
+    }
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+    }
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+
+    // Page grain — one row per page by construction, so no best_per_page
+    // pooling CTE is needed. The LEFT JOIN LATERAL picks the representative
+    // chunk (compiled_truth first, then lowest chunk_index); COALESCEs keep
+    // chunkless pages retrievable (the extreme D1 case: a title with no
+    // body) with the alias-hop row shape (chunk_id 0, empty chunk_text).
+    // Accepted limitations (Reviewer F5/F6): the synthetic chunkless row
+    // inherits the compiled-truth RRF boost and dedups on empty chunk_text;
+    // and detail='low' filters only the REPRESENTATIVE — pages without a
+    // compiled_truth chunk still surface (unlike the keyword arm's filter).
+    const titlesSql =
+      `SELECT
+         p.slug, p.id as page_id, p.title, p.type, p.source_id,
+         p.effective_date, p.effective_date_source,
+         COALESCE(rep.id, 0) as chunk_id,
+         COALESCE(rep.chunk_index, 0) as chunk_index,
+         COALESCE(rep.chunk_text, '') as chunk_text,
+         COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
+         ts_rank_cd(p.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+         CASE WHEN p.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+         ) THEN true ELSE false END AS stale
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+       LEFT JOIN LATERAL (
+         SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+         FROM content_chunks cc
+         WHERE cc.page_id = p.id
+           AND cc.modality = 'text'
+           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
+         ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
+         LIMIT 1
+       ) rep ON true
+       WHERE p.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+         ${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       ORDER BY score DESC, p.id ASC
+       LIMIT $2 OFFSET $3`;
+
+    let { rows } = await this.db.query(titlesSql, params);
+    if (rows.length === 0) {
+      const orQuery = buildOrFallbackWebsearchQuery(query);
+      if (orQuery) {
+        const fallbackParams = [...params];
+        fallbackParams[0] = orQuery;
+        ({ rows } = await this.db.query(titlesSql, fallbackParams));
+      }
+    }
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
@@ -1801,20 +1993,23 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     // visibilityClause already declared above (v0.32.7: hoisted so CJK branch can reuse).
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = getFtsLanguage();
 
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
          p.effective_date, p.effective_date_source,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-         ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
+         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
          ) THEN true ELSE false END AS stale
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        JOIN sources s ON s.id = p.source_id
-       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
        ORDER BY score DESC
        LIMIT $2 OFFSET $3`,
       params
@@ -3376,6 +3571,276 @@ export class PGLiteEngine implements BrainEngine {
     return result.rows as unknown as TimelineEntry[];
   }
 
+  // ── v0.42.x Life Chronicle (#2390) timeline reads ───────────────────────
+  // Same result contract as the Postgres engine (parity is on results, not the
+  // builder idiom): JOIN depth page (deleted_at IS NULL), LEFT JOIN event page,
+  // hide soft-deleted event projections, order by COALESCE(event effective_date,
+  // date). Source scope: federated sourceIds[] > scalar sourceId > unscoped.
+  private pushChronicleSource(where: string[], params: unknown[], opts?: { sourceId?: string; sourceIds?: string[] }): void {
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
+  }
+
+  private static CHRONICLE_SELECT = `
+    SELECT te.date::text AS date, te.summary, te.detail, te.source,
+           te.page_id, p.slug AS page_slug,
+           te.event_page_id, ep.slug AS event_slug,
+           ep.effective_date::text AS effective_date,
+           ep.frontmatter->'event'->>'kind' AS kind
+    FROM timeline_entries te
+    JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+    LEFT JOIN pages ep ON ep.id = te.event_page_id`;
+
+  async getTimelineForDate(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
+    const limit = opts?.limit ?? 200;
+    const params: unknown[] = [date];
+    const lower = opts?.week ? `date_trunc('week', $1::date)::date` : `$1::date`;
+    const upper = opts?.week ? `(date_trunc('week', $1::date) + interval '6 days')::date` : `$1::date`;
+    const where: string[] = [
+      `te.date >= ${lower}`,
+      `te.date <= ${upper}`,
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+    ];
+    this.pushChronicleSource(where, params, opts);
+    params.push(limit);
+    const result = await this.db.query(
+      `${PGLiteEngine.CHRONICLE_SELECT}
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows as unknown as ChronicleTimelineRow[];
+  }
+
+  async getSince(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
+    const limit = opts?.limit ?? 200;
+    const params: unknown[] = [date];
+    const where: string[] = [
+      `te.date >= $1::date`,
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+    ];
+    if (opts?.kind) {
+      params.push(opts.kind);
+      where.push(`ep.frontmatter->'event'->>'kind' = $${params.length}`);
+    }
+    this.pushChronicleSource(where, params, opts);
+    params.push(limit);
+    const result = await this.db.query(
+      `${PGLiteEngine.CHRONICLE_SELECT}
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows as unknown as ChronicleTimelineRow[];
+  }
+
+  async getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[] }): Promise<ChronicleTimelineRow[]> {
+    const limit = opts?.limit ?? 50;
+    const params: unknown[] = [];
+    let target: string;
+    if (opts?.date) { params.push(opts.date); target = `$${params.length}::date`; }
+    else { target = `current_date`; }
+    const where: string[] = [
+      `EXTRACT(MONTH FROM te.date) = EXTRACT(MONTH FROM ${target})`,
+      `EXTRACT(DAY FROM te.date) = EXTRACT(DAY FROM ${target})`,
+      `te.date < ${target}`,
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+    ];
+    this.pushChronicleSource(where, params, opts);
+    params.push(limit);
+    const result = await this.db.query(
+      `${PGLiteEngine.CHRONICLE_SELECT}
+       WHERE ${where.join(' AND ')}
+       ORDER BY te.date DESC, te.id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows as unknown as ChronicleTimelineRow[];
+  }
+
+  async getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[] }): Promise<LastSeenResult> {
+    const params: unknown[] = [entitySlug, `%${entitySlug}%`];
+    const where: string[] = [
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+      `(p.slug = $1 OR (ep.id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array'
+                 THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END
+          ) AS w(name) WHERE w.name = $1 OR w.name LIKE $2)))`,
+    ];
+    // "Last seen" is a PAST relation: chronicle stores future events
+    // (calendar-event is eligible), which must not read as "last seen".
+    // Bound to <= asof/today, mirroring getOnThisDay's `te.date < target`.
+    let seenThrough: string;
+    if (opts?.asof) { params.push(opts.asof); seenThrough = `$${params.length}::date`; }
+    else { seenThrough = `current_date`; }
+    where.push(`te.date <= ${seenThrough}`);
+    this.pushChronicleSource(where, params, opts);
+    const result = await this.db.query(
+      `SELECT te.date::text AS last_date, ep.slug AS last_event_slug
+       FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+       LEFT JOIN pages ep ON ep.id = te.event_page_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC
+       LIMIT 1`,
+      params,
+    );
+    const row = result.rows[0] as { last_date?: string; last_event_slug?: string } | undefined;
+    return finalizeLastSeen(entitySlug, row?.last_date ?? null, row?.last_event_slug ?? null, opts?.asof);
+  }
+
+  async upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }> {
+    const sourceId = opts.sourceId ?? 'default';
+    const r = await this.db.query(
+      `INSERT INTO timeline_entries (page_id, date, source, summary, detail, event_page_id)
+       SELECT dp.id, $1::date, $2, $3, $4, ep.id
+       FROM pages dp, pages ep
+       WHERE dp.slug = $5 AND dp.source_id = $6 AND ep.slug = $7 AND ep.source_id = $6
+       ON CONFLICT (event_page_id, date) WHERE event_page_id IS NOT NULL
+       DO UPDATE SET summary = EXCLUDED.summary, detail = EXCLUDED.detail,
+                     page_id = EXCLUDED.page_id, source = EXCLUDED.source
+       RETURNING id`,
+      [opts.date, 'life-chronicle:event:' + opts.eventSlug, opts.summary, opts.detail ?? '', opts.depthSlug, sourceId, opts.eventSlug],
+    );
+    return { projected: r.rows.length > 0 };
+  }
+
+  async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
+    const sourceId = obs.sourceId ?? 'default';
+    const { valueHash, normalizeDimension, isNovelDimension } = await import('./chronicle/ontology.ts');
+    const dimension = normalizeDimension(obs.dimension);
+    const vh = valueHash(obs.value);
+    const conf = obs.confidence ?? 0.7;
+    const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
+    const visibility = obs.visibility ?? 'private';
+    const validFrom = obs.validFrom ?? null;
+    const validUntil = obs.validTo ?? null;
+    const factText = `${dimension}: ${obs.value}`;
+
+    // "current open" = open-ended (valid_until IS NULL) + not retracted.
+    const cur = await this.db.query(
+      `SELECT id, value_hash, valid_from FROM facts
+        WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL
+          AND (dim_status IS NULL OR dim_status = 'active')
+        ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`,
+      [sourceId, obs.entitySlug, dimension],
+    );
+    const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
+
+    if (current && current.value_hash === vh) {
+      const ins = await this.db.query(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
+                            confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
+         VALUES ($1,$2,$3,'fact',$4,$5,$6,$7,$8,$9,$10,$10,COALESCE($11::timestamptz, now()),$12, now(), $13)
+         ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL
+         DO NOTHING RETURNING id`,
+        [sourceId, obs.entitySlug, factText, visibility, dimension, obs.value, vh, status, conf, obs.source, validFrom, validUntil, current.id],
+      );
+      return ins.rows.length
+        ? { action: 'corroborated', factId: Number((ins.rows[0] as { id: number }).id), supersededId: null }
+        : { action: 'noop', factId: null, supersededId: null };
+    }
+
+    const ins = await this.db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
+                          confidence, source, source_markdown_slug, valid_from, valid_until)
+       VALUES ($1,$2,$3,'fact',$4,$5,$6,$7,$8,$9,$10,$10,COALESCE($11::timestamptz, now()),$12)
+       ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL
+       DO NOTHING RETURNING id`,
+      [sourceId, obs.entitySlug, factText, visibility, dimension, obs.value, vh, status, conf, obs.source, validFrom, validUntil],
+    );
+    if (!ins.rows.length) return { action: 'noop', factId: null, supersededId: null };
+    const newId = Number((ins.rows[0] as { id: number }).id);
+
+    let supersededId: number | null = null;
+    if (current && status === 'active') {
+      const forward = validFrom == null || current.valid_from == null
+        || new Date(validFrom).getTime() >= new Date(current.valid_from).getTime();
+      if (forward) {
+        await this.db.query(
+          `UPDATE facts SET valid_until = COALESCE($1::timestamptz, now()), superseded_by = $2 WHERE id = $3 AND valid_until IS NULL`,
+          [validFrom, newId, current.id],
+        );
+        supersededId = current.id;
+      }
+    }
+    return { action: supersededId ? 'superseded_prior' : 'inserted', factId: newId, supersededId };
+  }
+
+  async getOntology(entitySlug: string, opts?: OntologyReadOpts): Promise<OntologyValue[]> {
+    const minConf = opts?.minConfidence ?? 0;
+    const includeQ = opts?.includeQuarantined ?? false;
+    const asof = opts?.asof ?? null;
+    const params: unknown[] = [entitySlug, asof, minConf, includeQ];
+    let scope: string;
+    if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
+    else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    const r = await this.db.query(
+      `SELECT DISTINCT ON (dimension) dimension, value, confidence,
+         source_markdown_slug AS source, valid_from, valid_until AS valid_to,
+         COALESCE(dim_status,'active') AS status, id AS fact_id
+       FROM facts
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope}
+         AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
+         AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
+         AND confidence >= $3
+         AND ($4::boolean OR dim_status IS NULL OR dim_status = 'active')
+       ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC`,
+      params,
+    );
+    return r.rows.map((row) => ({ ...(row as OntologyValue), confidence: Number((row as { confidence: number }).confidence), fact_id: Number((row as { fact_id: number }).fact_id) }));
+  }
+
+  async discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]> {
+    const params: unknown[] = [];
+    let scope: string;
+    if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
+    else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    const r = await this.db.query(
+      `SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
+       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       GROUP BY dimension ORDER BY entities DESC, dimension`,
+      params,
+    );
+    return r.rows.map((row) => {
+      const x = row as { dimension: string; entities: number; observations: number };
+      return { dimension: x.dimension, entities: Number(x.entities), observations: Number(x.observations) };
+    });
+  }
+
+  async findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]> {
+    const minConf = opts?.minConfidence ?? 0;
+    const params: unknown[] = [minConf];
+    let scope: string;
+    if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
+    else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    const r = await this.db.query(
+      `WITH cur AS (
+         SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
+         FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
+           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope}
+       )
+       SELECT entity_slug, dimension,
+              json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values
+       FROM cur GROUP BY entity_slug, dimension
+       HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2
+       ORDER BY entity_slug, dimension`,
+      params,
+    );
+    return r.rows.map((row) => {
+      const x = row as { entity_slug: string; dimension: string; values: OntologyConflict['values'] };
+      return { entity_slug: x.entity_slug, dimension: x.dimension, values: typeof x.values === 'string' ? JSON.parse(x.values) : x.values };
+    });
+  }
+
   // Raw data
   async putRawData(
     slug: string,
@@ -4276,6 +4741,8 @@ export class PGLiteEngine implements BrainEngine {
            OR ($6::boolean = false AND t.resolved_at IS NULL)
          )
          AND ($7::text[] IS NULL OR t.holder = ANY($7::text[]))
+         AND ($11::text[] IS NULL OR p.source_id = ANY($11::text[]))
+         AND ($12::text   IS NULL OR p.source_id = $12::text)
        ORDER BY
          CASE WHEN $8 = 'weight'      THEN t.weight     END DESC NULLS LAST,
          CASE WHEN $8 = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -4292,6 +4759,9 @@ export class PGLiteEngine implements BrainEngine {
         sortBy,
         limit,
         offset,
+        // #2200-class: source scope via the take's page.source_id (array wins over scalar).
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
       ]
     );
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
@@ -4299,7 +4769,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async searchTakes(
     query: string,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const { rows } = await this.db.query(
@@ -4311,16 +4781,26 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.claim % $1
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
+         AND ($5::text IS NULL OR p.source_id = $5::text)
        ORDER BY score DESC, t.weight DESC
        LIMIT $3`,
-      [query, opts.takesHoldersAllowList ?? null, limit]
+      [
+        query,
+        opts.takesHoldersAllowList ?? null,
+        limit,
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
+      ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
@@ -4333,11 +4813,21 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.embedding IS NOT NULL
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
+         AND ($5::text IS NULL OR p.source_id = $5::text)
        ORDER BY t.embedding <=> $1::vector
        LIMIT $3`,
-      [vec, opts.takesHoldersAllowList ?? null, limit]
+      [
+        vec,
+        opts.takesHoldersAllowList ?? null,
+        limit,
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
+      ]
     );
-    return rows as unknown as TakeHit[];
+    // Engine parity with PostgresEngine: coerce hit rows through the shared
+    // helper so both engines return the same TakeHit runtime shape (#2450).
+    return rows.map((r) => takeHitRowToHit(r as Record<string, unknown>));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
@@ -4506,6 +4996,10 @@ export class PGLiteEngine implements BrainEngine {
     if (opts.since !== undefined) { params.push(opts.since); clauses.push(`AND since_date >= $${params.length}`); }
     if (opts.until !== undefined) { params.push(opts.until); clauses.push(`AND since_date <= $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).
+    const srcIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
+    if (srcIds) { params.push(srcIds); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`); }
+    else if (opts.sourceId) { params.push(opts.sourceId); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`); }
     const where = clauses.join(' ');
     // v0.36.1.1 T1c: `resolved` deliberately filters to the 3-state subset
     // (correct|incorrect|partial) — NOT `resolved_quality IS NOT NULL` — so
@@ -4542,6 +5036,10 @@ export class PGLiteEngine implements BrainEngine {
     const clauses: string[] = [];
     if (opts.holder !== undefined) { params.push(opts.holder); clauses.push(`AND holder = $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).
+    const srcIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
+    if (srcIds) { params.push(srcIds); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`); }
+    else if (opts.sourceId) { params.push(opts.sourceId); clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`); }
     const where = clauses.join(' ');
     // NUMERIC casts for exact decimal arithmetic — keeps PGLite + Postgres
     // bucket boundaries identical at FP-edge weights (e.g. 0.7/0.1).
@@ -4677,7 +5175,7 @@ export class PGLiteEngine implements BrainEngine {
     `);
 
     const { rows: types } = await this.db.query(
-      `SELECT type, count(*)::int as count FROM pages GROUP BY type ORDER BY count DESC`
+      `SELECT type, count(*)::int as count FROM pages WHERE deleted_at IS NULL GROUP BY type ORDER BY count DESC`
     );
     const pages_by_type: Record<string, number> = {};
     for (const t of types as { type: string; count: number }[]) {

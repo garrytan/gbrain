@@ -113,7 +113,7 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
     // the original 2000-char ceiling. The intent of the guard is unchanged:
     // "the autopilot-cycle handler passes job.signal to runCycle." The
     // window just needs to be wide enough to span any reasonable handler.
-    const handlerStart = jobsSource.indexOf("worker.register('autopilot-cycle'");
+    const handlerStart = jobsSource.indexOf("registerBuiltinJob(worker, engine, 'autopilot-cycle'");
     expect(handlerStart).toBeGreaterThan(-1);
     const handlerBlock = jobsSource.slice(handlerStart, handlerStart + 6000);
 
@@ -175,7 +175,7 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     const src = fs.readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf8');
     const body = src.slice(src.indexOf('export async function runCycle'));
     // Each long phase receives the signal.
-    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal)');
+    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal, cycleSourceId)');
     expect(body).toMatch(/runPhaseExtractFacts\([^)]*opts\.signal\)/);
     expect(body).toContain('signal: opts.signal'); // consolidate opts
     expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, opts.signal)');
