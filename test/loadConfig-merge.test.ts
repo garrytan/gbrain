@@ -302,4 +302,29 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.engine).toBe('pglite');
     });
   });
+
+  describe('eval.* DB-plane merge (#1475)', () => {
+    test('gbrain config set eval.capture true reaches the merged config', async () => {
+      // The #1475 repro: DB plane has eval.capture=true, file plane silent.
+      // Pre-fix the merge skipped eval.* entirely and capture never fired.
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({ 'eval.capture': 'true', 'eval.scrub_pii': 'false' });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.eval?.capture).toBe(true);
+      expect(merged?.eval?.scrub_pii).toBe(false);
+    });
+
+    test('file plane wins per key; DB fills only the gaps', async () => {
+      const base: GBrainConfig = { engine: 'pglite', eval: { capture: false } };
+      const engine = makeEngine({ 'eval.capture': 'true', 'eval.scrub_pii': 'false' });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.eval?.capture).toBe(false); // file wins
+      expect(merged?.eval?.scrub_pii).toBe(false); // DB fills the gap
+    });
+
+    test('no eval keys anywhere leaves cfg.eval undefined', async () => {
+      const merged = await loadConfigWithEngine(makeEngine({}), { engine: 'pglite' });
+      expect(merged?.eval).toBeUndefined();
+    });
+  });
 });

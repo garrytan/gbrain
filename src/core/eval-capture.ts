@@ -251,6 +251,14 @@ registerBackgroundWorkDrainer({
 export function isEvalCaptureEnabled(config: GBrainConfig | null | undefined): boolean {
   if (config?.eval?.capture === true) return true;
   if (config?.eval?.capture === false) return false;
+  // #1475: DB-plane stash. `gbrain config set eval.capture true` lands in the
+  // config table; connectEngine stamps the merged value here because
+  // ctx.config is the sync file-plane load and never sees the DB plane.
+  // Explicit per-key setting (file above, DB here) beats the broad
+  // CONTRIBUTOR_MODE flag, matching how file-plane `false` already wins.
+  // Doubles as a direct operator env knob.
+  if (process.env.GBRAIN_EVAL_CAPTURE === 'true') return true;
+  if (process.env.GBRAIN_EVAL_CAPTURE === 'false') return false;
   return process.env.GBRAIN_CONTRIBUTOR_MODE === '1';
 }
 
@@ -263,5 +271,8 @@ export function isEvalCaptureEnabled(config: GBrainConfig | null | undefined): b
  * have explicit `capture: true`.
  */
 export function isEvalScrubEnabled(config: GBrainConfig | null | undefined): boolean {
-  return config?.eval?.scrub_pii !== false;
+  if (config?.eval?.scrub_pii === false) return false;
+  if (config?.eval?.scrub_pii === true) return true;
+  // #1475: DB-plane stash — see isEvalCaptureEnabled. Default stays true.
+  return process.env.GBRAIN_EVAL_SCRUB_PII !== 'false';
 }
