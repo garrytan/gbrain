@@ -298,14 +298,28 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const isMedia = mimeType?.startsWith('video/') || mimeType?.startsWith('audio/') || mimeType?.startsWith('image/');
   const needsCloud = stat.size >= SIZE_THRESHOLD || isMedia;
 
+  // Resolve the page + source ONCE for both branches (#2297). An explicit
+  // --source + --page pair that resolves to no page errors loudly (the doc
+  // promises strict disambiguation) instead of silently persisting an
+  // unlinked file row under the hinted source.
+  const page = pageSlug ? await lookupPageBySlug(engine, pageSlug, sourceHint) : null;
+  if (pageSlug && sourceHint && !page) {
+    console.error(JSON.stringify({
+      success: false,
+      reason: 'page_not_found_in_source',
+      message: `Page '${pageSlug}' not found in source '${sourceHint}'. `
+        + 'Check the slug/source pair, or drop --source to attach to the first matching source.',
+    }));
+    process.exit(1);
+  }
+  const sourceId = page?.source_id ?? sourceHint ?? 'default';
+
   if (!needsCloud) {
     // Small text/PDF files are copied INTO the brain repo and recorded in the
     // files table (#2297). Previously this branch printed success and returned
     // without copying anything or inserting a row — every small "raw" was
-    // silently lost. Resolve the page + source so the row links correctly and
-    // the destination is page-namespaced (storage_path is UNIQUE).
-    const page = pageSlug ? await lookupPageBySlug(engine, pageSlug, sourceHint) : null;
-    const sourceId = page?.source_id ?? sourceHint ?? 'default';
+    // silently lost. The row links to the resolved page + source and the
+    // destination is page-namespaced (storage_path is UNIQUE).
     const repoRoot = await resolveRepoRoot(engine, sourceId);
     if (!repoRoot) {
       console.error(JSON.stringify({
@@ -368,8 +382,6 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const hash = createHash('sha256').update(content).digest('hex');
   const bucket = (config.storage as any).bucket || 'brain-files';
 
-  const page = pageSlug ? await lookupPageBySlug(engine, pageSlug, sourceHint) : null;
-  const sourceId = page?.source_id ?? sourceHint ?? 'default';
   // Source-namespace the cloud storage key so the same slug+filename in two
   // sources doesn't collide on the UNIQUE storage_path (#2297). Default source
   // keeps its historical path.
