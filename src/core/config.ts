@@ -48,6 +48,21 @@ export interface GBrainConfig {
    * reads OPENROUTER_API_KEY.
    */
   openrouter_api_key?: string;
+  /**
+   * Voyage AI API key (#2662). File-plane slot so `~/.gbrain/config.json`'s
+   * `voyage_api_key` reaches the voyage recipe the same way
+   * zeroentropy_api_key/openrouter_api_key do: file plane →
+   * buildGatewayConfig env dict → recipe reads VOYAGE_API_KEY. Before this,
+   * launchd/daemon/MCP contexts without a process-env export silently
+   * failed multimodal embeds despite config.json looking complete.
+   *
+   * NOTE (scoped to what this fix covers): `gbrain config set
+   * voyage_api_key X` writes the DB plane, which `loadConfigWithEngine()`
+   * does NOT merge for any `*_api_key` field (zeroentropy_api_key /
+   * openrouter_api_key have the same pre-existing gap) — only the
+   * config.json file-plane route is wired through today.
+   */
+  voyage_api_key?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -843,6 +858,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'anthropic_api_key',
   'zeroentropy_api_key',
   'openrouter_api_key',
+  'voyage_api_key',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',
