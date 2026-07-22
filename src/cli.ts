@@ -2256,10 +2256,14 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       // op path and MCP dispatch — it never sees the DB plane directly. The
       // gates consult this stash when the file plane is silent, so
       // `gbrain config set eval.capture true` actually turns capture on.
-      if (merged.eval?.capture !== undefined) {
+      // A pre-set env value wins over the DB plane (env-above-config, the
+      // incident escape hatch) — unlike GBRAIN_EMBEDDING_MULTIMODAL these
+      // keys have no loadConfig() env mapping, so without this guard the
+      // DB stash would silently clobber an operator's export.
+      if (process.env.GBRAIN_EVAL_CAPTURE === undefined && merged.eval?.capture !== undefined) {
         process.env.GBRAIN_EVAL_CAPTURE = String(merged.eval.capture);
       }
-      if (merged.eval?.scrub_pii !== undefined) {
+      if (process.env.GBRAIN_EVAL_SCRUB_PII === undefined && merged.eval?.scrub_pii !== undefined) {
         process.env.GBRAIN_EVAL_SCRUB_PII = String(merged.eval.scrub_pii);
       }
       // Always re-configure with merged values when DB merge succeeded. The
