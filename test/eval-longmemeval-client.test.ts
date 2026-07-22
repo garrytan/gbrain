@@ -18,6 +18,7 @@ import {
   __setChatTransportForTests,
 } from '../src/core/ai/gateway.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 afterAll(() => {
   __setChatTransportForTests(null);
@@ -50,38 +51,35 @@ describe('buildLLMClient (#2099)', () => {
     const seen: string[] = [];
     // probeChatModel's Anthropic branch reads process.env (hasAnthropicKey),
     // not the gateway cfg.env — set both so the test is hermetic on CI.
-    const priorKey = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
-    configureGateway({
-      chat_model: 'anthropic:claude-sonnet-4-6',
-      env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
-    } as never);
-    __setChatTransportForTests(async (opts: ChatOpts): Promise<ChatResult> => {
-      seen.push(opts.model ?? '<none>');
-      return {
-        text: 'stubbed answer',
-        blocks: [],
-        stopReason: 'end',
-        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
-        model: opts.model ?? '',
-        providerId: 'anthropic',
-      } as ChatResult;
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-test' }, async () => {
+      configureGateway({
+        chat_model: 'anthropic:claude-sonnet-4-6',
+        env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
+      } as never);
+      __setChatTransportForTests(async (opts: ChatOpts): Promise<ChatResult> => {
+        seen.push(opts.model ?? '<none>');
+        return {
+          text: 'stubbed answer',
+          blocks: [],
+          stopReason: 'end',
+          usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: opts.model ?? '',
+          providerId: 'anthropic',
+        } as ChatResult;
+      });
+
+      const client = await buildLLMClient('anthropic:claude-sonnet-4-6', false);
+      const msg = await client.create({
+        model: 'anthropic:claude-sonnet-4-6',
+        max_tokens: 32,
+        messages: [{ role: 'user', content: 'q' }],
+      });
+
+      // Pre-#2099 this path constructed `new Anthropic()` and sent the
+      // prefixed id verbatim → HTTP 404. Now the gateway serves it.
+      expect(seen).toEqual(['anthropic:claude-sonnet-4-6']);
+      const first = msg.content[0];
+      expect(first && first.type === 'text' ? first.text : '').toBe('stubbed answer');
     });
-
-    const client = await buildLLMClient('anthropic:claude-sonnet-4-6', false);
-    const msg = await client.create({
-      model: 'anthropic:claude-sonnet-4-6',
-      max_tokens: 32,
-      messages: [{ role: 'user', content: 'q' }],
-    });
-
-    // Pre-#2099 this path constructed `new Anthropic()` and sent the
-    // prefixed id verbatim → HTTP 404. Now the gateway serves it.
-    expect(seen).toEqual(['anthropic:claude-sonnet-4-6']);
-    const first = msg.content[0];
-    expect(first && first.type === 'text' ? first.text : '').toBe('stubbed answer');
-
-    if (priorKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = priorKey;
   });
 });
