@@ -216,17 +216,21 @@ describe('progress reporter', () => {
   });
 
   test('only one process-level signal handler installed across many reporters', () => {
-    // Baseline: one handler already installed by prior tests in this file.
+    // Baseline: one handler already installed by prior tests in this file, and
+    // possibly live reporters from OTHER test files sharing this bun process
+    // (shard composition is not this test's invariant — assert the delta, not
+    // an absolute zero, or shard reshuffles make this fail spuriously).
     const installedBefore = __signalHandlerInstalledForTest();
+    const liveBefore = __liveReporterCountForTest();
     const { stream } = sink(false);
     for (let i = 0; i < 50; i++) {
       const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
       p.start(`phase_${i}`, 1);
       p.finish();
     }
-    // After 50 reporter lifecycles, still exactly one handler and zero leaked live entries.
+    // After 50 reporter lifecycles, still exactly one handler and zero NET leaked live entries.
     expect(__signalHandlerInstalledForTest()).toBe(installedBefore || true);
-    expect(__liveReporterCountForTest()).toBe(0);
+    expect(__liveReporterCountForTest()).toBe(liveBefore);
   });
 
   test('startHeartbeat() fires heartbeats and stop() clears', async () => {

@@ -45,6 +45,7 @@ const FIXTURE_TRANSCRIPT: DiscoveredTranscript = {
   content: 'Synthetic transcript content for gateway-adapter parity tests.',
   contentHash: 'sha-fixture-1',
   inferredDate: '2026-05-24',
+  transcriptSource: null,
 };
 
 describe('makeJudgeClient — construction-time provider probe', () => {

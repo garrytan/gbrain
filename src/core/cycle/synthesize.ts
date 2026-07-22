@@ -428,8 +428,13 @@ export async function runPhaseSynthesize(
 
     const queue = new MinionQueue(engine);
     const childIds: number[] = [];
-    /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
-    const chunkInfo = new Map<number, { idx: number; hash6: string }>();
+    /**
+     * Map child job_id → transcript metadata. Drives D6 orchestrator-side
+     * slug rewrite for chunked transcripts AND the deterministic frontmatter
+     * stampDreamProvenance merges into each written page. Populated for
+     * every child (single-chunk children carry chunkTotal=1).
+     */
+    const childMeta = new Map<number, ChildMeta>();
     /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
@@ -513,9 +518,14 @@ export async function runPhaseSynthesize(
           { allowProtectedSubmit: true },
         );
         childIds.push(child.id);
-        if (isChunked) {
-          chunkInfo.set(child.id, { idx: i, hash6 });
-        }
+        childMeta.set(child.id, {
+          idx: i,
+          hash6,
+          chunkTotal: chunks.length,
+          transcriptSource: t.transcriptSource,
+          transcriptId: stripContentVersionSuffix(t.basename),
+          inferredDate: t.inferredDate,
+        });
       }
     }
 
@@ -544,14 +554,14 @@ export async function runPhaseSynthesize(
 
     // Collect slugs from put_page tool executions across the children
     // (codex finding #2: deterministic provenance, NOT pages.updated_at).
-    // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
+    // D6 orchestrator slug rewrite: childMeta drives post-hoc rewrite of
     // bare-hash slugs to `<hash6>-c<idx>` so chunked siblings can't collide
     // even if Sonnet drops the chunk suffix.
     // v0.32.8: refs carry source_id so reverseWriteRefs picks the correct
     // (source, slug) row. #1586: refs are stamped with the cycle's resolved
     // source (children write there via SubagentHandlerData.source_id).
     const cycleSourceId = opts.sourceId ?? 'default';
-    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId);
+    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, childMeta, cycleSourceId);
 
     const summaryDate = opts.date ?? today();
 
@@ -559,7 +569,12 @@ export async function runPhaseSynthesize(
     // of every child-written page BEFORE reverse-rendering, so generated pages
     // are queryable (`frontmatter->>'dream_generated'`) and a later put_page
     // write-through (which re-renders from the DB row) can't erase the stamp.
-    await stampDreamProvenance(engine, writtenRefs, summaryDate);
+    // #2285: the stamp also carries the orchestrator-owned deterministic
+    // frontmatter (transcript_id, transcript_source, transcript_hash, date,
+    // chunk) derived from childMeta — subagent drift on those fields can't
+    // leak, and reverseWriteRefs below re-reads the row so the same fields
+    // land in the on-disk markdown.
+    await stampDreamProvenance(engine, writtenRefs, summaryDate, childMeta);
 
     // Dual-write: reverse-render each DB row → markdown file.
     const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
@@ -1095,15 +1110,17 @@ function sanitizeForSlug(s: string): string {
  * fake"): we no longer need detection because the rewrite enforces
  * uniqueness at slug-write time.
  *
- * `chunkInfo` maps child job_id → { chunk_index, hash6 }. Single-chunk
- * children are absent from the map and pass through unchanged.
+ * `childMeta` maps child job_id → per-child transcript metadata. Chunked
+ * children (chunkTotal > 1) get the slug rewrite; single-chunk children
+ * pass through unchanged. Each returned ref carries the job_id that wrote
+ * it so stampDreamProvenance can pair the slug back to its childMeta entry.
  */
 async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
-  chunkInfo: Map<number, { idx: number; hash6: string }>,
+  childMeta: Map<number, ChildMeta>,
   sourceId = 'default',
-): Promise<Array<{ slug: string; source_id: string }>> {
+): Promise<Array<{ slug: string; source_id: string; jobId: number }>> {
   if (childIds.length === 0) return [];
   // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
   // the orchestrator sees what each child wrote. COALESCE handles both
@@ -1122,16 +1139,73 @@ async function collectChildPutPageSlugs(
        FROM subagent_tool_executions
       WHERE job_id = ANY($1::int[])
         AND tool_name = 'brain_put_page'
-        AND status = 'complete'`,
+        AND status = 'complete'
+      ORDER BY id`,
     [childIds],
   );
-  const rewritten = new Set<string>();
+  const rewritten = new Map<string, number>();
   for (const r of rows) {
     if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
-    const ci = chunkInfo.get(r.job_id);
-    rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
+    const meta = childMeta.get(r.job_id);
+    const finalSlug = meta && meta.chunkTotal > 1
+      ? rewriteChunkedSlug(r.slug, meta.hash6, meta.idx)
+      : r.slug;
+    // Last writer wins, in execution-row order (ORDER BY id): if two children
+    // collide on a final slug, the pages row holds the LAST put_page write, so
+    // the stamp must attribute that child's transcript — not an arbitrary one.
+    rewritten.set(finalSlug, r.job_id);
   }
-  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: sourceId }));
+  return [...rewritten.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([slug, jobId]) => ({ slug, source_id: sourceId, jobId }));
+}
+
+/**
+ * Per-child orchestrator state. Drives D6 chunked-slug rewrite (idx + hash6)
+ * AND the deterministic frontmatter stampDreamProvenance merges into each
+ * written page. Populated for every child, not just chunked ones.
+ */
+interface ChildMeta {
+  idx: number;
+  hash6: string;
+  chunkTotal: number;
+  transcriptSource: string | null;
+  transcriptId: string;
+  inferredDate: string | null;
+}
+
+/**
+ * Strip the content-version suffix that claude-code-archive appends when a
+ * conversation is edited (`<uuid>--<contentHash>.md`). The session UUID is
+ * the stable transcript identifier; the suffix changes with content. Used to
+ * populate `transcript_id` so edits of the same session collapse to one id.
+ */
+function stripContentVersionSuffix(basename: string): string {
+  return basename.replace(/--[a-f0-9]+$/i, '');
+}
+
+/**
+ * Deterministic frontmatter for one synthesized page (#2285). Every field
+ * here is owned by the orchestrator — the subagent's value for any of these
+ * is overwritten. The subagent retains authority over type / title / tags /
+ * body. `date` feeds the effective-date precedence chain
+ * (src/core/effective-date.ts) so re-imports keep the conversation date even
+ * when sync tools re-stamp file mtimes.
+ */
+function buildDeterministicFrontmatter(
+  meta: ChildMeta,
+  cycleDate: string,
+): Record<string, unknown> {
+  const overrides: Record<string, unknown> = {
+    dream_generated: true,
+    dream_cycle_date: cycleDate,
+    transcript_id: meta.transcriptId,
+    transcript_hash: meta.hash6,
+  };
+  if (meta.transcriptSource) overrides.transcript_source = meta.transcriptSource;
+  if (meta.chunkTotal > 1) overrides.chunk = `${meta.idx + 1}/${meta.chunkTotal}`;
+  if (meta.inferredDate) overrides.date = meta.inferredDate;
+  return overrides;
 }
 
 /**
@@ -1177,12 +1251,19 @@ async function hasLegacySingleChunkCompletion(
  */
 async function stampDreamProvenance(
   engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string }>,
+  refs: Array<{ slug: string; source_id: string; jobId?: number }>,
   cycleDate: string,
+  childMeta?: Map<number, ChildMeta>,
 ): Promise<void> {
   if (refs.length === 0) return;
   const { executeRawJsonb } = await import('../sql-query.ts');
-  for (const { slug, source_id } of refs) {
+  for (const { slug, source_id, jobId } of refs) {
+    // #2285: when the ref pairs back to a child, the stamp also carries the
+    // orchestrator-owned deterministic frontmatter for that transcript.
+    const meta = jobId !== undefined ? childMeta?.get(jobId) : undefined;
+    const stamp = meta
+      ? buildDeterministicFrontmatter(meta, cycleDate)
+      : { dream_generated: true, dream_cycle_date: cycleDate };
     try {
       await executeRawJsonb(
         engine,
@@ -1190,7 +1271,7 @@ async function stampDreamProvenance(
             SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $3::jsonb
           WHERE slug = $1 AND source_id = $2`,
         [slug, source_id],
-        [{ dream_generated: true, dream_cycle_date: cycleDate }],
+        [stamp],
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

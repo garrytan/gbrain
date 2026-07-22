@@ -26,6 +26,7 @@ const transcript: DiscoveredTranscript = {
   content: 'User: hello world',
   contentHash: 'abcdef0123456789',
   inferredDate: '2026-07-17',
+  transcriptSource: null,
 } as DiscoveredTranscript;
 
 describe('#2415: buildSynthesisPrompt output root', () => {
