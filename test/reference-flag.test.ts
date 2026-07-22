@@ -72,14 +72,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runReference } from '../src/commands/reference.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('reference flag e2e (PGLite)', () => {
   let engine: PGLiteEngine;
   let brainDir: string;
-  const savedEnv = process.env.GBRAIN_SOURCE;
 
   beforeAll(async () => {
-    delete process.env.GBRAIN_SOURCE;
     engine = new PGLiteEngine();
     await engine.connect({ database_url: '' });
     await engine.initSchema();
@@ -115,13 +114,13 @@ describe('reference flag e2e (PGLite)', () => {
   });
 
   afterAll(async () => {
-    if (savedEnv !== undefined) process.env.GBRAIN_SOURCE = savedEnv;
     await engine.disconnect();
     fs.rmSync(brainDir, { recursive: true, force: true });
   });
 
   test('runReference scopes the JSONB write to the resolved (source_id, slug)', async () => {
-    await runReference(engine, ['people/andy-grove', '--brain', brainDir]);
+    await withEnv({ GBRAIN_SOURCE: undefined }, () =>
+      runReference(engine, ['people/andy-grove', '--brain', brainDir]));
 
     const rows = await engine.executeRaw<{ source_id: string; ref: string | null }>(
       `SELECT source_id, frontmatter->>'reference' AS ref FROM pages WHERE slug = 'people/andy-grove' ORDER BY source_id`,
@@ -143,7 +142,8 @@ describe('reference flag e2e (PGLite)', () => {
   });
 
   test('unset restores the page to a normal counted entity', async () => {
-    await runReference(engine, ['people/andy-grove', '--unset', '--brain', brainDir]);
+    await withEnv({ GBRAIN_SOURCE: undefined }, () =>
+      runReference(engine, ['people/andy-grove', '--unset', '--brain', brainDir]));
     const rows = await engine.executeRaw<{ ref: string | null }>(
       `SELECT frontmatter->>'reference' AS ref FROM pages WHERE slug = 'people/andy-grove' AND source_id = 'src-a'`,
     );
