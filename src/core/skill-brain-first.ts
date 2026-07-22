@@ -162,9 +162,11 @@ export const PHASE_HEADING_RE = /^##+\s*(?:Phase\s*1|Step\s*0)\b[^\n]*brain/im;
 /**
  * Frontmatter fence regex used by body extraction. Conservative match:
  * leading `---\n` through the next `\n---` (greedy stop). Matches the
- * shape `parseSkillFrontmatter` already accepts.
+ * shape `parseSkillFrontmatter` already accepts, including CRLF fences —
+ * if this stayed LF-only, a CRLF skill's `tools: [web_search]` frontmatter
+ * would survive into the body scan and false-flag the skill (F6).
  */
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 
 // ---------------------------------------------------------------------------
 // Hardcoded EXEMPT_SKILLS (CMT1 — replaces the dropped upgrade migration)

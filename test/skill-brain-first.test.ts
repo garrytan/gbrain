@@ -103,6 +103,36 @@ describe('parseSkillFrontmatter', () => {
     expect(fm!.triggers).toEqual(['foo', 'bar']);
   });
 
+  test('parses frontmatter fences and block arrays with CRLF line endings', () => {
+    const content = [
+      '---',
+      'name: windows-skill',
+      'writes_to:',
+      '  - people/',
+      'tools:',
+      '  - search',
+      'triggers:',
+      '  - windows trigger',
+      '---',
+      '# Windows Skill',
+    ].join('\r\n');
+    const fm = parseSkillFrontmatter(content);
+    expect(fm).not.toBeNull();
+    expect(fm!.name).toBe('windows-skill');
+    expect(fm!.writes_to).toEqual(['people/']);
+    expect(fm!.tools).toEqual(['search']);
+    expect(fm!.triggers).toEqual(['windows trigger']);
+  });
+
+  test('block arrays still tolerate trailing whitespace after the field colon', () => {
+    // Regression guard: the CRLF blockRe must keep `\\s*` as a real
+    // whitespace class inside the template literal (a raw `\s` would turn
+    // it into a literal "s" and silently break `triggers: ` + spaces).
+    const content = '---\nname: x\ntriggers:  \n  - foo\n---\n';
+    const fm = parseSkillFrontmatter(content);
+    expect(fm!.triggers).toEqual(['foo']);
+  });
+
   test('canonical brain_first: exempt populates the typed field', () => {
     const content = '---\nname: x\nbrain_first: exempt\n---\n';
     const fm = parseSkillFrontmatter(content);
@@ -195,6 +225,20 @@ describe('stripFrontmatter', () => {
     // before the gbrain reference.
     expect(findFirstBrainRefOffset(body)).toBeGreaterThanOrEqual(0);
     // Body should NOT contain `web_search` (it was in the stripped frontmatter).
+    expect(body.includes('web_search')).toBe(false);
+  });
+
+  test('F6 holds for CRLF fences — frontmatter tools do not leak into the body scan', () => {
+    const content = [
+      '---',
+      'name: x',
+      'tools: [web_search]',
+      '---',
+      '',
+      '# x',
+      'Body says gbrain search comes first.',
+    ].join('\r\n');
+    const body = stripFrontmatter(content);
     expect(body.includes('web_search')).toBe(false);
   });
 });
