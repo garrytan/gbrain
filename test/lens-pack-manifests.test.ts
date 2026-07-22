@@ -20,6 +20,7 @@ import {
   parseSchemaPackManifest,
   parseYamlMini,
   AGGREGATOR_KINDS,
+  BUNDLED_PACK_NAMES,
   type SchemaPackManifest,
 } from '../src/core/schema-pack/index.ts';
 
@@ -55,13 +56,11 @@ describe('v0.41 T4: all 4 bundled lens packs parse cleanly', () => {
 });
 
 describe('v0.41 T4: bundled registry includes lens packs', () => {
-  test('load-active.ts BUNDLED array source includes the 4 lens pack names', () => {
-    const loadActiveSrc = readFileSync(
-      join(here, '..', 'src', 'core', 'schema-pack', 'load-active.ts'),
-      'utf-8',
-    );
+  test('BUNDLED_PACK_NAMES registry includes the 4 lens pack names', () => {
+    // Registry lives ONCE in mutate.ts (BUNDLED_PACK_NAMES); assert against
+    // the real export instead of grepping load-active.ts source text.
     for (const name of PACK_NAMES) {
-      expect(loadActiveSrc).toContain(`'${name}'`);
+      expect(BUNDLED_PACK_NAMES.has(name)).toBe(true);
     }
   });
 });
