@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { detectInstallTarget } from '../src/commands/autopilot.ts';
+import { detectInstallTarget, renderAutopilotWrapper } from '../src/commands/autopilot.ts';
 
 let tmp: string;
 const envSnapshot: Record<string, string | undefined> = {};
@@ -77,4 +77,36 @@ describe('detectInstallTarget', () => {
   // Note: direct testing of linux-systemd / linux-cron requires mocking
   // existsSync + execSync which is awkward in-process. Those branches are
   // exercised by the E2E test (Task 14) against a stubbed host.
+});
+
+describe('autopilot wrapper', () => {
+  test('finds the current runtime with a minimal service PATH', () => {
+    const runtimeDir = join(tmp, 'runtime');
+    mkdirSync(runtimeDir, { recursive: true });
+
+    const fakeBun = join(runtimeDir, 'bun');
+    writeFileSync(fakeBun, '#!/bin/sh\nprintf \'%s\\n\' "$@"\n', { mode: 0o755 });
+
+    const fakeGbrain = join(tmp, 'gbrain');
+    writeFileSync(fakeGbrain, '#!/usr/bin/env bun\n', { mode: 0o755 });
+
+    const wrapperPath = join(tmp, 'autopilot-run.sh');
+    writeFileSync(
+      wrapperPath,
+      renderAutopilotWrapper('/brain', fakeGbrain, runtimeDir),
+      { mode: 0o755 },
+    );
+
+    const result = Bun.spawnSync({
+      cmd: ['/bin/bash', wrapperPath],
+      env: { HOME: tmp, PATH: '/usr/bin:/bin' },
+    });
+    const stdout = new TextDecoder().decode(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(fakeGbrain);
+    expect(stdout).toContain('autopilot');
+    expect(stdout).toContain('--repo');
+    expect(stdout).toContain('/brain');
+  });
 });
