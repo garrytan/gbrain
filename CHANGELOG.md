@@ -2,6 +2,24 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.61.1] - 2026-07-22
+
+**`add_timeline_entry` now write-throughs the matching markdown timeline bullet** into `pages.timeline` and the brain-repo `.md` (same sink as `put_page` / takes add), so ledger inserts stop leaving git silently stale.
+
+### Itemized changes
+
+#### Fixed
+- **`add_timeline_entry` updates markdown, not just `timeline_entries`.** After the structured insert, the op appends a dated bullet, refreshes `pages.timeline` + `content_hash`, and calls `writePageThrough`. Subagent sandbox stays DB-only; write-through failures are non-fatal (ledger row remains). Idempotent when the bullet is already present. (Minerva fork)
+
+### To take advantage of v0.42.61.1
+
+```bash
+bun install -g github:alexelgier/gbrain#fix/timeline-entry-write-through
+# or after merge: bun install -g github:alexelgier/gbrain
+```
+
+Reload Cursor `user-gbrain` / `gbrain` MCP so the stdio process picks up the new binary. Verify: MCP `add_timeline_entry` response includes `markdown.written: true`.
+
 ## [0.42.61.0] - 2026-07-16
 
 **If gbrain's background daemon dies hard, a restart now takes over right away instead of waiting minutes for a stale lock to expire. Re-processing the same content no longer piles up near-duplicate knowledge atoms. On large brains, the takes bootstrap finally works through the whole corpus instead of re-scanning the same newest pages every run. And `gbrain schema use` can now activate the schema packs gbrain actually ships — including the install default — instead of just one hardcoded name. Cost tracking also learns the newest Claude models, so spend on them is metered instead of invisible.**
