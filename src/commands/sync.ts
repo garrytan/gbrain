@@ -2861,7 +2861,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // reconcile below removes it after a successful import.
       let renameApplied = false;
       try {
-        renameApplied = (await engine.updateSlug(oldSlug, newSlug, renameOpts)) > 0;
+        // sourcePath: this rename tracks a FILE move, so refresh source_path
+        // in the same UPDATE — an unchanged-file rename skips reimport and
+        // would otherwise keep the OLD path, breaking every later
+        // source_path-based resolution for this row (#3056 round-2 review).
+        renameApplied = (await engine.updateSlug(oldSlug, newSlug, { ...renameOpts, sourcePath: to })) > 0;
         if (!renameApplied) {
           serr(
             `  [sync] rename fallback: updateSlug matched no row for ` +
@@ -2893,18 +2897,36 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // oldSlug), in which case nothing landed at newSlug and reconciling
       // would delete the only copy.
       let destMaterialized = false;
+      let importAttempted = false;
+      let importFailureRecorded = false;
       if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
+        importAttempted = true;
         try {
           const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
           if (result.status === 'imported') chunksCreated += result.chunks;
           else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
+            importFailureRecorded = true;
           }
           destMaterialized = result.status === 'imported' ||
             (result.status === 'skipped' && !result.error && result.slug === newSlug);
         } catch (e: unknown) {
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
+          importFailureRecorded = true;
         }
+      }
+      // #3056 round-2 review: on the fallback path, an import that did not
+      // land at newSlug (e.g. identity dedup skipped against the OLD row) is
+      // a failed rename, not a success — record it so the failure gate blocks
+      // the bookmark instead of silently advancing past a rename that never
+      // happened.
+      const renameUnresolved = !renameApplied && importAttempted && !destMaterialized;
+      if (renameUnresolved && !importFailureRecorded) {
+        failedFiles.push({
+          path: to,
+          error: `rename fallback: destination row ${newSlug} did not materialize ` +
+            `(import skipped against a different row); old row left in place`,
+        });
       }
       // #3056 reconcile: the rename fell back to add semantics, so the row
       // that still represents the OLD path is the stale half of the rename
@@ -2947,7 +2969,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
-      if (!reconcileFailed) await markCompleted(to);
+      // An unresolved fallback or a failed reconcile must NOT checkpoint —
+      // the failure gate keeps last_commit in place and the next run retries
+      // this rename from the same diff.
+      if (!reconcileFailed && !renameUnresolved) await markCompleted(to);
       progress.tick(1, newSlug);
     }
     progress.finish();

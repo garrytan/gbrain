@@ -5414,15 +5414,22 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Sync
-  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number> {
+  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string; sourcePath?: string }): Promise<number> {
     newSlug = validateSlug(newSlug);
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (mirrors postgres-engine.ts).
-    const result = await this.db.query(
-      `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3`,
-      [newSlug, oldSlug, sourceId]
-    );
+    // #3056: opts.sourcePath refreshes source_path in the same UPDATE (file
+    // moves); omitted for pure slug migrations.
+    const result = opts?.sourcePath !== undefined
+      ? await this.db.query(
+          `UPDATE pages SET slug = $1, source_path = $4, updated_at = now() WHERE slug = $2 AND source_id = $3`,
+          [newSlug, oldSlug, sourceId, opts.sourcePath]
+        )
+      : await this.db.query(
+          `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3`,
+          [newSlug, oldSlug, sourceId]
+        );
     // #3056: report rows moved so callers can distinguish a real rename from
     // a zero-row no-op (old slug absent), which UPDATE does not throw on.
     return result.affectedRows ?? 0;

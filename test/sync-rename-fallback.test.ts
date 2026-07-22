@@ -201,12 +201,17 @@ describe('#3056: failed updateSlug in the sync rename path', () => {
     execSync('git commit -m "rename carol to dana"', { cwd: repo, stdio: 'pipe' });
 
     const { result } = await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
-    expect(result.status).toBe('synced');
-    expect(result.renameFallbacks).toBe(1);
 
     // The import skipped against the OLD row (identity dedup), so the
-    // destination never materialized — the reconcile must not have deleted
-    // the old row, which still holds the only copy of the content.
+    // destination never materialized. That is a rename that never happened:
+    // the run must NOT advance the bookmark as if it had (round-2 review) —
+    // it lands in failedFiles and blocks, like any other unresolved file.
+    expect(result.status).toBe('blocked_by_failures');
+    expect(result.renameFallbacks).toBe(1);
+    expect(result.failedFiles).toBe(1);
+
+    // ...and the reconcile must not have deleted the old row, which still
+    // holds the only copy of the content.
     const carol = await engine.getPage('people/carol');
     expect(carol).not.toBeNull();
     expect(carol!.compiled_truth).toContain('Carol is a person.');
@@ -269,6 +274,51 @@ describe('#3056: failed updateSlug in the sync rename path', () => {
     expect(after).not.toBeNull();
     expect(after!.id).toBe(before!.id); // cheap-path rename preserved the row
     expect(await engine.getPage('people/carol')).toBeNull();
+    expect(await countPages()).toBe(1);
+
+    // Round-2 review: the unchanged-file rename skips reimport, so the
+    // UPDATE itself must refresh source_path — otherwise every later
+    // source_path-based resolution for this row points at the old path.
+    const rows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = 'people/dana'`,
+    );
+    expect(rows[0]?.source_path).toBe('people/dana.md');
+  });
+
+  test('reconcile failure blocks the bookmark and the next run retries to convergence', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    await engine.putPage('people/dana', {
+      type: 'person', title: 'Dana (stale)', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+
+    execSync('git mv people/carol.md people/dana.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename carol to dana"', { cwd: repo, stdio: 'pipe' });
+
+    // Inject a transient failure into the reconcile delete.
+    const origDelete = engine.deletePage.bind(engine);
+    engine.deletePage = async () => { throw new Error('injected transient delete failure'); };
+    let blocked;
+    try {
+      blocked = (await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }))).result;
+    } finally {
+      engine.deletePage = origDelete;
+    }
+
+    // The failed reconcile is not checkpointed past: the run blocks, the
+    // bookmark stays, and the stale duplicate is still visible.
+    expect(blocked.status).toBe('blocked_by_failures');
+    expect(blocked.failedFiles).toBe(1);
+    expect(await engine.getPage('people/carol')).not.toBeNull();
+
+    // Next run (failure gone) retries the same rename diff and converges.
+    const { result } = await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+    expect(result.status).toBe('synced');
+    expect(await engine.getPage('people/carol')).toBeNull();
+    const dana = await engine.getPage('people/dana');
+    expect(dana).not.toBeNull();
+    expect(dana!.compiled_truth).toContain('Carol is a person.');
     expect(await countPages()).toBe(1);
   });
 });
