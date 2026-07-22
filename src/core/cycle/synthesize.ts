@@ -332,6 +332,21 @@ async function runPgliteSubagentsInline(
       readInbox: async () => queue.readInbox(job.id, lockToken),
     };
 
+    // Per-job deadline enforcement (worker.ts parity). While the drain loop
+    // awaits the handler, the handleTimeouts sweep above can't run, so nothing
+    // else can stop a child that blows past timeout_ms — the handler only
+    // stops when ctx.signal fires. Derive the delay from the claim-time
+    // timeout_at stamp so timer, DB sweeper, and deadlineAtMs agree.
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    if (job.timeout_ms != null) {
+      const delayMs = job.timeout_at != null
+        ? Math.max(0, job.timeout_at.getTime() - Date.now())
+        : job.timeout_ms;
+      timeoutTimer = setTimeout(() => {
+        if (!abort.signal.aborted) abort.abort(new Error('timeout'));
+      }, delayMs);
+    }
+
     // Cycle-lock keepalive while the child runs (best-effort, never throws).
     const keepalive = yieldDuringPhase
       ? setInterval(() => { yieldDuringPhase().catch(() => { /* best-effort */ }); }, 60_000)
@@ -344,16 +359,20 @@ async function runPgliteSubagentsInline(
         result != null ? (typeof result === 'object' ? result as Record<string, unknown> : { value: result }) : undefined,
       );
     } catch (e) {
-      const errorText = e instanceof Error ? e.message : String(e);
+      // Timeout is terminal (handleTimeouts parity: stall → retry,
+      // timeout → dead), never a delayed retry.
+      const timedOut = abort.signal.aborted;
+      const errorText = timedOut ? 'timeout exceeded' : (e instanceof Error ? e.message : String(e));
       const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
       await queue.failJob(
         job.id,
         lockToken,
         errorText,
-        attemptsExhausted ? 'dead' : 'delayed',
+        timedOut || attemptsExhausted ? 'dead' : 'delayed',
         0,
       );
     } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (keepalive) clearInterval(keepalive);
     }
   }

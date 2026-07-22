@@ -590,4 +590,41 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       await rig.cleanup();
     }
   }, 30_000);
+
+  test('enforces per-job timeout_ms inline: aborts the child and dead-letters it', async () => {
+    const rig = await setupRig();
+    try {
+      const { MinionQueue } = await import('../../src/core/minions/queue.ts');
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-timeout-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 3, timeout_ms: 100 },
+        { allowProtectedSubmit: true },
+      );
+
+      // Handler only ends when ctx.signal fires — like the real subagent
+      // handler mid-LLM-call. Without the inline timeout timer this awaits
+      // forever and the drain (and the whole cycle) wedges.
+      await synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        undefined,
+        async (ctx) => {
+          await new Promise((_, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          });
+        },
+      );
+
+      // Timeout is terminal (dead), never a delayed retry, despite max_attempts: 3.
+      const final = await queue.getJob(child.id);
+      expect(final?.status).toBe('dead');
+      expect(final?.error_text).toBe('timeout exceeded');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
 });
