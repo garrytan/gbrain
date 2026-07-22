@@ -17,8 +17,12 @@
  * for those flags per Codex P1 #7.
  */
 
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
+import { parseTakesFence, upsertTakeRow } from '../takes-fence.ts';
+import { withPageLock } from '../page-lock.ts';
 import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
@@ -642,23 +646,54 @@ export async function persistThinkTake(
     return { rowNum: null, inserted: 0, warnings: [`TAKE_ANCHOR_NOT_FOUND: ${anchor}`] };
   }
 
-  const rows = await engine.executeRaw<{ next: number | string }>(
-    `SELECT (COALESCE(MAX(row_num), 0) + 1)::int AS next FROM takes WHERE page_id = $1`,
-    [page.id],
-  );
-  const rowNum = Number(rows[0]?.next ?? 1);
-  const inserted = await engine.addTakesBatch([{
-    page_id: page.id,
-    row_num: rowNum,
-    claim: result.answer.trim(),
-    kind: 'take',
-    holder: 'brain',
-    weight: 0.5,
-    source: 'gbrain think',
-    active: true,
-  }]);
+  // Takes are markdown-fence-canonical (append-only per CEO-D6): a DB-only
+  // row is silently overwritten by the next fence-derived append (addTakesBatch
+  // is ON CONFLICT (page_id, row_num) DO UPDATE) and deleted outright by
+  // `gbrain extract takes --rebuild`. Dual-write markdown + DB with the same
+  // row_num, exactly like `takes add` and proposal accept.
+  const brainDir = await engine.getConfig('sync.repo_path');
+  if (!brainDir) {
+    return { rowNum: null, inserted: 0, warnings: ['TAKE_NO_BRAIN_DIR: takes are markdown-canonical; set sync.repo_path'] };
+  }
+  const path = join(brainDir, `${anchor}.md`);
+  if (!existsSync(path)) {
+    return { rowNum: null, inserted: 0, warnings: [`TAKE_PAGE_FILE_NOT_FOUND: ${path}`] };
+  }
 
-  return { rowNum, inserted, warnings: [] };
+  // Fence table cells cannot hold newlines — collapse the synthesis answer to
+  // one line so the markdown row and the DB claim stay identical.
+  const claim = result.answer.trim().replace(/\s*\n+\s*/g, ' ');
+
+  return withPageLock(anchor, async () => {
+    const body = readFileSync(path, 'utf-8');
+    // Next row_num must clear BOTH the on-disk fence and any DB rows past it
+    // (e.g. pre-fix DB-only rows), or the ON CONFLICT upsert clobbers one.
+    const rows = await engine.executeRaw<{ next: number | string }>(
+      `SELECT (COALESCE(MAX(row_num), 0) + 1)::int AS next FROM takes WHERE page_id = $1`,
+      [page.id],
+    );
+    const dbNext = Number(rows[0]?.next ?? 1);
+    const fence = parseTakesFence(body).takes;
+    const fenceNext = fence.length > 0 ? Math.max(...fence.map(t => t.rowNum)) + 1 : 1;
+    const rowNum = Math.max(dbNext, fenceNext);
+
+    const { body: nextBody } = upsertTakeRow(body, {
+      rowNum, claim, kind: 'take', holder: 'brain', weight: 0.5,
+      source: 'gbrain think', active: true,
+    });
+    writeFileSync(path, nextBody, 'utf-8');
+    const inserted = await engine.addTakesBatch([{
+      page_id: page.id,
+      row_num: rowNum,
+      claim,
+      kind: 'take',
+      holder: 'brain',
+      weight: 0.5,
+      source: 'gbrain think',
+      active: true,
+    }]);
+    return { rowNum, inserted, warnings: [] };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────

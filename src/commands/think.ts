@@ -147,8 +147,8 @@ prints what would have been the input (exit 0).
         for (const w of persistedTake.warnings) result.warnings.push(w);
         if (!persistedTake.rowNum) {
           console.error(
-            'think: --take requested but no take row was written (missing anchor, ' +
-            'missing anchor page, or empty synthesis).',
+            'think: --take requested but no take row was written' +
+            `${persistedTake.warnings.length ? ` (${persistedTake.warnings.join(', ')})` : ''}.`,
           );
           process.exit(1);
         }

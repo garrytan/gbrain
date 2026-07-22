@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { BrainEngine, TakeKind } from './engine.ts';
-import { parseTakesFence, upsertTakeRow } from './takes-fence.ts';
+import { upsertTakeRow } from './takes-fence.ts';
 import { withPageLock } from './page-lock.ts';
 
 export interface TakeProposalRow {

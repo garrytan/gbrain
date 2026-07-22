@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, persistThinkTake, type ThinkLLMClient } from '../src/core/think/index.ts';
@@ -370,7 +373,7 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
     expect(saved.slug).toContain('synthesis/legacy-backcompat');
   });
 
-  test('persistThinkTake appends the synthesis answer as the next anchor take (#2556)', async () => {
+  test('persistThinkTake dual-writes markdown fence + DB on the anchor page (#2556)', async () => {
     const target = await engine.putPage('notes/think-take-target-example', {
       title: 'Think take target',
       type: 'note',
@@ -378,7 +381,7 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
     });
     const result: any = {
       question: 'what should this page remember?',
-      answer: 'This page should remember the synthesized placeholder insight.',
+      answer: 'This page should remember\nthe synthesized placeholder insight.',
       citations: [],
       gaps: [],
       pagesGathered: 0,
@@ -391,18 +394,54 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
       diagnostics: { pagesFromHybrid: 0, takesFromKeyword: 0, takesFromVector: 0, graphHits: 0 },
     };
 
-    const persisted = await persistThinkTake(engine, result, { anchor: target.slug });
+    // No sync.repo_path configured → explicit refusal, nothing written.
+    const noDir = await persistThinkTake(engine, result, { anchor: target.slug });
+    expect(noDir.rowNum).toBeNull();
+    expect(noDir.warnings.some((w: string) => w.startsWith('TAKE_NO_BRAIN_DIR'))).toBe(true);
 
-    expect(persisted).toEqual({ rowNum: 1, inserted: 1, warnings: [] });
-    const takes = await engine.listTakes({ page_id: target.id });
-    expect(takes).toHaveLength(1);
-    expect(takes[0]).toMatchObject({
-      row_num: 1,
-      claim: 'This page should remember the synthesized placeholder insight.',
-      kind: 'take',
-      holder: 'brain',
-      source: 'gbrain think',
-    });
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-think-take-'));
+    try {
+      await engine.setConfig('sync.repo_path', brainDir);
+
+      // Anchor page file missing on disk → explicit refusal (takes are
+      // markdown-canonical; a DB-only row would be clobbered later).
+      const noFile = await persistThinkTake(engine, result, { anchor: target.slug });
+      expect(noFile.rowNum).toBeNull();
+      expect(noFile.warnings.some((w: string) => w.startsWith('TAKE_PAGE_FILE_NOT_FOUND'))).toBe(true);
+      expect(await engine.listTakes({ page_id: target.id })).toHaveLength(0);
+
+      const pagePath = join(brainDir, `${target.slug}.md`);
+      mkdirSync(dirname(pagePath), { recursive: true });
+      writeFileSync(pagePath, '# Think take target\n\nBody\n', 'utf-8');
+      // Pre-existing DB-only row past the (empty) fence: next row_num must
+      // clear it, or the ON CONFLICT upsert would silently overwrite it.
+      await engine.addTakesBatch([{
+        page_id: target.id, row_num: 2, claim: 'pre-existing db-only row',
+        kind: 'take', holder: 'garry', weight: 0.5, active: true,
+      }]);
+
+      const persisted = await persistThinkTake(engine, result, { anchor: target.slug });
+
+      expect(persisted).toEqual({ rowNum: 3, inserted: 1, warnings: [] });
+      const takes = await engine.listTakes({ page_id: target.id });
+      expect(takes).toHaveLength(2);
+      expect(takes.find(t => t.row_num === 3)).toMatchObject({
+        row_num: 3,
+        // Newlines collapse to one line so the fence table row stays parseable.
+        claim: 'This page should remember the synthesized placeholder insight.',
+        kind: 'take',
+        holder: 'brain',
+        source: 'gbrain think',
+      });
+      // Markdown fence is canonical — the same row must land on disk.
+      const body = readFileSync(pagePath, 'utf-8');
+      expect(body).toContain('| 3 |');
+      expect(body).toContain('This page should remember the synthesized placeholder insight.');
+      expect(body).toContain('gbrain think');
+    } finally {
+      await engine.unsetConfig('sync.repo_path');
+      rmSync(brainDir, { recursive: true, force: true });
+    }
   });
 
   test('persistThinkTake refuses empty/no-LLM synthesis instead of writing a blank take (#2556)', async () => {
