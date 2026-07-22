@@ -60,7 +60,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "get more out of gbrain", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "gbrain advisor" | `skills/gbrain-advisor/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
-| "save this learning to the vault", "capture this skill in Obsidian", "record this workflow in my notes", "put this setup change in the knowledge base" | `skills/skill-vault-capture-policy/SKILL.md` |
+| "save this learning to the vault", "capture this skill in Obsidian", "record this workflow in my notes", "put this setup change in the vault" | `skills/skill-vault-capture-policy/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper", "add tests and evals for this" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
@@ -79,7 +79,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Set up GBrain", first boot | `skills/setup/SKILL.md` |
 | "Now what?", "fill my brain", "cold start", "bootstrap", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
-| "Connect Obsidian to gbrain", "sync vault and gbrain", "safe/free gbrain index", "embed gbrain after vault update", "is gbrain synced with my vault" | `skills/obsidian-gbrain-safe-index/SKILL.md` |
+| "Connect Obsidian to gbrain", "import my vault to gbrain", "sync vault and gbrain", "embed gbrain after vault update", "is gbrain synced with my vault" | `skills/obsidian-gbrain-safe-index/SKILL.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |

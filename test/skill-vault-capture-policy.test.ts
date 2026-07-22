@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { DEFAULT_PRIVATE_PATTERNS } from '../src/core/skillpack/harvest-lint.ts';
 
 const SKILL_DIR = join(import.meta.dir, '..', 'skills', 'skill-vault-capture-policy');
 const SKILL_MD = join(SKILL_DIR, 'SKILL.md');
@@ -40,7 +41,11 @@ describe('skill-vault-capture-policy skill', () => {
   it('contains no private user or agent-fork names (privacy rule)', () => {
     for (const file of [SKILL_MD, join(SKILL_DIR, 'routing-eval.jsonl')]) {
       const body = readFileSync(file, 'utf-8');
-      for (const name of [/\bAdam\b/, /\bHermes\b/, /\bHerdr\b/, /\bArk\b/, /\bWintermute\b/i]) {
+      // DEFAULT_PRIVATE_PATTERNS[0] is the banned fork-name pattern; sourced
+      // from harvest-lint so this file never contains the literal itself
+      // (scripts/check-privacy.sh would reject it).
+      const forkName = new RegExp(DEFAULT_PRIVATE_PATTERNS[0], 'i');
+      for (const name of [/\bAdam\b/, /\bHermes\b/, /\bHerdr\b/, /\bArk\b/, forkName]) {
         expect(name.test(body), `private name ${name} in ${file}`).toBe(false);
       }
     }
