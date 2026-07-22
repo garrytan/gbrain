@@ -2055,11 +2055,26 @@ export async function registerBuiltinHandlers(
         ? job.data.repoPath
         : ((await engine.getConfig('sync.repo_path')) ?? undefined);
     try {
-      return await runExtractAtomsDrainForSource(engine, {
+      const result = await runExtractAtomsDrainForSource(engine, {
         sourceId,
         windowSeconds,
         brainDir: repoPath,
       });
+      // issue #3218: every item the drain attempted failed (0 succeeded, >=1
+      // provider error) — completing this job normally would mark the
+      // durable job done while the backlog sits untouched, and no retry
+      // policy would ever fire on it again. Throw so the worker's ordinary
+      // failJob path (attempt+backoff, or dead-letter once exhausted) takes
+      // over instead — matching the existing behavior for every other
+      // handler failure. Partial success (>=1 item extracted) keeps
+      // completing normally, unchanged.
+      if (result.status === 'provider_failure') {
+        throw new Error(
+          `extract-atoms-drain: all provider calls failed this batch ` +
+          `(batches=${result.batches}, remaining=${result.remaining ?? '?'}) — retrying`,
+        );
+      }
+      return result;
     } catch (e) {
       if (e instanceof LockUnavailableError) {
         return { phase: 'extract_atoms', status: 'skipped', deferred: true, reason: 'cycle_already_running' };
