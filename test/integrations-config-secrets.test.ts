@@ -4,53 +4,47 @@
  * buildGatewayConfig folds into the gateway env. Also pins the X recipe's
  * secret name to the env var the x-api resolver actually reads.
  */
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'fs';
+import { describe, test, expect, beforeEach } from 'bun:test';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import matter from 'gray-matter';
+import { withEnv } from './helpers/with-env.ts';
 import { secretValue } from '../src/commands/integrations.ts';
 
-const originalHome = process.env.GBRAIN_HOME;
-const originalKey = process.env.ANTHROPIC_API_KEY;
 let home: string;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'gbrain-secrets-'));
-  process.env.GBRAIN_HOME = home;
-  delete process.env.ANTHROPIC_API_KEY;
-});
-
-afterAll(() => {
-  if (originalHome === undefined) delete process.env.GBRAIN_HOME;
-  else process.env.GBRAIN_HOME = originalHome;
-  if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-  else process.env.ANTHROPIC_API_KEY = originalKey;
-  rmSync(home, { recursive: true, force: true });
 });
 
 describe('secretValue folds config-stored creds (#2789)', () => {
-  test('config.json anthropic_api_key resolves when env is unset', () => {
+  test('config.json anthropic_api_key resolves when env is unset', async () => {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     writeFileSync(
       join(home, '.gbrain', 'config.json'),
       JSON.stringify({ engine: 'pglite', database_path: '/x', anthropic_api_key: 'sk-cfg-only' }),
     );
-    expect(secretValue('ANTHROPIC_API_KEY')).toBe('sk-cfg-only');
+    await withEnv({ GBRAIN_HOME: home, ANTHROPIC_API_KEY: undefined }, () => {
+      expect(secretValue('ANTHROPIC_API_KEY')).toBe('sk-cfg-only');
+    });
   });
 
-  test('process.env wins over config.json', () => {
+  test('process.env wins over config.json', async () => {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     writeFileSync(
       join(home, '.gbrain', 'config.json'),
       JSON.stringify({ engine: 'pglite', database_path: '/x', anthropic_api_key: 'sk-cfg' }),
     );
-    process.env.ANTHROPIC_API_KEY = 'sk-env';
-    expect(secretValue('ANTHROPIC_API_KEY')).toBe('sk-env');
+    await withEnv({ GBRAIN_HOME: home, ANTHROPIC_API_KEY: 'sk-env' }, () => {
+      expect(secretValue('ANTHROPIC_API_KEY')).toBe('sk-env');
+    });
   });
 
-  test('missing everywhere resolves undefined', () => {
-    expect(secretValue('DEFINITELY_NOT_SET_ANYWHERE_XYZ')).toBeUndefined();
+  test('missing everywhere resolves undefined', async () => {
+    await withEnv({ GBRAIN_HOME: home, ANTHROPIC_API_KEY: undefined }, () => {
+      expect(secretValue('DEFINITELY_NOT_SET_ANYWHERE_XYZ')).toBeUndefined();
+    });
   });
 });
 

@@ -5,14 +5,14 @@
  * silent no-op. `config unset` for the same keys must remove the file-plane
  * value.
  */
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { describe, test, expect, beforeEach } from 'bun:test';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { withEnv } from './helpers/with-env.ts';
 import { runConfig, API_KEY_FILE_PLANE_KEYS } from '../src/commands/config.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
-const originalHome = process.env.GBRAIN_HOME;
 let home: string;
 let configJson: string;
 let setConfigCalls: Array<[string, string]>;
@@ -27,21 +27,16 @@ const stubEngine = {
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'gbrain-apikey-'));
-  process.env.GBRAIN_HOME = home;
   configJson = join(home, '.gbrain', 'config.json');
   setConfigCalls = [];
   unsetConfigCalls = [];
 });
 
-afterAll(() => {
-  if (originalHome === undefined) delete process.env.GBRAIN_HOME;
-  else process.env.GBRAIN_HOME = originalHome;
-  rmSync(home, { recursive: true, force: true });
-});
-
 describe('config set *_api_key writes the file plane (#2119)', () => {
   test('anthropic_api_key lands in ~/.gbrain/config.json, not the DB plane', async () => {
-    await runConfig(stubEngine, ['set', 'anthropic_api_key', 'sk-ant-test-123']);
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await runConfig(stubEngine, ['set', 'anthropic_api_key', 'sk-ant-test-123']);
+    });
     const saved = JSON.parse(readFileSync(configJson, 'utf-8'));
     expect(saved.anthropic_api_key).toBe('sk-ant-test-123');
     expect(setConfigCalls).toEqual([]); // DB plane untouched — nothing reads keys there
@@ -50,7 +45,9 @@ describe('config set *_api_key writes the file plane (#2119)', () => {
   test('preserves existing file-plane fields', async () => {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     writeFileSync(configJson, JSON.stringify({ engine: 'pglite', database_path: '/x' }));
-    await runConfig(stubEngine, ['set', 'openai_api_key', 'sk-oai-test']);
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await runConfig(stubEngine, ['set', 'openai_api_key', 'sk-oai-test']);
+    });
     const saved = JSON.parse(readFileSync(configJson, 'utf-8'));
     expect(saved.engine).toBe('pglite');
     expect(saved.openai_api_key).toBe('sk-oai-test');
@@ -59,7 +56,9 @@ describe('config set *_api_key writes the file plane (#2119)', () => {
   test('unset removes the file-plane key and clears any stale DB row', async () => {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     writeFileSync(configJson, JSON.stringify({ anthropic_api_key: 'sk-old' }));
-    await runConfig(stubEngine, ['unset', 'anthropic_api_key']);
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await runConfig(stubEngine, ['unset', 'anthropic_api_key']);
+    });
     const saved = JSON.parse(readFileSync(configJson, 'utf-8'));
     expect(saved.anthropic_api_key).toBeUndefined();
     expect(unsetConfigCalls).toEqual(['anthropic_api_key']);
