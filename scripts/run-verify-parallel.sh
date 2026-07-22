@@ -43,6 +43,7 @@ CHECKS=(
   "check:source-config-leak"
   "check:progress"
   "check:test-isolation"
+  "check:gateway-reset"
   "check:wasm"
   "check:admin-build"
   "check:admin-scope-drift"
