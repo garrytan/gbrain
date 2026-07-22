@@ -281,6 +281,21 @@ export async function phaseBFenceFacts(
         const existingFence = parseFactsFence(body);
         const existingKeySet = new Set(existingFence.facts.map(f => `${f.claim}\0${f.source ?? ''}`));
 
+        // Seed appended row_nums from MAX(fence max, DB max) — same #2044
+        // divergence guard as writeFactsToFence. When the fence at the
+        // resolved path is missing/behind but the DB already holds stamped
+        // rows for this slug (legacy wrong-path fence writes), fence-max+1
+        // collides with idx_facts_fence_key on the post-rename UPDATE,
+        // failing the page and leaving fence and DB disagreeing.
+        const dbMaxRows = await engine.executeRaw<{ max: number | string | null }>(
+          `SELECT MAX(row_num) AS max FROM facts
+            WHERE source_id = $1 AND source_markdown_slug = $2`,
+          [sourceId, entitySlug],
+        );
+        const dbMaxRowNum = Number(dbMaxRows[0]?.max ?? 0) || 0;
+        const fenceMaxRowNum = existingFence.facts.reduce((m, f) => Math.max(m, f.rowNum), 0);
+        let nextRowNum = Math.max(fenceMaxRowNum, dbMaxRowNum) + 1;
+
         const assignments: Array<{ id: string; row_num: number }> = [];
         for (const row of group) {
           const key = `${row.fact}\0${row.source ?? ''}`;
@@ -303,6 +318,7 @@ export async function phaseBFenceFacts(
                 .toISOString().slice(0, 10)
             : undefined;
           const { body: updated, rowNum } = upsertFactRow(body, {
+            rowNum:     nextRowNum++,
             claim:      row.fact,
             kind:       row.kind,
             confidence: row.confidence,
