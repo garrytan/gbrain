@@ -218,15 +218,22 @@ describe('progress reporter', () => {
   test('only one process-level signal handler installed across many reporters', () => {
     // Baseline: one handler already installed by prior tests in this file.
     const installedBefore = __signalHandlerInstalledForTest();
+    // Baseline the live count too. Other test files sharing this shard process
+    // may legitimately hold reporters open while this test runs, and shard
+    // composition (which shifts whenever any PR adds or removes a test file)
+    // decides who those neighbors are. Asserting the absolute count made this
+    // test fail on unrelated PRs; the invariant this test owns is that its own
+    // 50 lifecycles leak nothing — a net-zero delta.
+    const liveBefore = __liveReporterCountForTest();
     const { stream } = sink(false);
     for (let i = 0; i < 50; i++) {
       const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
       p.start(`phase_${i}`, 1);
       p.finish();
     }
-    // After 50 reporter lifecycles, still exactly one handler and zero leaked live entries.
+    // After 50 reporter lifecycles, still exactly one handler and no net leak.
     expect(__signalHandlerInstalledForTest()).toBe(installedBefore || true);
-    expect(__liveReporterCountForTest()).toBe(0);
+    expect(__liveReporterCountForTest()).toBe(liveBefore);
   });
 
   test('startHeartbeat() fires heartbeats and stop() clears', async () => {
