@@ -918,12 +918,28 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
  *
  * 100 MiB is generous but still bounded — a 100K-file diff with long
  * paths tops out around 10–20 MiB in practice.
+ *
+ * `silenceStderr`: Node's `execFileSync` writes the child's stderr straight
+ * through to the parent's real stderr by default (in addition to attaching
+ * it to the thrown error's `.stderr`) *unless* an explicit `stdio` array is
+ * given. Callers that treat a failure as an expected, self-handled outcome
+ * (rather than a crash to surface) pass `silenceStderr: true` so git's raw
+ * `fatal: ...` line never reaches the process's own stderr — only the
+ * caller's own (usually friendlier) handling of the caught error does.
+ * Default `false` preserves today's passthrough for every other call site.
  */
-function git(repoPath: string, args: string[], configs: string[] = [], timeoutMs = 30000): string {
+function git(
+  repoPath: string,
+  args: string[],
+  configs: string[] = [],
+  timeoutMs = 30000,
+  { silenceStderr = false }: { silenceStderr?: boolean } = {},
+): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
     timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
+    ...(silenceStderr ? { stdio: ['ignore', 'pipe', 'pipe'] as const } : {}),
   }).trim();
 }
 
@@ -932,10 +948,19 @@ function git(repoPath: string, args: string[], configs: string[] = [], timeoutMs
  * `git -C <path> rev-parse --show-toplevel`. Handles worktrees and submodules
  * natively (git itself resolves them). Throws a user-friendly error when no
  * git repo is found.
+ *
+ * The probe's failure is expected and routine (a non-git-yet brain dir, a
+ * scratch dir, a caller checking "is this a repo?") — `sync.ts` self-heals
+ * it (git-init) or surfaces the message below, never the raw git stderr.
+ * `silenceStderr: true` keeps git's own `fatal: not a git repository ...`
+ * off the process's real stderr so operator log-scanning for `fatal:` as a
+ * crash signature doesn't false-alarm on every routine probe miss (#2964
+ * auto-recovery made the *outcome* self-healing; this keeps the *log* quiet
+ * about the expected miss that triggered it).
  */
 export function discoverGitRoot(inputPath: string): string {
   try {
-    return git(inputPath, ['rev-parse', '--show-toplevel']);
+    return git(inputPath, ['rev-parse', '--show-toplevel'], [], 30000, { silenceStderr: true });
   } catch {
     throw new Error(
       `Not inside a git repository: ${inputPath}. GBrain sync requires a git-initialized repo (or a subdirectory of one).`,
