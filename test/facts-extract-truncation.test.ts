@@ -39,6 +39,9 @@ beforeEach(() => {
 // restore the legacy 1536-d embedding pin so later fresh-schema files in
 // this shard don't inherit a dimensionless gateway.
 afterAll(() => {
+  // #3066: resetGateway() first so the guard sees a clean teardown, then
+  // restore the legacy pin below for sibling files in this shard.
+  resetGateway();
   __setChatTransportForTests(null);
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',

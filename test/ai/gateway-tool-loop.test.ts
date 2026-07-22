@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'bun:test';
 import {
   toolLoop,
   __setChatTransportForTests,
@@ -7,6 +7,11 @@ import {
   type ChatBlock,
   type ToolHandler,
 } from '../../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () => {
   beforeEach(() => {

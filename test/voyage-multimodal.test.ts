@@ -4,10 +4,15 @@
 // 401 / 429 / dim-mismatch error paths, and the off-by-one batch math
 // (n=0, n=1, n=32, n=33, n=64) flagged by Eng-3A.
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, afterAll } from 'bun:test';
 import { configureGateway, embedMultimodal, resetGateway } from '../src/core/ai/gateway.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import { AIConfigError, AITransientError } from '../src/core/ai/errors.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 // Capture all fetch calls. Each test installs a fresh handler and asserts
 // the request shape AND returns a plausible Voyage payload.

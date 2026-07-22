@@ -8,7 +8,7 @@
 //   - Cache miss: same query asked twice WITH llm_intent=true makes 2 LLM calls
 //     (caching is the existing query_cache layer, not a per-process LRU)
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, afterAll } from 'bun:test';
 import {
   classifyModalityWithLLM,
   parseModality,
@@ -18,6 +18,11 @@ import {
   configureGateway,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 beforeEach(() => {
   configureGateway({

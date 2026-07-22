@@ -3,9 +3,14 @@
 // voyage-multimodal.test.ts; covers the new embedMultimodalOpenAICompat
 // path including D12 dim validation.
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, afterAll } from 'bun:test';
 import { configureGateway, embedMultimodal, resetGateway } from '../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../src/core/ai/errors.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 type FetchHandler = (url: string, init: RequestInit) => Promise<Response>;
 let fetchHandler: FetchHandler | null = null;

@@ -13,11 +13,16 @@
  *   - init-specific message names --no-embedding / --skip-embed-check (not --no-embed)
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, afterAll } from 'bun:test';
 import { withEnv } from './helpers/with-env.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { runInitEmbedCheck } from '../src/core/init-embed-check.ts';
 import { __setEmbedTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 const OPENAI = 'openai:text-embedding-3-large';
 

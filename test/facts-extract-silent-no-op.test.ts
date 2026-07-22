@@ -44,6 +44,9 @@ beforeEach(() => {
 // 1536-d fixtures (bit engine-find-trajectory in CI shard 5). Restore the
 // legacy pin on exit.
 afterAll(() => {
+  // #3066: resetGateway() first so the guard sees a clean teardown, then
+  // restore the legacy pin below for sibling files in this shard.
+  resetGateway();
   __setChatTransportForTests(null);
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',

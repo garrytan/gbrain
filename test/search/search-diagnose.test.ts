@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
+import { __setEmbedTransportForTests, resetGateway } from '../../src/core/ai/gateway.ts';
 import { runSearchDiagnose } from '../../src/commands/search-diagnose.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
@@ -35,7 +35,9 @@ beforeAll(async () => {
   await engine.setPageAliases('projects/mingtang', 'default', ['hall of light']);
 });
 
-afterAll(async () => { __setEmbedTransportForTests(null); await engine.disconnect(); });
+// #3066: reset gateway state at file teardown so it doesn't leak into
+// whichever file runs next in this shard process.
+afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await engine.disconnect(); });
 
 describe('search diagnose', () => {
   test('alias query: trace shows alias match + hybrid rank 1', async () => {

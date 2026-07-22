@@ -16,7 +16,7 @@
  *     nothing), and config `provider_chat_options` overrides the derived key
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   chat,
   configureGateway,
@@ -24,6 +24,11 @@ import {
   resetGateway,
   __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 describe('openAIPromptCacheKey — derivation', () => {
   test('same system + same tools → identical stable key (sticky routing)', () => {
