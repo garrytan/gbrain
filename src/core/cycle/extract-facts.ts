@@ -100,6 +100,17 @@ function dedupeFactsByContentKey(facts: FenceExtractedFact[]): FenceExtractedFac
  * carry a row_num), so they must neither count as "stale" (forcing a
  * wipe every cycle) nor mask a fence row from insertion. Mirrors the
  * preserveExpiredLegacy filter deleteFactsForPage applies on the wipe.
+ *
+ * Deliberate consequence: if the fence still carries the same
+ * (claim, source) as an expired legacy row, the reconcile inserts it
+ * as a fresh ACTIVE fence-owned row. That is the fence-is-canonical
+ * contract working as documented — legacy DB-only forgets "DO NOT
+ * survive rebuild" (see forget.ts header); suppressing the insert
+ * would instead create silent fence↔DB divergence, the exact failure
+ * mode the empty-fence guard exists to prevent. To durably forget
+ * such a claim, forget the fence-owned row (forget_fact now takes the
+ * fence path, which strikes the row through in markdown). The expired
+ * legacy row survives alongside as the record of the earlier forget.
  */
 async function listExistingFactsForPage(
   engine: BrainEngine,

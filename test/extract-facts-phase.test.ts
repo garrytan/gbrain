@@ -443,6 +443,49 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
       .toEqual(['forgotten hybrid claim', 'replacement fact']);
   });
 
+  test('fence claim matching an expired legacy row is inserted active — fence is canonical (#2646)', async () => {
+    // Deliberate semantics, pinned: legacy DB-only forgets are
+    // documented NOT to survive rebuild (forget.ts header — the
+    // explicit DB-only exception). When the fence still carries the
+    // same (claim, source), the reconcile inserts a fresh active
+    // fence-owned row; the expired legacy row survives alongside as
+    // the record of the earlier forget. Suppressing the insert would
+    // create silent fence↔DB divergence ("0 facts" while the fence
+    // says otherwise) — the exact failure mode the guard prevents.
+    // To durably forget, forget the fence-owned row (fence path).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'shared claim', 'fact', 'private', 'medium',
+               now(), 's', 1.0, now(), 'people/alice')`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | shared claim | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r1 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    const r2 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r1.factsInserted).toBe(1);
+    expect(r1.factsDeleted).toBe(0);
+    // Idempotent thereafter — the coexisting pair is stable state.
+    expect(r2.factsInserted).toBe(0);
+    expect(r2.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, row_num, expired_at FROM facts
+        WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows[0]).toMatchObject({ fact: 'shared claim', row_num: null });
+    expect(rows.rows[0].expired_at).not.toBeNull();   // forget record preserved
+    expect(rows.rows[1]).toMatchObject({ fact: 'shared claim', row_num: 1 });
+    expect(rows.rows[1].expired_at).toBeNull();       // fence-canonical active row
+  });
+
   test('mixed active + expired legacy rows: guard counts only the active ones (#2646)', async () => {
     // One active legacy row + one soft-expired legacy row. The guard
     // must still trigger (an active row is pending backfill) but the
