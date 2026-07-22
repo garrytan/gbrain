@@ -12,6 +12,7 @@ import { describe, expect, test } from 'bun:test';
 import { DEFAULT_SLOTS } from '../src/core/cross-modal-eval/runner.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import { splitProviderModelId } from '../src/core/model-id.ts';
+import { canonicalLookup } from '../src/core/model-pricing.ts';
 
 describe('cross-modal DEFAULT_SLOTS ↔ recipe consistency', () => {
   test('every default slot model is listed in its recipe chat touchpoint', () => {
@@ -25,6 +26,17 @@ describe('cross-modal DEFAULT_SLOTS ↔ recipe consistency', () => {
         chatModels,
         `slot ${slot.id}: "${model}" not listed for ${provider} chat — the judge slot can never run`,
       ).toContain(model);
+    }
+  });
+
+  test('every default slot model has a canonical pricing entry', () => {
+    // Without one, estimateCost silently drops the slot from the
+    // --max-usd pre-flight and est_cost_usd audit rows (~1/3 under-count).
+    for (const slot of DEFAULT_SLOTS) {
+      expect(
+        canonicalLookup(slot.model),
+        `slot ${slot.id}: "${slot.model}" missing from CANONICAL_PRICING`,
+      ).toBeDefined();
     }
   });
 
