@@ -39,6 +39,13 @@ import {
   ALLOWED_TYPES,
 } from '../src/commands/extract-conversation-facts.ts';
 
+// #3066: this file has several sibling top-level describe() blocks, and the
+// existing reset (below, inside runExtractConversationFactsCore's describe)
+// only covers that one describe — safe today only because no later describe
+// re-touches the gateway. Add a genuine file-wide reset here so that
+// invariant doesn't depend on which describe happens to run last.
+afterAll(() => resetGateway());
+
 // ---------------------------------------------------------------------------
 // Fixture helpers.
 // ---------------------------------------------------------------------------
