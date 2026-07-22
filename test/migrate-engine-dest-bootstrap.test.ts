@@ -4,9 +4,10 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { bootstrapDestinationConfig } from '../src/commands/migrate-engine.ts';
 import { loadConfigFileOnly } from '../src/core/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('migrate --to pglite destination bootstrap (#1271)', () => {
-  test('writes <path>/.gbrain/config.json so GBRAIN_HOME=<path> resolves a brain', () => {
+  test('writes <path>/.gbrain/config.json so GBRAIN_HOME=<path> resolves a brain', async () => {
     const dest = mkdtempSync(join(tmpdir(), 'gbrain-dest-'));
     const written = bootstrapDestinationConfig(dest);
     const file = join(dest, '.gbrain', 'config.json');
@@ -21,16 +22,11 @@ describe('migrate --to pglite destination bootstrap (#1271)', () => {
 
     // The exact failure mode from #1271: config resolution under
     // GBRAIN_HOME=<path> used to find nothing ("No brain configured").
-    const prev = process.env.GBRAIN_HOME;
-    process.env.GBRAIN_HOME = dest;
-    try {
+    await withEnv({ GBRAIN_HOME: dest }, () => {
       const loaded = loadConfigFileOnly();
       expect(loaded?.engine).toBe('pglite');
       expect(loaded?.database_path).toBe(resolve(dest));
-    } finally {
-      if (prev === undefined) delete process.env.GBRAIN_HOME;
-      else process.env.GBRAIN_HOME = prev;
-    }
+    });
   });
 
   test('never clobbers an existing destination config', () => {
