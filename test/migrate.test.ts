@@ -624,24 +624,75 @@ describe('migrate v14 — pages_updated_at_index (handler-based, engine-aware)',
     expect(v14!.sql).toBe('');
   });
 
-  test('v14 handler source contains CONCURRENTLY + invalid-index cleanup for Postgres branch', async () => {
+  test('v14 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/migrate.ts', 'utf-8');
     const v14Start = src.indexOf("name: 'pages_updated_at_index'");
     expect(v14Start).toBeGreaterThan(-1);
     const v14Block = src.slice(v14Start, v14Start + 3000);
-    expect(v14Block).toContain('pg_index');
-    expect(v14Block).toContain('indisvalid');
-    expect(v14Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc');
+    expect(v14Block).toContain("dropInvalidConcurrentIndex(engine, 14, 'idx_pages_updated_at_desc')");
     expect(v14Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_updated_at_desc');
-    // Order within the handler body: DROP IF EXISTS must precede CREATE IF NOT EXISTS,
-    // so a failed prior CONCURRENTLY build is cleaned before re-create. Anchor on the
-    // explicit "IF EXISTS" / "IF NOT EXISTS" phrases so the header doc-comment
-    // (which mentions both unqualified) doesn't fool the ordering assertion.
-    const dropIdx = v14Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    expect(v14Block).not.toContain('DO $$');
+    // Order within the handler body: the cleanup call must precede CREATE IF NOT
+    // EXISTS, so a failed prior CONCURRENTLY build is cleaned before re-create.
+    const dropIdx = v14Block.indexOf('dropInvalidConcurrentIndex');
     const createIdx = v14Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
     expect(dropIdx).toBeLessThan(createIdx);
     expect(v14Block).toContain('engine.kind');
+  });
+});
+
+// #1178: DO $$ ... EXECUTE 'DROP INDEX CONCURRENTLY ...' END $$ is rejected by
+// Postgres whenever the guard condition fires (CONCURRENTLY can't run from any
+// function/EXECUTE context). All 11 historical migrations that pre-drop an
+// invalid CONCURRENTLY remnant now route through the dropInvalidConcurrentIndex()
+// helper instead. This locks the whole file against the old shape reappearing —
+// e.g. a future migration copy-pasting the nearest similar one instead of
+// reaching for the helper.
+describe('migrate — DROP INDEX CONCURRENTLY invalid-remnant cleanup (#1178, file-wide)', () => {
+  const KNOWN_SITES: Array<{ version: number; indexName: string }> = [
+    { version: 14, indexName: 'idx_pages_updated_at_desc' },
+    { version: 34, indexName: 'pages_deleted_at_purge_idx' },
+    { version: 38, indexName: 'pages_coalesce_date_idx' },
+    { version: 66, indexName: 'idx_chunks_embedding_null' },
+    { version: 71, indexName: 'takes_resolved_at_idx' },
+    { version: 91, indexName: 'pages_generation_idx' },
+    { version: 96, indexName: 'idx_facts_extract_conversation_session' },
+    { version: 97, indexName: 'pages_dedup_idx' },
+    { version: 103, indexName: 'content_chunks_stale_idx' },
+    { version: 104, indexName: 'pages_atom_source_hash_idx' },
+    { version: 112, indexName: 'pages_links_extracted_at_idx' },
+  ];
+
+  test('no DO $$ ... EXECUTE .DROP INDEX CONCURRENTLY. shape remains anywhere in migrate.ts', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    // `DO $$ ... END $$` blocks are a normal Postgres idiom used all over this
+    // file for unrelated conditional DDL — only the specific combination that
+    // EXECUTEs a DROP INDEX CONCURRENTLY string is the #1178 bug shape.
+    expect(src).not.toMatch(/EXECUTE\s+'DROP INDEX CONCURRENTLY/);
+  });
+
+  test('every known invalid-remnant site calls dropInvalidConcurrentIndex(engine, version, indexName)', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    for (const { version, indexName } of KNOWN_SITES) {
+      expect(src).toContain(`dropInvalidConcurrentIndex(engine, ${version}, '${indexName}')`);
+    }
+  });
+
+  test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO block)', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const helperStart = src.indexOf('async function dropInvalidConcurrentIndex');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperBlock = src.slice(helperStart, helperStart + 1200);
+    expect(helperBlock).toContain('pg_index');
+    expect(helperBlock).toContain('indisvalid');
+    expect(helperBlock).toContain('executeRaw');
+    expect(helperBlock).toContain('DROP INDEX CONCURRENTLY IF EXISTS');
+    expect(helperBlock).not.toContain('DO $$');
+    expect(helperBlock).not.toContain('EXECUTE ');
   });
 });
 
