@@ -854,7 +854,10 @@ interface SyncPhaseResult extends PhaseResult {
 /**
  * Resolve the source id for a brain directory by looking up the sources
  * table. Returns undefined when no registered source matches (falls back
- * to pre-v0.18 global config.sync.* keys).
+ * to pre-v0.18 global config.sync.* keys) OR when MORE than one source
+ * claims the path — an ambiguous match must not scope phases or stamp
+ * last_full_cycle_at for an arbitrarily-picked source (the "freshness
+ * stamp that lies" this resolution exists to prevent).
  */
 async function resolveSourceForDir(
   engine: BrainEngine,
@@ -865,10 +868,10 @@ async function resolveSourceForDir(
   if (brainDir === null) return undefined;
   try {
     const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
+      `SELECT id FROM sources WHERE local_path = $1 LIMIT 2`,
       [brainDir],
     );
-    return rows[0]?.id;
+    return rows.length === 1 ? rows[0]!.id : undefined;
   } catch {
     // sources table might not exist on very old brains — fall through.
     return undefined;
