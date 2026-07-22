@@ -227,6 +227,20 @@ describe('stripFrontmatter', () => {
     // Body should NOT contain `web_search` (it was in the stripped frontmatter).
     expect(body.includes('web_search')).toBe(false);
   });
+
+  test('F6 holds for CRLF fences — frontmatter tools do not leak into the body scan', () => {
+    const content = [
+      '---',
+      'name: x',
+      'tools: [web_search]',
+      '---',
+      '',
+      '# x',
+      'Body says gbrain search comes first.',
+    ].join('\r\n');
+    const body = stripFrontmatter(content);
+    expect(body.includes('web_search')).toBe(false);
+  });
 });
 
 describe('offset helpers', () => {
