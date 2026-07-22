@@ -127,6 +127,30 @@ describe('embedBatch bounded parallelism (#1818)', () => {
     await expect(embedBatch(texts, { onBatchComplete: () => {} })).rejects.toThrow();
   });
 
+  test('after a failure, surviving workers stop dispatching new slices', async () => {
+    // 1000 texts → 10 slices, concurrency 2. First call fails immediately;
+    // without the `failed` flag the second worker would keep draining all
+    // 10 slices in the background AFTER embedBatch already rejected —
+    // burning provider spend and firing onBatchComplete post-rejection.
+    let calls = 0;
+    const completions: number[] = [];
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      calls++;
+      if (calls === 1) throw new Error('boom');
+      await new Promise(r => setTimeout(r, 5));
+      return { embeddings: values.map(() => Array.from({ length: DIMS }, () => 0.1)) };
+    }) as any);
+    const many = Array.from({ length: 1000 }, (_, i) => `t${i}`);
+    await expect(
+      embedBatch(many, { concurrency: 2, onBatchComplete: d => completions.push(d) }),
+    ).rejects.toThrow('boom');
+    const callsAtRejection = calls;
+    await new Promise(r => setTimeout(r, 50)); // would-be background drain window
+    expect(calls).toBe(callsAtRejection); // no new dispatch after rejection
+    expect(calls).toBeLessThanOrEqual(2); // only the in-flight sibling ran
+    expect(completions).toHaveLength(0); // no progress reported after failure
+  });
+
   test('single small batch without callback stays on the one-call fast path', async () => {
     const tracker = installTrackingTransport(1);
     const result = await embedBatch(['t0', 't1', 't2']);

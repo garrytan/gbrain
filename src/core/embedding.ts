@@ -134,16 +134,29 @@ export async function embedBatch(
   let next = 0;
   let done = 0;
   const numWorkers = Math.min(resolveEmbedBatchConcurrency(options), slices.length);
+  // Once any sub-batch fails, `failed` stops the surviving workers from
+  // dispatching FURTHER slices — the whole call is rejecting anyway, so
+  // continuing would burn real provider spend in the background and fire
+  // onBatchComplete after the caller already saw the failure (worst with
+  // embedBatchWithBackoff, whose 429 backoff assumes nothing is in flight).
+  // In-flight sibling calls still run to completion (bounded by numWorkers-1).
+  let failed = false;
   const worker = async (): Promise<void> => {
-    while (next < slices.length) {
+    while (!failed && next < slices.length) {
       // NOTE: no local aborted-check here — an aborted signal makes the next
       // gatewayEmbed call throw (SDK-side), which rejects the pool. Returning
       // silently instead would resolve with holes in `results`.
       const slice = slices[next++];
-      const out = await gatewayEmbed(slice.texts, gwOpts);
+      let out: Float32Array[];
+      try {
+        out = await gatewayEmbed(slice.texts, gwOpts);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
       for (let j = 0; j < out.length; j++) results[slice.start + j] = out[j];
       done += out.length;
-      options.onBatchComplete?.(done, texts.length);
+      if (!failed) options.onBatchComplete?.(done, texts.length);
     }
   };
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
