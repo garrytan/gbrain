@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import type {
   BrainEngine,
+  EngineConnectOptions,
   LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
@@ -106,7 +107,10 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Lifecycle
-  async connect(config: EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }): Promise<void> {
+  async connect(
+    config: EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager },
+    options?: EngineConnectOptions,
+  ): Promise<void> {
     this._savedConfig = config;
     const url = config.database_url;
     if (config.poolSize) {
@@ -139,7 +143,9 @@ export class PostgresEngine implements BrainEngine {
         opts.prepare = prepare;
       }
       this._sql = postgres(url, opts);
-      await this._sql`SELECT 1`;
+      if (!options?.skipConnectionProbe) {
+        await this._sql`SELECT 1`;
+      }
       await db.setSessionDefaults(this._sql);
       this._connectionStyle = 'instance';
 
@@ -154,7 +160,7 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager.setReadPool(this._sql);
     } else {
       // Module-level singleton (backward compat for CLI main engine)
-      await db.connect(config);
+      await db.connect(config, options);
       this._connectionStyle = 'module';
 
       // v0.30.1: connection-manager wraps the module singleton.

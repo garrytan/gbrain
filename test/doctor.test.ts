@@ -97,6 +97,35 @@ describe('doctor command', () => {
     expect(statements).toEqual(['SELECT 1 AS ok']);
   });
 
+  test('Postgres fast doctor issues exactly one SQL probe across the connection boundary', async () => {
+    const { connectWithRetry } = await import('../src/core/db.ts');
+    const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
+    const statements: string[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      connect: async (
+        _config: import('../src/core/types.ts').EngineConfig,
+        options?: { skipConnectionProbe?: boolean },
+      ) => {
+        if (!options?.skipConnectionProbe) statements.push('SELECT 1');
+      },
+      executeRaw: async (sql: string) => {
+        statements.push(sql);
+        return [{ ok: 1 }];
+      },
+    } as unknown as import('../src/core/engine.ts').BrainEngine;
+
+    await connectWithRetry(
+      engine,
+      { engine: 'postgres', database_url: 'postgresql://example.invalid/test' },
+      { noRetry: true, skipConnectionProbe: true },
+    );
+    const result = await fastDatabaseConnectionCheck(engine);
+
+    expect(result.status).toBe('ok');
+    expect(statements).toEqual(['SELECT 1 AS ok']);
+  });
+
   test('fast database check reports a configured connection failure', async () => {
     const { fastDatabaseConnectionCheck } = await import('../src/commands/doctor.ts');
     const engine = {
@@ -140,6 +169,9 @@ describe('doctor command', () => {
 
     expect(doctorBlock).toContain('connectEngine({ probeOnly: true })');
     expect(doctorBlock).not.toContain('Skipping DB checks');
+    expect(source).toContain(
+      "skipConnectionProbe: opts?.probeOnly === true && engine.kind === 'postgres'",
+    );
   });
 
   // v0.12.2 reliability wave — doctor detects JSONB double-encode + truncated

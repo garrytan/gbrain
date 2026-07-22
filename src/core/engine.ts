@@ -412,12 +412,17 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
+export interface EngineConnectOptions {
+  /** Defer the eager Postgres probe to a caller that owns the health query. */
+  skipConnectionProbe?: boolean;
+}
+
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
 
   // Lifecycle
-  connect(config: EngineConfig): Promise<void>;
+  connect(config: EngineConfig, options?: EngineConnectOptions): Promise<void>;
   disconnect(): Promise<void>;
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;

@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
-import type { BrainEngine } from './engine.ts';
+import type { BrainEngine, EngineConnectOptions } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
@@ -159,7 +159,7 @@ export function getConnection(): ReturnType<typeof postgres> {
   return sql;
 }
 
-export async function connect(config: EngineConfig): Promise<void> {
+export async function connect(config: EngineConfig, options?: EngineConnectOptions): Promise<void> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
@@ -202,8 +202,9 @@ export async function connect(config: EngineConfig): Promise<void> {
     }
     sql = postgres(url, opts);
 
-    // Test connection
-    await sql`SELECT 1`;
+    if (!options?.skipConnectionProbe) {
+      await sql`SELECT 1`;
+    }
     connectedUrl = url;
 
     await setSessionDefaults(sql);
@@ -265,6 +266,7 @@ export interface ConnectWithRetryOpts {
   attempts?: number;
   baseDelayMs?: number;
   noRetry?: boolean;
+  skipConnectionProbe?: boolean;
   log?: (line: string) => void;
 }
 
@@ -281,7 +283,10 @@ export async function connectWithRetry(
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
-      await engine.connect(config);
+      await engine.connect(
+        config,
+        opts.skipConnectionProbe ? { skipConnectionProbe: true } : undefined,
+      );
       return;
     } catch (e: unknown) {
       lastErr = e;

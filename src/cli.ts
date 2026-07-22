@@ -1345,7 +1345,10 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   const noRetry = process.argv.includes('--no-retry-connect') ||
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
-  await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+  await connectWithRetry(engine, toEngineConfig(config), {
+    noRetry,
+    skipConnectionProbe: opts?.probeOnly === true && engine.kind === 'postgres',
+  });
 
   // v0.30.1 (Codex X1 / C2): probeOnly skips both hasPendingMigrations() probe
   // AND initSchema(). Used by `get_health` MCP op + `gbrain upgrade --status`
