@@ -24,6 +24,8 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   __setChatTransportForTests,
   type ChatOpts,
@@ -59,8 +61,10 @@ describe('models doctor — probe token budget (#3221)', () => {
 
     expect(r.status).toBe('ok');
     expect(seenMaxTokens).toBe(PROBE_MAX_OUTPUT_TOKENS);
-    // The bug class: a 1-token budget cannot accommodate reasoning burn.
-    expect(PROBE_MAX_OUTPUT_TOKENS).toBeGreaterThan(1);
+    // The bug class: a tiny budget cannot accommodate reasoning burn. Pin a
+    // real floor (not just > 1) so the constant can't quietly regress to a
+    // value that re-triggers the false-FAIL.
+    expect(PROBE_MAX_OUTPUT_TOKENS).toBeGreaterThanOrEqual(64);
   });
 
   test('length-exhausted empty completion is reachable, with the limitation surfaced', async () => {
@@ -112,5 +116,17 @@ describe('models doctor — probe token budget (#3221)', () => {
     const r = await probeModel('test:reasoner', 'chat');
 
     expect(r.status).toBe('auth');
+  });
+
+  test('human output renders ok-probe caveat messages, not only failure messages', () => {
+    // runModels needs a live engine, so pin the render branch structurally
+    // (same source-text convention as test/models-doctor-embed.test.ts): the
+    // non-json output path must print the message for an ok probe whose
+    // message deviates from the bare 'reachable' (the reasoning-burn caveat
+    // would otherwise be visible only under --json).
+    const src = readFileSync(join(__dirname, '..', 'src', 'commands', 'models.ts'), 'utf-8');
+    const runIdx = src.indexOf('export async function runModels');
+    expect(runIdx).toBeGreaterThan(0);
+    expect(src.slice(runIdx)).toMatch(/else if \(r\.message !== 'reachable'\)\s*\{[^}]*process\.stdout\.write\(`\s+\$\{r\.message\}\\n`\)/);
   });
 });

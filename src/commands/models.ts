@@ -9,8 +9,9 @@
  *                               per-task overrides, alias map, and source-of-truth
  *                               column (default / config / env).
  *
- *   `gbrain models doctor`    — opt-in probe. Fires a 1-token `gateway.chat()`
- *                               call against each configured chat / expansion
+ *   `gbrain models doctor`    — opt-in probe. Fires a small bounded
+ *                               `gateway.chat()` call (PROBE_MAX_OUTPUT_TOKENS)
+ *                               against each configured chat / expansion
  *                               model and reports reachability with the
  *                               provider's error string. Catches the bug class
  *                               that motivated v0.31.12 (the v0.31.6 chat
@@ -515,6 +516,8 @@ async function probeEmbeddingReachability(): Promise<ProbeResult | null> {
  * headroom to prove transport + auth + model routing, while staying a
  * minimal-cost probe: providers bill actual tokens generated, not the cap,
  * and non-reasoning models answer '.' in a handful of tokens and stop.
+ *
+ * @internal exported for tests (test/models-doctor-probe-token-budget.test.ts).
  */
 export const PROBE_MAX_OUTPUT_TOKENS = 64;
 
@@ -673,6 +676,11 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
       if (r.status !== 'ok') {
         process.stdout.write(`      ${r.message}\n`);
         if (r.fix) process.stdout.write(`      fix: ${r.fix}\n`);
+      } else if (r.message !== 'reachable') {
+        // Probe passed with a caveat (e.g. a reasoning model spent the whole
+        // budget on internal reasoning) — surface it in human output too, not
+        // only in --json.
+        process.stdout.write(`      ${r.message}\n`);
       }
     }
     process.stdout.write(`\nSummary: ${report.summary.ok}/${report.summary.total} reachable.\n`);
