@@ -11,6 +11,7 @@
  * any time the backlog reappears.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { phaseBFenceFacts } from './migrations/v0_32_2.ts';
 
 function printHelp(): void {
@@ -34,7 +35,7 @@ export async function runFactsCommand(engine: BrainEngine, args: string[]): Prom
   if (sub !== 'fence-backfill') {
     process.stderr.write(`Unknown facts subcommand: ${sub}\n`);
     printHelp();
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 
@@ -43,5 +44,5 @@ export async function runFactsCommand(engine: BrainEngine, args: string[]): Prom
   process.stderr.write(
     `fence-backfill: ${result.status}${result.detail ? ` — ${result.detail}` : ''}\n`,
   );
-  if (result.status === 'failed') process.exitCode = 1;
+  if (result.status === 'failed') setCliExitVerdict(1);
 }
