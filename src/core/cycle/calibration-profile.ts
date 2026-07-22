@@ -27,8 +27,13 @@
 
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { TIER_DEFAULTS } from '../model-config.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
+// v0.41 T10 — domain widening. The aggregator module resolves the active
+// pack's calibration_domains declarations into per-domain Brier+accuracy+
+// extras scorecards stored in calibration_profiles.domain_scorecards JSONB.
+import { aggregateDomainScorecards, type DomainScorecards } from '../calibration/domain-aggregators.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, TakesScorecard } from '../engine.ts';
@@ -224,7 +229,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? 'claude-sonnet-4-6';
+    const modelId = opts.model ?? TIER_DEFAULTS.reasoning;
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
@@ -310,6 +315,39 @@ class CalibrationProfilePhase extends BaseCyclePhase {
 
     // Write the profile row.
     const sourceId = scope.sourceId ?? 'default';
+
+    // v0.41 T10 — domain_scorecards widening (replaces v0.36.1.0 `{}`
+    // placeholder). Resolve the active pack's calibration_domains
+    // declarations and run each one's aggregator. Per-domain fail-soft:
+    // a malformed domain or missing page_type produces a {n:0, error}
+    // entry rather than crashing the whole phase. When no pack is
+    // active or the active pack declares no calibration_domains, the
+    // JSONB stays {} (byte-identical to v0.36.1.0 — R1 IRON RULE).
+    let domainScorecards: DomainScorecards = {};
+    try {
+      const { loadActivePack } = await import('../schema-pack/load-active.ts');
+      const { loadConfig } = await import('../config.ts');
+      const cfg = loadConfig();
+      const resolved = await loadActivePack({ cfg, remote: false });
+      const domains = resolved.manifest.calibration_domains ?? [];
+      if (domains.length > 0) {
+        domainScorecards = await aggregateDomainScorecards(
+          engine,
+          holder,
+          domains,
+          sourceId,
+        );
+      }
+    } catch (err) {
+      // Pack resolution failed (e.g. registry not initialized, manifest
+      // malformed). Don't crash calibration — log a warning and write the
+      // empty {} scorecard. Matches the v0.36.1.0 baseline behavior so
+      // R1 byte-identical regression survives the widening.
+      result.warnings.push(
+        `domain_scorecards_aggregation_failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     await engine.executeRaw(
       `INSERT INTO calibration_profiles (
          source_id, holder, generated_at, published,
@@ -319,7 +357,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
          active_bias_tags, model_id, cost_usd, judge_model_agreement
        ) VALUES ($1, $2, now(), false,
                  $3, $4, $5, $6, $7,
-                 $8::jsonb, $9::text[],
+                 $8::text::jsonb, $9::text[],
                  $10, $11,
                  $12::text[], $13, NULL, NULL)`,
       [
@@ -330,10 +368,10 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard.accuracy,
         scorecard.partial_rate,
         gradeCompletion,
-        // domain_scorecards: per-domain breakdown placeholder — v0.36.1.0
-        // ships with the overall scorecard only; per-domain comes when
-        // batchGetTakesScorecards (F12) lands in Lane C.
-        JSON.stringify({}),
+        // v0.41 T10 — domain_scorecards JSONB populated by the
+        // domain-aggregators pass above. Empty {} when no active pack
+        // declares calibration_domains (R1 byte-identical regression).
+        JSON.stringify(domainScorecards),
         result.pattern_statements,
         result.voice_gate_passed,
         result.voice_gate_attempts,

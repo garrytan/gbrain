@@ -240,24 +240,24 @@ describe('v0.28.5 A4 — existing-brain dim mismatch loud failure', () => {
       // Simulate the user passing --embedding-dimensions 768 against this
       // existing 1536 brain. Build the mismatch message that init would
       // print to stderr before exiting 1.
+      // v0.37 fix wave: engineKind now required. This E2E uses PGLite; pin
+      // the PGLite recipe (wipe-and-reinit, not ALTER COLUMN).
       const msg = embeddingMismatchMessage({
         currentDims: existing.dims!,
         requestedDims: 768,
         requestedModel: 'ollama:nomic-embed-text',
         source: 'init',
+        engineKind: 'pglite',
       });
 
-      // Codex finding #8: the recipe MUST inline the four steps including
-      // a conditional reindex. 768 is HNSW-eligible, so the recipe should
-      // include the HNSW CREATE INDEX line.
+      // PGLite branch: wipe-and-reinit recipe (no ALTER COLUMN — that fails
+      // on PGLite's WASM pgvector). Asserts the recipe references the
+      // correct dim and model and points at `gbrain init --pglite`.
       expect(msg).toContain('vector(1536)');
       expect(msg).toContain('vector(768)');
-      expect(msg).toContain('DROP INDEX IF EXISTS idx_chunks_embedding');
-      expect(msg).toContain('ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(768)');
-      expect(msg).toContain('UPDATE content_chunks SET embedding = NULL');
-      expect(msg).toContain('USING hnsw'); // HNSW reindex line for dims <= 2000
+      expect(msg).toContain('gbrain init --pglite --embedding-model ollama:nomic-embed-text --embedding-dimensions 768');
+      expect(msg).toContain('PGLite cannot ALTER vector column types');
       expect(msg).toContain('docs/embedding-migrations.md');
-      expect(msg).toContain('gbrain config set embedding_dimensions 768');
       expect(msg).toContain('gbrain embed --stale');
     } finally {
       await engine.disconnect();
@@ -267,11 +267,13 @@ describe('v0.28.5 A4 — existing-brain dim mismatch loud failure', () => {
   test('mismatch message for dims > 2000 explicitly skips the HNSW reindex (codex finding #8)', () => {
     // The exact case the user pasting a recipe would otherwise crash on:
     // CREATE INDEX HNSW on a 2048-d vector column is rejected by pgvector.
+    // Postgres branch: HNSW reindex must be skipped for dims > 2000 (pgvector cap).
     const msg = embeddingMismatchMessage({
       currentDims: 1536,
       requestedDims: 2048,
       requestedModel: 'voyage:voyage-4-large',
       source: 'doctor',
+      engineKind: 'postgres',
     });
 
     expect(msg).toContain('vector(2048)');

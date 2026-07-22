@@ -39,6 +39,8 @@ interface WireTrajectoryResult {
     value: number | null;
     unit: string | null;
     period: string | null;
+    /** v0.40.2.0 — event-shaped row marker; null on metric rows. */
+    event_type: string | null;
     text: string;
     source_session: string | null;
     source_markdown_slug: string | null;
@@ -111,8 +113,12 @@ export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Pr
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
     // Thin-client install: route through the remote find_trajectory MCP op.
+    // v0.40.2.0: kind:'metric' clarity flag; server gracefully ignores
+    // on pre-v0.40 backends because the op handler treats unknown values
+    // as undefined.
     const raw = await callRemoteTool(cfg!, 'find_trajectory', {
       entity_slug: parsed.entitySlug,
+      kind: 'metric',
       metric: parsed.metric,
       since: parsed.since,
       until: parsed.until,
@@ -123,8 +129,12 @@ export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Pr
     // Local: call engine.findTrajectory directly, then compute derived
     // metrics via trajectory.ts. ctx.remote is implicitly false here so
     // visibility filtering is OFF — trusted local caller sees all facts.
+    // v0.40.2.0: kind:'metric' is explicit clarity (downstream
+    // computeTrajectoryStats already filters NULL-metric rows; the filter
+    // surfaces intent at the call site).
     const points = await engine.findTrajectory({
       entitySlug: parsed.entitySlug,
+      kind: 'metric',
       metric: parsed.metric,
       since: parsed.since,
       until: parsed.until,
@@ -139,6 +149,7 @@ export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Pr
         value: p.value,
         unit: p.unit,
         period: p.period,
+        event_type: p.event_type,
         text: p.text,
         source_session: p.source_session,
         source_markdown_slug: p.source_markdown_slug,

@@ -236,7 +236,19 @@ describe('serializeFrontmatter', () => {
     expect(fm).toContain('type: apple-note');
     expect(fm).toContain('date: "2010-04-13"');
     expect(fm).toContain('source: apple-notes');
-    expect(fm).toContain('tags: ["yc"]');
+    // v0.37.9.0 — canonical single-quoted YAML flow. Aligns with
+    // brain-writer's step 3a auto-fix output. Was double-quoted pre-v0.37.9.0.
+    expect(fm).toContain(`tags: ['yc']`);
+  });
+
+  test('tags with apostrophe fall back to double quotes', () => {
+    const fm = serializeFrontmatter({
+      title: 'fashion note',
+      type: 'note',
+      tags: ["Men's Fashion", 'yc'],
+    });
+    // Apostrophe item keeps double quotes (JSON.stringify); clean item uses single.
+    expect(fm).toContain(`tags: ["Men's Fashion", 'yc']`);
   });
 
   test('quotes title with special chars', () => {

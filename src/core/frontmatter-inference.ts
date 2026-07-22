@@ -408,7 +408,11 @@ export function serializeFrontmatter(fm: InferredFrontmatter): string {
   }
 
   if (fm.tags && fm.tags.length > 0) {
-    lines.push(`tags: [${fm.tags.map(t => JSON.stringify(t)).join(', ')}]`);
+    // Single-quoted YAML flow is the canonical form (matches the auto-fix
+    // engine's step 3a output and v0.37.5.0's YAML-aware validator). Fall
+    // back to JSON.stringify (double quotes) only when the value contains an
+    // apostrophe — YAML's single-quote escaping (`''`) reads poorly.
+    lines.push(`tags: [${fm.tags.map(t => t.includes("'") ? JSON.stringify(t) : `'${t}'`).join(', ')}]`);
   }
 
   lines.push('---');

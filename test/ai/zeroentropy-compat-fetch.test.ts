@@ -53,13 +53,15 @@ describe('zeroEntropyCompatFetch — shim structural shape', () => {
     expect(src).not.toContain('/v1/v1/');
   });
 
-  test('body injects input_type default "document"', async () => {
+  test('body recovers threaded input_type, defaulting to "document"', async () => {
     const src = await Bun.file(GATEWAY_PATH).text();
-    // The wrapper defaults input_type to 'document' when caller didn't
-    // thread one (matches the document-side correctness for sync /
-    // import / embed CLI paths).
+    // The wrapper recovers the SDK-stripped input_type from
+    // __embedInputTypeStore (#1400) and still defaults to 'document' when
+    // no caller threaded one (document-side correctness for sync / import /
+    // embed CLI paths). Wire-level behavioral coverage lives in
+    // test/embed-input-type-wire.test.ts.
     expect(src).toMatch(/parsed\.input_type\s*===\s*undefined/);
-    expect(src).toMatch(/parsed\.input_type\s*=\s*['"]document['"]/);
+    expect(src).toMatch(/parsed\.input_type\s*=\s*__embedInputTypeStore\.getStore\(\)\s*\?\?\s*['"]document['"]/);
   });
 
   test('body forces encoding_format=float (CDX2-F2)', async () => {

@@ -32,6 +32,8 @@ function buildScorecard(opts: { resolved: number; brier: number | null }): Takes
     accuracy: 0.6,
     brier: opts.brier,
     partial_rate: 0,
+    unresolvable_count: 0,
+    unresolvable_rate: null,
   };
 }
 
