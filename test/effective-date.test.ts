@@ -176,27 +176,51 @@ describe('computeEffectiveDate range validation [1990, NOW + 1y]', () => {
 // real content date. content_created_at (the explicit override) and
 // frontmatter.created (the generic signal) close it.
 describe('computeEffectiveDate content_created_at / frontmatter.created (tasks-41o)', () => {
-  test('content_created_at wins over everything, including event_date', () => {
+  test('content_created_at loses to deliberate date fields (event_date) — created-derived, must not flip them on reindex', () => {
     const r = run({
       fm: { event_date: '2024-04-01' },
+      contentCreatedAt: new Date('2026-05-14T00:00:00Z'),
+    });
+    expect(r.source).toBe('event_date');
+    expect(r.date?.toISOString().startsWith('2024-04-01')).toBe(true);
+  });
+
+  test('content_created_at loses to daily/meetings filename-first override', () => {
+    const r = run({
+      slug: 'meetings/2024-06-15-acme-call',
+      filename: '2024-06-15-acme-call',
+      contentCreatedAt: new Date('2026-05-14T00:00:00Z'),
+    });
+    expect(r.source).toBe('filename');
+  });
+
+  test('content_created_at wins over frontmatter.created and the updated_at/created_at fallback', () => {
+    const r = run({
+      fm: { created: '2024-04-01' },
       contentCreatedAt: new Date('2026-05-14T00:00:00Z'),
     });
     expect(r.source).toBe('content_created_at');
     expect(r.date?.toISOString().startsWith('2026-05-14')).toBe(true);
   });
 
-  test('content_created_at wins over daily/meetings filename-first override', () => {
-    const r = run({
-      slug: 'meetings/2024-06-15-acme-call',
-      filename: '2024-06-15-acme-call',
-      contentCreatedAt: new Date('2026-05-14T00:00:00Z'),
+  test('import and reindex agree: created + date page keeps source=date whether or not the column is populated', () => {
+    // Regression for the reindex-flip bug: import computed 'date' while the
+    // re-walk (which reads the persisted column) computed content_created_at
+    // as top priority, silently flipping effective_date on the first
+    // `gbrain reindex-frontmatter` run.
+    const withoutColumn = run({ fm: { created: '2026-01-01', date: '2024-04-01' } });
+    const withColumn = run({
+      fm: { created: '2026-01-01', date: '2024-04-01' },
+      contentCreatedAt: new Date('2026-01-01T00:00:00Z'),
     });
-    expect(r.source).toBe('content_created_at');
+    expect(withoutColumn.source).toBe('date');
+    expect(withColumn.source).toBe('date');
+    expect(withColumn.date?.getTime()).toBe(withoutColumn.date?.getTime());
   });
 
-  test('frontmatter.created wins when no event_date/date/published/filename present (couples-counseling case)', () => {
+  test('frontmatter.created wins when no event_date/date/published/filename present (entity-page case)', () => {
     const r = run({
-      slug: 'wiki/entities/couples-counseling-vishnu-and-silas',
+      slug: 'wiki/entities/alice-and-charlie-example',
       fm: { created: '2026-05-14' },
     });
     expect(r.source).toBe('created');

@@ -75,7 +75,10 @@ export async function backfillContentCreatedAt(
   const slugPrefix = opts.slugPrefix?.replace(/[\\%_]/g, (c) => '\\' + c) ?? null;
 
   while (true) {
-    const slugFilter = slugPrefix ? `AND slug LIKE $2 ESCAPE '\\\\'` : '';
+    // NOTE: ESCAPE takes a single character. In this TS source that's `'\\'`
+    // (one backslash at runtime) — the doubled `'\\\\'` form sends a 2-char
+    // escape string and Postgres rejects it with "invalid escape string".
+    const slugFilter = slugPrefix ? `AND slug LIKE $2 ESCAPE '\\'` : '';
     const params: unknown[] = [lastId];
     if (slugPrefix) params.push(slugPrefix + '%');
 

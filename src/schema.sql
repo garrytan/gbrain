@@ -122,8 +122,8 @@ CREATE TABLE IF NOT EXISTS pages (
   -- tasks-41o (migration v125): the content's own creation date, distinct
   -- from created_at (row-insert time, never overwritten). NULL unless
   -- explicitly supplied (frontmatter `created`, backfilled from history, or
-  -- caller override via PageInput.content_created_at). Highest-priority
-  -- candidate in computeEffectiveDate's precedence chain.
+  -- caller override via PageInput.content_created_at). Ranks just above the
+  -- frontmatter.created rung in computeEffectiveDate's precedence chain.
   content_created_at    TIMESTAMPTZ,
   -- v0.37.0 (migration v79): real stale-page signal for `gbrain lsd`. Bumped
   -- by op-layer write-back inside `search`/`query`/`get_page` op handlers

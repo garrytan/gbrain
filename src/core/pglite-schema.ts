@@ -97,8 +97,8 @@ CREATE TABLE IF NOT EXISTS pages (
   import_filename       TEXT,
   salience_touched_at   TIMESTAMPTZ,
   -- tasks-41o (migration v125): the content's own creation date -- distinct
-  -- from created_at (the row-insert time; never overwritten). Top-priority
-  -- candidate in computeEffectiveDate's precedence chain. Mirrors src/schema.sql.
+  -- from created_at (the row-insert time; never overwritten). Ranks just above
+  -- the frontmatter.created rung in computeEffectiveDate. Mirrors src/schema.sql.
   content_created_at    TIMESTAMPTZ,
   -- v0.37.0 (migration v79): real stale-page signal for gbrain lsd
   -- (mirrors src/schema.sql). NULL = never retrieved.

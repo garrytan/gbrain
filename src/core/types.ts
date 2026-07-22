@@ -127,9 +127,9 @@ export interface Page {
    * tasks-41o (migration v125): the content's own creation date — distinct
    * from `created_at` (row-insert time, never overwritten by this field).
    * NULL unless explicitly supplied: frontmatter `created`, a backfill from
-   * git/mtime history, or an importer/caller override. Highest-priority
-   * candidate in `computeEffectiveDate`'s precedence chain — see
-   * `src/core/effective-date.ts`.
+   * git/mtime history, or an importer/caller override. Ranks just above the
+   * frontmatter.created rung in `computeEffectiveDate`'s precedence chain —
+   * see `src/core/effective-date.ts`.
    */
   content_created_at?: Date | null;
   /**
@@ -250,8 +250,8 @@ export interface PageInput {
    * `created_at` and never lets this field overwrite `created_at`). When
    * omitted, putPage leaves the column unchanged on conflict (preserves any
    * existing value, same COALESCE-preserve shape as effective_date); on
-   * insert the column is NULL. Consulted by `computeEffectiveDate` as the
-   * highest-priority precedence candidate.
+   * insert the column is NULL. Consulted by `computeEffectiveDate` just
+   * above the frontmatter.created rung.
    */
   content_created_at?: Date | null;
   /**

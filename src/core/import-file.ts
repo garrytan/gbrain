@@ -754,20 +754,14 @@ export async function importFromContent(
     const nowDate = new Date();
     // tasks-41o — thread frontmatter.created forward so it PERSISTS on the
     // row as content_created_at (distinct from created_at, the row-insert
-    // time; this NEVER touches created_at). Deliberately NOT passed as
-    // computeEffectiveDate's `contentCreatedAt` opt here — that opt is the
-    // top-priority explicit-override slot (reserved for an already-known,
-    // authoritative content date, e.g. a prior backfill), whereas
-    // frontmatter.created on a fresh import is the same generic, lower-
-    // priority signal computeEffectiveDate already reads via the full
-    // `frontmatter` object passed below (see effective-date.ts's 'created'
-    // rung). Passing it as BOTH would wrongly promote it above
-    // event_date/date/published for every import that happens to set
-    // `created`. `existing` doesn't carry content_created_at
-    // (engine.getPage's SELECT doesn't project it, same as effective_date),
-    // so there's nothing to preserve at this layer — putPage's
-    // COALESCE-preserve UPDATE keeps any prior column value when this
-    // frontmatter has no `created` key.
+    // time; this NEVER touches created_at). Passed as contentCreatedAt too
+    // so import and the reindex re-walk (backfill-effective-date.ts, which
+    // reads the column) compute the same result — the opt ranks just above
+    // the 'created' rung, never above event_date/date/published/filename.
+    // `existing` doesn't carry content_created_at (engine.getPage's SELECT
+    // doesn't project it, same as effective_date); putPage's COALESCE-
+    // preserve UPDATE keeps any prior column value when this frontmatter
+    // has no `created` key.
     const contentCreatedAt = parseDateLoose(parsed.frontmatter.created);
     const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
       slug,
@@ -775,6 +769,7 @@ export async function importFromContent(
       filename: filenameForChain,
       updatedAt: existing?.updated_at ?? nowDate,
       createdAt: existing?.created_at ?? nowDate,
+      contentCreatedAt,
     });
 
     await tx.putPage(slug, {

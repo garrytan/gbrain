@@ -152,8 +152,12 @@ export async function backfillEffectiveDate(
 
     // Keyset pagination: WHERE id > last_id ORDER BY id LIMIT N. Single-direction
     // walk; safe under concurrent inserts (new rows show up at the tail).
+    // NOTE: ESCAPE takes a single character. In this TS source that's `'\\'`
+    // (one backslash at runtime) — the doubled `'\\\\'` form sent a 2-char
+    // escape string and every --slug-prefix run died with "invalid escape
+    // string" (fixed in the tasks-41o takeover; PR #3168 review).
     const slugFilter = slugPrefix
-      ? `AND slug LIKE $2 ESCAPE '\\\\'`
+      ? `AND slug LIKE $2 ESCAPE '\\'`
       : '';
     const params: unknown[] = [lastId];
     if (slugPrefix) params.push(slugPrefix + '%');
@@ -198,7 +202,7 @@ export async function backfillEffectiveDate(
             // tasks-41o: once scripts/backfill-content-created-at.ts has
             // populated the column, this re-walk (`gbrain reindex-frontmatter`)
             // is what actually flips effective_date/effective_date_source for
-            // existing rows — content_created_at is the top-priority candidate.
+            // existing rows — the column ranks just above the 'created' rung.
             contentCreatedAt: r.content_created_at ? new Date(r.content_created_at) : null,
           });
 

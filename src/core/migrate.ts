@@ -5688,8 +5688,8 @@ export const MIGRATIONS: Migration[] = [
     // backfill inside the migration itself (see scripts/backfill-content-
     // created-at.ts — a separate, re-runnable, idempotent pass so a bad
     // backfill can be re-run without a schema round-trip). Consulted by
-    // computeEffectiveDate (src/core/effective-date.ts) as the
-    // highest-priority precedence candidate, and settable via
+    // computeEffectiveDate (src/core/effective-date.ts) just above the
+    // frontmatter.created rung, and settable via
     // PageInput.content_created_at on putPage. Mirrored in src/schema.sql,
     // src/core/pglite-schema.ts, and the generated src/core/schema-embedded.ts
     // so fresh installs carry the same column.
