@@ -733,6 +733,11 @@ export async function importFromContent(
       : computeCorpusGeneration({
           crMode: effectiveCRMode,
           haikuModel: 'anthropic:claude-haiku-4-5-20251001',
+          // Inline import-file path never uses per_chunk_synopsis (refuses
+          // upstream); pass undefined so the doc-cap field stays out of
+          // the hash here. Per_chunk_synopsis runs through the Minion
+          // backfill handler which threads SYNOPSIS_DOC_MAX_CHARS through
+          // the service layer.
         });
 
   // Transaction wraps all DB writes. Every per-page tx call carries the
