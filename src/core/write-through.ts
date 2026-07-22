@@ -13,16 +13,19 @@
  * upgraded the write to be ATOMIC — the original used a bare `writeFileSync`
  * into a live git tree that `gbrain sync` / autopilot actively walk, so a crash
  * mid-write left a partial `.md` that sync would fail to parse. We now write to
- * a unique temp sibling and `rename` into place (rename is atomic on the same
+ * a unique temp sibling and normally `rename` into place (atomic on the same
  * filesystem), matching the `.tmp + rename` convention used by
- * import-checkpoint.ts / op-checkpoint.ts.
- *
+ * import-checkpoint.ts / op-checkpoint.ts. On Windows only, if a watcher/editor
+ * rejects replacement of an existing file with EPERM/EACCES, we fall back to a
+ * temp-file-backed overwrite copy and then remove the temp file; the DB row is
+ * still the durable sink.
+
  * Trust gating (subagent sandbox, dry-run) stays at the CALLER — this helper
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { dirname, join } from 'path';
+import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync, copyFileSync } from 'fs';
+import { dirname, join, parse } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
@@ -70,6 +73,36 @@ export interface WritePageThroughOpts {
 }
 
 /**
+ * Return `targetPath` with any already-existing path segments re-cased to match
+ * the filesystem. This prevents Windows case-insensitive aliases such as
+ * `ai-sessions/...` from producing a sibling path when the repo already has
+ * `AI-Sessions/...`; the final non-existing segment is left as requested.
+ */
+function resolveExistingPathCasing(targetPath: string): string {
+  const root = parse(targetPath).root;
+  const parts = targetPath.slice(root.length).split(/[\\/]+/).filter(Boolean);
+  let current = root;
+
+  for (const part of parts) {
+    const parent = current || '.';
+    let chosen = part;
+    try {
+      if (existsSync(parent) && statSync(parent).isDirectory()) {
+        const entries = readdirSync(parent);
+        chosen = entries.find((entry) => entry === part)
+          ?? entries.find((entry) => entry.toLocaleLowerCase() === part.toLocaleLowerCase())
+          ?? part;
+      }
+    } catch {
+      chosen = part;
+    }
+    current = current ? join(current, chosen) : chosen;
+  }
+
+  return current || targetPath;
+}
+
+/**
  * Render the DB row for `slug` to markdown and atomically write it under
  * `sync.repo_path`. Never throws — failures are reported via the result's
  * `skipped` / `error` fields (the DB write is the durable sink; the file is
@@ -104,7 +137,7 @@ export async function writePageThrough(
       if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
         return { written: false, skipped: 'repo_not_found' };
       }
-      filePath = join(sourceLocalPath, `${slug}.md`);
+      filePath = resolveExistingPathCasing(join(sourceLocalPath, `${slug}.md`));
       writeRoot = sourceLocalPath;
     } else {
       const repoPath = await engine.getConfig('sync.repo_path');
@@ -123,7 +156,7 @@ export async function writePageThrough(
       if (collide.length > 0) {
         return { written: false, skipped: 'source_repo_belongs_to_other_source' };
       }
-      filePath = resolvePageFilePath(repoPath, slug, sourceId);
+      filePath = resolveExistingPathCasing(resolvePageFilePath(repoPath, slug, sourceId));
       writeRoot = repoPath;
     }
 
@@ -155,12 +188,26 @@ export async function writePageThrough(
     const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
     try {
       writeFileSync(tmpPath, md, 'utf8');
-      renameSync(tmpPath, filePath);
+      try {
+        renameSync(tmpPath, filePath);
+      } catch (renameErr) {
+        const code = (renameErr as NodeJS.ErrnoException).code;
+        if (process.platform === 'win32' && existsSync(filePath) && (code === 'EPERM' || code === 'EACCES')) {
+          // Windows can reject an atomic rename over an existing file when a
+          // watcher/editor briefly holds the destination. Keep the temp-file
+          // write path, but degrade to overwrite-copy for this platform-only
+          // replace failure; the DB row remains the durable sink either way.
+          copyFileSync(tmpPath, filePath);
+          unlinkSync(tmpPath);
+        } else {
+          throw renameErr;
+        }
+      }
     } catch (writeErr) {
       try {
         if (existsSync(tmpPath)) unlinkSync(tmpPath);
       } catch {
-        // best-effort cleanup; surface the original write error below
+        // Best effort cleanup only; report the original write failure.
       }
       throw writeErr;
     }

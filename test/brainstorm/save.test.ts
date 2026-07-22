@@ -78,6 +78,22 @@ describe('persistSavedIdea', () => {
     expect(Number(rows[0].n)).toBeGreaterThan(0);
   });
 
+  test('preserves existing on-disk path casing during write-through', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = buildIdeaSlug('why Case', 'lsd', 'noncecase'); // wiki/ideas/...
+    const casedDir = path.join(brainDir, 'Wiki', 'Ideas');
+    fs.mkdirSync(casedDir, { recursive: true });
+    fs.writeFileSync(path.join(casedDir, `${path.basename(slug)}.md`), 'old content');
+
+    const o = await persistSavedIdea(engine, { slug, content: sampleContent(), provenanceVia: 'lsd' });
+
+    expect(o.dbSaved).toBe(true);
+    expect(o.writeThrough.written).toBe(true);
+    expect(o.writeThrough.path).toContain(path.join('Wiki', 'Ideas'));
+    expect(fs.existsSync(path.join(casedDir, `${path.basename(slug)}.md`))).toBe(true);
+    expect(fs.readdirSync(brainDir)).not.toContain('wiki');
+  });
+
   test('no repo configured → DB canonical, writeThrough skipped, exit 0', async () => {
     await engine.setConfig('sync.repo_path', '');
     const slug = buildIdeaSlug('why Y', 'lsd', 'nonce02');
