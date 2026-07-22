@@ -297,18 +297,22 @@ describe('cloneRepo', () => {
 // ---------------------------------------------------------------------------
 
 describe('pullRepo', () => {
-  test('happy path: invokes git -C path with GIT_SSRF_FLAGS + pull --ff-only', async () => {
+  test('places --no-recurse-submodules after pull for Git 2.39 compatibility', async () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
     await withEnv({ PATH: fakePath() }, async () => {
       pullRepo(repo);
     });
     const argv = readArgvLog()[0];
-    expect(argv[0]).toBe('-C');
-    expect(argv[1]).toBe(repo);
-    expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('pull');
-    expect(argv).toContain('--ff-only');
+    expect(argv).toEqual([
+      '-C', repo,
+      '-c', 'http.followRedirects=false',
+      '-c', 'protocol.file.allow=never',
+      '-c', 'protocol.ext.allow=never',
+      'pull',
+      '--no-recurse-submodules',
+      '--ff-only',
+    ]);
     rmSync(repo, { recursive: true, force: true });
   });
 
