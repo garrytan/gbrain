@@ -2,14 +2,6 @@
 
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
-- [ ] **P1 — take-writes source scoping fails open when source resolution errors (#2684 residual).**
-  `resolveTakesSourceId` (src/commands/takes.ts) swallows resolution errors and returns
-  `undefined`, which falls back to the unscoped slug-only page lookup — so an invalid
-  `GBRAIN_SOURCE` (or a broken dotfile chain) silently restores the pre-#2698 cross-source
-  write behavior on multi-source brains. Decide fail-closed semantics: error out when a
-  source was explicitly requested but doesn't resolve; keep the unscoped fallback only for
-  brains with no source configuration at all. Add a regression test for the invalid-source
-  path. Found by cross-model adversarial review during the v0.42.60.0 release ship.
 - [ ] **P2 — cherry-pick #2112's uncovered doctor.ts hunk.** Fix-wave A (#2820) superseded
   most of #2112 but not its `checkSubagentCapability` fix (check explicit `models.subagent`
   before `models.tier.subagent`). Refile or cherry-pick; the rest of that PR is covered.
