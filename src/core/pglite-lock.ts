@@ -24,6 +24,17 @@ const LOCK_FILE = 'lock';
 // LIVE holder (embed jobs run for many minutes) is never mistaken for stale.
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
+class LiveServeLockError extends Error {}
+
+function isServeCommand(command: unknown): boolean {
+  if (typeof command !== 'string') return false;
+  const parts = command.trim().split(/\s+/);
+  // Source runs store "<path>/cli.ts serve"; compiled runs may store just
+  // "serve". Only inspect the command position so a search for the word
+  // "serve" is not mistaken for the server itself.
+  return parts[0] === 'serve' || parts[1] === 'serve';
+}
+
 // #2348: there is NO steal-on-stale-heartbeat anymore. A holder whose PID is
 // alive is NEVER reaped, regardless of how long its heartbeat has been stale.
 // PGLite/WASM is strictly single-writer; the heartbeat runs on the JS event
@@ -145,13 +156,24 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
           // Holder process is gone — reap and try to acquire.
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
         } else {
-          // Live holder — wait and retry. If it is genuinely wedged (or its PID
-          // was reused by an unrelated process), the acquire times out below
-          // with a message naming the PID; we never force-steal a live holder.
+          if (isServeCommand(lockData.command)) {
+            throw new LiveServeLockError(
+              `GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${lockPid}). ` +
+              `This brain uses PGLite, so a separate CLI process cannot open it at the same time. ` +
+              `Stop \`gbrain serve\` or use its MCP tools, then try again. ` +
+              `This is a healthy lock; do not delete ${lockDir}.`,
+            );
+          }
+          // Other live holders may be short-lived, so wait and retry. If one is
+          // genuinely wedged (or its PID was reused), the acquire times out;
+          // we never force-steal a live holder.
           await new Promise(r => setTimeout(r, 1000));
           continue;
         }
-      } catch {
+      } catch (err) {
+        // A live MCP server is not a stale or corrupt lock. Surface the useful
+        // explanation without touching the lock it still owns.
+        if (err instanceof LiveServeLockError) throw err;
         // Corrupt lock file — remove it
         try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
       }

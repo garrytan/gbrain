@@ -109,7 +109,7 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number }) {
+  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number; command?: string }) {
     const lockDir = join(TEST_DIR, '.gbrain-lock');
     mkdirSync(lockDir, { recursive: true });
     const now = Date.now();
@@ -117,9 +117,39 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
       pid: fields.pid,
       acquired_at: now - fields.acquiredAgoMs,
       refreshed_at: now - fields.refreshedAgoMs,
-      command: 'test holder',
+      command: fields.command ?? 'test holder',
     }));
   }
+
+  test('a live gbrain serve owner fails fast with a clear process-conflict explanation', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path/to/gbrain/src/cli.ts serve',
+    });
+
+    const startedAt = Date.now();
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 5_000 })).rejects.toThrow(
+      /already open through `gbrain serve`.*separate CLI process cannot open it at the same time.*healthy lock; do not delete/s,
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('a dead gbrain serve owner is still cleaned up automatically', async () => {
+    writeHolder({
+      pid: 999999999,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path/to/gbrain/src/cli.ts serve',
+    });
+
+    const lock = await acquireLock(TEST_DIR, { timeoutMs: 2_000 });
+    expect(lock.acquired).toBe(true);
+    await releaseLock(lock);
+  });
 
   test('[REGRESSION] a LIVE holder with a fresh heartbeat is NOT stolen even when the lock is old', async () => {
     // The WAL-corruption bug: a >5min embed used to get its lock force-removed.
