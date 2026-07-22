@@ -100,7 +100,15 @@ function gbrainHome(): string {
  *  core→commands import). which gbrain → process.execPath → argv[1] → "gbrain". */
 function resolveGbrainCliPath(): string {
   try {
-    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // #2747: `env: process.env` required under Bun — see the sibling copy
+    // of this function in commands/autopilot.ts for the full explanation
+    // (Bun snapshots process.env at its own startup; execSync without an
+    // explicit env is blind to any PATH mutation since then).
+    const which = execSync('which gbrain', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: process.env,
+    }).trim();
     if (which) return which;
   } catch { /* not on PATH */ }
   const exec = process.execPath ?? '';
@@ -183,15 +191,17 @@ if [ "\${1:-}" = "--push-only" ]; then
 fi
 
 _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift || true
-# Pull first so the local tree is current before we stage.
-git fetch origin >/dev/null 2>&1 || true
-git pull --rebase origin "$_branch" || { git rebase --abort >/dev/null 2>&1 || true; echo "rebase conflict: manual attention needed" >&2; exit 3; }
 
 # EXPLICIT paths only — never a blind 'git add -A' (would risk committing
 # secrets, temp files, or unrelated edits).
 if [ "$#" -eq 0 ]; then
   echo "refusing blind 'git add -A' — pass explicit path(s) to commit" >&2; exit 2
 fi
+# COMMIT BEFORE PULL (#2426): the old order (fetch + pull --rebase, THEN stage)
+# aborted on any dirty tree — 'cannot pull with rebase: You have unstaged
+# changes' — so the helper could never commit a MODIFIED page (exactly the
+# write-through case). Stage + commit first; brain_push below already handles
+# a remote that advanced (push -> rejected -> pull --rebase -> push).
 git add -- "$@"
 if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
 git commit -m "$_msg"
@@ -335,6 +345,47 @@ function uninstallLocalHook(repoPath: string): boolean {
   rmSync(hookPath);
   if (existsSync(hookPath + '.bak')) { writeFileSync(hookPath, readFileSync(hookPath + '.bak')); rmSync(hookPath + '.bak'); }
   return true;
+}
+
+/**
+ * True when the gbrain durability post-commit hook is installed — i.e. the
+ * user opted this repo into push-durability via `gbrain sources harden`.
+ * Cheap (one git-config read + one file read); used as the gate for
+ * write-through auto-commit (#2426).
+ */
+export function isDurabilityHardened(repoPath: string): boolean {
+  try {
+    const { dir } = resolveHooksDir(repoPath);
+    const hookPath = join(dir, 'post-commit');
+    return existsSync(hookPath) && readFileSync(hookPath, 'utf-8').includes(HOOK_BANNER);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #2426: best-effort commit of a single write-through artifact so DB writes
+ * reach git (the post-commit hook then background-pushes). Pre-fix,
+ * write-through `.md` accumulated uncommitted forever: it never reached the
+ * remote, froze `last_sync_at` (HEAD never moved), and a later `sync --full`
+ * delete-reconcile treated the never-committed pages as disposable.
+ *
+ * Path-limited (`git commit -- <path>`) so unrelated staged/dirty edits are
+ * never swept into the commit. Never throws; returns false on any failure
+ * (index.lock contention, nothing changed, detached states) — the DB row and
+ * the on-disk file remain the durable sinks either way.
+ */
+export function commitWriteThroughFile(repoPath: string, absPath: string, slug: string): boolean {
+  try {
+    const rel = relative(repoPath, absPath);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
+    const gitOpts = { stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV } } as const;
+    execFileSync('git', ['-C', repoPath, 'add', '--', rel], gitOpts);
+    execFileSync('git', ['-C', repoPath, 'commit', '-m', `gbrain: write-through ${slug}`, '--', rel], gitOpts);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Committed helper ────────────────────────────────────────────────────────

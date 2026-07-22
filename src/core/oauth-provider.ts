@@ -30,6 +30,15 @@ import { parseLegacyTokenScope } from './legacy-token-scope.ts';
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
 
+export interface AgentClientBindings {
+  boundTools?: string[];
+  boundSourceId?: string;
+  boundBrainId?: string;
+  boundSlugPrefixes?: string[];
+  boundMaxConcurrent?: number;
+  budgetUsdPerDay?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -885,6 +894,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     sourceId: string = 'default',
     federatedRead?: string[],
     tokenEndpointAuthMethod?: string,
+    agentBindings?: AgentClientBindings,
   ): Promise<{ clientId: string; clientSecret?: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -917,16 +927,44 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
     try {
-      await this.sql`
-        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                    grant_types, scope, token_endpoint_auth_method,
-                                    client_id_issued_at,
-                                    source_id, federated_read)
-        VALUES (${clientId}, ${secretHash}, ${name},
-                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
-                ${sourceId}, ${pgArray(federated)})
-      `;
+      if (agentBindings) {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at,
+                                      source_id, federated_read,
+                                      bound_tools, bound_source_id, bound_brain_id,
+                                      bound_slug_prefixes, bound_max_concurrent, budget_usd_per_day)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
+                  ${sourceId}, ${pgArray(federated)},
+                  ${agentBindings.boundTools ? pgArray(agentBindings.boundTools) : null},
+                  ${agentBindings.boundSourceId ?? null}, ${agentBindings.boundBrainId ?? null},
+                  ${agentBindings.boundSlugPrefixes ? pgArray(agentBindings.boundSlugPrefixes) : null},
+                  ${agentBindings.boundMaxConcurrent ?? 1}, ${agentBindings.budgetUsdPerDay ?? null})
+        `;
+      } else {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at,
+                                      source_id, federated_read)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
+                  ${sourceId}, ${pgArray(federated)})
+        `;
+      }
     } catch (err) {
+      if (agentBindings && (
+        isUndefinedColumnError(err, 'bound_tools') ||
+        isUndefinedColumnError(err, 'bound_source_id') ||
+        isUndefinedColumnError(err, 'bound_brain_id') ||
+        isUndefinedColumnError(err, 'bound_slug_prefixes') ||
+        isUndefinedColumnError(err, 'bound_max_concurrent') ||
+        isUndefinedColumnError(err, 'budget_usd_per_day')
+      )) {
+        throw new Error('register-client --bound-* flags require an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
+      }
       // Pre-v60 / pre-v61 brain: column missing. Fall back through both
       // projections so registration still works until apply-migrations.
       if (isUndefinedColumnError(err, 'federated_read')) {

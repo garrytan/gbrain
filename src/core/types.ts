@@ -581,6 +581,13 @@ export interface Chunk {
   parent_symbol_path?: string[] | null;
   doc_comment?: string | null;
   symbol_name_qualified?: string | null;
+  /**
+   * v0.27.1 multimodal. Read side of ChunkInput.modality — must round-trip
+   * through getChunks → embed-stale merge → upsertChunks or image rows get
+   * reset to 'text' (EXCLUDED.modality on the upsert) and vanish from the
+   * image search arm.
+   */
+  modality?: 'text' | 'image';
 }
 
 /**
@@ -974,6 +981,19 @@ export interface SearchOpts {
    * client) → `sourceIds`; otherwise `ctx.sourceId` (scalar) → `sourceId`.
    */
   sourceIds?: string[];
+  /**
+   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall
+   * fallback. When true, `searchKeyword` retries ONCE with OR-of-terms after
+   * the strict websearch AND query returns zero rows (strict results always
+   * win when non-empty). Default false/undefined = strict-AND only — the
+   * pre-fix contract. hybridSearch opts in for its keyword arm; precision
+   * consumers (enrichment countMentions, link-extraction resolution, eval
+   * paths) MUST NOT set this: OR-matches would inflate mention counts and
+   * relax link-candidate resolution ("John Smith" matching every John and
+   * every Smith). `searchTitles` has its own page-grain fallback and
+   * ignores this flag.
+   */
+  orFallback?: boolean;
   /**
    * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
    *

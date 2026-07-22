@@ -321,10 +321,21 @@ export function applyPattern(
   if (!body) return [];
   const out: MatchedMessage[] = [];
   const lines = body.split(/\r?\n/);
+  // Some multi-day conversation exports use markdown date headings instead
+  // of repeating a date on every message. Keep the caller's context immutable
+  // while advancing a local date anchor as those headings are encountered.
+  const runningCtx: DateContext = { ...dateCtx };
+  const dateHeaderRe = /^#{1,4}\s+(\d{4}-\d{2}-\d{2})\s*$/;
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const line = rawLine.trim();
     if (!line) continue;
+
+    const dateHeader = dateHeaderRe.exec(line);
+    if (dateHeader) {
+      runningCtx.fallbackDate = dateHeader[1];
+      continue;
+    }
 
     // Quick-reject fast path.
     if (entry.quick_reject && !entry.quick_reject.test(line)) {
@@ -339,7 +350,7 @@ export function applyPattern(
 
     const m = entry.regex.exec(line);
     if (m) {
-      const iso = buildIso(m, entry, dateCtx);
+      const iso = buildIso(m, entry, runningCtx);
       if (iso === null) continue; // reconstruction failed; skip line
       const rawSpeaker = m[entry.captures.speaker_group] ?? '';
       const speaker = cleanSpeaker(rawSpeaker, entry.speaker_clean);
@@ -380,7 +391,7 @@ function getNonBlankLines(body: string, headCap?: number): string[] {
  * window) and `scorePatternFull` (whole body) delegate here so the
  * quick_reject + regex loop lives in one place. Reused by
  * `parseConversation`'s fallback path which pre-splits ONCE and
- * passes the array to all 12 candidates (saves 11 redundant body
+ * passes the array to all 15 candidates (saves 14 redundant body
  * splits per fallback pass).
  */
 function scoreFromLines(

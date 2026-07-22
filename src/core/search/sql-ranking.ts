@@ -207,6 +207,51 @@ export function buildBestPerPagePoolCte(candidateCte: string): string {
 }
 
 // ============================================================
+// AND→OR keyword-recall fallback (fix/title-retrieval-arm, D2)
+// ============================================================
+
+/**
+ * Build a relaxed OR-of-terms websearch string for the keyword-arm recall
+ * fallback.
+ *
+ * `websearch_to_tsquery('english', query)` joins unquoted terms with `&`
+ * (AND). At chunk grain, one query token that doesn't co-occur in any
+ * single chunk zeroes keyword recall with no fallback. When the strict
+ * AND query returns zero rows, engines retry ONCE with the string this
+ * builder returns — the same tokens joined with websearch's `OR` keyword,
+ * which compiles to `|`.
+ *
+ * Why rebuild via websearch syntax instead of hand-assembling a tsquery:
+ * websearch_to_tsquery never raises on malformed input, applies the same
+ * stemming/stopword pipeline as the document side, and an all-stopword
+ * token list degrades to an empty tsquery (matches nothing) instead of a
+ * SQL error — the empty-tsquery guard comes free.
+ *
+ * Returns null when relaxation is pointless or unsafe:
+ *   - fewer than 2 tokens survive tokenization (OR of one term is the same
+ *     query as AND of one term);
+ *   - the raw query uses websearch OPERATORS (Reviewer F3): a `-term`
+ *     negation would be RESURRECTED as a positive OR term, and a quoted
+ *     phrase would degrade to a bag of words — both invert caller intent,
+ *     so operator queries get no fallback at all.
+ * Tokenization splits on non-alphanumeric runs (Unicode-aware). Literal
+ * OR/AND words are dropped so they can't be re-parsed as operators
+ * mid-list.
+ */
+export function buildOrFallbackWebsearchQuery(query: string): string | null {
+  // F3 operator guard: any double quote, or a dash LEADING a token
+  // (whitespace/start boundary — interior hyphens like "foo-bar" are fine).
+  if (query.includes('"') || /(^|\s)-\S/.test(query)) return null;
+  const tokens = query
+    .normalize('NFKC')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .filter(t => { const u = t.toUpperCase(); return u !== 'OR' && u !== 'AND'; });
+  if (tokens.length < 2) return null;
+  return tokens.join(' OR ');
+}
+
+// ============================================================
 // v0.29.1 — Recency component SQL builder
 // ============================================================
 

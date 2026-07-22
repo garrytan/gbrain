@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -99,6 +102,43 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'raw_data'.*col:\s*'data'/);
     expect(source).toMatch(/table:\s*'ingest_log'.*col:\s*'pages_updated'/);
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
+  });
+
+  test('pgvector and jsonb_integrity checks use the active PGLite engine', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { pgvectorCheck, jsonbIntegrityCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const pgvector = await pgvectorCheck(engine);
+      expect(pgvector.name).toBe('pgvector');
+      expect(pgvector.status).toBe('ok');
+
+      const jsonb = await jsonbIntegrityCheck(engine);
+      expect(jsonb.name).toBe('jsonb_integrity');
+      expect(jsonb.status).toBe('ok');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('skill conformance derives a valid host manifest when manifest.json is absent', async () => {
+    const { skillConformanceCheck } = await import('../src/commands/doctor.ts');
+    const skillsDir = join(tmpdir(), `gbrain-doctor-skills-${crypto.randomUUID()}`);
+    mkdirSync(join(skillsDir, 'host-only'), { recursive: true });
+    writeFileSync(
+      join(skillsDir, 'host-only', 'SKILL.md'),
+      '---\nname: host-only\ndescription: host-owned skill\n---\n\n# Host-only\n',
+    );
+    try {
+      const check = skillConformanceCheck(skillsDir);
+      expect(check).toMatchObject({ name: 'skill_conformance', status: 'ok' });
+      expect(check.message).toContain('1/1 skills pass');
+      expect(check.message).toContain('derived from SKILL.md files');
+    } finally {
+      rmSync(skillsDir, { recursive: true, force: true });
+    }
   });
 
   // v0.31.2 — facts_extraction_health check added in PR1 commit 12.

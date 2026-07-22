@@ -30,6 +30,7 @@ import {
   type AuditReport,
   type AuditFix,
 } from '../core/brain-writer.ts';
+import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
 import { isSyncable, pruneDir, slugifyPath } from '../core/sync.ts';
 
 export async function runFrontmatter(args: string[]): Promise<void> {
@@ -272,6 +273,13 @@ export function collectFiles(
   if (st.isFile()) {
     return [target];
   }
+
+  const gitFiles = collectGitVisibleFiles(target, (rel) => isSyncable(rel, { strategy: 'markdown' }));
+  if (gitFiles) {
+    if (visitDir) visitDir(target);
+    return gitFiles;
+  }
+
   const out: string[] = [];
   const stack = [target];
   if (visitDir) visitDir(target);

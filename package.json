@@ -84,7 +84,7 @@
     "check:fixture-privacy": "scripts/check-fixture-privacy.sh",
     "check:conversation-parser": "bun src/cli.ts eval conversation-parser test/fixtures/conversation-formats/all.jsonl --no-llm",
     "check:source-scope-onboard": "scripts/check-source-scope-onboard.sh",
-    "postinstall": "command -v gbrain >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive || echo '[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218' 1>&2",
+    "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin"
   },
@@ -118,8 +118,8 @@
     "express-rate-limit": "^7.5.0",
     "gray-matter": "^4.0.3",
     "heic-decode": "^2.1.0",
-    "js-yaml": "^3.14.2",
-    "marked": "^18.0.0",
+    "js-yaml": "^3.15.0",
+    "marked": "^18.0.2",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
     "postgres": "^3.4.0",
@@ -144,5 +144,16 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.42.59.0"
+  "version": "0.42.64.0",
+  "overrides": {
+    "@hono/node-server": "^1.19.13",
+    "fast-uri": "^3.1.2",
+    "fast-xml-builder": "^1.1.7",
+    "fast-xml-parser": "^5.7.0",
+    "form-data": "^4.0.6",
+    "hono": "^4.12.25",
+    "ip-address": "^10.1.1",
+    "qs": "^6.15.2",
+    "js-yaml": "^3.15.0"
+  }
 }

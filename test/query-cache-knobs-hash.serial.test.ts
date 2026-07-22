@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SemanticQueryCache, cacheRowId } from '../src/core/search/query-cache.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { knobsHash, resolveSearchMode } from '../src/core/search/mode.ts';
+import { resolveHardExcludes } from '../src/core/search/source-boost.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -228,5 +229,51 @@ describe('SemanticQueryCache cross-mode isolation (CDX-4 hotfix)', () => {
     // Conservative-hash lookup misses (the no-mode row had empty hash).
     const conservativeHit = await cache.lookup(emb, { knobsHash: conservativeHash });
     expect(conservativeHit.hit).toBe(false);
+  });
+});
+
+describe('hard-exclude cache isolation (#2825)', () => {
+  // Hashes computed the way hybridSearchCached does: same resolved mode, ctx
+  // carrying the resolved hard-exclude list. A row written by a process
+  // WITHOUT GBRAIN_SEARCH_EXCLUDE (defaults only) must not be served to a
+  // process WITH it, and vice versa.
+  const noEnvHash = knobsHash(resolveSearchMode({ mode: 'balanced' }), {
+    hardExcludes: resolveHardExcludes(undefined, undefined, undefined),
+  });
+  const envExcludeHash = knobsHash(resolveSearchMode({ mode: 'balanced' }), {
+    hardExcludes: resolveHardExcludes(undefined, undefined, 'private/'),
+  });
+
+  test('row written without excludes is NOT served to a lookup with excludes', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(6);
+
+    // Simulate a no-exclude process writing results that include a slug the
+    // excluding process must never see.
+    const leaky = makeResults('private', 5);
+    await cache.store('who is alice', emb, leaky, {
+      vector_enabled: true, detail_resolved: null, expansion_applied: false,
+    }, { knobsHash: noEnvHash });
+
+    // Excluding process → MISS (falls through to a fresh, filtered query).
+    const excluded = await cache.lookup(emb, { knobsHash: envExcludeHash });
+    expect(excluded.hit).toBe(false);
+
+    // Original no-exclude process still hits its own row.
+    const original = await cache.lookup(emb, { knobsHash: noEnvHash });
+    expect(original.hit).toBe(true);
+    expect(original.results?.length).toBe(5);
+  });
+
+  test('row written WITH excludes is not served back once excludes are lifted', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(7);
+
+    await cache.store('who is alice', emb, makeResults('filtered', 3), {
+      vector_enabled: true, detail_resolved: null, expansion_applied: false,
+    }, { knobsHash: envExcludeHash });
+
+    expect((await cache.lookup(emb, { knobsHash: noEnvHash })).hit).toBe(false);
+    expect((await cache.lookup(emb, { knobsHash: envExcludeHash })).hit).toBe(true);
   });
 });

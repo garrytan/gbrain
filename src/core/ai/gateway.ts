@@ -23,6 +23,7 @@
 
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -52,6 +53,8 @@ import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+import { loadConfig } from '../config.ts';
+import { buildGatewayConfig } from './build-gateway-config.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -117,6 +120,18 @@ let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
 
 /**
+ * Recover the process-global gateway for foreground command entrypoints that
+ * were reached without cli.ts's normal engine-connect initialization (#2590).
+ * Existing configured gateways, including their DB-resolved model overrides,
+ * are deliberately left unchanged.
+ */
+export function configureGatewayIfUninitialized(): void {
+  if (_config) return;
+  const config = loadConfig();
+  if (config) configureGateway(buildGatewayConfig(config));
+}
+
+/**
  * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
  * user opted into via config. Keyed by provider id (`anthropic`, `openai`,
  * etc.). Passed into `assertTouchpoint` so native-recipe allowlist checks
@@ -167,6 +182,8 @@ function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> |
  */
 type EmbedManyFn = typeof embedMany;
 let _embedTransport: EmbedManyFn = embedMany;
+type GenerateTextFn = typeof generateText;
+let _generateTextTransport: GenerateTextFn = generateText;
 // v0.41.6.0 D1: tests that install a transport stub also pass the
 // embedding-creds preflight, matching the chat-transport fast-path
 // pattern. Set when __setEmbedTransportForTests is called with a
@@ -377,7 +394,8 @@ export function applyOpenAICompatConfig(
   cfg: AIGatewayConfig,
 ): { baseURL: string; fetch?: typeof fetch } {
   if (recipe.resolveOpenAICompatConfig) {
-    return recipe.resolveOpenAICompatConfig(cfg.env);
+    const resolved = recipe.resolveOpenAICompatConfig(cfg.env);
+    return { ...resolved, fetch: resolved.fetch ?? recipe.compat?.fetch };
   }
   const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseURL) {
@@ -386,7 +404,7 @@ export function applyOpenAICompatConfig(
       recipe.setup_hint,
     );
   }
-  return { baseURL };
+  return { baseURL, fetch: recipe.compat?.fetch };
 }
 
 /**
@@ -440,6 +458,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     // wanted it. isAvailable('reranker') returns false when unset.
     reranker_model: config.reranker_model,
     base_urls: config.base_urls,
+    provider_chat_options: config.provider_chat_options,
     env: config.env,
   };
   _modelCache.clear();
@@ -502,6 +521,20 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
+  // ALSO resolve the four tier models and register them as extended models.
+  // assertTouchpoint's contract (model-resolver.ts) says config-chosen models —
+  // `models.default` and `models.tier.*` included — bypass the native recipe
+  // allowlist, but pre-fix only chat/expansion/embedding/reranker were
+  // registered. A model reachable ONLY through a tier (e.g. `models.tier.deep`
+  // set to an Opus newer than the recipe list) failed `probeChatModel` at call
+  // time and silently degraded think/auto_think to the gather-only stub.
+  // Resolving per-tier also honors `models.default` (it sits above tiers in
+  // the resolveModel chain).
+  const tierModels: string[] = [];
+  for (const tier of ['utility', 'reasoning', 'deep', 'subagent'] as const) {
+    tierModels.push(await resolveModel(engine, { tier, fallback: TIER_DEFAULTS[tier] }));
+  }
+
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
   _modelCache.clear();
   _shrinkState.clear();
@@ -513,6 +546,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
     _config.chat_model,
     _config.reranker_model,
     ...(_config.chat_fallback_chain ?? []),
+    ...tierModels,
   ]) {
     if (m) registerExtendedModel(m);
   }
@@ -581,6 +615,7 @@ export function resetGateway(): void {
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
+  _generateTextTransport = generateText;
   _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
@@ -599,6 +634,17 @@ export function resetGateway(): void {
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
   _embedTransportInstalled = fn !== null;
+}
+
+/**
+ * Test-only seam for the chat() SDK call. Unlike __setChatTransportForTests,
+ * this keeps provider resolution and providerOptions assembly live, then
+ * replaces only the final generateText call.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function __setGenerateTextTransportForTests(fn: GenerateTextFn | null): void {
+  _generateTextTransport = fn ?? generateText;
 }
 
 /**
@@ -1028,6 +1074,30 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
  * float[] (not base64), so the Layer 2 cap compares against the JSON
  * payload size of each embedding rather than a base64 string length.
  */
+/**
+ * NVIDIA NIM compatibility shim. NVIDIA uses the OpenAI embeddings wire
+ * shape but requires asymmetric input_type values: query for retrieval and
+ * passage for indexed documents. The generic gateway store carries
+ * query/document across the AI SDK boundary; map document to passage here.
+ */
+const nvidiaCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = __embedInputTypeStore.getStore() === 'query' ? 'query' : 'passage';
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Preserve the provider response when the SDK body is unexpectedly non-JSON.
+    }
+  }
+  return fetch(input as any, baseInit);
+}) as unknown as typeof fetch;
+
 const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
   // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
@@ -1288,6 +1358,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
+          : recipe.id === 'nvidia'
+          ? nvidiaCompatFetch
           : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
@@ -2383,6 +2455,58 @@ export interface ChatToolDef {
  * production subagent jobs) throws "messages do not match the ModelMessage[]
  * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
  */
+/**
+ * Default per-call max output tokens. Thinking-by-default Claude 5 models
+ * (`anthropic:claude-*-5`) burn a large chunk of the budget on internal
+ * reasoning before emitting any text, so a 4096 default leaves them with empty
+ * final text on the subagent tool loop. Give those models headroom; providers
+ * bill actual tokens, not the cap, so it is free for the models that don't use
+ * it. Everything else keeps 4096 on purpose: raising the default blanket-wide
+ * would exceed some openai-compat providers' hard max-output caps (DeepSeek
+ * 8192, gpt-4o 16384) and 400 on them — a regression for exactly the
+ * non-Anthropic subagent users the gateway loop exists to serve.
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
+const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+function defaultMaxOutputTokens(modelStr: string | undefined): number {
+  return modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+    ? THINKING_MODEL_MAX_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/**
+ * Deep-serialize a tool output into a plain JSON value for the AI SDK v6
+ * ModelMessage schema. node-postgres returns `timestamptz` columns as JS
+ * `Date` instances, and AI SDK v6's `JSONValue` schema rejects a raw Date,
+ * throwing "Invalid prompt ... ModelMessage[] schema" the moment a
+ * timestamp-bearing tool result (e.g. `brain_get_page`, `brain_list_pages`)
+ * is fed back — dead-lettering the whole multi-tool loop. The JSON round-trip
+ * runs `Date.prototype.toJSON` (ISO string) recursively and drops `undefined`.
+ * This is a serialization fix at the SDK boundary, NOT a `::jsonb` DB cast —
+ * it never touches Postgres. (BigInt / circular outputs still throw in
+ * JSON.stringify; those aren't LLM-serializable and are out of scope.)
+ */
+function toJsonSafe(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null));
+  } catch {
+    // BigInt / circular output isn't LLM-serializable; degrade to a string
+    // rather than throwing and dead-lettering the whole tool loop.
+    return safeStringify(value);
+  }
+}
+
+/** Stringify that never throws (bigint/circular fall back to String()). */
+function safeStringify(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return String(value);
+  }
+}
+
 export function toModelMessages(messages: ChatMessage[]): unknown[] {
   return messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content };
@@ -2398,22 +2522,84 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: safeStringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: toJsonSafe(b.output) as never }),
           })),
       };
     }
     return {
       role: m.role,
-      content: blocks.map((b) => {
-        if (b.type === 'text') return { type: 'text' as const, text: b.text };
-        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
-        return b;
-      }),
+      // Drop text blocks whose `text` isn't a string: reasoning models
+      // (DeepSeek v4, etc.) surface `text: null/undefined` thinking parts that
+      // AI SDK v6's Zod schema rejects, poisoning the whole call. `''` is valid
+      // and kept.
+      content: blocks
+        .filter((b) => b.type !== 'text' || typeof b.text === 'string')
+        .map((b) => {
+          if (b.type === 'text') return { type: 'text' as const, text: b.text };
+          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+          return b;
+        }),
     };
   });
+}
+
+/**
+ * Last-resort normalization at the `chat()` boundary: back-fill error stubs for
+ * any assistant tool-call that isn't answered by the immediately-following
+ * tool-result turn. The subagent handler already balances its own transcript
+ * (see reconcileGatewayReplay), so this is a no-op there — it exists for the
+ * paths reconcile can't reach: a partially-answered turn, a provider that
+ * duplicates or drops tool-call IDs (local vLLM), or a `finishReason:'length'`
+ * truncation mid-batch. Without it those histories throw
+ * AI_MissingToolResultsError inside `generateText`. No-op on balanced input.
+ *
+ * @internal exported for tests.
+ */
+export function repairToolPairing(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    out.push(m);
+    if (typeof m.content === 'string' || m.role !== 'assistant') continue;
+
+    const calls = m.content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    if (calls.length === 0) continue;
+
+    // v6 only accepts results in the immediately-following message.
+    const next = messages[i + 1];
+    const nextBlocks = next && typeof next.content !== 'string' ? next.content : [];
+    const resolved = new Set(
+      nextBlocks
+        .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+        .map((b) => b.toolCallId),
+    );
+
+    const missing = calls.filter((c) => !resolved.has(c.toolCallId));
+    if (missing.length === 0) continue;
+
+    const stubs: ChatBlock[] = missing.map((c) => ({
+      type: 'tool-result',
+      toolCallId: c.toolCallId,
+      toolName: c.toolName,
+      output: 'tool result unavailable (recovered after interrupted run)',
+      isError: true,
+    }));
+
+    if (resolved.size > 0) {
+      // A tool-result message follows but is incomplete — merge the stubs in.
+      out.push({ role: next!.role, content: [...(nextBlocks as ChatBlock[]), ...stubs] });
+      i++; // the merged message replaces the original; don't emit it twice.
+    } else {
+      // No following tool-result message at all — synthesize one.
+      out.push({ role: 'user', content: stubs });
+    }
+  }
+  return out;
 }
 
 export interface ChatResult {
@@ -2655,6 +2841,49 @@ function lastUserMessageForGuardrail(
   return null;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergeRecords(
+  ...records: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const record of records) {
+    if (!record) continue;
+    for (const [key, value] of Object.entries(record)) {
+      const existing = out[key];
+      if (isPlainObject(existing) && isPlainObject(value)) {
+        out[key] = deepMergeRecords(existing, value);
+      } else {
+        out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
+function applyConfiguredChatProviderOptions(
+  providerOptions: Record<string, any>,
+  cfg: AIGatewayConfig,
+  recipeId: string,
+  modelId: string,
+): void {
+  const providerRaw = cfg.provider_chat_options?.[recipeId];
+  const modelRaw = cfg.provider_chat_options?.[`${recipeId}:${modelId}`];
+  const providerScoped = isPlainObject(providerRaw) ? providerRaw : undefined;
+  const modelScoped = isPlainObject(modelRaw) ? modelRaw : undefined;
+  if (!providerScoped && !modelScoped) return;
+
+  providerOptions[recipeId] = deepMergeRecords(
+    isPlainObject(providerOptions[recipeId]) ? providerOptions[recipeId] : undefined,
+    providerScoped,
+    modelScoped,
+  );
+}
+
 /**
  * Gateway-side guardrail wrapper. Observe-only, fail-open, never throws into
  * the gateway. No-op when no guardrail is registered. The guardrail boundary
@@ -2674,6 +2903,46 @@ async function classifyGatewayGuardrail(input: {
   } catch {
     // Fail open. A guardrail must never break inference or tool execution.
   }
+}
+
+/**
+ * Derive OpenAI's `prompt_cache_key` (the AI SDK's `providerOptions.openai.
+ * promptCacheKey`). It's a ROUTING hint, not a cache breakpoint: OpenAI caches
+ * prefixes automatically, and a stable key makes requests sharing a prefix
+ * land on the same engine, raising the hit rate (OpenAI cites 60%→87%).
+ *
+ * Hash the system prompt + sorted tool names — that's the stable prefix
+ * gbrain's repeated loops (enrich, page-summary, skillopt, subagent) actually
+ * share. Returns undefined when there's no system prompt (nothing stable to
+ * key on), so one-off requests don't get pinned to a single engine. An
+ * explicit key can still be set per provider/model via
+ * `provider_chat_options` config, which overrides the derived key.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function openAIPromptCacheKey(args: {
+  system?: string;
+  toolNames?: string[];
+}): string | undefined {
+  if (!args.system) return undefined;
+  const basis = `${args.system} ${(args.toolNames ?? []).slice().sort().join(',')}`;
+  return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
+}
+
+export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, any> | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.reduce((acc, t) => {
+    acc[t.name] = {
+      description: t.description,
+      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
+      // thunk and call schema(), throwing "schema is not a function". Wrap the
+      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
+      // through the real toolLoop (skillopt rollouts + subagent jobs).
+      inputSchema: jsonSchema(t.inputSchema as any),
+    };
+    return acc;
+  }, {} as Record<string, any>);
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
@@ -2697,7 +2966,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = opts.maxTokens ?? 4096;
+  const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
   // runtime, or no_pricing (when cap is set). Pre-resolution model id is
@@ -2759,29 +3028,75 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
+  const cfg = requireConfig();
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
 
-  // Build messages. Anthropic prompt-cache markers ride on system + last tool
-  // via providerOptions; the AI SDK accepts the system as a string for
-  // generateText, so cache markers go through providerOptions.anthropic.
-  const tools = (opts.tools ?? []).reduce((acc, t) => {
-    acc[t.name] = {
-      description: t.description,
-      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
-      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
-      // thunk and call schema(), throwing "schema is not a function". Wrap the
-      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
-      // through the real toolLoop (skillopt rollouts + subagent jobs).
-      inputSchema: jsonSchema(t.inputSchema as any),
-    };
-    return acc;
-  }, {} as Record<string, any>);
+  const tools = toAISDKTools(opts.tools);
 
   const providerOptions: Record<string, any> = {};
   if (useCache) {
+    // Call-level `providerOptions.anthropic.cacheControl` is NOT a no-op:
+    // @ai-sdk/anthropic 3.0.47+ passes it through as a top-level
+    // `cache_control` field on the Anthropic request body, which the
+    // Messages API resolves as its documented "auto-cache the last
+    // cacheable block in the request" shorthand (see Anthropic's
+    // prompt-caching docs — "top-level auto-caching ... is the simplest
+    // option when you don't need fine-grained placement"). Keep it: it's
+    // what gives a growing multi-turn conversation (toolLoop()) a rolling
+    // cache breakpoint on each turn's tail for free, without us having to
+    // hand-roll the marker-walking logic subagent.ts's raw-SDK path uses.
+    //
+    // But "last cacheable block" is the wrong block for gbrain#2490's
+    // actual callers (page-summary, skillopt, enrich): those are
+    // single-turn calls with a STABLE system prompt and a DIFFERENT user
+    // message every time, so the auto-marker lands on the ever-varying
+    // tail — every call WRITES a fresh cache entry and never READS a prior
+    // one (cache_read_input_tokens stays 0 forever). Caching the stable
+    // prefix needs an EXPLICIT breakpoint on the system block itself,
+    // which is applied below via a `SystemModelMessage` (round-trips its
+    // own `providerOptions`) instead of a bare string.
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
+  }
+  // OpenAI prompt_cache_key (native-openai only): a stable per-prefix routing
+  // hint that keeps requests sharing a system prompt + tool set on the same
+  // inference engine, lifting OpenAI's automatic prefix-cache hit rate. The
+  // openai-compatible path (litellm/azure/groq/...) ignores
+  // providerOptions.openai, so it gets nothing. Applied BEFORE the configured
+  // provider options so `provider_chat_options.openai.promptCacheKey` from
+  // config still overrides the derived key.
+  if (recipe.implementation === 'native-openai') {
+    const promptCacheKey = openAIPromptCacheKey({
+      system: opts.system,
+      toolNames: (opts.tools ?? []).map(t => t.name),
+    });
+    if (promptCacheKey) providerOptions.openai = { promptCacheKey };
+  }
+  applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
+
+  // Derive ONE canonical cache-control value AFTER config merging and reuse
+  // it for every breakpoint (system block, last tool def, call-level). If
+  // `provider_chat_options.anthropic.cacheControl` overrides the TTL (e.g.
+  // `{ type: 'ephemeral', ttl: '1h' }`), that override lands in
+  // `providerOptions.anthropic.cacheControl` via the deep-merge above —
+  // reusing it here (instead of hardcoding `{ type: 'ephemeral' }` per
+  // breakpoint) keeps every marker in the request on the same TTL.
+  const cacheControlValue: { type: 'ephemeral'; ttl?: '5m' | '1h' } | undefined = useCache
+    ? (providerOptions.anthropic?.cacheControl ?? { type: 'ephemeral' })
+    : undefined;
+
+  // Anthropic-only secondary breakpoint: mark the LAST tool def too (mirrors
+  // subagent.ts's raw-SDK path — Anthropic caches everything up to and
+  // including the last `cache_control` block it sees in the request, so
+  // marking the last tool extends the cached prefix through the whole tool
+  // list). `tool.providerOptions.anthropic.cacheControl` is the shape
+  // @ai-sdk/anthropic 3.x reads for tool-def breakpoints.
+  if (cacheControlValue && opts.tools && opts.tools.length > 0 && tools) {
+    const lastTool = tools[opts.tools[opts.tools.length - 1]!.name];
+    if (lastTool) {
+      lastTool.providerOptions = { anthropic: { cacheControl: cacheControlValue } };
+    }
   }
 
   let _budgetRecorded = false;
@@ -2800,13 +3115,31 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   };
 
+  // The actual Anthropic system-prompt cache breakpoint. A bare string
+  // `system` produces `{ role: 'system', content }` with no `providerOptions`
+  // field (ai@6's convertToLanguageModelPrompt), so @ai-sdk/anthropic's
+  // getCacheControl(providerOptions) on that block always resolves to
+  // nothing. Passing a `SystemModelMessage` object instead — the shape `ai`
+  // documents specifically for "additional provider options (e.g. for
+  // caching)" — round-trips `providerOptions` onto that block. Byte-identical
+  // to the old bare-string form when useCache is false. Reuses
+  // `cacheControlValue` (the config-merged value) so this breakpoint's TTL
+  // always matches the last-tool and call-level breakpoints.
+  const systemParam = cacheControlValue && opts.system
+    ? {
+        role: 'system' as const,
+        content: opts.system,
+        providerOptions: { anthropic: { cacheControl: cacheControlValue } },
+      }
+    : opts.system;
+
   try {
-    const result = await generateText({
+    const result = await _generateTextTransport({
       model,
-      system: opts.system,
-      messages: toModelMessages(opts.messages) as any,
+      system: systemParam,
+      messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-      maxOutputTokens: opts.maxTokens ?? 4096,
+      maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
@@ -2957,6 +3290,14 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the tool-result user turn that closes each tool round, BEFORE it is
+   * appended to the in-memory history. Without this the loop only kept the
+   * tool-result turn in memory, so a resumed job reloaded assistant tool-calls
+   * with no matching results and non-Anthropic providers rejected the
+   * unbalanced history (AI_MissingToolResultsError). Fires per completed round.
+   */
+  onToolResultTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -2991,7 +3332,7 @@ export interface ToolLoopResult {
  */
 export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
-  const maxTokens = opts.maxTokens ?? 4096;
+  const maxTokens = opts.maxTokens ?? defaultMaxOutputTokens(opts.model ?? getChatModel());
   const handlers = opts.toolHandlers;
   const totalUsage: ChatResult['usage'] = {
     input_tokens: 0,
@@ -3180,9 +3521,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Persist + feed all tool results back as a single user message. The
+    // persist-before-push mirrors onAssistantTurn's write-ordering: a crash
+    // after this leaves a balanced transcript for the next resume.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResultTurn?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;

@@ -7,7 +7,9 @@
  * full story.
  *
  * Subcommands:
- *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated]
+ *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force]
+ *                               --path must be a git-initialized repo (files committed,
+ *                               not just present) — #2707. --force skips the check.
  *   gbrain sources list [--json]
  *   gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
  *   gbrain sources rename <id> <new-name>
@@ -107,7 +109,7 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
 
 async function countPages(engine: BrainEngine, sourceId: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
     [sourceId],
   );
   return rows[0]?.n ?? 0;
@@ -120,7 +122,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>]',
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]',
     );
     process.exit(2);
   }
@@ -132,6 +134,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let cloneDir: string | undefined;
   let patFile: string | undefined;
   let noHarden = false;
+  let force = false;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -143,6 +146,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--clone-dir') { cloneDir = args[++i]; continue; }
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
+    if (a === '--force') { force = true; continue; }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -162,6 +166,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     remoteUrl,
     federated,
     cloneDir,
+    force,
   });
 
   // Topology A discovery: if the just-added source carries a brain-resident
@@ -502,6 +507,19 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
 
   const result = await softDeleteSource(engine, id);
   if (!result) {
+    // #2792: softDeleteSource returns null both for "not found" (handled by
+    // the impact check above) and for "already archived" (UPDATE matched no
+    // `archived = false` row). Distinguish them: already-archived is a
+    // friendly idempotent no-op, not a reasonless failure.
+    const rows = await engine.executeRaw<{ archived: boolean }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    if (rows[0]?.archived) {
+      console.log(`Source "${id}" is already archived — nothing to do.`);
+      console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
+      return;
+    }
     console.error(`Failed to archive source "${id}".`);
     process.exit(4);
   }
@@ -1134,7 +1152,8 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
         continue;
       }
       if (stat.isDirectory()) {
-        if (pruneDir(entry, dir)) continue;
+        // pruneDir returns true = descend, false = prune (see core/sync.ts).
+        if (!pruneDir(entry, dir)) continue;
         walk(full);
       } else if (entry.endsWith('.md')) {
         files.push(full);
@@ -1164,7 +1183,14 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   // frontmatter.type and estimates per-page segment count from body
   // bytes. Estimated per-segment Sonnet cost is a rough heuristic
   // (~2000 in + 500 out tokens at $3/MTok in + $15/MTok out ≈ $0.013).
-  const FACTS_BACKFILL_ALLOWED = ['conversation', 'meeting', 'slack', 'email'];
+  const FACTS_BACKFILL_ALLOWED = [
+    'conversation',
+    'meeting',
+    'slack',
+    'email',
+    'imessage',
+    'imessage-daily',
+  ];
   const FACTS_BACKFILL_CHARS_PER_SEGMENT = 6500; // matches SEGMENT_TEXT_CHAR_LIMIT
   const FACTS_BACKFILL_USD_PER_SEGMENT = 0.013;
   let factsBackfillPages = 0;
@@ -1354,8 +1380,9 @@ function printHelp(): void {
   console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
-  add <id> --path <p> [--name <n>] [--federated|--no-federated]
-                                    Register a new source.
+  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+                                    Register a new source. --path must be a git repo
+                                    with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.

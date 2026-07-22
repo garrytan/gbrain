@@ -15,6 +15,7 @@ import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
+import { resolveHardExcludes } from './source-boost.ts';
 import {
   resolveAdaptiveReturn,
   applyAdaptiveReturn,
@@ -33,6 +34,7 @@ import { normalizeAlias } from './alias-normalize.ts';
 import { stampEvidence } from './evidence.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget } from './token-budget.ts';
+import { warnOncePerProcess } from '../utils.ts';
 import { recordSearchTelemetry } from './telemetry.ts';
 import {
   weightsForIntent,
@@ -739,6 +741,21 @@ export interface HybridSearchOpts extends SearchOpts {
    * a fresh per-call deadline. Not part of the public contract.
    */
   _queryEmbedDeadline?: QueryEmbedDeadline;
+
+  /**
+   * INTERNAL — cache-consult outcome threaded from `hybridSearchCached` into
+   * the inner `hybridSearch` so the ONE telemetry record per search (emitted
+   * by the inner function) carries the cache classification: 'miss' when the
+   * semantic cache was consulted and had no row, 'disabled' when the consult
+   * was skipped (cache off, walk/near-symbol/non-default-column/adaptive
+   * skip, or the lookup embed failed). Folded into the RECORDED meta only —
+   * `onMeta` payloads are unchanged. Direct `hybridSearch` callers leave it
+   * undefined and keep recording with no cache field (they never consulted
+   * the cache). The cache-HIT record is emitted by `hybridSearchCached`
+   * itself, since the inner function never runs on a hit. Not part of the
+   * public contract.
+   */
+  _telemetryCacheStatus?: 'miss' | 'disabled';
 }
 
 /**
@@ -916,6 +933,11 @@ export async function hybridSearch(
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.
     embeddingColumn: resolvedCol,
+    // D2 fix (fix/title-retrieval-arm, Reviewer F1): the hybrid keyword arm
+    // is a recall arm — opt in to the engine's AND→OR zero-recall fallback.
+    // Direct searchKeyword consumers (countMentions, link-extraction, eval)
+    // do NOT set this and keep the strict-AND contract.
+    orFallback: true,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
@@ -942,7 +964,15 @@ export async function hybridSearch(
       // swallow — capture telemetry is best-effort
     }
     try {
-      recordSearchTelemetry(engine, meta, { results_count: lastResultsCount, rank1_score: lastRank1Score });
+      // #2952 — fold the cache-consult outcome (threaded by hybridSearchCached)
+      // into the RECORDED meta only. None of the inner return paths set a
+      // `cache` field themselves, so this is the sole source of the miss /
+      // disabled classification; `onMeta` consumers above still receive the
+      // meta unchanged (the cached wrapper emits its own merged meta to them).
+      const recordedMeta = opts?._telemetryCacheStatus
+        ? { ...meta, cache: { status: opts._telemetryCacheStatus } }
+        : meta;
+      recordSearchTelemetry(engine, recordedMeta, { results_count: lastResultsCount, rank1_score: lastRank1Score });
     } catch {
       // swallow — telemetry must never break the search hot path.
     }
@@ -966,8 +996,31 @@ export async function hybridSearch(
   const earlyModality = (opts?.crossModal && opts.crossModal !== 'auto')
     ? opts.crossModal
     : (suggestions.suggestedModality ?? 'text');
-  const keywordResults: SearchResult[] =
-    earlyModality === 'image' ? [] : await engine.searchKeyword(query, searchOpts);
+  // D1 fix (fix/title-retrieval-arm): page-grain title candidate arm,
+  // fetched CONCURRENTLY with the keyword arm (Reviewer F7 — independent
+  // engine queries). The chunk FTS vector never includes the page title, so
+  // an exact-title query can be unretrievable by keyword — this arm queries
+  // pages.search_vector (title weight 'A') directly. Runs regardless of
+  // query token count: the alias hop (≤6-token guard) and the title-phrase
+  // boost are re-rank-only, so LONG exact-title queries — where strict-AND
+  // chunk FTS is weakest — need a candidate GENERATOR. Fail-open WITH
+  // SIGNAL (Reviewer F2): a SQL error (e.g. a pre-search_vector brain)
+  // degrades to no title candidates, but warns once per process so a
+  // broken engine arm cannot ship dark.
+  const [keywordResults, titleResults]: [SearchResult[], SearchResult[]] =
+    earlyModality === 'image'
+      ? [[], []]
+      : await Promise.all([
+          engine.searchKeyword(query, searchOpts),
+          engine.searchTitles(query, searchOpts).catch((err: unknown) => {
+            warnOncePerProcess(
+              'search-titles-arm-failed',
+              `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ` +
+                `${err instanceof Error ? err.message : String(err)}`,
+            );
+            return [] as SearchResult[];
+          }),
+        ]);
 
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
@@ -1045,14 +1098,16 @@ export async function hybridSearch(
   if (!isAvailable('embedding', providerProbe)) {
     // v0.43 — fuse the relational arm with keyword so typed-edge answers
     // survive on the no-embedding-provider path (the relational win is most
-    // valuable exactly when vector is unavailable).
+    // valuable exactly when vector is unavailable). The title arm fuses here
+    // too — an exact-title lookup on a keyless install is precisely where
+    // chunk-grain keyword FTS alone fails (D1).
     let noEmbedResults = keywordResults;
-    if (relationalList.length > 0) {
+    if (relationalList.length > 0 || titleResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
-      noEmbedResults = rrfFusionWeighted(
-        [{ list: keywordResults, k: fk }, { list: relationalList, k: fk }],
-        detailResolved !== 'high',
-      );
+      const noEmbedLists = [{ list: keywordResults, k: fk }];
+      if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk });
+      if (relationalList.length > 0) noEmbedLists.push({ list: relationalList, k: fk });
+      noEmbedResults = rrfFusionWeighted(noEmbedLists, detailResolved !== 'high');
     }
     if (noEmbedResults.length > 0) {
       await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
@@ -1279,14 +1334,15 @@ export async function hybridSearch(
     // post-fusion stages here too — without it, salience='on' silently
     // does nothing on embed failures.
     // v0.43: fuse the relational arm with keyword via RRF so typed-edge
-    // answers survive even when vector is unavailable.
+    // answers survive even when vector is unavailable. The title arm fuses
+    // here too (same rationale as the no-embedding-provider path — D1).
     let fallbackResults = keywordResults;
-    if (relationalList.length > 0) {
+    if (relationalList.length > 0 || titleResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
-      fallbackResults = rrfFusionWeighted(
-        [{ list: keywordResults, k: fk }, { list: relationalList, k: fk }],
-        detail !== 'high',
-      );
+      const fallbackLists = [{ list: keywordResults, k: fk }];
+      if (titleResults.length > 0) fallbackLists.push({ list: titleResults, k: fk });
+      if (relationalList.length > 0) fallbackLists.push({ list: relationalList, k: fk });
+      fallbackResults = rrfFusionWeighted(fallbackLists, detail !== 'high');
     }
     if (fallbackResults.length > 0) {
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
@@ -1350,6 +1406,15 @@ export async function hybridSearch(
       ...vectorLists.map(list => ({ list, k: vectorK })),
       { list: keywordResults, k: keywordK },
     ];
+
+  // D1 fix (fix/title-retrieval-arm) — title candidate arm as a third
+  // weighted list. Fuses at the keyword arm's intent-effective k (same
+  // lexical-evidence class, no new tunable). Mirrors the keyword list's
+  // inclusion rules: fetch was gated on earlyModality, so no extra modality
+  // check here. Empty for non-matching queries → pure no-op.
+  if (titleResults.length > 0) {
+    allLists.push({ list: titleResults, k: keywordK });
+  }
 
   // v0.43 — relational recall arm (fourth RRF arm), built above so it also
   // contributes on the keyword-only fallback path. Neutral weight (baseRrfK):
@@ -1631,6 +1696,12 @@ export async function hybridSearchCached(
   const cacheKnobsHash = knobsHash(resolvedForCache, {
     embeddingColumn: resolvedColCached.name,
     embeddingModel: resolvedColCached.embeddingModel,
+    // #2825 — fold the resolved hard-exclude prefix list (defaults ∪
+    // GBRAIN_SEARCH_EXCLUDE ∪ per-call exclude_slug_prefixes, minus
+    // include_slug_prefixes — exactly what the engines' query-build path
+    // resolves) into the cache key so a row written under one exclude
+    // policy can't be served to a lookup under another.
+    hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
@@ -1737,8 +1808,17 @@ export async function hybridSearchCached(
         ...(hit.meta?.embedding_column ? { embedding_column: hit.meta.embedding_column } : {}),
         ...(hit.meta?.adaptive_return ? { adaptive_return: hit.meta.adaptive_return } : {}),
         ...(hit.meta?.autocut ? { autocut: hit.meta.autocut } : {}),
+        // Per-call budget: prefer the STORED budget record, which carries
+        // the true dropped count from the write-time cut — the
+        // re-application above ran on an already-cut set and reads
+        // dropped=0 (same masking as the miss path's finalMeta). Safe
+        // unconditionally: tokenBudget is folded into knobsHash (`tb=`),
+        // so a hit only ever serves a lookup with the identical resolved
+        // budget as the write — the outer pass can never cut further.
+        // budgetMeta stays as the fallback for legacy rows stored without
+        // a budget record.
         ...(opts?.tokenBudget && opts.tokenBudget > 0
-          ? { token_budget: budgetMeta }
+          ? { token_budget: hit.meta?.token_budget ?? budgetMeta }
           : {}),
       };
       try {
@@ -1746,6 +1826,21 @@ export async function hybridSearchCached(
       } catch {
         // swallow — telemetry is best-effort
       }
+      // #2952 — a cache hit never reaches the inner hybridSearch (the only
+      // other telemetry site), so record the search HERE or it vanishes from
+      // stats entirely (count, results, tokens, rank-1 — not just the hit
+      // counter). Same rank-1 rule as the inner return paths. Tokens are
+      // gated on the MODE-resolved budget, mirroring the inner paths' `if
+      // (resolvedMode.tokenBudget > 0)` meta condition — otherwise a
+      // tokenmax (budget-off) brain would record real tokens on hits but 0
+      // on misses, skewing avg-tokens upward as the hit rate rises (codex).
+      recordSearchTelemetry(engine, cachedMeta, {
+        results_count: budgeted.length,
+        ...(resolvedForCache.tokenBudget && resolvedForCache.tokenBudget > 0
+          ? { tokens_estimate: budgetMeta.used }
+          : {}),
+        rank1_score: budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined,
+      });
       return budgeted;
     }
   }
@@ -1761,6 +1856,10 @@ export async function hybridSearchCached(
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,
+    // #2952 — classify this search's telemetry record (emitted by the inner
+    // function) with the cache-consult outcome. 'hit' already returned above,
+    // so only miss/disabled reach this call.
+    _telemetryCacheStatus: cacheStatus === 'disabled' ? 'disabled' : 'miss',
     onMeta: (m) => {
       innerMetaBox.current = m;
       // Do NOT call userOnMeta here — we'll emit a merged meta below
@@ -1787,8 +1886,15 @@ export async function hybridSearchCached(
     ...(innerMeta?.embedding_column ? { embedding_column: innerMeta.embedding_column } : {}),
     ...(innerMeta?.adaptive_return ? { adaptive_return: innerMeta.adaptive_return } : {}),
     ...(innerMeta?.autocut ? { autocut: innerMeta.autocut } : {}),
+    // Per-call budget: prefer the INNER meta's budget record. The inner
+    // hybridSearch already enforced the same resolved budget (per-call wins
+    // in resolveSearchMode), so the re-application above sees an
+    // already-cut set and its meta reads dropped=0 — masking the real cut
+    // from onMeta consumers (the `dropped` under-report the restored
+    // search-lite test caught). The outer pass stays as the enforcement
+    // for the cache-HIT path, where no inner run exists.
     ...(opts?.tokenBudget && opts.tokenBudget > 0
-      ? { token_budget: budgetMeta }
+      ? { token_budget: innerMeta?.token_budget ?? budgetMeta }
       : {}),
   };
   try {

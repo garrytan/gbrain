@@ -206,6 +206,22 @@ export async function embedStaleForSource(
           chunk_source: c.chunk_source,
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+          // Carry through per-chunk metadata. upsertChunks writes these as
+          // EXCLUDED.<col> (not COALESCE), so omitting them here resets image
+          // rows to modality='text' (breaking the image search arm's
+          // modality='image' filter) and wipes code-chunk symbol metadata on
+          // every embed-stale pass. embedding_image is deliberately NOT
+          // carried: the upsert COALESCEs it, and getChunks returns the
+          // pgvector as a string which upsertChunks would mis-serialize.
+          modality: c.modality ?? undefined,
+          language: c.language ?? undefined,
+          symbol_name: c.symbol_name ?? undefined,
+          symbol_type: c.symbol_type ?? undefined,
+          start_line: c.start_line ?? undefined,
+          end_line: c.end_line ?? undefined,
+          parent_symbol_path: c.parent_symbol_path ?? undefined,
+          doc_comment: c.doc_comment ?? undefined,
+          symbol_name_qualified: c.symbol_name_qualified ?? undefined,
         }));
         await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
         // v0.41.31: stamp provenance only when EVERY chunk was stale (fully

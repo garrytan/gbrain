@@ -7,7 +7,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
-import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import type { MinionHandler, MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -20,6 +20,49 @@ function parseFlag(args: string[], flag: string): string | undefined {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+/**
+ * Long-lived workers outlive operator config changes. Re-stamp the AI gateway
+ * from DB-backed model config immediately before queued jobs enter gateway-backed
+ * paths, so a stale process-level default cannot route new work to the wrong
+ * provider.
+ */
+async function refreshGatewayForJob(engine: BrainEngine): Promise<void> {
+  const { reconfigureGatewayWithEngine } = await import('../core/ai/gateway.ts');
+  await reconfigureGatewayWithEngine(engine);
+}
+
+const GATEWAY_REFRESH_JOB_NAMES = new Set([
+  'embed',
+  'extract-conversation-facts',
+  'enrich',
+  'contextual_reindex_per_chunk',
+  'autopilot-cycle',
+  'synthesize',
+  'patterns',
+  'consolidate',
+  'extract_facts',
+  'extract-atoms-drain',
+  'embed-backfill',
+  'extract-takes-from-pages',
+  'embed-catch-up',
+]);
+
+function registerBuiltinJob(
+  worker: MinionWorker,
+  engine: BrainEngine,
+  name: string,
+  handler: MinionHandler,
+): void {
+  if (!GATEWAY_REFRESH_JOB_NAMES.has(name)) {
+    worker.register(name, handler);
+    return;
+  }
+  worker.register(name, async (job) => {
+    await refreshGatewayForJob(engine);
+    return await handler(job);
+  });
 }
 
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
@@ -132,8 +175,22 @@ function formatJobDetail(job: MinionJob): string {
   return lines.join('\n');
 }
 
-export async function runJobs(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
   const sub = args[0];
+
+  // Thin-client dispatch (cli.ts) passes engine=null for the subcommands
+  // with remote MCP routing (`list`, `get`) so no scratch local engine is
+  // ever built. Any other subcommand arriving with a null engine is a
+  // routing bug upstream of this function — refuse instead of crashing
+  // inside MinionQueue.
+  if (!engineOrNull && sub !== 'list' && sub !== 'get') {
+    console.error(`\`gbrain jobs ${sub ?? ''}\` needs a local engine and cannot run on a thin client.`);
+    process.exit(1);
+  }
+  // Null only ever reaches the MCP-routed `list`/`get` branches, which
+  // never touch the engine — narrowed once here so the host-only cases
+  // below typecheck unchanged.
+  const engine = engineOrNull as BrainEngine;
 
   if (!sub || sub === '--help' || sub === '-h') {
     console.log(`gbrain jobs — Minions job queue
@@ -217,6 +274,8 @@ HANDLER TYPES (built in)
     return;
   }
 
+  // The constructor just stores the reference; on the null (thin-client
+  // list/get) paths no queue method is ever reached.
   const queue = new MinionQueue(engine);
 
   switch (sub) {
@@ -1423,7 +1482,7 @@ export async function registerBuiltinHandlers(
     return { ...result, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason };
   });
 
-  worker.register('embed', async (job) => {
+  registerBuiltinJob(worker, engine, 'embed', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
     // Primary Minion progress channel is job.updateProgress (DB-backed,
     // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
@@ -1470,7 +1529,7 @@ export async function registerBuiltinHandlers(
   // BudgetTracker inside its own process. BudgetExhausted is caught at
   // the core level and returned as `result.budget_exhausted: true` (NOT
   // a job failure) so the user can resume with a higher cap.
-  worker.register('extract-conversation-facts', async (job) => {
+  registerBuiltinJob(worker, engine, 'extract-conversation-facts', async (job) => {
     const { runExtractConversationFactsCore } = await import('./extract-conversation-facts.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!sourceId) {
@@ -1481,7 +1540,7 @@ export async function registerBuiltinHandlers(
     }
     const types = Array.isArray(job.data.types)
       ? (job.data.types as string[]).filter((t) =>
-          ['conversation', 'meeting', 'slack', 'email'].includes(t),
+          ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'].includes(t),
         )
       : undefined;
     const result = await runExtractConversationFactsCore(engine, {
@@ -1529,7 +1588,7 @@ export async function registerBuiltinHandlers(
   // at the core level and returned as result.budget_exhausted (NOT a failure).
   // Strict per-source: the CLI fans out one job per source when --source is
   // omitted, so a job ALWAYS carries data.sourceId.
-  worker.register('enrich', async (job) => {
+  registerBuiltinJob(worker, engine, 'enrich', async (job) => {
     const { runEnrichCore } = await import('./enrich.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!sourceId) {
@@ -1612,6 +1671,43 @@ export async function registerBuiltinHandlers(
     return await runBacklinksCore({ action, dir, dryRun: !!job.data.dryRun });
   });
 
+  // Local patch 2026-06-11: durable facts:absorb. One-shot CLI processes
+  // (capture/put/sync) can't finish the extraction chat before their exit
+  // drain aborts it, so backstop.ts submits this job instead and the
+  // long-lived worker does the LLM work here. Inline mode: errors throw,
+  // so minion retry/backoff handles transient gateway failures and real
+  // failures stay visible in `gbrain jobs list --status failed`.
+  worker.register('facts-absorb', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
+    if (!slug) throw new Error('facts-absorb job requires data.slug');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    const page = await engine.getPage(slug, { sourceId });
+    if (!page) return { skipped: 'page_missing', slug, sourceId };
+    const { runFactsBackstop } = await import('../core/facts/backstop.ts');
+    const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import'] as const;
+    const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
+      ? (job.data.source as typeof KNOWN_SOURCES[number])
+      : 'mcp:put_page';
+    return await runFactsBackstop(
+      {
+        slug: page.slug,
+        type: page.type,
+        compiled_truth: page.compiled_truth,
+        frontmatter: (page.frontmatter ?? {}) as Record<string, unknown>,
+      },
+      {
+        engine,
+        sourceId,
+        sessionId: typeof job.data.sessionId === 'string' ? job.data.sessionId : null,
+        source,
+        mode: 'inline',
+        notabilityFilter: job.data.notabilityFilter === 'high-only' ? 'high-only' : 'all',
+        visibility: job.data.visibility === 'world' ? 'world' : 'private',
+        ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
+      },
+    );
+  });
+
   // Autopilot-cycle handler: delegates to runCycle. Shares the exact same
   // phase set and ordering as `gbrain dream` and autopilot's inline path —
   // one source of truth for what the brain does overnight.
@@ -1632,13 +1728,13 @@ export async function registerBuiltinHandlers(
     const { makeContextualReindexHandler } = await import(
       '../core/minions/handlers/contextual-reindex-per-chunk.ts'
     );
-    worker.register('contextual_reindex_per_chunk', makeContextualReindexHandler({ engine }));
+    registerBuiltinJob(worker, engine, 'contextual_reindex_per_chunk', makeContextualReindexHandler({ engine }));
   }
 
   // derivation); the handler returns { partial, status, report } so
   // `gbrain jobs get <id>` shows the full structured report. Does NOT
   // throw on partial: a flaky phase must not block every future cycle.
-  worker.register('autopilot-cycle', async (job) => {
+  registerBuiltinJob(worker, engine, 'autopilot-cycle', async (job) => {
     const { runCycle } = await import('../core/cycle.ts');
     // v0.41.30 (T2): fall back to null (NOT cwd '.') when no repo is configured.
     // The queued cycle is the same primitive `gbrain dream` uses; a checkout-less
@@ -1743,6 +1839,7 @@ export async function registerBuiltinHandlers(
       brainDir: effectiveBrainDir,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       ...(sourceId ? { sourceId } : {}),
       ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
       yieldBetweenPhases: async () => {
@@ -1780,6 +1877,7 @@ export async function registerBuiltinHandlers(
       brainDir: repoPath,
       pull: false, // brain-wide DB/maintenance work never git-pulls
       signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       phases,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
@@ -1925,17 +2023,18 @@ export async function registerBuiltinHandlers(
       brainDir: repoPath,
       phases: [phase as any],
       signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
     });
     return { phase, status: report.status, report };
   };
 
   // PROTECTED — internally spawn subagent children
-  worker.register('synthesize', makePhaseHandler('synthesize'));
-  worker.register('patterns', makePhaseHandler('patterns'));
-  worker.register('consolidate', makePhaseHandler('consolidate'));
+  registerBuiltinJob(worker, engine, 'synthesize', makePhaseHandler('synthesize'));
+  registerBuiltinJob(worker, engine, 'patterns', makePhaseHandler('patterns'));
+  registerBuiltinJob(worker, engine, 'consolidate', makePhaseHandler('consolidate'));
 
   // Open — DB writes only, no LLM spend
-  worker.register('extract_facts', makePhaseHandler('extract_facts'));
+  registerBuiltinJob(worker, engine, 'extract_facts', makePhaseHandler('extract_facts'));
   worker.register('resolve_symbol_edges', makePhaseHandler('resolve_symbol_edges'));
   worker.register('recompute_emotional_weight', makePhaseHandler('recompute_emotional_weight'));
 
@@ -1945,7 +2044,7 @@ export async function registerBuiltinHandlers(
   // window / defer behavior. On LockUnavailableError (the routine cycle holds
   // the per-source lock) the job completes `{ deferred: true }` and retries
   // next tick instead of failing — cooperative interleave (CODEX accepted).
-  worker.register('extract-atoms-drain', async (job) => {
+  registerBuiltinJob(worker, engine, 'extract-atoms-drain', async (job) => {
     const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
@@ -1973,7 +2072,7 @@ export async function registerBuiltinHandlers(
   // Cost-bounded via D6 ($10/job BudgetTracker) + D19 (source-level cooldown
   // + 24h rolling cap, gated at submit time). NOT in PROTECTED_JOB_NAMES —
   // embedding-only spend, no API-by-the-minute risk like subagent.
-  worker.register('embed-backfill', async (job) => {
+  registerBuiltinJob(worker, engine, 'embed-backfill', async (job) => {
     const { makeEmbedBackfillHandler } = await import('../core/minions/handlers/embed-backfill.ts');
     return await makeEmbedBackfillHandler(engine)(job);
   });
@@ -1994,7 +2093,7 @@ export async function registerBuiltinHandlers(
   // (LLM-bearing). Two-gate consent enforced at the handler boundary:
   // refuses to run unless takes.bootstrap_enabled config is true, even
   // when allowProtectedSubmit was set at queue.add time.
-  worker.register('extract-takes-from-pages', async (job) => {
+  registerBuiltinJob(worker, engine, 'extract-takes-from-pages', async (job) => {
     const { extractTakesFromPages } = await import('../core/extract-takes-from-pages.ts');
     const data = (job.data ?? {}) as { sourceId?: string; maxPages?: number };
     const bootstrapCfg = await engine.getConfig('takes.bootstrap_enabled');
@@ -2021,7 +2120,7 @@ export async function registerBuiltinHandlers(
   // remediation pipeline. Wraps runEmbedCore with stale + catchUp + the
   // priority/batchSize the recommendation supplies. NOT in
   // PROTECTED_JOB_NAMES (embedding spend only).
-  worker.register('embed-catch-up', async (job) => {
+  registerBuiltinJob(worker, engine, 'embed-catch-up', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
     const data = (job.data ?? {}) as {
       sourceId?: string;

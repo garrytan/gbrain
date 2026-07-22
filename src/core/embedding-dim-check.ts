@@ -29,6 +29,9 @@ import {
   isOpenAITextEmbedding3Model,
   isValidOpenAITextEmbedding3Dim,
   maxOpenAITextEmbedding3Dim,
+  nvidiaEmbeddingDim,
+  nvidiaEmbeddingDimOptions,
+  supportsNvidiaEmbeddingDimension,
 } from './ai/dims.ts';
 
 /**
@@ -366,7 +369,9 @@ function validateDimAgainstTouchpoint(
   dimsOptions: number[] | undefined,
   requestedDims: number | undefined,
 ): ResolveSchemaDimResult {
-  const dim = requestedDims ?? defaultDims;
+  const nvidiaNaturalDims = recipe.id === 'nvidia' ? nvidiaEmbeddingDim(modelId) : undefined;
+  const effectiveDefaultDims = nvidiaNaturalDims ?? defaultDims;
+  const dim = requestedDims ?? effectiveDefaultDims;
 
   if (!Number.isInteger(dim) || dim <= 0) {
     return {
@@ -396,7 +401,7 @@ function validateDimAgainstTouchpoint(
     dim,
     model: `${recipe.id}:${modelId}`,
     provider: recipe.id,
-    recipeDefault: defaultDims,
+    recipeDefault: effectiveDefaultDims,
   };
 }
 
@@ -411,6 +416,22 @@ function isCustomDimValidForProvider(
   requestedDims: number,
   dimsOptions: number[] | undefined,
 ): CustomDimCheck {
+  // NVIDIA models are mixed: some fixed-dim, one Matryoshka-style. Handle
+  // them before generic recipe dims_options so llama-nemotron can use 1280d.
+  if (recipe.id === 'nvidia') {
+    const naturalDims = nvidiaEmbeddingDim(modelId);
+    if (naturalDims !== undefined && requestedDims === naturalDims) return { valid: true, error: '' };
+    if (supportsNvidiaEmbeddingDimension(modelId, requestedDims)) return { valid: true, error: '' };
+    const options = nvidiaEmbeddingDimOptions(modelId);
+    return {
+      valid: false,
+      error:
+        `NVIDIA model "${modelId}" does not support dimensions ${requestedDims}. ` +
+        `Natural dimensions: ${naturalDims ?? 'unknown'}. ` +
+        (options ? `Supported overrides: ${options.join(', ')}.` : 'No dimension overrides are supported for this NVIDIA model.'),
+    };
+  }
+
   // Tier 1: recipe-declared dims_options.
   if (dimsOptions && dimsOptions.length > 0) {
     if (dimsOptions.includes(requestedDims)) return { valid: true, error: '' };

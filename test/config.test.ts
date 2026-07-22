@@ -253,3 +253,15 @@ describe('loadConfig — GBRAIN_MAX_MARKUP_RATIO env (v0.42 #1699)', () => {
     });
   });
 });
+
+describe('KNOWN_CONFIG_KEYS — documented enable commands must be registered', () => {
+  test('Life Chronicle keys are registered (v0.42.56.0 release notes say `config set auto_chronicle true`)', async () => {
+    const { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } = await import('../src/core/config.ts');
+    // The flag the chronicle backstop reads (isAutoChronicleEnabled).
+    expect(KNOWN_CONFIG_KEYS).toContain('auto_chronicle');
+    // The takes bootstrap two-gate consent flag (v0.41.18.0 A12).
+    expect(KNOWN_CONFIG_KEYS).toContain('takes.bootstrap_enabled');
+    // chronicle.tz (chronicleTz) + future chronicle.* knobs.
+    expect(KNOWN_CONFIG_KEY_PREFIXES.some(p => 'chronicle.tz'.startsWith(p))).toBe(true);
+  });
+});

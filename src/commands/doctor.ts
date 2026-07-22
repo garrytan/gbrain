@@ -326,6 +326,70 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
   }
 }
 
+/**
+ * Doctor check: pgvector availability.
+ *
+ * Use the active engine instead of the module-level Postgres singleton.
+ * PGLite exposes pg_extension through its engine connection, but does not
+ * connect db.ts's Postgres singleton; using db.getConnection() here turns a
+ * healthy PGLite brain into a false warning.
+ */
+export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const ext = await engine.executeRaw<{ extname: string }>(
+      `SELECT extname FROM pg_extension WHERE extname = 'vector'`,
+    );
+    if (ext.length > 0) {
+      return { name: 'pgvector', status: 'ok', message: 'Extension installed' };
+    }
+    return { name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' };
+  } catch {
+    return { name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' };
+  }
+}
+
+/**
+ * Doctor check: JSONB columns are not double-encoded as strings.
+ *
+ * This check is valid on both Postgres and PGLite. Route through
+ * engine.executeRaw() so embedded PGLite brains are checked through their
+ * actual connection instead of the unrelated Postgres singleton.
+ */
+export async function jsonbIntegrityCheck(
+  engine: BrainEngine,
+  progress?: Pick<ProgressReporter, 'heartbeat'>,
+): Promise<Check> {
+  try {
+    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',      col: 'data',           expected: 'object' },
+      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',         col: 'metadata',       expected: 'object' },
+      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+    ];
+    let totalBad = 0;
+    const breakdown: string[] = [];
+    for (const { table, col } of targets) {
+      progress?.heartbeat(`jsonb_integrity.${table}.${col}`);
+      const rows = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+      );
+      const n = Number(rows[0]?.n ?? 0);
+      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+    }
+    if (totalBad === 0) {
+      return { name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' };
+    }
+    return {
+      name: 'jsonb_integrity',
+      status: 'warn',
+      message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+    };
+  } catch {
+    return { name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' };
+  }
+}
+
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
@@ -2992,7 +3056,7 @@ export async function computeConversationFactsBacklogCheck(
     const typesRaw = await engine.getConfig(
       'cycle.conversation_facts_backfill.types',
     );
-    let types = ['conversation', 'meeting', 'slack', 'email'];
+    let types = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'];
     if (typesRaw) {
       try {
         const parsed = JSON.parse(typesRaw);
@@ -4096,8 +4160,8 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     if (!enabled) {
       return {
         name,
-        status: 'warn',
-        message: 'retrieval reflex disabled (config/env) — entity pointer layer off',
+        status: 'ok',
+        message: 'retrieval reflex intentionally disabled (config/env) — entity pointer layer off',
         details: { enabled: false, engine: engineKind, policy_skill_installed: skillInstalled },
       };
     }
@@ -4281,7 +4345,7 @@ export async function buildChecks(
 
   // 2. Skill conformance (SKILL group — gated)
   if (scope === 'all' && skillsDir) {
-    const conformanceResult = checkSkillConformance(skillsDir);
+    const conformanceResult = skillConformanceCheck(skillsDir);
     checks.push(conformanceResult);
   }
 
@@ -4861,9 +4925,10 @@ export async function buildChecks(
   // triage the misses interactively.
   if (engine) {
     try {
+      const { readConversationBodyForParsing } = await import('../core/conversation-parser/body.ts');
       const { parseConversation } = await import('../core/conversation-parser/parse.ts');
-      const allowedTypes = ['conversation', 'meeting', 'slack', 'email'] as const;
-      // PageFilters supports singular `type` only; iterate the 4 types
+      const allowedTypes = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'] as const;
+      // PageFilters supports singular `type` only; iterate the allowed types
       // and cap at ~50/each to land at ~200 total max.
       const sample: import('../core/types.ts').Page[] = [];
       for (const t of allowedTypes) {
@@ -4880,7 +4945,7 @@ export async function buildChecks(
         const hitsByPattern: Record<string, number> = {};
         let unmatched = 0;
         for (const page of sample) {
-          const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`.trim();
+          const body = await readConversationBodyForParsing(engine, page);
           const result = parseConversation(body, { page, noPolish: true, noFallback: true });
           const id = result.matched_pattern_id ?? '_no_match';
           hitsByPattern[id] = (hitsByPattern[id] ?? 0) + 1;
@@ -5073,13 +5138,7 @@ export async function buildChecks(
         checks.push({
           name: 'multi_source_drift',
           status: 'warn',
-          message:
-            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
-            `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
-            `(2) source X never completed initial sync and the default page is unrelated. ` +
-            `Verify with 'gbrain sources status', then either re-sync with ` +
-            `'gbrain sync --source <id> --full' or 'gbrain delete <slug>' if the default-source ` +
-            `row is the misroute. (A 'gbrain sources rehome' cleanup command is tracked for v0.32.0.)`,
+          message: multiSourceDriftAdvice(result.count, sampleStr),
         });
       } else {
         checks.push({
@@ -5188,17 +5247,7 @@ export async function buildChecks(
 
   // 4. pgvector extension
   progress.heartbeat('pgvector');
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
-    }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
-  }
+  checks.push(await pgvectorCheck(engine));
 
   // 4b. PgBouncer / prepared-statement compatibility.
   // URL-only inspection — no DB roundtrip — so this is cheap and works
@@ -5984,37 +6033,7 @@ export async function buildChecks(
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
   progress.heartbeat('jsonb_integrity');
-  try {
-    const sql = db.getConnection();
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
-    ];
-    let totalBad = 0;
-    const breakdown: string[] = [];
-    for (const { table, col } of targets) {
-      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
-      );
-      const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
-    }
-    if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
-    } else {
-      checks.push({
-        name: 'jsonb_integrity',
-        status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
-      });
-    }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
-  }
+  checks.push(await jsonbIntegrityCheck(engine, progress));
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).
   //
@@ -7159,9 +7178,17 @@ export async function buildChecks(
       let vanished = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
+      const nodePath = await import('node:path');
+      // storage_path is repo-relative for sync-ingested assets. Resolving
+      // against cwd made this check a false-positive WARN whenever doctor
+      // ran outside the brain repo.
+      const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
+        const abs = nodePath.isAbsolute(r.storage_path)
+          ? r.storage_path
+          : nodePath.join(repoRoot, r.storage_path);
         try {
-          fs.statSync(r.storage_path);
+          fs.statSync(abs);
         } catch {
           vanished++;
           if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
@@ -7405,15 +7432,13 @@ function printAutoFixReport(report: AutoFixReport, dryRun: boolean, jsonOutput: 
 
 
 /** Quick skill conformance check — frontmatter + required sections */
-function checkSkillConformance(skillsDir: string): Check {
-  const manifestPath = join(skillsDir, 'manifest.json');
-  if (!existsSync(manifestPath)) {
-    return { name: 'skill_conformance', status: 'warn', message: 'manifest.json not found' };
-  }
-
+export function skillConformanceCheck(skillsDir: string): Check {
   try {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    const skills = manifest.skills || [];
+    // Host workspaces are allowed to omit a gbrain-specific manifest. Keep
+    // conformance aligned with resolver_health and skill_brain_first by using
+    // the canonical fallback that derives entries from direct SKILL.md files.
+    const manifest = loadOrDeriveManifest(skillsDir);
+    const skills = manifest.skills;
     let passing = 0;
     const failing: string[] = [];
 
@@ -7433,7 +7458,8 @@ function checkSkillConformance(skillsDir: string): Check {
     }
 
     if (failing.length === 0) {
-      return { name: 'skill_conformance', status: 'ok', message: `${passing}/${skills.length} skills pass` };
+      const derivedNote = manifest.derived ? ' (derived from SKILL.md files)' : '';
+      return { name: 'skill_conformance', status: 'ok', message: `${passing}/${skills.length} skills pass${derivedNote}` };
     }
     return {
       name: 'skill_conformance',
@@ -7441,7 +7467,7 @@ function checkSkillConformance(skillsDir: string): Check {
       message: `${passing}/${skills.length} pass. Failing: ${failing.join(', ')}`,
     };
   } catch {
-    return { name: 'skill_conformance', status: 'warn', message: 'Could not parse manifest.json' };
+    return { name: 'skill_conformance', status: 'warn', message: 'Could not load or derive skills manifest' };
   }
 }
 
@@ -8048,4 +8074,25 @@ async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<Check> {
       message: `Skipped: ${(e as Error).message}`,
     };
   }
+}
+
+/**
+ * #1123 — multi_source_drift remediation advice. Exported so the regression
+ * test can pin that it only references CLI surfaces that actually exist
+ * (the pre-fix text pointed at 'gbrain sources rehome', which was never
+ * built, and at 'gbrain delete <slug>' without explaining that delete
+ * targets the ACTIVE source — following it literally on a multi-source
+ * brain deletes the correctly-routed row).
+ */
+export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
+  return (
+    `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
+    `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
+    `(2) the intended source never completed initial sync and the default page is unrelated. ` +
+    `Verify with 'gbrain sources status', then re-sync with ` +
+    `'gbrain sync --source <id> --full' (reconciles drift without deleting data). ` +
+    `If a misrouted default-source row remains after re-sync, remove it with ` +
+    `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
+    `so pin it to 'default' explicitly.`
+  );
 }
