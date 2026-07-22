@@ -54,7 +54,7 @@ import type {
 import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
-import { upsertFactRow, parseFactsFence } from '../../core/facts-fence.ts';
+import { upsertFactRow, parseFactsFence, renderFactsTable } from '../../core/facts-fence.ts';
 
 let testEngineOverride: BrainEngine | null = null;
 export function __setTestEngineOverride(engine: BrainEngine | null): void {
@@ -148,6 +148,13 @@ interface PhaseBOutcome {
    * preserving the row as a record.
    */
   expired_duplicates: number;
+  /**
+   * #2646 (codex P1): fence rows removed again because a concurrent
+   * forget_fact expired their DB row between fetch and stamp — the
+   * committed fence row was unbacked and would have resurrected a
+   * freshly-forgotten claim on the next extract_facts cycle.
+   */
+  raced_forgets: number;
   pages_touched: number;
   failed_pages: string[];
 }
@@ -189,7 +196,11 @@ export async function detectV0_32_2Drift(): Promise<number | null> {
     return null;
   } finally {
     if (!testEngineOverride) {
-      engine.disconnect().catch(() => { /* best-effort */ });
+      // AWAIT the disconnect (codex P2): the caller may open another
+      // engine immediately (the repair itself); a fire-and-forget
+      // disconnect races the PGLite single-writer lock release — the
+      // same race the runner's pre-flight deliberately avoids.
+      try { await engine.disconnect(); } catch { /* best-effort */ }
     }
   }
 }
@@ -275,6 +286,7 @@ async function phaseBFenceFacts(
       skipped_no_entity: parseInt(noEntityRows[0]?.n ?? '0', 10),
       skipped_no_local_path: 0,
       expired_duplicates: 0,
+      raced_forgets: 0,
       pages_touched: 0,
       failed_pages: [],
     };
@@ -443,13 +455,59 @@ async function phaseBFenceFacts(
         // #2646: the `row_num IS NULL AND expired_at IS NULL` guard makes
         // the stamp race-safe against a concurrent forget_fact — a row
         // expired between our fetch and this UPDATE stays expired-legacy
-        // instead of being revived as an active fence row.
+        // instead of being revived as an active fence row. RETURNING id
+        // tells us whether the stamp actually landed.
+        const unbackedRowNums: number[] = [];
+        let stampedCount = 0;
         for (const a of assignments) {
-          await engine.executeRaw(
+          const stamped = await engine.executeRaw<{ id: string }>(
             `UPDATE facts SET row_num = $1, source_markdown_slug = $2
-              WHERE id = $3 AND row_num IS NULL AND expired_at IS NULL`,
+              WHERE id = $3 AND row_num IS NULL AND expired_at IS NULL
+              RETURNING id`,
             [a.row_num, entitySlug, a.id],
           );
+          if (stamped.length > 0) { stampedCount += 1; continue; }
+          // Zero rows stamped: the row changed under us between fetch
+          // and stamp. If it is now expired (a concurrent forget_fact
+          // won the race), the fence row we just committed is unbacked
+          // AND represents a claim the operator explicitly removed —
+          // leaving it would let the next extract_facts cycle
+          // resurrect the forgotten fact from markdown (codex P1).
+          // Collect it for removal below. If instead the row was
+          // stamped by a concurrent run, the fence row IS backed —
+          // leave it alone.
+          const current = await engine.executeRaw<{ row_num: number | string | null; expired_at: Date | null }>(
+            `SELECT row_num, expired_at FROM facts WHERE id = $1`,
+            [a.id],
+          );
+          const cur = current[0];
+          if (cur && cur.row_num === null && cur.expired_at !== null) {
+            unbackedRowNums.push(a.row_num);
+          }
+        }
+
+        // Remove fence rows orphaned by a raced forget: re-read the
+        // canonical file, drop those row_nums, and rewrite with the
+        // same atomic .tmp + parse + rename primitive.
+        if (unbackedRowNums.length > 0) {
+          const unbackedSet = new Set(unbackedRowNums);
+          const currentBody = readFileSync(filePath, 'utf-8');
+          const currentParsed = parseFactsFence(currentBody);
+          const kept = currentParsed.facts.filter(f => !unbackedSet.has(f.rowNum));
+          const newFence = renderFactsTable(kept);
+          const begin = currentBody.indexOf('<!--- gbrain:facts:begin -->');
+          const end   = currentBody.indexOf('<!--- gbrain:facts:end -->', begin + 1);
+          if (begin !== -1 && end !== -1) {
+            const cleanedBody =
+              currentBody.slice(0, begin) + newFence +
+              currentBody.slice(end + '<!--- gbrain:facts:end -->'.length);
+            writeFileSync(tmpPath, cleanedBody, 'utf-8');
+            const cleanedParsed = parseFactsFence(readFileSync(tmpPath, 'utf-8'));
+            if (cleanedParsed.warnings.length === 0) {
+              renameSync(tmpPath, filePath);
+            }
+          }
+          outcome.raced_forgets += unbackedRowNums.length;
         }
         // #2646: soft-expire duplicate legacy rows (same guard — an
         // already-expired or already-stamped row is left alone).
@@ -461,7 +519,7 @@ async function phaseBFenceFacts(
           );
         }
         outcome.expired_duplicates += duplicateIds.length;
-        outcome.fenced += assignments.length;
+        outcome.fenced += stampedCount;
         outcome.pages_touched += 1;
         touchedPages.push(key);
       } catch (err) {
@@ -474,6 +532,7 @@ async function phaseBFenceFacts(
       `pages=${outcome.pages_touched} skipped_no_entity=${outcome.skipped_no_entity} ` +
       `skipped_no_local_path=${outcome.skipped_no_local_path}` +
       (outcome.expired_duplicates > 0 ? ` expired_duplicates=${outcome.expired_duplicates}` : '') +
+      (outcome.raced_forgets > 0 ? ` raced_forgets=${outcome.raced_forgets}` : '') +
       (outcome.failed_pages.length > 0 ? ` failed=${outcome.failed_pages.length}` : '');
 
     if (outcome.failed_pages.length > 0) {

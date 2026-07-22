@@ -443,6 +443,59 @@ describe('phaseBFenceFacts — interrupted-run resume (#2646)', () => {
   });
 });
 
+describe('phaseBFenceFacts — raced forget between fetch and stamp (#2646 codex P1)', () => {
+  test('unbacked fence row is removed again; the forget is preserved', async () => {
+    const id = await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Claim being forgotten' });
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Untouched claim' });
+
+    // Simulate forget_fact winning the race: the moment phase B issues
+    // its first stamp UPDATE, expire the target row out from under it.
+    let raced = false;
+    const racedEngine = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'executeRaw') {
+          return async (sql: string, params?: unknown[]) => {
+            if (!raced && /UPDATE facts SET row_num/.test(sql) && params?.[2] === id) {
+              raced = true;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await (engine as any).db.query(
+                `UPDATE facts SET expired_at = now() WHERE id = $1`, [id],
+              );
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return (target as any).executeRaw(sql, params);
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const v = Reflect.get(target, prop) as any;
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await __testing.phaseBFenceFacts(racedEngine as any, OPTS);
+    expect(raced).toBe(true);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('raced_forgets=1');
+    expect(r.detail).toContain('fenced=1'); // only the untouched claim
+
+    // The fence must NOT carry the forgotten claim — leaving it would
+    // let the next extract_facts cycle resurrect it as an active fact.
+    const parsed = parseFactsFence(readFileSync(join(brainDir, 'people/alice.md'), 'utf-8'));
+    expect(parsed.facts.map(f => f.claim)).toEqual(['Untouched claim']);
+
+    // The DB row stays expired-legacy (forget record intact) and the
+    // guard backlog is fully drained.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (engine as any).db.query(
+      `SELECT row_num, expired_at FROM facts WHERE id = $1`, [id],
+    );
+    expect(row.rows[0].row_num).toBeNull();
+    expect(row.rows[0].expired_at).not.toBeNull();
+    expect(await countActiveLegacyRows(engine)).toBe(0);
+  });
+});
+
 describe('drift detection (#2646 repair lane)', () => {
   test('detectV0_32_2Drift counts only active legacy rows with an entity', async () => {
     expect(await detectV0_32_2Drift()).toBe(0);

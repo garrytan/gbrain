@@ -261,6 +261,56 @@ function printDryRun(plan: Plan, installed: string): void {
   }
 }
 
+/**
+ * #2646: verdict for a finished v0.32.2 drift-repair run. Pure so the
+ * exit-code semantics are unit-testable (codex P2/P3).
+ *
+ * - status failed/partial, or an unverifiable remainder (null after a
+ *   run that just held the DB) → treated as failure (exit 1); the
+ *   ledger stays untouched and progress is preserved for a re-run.
+ * - status complete + remaining 0 → success.
+ * - status complete + remaining > 0 → success WITH a loud warning, not
+ *   an error: rows can legitimately stay behind (skipped_no_local_path
+ *   on thin-client sources). Failing here would make every subsequent
+ *   `apply-migrations --yes` — including postinstall — exit 1 forever
+ *   for those users.
+ */
+function evaluateV0_32_2RepairOutcome(
+  status: 'complete' | 'partial' | 'failed',
+  remaining: number | null,
+): { failed: boolean; message: string } {
+  if (status === 'failed') {
+    return { failed: true, message: 'v0.32.2 drift repair reported status=failed. Fix the reported phase and re-run.' };
+  }
+  if (status === 'partial') {
+    return {
+      failed: true,
+      message: 'v0.32.2 drift repair finished as PARTIAL. Progress is preserved; ' +
+        'resolve the reported phase detail and re-run `gbrain apply-migrations --yes`.',
+    };
+  }
+  if (remaining === null) {
+    return {
+      failed: true,
+      message: 'v0.32.2 drift repair ran, but the remaining backlog could not be verified ' +
+        '(brain unreachable). Re-run `gbrain apply-migrations --yes` to confirm.',
+    };
+  }
+  if (remaining > 0) {
+    return {
+      failed: false,
+      message: `Drift repair finished with ${remaining} active legacy row(s) still pending ` +
+        `(see the fence_facts detail — e.g. skipped_no_local_path). Progress is ` +
+        `preserved; re-run \`gbrain apply-migrations --yes\` after resolving.`,
+    };
+  }
+  return {
+    failed: false,
+    message: 'Drift repair complete: no active legacy rows remain. ' +
+      'The extract_facts guard will release on the next cycle.',
+  };
+}
+
 function orchestratorOptsFrom(cli: ApplyMigrationsArgs): OrchestratorOpts {
   return {
     yes: cli.yes || cli.nonInteractive,
@@ -559,23 +609,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     );
     try {
       const result = await v0_32_2.orchestrator(orchestratorOptsFrom(cli));
-      if (result.status === 'failed') {
-        console.error('v0.32.2 drift repair reported status=failed. Fix the reported phase and re-run.');
+      const remaining = result.status === 'complete' ? await detectV0_32_2Drift() : null;
+      const verdict = evaluateV0_32_2RepairOutcome(result.status, remaining);
+      if (verdict.failed) {
+        console.error(verdict.message);
         failed = true;
       } else {
-        const remaining = await detectV0_32_2Drift();
-        if (remaining !== null && remaining > 0) {
-          console.log(
-            `Drift repair finished with ${remaining} active legacy row(s) still pending ` +
-            `(see the fence_facts detail — e.g. skipped_no_local_path). Progress is ` +
-            `preserved; re-run \`gbrain apply-migrations --yes\` after resolving.`,
-          );
-        } else {
-          console.log(
-            'Drift repair complete: no active legacy rows remain. ' +
-            'The extract_facts guard will release on the next cycle.',
-          );
-        }
+        console.log(verdict.message);
       }
     } catch (e) {
       console.error(`v0.32.2 drift repair threw: ${e instanceof Error ? e.message : String(e)}`);
@@ -592,4 +632,5 @@ export const __testing = {
   buildPlan,
   indexCompleted,
   statusForVersion,
+  evaluateV0_32_2RepairOutcome,
 };
