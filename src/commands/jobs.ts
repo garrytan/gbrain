@@ -106,11 +106,6 @@ export function parseMaxRssFlag(args: string[]): number | undefined {
   return parsed;
 }
 
-/** Parse `--nice N` (then `GBRAIN_NICE` env). Returns:
- *  - undefined if absent (no priority change — inherit)
- *  - the validated integer in [-20, 19] otherwise
- *  Errors and exits the process on non-integer / out-of-range input (mirrors
- *  parseMaxRssFlag's fail-fast). Flag wins over env. (issue #1815) */
 /** Terminal statuses `jobs prune --status` accepts (PR #2282). Matches what
  *  queue.prune can safely delete; anything else (waiting/active/…) is live. */
 export const PRUNE_STATUSES = ['completed', 'failed', 'dead', 'cancelled'] as const satisfies readonly MinionJobStatus[];
@@ -126,6 +121,11 @@ export function parsePruneStatuses(raw: string): MinionJobStatus[] {
   return requested as MinionJobStatus[];
 }
 
+/** Parse `--nice N` (then `GBRAIN_NICE` env). Returns:
+ *  - undefined if absent (no priority change — inherit)
+ *  - the validated integer in [-20, 19] otherwise
+ *  Errors and exits the process on non-integer / out-of-range input (mirrors
+ *  parseMaxRssFlag's fail-fast). Flag wins over env. (issue #1815) */
 export function parseNiceFlag(args: string[], env: NodeJS.ProcessEnv = process.env): number | undefined {
   const raw = parseFlag(args, '--nice') ?? env.GBRAIN_NICE;
   if (raw === undefined || raw === '') return undefined;
