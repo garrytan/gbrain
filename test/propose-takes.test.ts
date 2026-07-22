@@ -15,9 +15,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
@@ -448,58 +446,42 @@ New prose appended here.`;
   });
 
   test('default extractor skips cleanly when the Anthropic chat model has no key', async () => {
-    const oldHome = process.env.GBRAIN_HOME;
-    const oldKey = process.env.ANTHROPIC_API_KEY;
-    // Point GBRAIN_HOME at an empty dir so hasAnthropicKey's config-file
-    // fallback can't find the operator's real key.
-    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-propose-no-key-'));
-    process.env.GBRAIN_HOME = tempHome;
-    delete process.env.ANTHROPIC_API_KEY;
-    configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
-    try {
-      const { engine, captured } = buildMockEngine({
-        pages: [buildPage({ slug: 'wiki/a', body: 'claim-ish prose' })],
-      });
-      const result = await runPhaseProposeTakes(buildCtx(engine));
+    // Empty GBRAIN_HOME so hasAnthropicKey's config-file fallback can't find
+    // the operator's real key.
+    await withEnv({ GBRAIN_HOME: emptyHome(), ANTHROPIC_API_KEY: undefined }, async () => {
+      configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
+      try {
+        const { engine, captured } = buildMockEngine({
+          pages: [buildPage({ slug: 'wiki/a', body: 'claim-ish prose' })],
+        });
+        const result = await runPhaseProposeTakes(buildCtx(engine));
 
-      expect(result.status).toBe('skipped');
-      expect((result.details as Record<string, unknown>).reason).toBe('no_provider');
-      // Skips BEFORE touching the engine — no page scan, no cache probes.
-      expect(captured).toHaveLength(0);
-    } finally {
-      resetGateway();
-      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
-      else process.env.GBRAIN_HOME = oldHome;
-      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-      else process.env.ANTHROPIC_API_KEY = oldKey;
-      rmSync(tempHome, { recursive: true, force: true });
-    }
+        expect(result.status).toBe('skipped');
+        expect((result.details as Record<string, unknown>).reason).toBe('no_provider');
+        // Skips BEFORE touching the engine — no page scan, no cache probes.
+        expect(captured).toHaveLength(0);
+      } finally {
+        resetGateway();
+      }
+    });
   });
 
   test('an injected extractor is never gated on provider availability', async () => {
-    const oldHome = process.env.GBRAIN_HOME;
-    const oldKey = process.env.ANTHROPIC_API_KEY;
-    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-propose-no-key-'));
-    process.env.GBRAIN_HOME = tempHome;
-    delete process.env.ANTHROPIC_API_KEY;
-    configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
-    try {
-      const { engine } = buildMockEngine({
-        pages: [buildPage({ slug: 'wiki/b', body: 'still processed' })],
-      });
-      const extractor: ProposeTakesExtractor = async () => [];
-      const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    await withEnv({ GBRAIN_HOME: emptyHome(), ANTHROPIC_API_KEY: undefined }, async () => {
+      configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
+      try {
+        const { engine } = buildMockEngine({
+          pages: [buildPage({ slug: 'wiki/b', body: 'still processed' })],
+        });
+        const extractor: ProposeTakesExtractor = async () => [];
+        const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
 
-      expect(result.status).toBe('ok');
-      expect((result.details as Record<string, unknown>).pages_scanned).toBe(1);
-    } finally {
-      resetGateway();
-      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
-      else process.env.GBRAIN_HOME = oldHome;
-      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-      else process.env.ANTHROPIC_API_KEY = oldKey;
-      rmSync(tempHome, { recursive: true, force: true });
-    }
+        expect(result.status).toBe('ok');
+        expect((result.details as Record<string, unknown>).pages_scanned).toBe(1);
+      } finally {
+        resetGateway();
+      }
+    });
   });
 
   test('loads proposal candidates with a narrow page projection', async () => {
