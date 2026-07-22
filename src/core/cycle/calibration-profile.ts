@@ -89,6 +89,8 @@ export type PatternStatementsGenerator = (input: {
   holder: string;
   attempt: number;
   feedback?: string;
+  /** #2516 — resolved phase model; defaultPatternsGenerator routes its chat call through it. */
+  modelHint?: string;
 }) => Promise<string[]>;
 
 /** Generator function for bias tags (test seam). */
@@ -267,6 +269,10 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         holder,
         attempt,
         ...(feedback !== undefined ? { feedback } : {}),
+        // #2516: without this, the resolved model is priced by the budget
+        // check and persisted to model_id but the actual chat call silently
+        // uses the gateway default — the exact divergence this fix removes.
+        modelHint: modelId,
       });
       return lines.join('\n');
     };

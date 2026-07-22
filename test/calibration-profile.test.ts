@@ -344,11 +344,19 @@ describe('models.dream.calibration_profile config key (#2516)', () => {
     const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
     (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
       async (key: string) => (key === 'models.dream.calibration_profile' ? 'openai:gpt-4o-mini' : null);
+    const hints: Array<string | undefined> = [];
     await runPhaseCalibrationProfile(buildCtx(engine), {
-      patternsGenerator: async () => ['You call early-stage tactics well — 8 of 10 held up.'],
+      patternsGenerator: async ({ modelHint }) => {
+        hints.push(modelHint);
+        return ['You call early-stage tactics well — 8 of 10 held up.'];
+      },
       biasTagsGenerator: async () => [],
       voiceGateJudge: passJudge,
     });
+    // The resolved model must reach the generator's chat call, not just the
+    // budget check and the persisted row — otherwise the row lies about
+    // which model actually generated the patterns.
+    expect(hints).toEqual(['openai:gpt-4o-mini']);
     const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
     expect(insert).toBeDefined();
     expect(insert!.params).toContain('openai:gpt-4o-mini');
