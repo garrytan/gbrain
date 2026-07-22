@@ -16,7 +16,7 @@
  */
 import { execFileSync } from 'child_process';
 import { lstatSync, existsSync, readdirSync, realpathSync } from 'fs';
-import { join, sep } from 'path';
+import { isAbsolute, join, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { isInternalUrl } from './url-safety.ts';
 
@@ -275,7 +275,11 @@ function pullOriginUrl(repoPath: string): string | null {
 function isTrustedLocalOrigin(repoPath: string, trustedRoot: string): boolean {
   const url = pullOriginUrl(repoPath);
   if (!url || !isLocalFileRemote(url)) return false;
-  const originPath = url.startsWith('file://') ? fileURLToPath(url) : url;
+  // Resolve a relative origin against the repo, matching what `git -C repoPath
+  // pull` actually pulls (git resolves relative file remotes against the repo
+  // dir, NOT this process's cwd) — the guard must check the same path git uses.
+  const raw = url.startsWith('file://') ? fileURLToPath(url) : url;
+  const originPath = isAbsolute(raw) ? raw : join(repoPath, raw);
   try {
     const real = realpathSync(originPath);
     const root = realpathSync(trustedRoot);

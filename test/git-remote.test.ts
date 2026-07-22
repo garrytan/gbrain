@@ -453,6 +453,25 @@ describe('pullRepo', () => {
     expect(flagBlock).not.toContain('protocol.file.allow=always');
     rmSync(repo, { recursive: true, force: true });
   });
+
+  test('relative origin resolves against the repo dir (matching `git -C`), not process.cwd()', async () => {
+    // git resolves a relative file remote against the repo dir (`git -C repo
+    // pull`), so the containment guard must too. The relative name exists
+    // under repo (inside the trusted root) but NOT under process.cwd() — a
+    // cwd-based guard would realpath-fail and stay strict.
+    const repo = join(FAKE_GIT_DIR, 'pull-rel-origin');
+    mkdirSync(join(repo, 'rel-origin.git'), { recursive: true });
+    setMode('local-origin');
+    setOrigin('rel-origin.git');
+    await withEnv({ PATH: fakePath() }, async () => {
+      pullRepo(repo, { allowLocalFileOrigin: true, trustedOriginRoot: FAKE_GIT_DIR });
+    });
+    const pullCall = readArgvLog().find(c => c.includes('pull'));
+    expect(pullCall).toBeDefined();
+    const flagBlock = pullCall!.slice(2, pullCall!.indexOf('pull'));
+    expect(flagBlock).toEqual([...GIT_SSRF_FLAGS_LOCAL]);
+    rmSync(repo, { recursive: true, force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
