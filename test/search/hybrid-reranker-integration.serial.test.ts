@@ -161,6 +161,31 @@ describe('hybridSearchCached — email metadata through vector-first fusion', ()
     expect(cachedMatch?.thread_id).toBe('thread-vector-first');
     expect(cachedMatch?.source_subject).toBe('Vector-first exact subject');
   });
+
+  test('the query-op request shape (expandFn wired) still uses the semantic cache', async () => {
+    // Regression: operations.ts always passes expandFn on the default `query`
+    // op. If expandFn were treated as cache-unsafe, cacheStatus would be
+    // 'disabled' here and the flagship op would never hit the cache.
+    await engine.executeRaw(`DELETE FROM query_cache`);
+    const cacheStatuses: string[] = [];
+    const run = () => hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
+      limit: 10,
+      useCache: true,
+      autocut: false,
+      graph_signals: false,
+      expansion: false,
+      expandFn: async (q: string) => [q],
+      onMeta: (meta) => {
+        if (meta.cache?.status) cacheStatuses.push(meta.cache.status);
+      },
+    });
+
+    await run();
+    expect(cacheStatuses.at(-1)).toBe('miss');
+    await awaitPendingSearchCacheWrites();
+    await run();
+    expect(cacheStatuses.at(-1)).toBe('hit');
+  });
 });
 
 describe('hybridSearch — reranker enabled (reorder)', () => {

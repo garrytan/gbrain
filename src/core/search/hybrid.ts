@@ -1659,7 +1659,18 @@ export async function hybridSearchCached(
     perCall: {
       cache_enabled: opts?.useCache,
       tokenBudget: opts?.tokenBudget,
-      expansion: opts?.expansion,
+      // Fold EFFECTIVE expansion into the cache key: the inner hybridSearch
+      // only expands when the resolved knob is on AND an expandFn is wired
+      // in (`expansionAllowed && opts?.expandFn`). Without an expandFn the
+      // knob can never fire, so force `false` here — otherwise a
+      // no-expandFn caller under a tokenmax bundle would share a cache row
+      // with the expanded results of an expandFn caller (and vice versa).
+      // This is what makes `expandFn` cache-SAFE (it is deliberately NOT in
+      // isSemanticCacheRequestSafe's unsafe list): its result-shaping effect
+      // is fully expressed by the expansion bit of the knobs hash. The
+      // production `query` op always passes expandFn, so listing it unsafe
+      // would silently disable the semantic cache for the flagship op.
+      expansion: opts?.expandFn ? opts?.expansion : false,
       intentWeighting: opts?.intentWeighting,
       searchLimit: opts?.limit,
       // v0.35.6.0 — floor-ratio threaded through cache resolver too so
@@ -2017,8 +2028,7 @@ export function isSemanticCacheRequestSafe(opts?: HybridSearchOpts): boolean {
     opts.crossModal !== undefined ||
     opts.reranker !== undefined ||
     opts.rrfK !== undefined ||
-    opts.dedupOpts !== undefined ||
-    opts.expandFn !== undefined
+    opts.dedupOpts !== undefined
   );
 }
 

@@ -52,6 +52,20 @@ describe('isSemanticCacheRequestSafe', () => {
     expect(isSemanticCacheRequestSafe({ limit: 20, sourceId: 'default' })).toBe(true);
   });
 
+  test('accepts the production query-op shape (expandFn is folded into the knobs hash, not unsafe)', () => {
+    // operations.ts always passes expandFn on the default `query` op path;
+    // listing it unsafe would permanently disable the semantic cache for the
+    // flagship op. Its effect is keyed via the expansion bit instead
+    // (hybridSearchCached folds `expandFn ? expansion : false` into the hash).
+    expect(isSemanticCacheRequestSafe({
+      limit: 20,
+      offset: 0,
+      expansion: true,
+      expandFn: async (q: string) => [q],
+      sourceId: 'default',
+    })).toBe(true);
+  });
+
   const unsafeRequests: HybridSearchOpts[] = [
     { offset: 10 }, { detail: 'high' }, { language: 'typescript' },
     { symbolKind: 'function' }, { types: ['note'] }, { since: '7d' },
