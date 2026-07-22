@@ -503,7 +503,23 @@ async function probeEmbeddingReachability(): Promise<ProbeResult | null> {
   }
 }
 
-async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
+/**
+ * Output budget for the chat/expansion reachability probe.
+ *
+ * This was `maxTokens: 1`, which falsely fails reasoning models: they spend
+ * output budget on internal reasoning before emitting any text, so a 1-token
+ * cap is either exhausted with zero usable text (finishReason 'length') or
+ * rejected outright by providers that require the cap to exceed the model's
+ * minimum reasoning spend — and the probe then reported a config failure for
+ * a perfectly reachable model. 64 tokens gives every model class enough
+ * headroom to prove transport + auth + model routing, while staying a
+ * minimal-cost probe: providers bill actual tokens generated, not the cap,
+ * and non-reasoning models answer '.' in a handful of tokens and stop.
+ */
+export const PROBE_MAX_OUTPUT_TOKENS = 64;
+
+/** @internal exported for tests (test/models-doctor-probe-token-budget.test.ts). */
+export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
   const start = Date.now();
   try {
     const { chat } = await import('../core/ai/gateway.ts');
@@ -511,13 +527,22 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
     try {
-      await chat({
+      const res = await chat({
         model: modelStr,
         messages: [{ role: 'user', content: '.' }],
-        maxTokens: 1,
+        maxTokens: PROBE_MAX_OUTPUT_TOKENS,
         abortSignal: controller.signal,
       });
-      return { model: modelStr, touchpoint, status: 'ok', message: 'reachable', elapsed_ms: Date.now() - start };
+      // A length-exhausted response with no text is still proof of
+      // reachability: the request survived transport + auth + model routing,
+      // and the model generated tokens — a reasoning model may spend the
+      // whole probe budget on internal reasoning. Report ok, but surface the
+      // generation limitation instead of a bare 'reachable'.
+      const message =
+        res.stopReason === 'length' && res.text.length === 0
+          ? `reachable (spent the ${PROBE_MAX_OUTPUT_TOKENS}-token probe budget on internal reasoning without emitting text; transport verified, text generation not exercised)`
+          : 'reachable';
+      return { model: modelStr, touchpoint, status: 'ok', message, elapsed_ms: Date.now() - start };
     } finally {
       clearTimeout(timeoutId);
     }
@@ -555,7 +580,7 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
     process.stdout.write(
 `Usage:
   gbrain models                   Show routing table (read-only)
-  gbrain models doctor [flags]    Probe each configured model (~1 token each)
+  gbrain models doctor [flags]    Probe each configured model (one small bounded request each)
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
