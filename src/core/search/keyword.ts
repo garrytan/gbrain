@@ -1,20 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 
-// Postgres' default text-search parser classifies `foo/bar` as a single
-// `file`-alias token. Under the english config that alias maps to the
-// `simple` dictionary, so `websearch_to_tsquery('english', 'foo/bar')`
-// produces the single lexeme `'foo/bar'`. That lexeme never matches indexed
-// text whose `to_tsvector('english', …)` split on the slash, so any query
-// containing `/` silently returns zero FTS hits — e.g. pasting a meeting
-// title like `Author1/Author2 - Topic`. Replacing `/` with whitespace breaks
-// the file-alias token into ordinary `asciiword`s, which then stem and match
-// through the english dictionary the same way a manually-despaced query
-// does. The semantic / vector path is unaffected.
-export function normalizeKeywordQuery(query: string): string {
-  return query.replace(/\//g, ' ').replace(/\s+/g, ' ').trim();
-}
-
 export async function keywordSearch(
   engine: BrainEngine,
   query: string,

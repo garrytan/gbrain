@@ -251,6 +251,28 @@ export function buildOrFallbackWebsearchQuery(query: string): string | null {
   return tokens.join(' OR ');
 }
 
+/**
+ * #2380: FTS query expression for slash-bearing queries. Postgres' default
+ * text-search parser classifies `foo/bar` as a single `file`-alias lexeme —
+ * on BOTH the query side and the index side. So a raw `foo/bar` query only
+ * matched documents carrying the identical joined lexeme (literal paths),
+ * and a slash-split query only matches documents whose text had the words
+ * separated. Neither form alone covers both document shapes; OR the two
+ * parses so a slash query matches prose ("foo and bar", stemmed, AND
+ * semantics) AND literal slash forms ("src/core/x.ts") alike.
+ *
+ * Slash-free queries return the plain single-parse expression — byte-
+ * identical SQL and identical ts_rank to the historical behavior.
+ *
+ * `ftsLang` is validated by getFtsLanguage() (safe to interpolate);
+ * `param` is a `$N` placeholder, never user text.
+ */
+export function buildWebsearchQueryExpr(ftsLang: string, param: string, query: string): string {
+  const plain = `websearch_to_tsquery('${ftsLang}', ${param})`;
+  if (!query.includes('/')) return plain;
+  return `(websearch_to_tsquery('${ftsLang}', translate(${param}, '/', ' ')) || ${plain})`;
+}
+
 // ============================================================
 // v0.29.1 — Recency component SQL builder
 // ============================================================

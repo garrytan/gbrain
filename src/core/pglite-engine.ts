@@ -56,7 +56,7 @@ import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, buildWebsearchQueryExpr } from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -65,7 +65,6 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
-import { normalizeKeywordQuery } from './search/keyword.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1592,11 +1591,9 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
-    // Normalize the FTS query so `/` is split into separate words before
-    // websearch_to_tsquery parses it; Postgres' default parser otherwise
-    // treats `foo/bar` as a single `file`-alias token that never matches
-    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
-    const params: unknown[] = [normalizeKeywordQuery(query), innerLimit, limit, offset];
+    // #2380: slash-bearing queries match both the split-word and literal
+    // slash forms — see buildWebsearchQueryExpr in ./search/sql-ranking.ts.
+    const params: unknown[] = [query, innerLimit, limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
@@ -1635,6 +1632,7 @@ export class PGLiteEngine implements BrainEngine {
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
+    const ftsQueryExpr = buildWebsearchQueryExpr(ftsLang, '$1', query);
 
     const keywordSql =
       `WITH ranked AS (
@@ -1642,14 +1640,14 @@ export class PGLiteEngine implements BrainEngine {
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+           ts_rank(cc.search_vector, ${ftsQueryExpr}) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
            ) THEN true ELSE false END AS stale
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE cc.search_vector @@ ${ftsQueryExpr} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
            -- v0.27.1: hide image rows from default text-keyword search so
            -- OCR text doesn't drown text-page hits. Image-similarity queries
            -- run a separate vector path on embedding_image.
@@ -1717,12 +1715,11 @@ export class PGLiteEngine implements BrainEngine {
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
+    const ftsQueryExpr = buildWebsearchQueryExpr(ftsLang, '$1', query);
 
-    // Normalize the FTS query so `/` is split into separate words before
-    // websearch_to_tsquery parses it; Postgres' default parser otherwise
-    // treats `foo/bar` as a single `file`-alias token that never matches
-    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
-    const params: unknown[] = [normalizeKeywordQuery(query), limit, offset];
+    // #2380: slash-bearing queries match both the split-word and literal
+    // slash forms — see buildWebsearchQueryExpr in ./search/sql-ranking.ts.
+    const params: unknown[] = [query, limit, offset];
     let extraFilter = '';
     if (opts?.type) {
       params.push(opts.type);
@@ -1769,7 +1766,7 @@ export class PGLiteEngine implements BrainEngine {
          COALESCE(rep.chunk_index, 0) as chunk_index,
          COALESCE(rep.chunk_text, '') as chunk_text,
          COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
-         ts_rank_cd(p.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+         ts_rank_cd(p.search_vector, ${ftsQueryExpr}) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
          ) THEN true ELSE false END AS stale
@@ -1784,7 +1781,7 @@ export class PGLiteEngine implements BrainEngine {
          ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
          LIMIT 1
        ) rep ON true
-       WHERE p.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+       WHERE p.search_vector @@ ${ftsQueryExpr}
          ${extraFilter} ${hardExcludeClause} ${visibilityClause}
        ORDER BY score DESC, p.id ASC
        LIMIT $2 OFFSET $3`;
@@ -1971,11 +1968,9 @@ export class PGLiteEngine implements BrainEngine {
       });
     }
 
-    // Normalize the FTS query so `/` is split into separate words before
-    // websearch_to_tsquery parses it; Postgres' default parser otherwise
-    // treats `foo/bar` as a single `file`-alias token that never matches
-    // indexed text. See normalizeKeywordQuery in ./search/keyword.ts.
-    const params: unknown[] = [normalizeKeywordQuery(query), limit, offset];
+    // #2380: slash-bearing queries match both the split-word and literal
+    // slash forms — see buildWebsearchQueryExpr in ./search/sql-ranking.ts.
+    const params: unknown[] = [query, limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
@@ -2009,20 +2004,21 @@ export class PGLiteEngine implements BrainEngine {
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
+    const ftsQueryExpr = buildWebsearchQueryExpr(ftsLang, '$1', query);
 
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
          p.effective_date, p.effective_date_source,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+         ts_rank(cc.search_vector, ${ftsQueryExpr}) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
          ) THEN true ELSE false END AS stale
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        JOIN sources s ON s.id = p.source_id
-       WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       WHERE cc.search_vector @@ ${ftsQueryExpr} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
        ORDER BY score DESC
        LIMIT $2 OFFSET $3`,
       params

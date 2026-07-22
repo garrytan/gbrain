@@ -259,6 +259,24 @@ describe('PGLiteEngine: Search', () => {
     expect(results[0].slug).toBe('companies/novamind-enterprise');
   });
 
+  test('searchKeyword: slash query still matches the literal slash form (file paths)', async () => {
+    // The INDEX side also emits the joined file-alias lexeme for literal
+    // `foo/bar` text, so a query normalized to split words alone would go
+    // blind to documents containing the literal slash form (paths, URLs).
+    // buildWebsearchQueryExpr ORs both parses; this pins the raw arm.
+    await engine.putPage('runbooks/widget-deploy', {
+      type: 'concept', title: 'Widget Deploy Runbook',
+      compiled_truth: 'Runbook for the acme/widget deployment pipeline.',
+    });
+    await engine.upsertChunks('runbooks/widget-deploy', [
+      { chunk_index: 0, chunk_text: 'Runbook for the acme/widget deployment pipeline', chunk_source: 'compiled_truth' },
+    ]);
+
+    const results = await engine.searchKeyword('acme/widget');
+    expect(results.length).toBe(1);
+    expect(results[0].slug).toBe('runbooks/widget-deploy');
+  });
+
   test('tsvector trigger populates search_vector on insert', async () => {
     // Verify the PL/pgSQL trigger fires and content_chunks.search_vector is
     // populated from chunk_text. v0.20.0 Cathedral II Layer 3 moved FTS from
