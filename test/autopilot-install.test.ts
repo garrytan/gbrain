@@ -89,6 +89,24 @@ describe('detectInstallTarget', () => {
 // wrapper always exec'd bare `autopilot --repo ...` (default 300s). The
 // wrapper's exec line must carry the interval when one is known.
 describe('autopilot wrapper script — --interval threading (#2794)', () => {
+  // writeWrapperScript resolves the gbrain CLI via `which gbrain`; CI runners
+  // don't have the binary installed, so put a fake one on PATH to keep the
+  // test hermetic (deterministic on dev machines too — fake bin wins).
+  let pathSnapshot: string | undefined;
+
+  beforeEach(() => {
+    pathSnapshot = process.env.PATH;
+    const bin = join(tmp, 'bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'gbrain'), '#!/bin/sh\n', { mode: 0o755 });
+    process.env.PATH = `${bin}:${process.env.PATH ?? ''}`;
+  });
+
+  afterEach(() => {
+    if (pathSnapshot === undefined) delete process.env.PATH;
+    else process.env.PATH = pathSnapshot;
+  });
+
   test('exec line carries --interval when provided', () => {
     const wrapperPath = writeWrapperScript('/tmp/some repo', 600);
     const script = readFileSync(wrapperPath, 'utf8');
