@@ -6,14 +6,14 @@ description: Twitter timeline, mentions, and keyword monitoring flow into brain 
 category: sense
 requires: []
 secrets:
-  - name: X_BEARER_TOKEN
+  - name: X_API_BEARER_TOKEN
     description: X API v2 Bearer token (Basic tier minimum, $200/mo for full archive search)
     where: https://developer.x.com/en/portal/dashboard — create a project + app, copy the Bearer Token from "Keys and tokens"
 health_checks:
   - type: http
     url: "https://api.x.com/2/users/me"
     auth: bearer
-    auth_token: "$X_BEARER_TOKEN"
+    auth_token: "$X_API_BEARER_TOKEN"
     label: "X API"
 setup_time: 15 min
 cost_estimate: "$0-200/mo (Free tier: 1 app, read-only. Basic: $200/mo for search + higher limits)"
@@ -117,7 +117,7 @@ gives search/recent endpoint and higher limits. Pro tier gets full archive searc
 
 Validate immediately:
 ```bash
-curl -sf -H "Authorization: Bearer $X_BEARER_TOKEN" \
+curl -sf -H "Authorization: Bearer $X_API_BEARER_TOKEN" \
   "https://api.x.com/2/users/me" \
   && echo "PASS: X API connected" \
   || echo "FAIL: X API token invalid"
@@ -133,7 +133,7 @@ starting with 'AAA...', (3) if you just created the app, the token is valid imme
 
 ```bash
 # Look up the user's X user ID from their handle
-curl -sf -H "Authorization: Bearer $X_BEARER_TOKEN" \
+curl -sf -H "Authorization: Bearer $X_API_BEARER_TOKEN" \
   "https://api.x.com/2/users/by/username/USERNAME" | grep -o '"id":"[^"]*"'
 ```
 
