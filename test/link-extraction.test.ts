@@ -270,6 +270,53 @@ describe('extractPageLinks', () => {
     expect(sourceLink!.targetSlug).toBe('meetings/2026-01-15');
   });
 
+  // ─── global_basename for frontmatter link fields (issue #972 follow-up) ───
+
+  test('frontmatter [[wikilink]] resolves via global_basename when resolve() misses', async () => {
+    // `sources: [[2025-12-25_mentor-extraction]]` — bare title, no '/', so the
+    // standard resolver misses; the basename index finds the single match.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === '2025-12-25_mentor-extraction'
+          ? ['trading/raw/2025-12-25_mentor-extraction']
+          : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'trading/wiki/backtesting', 'Body.',
+      { sources: ['[[2025-12-25_mentor-extraction]]'] },
+      'concept', resolver, { globalBasename: true },
+    );
+    // `sources` is direction:'incoming' → edge is resolved → page.
+    const edge = candidates.find(c => c.linkType === 'discussed_in');
+    expect(edge).toBeDefined();
+    expect(edge!.fromSlug).toBe('trading/raw/2025-12-25_mentor-extraction');
+    expect(edge!.targetSlug).toBe('trading/wiki/backtesting');
+  });
+
+  test('frontmatter basename fallback stays unresolved when ambiguous (>1 match)', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async () => ['a/dup', 'b/dup'],
+    };
+    const { candidates, unresolved } = await extractPageLinks(
+      'wiki/x', 'Body.', { sources: ['[[dup]]'] }, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.find(c => c.linkType === 'discussed_in')).toBeUndefined();
+    expect(unresolved.some(u => u.field === 'sources')).toBe(true);
+  });
+
+  test('frontmatter basename fallback is gated OFF when globalBasename is false', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async () => ['raw/note'],
+    };
+    const { candidates } = await extractPageLinks(
+      'wiki/x', 'Body.', { sources: ['[[note]]'] }, 'concept', resolver, // globalBasename omitted = false
+    );
+    expect(candidates.find(c => c.linkType === 'discussed_in')).toBeUndefined();
+  });
+
   test('extracts bare slug references in text', async () => {
     const { candidates } = await extractPageLinks(
       'docs/x', 'See companies/acme for details.', {}, 'concept', nullResolver,
