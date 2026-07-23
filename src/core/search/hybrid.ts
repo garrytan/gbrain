@@ -51,6 +51,45 @@ const COMPILED_TRUTH_BOOST = 2.0;
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
 /**
+ * Resolve the public relative-date syntax before passing it to engine SQL.
+ * SearchOpts documents compact values such as 7d/2w/1y, but engines consume
+ * timestamptz values and previously received the raw token, producing
+ * "Invalid Date" in the title arm and a Postgres cast failure elsewhere.
+ */
+export function normalizeSearchDate(
+  raw: string | undefined,
+  boundary: 'since' | 'until',
+  nowMs = Date.now(),
+): string | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+  const relative = value.match(/^(\d+)\s*(s|m|h|d|w|y)$/i);
+  if (relative) {
+    const amount = Number(relative[1]);
+    const unit = relative[2]!.toLowerCase();
+    const unitMs =
+      unit === 's' ? 1_000 :
+      unit === 'm' ? 60_000 :
+      unit === 'h' ? 3_600_000 :
+      unit === 'd' ? 86_400_000 :
+      unit === 'w' ? 7 * 86_400_000 :
+      365 * 86_400_000;
+    return new Date(nowMs - amount * unitMs).toISOString();
+  }
+  if (boundary === 'until' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return `${value}T23:59:59.999Z`;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(
+      `Invalid ${boundary} date "${raw}". Use ISO-8601 or a compact duration such as 7d, 2w, or 1y.`,
+    );
+  }
+  return new Date(parsed).toISOString();
+}
+
+/**
  * v0.42 (issue #1699) agent-warning channel. Stamps `SearchResult.content_flag`
  * for any result whose page carries a `frontmatter.content_flag` marker (fuzzy
  * markup-heavy / oversize). One batched query over the returned set's page_ids;
@@ -923,8 +962,8 @@ export async function hybridSearch(
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
-    afterDate: opts?.since ?? opts?.afterDate,
-    beforeDate: opts?.until ?? opts?.beforeDate,
+    afterDate: normalizeSearchDate(opts?.since ?? opts?.afterDate, 'since'),
+    beforeDate: normalizeSearchDate(opts?.until ?? opts?.beforeDate, 'until'),
     // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
     // inner engine.searchKeyword / engine.searchVector calls apply the
     // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
