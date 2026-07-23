@@ -140,6 +140,17 @@ describe('extractEntityRefs', () => {
     expect(wikiRefs[0].needsResolution).toBe(true);
   });
 
+  test('recognizes reference-page wikilinks as concrete targets', () => {
+    const refs = extractEntityRefs('See [[reference/mcminnville-market-data]] for source context.');
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toMatchObject({
+      name: 'reference/mcminnville-market-data',
+      slug: 'reference/mcminnville-market-data',
+      dir: 'reference',
+    });
+    expect(refs[0].needsResolution).toBeUndefined();
+  });
+
   test('skips qualified-syntax tokens (those belong to 2a)', () => {
     // [[wiki:topics/ai]] looks like 2a's qualified shape — even though
     // it wouldn't satisfy DIR_PATTERN, 2c must not claim it either
@@ -1235,6 +1246,43 @@ describe('makeResolver — fallback chain', () => {
     // Both should match because basename of `struktura` is `struktura`.
     const out = await r.resolveBasenameMatches!('struktura');
     expect(out.sort()).toEqual(['notes/struktura', 'struktura']);
+  });
+
+  test('opts.sourceId is forwarded to findByTitleFuzzy (twin of #1436 fix)', async () => {
+    // Captures every (name, dirPrefix, minSimilarity, sourceId) call so we
+    // can assert the resolver threads sourceId through. Without the wire-up,
+    // findByTitleFuzzy would be called with sourceId=undefined and the SQL
+    // could return cross-source slug suggestions that the FK filter
+    // downstream silently drops.
+    const calls: Array<{ name: string; dirPrefix?: string; minSimilarity?: number; sourceId?: string }> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy(name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) {
+        calls.push({ name, dirPrefix, minSimilarity, sourceId });
+        return null;
+      },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    await r.resolve('Alice Example', 'people');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(c => c.sourceId === 'src-a')).toBe(true);
+  });
+
+  test('opts.sourceId omitted → findByTitleFuzzy receives undefined (back-compat)', async () => {
+    const calls: Array<{ sourceId?: string }> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy(_name: string, _dirPrefix?: string, _min?: number, sourceId?: string) {
+        calls.push({ sourceId });
+        return null;
+      },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    await r.resolve('Alice Example', 'people');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(c => c.sourceId === undefined)).toBe(true);
   });
 });
 

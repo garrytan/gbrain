@@ -127,7 +127,12 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   }
 
   // Rule: Wrapping code fences (```markdown ... ```)
-  if (content.match(/^```(?:markdown|md)\s*\n/m) && content.match(/\n```\s*$/m)) {
+  // Detector intentionally has NO /m flag so ^/$ match start/end of the whole
+  // file, not inner lines. Keeps detector in sync with fixContent() below,
+  // which also has no /m flag. Without this, lint reports "fixable" false
+  // positives on any page that simply contains a ```markdown code block, but
+  // fixContent can never strip them (its regex only matches whole-file wrappers).
+  if (content.match(/^```(?:markdown|md)\s*\n/) && content.match(/\n```\s*$/)) {
     issues.push({
       file: filePath, line: 1, rule: 'code-fence-wrap',
       message: 'Page wrapped in ```markdown code fences (LLM artifact)',

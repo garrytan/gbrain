@@ -163,9 +163,19 @@ interface ExtractedAtom {
   body: string;
   source_quote?: string;
   lesson?: string;
+  /**
+   * 1-3 kebab-case topic labels for concept clustering. Consumed by
+   * synthesize_concepts (groups atoms by `frontmatter.concepts`; only
+   * labels shared by >=2 atoms materialize a concept page, so the prompt
+   * biases reuse-over-coinage). #2123.
+   */
+  concepts?: string[];
   virality_score?: number;
   emotional_register?: string;
 }
+
+/** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
+const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
@@ -177,11 +187,16 @@ quote, or short essay angle. Each atom must:
 
 Output a JSON array of atoms (1-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
-source_quote (verbatim ≤200 chars), lesson (one sentence), virality_score
-(0-100), emotional_register (one of: shocking, inspiring, funny, sobering,
-practical, controversial)}.
+source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
+(1-3 topic labels), virality_score (0-100), emotional_register (one of:
+shocking, inspiring, funny, sobering, practical, controversial)}.
 
 atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
+
+concepts are kebab-case English TOPIC labels used to cluster atoms into
+concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
+entity or brand names. Use the same label for the same topic across atoms;
+prefer a label you already used over coining a near-synonym.
 
 Output ONLY the JSON array, no prose.`;
 
@@ -226,6 +241,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       AND length(COALESCE(p.compiled_truth, '')) >= $3
+      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -298,6 +314,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            AND length(COALESCE(p.compiled_truth, '')) >= $3
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -311,6 +328,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            AND length(COALESCE(p.compiled_truth, '')) >= $2
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -556,6 +574,25 @@ export async function runPhaseExtractAtoms(
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
+        // #2144: tombstone zero-yield pages so they stop being rediscovered.
+        // Idempotency is keyed on atom rows — a page that yields no atoms
+        // leaves no row, so pre-fix it re-entered the discovery window every
+        // run (wedging --drain with a false no_progress and re-spending
+        // nightly budget on the same pages). Stamp the content hash we
+        // scanned; discovery skips the page only while its content is
+        // unchanged (edits re-eligibilize, mirroring atom-row staleness).
+        // Only stamped after a SUCCESSFUL chat call — LLM failures take the
+        // catch path below and stay retryable.
+        if (!opts.dryRun && item.kind === 'page') {
+          try {
+            await engine.executeRaw(
+              `UPDATE pages
+                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+              [item.contentHash.slice(0, 16), sourceId, item.slug],
+            );
+          } catch { /* fail-soft: page stays rediscoverable */ }
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -585,6 +622,7 @@ export async function runPhaseExtractAtoms(
                 source_hash: item.contentHash.slice(0, 16),
                 ...(atom.source_quote && { source_quote: atom.source_quote }),
                 ...(atom.lesson && { lesson: atom.lesson }),
+                ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
                 ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
                 ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
                 extracted_at: new Date().toISOString(),
@@ -721,6 +759,13 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
       body,
       source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
       lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
+      concepts: (() => {
+        if (!Array.isArray(obj.concepts)) return undefined;
+        const labels = obj.concepts
+          .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
+          .slice(0, 3);
+        return labels.length > 0 ? labels : undefined;
+      })(),
       virality_score:
         typeof obj.virality_score === 'number' &&
         obj.virality_score >= 0 &&

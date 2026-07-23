@@ -1186,6 +1186,15 @@ function writeWrapperScript(repoPath: string): string {
 # OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
+# Belt-and-suspenders PATH fix. ~/.bashrc ships with a non-interactive guard
+# (\`case $- in *i*) ;; *) return;; esac\`) that exits early when launched from
+# cron/systemd/launchd — so its PATH exports never reach this subprocess.
+# Without bun on PATH, the exec'd gbrain (a \`#!/usr/bin/env bun\` script) fails
+# silently with "env: bun: No such file or directory" and leaves a stale
+# lockfile that blocks every subsequent tick. Prepending ~/.bun/bin here
+# keeps the wrapper self-contained regardless of which init file the OS
+# loaded.
+export PATH="$HOME/.bun/bin:$PATH"
 exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });

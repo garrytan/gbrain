@@ -3082,6 +3082,7 @@ export class PostgresEngine implements BrainEngine {
     name: string,
     dirPrefix?: string,
     minSimilarity: number = 0.55,
+    sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
     const sql = this.sql;
     // Use the `similarity()` function directly with an explicit threshold
@@ -3094,15 +3095,33 @@ export class PostgresEngine implements BrainEngine {
     // Tie-breaker: sort by slug after similarity so re-runs return the
     // same winner when multiple pages score equally (prevents churn
     // in put_page auto-link reconciliation).
+    //
+    // `sourceId` + `deleted_at IS NULL` mirror the filters `tryFuzzyMatch`
+    // in `src/core/entities/resolve.ts` got via #1436 (v0.41.13.0). Without
+    // them, fuzzy resolution could suggest cross-source slugs that the
+    // caller then silently drops at the FK filter in
+    // `operations.ts:reconcileLinks` (the `allSlugs` filter) — making it
+    // look like the match failed when in fact it picked the wrong page.
     const prefixPattern = dirPrefix ? `${dirPrefix}/%` : '%';
-    const rows = await sql`
-      SELECT slug, similarity(title, ${name}) AS sim
-      FROM pages
-      WHERE similarity(title, ${name}) >= ${minSimilarity}
-        AND slug LIKE ${prefixPattern}
-      ORDER BY sim DESC, slug ASC
-      LIMIT 1
-    `;
+    const rows = sourceId
+      ? await sql`
+          SELECT slug, similarity(title, ${name}) AS sim
+          FROM pages
+          WHERE similarity(title, ${name}) >= ${minSimilarity}
+            AND slug LIKE ${prefixPattern}
+            AND source_id = ${sourceId}
+            AND deleted_at IS NULL
+          ORDER BY sim DESC, slug ASC
+          LIMIT 1
+        `
+      : await sql`
+          SELECT slug, similarity(title, ${name}) AS sim
+          FROM pages
+          WHERE similarity(title, ${name}) >= ${minSimilarity}
+            AND slug LIKE ${prefixPattern}
+          ORDER BY sim DESC, slug ASC
+          LIMIT 1
+        `;
     if (rows.length === 0) return null;
     const row = rows[0] as { slug: string; sim: number };
     return { slug: row.slug, similarity: row.sim };
@@ -6153,6 +6172,13 @@ export class PostgresEngine implements BrainEngine {
     const prefixCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    // TIM-37: exclude briefing pages from their own Brain Pulse. The cron
+    // briefing writes to 90_Briefings/, gets re-ingested, and would otherwise
+    // top tomorrow's salience as pure self-reference. Suppress unless the
+    // caller explicitly asked for the briefings/ prefix.
+    const excludeBriefings = !(slugPrefix && slugPrefix.startsWith('briefings'))
+      ? sql`AND p.slug NOT LIKE 'briefings/%'`
+      : sql``;
     // v0.29.1: third score term via buildRecencyComponentSql. Default
     // 'flat' = v0.29.0 behavior (1 / (1 + days_old)). 'on' opts into the
     // per-prefix decay map (concepts/ evergreen, daily/ aggressive, etc.).
@@ -6186,6 +6212,7 @@ export class PostgresEngine implements BrainEngine {
         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
        WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
          ${prefixCondition}
+         ${excludeBriefings}
        GROUP BY p.id
        ORDER BY score DESC
        LIMIT ${limit}

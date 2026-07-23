@@ -1664,7 +1664,13 @@ export async function registerBuiltinHandlers(
 
   worker.register('backlinks', async (job) => {
     const { runBacklinksCore } = await import('./backlinks.ts');
-    const action: 'check' | 'fix' = job.data.action === 'check' ? 'check' : 'fix';
+    // Default to 'check', not 'fix': backlinks jobs submitted with an empty
+    // payload (e.g. the sync→embed→backlinks chains enqueued after ingestion)
+    // must never rewrite tracked brain pages with generated "Referenced in"
+    // timeline bullets. Mirrors the documented intent in src/core/cycle.ts
+    // (runPhaseBacklinks). The filesystem fixer stays available explicitly
+    // via '{"action":"fix"}' or `gbrain check-backlinks fix`.
+    const action: 'check' | 'fix' = job.data.action === 'fix' ? 'fix' : 'check';
     const dir = typeof job.data.dir === 'string'
       ? job.data.dir
       : (await engine.getConfig('sync.repo_path')) ?? '.';
