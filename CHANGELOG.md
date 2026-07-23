@@ -2,6 +2,18 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.64.1] - 2026-07-23
+
+### Fixed
+
+- Upgrading now installs `fast-uri` 3.1.4, removing the high-severity advisory from GBrain's locked dependency graph without changing its MCP or JSON Schema interfaces.
+
+### Internal
+
+- CI and release workflows now pin `actions/checkout` v4 and `softprops/action-gh-release` v2 to their current major-tag commits.
+
+No schema migrations.
+
 ## [0.42.64.0] - 2026-07-20
 
 ### Fixed
