@@ -68,9 +68,11 @@ PATTERN='import[[:space:]]+(\*[[:space:]]+as[[:space:]]+[a-zA-Z_$][a-zA-Z0-9_$]*
 # Collect files that import `operations`. Use a while-loop over grep output
 # instead of `mapfile` to stay compatible with macOS's default bash 3.2.
 FOUND_FILES=""
+# Normalize `//` -> `/`: BSD grep (macOS) emits `src//file.ts` for `grep -r ... src/`, which
+# then fails the exact match against the `src/...` ALLOWED entries below. GNU grep (CI) does not.
 while IFS= read -r f; do
   [ -n "$f" ] && FOUND_FILES="$FOUND_FILES$f"$'\n'
-done < <(grep -rlE --include='*.ts' "$PATTERN" src/ 2>/dev/null | sort -u || true)
+done < <(grep -rlE --include='*.ts' "$PATTERN" src/ 2>/dev/null | sed 's#//*#/#g' | sort -u || true)
 
 FAIL=0
 
