@@ -18,6 +18,12 @@
 #  R4: any file that creates `new PGLiteEngine(` must call `.disconnect(`
 #      inside an `afterAll(` block. Without disconnect, engines leak across
 #      file boundaries within a shard process.
+#  R5: any file that calls `configureGateway(` or
+#      `__setEmbedTransportForTests(` must also call `resetGateway()` and
+#      have an `afterAll(`/`afterEach(` hook. The gateway is module-global;
+#      a configured remote provider + fake key left past the file boundary
+#      makes the next embed-triggering file in the shard fire a live HTTP
+#      call (issue #3066; master shard 6 broke twice this way).
 #
 # Scope:
 #  - Recursively scans `test/**/*.test.ts`.
@@ -130,6 +136,22 @@ while IFS= read -r f; do
     if ! grep -qE 'afterAll[[:space:]]*\(' "$f" 2>/dev/null \
        || ! grep -qE '\.disconnect[[:space:]]*\(' "$f" 2>/dev/null; then
       emit_violation "$f" "R4" "creates PGLiteEngine but missing afterAll(() => engine.disconnect()); engine leaks across files in the shard process" ""
+    fi
+  fi
+
+  # R5: gateway configuration requires resetGateway + an afterAll/afterEach
+  # hook. Same loose two-grep shape as R4 — `resetGateway(` present plus at
+  # least one afterAll(/afterEach( — but on comment-stripped lines: a prose
+  # mention like "a test that calls resetGateway()" must not satisfy the
+  # rule (that exact false pass hid the cycle-consolidate leaker).
+  # No [[:space:]]* before the paren on the trigger side: prose in a test
+  # name ("works WITHOUT configureGateway (reads registry...)") must not
+  # trigger the rule; real call sites are always `configureGateway(`.
+  r5_code=$(grep -vE '^[[:space:]]*(//|\*)' "$f" 2>/dev/null || true)
+  if printf '%s\n' "$r5_code" | grep -qE 'configureGateway\(|__setEmbedTransportForTests\('; then
+    if ! printf '%s\n' "$r5_code" | grep -qE 'resetGateway\(' \
+       || ! printf '%s\n' "$r5_code" | grep -qE 'afterAll[[:space:]]*\(|afterEach[[:space:]]*\('; then
+      emit_violation "$f" "R5" "configures the AI gateway but never calls resetGateway() in afterAll/afterEach; gateway state (provider, fake keys, transports) leaks across files in the shard process" ""
     fi
   fi
 done <<EOF

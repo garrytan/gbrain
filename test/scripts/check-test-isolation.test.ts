@@ -199,6 +199,84 @@ describe('check-test-isolation.sh', () => {
     });
   });
 
+  describe('R5 — gateway configuration requires resetGateway teardown (#3066)', () => {
+    it('flags configureGateway without resetGateway in a teardown hook', () => {
+      const r = runLintIn([
+        {
+          path: 'gateway-leak.test.ts',
+          contents:
+            `import { beforeAll, test, expect } from 'bun:test';\n` +
+            `import { configureGateway } from '../src/core/ai/gateway.ts';\n` +
+            `beforeAll(() => { configureGateway({ env: {} }); });\n` +
+            `test('x', () => expect(1).toBe(1));\n`,
+        },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('R5');
+      expect(r.stdout).toContain('gateway-leak.test.ts');
+    });
+
+    it('flags __setEmbedTransportForTests without resetGateway', () => {
+      const r = runLintIn([
+        {
+          path: 'transport-leak.test.ts',
+          contents:
+            `import { afterAll, test, expect } from 'bun:test';\n` +
+            `import { __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';\n` +
+            `__setEmbedTransportForTests(async () => ({ embeddings: [] }));\n` +
+            `afterAll(() => { /* disconnect only */ });\n` +
+            `test('x', () => expect(1).toBe(1));\n`,
+        },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('R5');
+    });
+
+    it('passes when resetGateway is called and an afterAll hook exists', () => {
+      const r = runLintIn([
+        {
+          path: 'gateway-clean.test.ts',
+          contents:
+            `import { beforeAll, afterAll, test, expect } from 'bun:test';\n` +
+            `import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';\n` +
+            `beforeAll(() => { configureGateway({ env: {} }); });\n` +
+            `afterAll(() => { resetGateway(); });\n` +
+            `test('x', () => expect(1).toBe(1));\n`,
+        },
+      ]);
+      expect(r.status).toBe(0);
+    });
+
+    it('a comment mentioning resetGateway() does not satisfy the rule', () => {
+      const r = runLintIn([
+        {
+          path: 'gateway-comment-leak.test.ts',
+          contents:
+            `import { beforeAll, afterAll, test, expect } from 'bun:test';\n` +
+            `import { configureGateway } from '../src/core/ai/gateway.ts';\n` +
+            `// a co-sharded test that calls resetGateway() would clear this\n` +
+            `beforeAll(() => { configureGateway({ env: {} }); });\n` +
+            `afterAll(() => { /* disconnect only */ });\n` +
+            `test('x', () => expect(1).toBe(1));\n`,
+        },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('R5');
+    });
+
+    it('a test name mentioning "configureGateway (" does not trigger the rule', () => {
+      const r = runLintIn([
+        {
+          path: 'gateway-prose.test.ts',
+          contents:
+            `import { test, expect } from 'bun:test';\n` +
+            `test('works WITHOUT configureGateway (reads registry)', () => expect(1).toBe(1));\n`,
+        },
+      ]);
+      expect(r.status).toBe(0);
+    });
+  });
+
   describe('scope', () => {
     it('skips *.serial.test.ts files entirely', () => {
       const r = runLintIn([
