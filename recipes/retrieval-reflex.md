@@ -9,7 +9,7 @@ requires: []
 secrets: []
 health_checks:
   - type: command
-    argv: [gbrain, doctor, --json]
+    argv: [gbrain, doctor, --fast, --json]
     label: Retrieval reflex wiring (see retrieval_reflex_health)
 setup_time: 2 min
 cost_estimate: "$0 — zero-LLM deterministic layer + a prose policy skill"
@@ -42,7 +42,7 @@ This reflex has two halves:
 **You are the installer.** Run these steps on behalf of the user.
 
 1. Confirm the deterministic layer isn't disabled:
-   `gbrain doctor --json | jq '.checks[] | select(.name=="retrieval_reflex_health")'`
+   `gbrain doctor --fast --json | jq '.checks[] | select(.name=="retrieval_reflex_health")'`
 2. Install the policy skill into the host repo (the OpenClaw/agent repo that
    holds `skills/RESOLVER.md` or `AGENTS.md`):
    `gbrain integrations install retrieval-reflex --target <host-repo>`
