@@ -2669,6 +2669,11 @@ export interface ChatOpts {
   maxTokens?: number;
   abortSignal?: AbortSignal;
   /**
+   * AI SDK retry count. Omit for the normal provider default; bounded batch
+   * workflows that have their own fallback/circuit breaker should pass 0.
+   */
+  maxRetries?: number;
+  /**
    * Anthropic-specific: cache the system prompt + last tool def. Silently
    * ignored on providers without `supports_prompt_cache`.
    */
@@ -3175,6 +3180,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+      ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),

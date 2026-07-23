@@ -18,6 +18,7 @@ import {
   runPhaseExtractAtoms,
   discoverExtractablePages,
 } from '../src/core/cycle/extract-atoms.ts';
+import { AIConfigError } from '../src/core/ai/errors.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 
@@ -447,6 +448,27 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     });
     expect(malformed.status).toBe('warn');
     expect((malformed.details?.failures as unknown[]).length).toBe(1);
+  });
+
+  test('provider-wide config failure opens the circuit after one item', async () => {
+    let calls = 0;
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [
+        { slug: 'meeting/a', content: 'a', contentHash: 'a1234567890abcde' },
+        { slug: 'meeting/b', content: 'b', contentHash: 'b1234567890abcde' },
+        { slug: 'meeting/c', content: 'c', contentHash: 'c1234567890abcde' },
+      ],
+      _chat: async () => {
+        calls++;
+        throw new AIConfigError('monthly spending cap exceeded');
+      },
+    });
+
+    expect(calls).toBe(1);
+    expect(result.status).toBe('warn');
+    expect((result.details?.failures as unknown[]).length).toBe(1);
+    expect(result.details?.stopped_provider_unavailable).toBe(true);
   });
 
   test('dry-run skips putPage for atoms', async () => {

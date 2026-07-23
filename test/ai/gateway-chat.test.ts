@@ -222,6 +222,32 @@ describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', ()
   });
 });
 
+describe('chat touchpoint — caller-owned retry policy', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  test('threads maxRetries=0 to the AI SDK transport', async () => {
+    let observed: number | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      observed = args.maxRetries;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      chat_model: 'google:gemini-2.5-flash',
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+    });
+
+    await chat({ messages: [{ role: 'user', content: 'x' }], maxRetries: 0 });
+    expect(observed).toBe(0);
+  });
+});
+
 describe('chat touchpoint — provider_chat_options passthrough', () => {
   beforeEach(() => {
     resetGateway();

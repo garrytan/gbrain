@@ -255,6 +255,16 @@ describe('computeNightlyQualityProbeHealthCheck — pure doctor branch coverage'
     expect(check.message).toMatch(/gbrain config set autopilot\.nightly_quality_probe\.enabled true/);
   });
 
+  test('disabled + historical failures stay informational, not unhealthy', async () => {
+    const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const check = computeNightlyQualityProbeHealthCheck(false, [
+      { outcome: 'error', ts: '2026-05-20T03:00:00Z', detail: 'old runtime failure' },
+    ]);
+    expect(check.status).toBe('ok');
+    expect(check.message).toMatch(/1 historical event/);
+    expect(check.message).toMatch(/while disabled/);
+  });
+
   test('enabled + no events → ok pending', async () => {
     const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
     const check = computeNightlyQualityProbeHealthCheck(true, []);

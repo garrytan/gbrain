@@ -2978,12 +2978,19 @@ export function computeNightlyQualityProbeHealthCheck(
   events: ReadonlyArray<{ outcome: string; ts: string; detail?: string }>,
 ): Check {
   const name = 'nightly_quality_probe_health';
-  if (!probeEnabled && events.length === 0) {
-    // Quiet skip — surface enable hint only when explicitly asked to.
+  if (!probeEnabled) {
+    // An explicitly disabled opt-in probe is not an active health surface.
+    // Historical failures may remain in the seven-day audit window after an
+    // operator disables a broken probe; reporting those as current warnings
+    // makes doctor claim the live system is unhealthy when the feature cannot
+    // run. Keep the history visible as context without degrading status.
     return {
       name,
       status: 'ok',
-      message: `disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true`,
+      message:
+        `disabled (opt-in)` +
+        (events.length > 0 ? `; ${events.length} historical event(s) ignored while disabled` : '') +
+        `. Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true`,
     };
   }
   if (events.length === 0) {

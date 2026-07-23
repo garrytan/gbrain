@@ -52,6 +52,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { AIConfigError } from '../ai/errors.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
@@ -540,6 +541,7 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
+  let stoppedProviderUnavailable = false;
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -594,6 +596,9 @@ export async function runPhaseExtractAtoms(
         ],
         maxTokens: 2000,
         abortSignal: opts.signal,
+        // The phase has its own per-item failure handling. SDK retries turn a
+        // permanent account/spend-cap error into minutes of repeated calls.
+        maxRetries: 0,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -695,6 +700,13 @@ export async function runPhaseExtractAtoms(
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
       });
+      // Configuration/billing failures are provider-wide, not item-specific.
+      // Stop after the first one; trying the remaining batch cannot succeed
+      // and merely multiplies latency, spend pressure, and halt noise.
+      if (err instanceof AIConfigError) {
+        stoppedProviderUnavailable = true;
+        break;
+      }
     }
   }
 
@@ -757,6 +769,7 @@ export async function runPhaseExtractAtoms(
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
       stopped_deadline: stoppedDeadline,
+      stopped_provider_unavailable: stoppedProviderUnavailable,
     },
   };
 }
