@@ -5,7 +5,7 @@
  * test seam to drive different recipe / env shapes without touching
  * process.env.
  */
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   validateEmbeddingCreds,
@@ -13,6 +13,28 @@ import {
   EmbeddingCredentialError,
 } from '../src/core/embed-preflight.ts';
 import type { AIGatewayConfig } from '../src/core/ai/types.ts';
+
+// This file calls configureGateway() to drive credential-validation
+// scenarios. configureGateway mutates module-level gateway state (_config).
+// beforeEach resets BEFORE each test, but the LAST test leaves its config
+// behind — and bun runs every file in a shard inside ONE process, so that
+// residue (e.g. OPENAI_API_KEY: 'sk-test') bleeds into the next file's
+// isAvailable('embedding') check. That's what made facts-backstop-gating
+// fail intermittently (bin-pack-dependent) on CI shard 10.
+//
+// Don't end on a bare resetGateway() either: the NEXT file's beforeAll
+// (often engine.initSchema, which sizes vector columns from ambient gateway
+// state) runs before the legacy-embedding-preload's per-test restore, so a
+// null gateway here would seed 1280-d schemas under 1536-d fixtures.
+// Restore the preload's legacy pin instead.
+afterAll(() => {
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
+});
 
 function baseConfig(overrides: Partial<AIGatewayConfig> = {}): AIGatewayConfig {
   return {
@@ -25,6 +47,23 @@ function baseConfig(overrides: Partial<AIGatewayConfig> = {}): AIGatewayConfig {
     ...overrides,
   };
 }
+
+describe('formatEmbeddingCredsError — user_provided_dims_unset (#1292/D6)', () => {
+  test('names the dimension fix, not a model fix', () => {
+    const msg = formatEmbeddingCredsError({
+      ok: false,
+      reason: 'user_provided_dims_unset',
+      model: 'litellm:bge-large',
+      provider: 'litellm',
+      recipeId: 'litellm',
+    });
+    expect(msg).toMatch(/dimension/i);
+    // Points at the ACCEPTED remediation, not the hard-rejected `config set`
+    // (config.ts refuses to write embedding_dimensions — a schema-sizing field).
+    expect(msg).toMatch(/gbrain init --embedding-dimensions/);
+    expect(msg).not.toMatch(/config set embedding_dimensions/);
+  });
+});
 
 describe('validateEmbeddingCreds', () => {
   beforeEach(() => { resetGateway(); });

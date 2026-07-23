@@ -85,6 +85,40 @@ services:
     volumes:
       - gbrain-ci-pg-data-4:/var/lib/postgresql/data
 
+  # v0.43 (#2084 / eng-review TD1): PgBouncer in TRANSACTION pooling mode
+  # fronting postgres-1 — the production topology (Supabase direct :5432 +
+  # pooled :6543) behind three consecutive pooler-teardown waves
+  # (#1972 → #2015 → #2084) that CI could never reproduce.
+  # test/e2e/pgbouncer-teardown.test.ts uses a DEDICATED database
+  # (gbrain_pgbouncer) on postgres-1 so it never races shard 1's
+  # TRUNCATE-based fixtures; pgbouncer's wildcard [databases] section
+  # forwards any dbname to DB_HOST.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      DB_HOST: postgres-1
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      POOL_MODE: transaction
+      # plain (CI-only): pg16 stores SCRAM verifiers, and pgbouncer can only
+      # answer the server's SCRAM challenge when its userlist holds the
+      # PLAINTEXT password — an md5-hashed userlist fails with
+      # "server login failed: wrong password type".
+      AUTH_TYPE: plain
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "10"
+      # gbrain's client sets statement_timeout + idle_in_transaction_session_timeout
+      # as startup parameters (db.ts buildConnectionParams); the Supabase pooler
+      # whitelists them, so this pooler must too or every connection is refused
+      # before the teardown path is even reached.
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
+    ports:
+      - "${GBRAIN_CI_PGBOUNCER_PORT:-6543}:5432"
+    depends_on:
+      postgres-1:
+        condition: service_healthy
+
   runner:
     image: oven/bun:1
     working_dir: /app
@@ -97,6 +131,8 @@ services:
         condition: service_healthy
       postgres-4:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
     # No global DATABASE_URL — scripts/ci-local.sh sets per-shard URL via -e.
     # Unit phase explicitly unsets DATABASE_URL so test/e2e/* gracefully skip.
     volumes:

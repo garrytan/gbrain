@@ -23,7 +23,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, lstatSync, statSync, realpathSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { execSync } from 'child_process';
-import { childGlobalFlags } from '../../core/cli-options.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { savePreferences, loadPreferences } from '../../core/preferences.ts';
 // Bug 3 — appendCompletedMigration moved to the runner (apply-migrations.ts).
@@ -61,28 +60,14 @@ export interface PendingHostWorkEntry {
 async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    // v0.36.x #1100: route PGLite through an in-process schema apply rather
-    // than `execSync('gbrain init --migrate-only')`. The subprocess inherits
-    // HOME and tries to acquire the same file lock the parent process is
-    // holding (or briefly released and the on-disk artifact has not finished
-    // settling), which deadlocks until the 30s lock timeout fires. The
-    // structural fix is to not spawn a subprocess for work the parent can
-    // do directly — Postgres tolerates concurrent connections, so the
-    // legacy execSync path stays for Postgres callers.
-    const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
-    const cfg = loadConfig();
-    if (cfg?.engine === 'pglite') {
-      const { createEngine } = await import('../../core/engine-factory.ts');
-      const eng = await createEngine(toEngineConfig(cfg));
-      try {
-        await eng.connect(toEngineConfig(cfg));
-        await eng.initSchema();
-      } finally {
-        try { await eng.disconnect(); } catch { /* best-effort */ }
-      }
-      return { name: 'schema', status: 'complete' };
-    }
-    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 60_000, env: process.env });
+    // v0.41.37.0 #1605: bring schema to head IN-PROCESS for every engine. Was an
+    // a `gbrain init --migrate-only` subprocess subprocess for Postgres (died with
+    // `getaddrinfo ENOTFOUND` on Windows+bun+Supabase-pooler before it could
+    // connect) plus a PGLite-only in-process branch (which separately
+    // deadlocked on the file lock, #1100). runMigrateOnlyCore is the single
+    // in-process path for both engines.
+    const { runMigrateOnlyCore } = await import('./in-process.ts');
+    await runMigrateOnlyCore();
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

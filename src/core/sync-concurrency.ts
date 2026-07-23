@@ -163,6 +163,52 @@ export function parseDurationSeconds(s: string | undefined, flagName: string): n
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// v0.42.x (#1794, 4A) — connection-budget clamp.
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve `GBRAIN_MAX_CONNECTIONS` (a positive integer) or undefined when
+ * unset/invalid. OPT-IN: when unset, the budget clamp is a no-op and the
+ * well-tuned defaults are unchanged. Operators behind a low-cap pooler
+ * (Supabase Supavisor's 20-client transaction pooler is the #1794 trigger)
+ * set this so a single source's worker fan-out stays under the cap instead of
+ * starving retries with EMAXCONNSESSION.
+ */
+export function resolveMaxConnections(): number | undefined {
+  const raw = process.env.GBRAIN_MAX_CONNECTIONS;
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Clamp a single sync's worker count so its connection footprint
+ * (`parentPool + workers * perWorkerPool`) stays at or under `maxConnections`.
+ *
+ * Pure. No-op (returns `workers` unchanged, `clamped:false`) when
+ * `maxConnections` is undefined — preserving every existing brain's behavior.
+ * When even one worker won't fit (`parentPool + perWorkerPool > budget`),
+ * returns 1: the caller's serial path uses only the parent pool, and the
+ * doctor nudge tells the operator to lower `GBRAIN_POOL_SIZE`.
+ *
+ * Deliberately clamps only the worker COUNT (not per-worker poolSize) — the
+ * dominant lever — to keep the clamp narrow per the 4A scope.
+ */
+export function clampWorkersForConnectionBudget(
+  workers: number,
+  opts: { maxConnections?: number; parentPool: number; perWorkerPool: number },
+): { workers: number; clamped: boolean } {
+  const { maxConnections, parentPool, perWorkerPool } = opts;
+  if (maxConnections === undefined || perWorkerPool <= 0) {
+    return { workers, clamped: false };
+  }
+  const maxWorkers = Math.floor((maxConnections - parentPool) / perWorkerPool);
+  if (maxWorkers < 1) return { workers: 1, clamped: workers > 1 };
+  if (workers > maxWorkers) return { workers: maxWorkers, clamped: true };
+  return { workers, clamped: false };
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // v0.41.16.0 — D9 wrapper for bulk-command --workers.
 // ────────────────────────────────────────────────────────────────────────
 

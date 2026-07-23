@@ -74,12 +74,19 @@ to the HTTP server, so no migration is required.
 gbrain serve --http --port 3131
 ```
 
-On first start, the server prints an **admin bootstrap token** to stderr:
+On first start in an interactive terminal, the server prints an **admin
+bootstrap token** to stderr:
 
 ```
 Admin bootstrap token: 3a1f9c...
 Open http://localhost:3131/admin and paste it to log in.
 ```
+
+On a non-TTY start (systemd, Docker, any piped or captured logs) the generated
+token is hidden so it never lands in log storage. For headless deploys either
+set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` to a value you control before starting, or
+run `gbrain serve --http --print-admin-token` once on a trusted terminal to
+force printing.
 
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,

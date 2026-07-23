@@ -76,6 +76,7 @@ export const BATCH_AUDIT_SITES = [
   // Engine-method defaults (used when caller doesn't supply auditSite).
   'addLinksBatch',
   'addTimelineEntriesBatch',
+  'addTakesBatch',
   'upsertChunks',
   // extract.ts per-site labels.
   'extract.links_inc',
@@ -85,6 +86,8 @@ export const BATCH_AUDIT_SITES = [
   'extract.links_db',
   'extract.timeline_db',
   'extract.by_mention',
+  // v0.42.7 (#1696): extract --stale incremental sweep.
+  'extract.stale',
   // operations.ts MCP put_page auto-link path.
   'mcp.put_page.autolink',
   // sync.ts/reindex.ts orchestrator labels.
@@ -93,6 +96,10 @@ export const BATCH_AUDIT_SITES = [
   'reindex.multimodal',
   // backfill-base.ts outer connection-retry layer.
   'backfill.outer',
+  // queue.ts Minion hot-path lock recovery (issue #1678): promoteDelayed
+  // self-heal on a reaped pooler socket. claim/renewLock deliberately do NOT
+  // route here (Codex #1/#2) — the poll loop and renewal-tick recover those.
+  'minion-lock',
 ] as const;
 
 export type BatchAuditSite = (typeof BATCH_AUDIT_SITES)[number];
@@ -112,8 +119,34 @@ export interface WithRetryOpts {
   signal?: AbortSignal;
   /** Audit-site label for observability. Must be in BATCH_AUDIT_SITES. */
   auditSite?: BatchAuditSite;
-  /** Per-attempt callback fires on each retry (attempt is 1-based). */
-  onRetry?: (attempt: number, err: unknown) => void;
+  /**
+   * Per-attempt callback fires on each retry (attempt is 1-based).
+   *
+   * v0.41.25.0: now awaited. Sync callbacks (the only in-tree shape) work
+   * identically; async callbacks correctly delay the inter-attempt sleep.
+   */
+  onRetry?: (attempt: number, err: unknown) => void | Promise<void>;
+  /**
+   * v0.41.25.0 — invoked between attempts AFTER `isRetryableConnError`
+   * classification but BEFORE the inter-attempt sleep. Use this to rebuild
+   * a dead connection / pool before the retry fires.
+   *
+   * Fail-loud posture (per codex finding 3 from /codex review): if reconnect
+   * throws, the throw PROPAGATES out of `withRetry` AS the new error,
+   * replacing the original retryable. Operators see the real cause
+   * ("auth failed", "EHOSTUNREACH") instead of "No database connection"
+   * for hours when DB credentials are bad.
+   *
+   * Engine-level callers (PostgresEngine.batchRetry) inject
+   * `(ctx) => this.reconnect(ctx)` which already handles both module and
+   * instance pools, race-safe via the `_reconnecting` guard.
+   *
+   * v0.42.x (#1685 CODEX #8): receives the triggering error so the engine can
+   * classify it (pooler reap vs network/auth) for the pool-recovery audit. The
+   * arg is optional — back-compat zero-arg callbacks (`() => this.reconnect()`)
+   * still satisfy the type.
+   */
+  reconnect?: (ctx?: { error?: unknown }) => Promise<void>;
 }
 
 /**
@@ -206,6 +239,9 @@ export function computeNextDelay(
  * - Pass `BULK_RETRY_OPTS` for the Supavisor-tuned 3-retry exponential shape.
  * - Non-retryable errors (per `isRetryableConnError`) throw immediately.
  * - AbortSignal triggers `RetryAbortError` mid-sleep.
+ * - v0.41.25.0: optional `reconnect` callback runs between attempts AFTER
+ *   classification but BEFORE the sleep. Fail-loud — a reconnect throw
+ *   propagates as the new error.
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -227,7 +263,25 @@ export async function withRetry<T>(
       if (!isRetryableConnError(err)) throw err;
       lastErr = err;
       if (attempt >= maxRetries) break;
-      opts.onRetry?.(attempt + 1, err);
+      // v0.41.25.0: onRetry is now awaited so async observability + audit
+      // hooks correctly run before the inter-attempt sleep. Sync arrows
+      // (the only in-tree shape) work identically.
+      await opts.onRetry?.(attempt + 1, err);
+      // v0.41.25.0: optional reconnect hook. PostgresEngine.batchRetry
+      // injects `() => this.reconnect()` so a null-singleton from a
+      // sibling caller's mid-process disconnect doesn't keep the retry
+      // hammering against a dead reference. Fail-loud: any throw from
+      // reconnect (auth failure, network partition) propagates AS the
+      // new error — operators see the real cause, not the symptom.
+      // v0.41.25 also ships diagnostic instrumentation on disconnect
+      // call sites to find the offending caller; this hook is the
+      // immediate-recovery half of that pair.
+      if (opts.reconnect) {
+        if (signal?.aborted) throw new RetryAbortError();
+        // Thread the triggering error so the engine can classify it (pooler
+        // reap vs other) for the pool-recovery audit (#1685 CODEX #8).
+        await opts.reconnect({ error: err });
+      }
       const delay = computeNextDelay(attempt, prevDelay, baseDelay, maxDelay, jitter);
       prevDelay = delay;
       await abortableSleep(delay, signal);

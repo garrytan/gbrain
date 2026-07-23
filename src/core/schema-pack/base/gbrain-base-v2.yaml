@@ -302,6 +302,23 @@ page_types:
     extractable: true
     expert_routing: false
 
+  # v0.42.x — Life Chronicle (#2390): timeline events + thought diary.
+  - name: event
+    primitive: temporal
+    path_prefixes:
+      - life/events/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: diary
+    primitive: temporal
+    path_prefixes:
+      - life/diary/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
 link_types:
   - name: partner_of
     inverse: partner_of

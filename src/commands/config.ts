@@ -98,9 +98,25 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   const value = args[2];
 
   if (action === 'get' && key) {
-    const val = await engine.getConfig(key);
-    if (val !== null) {
-      console.log(val);
+    // #2120: `get` used to read only the DB plane, so a runtime-effective key
+    // in ~/.gbrain/config.json (or env) reported not-found. Resolve the way
+    // the runtime does — env/file plane wins over DB (loadConfig() already
+    // overlays env onto the file) — and report which plane answered on
+    // stderr, keeping stdout a bare value for scripts.
+    const filePlane = loadConfig() as Record<string, unknown> | null;
+    const fileVal = filePlane?.[key];
+    const dbVal = await engine.getConfig(key);
+    const val = fileVal !== undefined && fileVal !== null ? fileVal : dbVal;
+    if (val !== null && val !== undefined) {
+      console.log(typeof val === 'string' ? val : JSON.stringify(val));
+      if (fileVal !== undefined && fileVal !== null) {
+        const shadow = dbVal !== null && dbVal !== undefined
+          ? ' — a DB-plane value also exists and is shadowed at runtime'
+          : '';
+        console.error(`[config] source: file/env plane (~/.gbrain/config.json or env)${shadow}`);
+      } else {
+        console.error(`[config] source: db plane`);
+      }
     } else {
       console.error(`Config key not found: ${key}`);
       process.exit(1);
@@ -180,6 +196,20 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // they're mid-backfill.
     const coverageOverride =
       args.includes('--coverage-override') || args.includes('--yes');
+
+    // v0.42.42.0 (#2139): validate spend.posture at set time so a typo
+    // ('tokenMax', 'max') doesn't silently fall back to gated.
+    if (key === 'spend.posture') {
+      const { isValidSpendPosture } = await import('../core/spend-posture.ts');
+      if (!isValidSpendPosture(value)) {
+        console.error(
+          `[config] spend.posture must be 'gated' or 'tokenmax' (got '${value}').\n` +
+          `[config]   gbrain config set spend.posture tokenmax   # cost gates become informational\n` +
+          `[config]   gbrain config set spend.posture gated       # default — gates enforce`,
+        );
+        process.exit(1);
+      }
+    }
 
     if (key === 'embedding_columns') {
       try {

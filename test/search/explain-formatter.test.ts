@@ -10,7 +10,9 @@ import type { SearchResult } from '../../src/core/types.ts';
 import {
   formatResultExplain,
   formatResultsExplain,
+  formatAutocutSummary,
 } from '../../src/core/search/explain-formatter.ts';
+import type { AutocutDecision } from '../../src/core/search/autocut.ts';
 
 function r(slug: string, score: number, extras: Partial<SearchResult> = {}): SearchResult {
   return {
@@ -195,5 +197,66 @@ describe('formatResultExplain — number formatting', () => {
   test('NaN preserved as "NaN"', () => {
     const out = formatResultExplain(r('a/b', NaN), 1);
     expect(out).toContain('score=NaN');
+  });
+});
+
+describe('v0.42.3.0 — autocut in --explain', () => {
+  test('rerank_score renders per result (the cliff signal)', () => {
+    const out = formatResultExplain(r('a/b', 1.2, { rerank_score: 0.87 }), 1);
+    expect(out).toContain('rerank score=0.87');
+  });
+
+  test('no rerank score line when absent', () => {
+    const out = formatResultExplain(r('a/b', 1.2), 1);
+    expect(out).not.toContain('rerank score');
+  });
+
+  const applied: AutocutDecision = {
+    applied: true,
+    signal: 'rerank',
+    cut: 2,
+    kept: 2,
+    total: 7,
+    gapRatio: 0.41,
+  };
+  const declined: AutocutDecision = {
+    applied: false,
+    signal: 'none',
+    cut: 7,
+    kept: 7,
+    total: 7,
+    gapRatio: 0.05,
+  };
+
+  test('formatAutocutSummary — applied cut', () => {
+    const s = formatAutocutSummary(applied);
+    expect(s).toContain('kept 2/7');
+    expect(s).toContain('0.41');
+  });
+
+  test('formatAutocutSummary — declined', () => {
+    const s = formatAutocutSummary(declined);
+    expect(s).toContain('no cut');
+    expect(s).toContain('full 7');
+  });
+
+  test('formatAutocutSummary — undefined → null (omit cleanly)', () => {
+    expect(formatAutocutSummary(undefined)).toBeNull();
+  });
+
+  test('formatResultsExplain prepends the autocut summary when meta has a decision', () => {
+    const out = formatResultsExplain([r('a/b', 1.2, { rerank_score: 0.9 })], {
+      vector_enabled: true,
+      detail_resolved: null,
+      expansion_applied: false,
+      autocut: applied,
+    });
+    expect(out.startsWith('autocut:')).toBe(true);
+    expect(out).toContain('kept 2/7');
+  });
+
+  test('formatResultsExplain omits the summary when meta has no autocut decision', () => {
+    const out = formatResultsExplain([r('a/b', 1.2)]);
+    expect(out.startsWith('autocut:')).toBe(false);
   });
 });
