@@ -19,7 +19,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
@@ -1089,7 +1089,24 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
           hasEmbeddingProvider: () => isAvailable('embedding'),
           resolveMaxUsd: () => maxUsd,
-          resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
+          resolveRepoRoot: async () => {
+            const configured = await engine.getConfig('autopilot.nightly_quality_probe.repo_root');
+            const cliPath = (() => {
+              try { return resolveGbrainCliPath(); } catch { return ''; }
+            })();
+            const candidates = [
+              configured,
+              // Source checkout / locally compiled binary.
+              resolve(import.meta.dir, '..', '..'),
+              cliPath ? resolve(dirname(cliPath), '..') : null,
+              process.cwd(),
+              repoPath,
+              gbrainHomePath('.'),
+            ].filter((p): p is string => Boolean(p));
+            const fixture = join('test', 'fixtures', 'longmemeval-nightly.jsonl');
+            return candidates.find((root) => existsSync(join(root, fixture))) ??
+              candidates[0]!;
+          },
           runLongMemEval: runLongMemEvalForProbe,
           runCrossModalBatch: runCrossModalBatchForProbe,
           now: () => new Date(),

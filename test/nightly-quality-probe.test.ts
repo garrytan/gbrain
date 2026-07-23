@@ -85,6 +85,22 @@ describe('shouldRunNightly (pure function, rate-limit logic)', () => {
     );
     expect(r).toEqual({ run: true });
   });
+
+  test('rate-limited observations do not perpetually extend the window', () => {
+    const r = shouldRunNightly(
+      new Date('2026-05-22T00:00:00Z'),
+      [{ ts: '2026-05-21T23:59:00Z', outcome: 'rate_limited' }],
+    );
+    expect(r).toEqual({ run: true });
+  });
+
+  test('transient errors retry after five minutes', () => {
+    const r = shouldRunNightly(
+      new Date('2026-05-22T00:10:00Z'),
+      [{ ts: '2026-05-22T00:00:00Z', outcome: 'error' }],
+    );
+    expect(r).toEqual({ run: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -141,8 +157,10 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       const r2 = await runNightlyQualityProbe(makeDeps());
       expect(r2.outcome).toBe('rate_limited');
       const events = await readEvents();
-      expect(events.length).toBe(2);
-      expect(events[1].outcome).toBe('rate_limited');
+      // Rate-limit observations are deliberately not persisted; otherwise
+      // every autopilot tick extends the window forever.
+      expect(events.length).toBe(1);
+      expect(events[0].outcome).toBe('pass');
     });
   });
 

@@ -68,11 +68,20 @@ export interface NightlyProbeDeps {
  */
 export function shouldRunNightly(
   now: Date,
-  recentEvents: ReadonlyArray<{ ts: string }>,
+  recentEvents: ReadonlyArray<{ ts: string; outcome?: string }>,
   windowMs: number = NIGHTLY_WINDOW_MS,
 ): { run: true } | { run: false; reason: 'rate_limited' } {
-  const cutoff = now.getTime() - windowMs;
   for (const ev of recentEvents) {
+    // A rate-limit observation is not a probe run. Counting it resets the
+    // 24-hour window every tick and can suppress the probe forever.
+    if (ev.outcome === 'rate_limited') continue;
+    // Transient setup/provider failures retry after five minutes; completed
+    // quality verdicts retain the normal once-per-day spend bound.
+    const eventWindow =
+      ev.outcome === 'error' || ev.outcome === 'no_embedding_key'
+        ? 5 * 60 * 1000
+        : windowMs;
+    const cutoff = now.getTime() - eventWindow;
     const ts = Date.parse(ev.ts);
     if (Number.isFinite(ts) && ts >= cutoff) {
       return { run: false, reason: 'rate_limited' };
@@ -106,16 +115,9 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
   const recent = readRecentQualityProbeEvents(2, now); // 2-day window is enough for 24h check
   const decision = shouldRunNightly(now, recent);
   if (!decision.run) {
-    logQualityProbeEvent({
-      outcome: 'rate_limited',
-      exit_code: 0,
-      pass_count: 0,
-      fail_count: 0,
-      inconclusive_count: 0,
-      error_count: 0,
-      est_cost_usd: 0,
-      detail: 'already ran within 24h window',
-    });
+    // Do not write a rate_limited audit row: it is an observation, not a
+    // probe result, and writing one on every tick creates a sliding window
+    // that never expires.
     return { outcome: 'rate_limited', exit_code: 0, detail: 'already ran within 24h' };
   }
 
