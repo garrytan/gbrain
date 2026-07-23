@@ -13,7 +13,15 @@ import { hardenBrainRepo } from '../src/core/brain-repo-durability.ts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, '-c', 'protocol.file.allow=always', ...args], {
-    stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8',
+    // Explicit env passthrough (matches every other execFileSync in this file
+    // and hardenBrainRepo's own internal git calls) — without it, `git commit`
+    // and the post-commit hook it spawns (including the disowned background
+    // push subshell) can resolve HOME/GBRAIN_HOME from the real process
+    // environment instead of this test's per-test overrides set in
+    // beforeEach, silently writing brain-push.log to the real
+    // ~/.gbrain instead of the test's isolated temp dir. Root-caused via a
+    // standalone repro that traced the backgrounded subshell's own env.
+    stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', env: process.env,
   }).trim();
 }
 function originHead(bare: string): string {

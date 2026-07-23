@@ -30,7 +30,23 @@ function applyLegacy() {
   configureGateway({
     embedding_model: LEGACY_CONFIG.embedding_model,
     embedding_dimensions: LEGACY_CONFIG.embedding_dimensions,
-    env: { ...process.env },
+    // Deliberately NOT `{ ...process.env }`. `_config.env` is only consulted
+    // by the gateway itself (provider auth-env lookups in `isAvailable()`,
+    // `*_BASE_URL` resolution, and the actual chat/embed transport API-key
+    // reads) — it is never used for process spawning, PATH, or DB
+    // connection vars, so an empty object here can't break anything that
+    // needs a real env var to reach a *subprocess*. Spreading the real host
+    // env leaked ANTHROPIC_API_KEY / OPENAI_API_KEY / etc. from the
+    // developer's shell into every test's gateway config, which made
+    // `isAvailable('chat')` return `true` on any machine with a real key
+    // exported (e.g. anyone running Claude Code locally) even though
+    // several tests are explicitly written assuming a hermetic "no API key
+    // in test env" (see test/facts-classify.test.ts and
+    // test/facts-mcp-allowlist.serial.test.ts). Tests that need real
+    // provider env vars in the gateway config call `configureGateway({ env:
+    // { ...process.env } })` explicitly themselves (several already do) —
+    // that stays an intentional per-file opt-in, not a global default.
+    env: {},
   });
 }
 

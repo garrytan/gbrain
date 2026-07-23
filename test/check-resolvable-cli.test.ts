@@ -149,9 +149,24 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     // in test/repo-root.test.ts that drive autoDetectSkillsDirReadOnly
     // with mocked env to suppress the install-path success.
     const empty = mkdtempSync(join(tmpdir(), 'empty-for-resolve-'));
+    // Fake, empty $HOME so tier 2 (~/.openclaw/workspace home-root discovery
+    // in src/core/repo-root.ts) can't find a real OpenClaw deployment on dev
+    // machines that have one at $HOME/.openclaw/workspace. resolveSkillsDir
+    // reads process.env directly (no env param), so HOME must be mutated in
+    // place for the duration of the call. Without this, a machine with a
+    // real ~/.openclaw/workspace/AGENTS.md resolves to
+    // 'openclaw_workspace_home_root' before the install-path fallback tier
+    // ever runs — a test-isolation gap, not a product bug.
+    const fakeHome = mkdtempSync(join(tmpdir(), 'empty-home-for-resolve-'));
     const original = process.cwd();
+    const originalHome = process.env.HOME;
+    const originalOpenclawWorkspace = process.env.OPENCLAW_WORKSPACE;
+    const originalGbrainSkillsDir = process.env.GBRAIN_SKILLS_DIR;
     try {
       process.chdir(empty);
+      process.env.HOME = fakeHome;
+      delete process.env.OPENCLAW_WORKSPACE;
+      delete process.env.GBRAIN_SKILLS_DIR;
       const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
       // Install-path fallback succeeds when test runs inside the gbrain repo.
       expect(r.error).toBeNull();
@@ -159,7 +174,14 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
       expect(r.source).toBe('install_path');
     } finally {
       process.chdir(original);
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalOpenclawWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
+      else process.env.OPENCLAW_WORKSPACE = originalOpenclawWorkspace;
+      if (originalGbrainSkillsDir === undefined) delete process.env.GBRAIN_SKILLS_DIR;
+      else process.env.GBRAIN_SKILLS_DIR = originalGbrainSkillsDir;
       rmSync(empty, { recursive: true, force: true });
+      rmSync(fakeHome, { recursive: true, force: true });
     }
   });
 
@@ -383,11 +405,19 @@ describe('gbrain check-resolvable CLI — integration', () => {
   it('v0.31.7 D6: --fix refuses when source is install_path', () => {
     // Run from a guaranteed-empty tempdir so the install-path fallback fires.
     const empty = mkdtempSync(join(tmpdir(), 'cr-fix-installpath-'));
+    // Also fake $HOME to an empty tempdir. OPENCLAW_WORKSPACE: '' only
+    // neutralizes tier 1 (explicit env). Tier 2 in autoDetectSkillsDir
+    // (src/core/repo-root.ts) independently scans $HOME/.openclaw/workspace
+    // regardless of OPENCLAW_WORKSPACE, so a machine with a real OpenClaw
+    // deployment there (as this dev machine has) would resolve to
+    // 'openclaw_workspace_home_root' instead of falling through to
+    // install_path, and the CLI would never print "install-path fallback".
+    const fakeHome = mkdtempSync(join(tmpdir(), 'cr-fix-installpath-home-'));
     try {
       // Pass --fix; expect refusal exit + clear error message.
       const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
         cwd: empty,
-        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
+        env: { ...process.env, HOME: fakeHome, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
         encoding: 'utf-8',
       });
       expect(r.status).toBe(1);
@@ -396,6 +426,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
       expect(r.stderr).toMatch(/GBRAIN_SKILLS_DIR|OPENCLAW_WORKSPACE|--skills-dir/);
     } finally {
       rmSync(empty, { recursive: true, force: true });
+      rmSync(fakeHome, { recursive: true, force: true });
     }
   });
 });

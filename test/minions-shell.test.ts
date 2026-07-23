@@ -282,12 +282,24 @@ describe('shell-audit: computeAuditFilename', () => {
 
 describe('shell-audit: write', () => {
   let tmpDir: string;
+  // #2823 follow-up: this describe used to `delete process.env.GBRAIN_AUDIT_DIR`
+  // unconditionally in afterAll instead of restoring the prior value. That
+  // clobbered the shared test-bootstrap preload's scratch dir
+  // (test/helpers/audit-dir-preload.ts sets GBRAIN_AUDIT_DIR once per shard
+  // process) for every OTHER file that runs afterward in the same `bun test`
+  // shard — bun does not guarantee file execution follows the order given on
+  // the command line, so this leak could surface as a flaky failure in ANY
+  // file sharing the process, most visibly test/audit/audit-dir-preload.test.ts's
+  // own regression tests. Save/restore (matches the pattern already used by
+  // test/subagent-audit.test.ts and test/supervisor.test.ts) instead of deleting.
+  const savedAuditDir = process.env.GBRAIN_AUDIT_DIR;
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-audit-test-'));
     process.env.GBRAIN_AUDIT_DIR = tmpDir;
   });
   afterAll(() => {
-    delete process.env.GBRAIN_AUDIT_DIR;
+    if (savedAuditDir === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+    else process.env.GBRAIN_AUDIT_DIR = savedAuditDir;
   });
 
   test('GBRAIN_AUDIT_DIR env override resolves to the custom dir', () => {

@@ -213,11 +213,29 @@ describe('Lane C.3 — env ZEROENTROPY_API_KEY merges into loadConfig', () => {
 // ─────────────────────────────────────────────────────────────────────
 describe('Lane D.2 — embed pre-flight catches dim mismatch before worker pool', () => {
   let engine: PGLiteEngine;
+  let tmpHome: string;
+  let origHome: string | undefined;
 
   // Fully self-contained: configure gateway EXPLICITLY so schema dim is
   // deterministic regardless of earlier tests' state. resetGateway() at
   // teardown so we don't poison downstream tests.
+  //
+  // Also hermetic against GBRAIN_HOME (test/helpers/with-env.ts's
+  // emptyHome() rationale applies here too): `runEmbedCore` calls
+  // `assertEmbeddingEnabled(loadConfig())` BEFORE the dim-mismatch
+  // preflight this lane targets, and `loadConfig()` reads the REAL
+  // on-disk config unless GBRAIN_HOME is redirected. On a dev machine
+  // whose personal brain was initialized with `--no-embedding`
+  // (`embedding_disabled: true` in `~/.gbrain/config.json`), that guard
+  // fires first and this lane never reaches the code it's meant to
+  // exercise. Point GBRAIN_HOME at a fresh empty temp dir so
+  // `loadConfig()` sees no file (embedding_disabled stays
+  // undefined/falsy) regardless of the operator's real brain config.
   beforeAll(async () => {
+    origHome = process.env.GBRAIN_HOME;
+    tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-v37-d2-'));
+    process.env.GBRAIN_HOME = tmpHome;
+
     configureGateway({
       embedding_model: 'openai:text-embedding-3-large',
       embedding_dimensions: 1536,
@@ -240,6 +258,9 @@ describe('Lane D.2 — embed pre-flight catches dim mismatch before worker pool'
       embedding_dimensions: 1536,
       env: { ...process.env },
     });
+    if (origHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = origHome;
+    rmSync(tmpHome, { recursive: true, force: true });
   });
 
   test('schema=1536 + gateway=ZE/1280 → runEmbedCore throws EmbeddingDimMismatchError before transport fires', async () => {
