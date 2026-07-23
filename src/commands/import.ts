@@ -54,6 +54,13 @@ export async function runImport(
     sourceId?: string;
     managedBookmark?: boolean;
     /**
+     * #2156: allow-list glob patterns — only dir-relative paths matching at
+     * least one pattern are imported. Applied BEFORE `exclude`. Threaded by
+     * performFullSync from `gbrain sync --include` / the source row's
+     * persisted `config.include_globs`.
+     */
+    include?: string[];
+    /**
      * #753/#774: glob patterns to exclude from the import (same semantics as
      * `isSyncable`'s `exclude` — matched against the dir-relative path).
      * Threaded by performFullSync for `gbrain sync --exclude`.
@@ -215,6 +222,10 @@ export async function runImport(
   );
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
+  // #2156: apply --include allow-list globs first (threaded by performFullSync).
+  if (opts.include && opts.include.length > 0) {
+    allFiles = allFiles.filter(abs => matchesAnyGlob(relative(dir, abs), opts.include));
+  }
   // #753/#774: apply --exclude glob patterns (threaded by performFullSync).
   if (opts.exclude && opts.exclude.length > 0) {
     const beforeExclude = allFiles.length;

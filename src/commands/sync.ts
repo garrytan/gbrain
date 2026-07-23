@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
+import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -757,11 +758,22 @@ export interface SyncOpts {
    */
   srcSubpath?: string;
   /**
+   * #2156 — glob patterns files must match to be synced (allow-list).
+   * Populated from the source row's persisted `config.include_globs`
+   * (set via `gbrain sources add --include <glob>`) or the repeatable
+   * `--include` CLI flag. Matched against the scope-relative path, same
+   * anchoring as `exclude`. `exclude` is applied after `include`: a path
+   * matching an include pattern is still rejected if it also matches an
+   * exclude pattern. Empty arrays are the same as undefined (no filter).
+   */
+  include?: string[];
+  /**
    * #753/#774 — glob patterns for files to exclude from sync (repeatable
-   * `--exclude` on the CLI). Matched against the scope-relative path in both
-   * the full-sync and incremental paths. Excluded files are never imported;
-   * exclusion does NOT delete previously-imported pages (conservative,
-   * matching the #1433 metafile posture).
+   * `--exclude` on the CLI; #2156: also populated from the source row's
+   * persisted `config.exclude_globs`). Matched against the scope-relative
+   * path in both the full-sync and incremental paths. Excluded files are
+   * never imported; exclusion does NOT delete previously-imported pages
+   * (conservative, matching the #1433 metafile posture).
    */
   exclude?: string[];
   /**
@@ -1172,6 +1184,29 @@ function unique<T>(items: T[]): T[] {
 // `src/core/sync-delta.ts` (re-imported below) so the inline cost estimator
 // prices detached sources through the same code the executor imports them with.
 
+/**
+ * Defensive parse for the JSONB-loaded `config.include_globs` / `config.exclude_globs`
+ * arrays read off the sources row. The column is a free-form JSONB and could
+ * contain anything — coerce to a string-only array, drop empties, and return
+ * undefined when the result has no useful entries so the caller can decide
+ * not to engage glob-filtering at all.
+ */
+export function parseGlobList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const globs = value.filter((v): v is string => typeof v === 'string' && v.length > 0);
+  return globs.length > 0 ? globs : undefined;
+}
+
+/**
+ * Union of CLI-supplied glob patterns (one-off, this invocation) and the
+ * source row's persisted config globs (every sync). Deduped; undefined when
+ * neither side has entries so `SyncOpts` stays unset and no filter engages.
+ */
+export function mergeGlobs(cli: string[], persisted: string[] | undefined): string[] | undefined {
+  const merged = [...new Set([...cli, ...(persisted ?? [])])];
+  return merged.length > 0 ? merged : undefined;
+}
+
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
 // keys. These wrappers centralize the branch so every read/write site
@@ -1332,6 +1367,125 @@ async function writeChunkerVersion(
     `UPDATE sources SET chunker_version = $1 WHERE id = $2`,
     [version, sourceId],
   );
+}
+
+/**
+ * #2157 follow-on: detect when sources.config has shifted in a way that
+ * affects which paths the walker will include this run. The "Already up
+ * to date" gate at performSync's git-HEAD equality check honored chunker
+ * version match but ignored config drift — a user who changes
+ * `sources.config.exclude_globs` mid-life got "Already up to date" on
+ * the next sync because git HEAD was unchanged, with no observable
+ * effect until `gbrain sync --full`.
+ *
+ * Fingerprint covers exactly the walk-affecting fields that flow from
+ * `sources.config` into `SyncOpts` at the syncOneSource call site:
+ * `strategy`, `include_globs`, `exclude_globs`. CLI-supplied --include
+ * / --exclude overrides do NOT participate — they are one-off scope
+ * changes, not source state, and shouldn't invalidate the row's
+ * checkpoint. (A user running `gbrain sync --exclude X` on a row whose
+ * stored config has no X is intentionally narrowing this one pass; on
+ * the next no-flags sync, the row config governs again.)
+ *
+ * Array order is normalized (alphabetical, post-defensive-parse) so
+ * `["a/**", "b/**"]` and `["b/**", "a/**"]` fingerprint identically.
+ * `parseGlobList` shares the same defensive coercion as the call site
+ * that builds SyncOpts, so hand-edited or pre-normalization rows
+ * fingerprint to the same shape the walker actually sees.
+ */
+export function computeSourceConfigFingerprint(rawConfig: unknown): string {
+  const cfg = (rawConfig || {}) as {
+    strategy?: unknown;
+    include_globs?: unknown;
+    exclude_globs?: unknown;
+  };
+  const canonical = JSON.stringify({
+    strategy: typeof cfg.strategy === 'string' ? cfg.strategy : null,
+    include_globs: (parseGlobList(cfg.include_globs) ?? []).slice().sort(),
+    exclude_globs: (parseGlobList(cfg.exclude_globs) ?? []).slice().sort(),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Read the per-source fingerprint stamp. NULL on pre-migration rows or
+ * sources that have never been synced — the gate treats NULL as
+ * "fingerprint unknown" and skips the invalidation check so first-time
+ * post-upgrade syncs don't spuriously force-full.
+ */
+export async function readConfigFingerprint(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<string | null> {
+  if (!sourceId) return null;
+  const rows = await engine.executeRaw<{ config_fingerprint: string | null }>(
+    `SELECT config_fingerprint FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  return rows[0]?.config_fingerprint ?? null;
+}
+
+export async function writeConfigFingerprint(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  fingerprint: string,
+): Promise<void> {
+  if (!sourceId) return;
+  await engine.executeRaw(
+    `UPDATE sources SET config_fingerprint = $1 WHERE id = $2`,
+    [fingerprint, sourceId],
+  );
+}
+
+/**
+ * Read the raw `sources.config` value for the named source. Returns an
+ * empty object for missing or never-configured rows. The reader is
+ * defensive about legacy double-encoded JSONB rows (`{"federated":true}`
+ * stored as a JSON string scalar, the #2339 class) — the engine's
+ * `r.config` may arrive as either a string or an object, and both are
+ * normalized to an object before the fingerprint computation walks the
+ * keys.
+ */
+async function readSourceConfig(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<unknown> {
+  if (!sourceId) return {};
+  const rows = await engine.executeRaw<{ config: unknown }>(
+    `SELECT config FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  const raw = rows[0]?.config;
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw); } catch { return {}; }
+  }
+  return raw;
+}
+
+/**
+ * Read-hash-stamp wrapper for sync-completion sites outside the gate's
+ * scope (e.g. `performFullSync`'s `advanceFull` closure, which doesn't
+ * see `performSync`'s cached `currentConfigFp` because it's a separate
+ * function). Reads the row's current config and stamps a fresh
+ * fingerprint.
+ *
+ * Race note: if `sources.config` was mutated between the gate's read
+ * and this stamp, the freshly-read value wins. The walker still used
+ * the gate-time effective globs (already captured into `opts.include` /
+ * `opts.exclude` upstream), so the stamp can drift from what was
+ * actually walked. In practice mid-sync mutations are rare and the
+ * NEXT sync will re-evaluate against the latest config anyway, so the
+ * minor staleness is acceptable and avoids threading the gate-time
+ * fingerprint through every helper signature.
+ */
+async function stampSourceConfigFingerprint(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<void> {
+  if (!sourceId) return;
+  const cfg = await readSourceConfig(engine, sourceId);
+  await writeConfigFingerprint(engine, sourceId, computeSourceConfigFingerprint(cfg));
 }
 
 /**
@@ -2182,7 +2336,25 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.deleted.length > 0 ||
       detachedWorkingTreeManifest.renamed.length > 0);
 
-  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+  // #2157 follow-on: parallel gate for sources.config drift. Without
+  // this, changing `sources.config.exclude_globs` (or include_globs /
+  // strategy) on a synced source had no observable effect on the next
+  // sync because git HEAD was unchanged — the "Already up to date"
+  // branch below returned without re-walking. Mismatch path mirrors the
+  // chunker_version gate exactly so both kinds of drift route through
+  // the same `performFullSync` recovery.
+  //
+  // NULL stored fingerprint is "never stamped" (pre-v125 brain OR fresh
+  // source whose first sync hasn't completed yet). Treated as
+  // pass-through in the up-to-date check — first post-upgrade sync
+  // stamps the column quietly so subsequent passes have a baseline.
+  const storedConfigFp = await readConfigFingerprint(engine, opts.sourceId);
+  const currentSourceConfig = await readSourceConfig(engine, opts.sourceId);
+  const currentConfigFp = computeSourceConfigFingerprint(currentSourceConfig);
+  const configMismatch = storedConfigFp !== null && storedConfigFp !== currentConfigFp;
+  const configNeverStamped = storedConfigFp === null && opts.sourceId !== undefined;
+
+  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges && !configMismatch) {
     // v0.42.52.0 (PR #22xx): bump last_sync_at as a heartbeat on every successful
     // 0-changes sync. D4 invariant ("never advance last_commit on partial") is
     // preserved: last_sync_at is a monitoring signal (doctor sync_freshness
@@ -2195,6 +2367,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         [opts.sourceId],
       );
     }
+    // First post-upgrade sync on a pre-v125 brain lands here with
+    // configNeverStamped=true; stamp the fingerprint so the gate has a
+    // baseline for the NEXT pass. A spurious re-walk on the upgrade
+    // pass would surprise users; quietly establishing the baseline does
+    // not.
+    if (configNeverStamped) {
+      await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
+    }
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -2206,13 +2386,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     };
   }
 
-  if ((versionMismatch || versionNeverSet) && lastCommit === headCommit) {
+  if ((versionMismatch || versionNeverSet || configMismatch) && lastCommit === headCommit) {
+    const reasons: string[] = [];
+    if (versionMismatch || versionNeverSet) {
+      reasons.push(`chunker_version=${storedVersion ?? 'unset'}→${currentVersion}`);
+    }
+    if (configMismatch) {
+      reasons.push(`config_fingerprint=${storedConfigFp?.slice(0, 8)}→${currentConfigFp.slice(0, 8)}`);
+    }
     slog(
-      `[sync] chunker_version gate: stored=${storedVersion ?? 'unset'}, current=${currentVersion}. ` +
-      `Forcing full re-chunk pass (git HEAD unchanged but pipeline version advanced).`,
+      `[sync] full re-walk forced (${reasons.join(', ')}): ` +
+      `git HEAD unchanged but a walk-affecting setting advanced.`,
     );
     const result = await performFullSync(engine, fullSyncRoots, headCommit, opts);
     await writeChunkerVersion(engine, opts.sourceId, currentVersion);
+    await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
     return result;
   }
 
@@ -2256,8 +2444,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     scoped && p.startsWith(syncScopeRelPath + '/') ? p.slice(syncScopeRelPath.length + 1) : p;
   const excluded = (p: string): boolean =>
     opts.exclude !== undefined && opts.exclude.length > 0 && matchesAnyGlob(scopeRel(p), opts.exclude);
+  // #2156: include globs are an allow-list, same scope-relative anchoring as
+  // exclude. Populated from the source row's persisted config.include_globs
+  // (or CLI --include). Deliberately NOT threaded into syncOpts/isSyncable:
+  // the unsyncable-cleanup loop below deletes pages for non-metafile
+  // classifications, and glob filtering must stay conservative (never delete
+  // previously-imported pages — the documented #1433 posture for --exclude).
+  const included = (p: string): boolean =>
+    opts.include === undefined || opts.include.length === 0 || matchesAnyGlob(scopeRel(p), opts.include);
 
-  // Filter to syncable files (strategy-aware + scope-aware + exclude-aware)
+  // Filter to syncable files (strategy-aware + scope-aware + glob-aware)
   const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
   // #1970 (F-C): a rename whose DESTINATION is unsyncable drops out of BOTH
   // `renamed` (only `r.to` is kept below) AND `deleted` (git emits it as `R`,
@@ -2271,13 +2467,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       !(inScope(r.to) && isSyncable(r.to, syncOpts)))
     .map(r => r.from);
   const filtered: SyncManifest = {
-    added: manifest.added.filter(p => inScope(p) && !excluded(p) && isSyncable(p, syncOpts)),
-    modified: manifest.modified.filter(p => inScope(p) && !excluded(p) && isSyncable(p, syncOpts)),
+    added: manifest.added.filter(p => inScope(p) && included(p) && !excluded(p) && isSyncable(p, syncOpts)),
+    modified: manifest.modified.filter(p => inScope(p) && included(p) && !excluded(p) && isSyncable(p, syncOpts)),
     deleted: unique([
       ...manifest.deleted.filter(p => inScope(p) && isSyncable(p, syncOpts)),
       ...renamedToUnsyncable,
     ]),
-    renamed: manifest.renamed.filter(r => inScope(r.to) && !excluded(r.to) && isSyncable(r.to, syncOpts)),
+    renamed: manifest.renamed.filter(r => inScope(r.to) && included(r.to) && !excluded(r.to) && isSyncable(r.to, syncOpts)),
   };
 
   // NAV-4: warn when --exclude filtered out every candidate change — almost
@@ -2374,6 +2570,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
     return {
@@ -3203,6 +3400,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
   };
@@ -3458,6 +3656,9 @@ async function performFullSync(
   // files were waiting.
   if (opts.dryRun) {
     let allFiles = collectSyncableFiles(syncScopeRoot, { strategy: opts.strategy ?? 'markdown' });
+    if (opts.include && opts.include.length > 0) {
+      allFiles = allFiles.filter(abs => matchesAnyGlob(relative(syncScopeRoot, abs), opts.include));
+    }
     if (opts.exclude && opts.exclude.length > 0) {
       allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(syncScopeRoot, abs), opts.exclude));
     }
@@ -3503,6 +3704,7 @@ async function performFullSync(
     commit: headCommit,
     strategy: opts.strategy,
     sourceId: opts.sourceId,
+    include: opts.include,
     exclude: opts.exclude,
     slugRoot,
     // issue #1939: performFullSync owns the failure ledger + bookmark via the
@@ -3532,6 +3734,7 @@ async function performFullSync(
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await stampSourceConfigFingerprint(engine, opts.sourceId);
   };
 
   const fullGate = await applySyncFailureGate({
@@ -3995,8 +4198,12 @@ Options:
                        run at the repo root; imports are scoped to the subdir
                        and slugs stay root-relative (wiki/page1). Passing the
                        subdirectory directly as --repo also works.
+  --include <glob>     Only sync files matching at least one glob (repeatable;
+                       matched against the scope-relative path). Merged with
+                       the source's persisted config.include_globs.
   --exclude <glob>     Exclude files matching the glob from sync (repeatable;
-                       matched against the scope-relative path).
+                       matched against the scope-relative path; applied after
+                       --include). Merged with config.exclude_globs.
   --dry-run            Show what would be synced without writing.
   --skip-failed        Acknowledge previously-recorded sync failures so
                        the bookmark can advance past unparseable files.
@@ -4157,14 +4364,17 @@ See also:
   }
   const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
   // #753/#774: monorepo subdir-source flags. --exclude is repeatable.
+  // #2156: --include is the allow-list counterpart, same repeatable shape.
   const srcSubpath = args.find((a, i) => args[i - 1] === '--src-subpath') || undefined;
   const excludePatterns: string[] = [];
+  const includePatterns: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--exclude' && i + 1 < args.length) excludePatterns.push(args[i + 1]);
+    if (args[i] === '--include' && i + 1 < args.length) includePatterns.push(args[i + 1]);
   }
-  if (syncAll && (srcSubpath || excludePatterns.length > 0)) {
+  if (syncAll && (srcSubpath || excludePatterns.length > 0 || includePatterns.length > 0)) {
     console.error(
-      `--src-subpath/--exclude scope a single sync invocation; they cannot be combined with --all. ` +
+      `--src-subpath/--include/--exclude scope a single sync invocation; they cannot be combined with --all. ` +
       `For --all runs, register the subdirectory as the source's local_path instead ` +
       `(gbrain sources add <id> --path <repo>/<subdir>).`,
     );
@@ -4365,7 +4575,11 @@ See also:
     const onAllSigint = () => { try { allInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
 
     const runOne = async (src: typeof sources[number]): Promise<SyncResult> => {
-      const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
+      const cfg = (src.config || {}) as {
+        strategy?: 'markdown' | 'code' | 'auto';
+        include_globs?: unknown;
+        exclude_globs?: unknown;
+      };
       // D18: parallel path defers embed; auto-enqueue embed-backfill after.
       // v0.42.42.0 (#2139): `autoDeferEmbeds` (the inline gate tripped in a
       // non-TTY session) ALSO forces deferral — global by design (the gate's
@@ -4403,6 +4617,8 @@ See also:
         skipFailed, retryFailed, noSchemaPack,
         sourceId: src.id,
         strategy: cfg.strategy,
+        include: parseGlobList(cfg.include_globs),
+        exclude: parseGlobList(cfg.exclude_globs),
         concurrency,
         signal: composeAbortSignals(allInterrupt.signal, controller?.signal),
       };
@@ -4614,11 +4830,27 @@ See also:
   // lock released by its own finally) instead of a hard cut.
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
+  // Read persisted include/exclude globs from the source row, mirroring the
+  // --all fan-out's `runOne` closure above. Best-effort: a fetch failure
+  // falls through to "no glob filters", preserving pre-existing behavior.
+  // sourceId is always set here (resolveSourceWithTier ran above), so this
+  // path never silently runs without source-config awareness.
+  let sourceCfg: { include_globs?: unknown; exclude_globs?: unknown } = {};
+  try {
+    const { fetchSource } = await import('../core/sources-load.ts');
+    const src = await fetchSource(engine, sourceId);
+    if (src?.config && typeof src.config === 'object') {
+      sourceCfg = src.config as { include_globs?: unknown; exclude_globs?: unknown };
+    }
+  } catch { /* fall through to no filters */ }
   const opts: SyncOpts = {
     repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
     strategy: strategyArg, concurrency,
     srcSubpath,
-    exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
+    // #2156: union of the repeatable CLI flags (one-off, this invocation
+    // only) and the source row's persisted config globs (every sync).
+    include: mergeGlobs(includePatterns, parseGlobList(sourceCfg.include_globs)),
+    exclude: mergeGlobs(excludePatterns, parseGlobList(sourceCfg.exclude_globs)),
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
   };
 
@@ -4846,7 +5078,11 @@ export async function syncOneSource(
     noExtract?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
-  const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
+  const cfg = (src.config || {}) as {
+    strategy?: 'markdown' | 'code' | 'auto';
+    include_globs?: unknown;
+    exclude_globs?: unknown;
+  };
   const log = `\n--- Syncing source: ${src.name} ---\n`;
   const repoOpts: SyncOpts = {
     repoPath: src.local_path!,
@@ -4860,6 +5096,8 @@ export async function syncOneSource(
     noSchemaPack: shared.noSchemaPack,
     sourceId: src.id,
     strategy: cfg.strategy,
+    include: parseGlobList(cfg.include_globs),
+    exclude: parseGlobList(cfg.exclude_globs),
     concurrency: shared.concurrency,
     // lockId defaults to `gbrain-sync:${src.id}` via the invariant in
     // performSync (no explicit override needed — sourceId triggers it).

@@ -5684,6 +5684,32 @@ export const MIGRATIONS: Migration[] = [
 `);
     },
   },
+  {
+    version: 125,
+    name: 'sources_config_fingerprint',
+    // #2157 follow-on: the "Already up to date" gate at sync.ts honors
+    // git-HEAD equality + chunker-version match but ignored source-config
+    // drift. A user who runs `gbrain sources add default --exclude
+    // 'Templates/**'` AFTER an initial sync got "Already up to date" on
+    // the next pass because git HEAD was unchanged — the new exclusion
+    // never reached the walk until `gbrain sync --full`.
+    //
+    // This column caches a SHA-256 fingerprint of the walk-affecting
+    // fields in `sources.config` (strategy + include_globs +
+    // exclude_globs); mismatches trigger a full re-walk via the same code
+    // path as a chunker_version bump.
+    //
+    // NULL on pre-migration rows is treated as "not yet stamped" by
+    // readConfigFingerprint, so the FIRST sync after upgrade is normal
+    // (no spurious force-full just because the column was added).
+    //
+    // Keep in sync with src/schema.sql and src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      ALTER TABLE sources
+        ADD COLUMN IF NOT EXISTS config_fingerprint TEXT;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

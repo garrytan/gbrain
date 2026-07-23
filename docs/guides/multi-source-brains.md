@@ -115,6 +115,7 @@ Full subcommand reference:
 
 ```
 gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+                                  [--include <glob>...] [--exclude <glob>...]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
@@ -130,6 +131,43 @@ gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
 ```
+
+## Filtering what gets synced (--include / --exclude)
+
+`--include` and `--exclude` on `gbrain sources add` accept repeatable glob
+patterns and are honored by every subsequent sync AND lint of the source.
+Common Obsidian vault setups need to exclude authoring scaffolding so it
+doesn't pollute search:
+
+```bash
+# Skip Templates/, Drafts/, and the smart-env sidecar; everything else syncs.
+gbrain sources add vault \
+  --path ~/Documents/vault --federated \
+  --exclude 'Templates/**' \
+  --exclude 'Drafts/**' \
+  --exclude '.smart-env/**'
+
+# Or: only sync the people/ and companies/ subtrees of a CRM vault.
+gbrain sources add crm \
+  --path ~/Documents/crm --no-federated \
+  --include 'people/**' \
+  --include 'companies/**'
+```
+
+Both persist into `sources.config.include_globs` / `exclude_globs` arrays.
+The filter runs `include` first, then `exclude`, so a path inside
+`people/**` is still rejected if it also matches `exclude_globs`. Globs use
+the same matcher as the rest of gbrain's sync classifier (`matchesAnyGlob`
+in `src/core/sync.ts`) and are matched against the source-root-relative
+path. Exclusion is conservative: it never deletes previously-imported pages.
+
+`gbrain sync --include <glob> --exclude <glob>` and
+`gbrain lint <dir> --include <glob> --exclude <glob>` take the same
+repeatable flags for one-off scope changes; for lint the persisted source
+globs are auto-applied when the lint target matches a source's `local_path`.
+Changing the persisted globs on an existing source triggers a full re-walk
+on the next sync (the source's config fingerprint invalidates the
+"already up to date" gate).
 
 ## The git requirement for --path sources
 
