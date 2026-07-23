@@ -81,6 +81,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
+| "$dreams", "review brain inbox", "process auto captures", "promote memory drafts" | `skills/dreams/SKILL.md` |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
 | "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
 | "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |

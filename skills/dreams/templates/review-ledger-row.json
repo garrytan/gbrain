@@ -1,0 +1,89 @@
+{
+  "reviewed_at": "2026-05-27T14:00:00+07:00",
+  "session": ".dreams/20260527-140000",
+  "source_path": "inbox/example.md",
+  "content_hash": "abc123",
+  "archived_path": "archive/inbox-reviewed/2026-05/example.md",
+  "decision": "promoted",
+  "preservation_mode": "preserve-full",
+  "importance_score": {
+    "future_retrieval": 3,
+    "durability": 3,
+    "specificity": 2,
+    "authorship": 3,
+    "fidelity": 2,
+    "total": 13
+  },
+  "evidence_quality": "medium",
+  "quality_reason": "operator-authored strategy needs exact reasoning preserved",
+  "coverage": {
+    "source_read": "source-snapshot",
+    "durable_content": "All durable source material is represented in memory_units and target_actions",
+    "discarded_content": "none",
+    "unsupported_additions": "none",
+    "loss_risk": "low",
+    "session_coverage": {
+      "session_id": "stop-hook-session-id-when-applicable",
+      "capture_segment_count": 2,
+      "review_strategy": "Reviewed the full aggregated session draft segment by segment before writing memory units",
+      "segments": [
+        {
+          "segment_id": "segment-1",
+          "source_anchor": "segment-1 baseline transcript section",
+          "status": "reviewed",
+          "summary": "Baseline transcript segment was reviewed for durable memory units",
+          "memory_unit_indexes": [0]
+        },
+        {
+          "segment_id": "segment-2",
+          "source_anchor": "segment-2 incremental transcript section",
+          "status": "reviewed",
+          "summary": "Incremental transcript segment was reviewed for durable memory units",
+          "memory_unit_indexes": [1]
+        }
+      ]
+    }
+  },
+  "targets": ["originals/memory-quality.md"],
+  "target_actions": [
+    {
+      "path": "originals/memory-quality.md",
+      "action": "update",
+      "compiled_truth_changed": true,
+      "supporting_units": [0],
+      "reason": "New evidence revises the compiled truth on this page"
+    }
+  ],
+  "target_timeline_entry": {
+    "target": "originals/memory-quality.md",
+    "source_hash": "abc123",
+    "summary": "Reviewed draft evidence for this memory update"
+  },
+  "source_excerpt_summary": "Bounded English summary of the archived source evidence for drilldown",
+  "session_owner_report": {
+    "session_id": "stop-hook-session-id-when-applicable",
+    "agent_id": "spawned-session-owner-agent-id",
+    "report_path": ".dreams/session-owner/reports/session-id.json",
+    "report_sha256": "sha256-of-session-owner-report",
+    "covered_review_units": ["segment-1", "segment-2"]
+  },
+  "memory_units": [
+    {
+      "kind": "authored-thinking",
+      "summary": "Specific authored claim or passage being evaluated",
+      "source_anchor": "segment-1: sanitized source phrase, heading, or local source-snapshot section",
+      "importance_score": {
+        "future_retrieval": 3,
+        "durability": 3,
+        "specificity": 2,
+        "authorship": 3,
+        "fidelity": 2,
+        "total": 13
+      },
+      "preservation_mode": "preserve-full",
+      "reason": "Future agents need the original reasoning, not a generic recap",
+      "anti_summary_reason": "The exact rationale controls the future agent behavior",
+      "target": "originals/memory-quality.md"
+    }
+  ]
+}

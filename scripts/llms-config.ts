@@ -129,6 +129,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/cron-schedule.md",
       },
       {
+        title: "docs/guides/dreams-review-workflow.md",
+        description:
+          "Optional review workflow for inbox drafts and stop-hook capture candidates. Keeps raw evidence, review drafts, and curated memory separate.",
+        path: "docs/guides/dreams-review-workflow.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/minions-deployment.md",
         description:
           "Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.",
