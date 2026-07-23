@@ -206,7 +206,11 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 22, not 15: under parallel PR load the PGLite WASM cold-starts stretch a
+    # shard past 15 min while every test is still passing — the timeout then
+    # cancels the job and the test-status gate reads it as a failure. 13 runs
+    # died this way on 2026-07-21/22 alone.
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:

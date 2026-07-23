@@ -142,3 +142,29 @@ describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () =>
     expect(stdout).toContain('/brain');
   });
 });
+
+// v0.42.x: the wrapper must export PATH with ~/.bun/bin before exec'ing
+// gbrain. The exec'd gbrain has a `#!/usr/bin/env bun` shebang, and the
+// standard Debian ~/.bashrc ships a non-interactive guard
+// (`case $- in *i*) ;; *) return;; esac`) that exits early when cron/launchd/
+// systemd invokes bash non-interactively — so the PATH exports that
+// operators put in ~/.bashrc never reach this subprocess. Without the
+// explicit export the wrapper silently dies with `env: bun: No such file
+// or directory`, leaves a stale lockfile, and blocks every subsequent tick
+// for the 10-min stale-lock window. Regression: see Hermes `cron doctor`
+// reports — this caused a 1-week nightly-cycle outage on at least one
+// operator machine before being diagnosed.
+describe('autopilot wrapper script — bun PATH export (v0.42.x regression)', () => {
+  test('wrapper exports ~/.bun/bin onto PATH before the exec', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    // The export line must appear inside the writeWrapperScript heredoc.
+    expect(src).toMatch(/export\s+PATH="\$HOME\/\.bun\/bin:\$PATH"/);
+    // The export must precede the exec line, otherwise env never sees it.
+    const exportIdx = src.search(/export\s+PATH="\$HOME\/\.bun\/bin/);
+    const execIdx = src.search(/exec\s+'\${safeGbrainPath}'/);
+    expect(exportIdx).toBeGreaterThan(0);
+    expect(execIdx).toBeGreaterThan(0);
+    expect(exportIdx).toBeLessThan(execIdx);
+  });
+});

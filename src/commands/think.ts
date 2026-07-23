@@ -6,7 +6,7 @@
  * degrades to gather-only output with a warning if missing.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { runThink, persistSynthesis } from '../core/think/index.ts';
+import { runThink, persistSynthesis, stripGapsSection } from '../core/think/index.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
@@ -157,7 +157,7 @@ prints what would have been the input (exit 0).
 
   // Human-readable output
   console.log(`# ${question}\n`);
-  console.log(result.answer);
+  console.log(stripGapsSection(result.answer));
   console.log('');
   if (result.gaps.length > 0) {
     console.log('## Gaps');

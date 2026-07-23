@@ -1060,6 +1060,16 @@ export class PGLiteEngine implements BrainEngine {
        RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
       [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
+    // PGLite can return zero rows from INSERT ... ON CONFLICT DO UPDATE ...
+    // RETURNING in no-op/trigger edge cases, which made rowToPage(undefined)
+    // throw "undefined is not an object (evaluating 'row.deleted_at')" and
+    // skip the file during sync. The row WAS written, so re-read instead of
+    // crashing.
+    if (rows.length === 0) {
+      const reread = await this.getPage(slug, { sourceId });
+      if (reread) return reread;
+      throw new Error(`putPage: RETURNING produced no row for ${sourceId}/${slug}`);
+    }
     return rowToPage(rows[0] as Record<string, unknown>);
   }
 
@@ -2912,22 +2922,41 @@ export class PGLiteEngine implements BrainEngine {
     name: string,
     dirPrefix?: string,
     minSimilarity: number = 0.55,
+    sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
     // Inline threshold comparison instead of `SET LOCAL pg_trgm.similarity_threshold`.
     // The GUC only scopes to the current transaction and pglite auto-commits each
     // .query() call, so the SET LOCAL would be a no-op. Using similarity() >= $N
     // directly gives predictable behavior. Tie-breaker: sort by slug so re-runs
     // pick the same winner.
+    //
+    // `sourceId` + `deleted_at IS NULL` mirror the filters `tryFuzzyMatch` in
+    // `src/core/entities/resolve.ts` got via #1436 (v0.41.13.0). Without them,
+    // fuzzy resolution could suggest cross-source slugs that the caller then
+    // silently drops at the FK filter — making it look like the match failed
+    // when in fact it picked the wrong page.
     const prefixPattern = dirPrefix ? `${dirPrefix}/%` : '%';
-    const { rows } = await this.db.query(
-      `SELECT slug, similarity(title, $1) AS sim
-       FROM pages
-       WHERE similarity(title, $1) >= $3
-         AND slug LIKE $2
-       ORDER BY sim DESC, slug ASC
-       LIMIT 1`,
-      [name, prefixPattern, minSimilarity]
-    );
+    const { rows } = sourceId
+      ? await this.db.query(
+          `SELECT slug, similarity(title, $1) AS sim
+           FROM pages
+           WHERE similarity(title, $1) >= $3
+             AND slug LIKE $2
+             AND source_id = $4
+             AND deleted_at IS NULL
+           ORDER BY sim DESC, slug ASC
+           LIMIT 1`,
+          [name, prefixPattern, minSimilarity, sourceId]
+        )
+      : await this.db.query(
+          `SELECT slug, similarity(title, $1) AS sim
+           FROM pages
+           WHERE similarity(title, $1) >= $3
+             AND slug LIKE $2
+           ORDER BY sim DESC, slug ASC
+           LIMIT 1`,
+          [name, prefixPattern, minSimilarity]
+        );
     if (rows.length === 0) return null;
     const row = rows[0] as { slug: string; sim: number };
     return { slug: row.slug, similarity: row.sim };
@@ -5837,6 +5866,11 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       prefixCondition = `AND p.slug LIKE $${params.length} ESCAPE '\\'`;
     }
+    // TIM-37: exclude briefing pages from their own Brain Pulse. See the
+    // matching block in postgres-engine.ts getRecentSalience() for context.
+    const excludeBriefings = !(slugPrefix && slugPrefix.startsWith('briefings'))
+      ? `AND p.slug NOT LIKE 'briefings/%'`
+      : '';
     params.push(limit);
     const limitParam = `$${params.length}`;
 
@@ -5872,6 +5906,7 @@ export class PGLiteEngine implements BrainEngine {
          LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
         WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz
           ${prefixCondition}
+          ${excludeBriefings}
         GROUP BY p.id
         ORDER BY score DESC
         LIMIT ${limitParam}`,

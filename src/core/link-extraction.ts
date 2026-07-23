@@ -79,11 +79,11 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
 /**
  * Directory prefix whitelist. These are the top-level slug dirs the extractor
  * recognizes as entity references. Upstream canonical + our extensions:
- *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
+ *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects, reference
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities|reference)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -980,10 +980,14 @@ export function makeResolver(
 
       // Step 3: pg_trgm fuzzy title match — both modes. Tries each hint in
       // order; first hint with a ≥0.55 similarity match wins. If no hints,
-      // try the whole pages table.
+      // try the whole pages table. When opts.sourceId is set, the fuzzy
+      // search is constrained to that source (and skips soft-deleted pages)
+      // so cross-source slug suggestions don't get silently dropped at the
+      // FK filter downstream. Mirrors the same scope fix `tryFuzzyMatch` got
+      // via #1436.
       const searchHints = hints.length > 0 ? hints : [undefined];
       for (const hint of searchHints) {
-        const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55);
+        const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55, opts.sourceId);
         if (match) {
           cache.set(cacheKey, match.slug);
           return match.slug;

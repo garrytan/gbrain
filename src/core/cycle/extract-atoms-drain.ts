@@ -90,7 +90,14 @@ export async function runExtractAtomsDrain(
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
       // that spends budget without draining.
-      if (r.extracted === 0 && r.skipped === 0) { stopped = 'no_progress'; break; }
+      //
+      // #2144: a zero-ATOM batch can still be progress — tombstoned
+      // zero-yield pages shrink the backlog without producing atoms. Only
+      // stop when the backlog count genuinely didn't move.
+      if (r.extracted === 0 && r.skipped === 0) {
+        const after = await deps.countRemaining();
+        if (after === null || before === null || after >= before) { stopped = 'no_progress'; break; }
+      }
     }
 
     const remaining = await deps.countRemaining();
