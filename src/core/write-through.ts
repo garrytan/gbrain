@@ -21,13 +21,21 @@
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
+import { existsSync, statSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { isWriteTargetContained } from './path-confine.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
+import { withPageLock } from './page-lock.ts';
+import {
+  parseFactsFence,
+  renderFactsTable,
+  FACTS_FENCE_BEGIN,
+  FACTS_FENCE_END,
+  type ParsedFact,
+} from './facts-fence.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -60,6 +68,38 @@ export interface WriteThroughResult {
   skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
+}
+
+/**
+ * #2839: fence writers (`writeFactsToFence`, `forgetFactInFence`) edit the
+ * on-disk `## Facts` fence FIRST and stamp the DB facts index second — the
+ * `pages.body` row only catches up on the next sync/import. A write-through
+ * render from the (lagging) DB row would silently drop those just-deposited
+ * fence rows from disk. Merge them back: union by row_num, the DISK row wins
+ * a collision (the fence file is the system of record for facts; any fence
+ * state inside the DB body is at best the last-imported snapshot).
+ *
+ * Exported for tests.
+ */
+export function mergeDiskFactsFence(renderedMd: string, diskBody: string): string {
+  const disk = parseFactsFence(diskBody);
+  if (disk.facts.length === 0) return renderedMd;
+
+  const rendered = parseFactsFence(renderedMd);
+  const byRowNum = new Map<number, ParsedFact>();
+  for (const f of rendered.facts) byRowNum.set(f.rowNum, f);
+  for (const f of disk.facts) byRowNum.set(f.rowNum, f); // disk wins
+  const merged = [...byRowNum.values()].sort((a, b) => a.rowNum - b.rowNum);
+  const fence = renderFactsTable(merged);
+
+  const beginIdx = renderedMd.indexOf(FACTS_FENCE_BEGIN);
+  const endIdx = renderedMd.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
+  if (beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx) {
+    return renderedMd.slice(0, beginIdx) + fence + renderedMd.slice(endIdx + FACTS_FENCE_END.length);
+  }
+  // Rendered body has no fence at all — append one (same shape upsertFactRow creates).
+  const sep = renderedMd.endsWith('\n') ? '\n' : '\n\n';
+  return `${renderedMd}${sep}## Facts\n\n${fence}\n`;
 }
 
 export interface WritePageThroughOpts {
@@ -148,22 +188,40 @@ export async function writePageThrough(
 
     mkdirSync(dirname(filePath), { recursive: true });
 
-    // Atomic write: unique temp sibling + rename. Unique name (pid + random)
-    // so two concurrent saves to the same target can't clobber each other's
-    // temp file. Clean up the temp on any failure so we never leak a stray
-    // `.tmp` next to the real file.
-    const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
-    try {
-      writeFileSync(tmpPath, md, 'utf8');
-      renameSync(tmpPath, filePath);
-    } catch (writeErr) {
+    // #2839: serialize against the fence writers (writeFactsToFence /
+    // forgetFactInFence hold the same per-slug lock) so this read-merge-
+    // rename can't interleave with a fence edit, and merge any on-disk
+    // fence rows the DB body hasn't caught up with before rendering over
+    // the file. Lock timeout surfaces via the outer catch → `error` field
+    // (writePageThrough never throws).
+    await withPageLock(slug, async () => {
+      let out = md;
       try {
-        if (existsSync(tmpPath)) unlinkSync(tmpPath);
+        if (existsSync(filePath)) {
+          out = mergeDiskFactsFence(md, readFileSync(filePath, 'utf8'));
+        }
       } catch {
-        // best-effort cleanup; surface the original write error below
+        // Unreadable existing file — fall back to the rendered body.
+        out = md;
       }
-      throw writeErr;
-    }
+
+      // Atomic write: unique temp sibling + rename. Unique name (pid + random)
+      // so two concurrent saves to the same target can't clobber each other's
+      // temp file. Clean up the temp on any failure so we never leak a stray
+      // `.tmp` next to the real file.
+      const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+      try {
+        writeFileSync(tmpPath, out, 'utf8');
+        renameSync(tmpPath, filePath);
+      } catch (writeErr) {
+        try {
+          if (existsSync(tmpPath)) unlinkSync(tmpPath);
+        } catch {
+          // best-effort cleanup; surface the original write error below
+        }
+        throw writeErr;
+      }
+    }, { timeoutMs: 5_000 });
 
     // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
     // commit the artifact so it reaches git — pre-fix, write-through content

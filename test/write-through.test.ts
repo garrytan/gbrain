@@ -189,3 +189,80 @@ describe('writePageThrough', () => {
     expect(files.some((f) => f.includes('.tmp.'))).toBe(false);
   });
 });
+
+// #2839: writePageThrough renders from the DB row, but fence writers
+// (writeFactsToFence / forget) edit the on-disk `## Facts` fence FIRST and the
+// DB body only catches up on the next sync. The write-through must merge those
+// on-disk fence rows back instead of silently clobbering them.
+describe('writePageThrough — facts fence preservation (#2839)', () => {
+  test('preserves on-disk fence rows the DB body has not caught up with', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = 'people/carol';
+    await seedPage(slug);
+
+    // First write-through creates the file from the row.
+    const first = await writePageThrough(engine, slug, { sourceId: 'default' });
+    expect(first.written).toBe(true);
+    const filePath = first.path!;
+
+    // Simulate a fence write landing on disk after the last import.
+    const { upsertFactRow } = await import('../src/core/facts-fence.ts');
+    const { body: withFence } = upsertFactRow(fs.readFileSync(filePath, 'utf8'), {
+      claim: 'Deposited via fence write',
+      kind: 'fact',
+      confidence: 1.0,
+      visibility: 'world',
+      notability: 'high',
+      validFrom: '2026-01-01',
+      source: 'test',
+    });
+    fs.writeFileSync(filePath, withFence, 'utf8');
+
+    // A put_page-style write-through re-renders from the (lagging) DB row...
+    const second = await writePageThrough(engine, slug, { sourceId: 'default' });
+    expect(second.written).toBe(true);
+
+    // ...but the fence row deposited on disk survives.
+    const after = fs.readFileSync(filePath, 'utf8');
+    expect(after).toContain('Deposited via fence write');
+    expect(after).toContain('## Facts');
+  });
+});
+
+describe('mergeDiskFactsFence (#2839)', () => {
+  const row = (rowNum: number, claim: string) =>
+    `| ${rowNum} | ${claim} | fact | 1.0 | world | high | 2026-01-01 |  | test |  |`;
+  const fence = (rows: string[]) => [
+    '<!--- gbrain:facts:begin -->',
+    '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+    '|---|---|---|---|---|---|---|---|---|---|',
+    ...rows,
+    '<!--- gbrain:facts:end -->',
+  ].join('\n');
+
+  test('unions rows by row_num, disk wins collisions', async () => {
+    const { mergeDiskFactsFence } = await import('../src/core/write-through.ts');
+    const rendered = `# Page\n\n## Facts\n\n${fence([row(1, 'old claim one')])}\n`;
+    const disk = `# Page\n\n## Facts\n\n${fence([row(1, 'edited claim one'), row(2, 'new disk-only claim')])}\n`;
+    const merged = mergeDiskFactsFence(rendered, disk);
+    expect(merged).toContain('edited claim one');
+    expect(merged).toContain('new disk-only claim');
+    expect(merged).not.toContain('old claim one');
+  });
+
+  test('appends a fence section when the rendered body has none', async () => {
+    const { mergeDiskFactsFence } = await import('../src/core/write-through.ts');
+    const rendered = '# Page\n\nBody only.\n';
+    const disk = `# Page\n\n## Facts\n\n${fence([row(1, 'disk fact')])}\n`;
+    const merged = mergeDiskFactsFence(rendered, disk);
+    expect(merged).toContain('Body only.');
+    expect(merged).toContain('## Facts');
+    expect(merged).toContain('disk fact');
+  });
+
+  test('no-op when the disk body has no fence', async () => {
+    const { mergeDiskFactsFence } = await import('../src/core/write-through.ts');
+    const rendered = '# Page\n\nRendered.\n';
+    expect(mergeDiskFactsFence(rendered, '# Page\n\nNo fence here.\n')).toBe(rendered);
+  });
+});

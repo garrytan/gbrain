@@ -258,6 +258,24 @@ the user owns the machine.
 See [ALTERNATIVES.md](ALTERNATIVES.md) for a comparison of ngrok, Tailscale
 Funnel, and cloud hosts (Fly.io, Railway).
 
+### Running in a container (PID 1)
+
+When `gbrain serve` (or `gbrain jobs supervisor start`) is the container
+entrypoint, it runs as PID 1 and inherits init duties: every orphaned
+grandchild process the kernel re-parents onto it must be reaped, or zombies
+accumulate until the container's pid limit is exhausted. Prefer a real init
+as the entrypoint:
+
+```bash
+docker run --init ...            # Docker's bundled tini
+# or in a Dockerfile:
+ENTRYPOINT ["tini", "--", "gbrain", "serve", "--http"]
+```
+
+gbrain also ships an in-process backstop: when it detects it is PID 1 on
+Linux it periodically reaps orphaned zombie children. An explicit init like
+tini is still the recommended setup.
+
 ## Troubleshooting
 
 **"missing_auth" error**

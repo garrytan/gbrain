@@ -33,11 +33,12 @@
  * sees the constraint.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
 import { resolvePageFilePath } from '../markdown.ts';
+import { isWriteTargetContained } from '../path-confine.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
@@ -91,6 +92,38 @@ export interface FenceWriteResult {
 }
 
 const FAILURE_LOG_PATH = (): string => gbrainPath('facts.write_failures.jsonl');
+
+/**
+ * #2722: compute the on-disk file to fence into. When the page row exists
+ * with an import-time `pages.source_path`, that path (relative to the
+ * source's local_path — the same root `scanOneSource` walked) is the
+ * canonical file, and it can differ from the slug-derived name (slugs are
+ * normalized: `10 People/Jane Doe.md` → slug `10-people/jane-doe`). Only
+ * honored for markdown files that stay inside the source root (the DB row
+ * is data, not trusted path input). Everything else falls back to the
+ * slug-derived path, which is also the stub-create location for genuinely
+ * new pages.
+ *
+ * Shared with `forgetFactInFence` so the forget path edits the SAME file
+ * the fence write deposited into.
+ */
+export async function resolveFenceFilePath(engine: BrainEngine, target: FenceTarget): Promise<string> {
+  const root = target.localPath as string;
+  try {
+    const rows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1`,
+      [target.sourceId, target.slug],
+    );
+    const sourcePath = rows[0]?.source_path ?? null;
+    if (sourcePath && sourcePath.toLowerCase().endsWith('.md')) {
+      const candidate = join(root, sourcePath);
+      if (isWriteTargetContained(candidate, root)) return candidate;
+    }
+  } catch {
+    // Best-effort lookup — fall back to the slug-derived path.
+  }
+  return resolvePageFilePath(root, target.slug, target.sourceId);
+}
 
 function recordWriteFailure(slug: string, sourceId: string, warnings: string[], filePath: string): void {
   // Best-effort JSONL append — never throws back into the caller. The
@@ -172,7 +205,14 @@ export async function writeFactsToFence(
   // the put_page write-through and dream-cycle reverse-render compute. The
   // bare join wrote main-source fences to the repo ROOT (the default source's
   // tree), polluting ~/brain with stray root-level fence files.
-  const filePath = resolvePageFilePath(target.localPath, target.slug, target.sourceId);
+  //
+  // #2722: when the page row already exists with an import-time
+  // `pages.source_path`, fence into THAT file. Slugs are normalized (spaces →
+  // hyphens, lowercase), so a page imported from `10 People/Jane Doe.md` has
+  // slug `10-people/jane-doe` — the slug-derived path would stub-create a
+  // parallel `10-people/jane-doe.md` next to the canonical page and fork it.
+  // The slug-derived path stays the fallback for genuinely new pages.
+  const filePath = await resolveFenceFilePath(engine, target);
   const tmpPath = `${filePath}.tmp`;
 
   return withPageLock(
@@ -180,6 +220,7 @@ export async function writeFactsToFence(
     async () => {
       // 1. Read existing body or stub-create.
       let body: string;
+      let stubCreated = false;
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
       } else {
@@ -215,6 +256,7 @@ export async function writeFactsToFence(
         // Stub-create the parent directory if it doesn't exist.
         mkdirSync(dirname(filePath), { recursive: true });
         body = stubEntityPage(target.slug);
+        stubCreated = true;
       }
 
       // 2. Upsert each fact onto the fence in input order. row_num
@@ -274,7 +316,20 @@ export async function writeFactsToFence(
         source_session: facts[i].sessionId,
       }));
 
-      const result = await engine.insertFacts(enriched, { source_id: target.sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+      let result: { inserted: number; ids: number[] };
+      try {
+        result = await engine.insertFacts(enriched, { source_id: target.sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+      } catch (err) {
+        // #2722 (secondary): if the DB stamp fails on a page we JUST
+        // stub-created, remove the stub so a transient DB error doesn't
+        // leave a phantom entity page on disk with facts the index never
+        // recorded. Pre-existing pages keep their fence (system of record;
+        // doctor/extract reconciles the index later).
+        if (stubCreated) {
+          try { unlinkSync(filePath); } catch { /* best effort */ }
+        }
+        throw err;
+      }
       return { inserted: result.inserted, ids: result.ids };
     },
     { timeoutMs: 5_000 },

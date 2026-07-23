@@ -16,7 +16,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { writeFactsToFence, lookupSourceLocalPath } from '../src/core/facts/fence-write.ts';
@@ -289,6 +289,105 @@ describe('lookupSourceLocalPath', () => {
     await (engine as any).db.query(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     const got = await lookupSourceLocalPath(engine, 'default');
     expect(got).toBeNull();
+  });
+});
+
+describe('writeFactsToFence — pages.source_path routing (#2722)', () => {
+  test('fences into the import-time source_path file, not a slug-derived sibling', async () => {
+    // Canonical page imported from a spaced filename: slug normalization
+    // means the slug-derived path differs from the real file.
+    const { importFromContent } = await import('../src/core/import-file.ts');
+    const canonicalRel = '10 People/Jane Doe.md';
+    const canonicalAbs = join(brainDir, canonicalRel);
+    mkdirSync(dirname(canonicalAbs), { recursive: true });
+    const content = '---\ntype: person\ntitle: Jane Doe\n---\n\n# Jane Doe\n\nMet at demo day.\n';
+    writeFileSync(canonicalAbs, content, 'utf-8');
+    const imported = await importFromContent(engine, '10-people/jane-doe', content, {
+      noEmbed: true,
+      sourceId: 'default',
+      sourcePath: canonicalRel,
+    });
+    expect(imported).toBeTruthy();
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: '10-people/jane-doe' },
+      [baseInput({ fact: 'Raised a seed round' })],
+    );
+
+    expect(result.inserted).toBe(1);
+    // Fence landed in the canonical spaced-name file...
+    const body = readFileSync(canonicalAbs, 'utf-8');
+    expect(body).toContain('Met at demo day.');
+    expect(body).toContain('## Facts');
+    expect(body).toContain('Raised a seed round');
+    // ...and no hyphen-path fork was stub-created next to it.
+    expect(existsSync(join(brainDir, '10-people/jane-doe.md'))).toBe(false);
+  });
+
+  test('falls back to the slug-derived path when no page row exists', async () => {
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/newcomer' },
+      [baseInput()],
+    );
+    expect(result.inserted).toBe(1);
+    expect(existsSync(join(brainDir, 'people/newcomer.md'))).toBe(true);
+  });
+
+  test('ignores a hostile source_path that escapes the source root', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO pages (slug, title, type, source_id, source_path)
+       VALUES ('people/evil', 'Evil', 'person', 'default', '../../escape.md')`,
+    );
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/evil' },
+      [baseInput()],
+    );
+    expect(result.inserted).toBe(1);
+    // Fell back to the slug-derived, contained path.
+    expect(existsSync(join(brainDir, 'people/evil.md'))).toBe(true);
+    expect(existsSync(join(brainDir, '..', '..', 'escape.md'))).toBe(false);
+  });
+});
+
+describe('writeFactsToFence — stub cleanup on DB failure (#2722)', () => {
+  const failingEngine = () => ({
+    kind: engine.kind,
+    executeRaw: engine.executeRaw.bind(engine),
+    insertFacts: async () => {
+      throw new Error('db down');
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any;
+
+  test('removes a freshly stub-created page when the DB stamp fails', async () => {
+    await expect(
+      writeFactsToFence(
+        failingEngine(),
+        { sourceId: 'default', localPath: brainDir, slug: 'people/ghost' },
+        [baseInput()],
+      ),
+    ).rejects.toThrow('db down');
+    expect(existsSync(join(brainDir, 'people/ghost.md'))).toBe(false);
+  });
+
+  test('keeps a pre-existing page file when the DB stamp fails (fence stays system of record)', async () => {
+    const filePath = join(brainDir, 'people/survivor.md');
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, '---\ntype: person\ntitle: S\nslug: people/survivor\n---\n\n# S\n', 'utf-8');
+    await expect(
+      writeFactsToFence(
+        failingEngine(),
+        { sourceId: 'default', localPath: brainDir, slug: 'people/survivor' },
+        [baseInput()],
+      ),
+    ).rejects.toThrow('db down');
+    expect(existsSync(filePath)).toBe(true);
+    // The fence write itself committed (system of record); only the DB stamp failed.
+    expect(readFileSync(filePath, 'utf-8')).toContain('## Facts');
   });
 });
 
