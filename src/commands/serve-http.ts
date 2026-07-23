@@ -1593,7 +1593,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Rescope failed';
       const status = /No OAuth client found/.test(message) ? 404
-        : /Invalid source_id|requires --source|cannot be empty/.test(message) ? 400
+        : /Invalid source_id|requires --source|cannot be empty|does not exist/.test(message) ? 400
         : 500;
       res.status(status).json({ error: message });
     }
