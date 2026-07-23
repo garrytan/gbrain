@@ -2058,8 +2058,11 @@ async function handleCliOnly(command: string, args: string[]) {
         // v0.30.1: still works; canonical entrypoint is now `gbrain backfill
         // effective_date`. This command stays as a thin alias for back-compat.
         const { reindexFrontmatterCli } = await import('./commands/reindex-frontmatter.ts');
-        await reindexFrontmatterCli(args);
-        return; // reindexFrontmatterCli handles its own engine lifecycle
+        // This dispatcher already owns a connected engine. Passing it through
+        // avoids a second PGLite connection trying to acquire the lock held by
+        // this process.
+        await reindexFrontmatterCli(args, engine);
+        break;
       }
       case 'backfill': {
         // v0.30.1: first-class generic backfill command. Subcommand dispatch

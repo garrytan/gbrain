@@ -75,6 +75,8 @@ interface PageRow {
   effective_date_source: EffectiveDateSource | null;
   created_at: string;
   updated_at: string;
+  /** tasks-41o (migration v125). NULL until scripts/backfill-content-created-at.ts runs. */
+  content_created_at: string | null;
 }
 
 function parseFrontmatter(raw: unknown): Record<string, unknown> {
@@ -150,8 +152,12 @@ export async function backfillEffectiveDate(
 
     // Keyset pagination: WHERE id > last_id ORDER BY id LIMIT N. Single-direction
     // walk; safe under concurrent inserts (new rows show up at the tail).
+    // NOTE: ESCAPE takes a single character. In this TS source that's `'\\'`
+    // (one backslash at runtime) — the doubled `'\\\\'` form sent a 2-char
+    // escape string and every --slug-prefix run died with "invalid escape
+    // string" (fixed in the tasks-41o takeover; PR #3168 review).
     const slugFilter = slugPrefix
-      ? `AND slug LIKE $2 ESCAPE '\\\\'`
+      ? `AND slug LIKE $2 ESCAPE '\\'`
       : '';
     const params: unknown[] = [lastId];
     if (slugPrefix) params.push(slugPrefix + '%');
@@ -159,7 +165,7 @@ export async function backfillEffectiveDate(
     const limitParam = `$${params.length}`;
 
     const rows = await engine.executeRaw<PageRow>(
-      `SELECT id, slug, frontmatter, import_filename, effective_date, effective_date_source, created_at, updated_at
+      `SELECT id, slug, frontmatter, import_filename, effective_date, effective_date_source, created_at, updated_at, content_created_at
          FROM pages
          WHERE id > $1 ${slugFilter}
          ORDER BY id
@@ -193,6 +199,11 @@ export async function backfillEffectiveDate(
             filename,
             updatedAt: new Date(r.updated_at),
             createdAt: new Date(r.created_at),
+            // tasks-41o: once scripts/backfill-content-created-at.ts has
+            // populated the column, this re-walk (`gbrain reindex-frontmatter`)
+            // is what actually flips effective_date/effective_date_source for
+            // existing rows — the column ranks just above the 'created' rung.
+            contentCreatedAt: r.content_created_at ? new Date(r.content_created_at) : null,
           });
 
           // No-op-on-equal: skip the UPDATE if existing matches (saves write
@@ -224,6 +235,7 @@ export async function backfillEffectiveDate(
           filename,
           updatedAt: new Date(r.updated_at),
           createdAt: new Date(r.created_at),
+          contentCreatedAt: r.content_created_at ? new Date(r.content_created_at) : null,
         });
         const existingMs = r.effective_date ? new Date(r.effective_date).getTime() : null;
         const computedMs = computed.date ? computed.date.getTime() : null;

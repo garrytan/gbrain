@@ -252,6 +252,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       timeline: page.timeline,
       frontmatter: page.frontmatter,
       content_hash: page.content_hash,
+      // tasks-41o: preserve the content's own creation date across engine
+      // migration. Pre-fix, this copy silently dropped it — a pglite→postgres
+      // migration re-INSERTed every row with putPage's default (row-insert
+      // time), the exact bug class that produced the Jul 7-8 timestamp
+      // corruption. `listPages` (both engines) is `SELECT p.*`, so
+      // `page.content_created_at` is already populated when present.
+      content_created_at: page.content_created_at,
     }, sourceOpts);
 
     // Copy chunks with embeddings.

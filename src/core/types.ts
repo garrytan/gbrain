@@ -124,6 +124,15 @@ export interface Page {
    */
   import_filename?: string | null;
   /**
+   * tasks-41o (migration v125): the content's own creation date — distinct
+   * from `created_at` (row-insert time, never overwritten by this field).
+   * NULL unless explicitly supplied: frontmatter `created`, a backfill from
+   * git/mtime history, or an importer/caller override. Ranks just above the
+   * frontmatter.created rung in `computeEffectiveDate`'s precedence chain —
+   * see `src/core/effective-date.ts`.
+   */
+  content_created_at?: Date | null;
+  /**
    * v0.29.1: bumped by `recompute_emotional_weight` when the page's
    * emotional_weight changes. The salience query window uses
    * `GREATEST(updated_at, salience_touched_at)` so newly-salient old pages
@@ -178,9 +187,11 @@ export interface Page {
 }
 
 export type EffectiveDateSource =
+  | 'content_created_at'
   | 'event_date'
   | 'date'
   | 'published'
+  | 'created'
   | 'filename'
   | 'fallback';
 
@@ -233,6 +244,16 @@ export interface PageInput {
   effective_date_source?: EffectiveDateSource | null;
   /** v0.29.1: basename without extension captured at import. */
   import_filename?: string | null;
+  /**
+   * tasks-41o (migration v125): the content's own creation date, distinct
+   * from `created_at` (row-insert time — putPage never derives this from
+   * `created_at` and never lets this field overwrite `created_at`). When
+   * omitted, putPage leaves the column unchanged on conflict (preserves any
+   * existing value, same COALESCE-preserve shape as effective_date); on
+   * insert the column is NULL. Consulted by `computeEffectiveDate` just
+   * above the frontmatter.created rung.
+   */
+  content_created_at?: Date | null;
   /**
    * v0.32.7 CJK wave: bumped to MARKDOWN_CHUNKER_VERSION (2) on import so the
    * post-upgrade `gbrain reindex --markdown` sweep can find pre-bump pages

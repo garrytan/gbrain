@@ -11,7 +11,7 @@ import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
-import { computeEffectiveDate } from './effective-date.ts';
+import { computeEffectiveDate, parseDateLoose } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
@@ -757,12 +757,24 @@ export async function importFromContent(
     // consults it.
     const filenameForChain = opts.filename ?? slug.split('/').pop() ?? slug;
     const nowDate = new Date();
+    // tasks-41o — thread frontmatter.created forward so it PERSISTS on the
+    // row as content_created_at (distinct from created_at, the row-insert
+    // time; this NEVER touches created_at). Passed as contentCreatedAt too
+    // so import and the reindex re-walk (backfill-effective-date.ts, which
+    // reads the column) compute the same result — the opt ranks just above
+    // the 'created' rung, never above event_date/date/published/filename.
+    // `existing` doesn't carry content_created_at (engine.getPage's SELECT
+    // doesn't project it, same as effective_date); putPage's COALESCE-
+    // preserve UPDATE keeps any prior column value when this frontmatter
+    // has no `created` key.
+    const contentCreatedAt = parseDateLoose(parsed.frontmatter.created);
     const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
       slug,
       frontmatter: parsed.frontmatter,
       filename: filenameForChain,
       updatedAt: existing?.updated_at ?? nowDate,
       createdAt: existing?.created_at ?? nowDate,
+      contentCreatedAt,
     });
 
     await tx.putPage(slug, {
@@ -775,6 +787,7 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
+      content_created_at: contentCreatedAt,
       // v0.32.7 CJK wave: stamp the chunker version so the post-upgrade
       // reindex sweep can find pre-bump pages via `chunker_version < 2`.
       // Also capture the repo-relative source path so sync's delete/rename
