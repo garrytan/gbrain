@@ -132,7 +132,7 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
     });
   });
 
-  test('enabled + recent run within 24h → outcome: rate_limited', async () => {
+  test('enabled + recent run within 24h → outcome: rate_limited (no audit row for the skip)', async () => {
     // Pre-seed a recent audit event by running the probe once first.
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
       // First run succeeds.
@@ -140,9 +140,28 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       // Second run, same hour → rate_limited.
       const r2 = await runNightlyQualityProbe(makeDeps());
       expect(r2.outcome).toBe('rate_limited');
+      // #3064: the skip does NOT log an audit row — autopilot ticks every
+      // ~5 min, so skip rows would spam the JSONL and (pre-fix) re-arm the
+      // 24h window on every tick, muting the probe forever after one run.
       const events = await readEvents();
-      expect(events.length).toBe(2);
-      expect(events[1].outcome).toBe('rate_limited');
+      expect(events.length).toBe(1);
+      expect(events[0].outcome).toBe('pass');
+    });
+  });
+
+  test('#3064 regression: historical rate_limited skip rows do NOT re-arm the 24h window', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const { logQualityProbeEvent } = await import('../src/core/audit-quality-probe.ts');
+      const now = new Date();
+      const zero = { exit_code: 0, pass_count: 0, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 0 };
+      // Real run 25h ago (outside the window)...
+      logQualityProbeEvent({ outcome: 'pass', ts: new Date(now.getTime() - 25 * 3600_000).toISOString(), ...zero });
+      // ...plus skip rows a pre-fix brain logged on every autopilot tick.
+      logQualityProbeEvent({ outcome: 'rate_limited', ts: new Date(now.getTime() - 10 * 60_000).toISOString(), ...zero });
+      logQualityProbeEvent({ outcome: 'rate_limited', ts: new Date(now.getTime() - 5 * 60_000).toISOString(), ...zero });
+
+      const r = await runNightlyQualityProbe(makeDeps({ now: () => now }));
+      expect(r.outcome).toBe('pass'); // pre-fix: 'rate_limited' forever
     });
   });
 

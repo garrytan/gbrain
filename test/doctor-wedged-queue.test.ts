@@ -97,6 +97,34 @@ describe('issue #1801 fix #3 — computeWedgedQueueCheck', () => {
     expect(check.message).not.toContain("'q-healthy'");
   });
 
+  it('#3063: wedged queue with NO live supervisor → "no worker running", not the DB-pool message', async () => {
+    await seed('default', 'cycle', 'waiting');
+    await seed('default', 'cycle', 'completed', { updatedAtSql: "now() - interval '20 min'" });
+    // No gbrain_cycle_locks row for gbrain-supervisor:default.
+    const check = await computeWedgedQueueCheck(pgLike);
+    expect(check.status).toBe('fail');
+    expect(check.message).toContain('no worker running');
+    expect(check.message).toContain('gbrain jobs supervisor start');
+    expect(check.message).not.toContain('rebuilds a fresh DB pool');
+  });
+
+  it('#3063: wedged queue WITH a live supervisor lock → keeps the wedged-pool message', async () => {
+    await seed('default', 'cycle', 'waiting');
+    await seed('default', 'cycle', 'completed', { updatedAtSql: "now() - interval '20 min'" });
+    await base.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+       VALUES ('gbrain-supervisor:default', 12345, 'test-host', now(), now() + interval '5 min', now())`,
+    );
+    try {
+      const check = await computeWedgedQueueCheck(pgLike);
+      expect(check.status).toBe('fail');
+      expect(check.message).toContain('worker alive but not claiming work');
+      expect(check.message).toContain('rebuilds a fresh DB pool');
+    } finally {
+      await base.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id = 'gbrain-supervisor:default'`);
+    }
+  });
+
   it('returns ok on PGLite (no multi-process worker surface)', async () => {
     const check = await computeWedgedQueueCheck(base as unknown as BrainEngine);
     expect(check.status).toBe('ok');

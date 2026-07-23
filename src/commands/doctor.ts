@@ -1623,7 +1623,7 @@ export async function computeWedgedQueueCheck(engine: BrainEngine): Promise<Chec
        FROM minion_jobs
        GROUP BY queue`,
     );
-    const wedged: string[] = [];
+    const wedged: Array<{ queue: string; label: string }> = [];
     for (const r of rows) {
       const activeHealthy = Number(r.active_healthy ?? 0);
       const waiting = Number(r.waiting ?? 0);
@@ -1631,21 +1631,59 @@ export async function computeWedgedQueueCheck(engine: BrainEngine): Promise<Chec
       // Conservative: only flag stale-after-progress (non-null mins past
       // threshold). The null-completions case is the supervisor's job.
       if (activeHealthy === 0 && waiting > 0 && mins !== null && mins > thresholdMin) {
-        wedged.push(`'${r.queue}' (${waiting} waiting, 0 active, ${Math.round(mins)}m since last completion)`);
+        wedged.push({
+          queue: r.queue,
+          label: `'${r.queue}' (${waiting} waiting, 0 active, ${Math.round(mins)}m since last completion)`,
+        });
       }
     }
     if (wedged.length === 0) {
       return { name: 'wedged_queue', status: 'ok', message: 'No wedged queues' };
     }
-    return {
-      name: 'wedged_queue',
-      status: 'fail',
-      message:
-        `Wedged queue(s) — worker alive but not claiming work: ${wedged.join('; ')}. ` +
+    // #3063: split the diagnosis on worker liveness. The wedged-pool message
+    // ("worker alive but not claiming work → restart to rebuild the DB pool")
+    // only applies when a supervisor actually holds a live singleton lock.
+    // With no live holder the worker is simply not running — telling the
+    // operator to blame the DB pool sends them down the wrong path.
+    const alive: string[] = [];
+    const noWorker: string[] = [];
+    for (const w of wedged) {
+      let hasLiveWorker = false;
+      try {
+        const { supervisorLockId } = await import('../core/minions/supervisor.ts');
+        const lockRows = await engine.executeRaw<{ live: boolean }>(
+          `SELECT (ttl_expires_at > now()) AS live FROM gbrain_cycle_locks WHERE id = $1`,
+          [supervisorLockId(w.queue)],
+        );
+        hasLiveWorker = lockRows.length > 0 && lockRows[0].live === true;
+      } catch {
+        // Lock table unreadable → can't prove absence; keep the
+        // conservative wedged-pool message.
+        hasLiveWorker = true;
+      }
+      (hasLiveWorker ? alive : noWorker).push(w.label);
+    }
+    const parts: string[] = [];
+    if (noWorker.length > 0) {
+      parts.push(
+        `Queue(s) with waiting jobs and no worker running: ${noWorker.join('; ')}. ` +
+        `Start the worker: \`gbrain jobs supervisor start\` ` +
+        `(or restart the autopilot unit if installed).`,
+      );
+    }
+    if (alive.length > 0) {
+      parts.push(
+        `Wedged queue(s) — worker alive but not claiming work: ${alive.join('; ')}. ` +
         `Restart the worker so it rebuilds a fresh DB pool: ` +
         `\`gbrain jobs supervisor stop && gbrain jobs supervisor start\`, ` +
         `then \`gbrain jobs retry <id>\` on any dead-lettered jobs.`,
-      details: { wedged_queues: wedged.length, threshold_minutes: thresholdMin },
+      );
+    }
+    return {
+      name: 'wedged_queue',
+      status: 'fail',
+      message: parts.join(' '),
+      details: { wedged_queues: wedged.length, no_worker_queues: noWorker.length, threshold_minutes: thresholdMin },
     };
   } catch (e) {
     // Pre-migration brains / transient errors: advisory check stays ok.
