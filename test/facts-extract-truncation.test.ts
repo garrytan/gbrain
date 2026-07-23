@@ -17,6 +17,7 @@ import {
   configureGateway,
   resetGateway,
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
 } from '../src/core/ai/gateway.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import {
@@ -29,6 +30,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 beforeEach(() => {
   resetGateway();
   __setChatTransportForTests(null);
+  __setGenerateTextTransportForTests(null);
   configureGateway({
     chat_model: 'anthropic:claude-sonnet-4-6',
     env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
@@ -128,5 +130,36 @@ describe('extractFactsFromTurn truncation handling (#2113)', () => {
     });
     expect(calls).toBe(2);
     expect(facts).toEqual([]);
+  });
+
+  // #3217 follow-through: a completion that spends the WHOLE cap on internal
+  // reasoning (zero text) now throws inside chat() — before this function can
+  // observe stopReason === 'length'. The retry-at-double-cap recovery must
+  // still fire. Uses the generateText transport (NOT the chat transport) so
+  // the REAL empty-completion guard runs.
+  test("contentless 'length' throw from chat() still triggers the double-cap retry", async () => {
+    const seen: Array<{ maxOutputTokens?: number }> = [];
+    __setGenerateTextTransportForTests(async (opts: any) => {
+      seen.push({ maxOutputTokens: opts.maxOutputTokens });
+      return (seen.length === 1
+        ? { content: [], finishReason: 'length', usage: { inputTokens: 42, outputTokens: 4000 } }
+        : {
+            content: [{ type: 'text', text: GOOD_JSON }],
+            finishReason: 'stop',
+            usage: { inputTokens: 42, outputTokens: 60 },
+          }) as any;
+    });
+    try {
+      const facts = await extractFactsFromTurn({
+        turnText: 'I gave up alcohol.',
+        source: 'test:truncation',
+      });
+      expect(seen).toHaveLength(2);
+      expect(seen[1]!.maxOutputTokens).toBe(seen[0]!.maxOutputTokens! * 2);
+      expect(facts).toHaveLength(1);
+      expect(facts[0]!.fact).toContain('alcohol');
+    } finally {
+      __setGenerateTextTransportForTests(null);
+    }
   });
 });

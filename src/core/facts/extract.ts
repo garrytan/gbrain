@@ -21,7 +21,7 @@
  * gateway-down errors are absorbed into NULL-embedding rows.
  */
 
-import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { chat, embedOne, isAvailable, isContentlessLengthError } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
@@ -190,18 +190,29 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   }`;
   let result: ChatResult;
   try {
-    result = await chat({
-      model,
-      system: EXTRACTOR_SYSTEM,
-      messages: [{ role: 'user', content: userContent }],
-      maxTokens,
-      abortSignal: input.abortSignal,
-    });
+    // #3217 follow-through: a completion that spent the WHOLE cap on
+    // internal reasoning (zero text) now throws inside chat() before this
+    // function can observe stopReason === 'length'. Same root cause as the
+    // partial-truncation branch below → same recovery: one retry at double
+    // the cap, instead of silently extracting zero facts.
+    let first: ChatResult | null = null;
+    try {
+      first = await chat({
+        model,
+        system: EXTRACTOR_SYSTEM,
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens,
+        abortSignal: input.abortSignal,
+      });
+    } catch (err) {
+      if (!isContentlessLengthError(err)) throw err;
+    }
+    result = first as ChatResult;
     // #2113: never checked pre-fix — a truncated response (stopReason
     // 'length', e.g. reasoning tokens eating the cap on mandatory-reasoning
     // models) produced unparseable JSON and silently extracted zero facts.
     // Retry ONCE at double the cap, then surface the truncation loudly.
-    if (result.stopReason === 'length') {
+    if (first === null || first.stopReason === 'length') {
       process.stderr.write(
         `[facts-extract] WARN: extractor output truncated at maxTokens=${maxTokens} ` +
         `(model=${model}); retrying once at ${maxTokens * 2}\n`,

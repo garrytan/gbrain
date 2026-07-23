@@ -192,7 +192,7 @@ const DEFAULT_JUDGE_MAX_TOKENS = 4000;
 
 function defaultJudge(engine: BrainEngine): ChronicleJudge {
   return async (input) => {
-    const { isAvailable, chat } = await import('../ai/gateway.ts');
+    const { isAvailable, chat, isContentlessLengthError } = await import('../ai/gateway.ts');
     if (!isAvailable('chat')) return { events: [] };
     const body = (input.body || '').slice(0, 12_000);
     // #2606: configurable cap so event-dense pages have headroom.
@@ -222,6 +222,10 @@ function defaultJudge(engine: BrainEngine): ChronicleJudge {
       text = res.text;
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err;
+      // #3217 follow-through: a contentless 'length' stop now throws inside
+      // chat() before the stopReason check above can see it — preserve the
+      // #2606 truncation signal instead of degrading to a silent no-op.
+      if (isContentlessLengthError(err)) return { events: [], failure: 'truncated' };
       return { events: [] };
     }
     const parsed = parseJudgeJson(text);

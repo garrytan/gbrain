@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import {
   chat,
   configureGateway,
+  isContentlessLengthError,
   resetGateway,
   withBudgetTracker,
   __setGenerateTextTransportForTests,
@@ -104,6 +105,24 @@ describe('#3217 — empty-completion guard in chat()', () => {
       expect(e).toBeInstanceOf(AIConfigError);
       expect((e as AIConfigError).message).toContain('output budget exhausted');
       expect((e as AIConfigError).fix).toBeDefined();
+      // Callers with their own length-stop truncation handling (facts
+      // extract #2113, chronicle #2606) branch on this predicate.
+      expect(isContentlessLengthError(e)).toBe(true);
+    }
+  });
+
+  test('isContentlessLengthError is false for the non-length empty-completion throw', async () => {
+    installTransport({
+      content: [],
+      finishReason: 'stop',
+      usage: { inputTokens: 42, outputTokens: 0 },
+    });
+    try {
+      await callChat();
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(AITransientError);
+      expect(isContentlessLengthError(e)).toBe(false);
     }
   });
 

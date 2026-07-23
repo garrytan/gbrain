@@ -3246,6 +3246,14 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
           : new AITransientError(
               `${label}: provider returned an empty completion (stopReason=${stopReason}, output_tokens=${outTok}) — no text and no tool calls`,
             );
+      // Mark the contentless-length case so callers with their own
+      // stopReason==='length' truncation handling (facts extract's #2113
+      // double-cap retry, chronicle's #2606 'truncated' failure marker)
+      // can keep that handling reachable — this throw fires before they
+      // can observe the stop reason. See isContentlessLengthError.
+      if (stopReason === 'length') {
+        (emptyErr as { contentlessLength?: boolean }).contentlessLength = true;
+      }
       // Carry the real usage on the error so the catch-path budget record
       // charges actual tokens instead of the pessimistic ceiling — but only
       // the fields the provider actually reported. When usage was omitted
@@ -3287,6 +3295,18 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
+}
+
+/**
+ * #3217 — true when `err` is the AIConfigError `chat()` throws for a
+ * completion that exhausted its output budget with NO content at all
+ * (the contentless 'length' stop). Callers that had their own
+ * `stopReason === 'length'` truncation handling branch on this instead
+ * of the (unstable) error message.
+ */
+export function isContentlessLengthError(err: unknown): boolean {
+  return err instanceof AIConfigError &&
+    (err as { contentlessLength?: boolean }).contentlessLength === true;
 }
 
 // ---- Tool loop (v0.38 — D11 + D6/D7 gateway-native subagent path) ----
