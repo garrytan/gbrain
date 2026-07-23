@@ -501,6 +501,20 @@ export class MinionQueue {
     return parseInt(rows[0]?.count ?? '0', 10);
   }
 
+  /** Count jobs that would be pruned without deleting them. */
+  async countPrunable(opts?: { olderThan?: Date; status?: MinionJobStatus[] }): Promise<number> {
+    const statuses = opts?.status ?? ['completed', 'dead', 'cancelled'];
+    const olderThan = opts?.olderThan ?? new Date(Date.now() - 30 * 86400000);
+
+    const rows = await this.engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text as count
+       FROM minion_jobs
+       WHERE status = ANY($1) AND updated_at < $2`,
+      [statuses, olderThan.toISOString()]
+    );
+    return parseInt(rows[0]?.count ?? '0', 10);
+  }
+
   /** Get job statistics. */
   async getStats(opts?: { since?: Date; queue?: string }): Promise<{
     by_status: Record<string, number>;
