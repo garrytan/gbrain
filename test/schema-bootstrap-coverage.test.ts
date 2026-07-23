@@ -691,6 +691,13 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   //
   // Refreshing PGLITE_SCHEMA_SQL is a separate concern handled by
   // `bun run build:schema` from src/schema.sql; not gated by this test.
+  // v125 (#2089): takes.embedding is not NEW — the takes table (migration
+  // v37) already carries it. v125's ADD COLUMN is the second half of a
+  // DROP/ADD retype to the configured embedder dims (all-NULL column, so
+  // nothing to convert), guarded to run only on dim mismatch. The takes
+  // table is migration-created (absent from the schema blob), so there is
+  // no forward reference for the bootstrap to cover.
+  'takes.embedding',
   'minion_jobs.quiet_hours',
   'minion_jobs.stagger_key',
   'sources.chunker_version',

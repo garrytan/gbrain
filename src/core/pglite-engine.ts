@@ -4929,6 +4929,24 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as StaleTakeRow[];
   }
 
+  async updateTakeEmbeddings(rows: Array<{ take_id: number; embedding: Float32Array }>): Promise<number> {
+    if (rows.length === 0) return 0;
+    let updated = 0;
+    // ponytail: per-row UPDATE loop — takes volume is small (hundreds, not
+    // millions); switch to an unnest batch if listStaleTakes ever pages.
+    for (const r of rows) {
+      const vec = `[${Array.from(r.embedding).join(',')}]`;
+      const res = await this.db.query(
+        `UPDATE takes SET embedding = $2::vector, embedded_at = now()
+         WHERE id = $1 AND active
+         RETURNING 1`,
+        [r.take_id, vec]
+      );
+      updated += res.rows.length;
+    }
+    return updated;
+  }
+
   async updateTake(
     pageId: number,
     rowNum: number,

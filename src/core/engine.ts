@@ -1535,6 +1535,14 @@ export interface BrainEngine {
   listStaleTakes(): Promise<StaleTakeRow[]>;
 
   /**
+   * #2089: write claim embeddings for takes (the write side of
+   * searchTakesVector). Sets `embedding` + `embedded_at`; does NOT bump
+   * `updated_at` (embeddings are derived data, not a content change).
+   * Returns the number of rows updated (inactive/deleted rows are skipped).
+   */
+  updateTakeEmbeddings(rows: Array<{ take_id: number; embedding: Float32Array }>): Promise<number>;
+
+  /**
    * Update a take's mutable fields. May NOT change claim/kind/holder per the
    * supersession invariants — those route through supersedeTake. Throws
    * `TAKE_ROW_NOT_FOUND` when (page_id, row_num) doesn't exist.
