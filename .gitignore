@@ -41,3 +41,7 @@ test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/
+
+# Docker build artifacts — local container image build files, not part of the source
+Dockerfile
+docker-entrypoint.sh
