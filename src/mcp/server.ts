@@ -7,6 +7,7 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 import { loadConfig } from '../core/config.ts';
 import {
   resolveSocketPath,
@@ -14,6 +15,20 @@ import {
   cleanupStaleSocket,
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
+
+/**
+ * Resolve the scalar source grant used by the local stdio MCP transport.
+ * Exported as a narrow seam so multi-source routing can be regression-tested
+ * without attaching the MCP SDK to a test runner's stdin.
+ */
+export async function resolveStdioSourceId(
+  engine: BrainEngine,
+  explicit: string | null = process.env.GBRAIN_SOURCE || null,
+  cwd: string = process.cwd(),
+): Promise<string> {
+  return resolveSourceId(engine, explicit, cwd)
+    .catch(() => explicit || 'default');
+}
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -33,6 +48,15 @@ export async function startMcpServer(engine: BrainEngine) {
   // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
   // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
+  // v0.42.59: stdio previously pinned sourceId to 'default', which on a
+  // multi-source brain is an EMPTY source — every source-scoped MCP op
+  // (search, query, get_page, ...) returned nothing while the CLI
+  // (remote:false + resolveSourceId) worked. Resolve once at startup through
+  // the same canonical chain the CLI uses: GBRAIN_SOURCE remains the
+  // explicit override (tier 1), otherwise path-match / config
+  // sources.default decide. Trust posture is unchanged: remote stays true
+  // and takes stay world-scoped.
+  const stdioSourceId = await resolveStdioSourceId(engine);
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
@@ -43,10 +67,7 @@ export async function startMcpServer(engine: BrainEngine) {
     return dispatchToolCall(engine, name, params, {
       remote: true,
       takesHoldersAllowList: ['world'],
-      // v0.31: source defaults to 'default' for stdio (no per-token scope).
-      // Operators who want a different source on stdio MCP should set
-      // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
-      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      sourceId: stdioSourceId,
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
@@ -67,7 +88,9 @@ export async function startMcpServer(engine: BrainEngine) {
     const cfg = loadConfig();
     if (cfg?.engine === 'pglite' && cfg.database_path) {
       resolveSocket = resolveSocketPath(cfg.database_path);
-      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+      // v0.42.59: same empty-'default' hazard as the tool-call path above —
+      // the reflex resolver must scope to the canonically resolved source.
+      const defaultSource = stdioSourceId;
       resolveServer = await startResolveIpcServer(
         resolveSocket,
         (req) =>
