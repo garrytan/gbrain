@@ -20,11 +20,34 @@
  */
 
 import { realpathSync, existsSync, type Stats } from 'fs';
+import * as nodePath from 'path';
 import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join } from 'path';
 
 /**
+ * Pure containment predicate over ALREADY-resolved paths: true iff `child`
+ * IS `parent` or lives under it. Separator-agnostic via `path.relative`.
+ *
+ * #3057: the previous `startsWith(parent + '/')` form is false for EVERY
+ * path on Windows — `realpathSync` returns backslash separators there — so
+ * every containment check built on it failed closed and blocked sync
+ * entirely (same separator class as #2828/#2836). `pathMod` is injectable
+ * so POSIX CI can pin the win32 semantics with `path.win32`.
+ */
+export function isResolvedContained(
+  child: string,
+  parent: string,
+  pathMod: Pick<typeof nodePath, 'relative' | 'isAbsolute' | 'sep'> = nodePath,
+): boolean {
+  const rel = pathMod.relative(parent, child);
+  // '' = same path; '..' or '../…' = escapes upward; absolute = different
+  // root entirely (e.g. another drive on Windows, where relative() returns
+  // the child verbatim).
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + pathMod.sep) && !pathMod.isAbsolute(rel));
+}
+
+/**
  * Symlink-safe path confinement: realpath BOTH sides, then a separator-aware
- * prefix check. A plain `startsWith()` on un-resolved paths would let a
+ * containment check. A plain `startsWith()` on un-resolved paths would let a
  * `parent/skills` symlink → `/etc` (or `$GBRAIN_HOME/clones/<id>` → `/etc`)
  * bypass the boundary; resolving first defeats that.
  *
@@ -41,9 +64,7 @@ export function isPathContained(child: string, parent: string): boolean {
   } catch {
     return false; // missing / unresolvable path → not contained
   }
-  // Append a separator so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
+  return isResolvedContained(resolvedChild, resolvedParent);
 }
 
 /**
