@@ -466,7 +466,7 @@ async function main() {
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
-    const output = formatResult(op.name, result);
+    const output = formatResult(op.name, result, params);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -549,7 +549,7 @@ async function runThinClientRouted(
       signal: sigintController.signal,
     });
     const result = unpackToolResult(raw);
-    const output = formatResult(op.name, result);
+    const output = formatResult(op.name, result, params);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -840,7 +840,7 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
 }
 
 // Exported for tests (same import-safety contract as cliAliases/printOpHelp).
-export function formatResult(opName: string, result: unknown): string {
+export function formatResult(opName: string, result: unknown, params?: Record<string, unknown>): string {
   switch (opName) {
     case 'volunteer_context': {
       const r = result as any;
@@ -879,6 +879,10 @@ export function formatResult(opName: string, result: unknown): string {
     case 'search':
     case 'query': {
       const results = result as any[];
+      // `--json` (search op only, see its param doc): checked before the
+      // "No results." short-circuit below so scripts/agents piping
+      // `gbrain search --json` always get parseable JSON, including `[]`.
+      if (params?.json === true) return JSON.stringify(results, null, 2) + '\n';
       if (results.length === 0) return 'No results.\n';
       // v0.40.4 — --explain switches to per-stage attribution formatter.
       // Reads CliOptions.explain via the module-level singleton.

@@ -1446,13 +1446,41 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    // v0.43.x (reported by morzu117/swairm — a multi-source consumer wiring a
+    // 2nd repo into one shared brain): `search` lacked the per-call source
+    // override that `query`, `search_by_image`, and the code-intel ops
+    // (code_callers/code_callees/code_blast/code_flow) already have via
+    // `resolveRequestedScope`. `search` fell back to `sourceScopeOpts(ctx)`
+    // only, so an MCP tool-caller had no way to scope a single tool call to
+    // one source — only the CLI's `--source` flag (which sets ctx.sourceId
+    // for the whole invocation) worked.
+    source_id: {
+      type: 'string',
+      description:
+        "Scope this search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
+    // CLI-rendering-only, mirrors the `mode` param's "local callers only"
+    // convention above — the handler always returns the full structured
+    // result (MCP responses are JSON already); this only switches the CLI's
+    // text formatter (src/cli.ts formatResult) from the one-line-per-result
+    // view to raw `JSON.stringify(results)` so scripts/agents piping
+    // `gbrain search` don't have to parse the human format.
+    json: {
+      type: 'boolean',
+      description: 'CLI only: print raw JSON results instead of the human-readable one-line-per-result format.',
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
-    const scope = sourceScopeOpts(ctx);
+    // Explicit per-call source_id wins over ctx.sourceId; resolveRequestedScope
+    // is the single trust+grant resolver shared by every source-scoped read op
+    // (see its docstring) — remote callers get permission_denied for an
+    // out-of-grant source_id instead of a silent cross-source leak.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = resolveRequestedScope(ctx, sourceIdParam);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
