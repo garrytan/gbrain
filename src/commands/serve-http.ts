@@ -1567,6 +1567,38 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // v0.42.x (#1914): rescope an OAuth client's write source / federated read
+  // scope. Admin-gated on purpose — DCR clients must never self-widen their
+  // scope (fail-closed trust); only the operator rescopes, here or via
+  // `gbrain auth rescope-client`. Source ids are validated by the canonical
+  // validator inside rescopeClient.
+  app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId, sourceId, federatedRead } = req.body ?? {};
+      if (!clientId || typeof clientId !== 'string') {
+        res.status(400).json({ error: 'clientId required' });
+        return;
+      }
+      if (federatedRead !== undefined &&
+          !(Array.isArray(federatedRead) && federatedRead.every((s: unknown) => typeof s === 'string'))) {
+        res.status(400).json({ error: 'federatedRead must be an array of source id strings' });
+        return;
+      }
+      if (sourceId !== undefined && typeof sourceId !== 'string') {
+        res.status(400).json({ error: 'sourceId must be a string' });
+        return;
+      }
+      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead });
+      res.json(result);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Rescope failed';
+      const status = /No OAuth client found/.test(message) ? 404
+        : /Invalid source_id|requires --source|cannot be empty/.test(message) ? 400
+        : 500;
+      res.status(status).json({ error: message });
+    }
+  });
+
   // Revoke OAuth client
   app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
