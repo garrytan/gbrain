@@ -339,6 +339,35 @@ describe('writeFactsToFence — basename ≠ slug (#3069)', () => {
     expect(result.stubGuardBlocked).toBe(true);
     expect(existsSync(join(brainDir, '10-people/ghost-page.md'))).toBe(false);
   });
+
+  test('hostile source_path with ../ cannot steer the fence write outside the source tree', async () => {
+    // A corrupt/hostile page row must not make fence-write read + rename-over
+    // a file OUTSIDE localPath (same threat class write-through guards with
+    // isWriteTargetContained).
+    const victim = join(brainDir, '..', 'fence-victim.md');
+    writeFileSync(victim, '# victim\n', 'utf-8');
+    const before = readFileSync(victim, 'utf-8');
+    await engine.putPage('10-people/evil-row', {
+      type: 'person',
+      title: 'Evil',
+      compiled_truth: '',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'z',
+      source_path: '../fence-victim.md',
+      import_filename: null,
+    });
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: '10-people/evil-row' },
+      [baseInput()],
+    );
+
+    // Escaping candidate is rejected → treated as file-not-found → blocked.
+    expect(result.stubGuardBlocked).toBe(true);
+    expect(readFileSync(victim, 'utf-8')).toBe(before);
+  });
 });
 
 describe('lookupSourceLocalPath', () => {

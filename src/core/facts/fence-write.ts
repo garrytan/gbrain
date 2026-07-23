@@ -39,6 +39,7 @@ import { dirname, join } from 'node:path';
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
 import { resolvePageFilePath } from '../markdown.ts';
 import { withPageLock } from '../page-lock.ts';
+import { isWriteTargetContained } from '../path-confine.ts';
 import { gbrainPath } from '../config.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
@@ -213,7 +214,14 @@ export async function writeFactsToFence(
               : `${pageRow.import_filename}.md`;
             candidates.push(join(dirname(filePath), name));
           }
-          const hit = candidates.find((c) => existsSync(c));
+          // Containment guard (same threat class write-through covers with
+          // isWriteTargetContained, #1647-slug): source_path/import_filename
+          // come from the DB, not from a validated slug — a hostile or
+          // corrupt page row with `../` must not steer the fence write (read
+          // + rename-over) outside the source tree.
+          const hit = candidates.find(
+            (c) => isWriteTargetContained(c, target.localPath!) && existsSync(c),
+          );
           if (hit !== undefined) {
             filePath = hit;
             body = readFileSync(filePath, 'utf-8');
