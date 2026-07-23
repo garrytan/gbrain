@@ -1002,9 +1002,24 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   // Voyage diverges from OpenAI in two places that break the parser:
   //   - `embedding` is a base64 string (SDK schema expects `number[]`)
   //   - `usage` lacks `prompt_tokens` (SDK schema requires it when usage present)
+  //
+  // #1610: read the body ONCE via text() and JSON.parse it. The pre-fix
+  // `await resp.clone().json()` truncated large bodies on bun < 1.1.27
+  // (oven-sh/bun#6348) — the parse threw, the catch fell back to the raw
+  // response, and multi-chunk pages died with "Invalid JSON response".
+  // Every JSON return path below rebuilds the Response so a stale
+  // Content-Length/Content-Encoding header from the original can't lie
+  // about the rewritten body.
+  const bodyText = await resp.text();
+  const rebuild = (body: string) => {
+    const headers = new Headers(resp.headers);
+    headers.delete('content-length');
+    headers.delete('content-encoding');
+    return new Response(body, { status: resp.status, statusText: resp.statusText, headers });
+  };
   try {
-    const json: any = await resp.clone().json();
-    if (!json || typeof json !== 'object') return resp;
+    const json: any = JSON.parse(bodyText);
+    if (!json || typeof json !== 'object') return rebuild(bodyText);
     let modified = false;
     if (Array.isArray(json.data)) {
       for (const item of json.data) {
@@ -1039,22 +1054,19 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
         : 0;
       modified = true;
     }
-    if (!modified) return resp;
-    return new Response(JSON.stringify(json), {
-      status: resp.status,
-      statusText: resp.statusText,
-      headers: resp.headers,
-    });
+    if (!modified) return rebuild(bodyText);
+    return rebuild(JSON.stringify(json));
   } catch (err) {
     // OOM-cap throws MUST propagate. The catch is here for "Voyage returned
     // JSON I can't reshape" (parse error, unexpected schema) — falling back
-    // to the original response is correct in that case. Letting the
+    // to the original body is correct in that case. Letting the
     // too-large response through here would defeat the entire purpose of
     // Layer 2 (the per-embedding cap that fires when Content-Length wasn't
     // available to Layer 1).
     if (err instanceof VoyageResponseTooLargeError) throw err;
-    // If parsing/transformation fails, fall back to the original response.
-    return resp;
+    // If parsing/transformation fails, pass the original body through
+    // (rebuilt — resp's body stream is already consumed by text()).
+    return rebuild(bodyText);
   }
 }) as unknown as typeof fetch;
 
@@ -1194,9 +1206,21 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   // validates. Also map usage.total_tokens → prompt_tokens (SDK requires
   // prompt_tokens when `usage` is present — same divergence Voyage hit at
   // gateway.ts:655).
+  //
+  // #1610: read the body ONCE via text() + JSON.parse — `resp.clone().json()`
+  // truncated large bodies on bun < 1.1.27 (oven-sh/bun#6348), so the parse
+  // threw and the catch fell back to the RAW ZE `{results: ...}` shape, which
+  // the AI SDK schema rejects → "Invalid JSON response" on multi-chunk pages.
+  const bodyText = await resp.text();
+  const rebuild = (body: string) => {
+    const headers = new Headers(resp.headers);
+    headers.delete('content-length');
+    headers.delete('content-encoding');
+    return new Response(body, { status: resp.status, statusText: resp.statusText, headers });
+  };
   try {
-    const json: any = await resp.clone().json();
-    if (!json || typeof json !== 'object') return resp;
+    const json: any = JSON.parse(bodyText);
+    if (!json || typeof json !== 'object') return rebuild(bodyText);
     let modified = false;
     if (Array.isArray(json.results) && !Array.isArray(json.data)) {
       // Layer 2 OOM cap — per-embedding size. ZE returns float[] arrays,
@@ -1230,19 +1254,24 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
       // SDK also expects total_tokens; ZE provides it directly.
       modified = true;
     }
-    if (!modified) return resp;
-    return new Response(JSON.stringify(json), {
-      status: resp.status,
-      statusText: resp.statusText,
-      headers: resp.headers,
-    });
+    if (!modified) return rebuild(bodyText);
+    return rebuild(JSON.stringify(json));
   } catch (err) {
     // OOM-cap throws MUST propagate. Voyage's pattern: instanceof check on
     // its own tagged class. Same here — only rethrow our own cap class.
     if (err instanceof ZeroEntropyResponseTooLargeError) throw err;
-    return resp;
+    return rebuild(bodyText);
   }
 }) as unknown as typeof fetch;
+
+/**
+ * Test-only seams (#1610): the compat shims are module-private closures;
+ * exporting them lets tests drive the response-rewrite paths behaviorally
+ * (truncating clone(), stale Content-Length) without a live provider.
+ * Same pattern as __getShrinkStateForTests.
+ */
+export const __voyageCompatFetchForTests = voyageCompatFetch;
+export const __zeroEntropyCompatFetchForTests = zeroEntropyCompatFetch;
 
 /**
  * Generic asymmetric-embedding shim for openai-compatible recipes that

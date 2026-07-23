@@ -34,7 +34,7 @@ describe('v0.31.8 — voyage Content-Length pre-check + per-item cap', () => {
     expect(source).toMatch(/MAX_VOYAGE_RESPONSE_BYTES\s*=\s*256\s*\*\s*1024\s*\*\s*1024/);
   });
 
-  test('Layer 1: Content-Length pre-check fires BEFORE resp.clone().json() (D10 OOM defense)', async () => {
+  test('Layer 1: Content-Length pre-check fires BEFORE the body is read (D10 OOM defense)', async () => {
     const source = await Bun.file(new URL('../src/core/ai/gateway.ts', import.meta.url)).text();
     // Anchor relative to the post-fetch handler block. The function declaration
     // contains an OUTBOUND request body section earlier; we want to verify
@@ -47,8 +47,10 @@ describe('v0.31.8 — voyage Content-Length pre-check + per-item cap', () => {
     // doesn't pin to comment text.
     const preCheckIdx = inboundBlock.indexOf("resp.headers.get('content-length')");
     // Use the full lvalue assignment so the match doesn't accidentally hit
-    // comment text that mentions `await resp.clone().json()` for context.
-    const jsonParseIdx = inboundBlock.indexOf('const json: any = await resp.clone().json()');
+    // comment text that mentions the body read for context. (#1610 moved the
+    // read from `resp.clone().json()` to a single `resp.text()` — bun <
+    // 1.1.27 truncates clone()d bodies, oven-sh/bun#6348.)
+    const jsonParseIdx = inboundBlock.indexOf('const bodyText = await resp.text()');
     expect(preCheckIdx).toBeGreaterThan(0);
     expect(jsonParseIdx).toBeGreaterThan(0);
     // The pre-check MUST appear before the JSON parse — otherwise the OOM

@@ -499,7 +499,7 @@ export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; s
  * FAIL-CLOSED: anything not strictly `ctx.remote === false` is untrusted.
  *
  * This is the SINGLE resolver for every read op that accepts a per-call
- * `source_id` / `all_sources` parameter (query, code_callers, code_callees,
+ * `source_id` / `all_sources` parameter (query, search, code_callers, code_callees,
  * get_page, search_by_image, code_blast, code_flow). Inlining the `__all__`
  * branch per handler is the bug class that leaked cross-source reads (#1924,
  * #1371): a remote client could pass `source_id: '__all__'` to opt out of its
@@ -1446,13 +1446,24 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope search to a single source. Defaults to OperationContext.sourceId. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
+    all_sources: { type: 'boolean', description: "Span sources (equivalent to source_id=__all__): every source locally, your grant remotely." },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
-    const scope = sourceScopeOpts(ctx);
+    // #1484 follow-up: route through the canonical fail-closed resolver so
+    // `--source-id __all__` / `all_sources` behave the same as on `query`
+    // (the zero-hit CLI hint advises exactly that retry). Without a per-call
+    // param, `search` silently ignored --source-id — the retry looked like
+    // a genuine miss.
+    const scope = resolveRequestedScope(ctx, p.source_id as string | undefined, p.all_sources === true);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown

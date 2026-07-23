@@ -468,6 +468,11 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    // #1484 — invisible-miss hint: a bare query/search that hit zero results
+    // on a multi-source brain tells the user (stderr) which source it
+    // actually searched and how to widen the scope.
+    const hint = await sourceScopeHint(op.name, params, ctx.sourceId, engine, result);
+    if (hint) console.error(hint);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
     // STILL runs (drains every background-work sink + disconnects). A bare
@@ -837,6 +842,44 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // every transport.
     sourceId: sourceId ?? 'default',
   };
+}
+
+/**
+ * #1484 — a bare `gbrain query`/`search` silently scopes to the resolved
+ * source (usually 'default'); on a multi-source brain a zero-hit run looks
+ * identical to "the brain doesn't know this" even when the answer lives in
+ * another source. Returns a stderr hint when (a) the op is query/search,
+ * (b) it returned zero results, (c) the caller did NOT scope explicitly
+ * (--source / --source-id / --all-sources), and (d) the brain has >1
+ * registered source. Best-effort: any lookup failure returns null.
+ *
+ * Exported for tests (same import-safety contract as formatResult).
+ */
+export async function sourceScopeHint(
+  opName: string,
+  params: Record<string, unknown>,
+  sourceId: string,
+  engine: BrainEngine,
+  result: unknown,
+): Promise<string | null> {
+  if (opName !== 'query' && opName !== 'search') return null;
+  if (!Array.isArray(result) || result.length > 0) return null;
+  // Explicit scoping (flag tier) = user intent; don't second-guess it.
+  if (params.source || params.source_id || params.all_sources) return null;
+  if (sourceId === '__all__') return null;
+  try {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM sources`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    if (n <= 1) return null;
+    return (
+      `Hint: this brain has ${n} sources; you searched only "${sourceId}". ` +
+      `Retry with --source-id __all__ (all sources) or --source-id <id>.`
+    );
+  } catch {
+    return null; // hint is best-effort; never fail the query over it
+  }
 }
 
 // Exported for tests (same import-safety contract as cliAliases/printOpHelp).

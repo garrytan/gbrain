@@ -1323,8 +1323,18 @@ export async function hybridSearch(
       if (effectiveModality === 'both' && imageVectorList !== null) {
         vectorLists = [...vectorLists, imageVectorList];
       }
-    } catch {
-      // Embedding failure is non-fatal, fall back to keyword-only
+    } catch (err) {
+      // Embedding/vector failure is non-fatal — fall back to keyword-only —
+      // but say WHY (#1626): this arm only runs when the embedding provider
+      // probed available, so a throw here is a real failure (embed timeout,
+      // transient pooler error on the searchVector fan-out). Pre-fix the bare
+      // catch made a cross-source `--source __all__` run silently collapse to
+      // keyword-only/"No results" with zero diagnostics.
+      warnOncePerProcess(
+        'hybrid-vector-arm-failed',
+        `[gbrain] vector arm failed (fail-open, keyword-only fallback): ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

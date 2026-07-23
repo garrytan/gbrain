@@ -98,16 +98,18 @@ describe('zeroEntropyCompatFetch — OOM caps', () => {
     expect(src).toMatch(/MAX_ZEROENTROPY_RESPONSE_BYTES\s*=\s*256\s*\*\s*1024\s*\*\s*1024/);
   });
 
-  test('Layer 1: Content-Length pre-check before resp.clone().json()', async () => {
+  test('Layer 1: Content-Length pre-check before the body is read', async () => {
     const src = await Bun.file(GATEWAY_PATH).text();
     // Find the zeroEntropyCompatFetch block bounds, then assert ordering
-    // within it (mirroring the voyage cap test pattern).
+    // within it (mirroring the voyage cap test pattern). #1610 moved the
+    // body read from `resp.clone().json()` to a single `resp.text()` (bun
+    // < 1.1.27 truncates clone()d bodies, oven-sh/bun#6348).
     const zeFetchStart = src.indexOf('const zeroEntropyCompatFetch');
     expect(zeFetchStart).toBeGreaterThan(0);
-    const block = src.slice(zeFetchStart, zeFetchStart + 8000);
+    const block = src.slice(zeFetchStart, zeFetchStart + 9000);
 
     const preCheckIdx = block.indexOf("resp.headers.get('content-length')");
-    const jsonParseIdx = block.indexOf('await resp.clone().json()');
+    const jsonParseIdx = block.indexOf('const bodyText = await resp.text()');
     expect(preCheckIdx).toBeGreaterThan(0);
     expect(jsonParseIdx).toBeGreaterThan(0);
     // The pre-check MUST appear before the JSON parse — Voyage's lesson
