@@ -42,6 +42,21 @@ describe('recipe: zhipu', () => {
     );
   });
 
+  test('chat + expansion touchpoints declared (GLM via openai-compat)', () => {
+    const r = getRecipe('zhipu')!;
+    expect(r.touchpoints.chat).toBeDefined();
+    expect(r.touchpoints.chat!.models).toContain('glm-4.7');
+    expect(r.touchpoints.chat!.supports_tools).toBe(true);
+    // Subagent loops stay Anthropic-direct (isAnthropicProvider gate).
+    expect(r.touchpoints.chat!.supports_subagent_loop).toBe(false);
+    expect(r.touchpoints.chat!.supports_prompt_cache ?? false).toBe(false);
+    // No structured-output opt-in: expand() must route zhipu through the
+    // schemaless generateText path (#2372).
+    expect(r.touchpoints.chat!.supports_structured_outputs ?? false).toBe(false);
+    expect(r.touchpoints.expansion).toBeDefined();
+    expect(r.touchpoints.expansion!.models).toContain('glm-4.7-flash');
+  });
+
   test('default auth: ZHIPUAI_API_KEY set → "Bearer <key>"', () => {
     const r = getRecipe('zhipu')!;
     const auth = defaultResolveAuth(r, { ZHIPUAI_API_KEY: 'fake-zhipu-key' }, 'embedding');

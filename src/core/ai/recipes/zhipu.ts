@@ -34,7 +34,22 @@ export const zhipu: Recipe = {
       max_batch_tokens: 8192,
       chars_per_token: 2,
     },
+    expansion: {
+      models: ['glm-4.7', 'glm-4.7-flash'],
+      cost_per_1m_tokens_usd: 0.15,
+      price_last_verified: '2026-05-29',
+    },
+    chat: {
+      models: ['glm-4.7', 'glm-4.7-flash', 'glm-5.1', 'glm-5-turbo'],
+      supports_tools: true,
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      max_context_tokens: 200000,
+      cost_per_1m_input_usd: 0.5,
+      cost_per_1m_output_usd: 2.0,
+      price_last_verified: '2026-05-29',
+    },
   },
   setup_hint:
-    'Get an API key at https://open.bigmodel.cn/, then `export ZHIPUAI_API_KEY=...`',
+    'Get an API key at https://open.bigmodel.cn/ or https://z.ai/, then `export ZHIPUAI_API_KEY=...`',
 };

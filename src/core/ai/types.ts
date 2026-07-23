@@ -233,8 +233,24 @@ export interface ChatTouchpoint {
    * Strictly stronger than supports_tools.
    */
   supports_subagent_loop: boolean;
-  /** Anthropic-style ephemeral prompt cache markers honored. */
-  supports_prompt_cache?: boolean;
+  /**
+   * Anthropic-style ephemeral prompt cache markers honored. Static booleans
+   * cover native providers; openai-compatible aggregators may decide per
+   * model id (OpenRouter forwards Anthropic cache_control on
+   * `anthropic/claude-*` routes but not for every routed model family).
+   */
+  supports_prompt_cache?: boolean | ((modelId: string) => boolean);
+  /**
+   * Backend honors OpenAI structured outputs (a strict `json_schema`
+   * response_format). Threaded into `createOpenAICompatible`'s
+   * `supportsStructuredOutputs` so query expansion's `generateObject` sends a
+   * real schema (strict validation) instead of degrading to schemaless JSON.
+   * Default false: an openai-compatible recipe may front arbitrary backends,
+   * most of which lack strict json_schema support, so `expand()` routes them
+   * through the schemaless text path. Opt in per recipe when the backend is
+   * known to honor it.
+   */
+  supports_structured_outputs?: boolean;
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;
@@ -348,6 +364,15 @@ export interface Recipe {
    */
   compat?: {
     fetch?: typeof fetch;
+    /**
+     * Chat/expansion-only fetch wrapper. Unlike `fetch`, this does NOT
+     * displace the embedding path's asymmetric input_type shim
+     * (`openAICompatAsymmetricFetch`) — use it when only the chat wire
+     * shape needs rewriting (OpenRouter's cache_control lift). A recipe
+     * `fetch` (or `resolveOpenAICompatConfig` fetch) takes precedence on
+     * the chat path when both are present.
+     */
+    chatFetch?: typeof fetch;
   };
   /**
    * v0.32 (D13=A): optional runtime readiness check for local-server
