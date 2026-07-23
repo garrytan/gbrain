@@ -18,8 +18,11 @@
 import { execFileSync } from 'child_process';
 
 /**
- * Resolve the tini binary path, or return an empty string when not on PATH.
- * Resolved once at startup so we don't shell out on every respawn.
+ * Resolve a runnable tini binary path, or return an empty string when no
+ * compatible executable is on PATH. Discovery alone is insufficient: some
+ * container images expose an `/init` (s6-overlay) alias named `tini` which
+ * cannot run outside PID 1. Probe `--version` once at startup, then reuse the
+ * verified path on every respawn.
  */
 export function detectTini(): string {
   try {
@@ -27,11 +30,21 @@ export function detectTini(): string {
     // inherit the current process env by default (Bun snapshots env at
     // startup). Without this, runtime mutations to PATH (including in
     // tests) are invisible to `which`.
-    return execFileSync('which', ['tini'], {
+    const tiniPath = execFileSync('which', ['tini'], {
       encoding: 'utf8',
       timeout: 2000,
       env: process.env,
     }).trim();
+    if (!tiniPath) return '';
+
+    // `which tini` can resolve an unrelated container init shim. Only wrap
+    // workers when the candidate can actually execute as a normal child.
+    execFileSync(tiniPath, ['--version'], {
+      stdio: 'ignore',
+      timeout: 2000,
+      env: process.env,
+    });
+    return tiniPath;
   } catch {
     return '';
   }
