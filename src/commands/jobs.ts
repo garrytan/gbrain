@@ -22,6 +22,21 @@ function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+/** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
+ *  Throws on malformed input (caller should surface the error and exit).
+ *  Clamps to [1, 100] to match the queue-layer clamp in MinionQueue.add.
+ *  Exported for unit tests; the CLI handler at `jobs submit` wraps this
+ *  with process.exit(1) on throw so operators see 'must be positive integer'. */
+export function parseMaxWaitingFlag(args: string[]): number | undefined {
+  const raw = parseFlag(args, '--max-waiting');
+  if (raw === undefined) return undefined;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error('--max-waiting must be a positive integer (will be clamped to [1, 100])');
+  }
+  return Math.max(1, Math.min(100, parsed));
+}
+
 export interface JobsPruneArgs {
   help: boolean;
   dryRun: boolean;
@@ -81,21 +96,6 @@ FLAGS
   --dry-run          Report how many rows would be deleted; do not delete.
   --help, -h         Show this help.
 `);
-}
-
-/** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
- *  Throws on malformed input (caller should surface the error and exit).
- *  Clamps to [1, 100] to match the queue-layer clamp in MinionQueue.add.
- *  Exported for unit tests; the CLI handler at `jobs submit` wraps this
- *  with process.exit(1) on throw so operators see 'must be positive integer'. */
-export function parseMaxWaitingFlag(args: string[]): number | undefined {
-  const raw = parseFlag(args, '--max-waiting');
-  if (raw === undefined) return undefined;
-  const parsed = parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new Error('--max-waiting must be a positive integer (will be clamped to [1, 100])');
-  }
-  return Math.max(1, Math.min(100, parsed));
 }
 
 /** Parse `--max-rss N` (MB). Returns:
