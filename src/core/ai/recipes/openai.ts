@@ -30,7 +30,9 @@ export const openai: Recipe = {
       price_last_verified: '2026-04-20',
     },
     chat: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      // gpt-5 matches the registry alias in model-config.ts:DEFAULT_ALIASES;
+      // gpt-4o/gpt-5.5 are live API models carried in model-pricing.ts (#1607).
+      models: ['gpt-5.2', 'gpt-5.5', 'gpt-5', 'gpt-4o', 'gpt-4o-mini'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,

@@ -44,9 +44,9 @@ export const DEFAULT_DIMENSIONS: string[] = [
  * `--slot-a-model`, `--slot-b-model`, `--slot-c-model` on the CLI.
  */
 export const DEFAULT_SLOTS: SlotConfig[] = [
-  { id: 'A', model: 'openai:gpt-4o' },
-  { id: 'B', model: 'anthropic:claude-opus-4-7' },
-  { id: 'C', model: 'google:gemini-1.5-pro' },
+  { id: 'A', model: 'openai:gpt-5.2' },
+  { id: 'B', model: 'anthropic:claude-opus-4-8' },
+  { id: 'C', model: 'google:gemini-3-pro' },
 ];
 
 export interface SlotConfig {

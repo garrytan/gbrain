@@ -118,10 +118,13 @@ describe('DRIFT GUARD — derived views stay equal to canonical (re-hardcode tri
     for (const id of [
       'openai:gpt-4o',
       'openai:gpt-4o-mini',
+      'openai:gpt-5.2',
       'anthropic:claude-opus-4-7',
+      'anthropic:claude-opus-4-8',
       'anthropic:claude-sonnet-4-6',
       'google:gemini-1.5-pro',
       'google:gemini-2.0-flash',
+      'google:gemini-3-pro',
       'together:meta-llama/Llama-3.3-70B-Instruct-Turbo',
       'deepseek:deepseek-chat',
     ]) {
