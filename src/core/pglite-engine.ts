@@ -5235,25 +5235,35 @@ export class PGLiteEngine implements BrainEngine {
     // most_connected). Both coexist: master's brain_score is the composite
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
     const { rows: [h] } = await this.db.query(`
-      WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      WITH active_pages AS (
+        SELECT p.*
+        FROM pages p
+        JOIN sources s ON s.id = p.source_id
+        WHERE p.deleted_at IS NULL AND COALESCE(s.archived, false) = false
+      ),
+      entity_pages AS (
+        SELECT id, slug FROM active_pages WHERE type IN ('person', 'company')
       )
       SELECT
-        (SELECT count(*) FROM pages) as page_count,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
-          GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
+        (SELECT count(*) FROM active_pages) as page_count,
+        (SELECT count(*) FROM content_chunks cc JOIN active_pages p ON p.id = cc.page_id WHERE cc.embedded_at IS NOT NULL)::float /
+          GREATEST((SELECT count(*) FROM content_chunks cc JOIN active_pages p ON p.id = cc.page_id), 1)::float as embed_coverage,
         0 as stale_pages,
         -- Bug 11 — orphan = islanded (no inbound AND no outbound). The raw
         -- list is filtered in TS using the shared orphan-reporting policy.
         0 as orphan_pages,
         (SELECT count(*) FROM links l
-         WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
+         WHERE l.from_page_id IN (SELECT id FROM active_pages)
+           AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
-        (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(*) FROM content_chunks cc JOIN active_pages p ON p.id = cc.page_id WHERE cc.embedded_at IS NULL) as missing_embeddings,
+        (SELECT count(*) FROM links l WHERE l.from_page_id IN (SELECT id FROM active_pages) AND l.to_page_id IN (SELECT id FROM active_pages)) as link_count,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te WHERE te.page_id IN (SELECT id FROM active_pages)) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
+         WHERE EXISTS (
+           SELECT 1 FROM links l
+           WHERE l.to_page_id = e.id AND l.from_page_id IN (SELECT id FROM active_pages)
+         ))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
@@ -5265,7 +5275,10 @@ export class PGLiteEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
+      JOIN sources s ON s.id = p.source_id
       WHERE p.type IN ('person', 'company')
+        AND p.deleted_at IS NULL
+        AND COALESCE(s.archived, false) = false
       ORDER BY link_count DESC
       LIMIT 5
     `);
@@ -5273,7 +5286,10 @@ export class PGLiteEngine implements BrainEngine {
     const { rows: islandedRows } = await this.db.query(`
       SELECT p.slug
       FROM pages p
-      WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+      JOIN sources s ON s.id = p.source_id
+      WHERE p.deleted_at IS NULL
+        AND COALESCE(s.archived, false) = false
+        AND NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
     `);
 
@@ -5286,10 +5302,9 @@ export class PGLiteEngine implements BrainEngine {
       .filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides)).length;
     const deadLinks = Number(r.dead_links);
     const linkCount = Number(r.link_count);
-    const pagesWithTimeline = Number(r.pages_with_timeline);
+    const timelineCoverage = Number(r.timeline_coverage);
 
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageDensity = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
     const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Bug 11 — per-component points. Sum equals brainScore by construction
@@ -5303,7 +5318,8 @@ export class PGLiteEngine implements BrainEngine {
     // who'd just successfully run init.
     const embedCoverageScore = pageCount === 0 ? 35 : Math.round(embedCoverage * 35);
     const linkDensityScore = pageCount === 0 ? 25 : Math.round(linkDensity * 25);
-    const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineCoverageDensity * 15);
+    // Timeline is meaningful on entity pages, not raw archival documents.
+    const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineCoverage * 15);
     const noOrphansScore = pageCount === 0 ? 15 : Math.round(noOrphans * 15);
     const noDeadLinksScore = pageCount === 0 ? 10 : Math.round(noDeadLinks * 10);
     const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
@@ -5317,7 +5333,7 @@ export class PGLiteEngine implements BrainEngine {
       brain_score: brainScore,
       dead_links: deadLinks,
       link_coverage: Number(r.link_coverage),
-      timeline_coverage: Number(r.timeline_coverage),
+      timeline_coverage: timelineCoverage,
       most_connected: (connected as { slug: string; link_count: number }[]).map(c => ({
         slug: c.slug,
         link_count: Number(c.link_count),

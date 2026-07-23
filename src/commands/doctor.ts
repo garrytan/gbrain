@@ -5849,8 +5849,11 @@ export async function buildChecks(
     // real knowledge entities.
     const eligibleStats = (await engine.executeRaw<{ entities: number; linked_from: number; timeline: number }>(
       `WITH eligible AS (
-        SELECT id FROM pages
+        SELECT p.id FROM pages p
+        JOIN sources s ON s.id = p.source_id
         WHERE type IN ('entity','person','company','organization')
+          AND p.deleted_at IS NULL
+          AND COALESCE(s.archived, false) = false
           AND slug NOT LIKE 'tools/gbrain/test/%'
           AND slug <> 'templates/new-person'
       )
@@ -5933,17 +5936,51 @@ export async function buildChecks(
     const srcId = orphanRatioSourceId;
     const inSource = srcId ? ` in source '${srcId}'` : '';
     const entityCount = (await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization') AND deleted_at IS NULL${srcId ? ' AND source_id = $1' : ''}`,
+      `SELECT COUNT(*)::int AS count
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+       WHERE p.type IN ('entity', 'person', 'company', 'organization')
+         AND p.deleted_at IS NULL
+         AND COALESCE(s.archived, false) = false${srcId ? ' AND p.source_id = $1' : ''}`,
       srcId ? [srcId] : [],
     ))[0]?.count ?? 0;
-    // Brain-wide (no --source): <100 entities is vacuous — small brains
-    // naturally show a high orphan ratio; not actionable signal. Skip.
-    if (entityCount < 100 && !srcId) {
-      checks.push({
-        name: 'orphan_ratio',
-        status: 'ok',
-        message: `Vacuous: ${entityCount} entity pages (<100). Orphan ratio not meaningful at this scale.`,
-      });
+    if (!srcId) {
+      // Brain-wide health uses the canonical islanded-page definition from
+      // getHealth(): no inbound AND no outbound edges, with archived/deleted
+      // sources and policy-excluded convention pages removed. The previous
+      // inbound-only metric marked chronological archives as broken even when
+      // their outgoing entity links were healthy.
+      const health = await engine.getHealth();
+      const ratio = health.page_count > 0 ? health.orphan_pages / health.page_count : 0;
+      const pct = (ratio * 100).toFixed(0);
+      const hint =
+        'Run: gbrain extract links --by-mention, then gbrain orphans for the remaining list; ' +
+        'use policy exclusions only for genuinely isolated convention pages.';
+      if (health.page_count < 100) {
+        checks.push({
+          name: 'orphan_ratio',
+          status: 'ok',
+          message: `Vacuous: ${health.page_count} active pages (<100). Island ratio not meaningful at this scale.`,
+        });
+      } else if (ratio > 0.8) {
+        checks.push({
+          name: 'orphan_ratio',
+          status: 'fail',
+          message: `Orphan ratio ${pct}% (islanded definition: ${health.orphan_pages}/${health.page_count} active pages have neither inbound nor outbound links). ${hint}`,
+        });
+      } else if (ratio > 0.5) {
+        checks.push({
+          name: 'orphan_ratio',
+          status: 'warn',
+          message: `Orphan ratio ${pct}% (islanded definition: ${health.orphan_pages}/${health.page_count} active pages have neither inbound nor outbound links). ${hint}`,
+        });
+      } else {
+        checks.push({
+          name: 'orphan_ratio',
+          status: 'ok',
+          message: `Orphan ratio ${pct}% (islanded definition: ${health.orphan_pages}/${health.page_count} active pages)`,
+        });
+      }
     } else {
       // F7 (Codex): under EXPLICIT --source, an operator deliberately asked
       // about one source — answer it even below 100 entities, with a
