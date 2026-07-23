@@ -1,0 +1,11 @@
+// Routing eval fixtures for skills/obsidian-gbrain-safe-index.
+// Positive cases: intents embed a trigger phrase in natural surrounding context
+// (never verbatim-identical to a trigger — the fixture linter rejects tautologies).
+{"intent": "help me connect Obsidian to gbrain for my notes", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "import my vault to gbrain but skip embeddings for now", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "please sync vault and gbrain after I edit notes", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "run embed gbrain after vault update tonight", "expected_skill": "obsidian-gbrain-safe-index"}
+{"intent": "hey is gbrain synced with my vault right now", "expected_skill": "obsidian-gbrain-safe-index"}
+// Negative cases: related but owned by other skills. Assert NO route to this skill.
+{"intent": "migrate my notes from Notion to gbrain", "expected_skill": null}
+{"intent": "what is on my calendar tomorrow", "expected_skill": null}

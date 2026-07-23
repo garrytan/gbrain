@@ -1,0 +1,10 @@
+// Routing eval fixtures for skills/skill-vault-capture-policy.
+// Positive cases: intents embed a trigger phrase in natural surrounding context
+// (never verbatim-identical to a trigger — the fixture linter rejects tautologies).
+{"intent": "please save this learning to the vault so we keep it", "expected_skill": "skill-vault-capture-policy", "ambiguous_with": ["idea-ingest"]}
+{"intent": "we should capture this skill in Obsidian for reuse", "expected_skill": "skill-vault-capture-policy", "ambiguous_with": ["capture"]}
+{"intent": "can you record this workflow in my notes for next time", "expected_skill": "skill-vault-capture-policy"}
+{"intent": "put this setup change in the vault before we forget", "expected_skill": "skill-vault-capture-policy"}
+// Negative cases: related but owned by other skills or out of scope.
+{"intent": "connect my Obsidian vault to gbrain", "expected_skill": null}
+{"intent": "what is on my calendar tomorrow", "expected_skill": null}
