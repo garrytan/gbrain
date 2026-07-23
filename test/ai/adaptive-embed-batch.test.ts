@@ -445,17 +445,18 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
       console.warn = original;
     }
 
-    // The warning text should match the documented contract.
+    // Every fixed-cap remote recipe now declares max_batch_tokens, so the
+    // startup sweep should be silent for this configuration.
     const contractMatch = warnings.filter(w =>
       w.includes('[ai.gateway]') && w.includes('declares an embedding touchpoint'),
     );
-    expect(contractMatch.length).toBe(1);
+    expect(contractMatch.length).toBe(0);
 
-    // Voyage declares max_batch_tokens → suppressed. OpenAI is the
-    // canonical fast-path recipe → also suppressed by id. Both must be
+    // Voyage and google declare max_batch_tokens → suppressed. OpenAI is
+    // the canonical fast-path recipe → suppressed by id. All must be
     // absent from the warnings.
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
-    expect(warnings.find(w => w.includes('"google"'))).toBeDefined();
+    expect(warnings.find(w => w.includes('"google"'))).toBeUndefined();
   });
 });
