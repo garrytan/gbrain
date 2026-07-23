@@ -422,6 +422,34 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   return {};
 }
 
+/**
+ * Resolve an optional caller-selected source without allowing remote callers
+ * to escape the source scope bound to their credential.
+ */
+export function requestedSourceScopeOpts(
+  ctx: OperationContext,
+  requestedSource: unknown,
+): { sourceId?: string; sourceIds?: string[] } {
+  if (requestedSource === undefined || requestedSource === null || requestedSource === '') {
+    return sourceScopeOpts(ctx);
+  }
+  if (typeof requestedSource !== 'string') {
+    throw new OperationError('invalid_params', 'source must be a string');
+  }
+
+  const allowed = ctx.auth?.allowedSources;
+  if (ctx.remote !== false) {
+    if (allowed && allowed.length > 0) {
+      if (!allowed.includes(requestedSource)) {
+        throw new OperationError('permission_denied', `Source "${requestedSource}" is outside this credential's allowed sources.`);
+      }
+    } else if (ctx.sourceId && requestedSource !== ctx.sourceId) {
+      throw new OperationError('permission_denied', `Source "${requestedSource}" is outside this credential's source scope.`);
+    }
+  }
+  return { sourceId: requestedSource };
+}
+
 export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
   const scope = sourceScopeOpts(ctx);
   if (ctx.remote !== false && scope.sourceId && !scope.sourceIds) {
@@ -1171,6 +1199,7 @@ const list_pages: Operation = {
   name: 'list_pages',
   description: LIST_PAGES_DESCRIPTION,
   params: {
+    source: { type: 'string', description: 'Optional source id. Must remain within the credential source scope for remote callers.' },
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
@@ -1199,7 +1228,7 @@ const list_pages: Operation = {
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
-    const scope = sourceScopeOpts(ctx);
+    const scope = requestedSourceScopeOpts(ctx, p.source);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
@@ -1228,6 +1257,7 @@ const search: Operation = {
   description: SEARCH_DESCRIPTION,
   params: {
     query: { type: 'string', required: true },
+    source: { type: 'string', description: 'Optional source id. Must remain within the credential source scope for remote callers.' },
     limit: { type: 'number', description: '最大结果数（默认 20）' },
     offset: { type: 'number', description: '跳过前 N 条结果（用于分页）' },
   },
@@ -1240,7 +1270,7 @@ const search: Operation = {
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
-      ...sourceScopeOpts(ctx),
+      ...requestedSourceScopeOpts(ctx, p.source),
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;

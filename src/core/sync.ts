@@ -175,7 +175,7 @@ export function isMarkdownFilePath(path: string): boolean {
   return path.endsWith('.md') || path.endsWith('.mdx');
 }
 
-const OFFICE_EXTENSIONS = new Set(['.docx', '.doc', '.wps', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv']);
+const OFFICE_EXTENSIONS = new Set(['.docx', '.doc', '.wps', '.pptx', '.ppt', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv']);
 
 export function isOfficeFilePath(path: string): boolean {
   const lower = path.toLowerCase();

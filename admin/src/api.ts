@@ -94,6 +94,9 @@ export const api = {
   },
   startMarkdownExportRun: (rootPath: string) =>
     apiFetch('/admin/api/export-runs', { method: 'POST', body: JSON.stringify({ rootPath }) }),
+  importSettings: () => apiFetch('/admin/api/import/settings'),
+  saveImportSettings: (thresholdKb: number) =>
+    apiFetch('/admin/api/import/settings', { method: 'POST', body: JSON.stringify({ thresholdKb }) }),
   dreamOverview: () => apiFetch('/admin/api/dream/overview'),
   dreamSettings: () => apiFetch('/admin/api/dream/settings'),
   saveDreamSettings: (body: { outputDir: string; dualWrite: boolean }) =>

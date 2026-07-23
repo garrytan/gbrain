@@ -9,7 +9,7 @@ import {
 } from './lan-mcp-gateway.js';
 import type { SidecarManager } from './sidecar-manager.js';
 
-export type IntegrationClient = 'codebuddy' | 'workbuddy' | 'cursor' | 'claude' | 'codex' | 'qwenpaw';
+export type IntegrationClient = 'codebuddy' | 'workbuddy' | 'cursor' | 'trae' | 'claude' | 'codex' | 'qwenpaw';
 export type CredentialKind = 'api_key' | 'oauth';
 
 export interface IntegrationInfo {
@@ -92,6 +92,7 @@ const CLIENT_META: Record<IntegrationClient, { name: string; path: () => string 
   codebuddy: { name: 'CodeBuddy', path: () => join(homedir(), '.codebuddy', 'mcp.json'), automatic: true },
   workbuddy: { name: 'Workbuddy', path: () => join(homedir(), '.workbuddy', 'mcp.json'), automatic: true },
   cursor: { name: 'Cursor', path: () => join(homedir(), '.cursor', 'mcp.json'), automatic: true },
+  trae: { name: 'Trae', path: () => join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'Trae', 'User', 'mcp.json'), automatic: true },
   claude: { name: 'Claude', path: () => null, automatic: false },
   codex: { name: 'Codex', path: () => join(homedir(), '.codex', 'config.toml'), automatic: true },
   qwenpaw: { name: 'QwenPaw', path: () => qwenPawIntegrationPath(), automatic: true },
@@ -796,7 +797,7 @@ export async function configureIntegration(
   let configured = false;
   let connectionState: IntegrationResult['connectionState'];
 
-  if (client === 'codebuddy' || client === 'workbuddy' || client === 'cursor') {
+  if (client === 'codebuddy' || client === 'workbuddy' || client === 'cursor' || client === 'trae') {
     backup = writeJsonIntegration(path!, sidecar.mcpUrl, token);
     configured = true;
   } else if (client === 'qwenpaw') {

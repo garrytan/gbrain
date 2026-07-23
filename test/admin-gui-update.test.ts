@@ -44,9 +44,35 @@ describe('Admin GUI update contract', () => {
     expect(consoleSource).toContain('className="main-source-current"');
     expect(consoleSource).toContain('className="main-source-purpose"');
     expect(consoleSource).not.toContain('className="main-source-grid"');
-    expect(consoleSource).toContain("{saving ? '正在保存…' : '保存设置'}");
+    expect(consoleSource).toContain('className="dream-output-action-row"');
+    expect(consoleSource).not.toContain('<div className="settings-panel-actions">');
     expect(adminStyles).toContain('.dream-output-setting,');
     expect(adminStyles).toContain('.settings-feedback');
+  });
+
+  test('import options expose a clear data-source action', () => {
+    expect(consoleSource).toContain("{importOptionsOpen ? '收起' : '展开'}");
+    expect(consoleSource).toContain('可选择不同数据源及文件处理方式');
+    expect(consoleSource).toContain('className="import-options-action"');
+    expect(consoleSource).toContain('source.id !== overview.main_source_id');
+    expect(consoleSource).not.toContain('className="worker-option"');
+    expect(consoleSource).toContain('workers: 1');
+    expect(adminStyles).toContain('.import-options-action');
+  });
+
+  test('settings exposes the all-file chunking and vectorization threshold', () => {
+    expect(consoleSource).toContain('function ImportVectorizationSettings()');
+    expect(consoleSource).toContain('默认 500 KB，可设置 100–5000 KB');
+    expect(consoleSource).toContain('适用于所有文件');
+    expect(serveHttpSource).toContain("app.get('/admin/api/import/settings'");
+    expect(serveHttpSource).toContain("app.post('/admin/api/import/settings'");
+  });
+
+  test('Dream local Markdown toggle persists immediately and rolls back on failure', () => {
+    expect(consoleSource).toContain('const saveDualWrite = async (dualWrite: boolean)');
+    expect(consoleSource).toContain('onChange={event => void saveDualWrite(event.target.checked)}');
+    expect(consoleSource).toContain("setMessage(dualWrite ? '已开启本地 Markdown 写入' : '已关闭本地 Markdown 写入')");
+    expect(consoleSource).toContain('dualWrite: previousValue');
   });
 
   test('dark mode covers code blocks and Dream contrast-sensitive content', () => {

@@ -1495,6 +1495,36 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  const importSettingsView = async (overrideBytes?: number) => {
+    const stored = await engine.getConfig('content_sanity.bytes_block');
+    const parsed = Number.parseInt(stored ?? '', 10);
+    const bytesBlock = overrideBytes ?? (Number.isFinite(parsed) && parsed > 0 ? parsed : 500_000);
+    return { bytesBlock, thresholdKb: Math.round(bytesBlock / 1000), minKb: 100, maxKb: 5000 };
+  };
+
+  app.get('/admin/api/import/settings', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await importSettingsView());
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'import_settings_failed' });
+    }
+  });
+
+  app.post('/admin/api/import/settings', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
+    const thresholdKb = Number(req.body?.thresholdKb);
+    if (!Number.isInteger(thresholdKb) || thresholdKb < 100 || thresholdKb > 5000) {
+      res.status(400).json({ error: 'vectorization_threshold_kb_must_be_between_100_and_5000' });
+      return;
+    }
+    try {
+      const bytesBlock = thresholdKb * 1000;
+      await engine.setConfig('content_sanity.bytes_block', String(bytesBlock));
+      res.json(await importSettingsView(bytesBlock));
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'save_import_settings_failed' });
+    }
+  });
+
   app.get('/admin/api/dream/overview', requireAdmin, async (_req: Request, res: Response) => {
     try {
       res.json(await getAdminDreamOverview(engine, config, VERSION));

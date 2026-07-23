@@ -252,6 +252,18 @@ describe('desktop integration config merging', () => {
     }
   });
 
+  test('uses the Trae user-level MCP config and preserves other servers', () => {
+    const path = integrationConfigPath('trae');
+    expect(path).toEndWith(join('Trae', 'User', 'mcp.json'));
+
+    const configPath = tempFile('mcp.json');
+    writeFileSync(configPath, JSON.stringify({ mcpServers: { existing: { command: 'keep-me' } } }));
+    writeJsonIntegration(configPath, 'http://127.0.0.1:3131/mcp', 'secret', dirname(configPath));
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8'));
+    expect(parsed.mcpServers.existing.command).toBe('keep-me');
+    expect(parsed.mcpServers.pmbrain.headers.Authorization).toBe('Bearer secret');
+  });
+
   test('uses Workbuddy mcp.json path', () => {
     const path = integrationConfigPath('workbuddy');
     expect(path).toEndWith(join('.workbuddy', 'mcp.json'));

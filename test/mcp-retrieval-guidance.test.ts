@@ -4,6 +4,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 const emptySearchEngine = {
   kind: 'postgres',
   searchKeyword: async () => [],
+  listPages: async () => [],
   getPage: async () => null,
 } as any;
 
@@ -12,19 +13,48 @@ function parseFirstText(result: Awaited<ReturnType<typeof dispatchToolCall>>): a
 }
 
 describe('MCP retrieval guidance and input diagnostics', () => {
-  test('rejects unknown search parameters instead of silently ignoring source', async () => {
+  test('accepts the same source selector for local and shared calls', async () => {
+    const local = await dispatchToolCall(
+      emptySearchEngine,
+      'search',
+      { query: 'Liu Cixin', source: 'duwu' },
+      { remote: false, sourceId: 'default' },
+    );
+    const shared = await dispatchToolCall(
+      emptySearchEngine,
+      'search',
+      { query: 'Liu Cixin', source: 'duwu' },
+      { remote: true, sourceId: 'duwu' },
+    );
+
+    expect(local.isError).toBeUndefined();
+    expect(shared.isError).toBeUndefined();
+  });
+
+  test('list_pages accepts the same source selector in shared mode', async () => {
+    const result = await dispatchToolCall(
+      emptySearchEngine,
+      'list_pages',
+      { source: 'duwu' },
+      { remote: true, sourceId: 'duwu' },
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(parseFirstText(result)).toEqual([]);
+  });
+
+  test('rejects a shared source selector outside the credential scope', async () => {
     const result = await dispatchToolCall(
       emptySearchEngine,
       'search',
-      { query: '刘慈欣', source: 'duwu' },
-      { remote: true },
+      { query: 'Liu Cixin', source: 'private' },
+      { remote: true, sourceId: 'duwu' },
     );
 
     expect(result.isError).toBe(true);
     const body = parseFirstText(result);
-    expect(body.error).toBe('invalid_params');
-    expect(body.message).toContain('Unknown parameter: source');
-    expect(body.message).toContain('Allowed parameters: query, limit, offset');
+    expect(body.error).toBe('permission_denied');
+    expect(body.message).toContain('outside this credential');
   });
 
   test('rejects Unicode replacement characters with an actionable UTF-8 error', async () => {

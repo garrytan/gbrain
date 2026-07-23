@@ -44,6 +44,18 @@ async function writeDocx(path: string, paragraphs: string[]): Promise<void> {
   writeFileSync(path, bytes);
 }
 
+async function writePptx(path: string, slides: string[][]): Promise<void> {
+  const zip = new JSZip();
+  slides.forEach((lines, index) => {
+    const body = lines.map(text => `<a:p><a:r><a:t>${text}</a:t></a:r></a:p>`).join('');
+    zip.file(
+      `ppt/slides/slide${index + 1}.xml`,
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree>${body}</p:spTree></p:cSld></p:sld>`,
+    );
+  });
+  writeFileSync(path, await zip.generateAsync({ type: 'uint8array' }));
+}
+
 function writePdf(path: string, text: string): void {
   const escaped = text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
   const objects = [
@@ -98,7 +110,8 @@ describe('Office import', () => {
     expect(isOfficeFilePath('docs/report.pdf')).toBe(true);
     expect(isOfficeFilePath('docs/sheet.xlsx')).toBe(true);
     expect(isOfficeFilePath('docs/sheet.xls')).toBe(true);
-    expect(isOfficeFilePath('docs/slides.pptx')).toBe(false);
+    expect(isOfficeFilePath('docs/slides.pptx')).toBe(true);
+    expect(isOfficeFilePath('docs/legacy.ppt')).toBe(true);
   });
 
   test('extracts paragraphs from a docx file', async () => {
@@ -109,6 +122,18 @@ describe('Office import', () => {
 
     expect(text).toContain('First paragraph');
     expect(text).toContain('Second paragraph');
+  });
+
+  test('extracts slides from a pptx file in slide order', async () => {
+    const filePath = join(tmp, 'roadmap.pptx');
+    await writePptx(filePath, [['Roadmap 2026', 'Launch plan'], ['Risks', 'Budget review']]);
+
+    const text = await extractOfficeText(filePath);
+
+    expect(text).toContain('## Slide 1');
+    expect(text).toContain('Roadmap 2026');
+    expect(text).toContain('## Slide 2');
+    expect(text.indexOf('Roadmap 2026')).toBeLessThan(text.indexOf('Budget review'));
   });
 
   test('extracts text from a pdf file', async () => {
@@ -177,6 +202,25 @@ describe('Office import', () => {
     expect(storedPage.source_path).toBe('docs/plan.xlsx');
     expect(storedPage.frontmatter.source_format).toBe('xlsx');
     expect(storedPage.compiled_truth).toContain('Import PDF');
+  });
+
+  test('imports PowerPoint through the markdown chunking pipeline', async () => {
+    const filePath = join(tmp, 'roadmap.pptx');
+    await writePptx(filePath, [['Roadmap 2026', 'Launch plan'], ['Risks', 'Budget review']]);
+    let storedPage: any;
+    const engine = mockEngine({
+      putPage: (_slug: string, page: any) => {
+        storedPage = page;
+        return Promise.resolve(null);
+      },
+    });
+
+    const result = await importOfficeFile(engine, filePath, 'docs/roadmap.pptx', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.chunks).toBeGreaterThan(0);
+    expect(storedPage.frontmatter.source_format).toBe('pptx');
+    expect(storedPage.compiled_truth).toContain('Budget review');
   });
 
   test('uses raw file hash as a stable external identity for duplicate detection', async () => {

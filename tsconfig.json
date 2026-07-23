@@ -6,6 +6,8 @@
     "types": ["bun-types"],
     "strict": true,
     "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false,
     "noEmit": true,
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,

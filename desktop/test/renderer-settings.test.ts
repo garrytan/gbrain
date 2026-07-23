@@ -177,6 +177,7 @@ describe('desktop settings renderer contracts', () => {
     expect(preview).toContain('getSharedAccess: async');
     expect(preview).toContain('createSharedIntegration: async');
     expect(preview).toContain('revokeSharedIntegration: async');
+    expect(preview).toContain("id: 'trae', name: 'Trae'");
     expect(preview).toContain("id: 'qwenpaw', name: 'QwenPaw'");
     expect(preview).toContain('drivers\\\\mcp\\\\pmbrain.yaml');
   });

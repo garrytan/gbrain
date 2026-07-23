@@ -19,7 +19,7 @@ import type { BrainEngine } from './engine.ts';
 import { importFromContent, type ImportResult } from './import-file.ts';
 import { isOfficeFilePath, slugifyPath } from './sync.ts';
 
-export const SUPPORTED_OFFICE_EXTS = ['.docx', '.doc', '.wps', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv'] as const;
+export const SUPPORTED_OFFICE_EXTS = ['.docx', '.doc', '.wps', '.pptx', '.ppt', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv'] as const;
 
 const MAX_OFFICE_BYTES = 50 * 1024 * 1024;
 const OFFICE_XML_TEXT_NODES = new Set(['w:t', 'a:t']);
@@ -108,6 +108,27 @@ async function readDocxText(filePath: string): Promise<string> {
   const parsed = parser.parse(await documentXml.async('text'));
   const paragraphs = extractParagraphTexts(parsed);
   return normalizeText(paragraphs.join('\n\n'));
+}
+
+async function readPptxText(filePath: string): Promise<string> {
+  const zip = await JSZip.loadAsync(readFileSync(filePath));
+  const parser = new XMLParser({ ignoreAttributes: true, processEntities: true, trimValues: false });
+  const slideFiles = Object.keys(zip.files)
+    .map(name => ({ name, match: name.match(/^ppt\/slides\/slide(\d+)\.xml$/i) }))
+    .filter((item): item is { name: string; match: RegExpMatchArray } => Boolean(item.match))
+    .sort((left, right) => Number(left.match[1]) - Number(right.match[1]));
+  if (slideFiles.length === 0) throw new Error('PPTX contains no slides.');
+
+  const sections: string[] = [];
+  for (const [index, slideFile] of slideFiles.entries()) {
+    const entry = zip.file(slideFile.name);
+    if (!entry) continue;
+    const parts: string[] = [];
+    collectTextFromNode(parser.parse(await entry.async('text')), parts);
+    const body = normalizeText(parts.join('\n'));
+    if (body) sections.push(`## Slide ${index + 1}\n\n${body}`);
+  }
+  return normalizeText(sections.join('\n\n'));
 }
 
 async function readPdfText(filePath: string): Promise<string> {
@@ -216,6 +237,30 @@ function convertLegacyWordToDocx(filePath: string, officeCommand: string, outDir
   return null;
 }
 
+function convertLegacyPresentationToPptx(filePath: string, officeCommand: string, outDir: string): string | null {
+  execFileSync(officeCommand, ['--headless', '--convert-to', 'pptx', '--outdir', outDir, filePath], {
+    stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,
+  });
+  const expected = join(outDir, `${basename(filePath, extname(filePath))}.pptx`);
+  return existsSync(expected) ? expected : null;
+}
+
+async function readLegacyPresentationText(filePath: string): Promise<string> {
+  const officeCommand = findOfficeCommand();
+  if (officeCommand) {
+    const tmp = mkdtempSync(join(tmpdir(), 'gbrain-office-'));
+    try {
+      const converted = convertLegacyPresentationToPptx(filePath, officeCommand, tmp);
+      if (!converted) throw new Error('LibreOffice conversion did not produce a .pptx file.');
+      return readPptxText(converted);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  if (process.platform === 'win32') return readLegacyPresentationTextViaPowerPointCom(filePath);
+  throw new Error('Legacy PowerPoint import requires LibreOffice/soffice, or Microsoft PowerPoint on Windows.');
+}
+
 async function readLegacyWordText(filePath: string): Promise<string> {
   const officeCommand = findOfficeCommand();
   if (officeCommand) {
@@ -294,10 +339,61 @@ try {
   }
 }
 
+function readLegacyPresentationTextViaPowerPointCom(filePath: string): string {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$path = $env:GBRAIN_OFFICE_FILE
+$powerPoint = $null
+$presentation = $null
+try {
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  $powerPoint = New-Object -ComObject PowerPoint.Application
+  $presentation = $powerPoint.Presentations.Open($path, $true, $true, $false)
+  $sections = New-Object System.Collections.Generic.List[string]
+  for ($slideIndex = 1; $slideIndex -le $presentation.Slides.Count; $slideIndex++) {
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($shape in $presentation.Slides.Item($slideIndex).Shapes) {
+      try {
+        if ($shape.HasTextFrame -and $shape.TextFrame.HasText) {
+          $value = $shape.TextFrame.TextRange.Text.Trim()
+          if ($value) { $lines.Add($value) }
+        }
+      } catch {}
+    }
+    if ($lines.Count -gt 0) { $sections.Add("## Slide $slideIndex" + [Environment]::NewLine + [Environment]::NewLine + ($lines -join [Environment]::NewLine)) }
+  }
+  [Console]::Write($sections -join ([Environment]::NewLine + [Environment]::NewLine))
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 2
+} finally {
+  if ($presentation -ne $null) {
+    try { $presentation.Close() } catch {}
+    try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($presentation) | Out-Null } catch {}
+  }
+  if ($powerPoint -ne $null) {
+    try { $powerPoint.Quit() } catch {}
+    try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($powerPoint) | Out-Null } catch {}
+  }
+}
+`;
+  try {
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodePowerShell(script)], {
+      encoding: 'utf8', timeout: 60_000, env: { ...process.env, GBRAIN_OFFICE_FILE: filePath },
+    });
+    return normalizeText(out);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Legacy PowerPoint import failed: ${message}`);
+  }
+}
+
 export async function extractOfficeText(filePath: string): Promise<string> {
   const ext = extname(filePath).toLowerCase();
   if (ext === '.docx') return readDocxText(filePath);
   if (ext === '.doc' || ext === '.wps') return readLegacyWordText(filePath);
+  if (ext === '.pptx') return readPptxText(filePath);
+  if (ext === '.ppt') return readLegacyPresentationText(filePath);
   if (ext === '.pdf') return readPdfText(filePath);
   if (ext === '.xlsx' || ext === '.xlsm' || ext === '.xls' || ext === '.csv') return readSpreadsheetText(filePath);
   throw new Error(`Unsupported document file type: ${ext}`);

@@ -10,7 +10,7 @@ import { CopyButton } from '../lib/clipboard';
 import { parseMarkdownTable } from '../lib/markdown-table';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  Activity, AlertTriangle, Bot, Boxes, CheckCircle2, Clock3, Cpu, Database,
+  Activity, AlertTriangle, Bot, Boxes, CheckCircle2, ChevronDown, Clock3, Cpu, Database,
   Download, FileText, FolderKanban, FolderTree, History, Layers3, Link2,
   MonitorCog, Plus, RefreshCw, Search, Sparkles, Tags, Upload, type LucideIcon,
 } from 'lucide-react';
@@ -1338,11 +1338,11 @@ function NaturalLanguagePanel({
 
 export function ImportDataPage() {
   const { overview, error } = useOverview();
+  const [importOptionsOpen, setImportOptionsOpen] = useState(false);
   const [sourceId, setSourceId] = useState('');
   const [includeOffice, setIncludeOffice] = useState(true);
   const [includeImages, setIncludeImages] = useState(false);
   const [autoEmbed, setAutoEmbed] = useState(true);
-  const [workers, setWorkers] = useState(1);
 
   return (
     <div className="pm-page knowledge-assistant-page">
@@ -1358,14 +1358,28 @@ export function ImportDataPage() {
       {overview && !overview.llm_enabled && (
         <div className="pm-card pm-warning">搜索综合和 AI 意图识别需要普通模型；正文、路径和附件导入仍可直接使用。</div>
       )}
-      <details className="pm-card import-options">
-        <summary>导入选项 <span>默认写入 {overview?.main_source_id ?? '主知识库源'}</span></summary>
+      <details
+        className="pm-card import-options"
+        open={importOptionsOpen}
+        onToggle={event => setImportOptionsOpen(event.currentTarget.open)}
+      >
+        <summary>
+          <span className="import-options-copy">
+            <b>导入选项</b>
+            <small>可选择不同数据源及文件处理方式</small>
+          </span>
+          <span className="import-options-current">默认写入 {overview?.main_source_id ?? '主知识库源'}</span>
+          <span className="import-options-action">
+            {importOptionsOpen ? '收起' : '展开'}
+            <ChevronDown aria-hidden="true" />
+          </span>
+        </summary>
         <div className="import-option-grid">
           <label>
             <span>写入位置</span>
             <select value={sourceId} onChange={event => setSourceId(event.target.value)}>
               <option value="">主知识库源（{overview?.main_source_id ?? '自动'}）</option>
-              {overview?.sources.filter(source => !source.archived).map(source => (
+              {overview?.sources.filter(source => !source.archived && source.id !== overview.main_source_id).map(source => (
                 <option key={source.id} value={source.id}>{sourceLabel(source)}</option>
               ))}
             </select>
@@ -1373,10 +1387,9 @@ export function ImportDataPage() {
           <label><input type="checkbox" checked={includeOffice} onChange={event => setIncludeOffice(event.target.checked)} /> Office / PDF / Excel</label>
           <label><input type="checkbox" checked={includeImages} onChange={event => setIncludeImages(event.target.checked)} /> 图片 / 扫描件</label>
           <label><input type="checkbox" checked={autoEmbed} onChange={event => setAutoEmbed(event.target.checked)} /> 导入后向量化</label>
-          <label className="worker-option"><span>并行任务</span><input type="number" min={1} max={8} value={workers} onChange={event => setWorkers(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></label>
         </div>
       </details>
-      <NaturalLanguagePanel importOptions={{ sourceId: sourceId || undefined, includeOffice, includeImages, autoEmbed, workers }} />
+      <NaturalLanguagePanel importOptions={{ sourceId: sourceId || undefined, includeOffice, includeImages, autoEmbed, workers: 1 }} />
     </div>
   );
 }
@@ -2281,6 +2294,29 @@ function DreamSettings() {
     }
   };
 
+  const saveDualWrite = async (dualWrite: boolean) => {
+    const outputDir = settings.outputDir.trim();
+    if (!outputDir) {
+      setError('请先填写 Dream 输出目录');
+      return;
+    }
+    const previousValue = settings.dualWrite;
+    setSettings(current => ({ ...current, dualWrite }));
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const saved = await api.saveDreamSettings({ outputDir, dualWrite }) as DreamSettingsValue;
+      setSettings(current => ({ ...current, ...saved }));
+      setMessage(dualWrite ? '已开启本地 Markdown 写入' : '已关闭本地 Markdown 写入');
+    } catch (nextError) {
+      setSettings(current => ({ ...current, dualWrite: previousValue }));
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const outputIsAbsolute = /^[A-Za-z]:[\\/]/.test(settings.outputDir)
     || /^\\\\/.test(settings.outputDir)
     || settings.outputDir.startsWith('/');
@@ -2301,20 +2337,22 @@ function DreamSettings() {
             <p className="pm-hint">设置 Dream 生成内容的本地保存位置，以及是否同时保留 Markdown 文件。</p>
           </div>
         </div>
-        <button className="pm-primary" onClick={() => void save()} disabled={loading || saving}>
-          {saving ? '正在保存…' : '保存设置'}
-        </button>
       </div>
       <div className="dream-settings-grid">
         <div className="dream-output-setting">
           <label htmlFor="dream-output-dir">Dream 输出目录（相对目录或完整路径）</label>
-          <input
-            id="dream-output-dir"
-            value={settings.outputDir}
-            onChange={event => setSettings(current => ({ ...current, outputDir: event.target.value }))}
-            placeholder="output"
-            disabled={loading || saving}
-          />
+          <div className="dream-output-action-row">
+            <input
+              id="dream-output-dir"
+              value={settings.outputDir}
+              onChange={event => setSettings(current => ({ ...current, outputDir: event.target.value }))}
+              placeholder="output"
+              disabled={loading || saving}
+            />
+            <button className="pm-primary" onClick={() => void save()} disabled={loading || saving}>
+              {saving ? '正在保存…' : '保存设置'}
+            </button>
+          </div>
           <div className="dream-output-preview">
             <span>默认 Dream 目录</span>
             <code>{settings.defaultBrainDir ?? '尚未配置本地知识库目录'}</code>
@@ -2335,11 +2373,79 @@ function DreamSettings() {
             id="dream-dual-write"
             type="checkbox"
             checked={settings.dualWrite}
-            onChange={event => setSettings(current => ({ ...current, dualWrite: event.target.checked }))}
+            onChange={event => void saveDualWrite(event.target.checked)}
             disabled={loading || saving}
           />
         </label>
       </div>
+      {(message || error) && <div className="settings-feedback" aria-live="polite">
+        {message && <span className="pm-ok">{message}</span>}
+        {error && <span className="pm-error-text">{error}</span>}
+      </div>}
+    </section>
+  );
+}
+
+interface ImportSettingsValue {
+  thresholdKb: number;
+  minKb: number;
+  maxKb: number;
+}
+
+function ImportVectorizationSettings() {
+  const [value, setValue] = useState<ImportSettingsValue>({ thresholdKb: 500, minKb: 100, maxKb: 5000 });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void api.importSettings()
+      .then(next => setValue(next as ImportSettingsValue))
+      .catch(nextError => setError(nextError instanceof Error ? nextError.message : String(nextError)));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const saved = await api.saveImportSettings(value.thresholdKb) as ImportSettingsValue;
+      setValue(saved);
+      setMessage('切片与向量化上限已保存');
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="pm-card import-vector-settings settings-panel">
+      <div className="settings-panel-title">
+        <span className="settings-panel-icon"><Database /></span>
+        <div>
+          <h2>导入切片与向量化</h2>
+          <p>适用于所有文件。正文超过此上限时仍会保留，但不会切片和向量化，并会明确提示原因。</p>
+        </div>
+      </div>
+      <div className="import-vector-setting-row">
+        <label htmlFor="vectorization-threshold">最大正文大小</label>
+        <input
+          id="vectorization-threshold"
+          type="number"
+          min={value.minKb}
+          max={value.maxKb}
+          step={100}
+          value={value.thresholdKb}
+          onChange={event => setValue(current => ({ ...current, thresholdKb: Number(event.target.value) || current.minKb }))}
+          disabled={saving}
+        />
+        <span>KB</span>
+        <button className="pm-primary" onClick={() => void save()} disabled={saving || value.thresholdKb < value.minKb || value.thresholdKb > value.maxKb}>
+          {saving ? '正在保存…' : '保存设置'}
+        </button>
+      </div>
+      <p className="pm-hint">默认 500 KB，可设置 100–5000 KB。上限越大，切片和向量化耗时越长，也会增加内存、模型调用量和 API 消耗。该项不限制原文件上传大小。</p>
       {(message || error) && <div className="settings-feedback" aria-live="polite">
         {message && <span className="pm-ok">{message}</span>}
         {error && <span className="pm-error-text">{error}</span>}
@@ -2394,6 +2500,7 @@ export function SettingsPage({
         <MainSourceSettings overview={overview} onSaved={reload} />
       </div>
       <DreamSettings />
+      <ImportVectorizationSettings />
       <SourceManagementSettings />
       <MarkdownExportSettings />
 

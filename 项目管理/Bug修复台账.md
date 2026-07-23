@@ -1,5 +1,23 @@
 # Bug 修复台账
 
+## 2026-07-23 共享 MCP 数据源调用与 Admin 设置交互修复
+
+- 时间：2026-07-23
+- 版本号：PMBrain 1.1.48；PMBrain Desktop 1.0.76
+- 标题：修复共享模式拒绝 source、数据源重复显示和设置状态未落盘
+- 描述：共享客户端调用 `search`、`list_pages` 时因操作契约未声明 `source` 被拒绝；知识工作台又把主源和普通源列表重复展示，并暴露缺少用户意义的并行任务输入；Dream 本地 Markdown 开关只改页面状态，离开后恢复原值；根项目类型检查还被两个 Skill 测试缺少 `.mjs` 声明阻断。现统一 operation 参数契约并保持凭证越权校验，过滤主源重复项、固定安全的单任务导入、开关即时保存失败回滚，补齐 `.mjs` 模块解析配置并调整保存按钮位置。
+- 是否完成：是
+- 最终结果：共享与本地模式以同一方式指定 source，越权 source 仍明确拒绝；页面仅显示一个主源、入口只显示“展开/收起”、Dream 开关重新进入仍保持选择；根项目全量 TypeScript 检查恢复通过。
+
+## 2026-07-23 Admin 本地 Markdown 开关未即时保存修复
+
+- 时间：2026-07-23
+- 版本号：PMBrain 1.1.47
+- 标题：修复关闭“写入本地 Markdown”后重新进入页面又恢复开启
+- 描述：原开关只修改 React 页面内状态，只有再次点击右上角“保存设置”才写入已有 Dream 设置接口；用户切换后直接离开页面时未落盘。现改为开关切换即调用原设置接口保存，成功后给出明确反馈，失败时回滚到原状态并显示原生错误。
+- 是否完成：是
+- 最终结果：开关关闭或开启后立即持久化，重新进入设置页保持用户选择；输出目录仍由原“保存设置”按钮统一保存。未修改 CLI、Dream 核心执行逻辑、数据库 schema、知识库数据或原始资料。
+
 ## 2026-07-21 Admin 撤销 Agent 后名称输入再次失焦与 Dream 向量化参数误导修复
 
 - 时间：2026-07-21
@@ -712,6 +730,7 @@
 - 解决方案：改用 Docker Postgres 引擎（`pgvector/pgvector:pg16` 容器 + `gbrain init --url`），绕过 PGLite 路径。
 - 是否完成：是
 - 最终结果：Docker Postgres 方案成功运行，Schema 107 版全部迁移通过。
+
 ## 2026-07-03 Dream 会议文件夹只处理 1 份 transcript
 
 - 时间：2026-07-03
@@ -722,6 +741,7 @@
 - 解决方案：显式输入文件夹时跳过普通 significance filter，全部可读 transcript 都进入综合处理；允许写入 `wiki/meetings/*`；synthesize 子任务提示词要求会议 transcript 先写会议纪要页，再额外沉淀观点。
 - 是否完成：是
 - 最终结果：dry-run 验证 `D:\LenovoSoftstore\huiyijilu` 从 “1 of 12” 修复为 “10 of 12 transcripts would synthesize”；其中 12 个文件包含 10 份唯一 transcript，2 份重复路径会在 `duplicate_skips` 中展示并跳过。
+
 ## 2026-07-03 Dream 显式输入缺少 AI 会话整理产物
 
 - 时间：2026-07-03
@@ -743,6 +763,7 @@
 - 解决方案：新增共享 allow-list loader，显式规则文件优先；缺失或旧格式时，回退到打包内置的 canonical `_brain-filing-rules.json`，并合并 active schema pack 派生路径；synthesize 和 patterns 共用该 loader。
 - 是否完成：是
 - 最终结果：重建桌面 sidecar 后，在无 `skills` 文件夹的临时工作目录中 dry-run `C:\Users\zhengyunhui\.claude\projects`，结果为 `dry-run: 19 of 20 transcripts would synthesize`，不再报 `NO_ALLOWLIST`。
+
 ## 2026-07-04 Dream system skill 初始化链路补强
 
 - 时间：2026-07-04
@@ -877,6 +898,7 @@
 - 解决方案：同步 PMBrain 契约与测试预期，补齐 Skill 元数据和 resolver 歧义，隔离串行测试，保证迁移 dry-run 无副作用，修正 Heavy Tests 初始化和日志保留，统一 llms 输入行尾，补齐 embedding 维度对齐模块、Admin 嵌入资产及回归测试，并将 Admin 路由测试改为整组复用一次冷启动服务。
 - 是否完成：是
 - 最终结果：严格 resolver 通过；Skill 合规测试 264 项通过；CI 相关组合测试通过，迁移、品牌契约、OAuth、公开导出、阶段覆盖、Admin 意图和生成文件均有回归验证。Heavy Tests 的数据库初始化失败根因已修正，等待 GitHub Actions 在 Linux/Postgres 环境复验。
+
 ## 2026-07-11 Dream 会议原子提取、模型配置漂移与日志品牌修复
 
 - 时间：2026-07-11
