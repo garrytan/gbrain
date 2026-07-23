@@ -2438,6 +2438,23 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    // Provenance fallback for chunks that don't carry an explicit `model`:
+    // resolve the model the gateway ACTUALLY uses at runtime, not the
+    // compile-time DEFAULT_EMBEDDING_MODEL constant. Callers like `embed`
+    // build ChunkInputs without a `model` field (src/commands/embed.ts), so
+    // the old `chunk.model || DEFAULT_EMBEDDING_MODEL` fallback stamped the
+    // hardcoded default (e.g. zeroentropyai:zembed-1) onto rows whose vectors
+    // were produced by a different, config-resolved model — corrupting the
+    // provenance that signature-drift staleness + dim-migration logic trust.
+    // Mirrors the resolve-then-fallback pattern used for schema sizing above.
+    let resolvedModel: string = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const gw = await import('./ai/gateway.ts');
+      resolvedModel = gw.getEmbeddingModel() || resolvedModel;
+    } catch {
+      // Gateway unconfigured (unit tests / pre-connect): keep the default.
+    }
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -2467,7 +2484,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null,
+        chunk.model || resolvedModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,

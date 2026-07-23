@@ -216,6 +216,44 @@ describe('hybridSearch + resolver — unknown column at entry (D11)', () => {
   });
 });
 
+describe('upsertChunks — model provenance uses gateway-resolved model, not compiled default', () => {
+  // Regression (zbrain-rfi): when a caller builds ChunkInputs without an
+  // explicit `model` (as src/commands/embed.ts does), the engine used to
+  // stamp the compile-time DEFAULT_EMBEDDING_MODEL ('zeroentropyai:zembed-1')
+  // onto content_chunks.model — even though the vector was produced by the
+  // config-resolved model. That corrupted provenance the signature-drift +
+  // dim-migration logic trusts. The engine must fall back to the model the
+  // gateway ACTUALLY resolves at write time.
+  test('unspecified chunk.model records the resolved model, not zeroentropyai:zembed-1', async () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-test' },
+    });
+
+    await engine.putPage('docs/provenance-page', {
+      type: 'concept',
+      title: 'Provenance test page',
+      compiled_truth: 'Chunk whose model column must reflect the resolved model.',
+    });
+    // No `model` field on the input — the write-side fallback must fill it.
+    await engine.upsertChunks('docs/provenance-page', [
+      { chunk_index: 0, chunk_text: 'provenance chunk', chunk_source: 'compiled_truth' },
+    ]);
+
+    const rows = await engine.executeRaw<{ model: string }>(
+      `SELECT cc.model FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = 'docs/provenance-page'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].model).toBe('openai:text-embedding-3-large');
+    expect(rows[0].model).not.toBe('zeroentropyai:zembed-1');
+
+    resetGateway();
+  });
+});
+
 describe('buildVectorCastFragment — engine SQL composer (D3)', () => {
   test('vector descriptor emits $1::vector', () => {
     const r: ResolvedColumn = {
