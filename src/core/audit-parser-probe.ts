@@ -37,7 +37,13 @@ export function readRecentParserProbeEvents(
   days = 7,
   now: Date = new Date(),
 ): ParserProbeAuditEvent[] {
-  return writer.readRecent(days, now);
+  // Chronological order (oldest → newest). The shared reader walks the
+  // CURRENT week's file first, then the previous week's, so without sorting
+  // the array tail is the OLDEST in-window event whenever last week's file
+  // has entries — and doctor's "latest" (which reads the tail) reported a
+  // days-old run while counts included the newest one.
+  return writer.readRecent(days, now)
+    .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
 
 /** Exposed for tests pinning the rotation edge cases. */
