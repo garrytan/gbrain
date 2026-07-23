@@ -995,6 +995,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
+  // Issue #1493: any-dir exact-path wikilink resolution (default ON; this
+  // key is the documented escape hatch, so `config set` must accept it).
+  'link_resolution.any_dir_exact_path',
   // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.

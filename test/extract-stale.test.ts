@@ -188,7 +188,8 @@ describe('gbrain extract --stale', () => {
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) advises [Acme](companies/acme).'));
     // Microsecond-precision updated_at, recent (after LINK_EXTRACTOR_VERSION_TS) so the
     // version arm doesn't fire — the edited arm is what must clear.
-    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-06-02 08:18:58.999166+00'`);
+    // (#1493: fixture date advanced past the bumped watermark.)
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-08-02 08:18:58.999166+00'`);
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(2);
 
     await runExtract(engine, ['--stale']);
@@ -314,5 +315,137 @@ describe('gbrain extract --stale', () => {
     }
     expect(exited).toBe(true);
     expect(msg).toContain('DB-source only');
+  });
+});
+
+// ─── Issue #1493 (codex P2): any-dir links + unresolved surfacing ────
+
+describe('extract --stale: any-dir exact-path wikilinks (#1493)', () => {
+  test('creates the edge for an existing any-dir target', async () => {
+    await engine.putPage('janus/real', { type: 'concept', title: 'Real', compiled_truth: 'The target.', timeline: '' });
+    await engine.putPage('concepts/note', { type: 'concept', title: 'Note', compiled_truth: 'See [[janus/real]].', timeline: '' });
+
+    await runExtract(engine, ['--stale']);
+
+    const links = await engine.getLinks('concepts/note');
+    expect(links.some(l => l.to_slug === 'janus/real')).toBe(true);
+  });
+
+  test('misses are surfaced in the --json sweep summary, not silently dropped', async () => {
+    await engine.putPage('concepts/note', {
+      type: 'concept', title: 'Note',
+      compiled_truth: 'See [[janus/never-existed]] and [[janus/also-gone]].', timeline: '',
+    });
+
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as any;
+    try {
+      await runExtract(engine, ['--stale', '--json']);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const done = lines
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l.trim()))
+      .find(o => o.action === 'extract_stale_done');
+    expect(done).toBeDefined();
+    expect(done.unresolved_count).toBe(2);
+    expect(done.unresolved_refs).toContainEqual({ field: 'wikilink', name: 'janus/never-existed' });
+    expect(done.unresolved_refs).toContainEqual({ field: 'wikilink', name: 'janus/also-gone' });
+    // And no ghost edges were written.
+    expect((await engine.getLinks('concepts/note')).length).toBe(0);
+  });
+
+  test('clean sweep reports unresolved_count 0 with no unresolved_refs key', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as any;
+    try {
+      await runExtract(engine, ['--stale', '--json']);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const done = lines
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l.trim()))
+      .find(o => o.action === 'extract_stale_done');
+    expect(done).toBeDefined();
+    expect(done.unresolved_count).toBe(0);
+    expect(done.unresolved_refs).toBeUndefined();
+  });
+});
+
+// ─── Issue #1493 (codex P2, round 2): per-page-source resolution domain ──
+
+describe('extract --stale: per-source resolution domain (#1493 round 2)', () => {
+  test('alpha page linking a beta-only target records the miss (no silent drop, no cross-source edge)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('alpha', 'alpha'), ('beta', 'beta')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[janus/foreign]].', ''),
+         ('janus/foreign', 'beta', 'concept', 'Foreign', 'x', '')`,
+    );
+
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as any;
+    try {
+      await runExtract(engine, ['--stale', '--json']);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const done = lines
+      .filter(l => l.trim().startsWith('{'))
+      .map(l => JSON.parse(l.trim()))
+      .find(o => o.action === 'extract_stale_done');
+    expect(done).toBeDefined();
+    // The alpha page's resolution domain is alpha ∪ default — the beta-only
+    // target is a MISS and must be recorded, not silently dropped after
+    // passing an unscoped existence check.
+    expect(done.unresolved_refs ?? []).toContainEqual({ field: 'wikilink', name: 'janus/foreign' });
+    const linkRows = await engine.executeRaw<{ n: string }>(`SELECT COUNT(*)::text AS n FROM links`);
+    expect(Number(linkRows[0]?.n ?? 0)).toBe(0);
+  });
+
+  test('alpha page linking a default-source target resolves via the default overlay', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('alpha', 'alpha')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('concepts/note', 'alpha', 'concept', 'Note', 'See [[janus/shared]].', ''),
+         ('janus/shared', 'default', 'concept', 'Shared', 'x', '')`,
+    );
+
+    await runExtract(engine, ['--stale']);
+
+    const rows = await engine.executeRaw<{ to_slug: string; to_source: string }>(
+      `SELECT t.slug AS to_slug, t.source_id AS to_source
+         FROM links l JOIN pages t ON l.to_page_id = t.id`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].to_slug).toBe('janus/shared');
+    expect(rows[0].to_source).toBe('default');
   });
 });

@@ -36,7 +36,8 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
+  extractFrontmatterLinks, isAnyDirExactPathEnabled, isGlobalBasenameEnabled,
+  LINK_EXTRACTOR_VERSION_TS, type SlugResolver,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
   type UnresolvedFrontmatterRef, type LinkCandidate,
@@ -126,7 +127,15 @@ export function resolveCandidateSources(
     : (fromSources.includes('default') ? 'default' : fromSources[0]);
   const targetSources = slugToSources.get(c.targetSlug) ?? [];
   let toSourceId: string;
-  if (targetSources.includes(fromSourceId)) {
+  if (c.targetSourceId) {
+    // Issue #1493 (codex P1): a qualified wikilink `[[src:slug]]` pins the
+    // target source — that IS the qualification's meaning (v0.17.0). The pin
+    // overrides the local-first/default fallback: the target must exist in
+    // the pinned source or the candidate is skipped (never misdirected to a
+    // same-slug page in the origin/default source).
+    if (!targetSources.includes(c.targetSourceId)) return null;
+    toSourceId = c.targetSourceId;
+  } else if (targetSources.includes(fromSourceId)) {
     toSourceId = fromSourceId;
   } else if (targetSources.includes('default')) {
     toSourceId = 'default';
@@ -179,6 +188,14 @@ interface ExtractResult {
   links_created: number;
   timeline_entries_created: number;
   pages_processed: number;
+  /**
+   * Issue #1493 (codex P2): unresolved refs (frontmatter misses +
+   * wikilink exact-path misses) from the DB links pass. Present only when
+   * non-empty so pre-existing JSON consumers see an unchanged shape on
+   * clean runs. `--json` prints the whole ExtractResult, so agents see
+   * the misses instead of only counts.
+   */
+  unresolved_refs?: UnresolvedFrontmatterRef[];
 }
 
 // --- Shared walker ---
@@ -947,6 +964,9 @@ Status (v0.42):
           const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter, stampWatermark: subcommand === 'all' });
           result.links_created = r.created;
           result.pages_processed = r.pages;
+          // Issue #1493 (codex P2): thread unresolved refs into the JSON
+          // result — --json used to suppress the miss report entirely.
+          if (r.unresolved.length > 0) result.unresolved_refs = r.unresolved;
         }
         if (subcommand === 'timeline' || subcommand === 'all') {
           const r = await extractTimelineFromDB(engine, dryRun, jsonMode, typeFilter, since, { sourceIdFilter });
@@ -1381,6 +1401,9 @@ async function extractLinksFromDB(
   // Issue #972: opt-in global-basename wikilink resolution. Read once
   // per extract run; threaded into each extractPageLinks call.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
+  // whitelist. On by default; read once per run like globalBasename.
+  const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1461,7 +1484,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename },
+      { skipFrontmatter: !includeFrontmatter, globalBasename, anyDirExactPath },
     );
     unresolved.push(...extracted.unresolved);
 
@@ -1528,10 +1551,13 @@ async function extractLinksFromDB(
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
-    if (includeFrontmatter && unresolved.length > 0) {
-      // Top-20 preview of unresolvable frontmatter names so the user can
-      // see where the graph has holes (codex tension 6.4).
-      console.log(`Unresolved frontmatter refs: ${unresolved.length} total`);
+    if (unresolved.length > 0) {
+      // Top-20 preview of unresolvable names so the user can see where the
+      // graph has holes (codex tension 6.4). Pre-#1493 this was gated on
+      // includeFrontmatter because frontmatter was the only unresolved
+      // source; path-shaped wikilink misses (field='wikilink') now report
+      // here too, so the gate is simply "anything unresolved".
+      console.log(`Unresolved refs (frontmatter + wikilinks): ${unresolved.length} total`);
       const bucket = new Map<string, number>();
       for (const u of unresolved) {
         const key = `${u.field}:${u.name}`;
@@ -1660,7 +1686,7 @@ export async function extractStaleFromDB(
     sourceIdFilter?: string;
     catchUp: boolean;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; unresolved?: UnresolvedFrontmatterRef[] }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
 
@@ -1684,9 +1710,39 @@ export async function extractStaleFromDB(
   // Batch mode = pg_trgm + exact only, NO per-name search fallback. The
   // resolution map sees ALL sources so qualified cross-source wikilinks resolve
   // even when --source-id scopes the stale SCAN.
-  const resolver = makeResolver(engine, { mode: 'batch' });
-  const nullResolver = { resolve: async () => null as string | null };
-  const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  // Issue #1493 (codex P2): always pass the REAL resolver and gate the
+  // frontmatter pass via opts.skipFrontmatter — the same migration
+  // extractLinksFromDB made for issue #972. The old nullResolver ternary
+  // meant the default sweep (no --include-frontmatter) had no slugExists,
+  // so any-dir exact-path misses were silently discarded by the endpoint
+  // check instead of being verified + recorded as unresolved.
+  //
+  // Issue #1493 (codex P2, round 2): the resolver is scoped PER PAGE SOURCE,
+  // not one unscoped instance for the sweep. An unscoped slugExists spans
+  // all sources, so an alpha page's `[[janus/foo]]` whose target exists
+  // only in beta passed verification, became a candidate, was rejected by
+  // resolveCandidateSources (not in alpha ∪ default) — and the miss was
+  // never recorded. Per-source resolvers give each page the SAME
+  // resolution domain resolveCandidateSources applies (page source ∪
+  // default). Cached per source_id: getAllSlugs runs at most twice per
+  // distinct source across the whole sweep (scoped + default overlay),
+  // matching the DB path's fetch discipline.
+  const resolverBySource = new Map<string, SlugResolver>();
+  function resolverForSource(sourceId: string): SlugResolver {
+    let r = resolverBySource.get(sourceId);
+    if (!r) {
+      r = makeResolver(engine, { mode: 'batch', sourceId });
+      resolverBySource.set(sourceId, r);
+    }
+    return r;
+  }
+  // Issue #1493: exact-path resolution for wikilinks outside the DIR_PATTERN
+  // whitelist. Read once per sweep.
+  const anyDirExactPath = await isAnyDirExactPathEnabled(engine);
+  // Issue #1493 (codex P2): aggregate unresolved refs (wikilink misses +,
+  // with --include-frontmatter, frontmatter misses) and surface them in the
+  // sweep summary — consistent with the DB path.
+  const unresolved: UnresolvedFrontmatterRef[] = [];
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1718,8 +1774,10 @@ export async function extractStaleFromDB(
     for (const page of rows) {
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
-        page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        page.slug, fullContent, page.frontmatter, page.type, resolverForSource(page.source_id),
+        { skipFrontmatter: !includeFrontmatter, anyDirExactPath },
       );
+      unresolved.push(...extracted.unresolved);
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
         if (!r) continue;
@@ -1783,6 +1841,20 @@ export async function extractStaleFromDB(
 
   if (!jsonMode) {
     console.log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    // Issue #1493 (codex P2): surface unresolved refs (top-10 preview),
+    // mirroring the DB path's summary — misses must not be silent.
+    if (unresolved.length > 0) {
+      console.log(`Unresolved refs (frontmatter + wikilinks): ${unresolved.length} total`);
+      const bucket = new Map<string, number>();
+      for (const u of unresolved) {
+        const key = `${u.field}:${u.name}`;
+        bucket.set(key, (bucket.get(key) || 0) + 1);
+      }
+      const top = Array.from(bucket.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      for (const [key, count] of top) {
+        console.log(`  ${count}× ${key}`);
+      }
+    }
     if (budgetHit && staleRemaining > 0) {
       console.log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
     }
@@ -1790,9 +1862,12 @@ export async function extractStaleFromDB(
     process.stdout.write(JSON.stringify({
       action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
+      // Issue #1493 (codex P2): agents consuming --json must see the misses.
+      unresolved_count: unresolved.length,
+      ...(unresolved.length > 0 ? { unresolved_refs: unresolved } : {}),
     }) + '\n');
   }
-  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining };
+  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, unresolved };
 }
 
 /**
