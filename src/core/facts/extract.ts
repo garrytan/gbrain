@@ -173,16 +173,22 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   cleaned = cleaned.trim();
   if (!cleaned) return [];
 
-  if (!isAvailable('chat')) {
-    // No chat gateway → no extraction. Caller still inserts facts via direct
-    // `gbrain take add` paths.
-    return [];
-  }
-
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
   const maxTokens = await getFactsExtractionMaxTokens(input.engine);
   const model = input.model ?? defaultModel;
+
+  // #3206: gate on the model this call will ACTUALLY use, not the global
+  // chat default. `facts.extraction_model` can point at a different provider
+  // than `getChatModel()` (e.g. a self-hosted proxy on a brain with no
+  // Anthropic key); pre-fix the bare isAvailable('chat') checked the global
+  // default and silently returned [] even though the extraction call itself
+  // would have succeeded.
+  if (!isAvailable('chat', model)) {
+    // No chat gateway for this model → no extraction. Caller still inserts
+    // facts via direct `gbrain take add` paths.
+    return [];
+  }
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`

@@ -503,14 +503,28 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   // Resolve expansion (utility tier) and chat (reasoning tier). Embedding is
   // intentionally NOT re-resolved here — switching embedding models invalidates
   // the vector index. Out of scope per v0.31.12 plan ("Embedding tier knob").
+  // #3206: a file-plane `chat_model` / `expansion_model` (config.json) is
+  // explicit user config, not a hardcoded default — pass it as `userFallback`
+  // so it ranks ABOVE the tier default in resolveModel. Pre-fix it rode the
+  // bottom-rung `fallback` slot, so TIER_DEFAULTS silently replaced it on
+  // every engine-backed startup and (on brains without an Anthropic key)
+  // every chat-gated feature reported unavailable with no error. When the
+  // gateway value IS the hardcoded default, pass nothing — the hardcoded
+  // default stays at the bottom of the chain where the tier default wins.
+  const userExpansion = cfg.expansion_model && cfg.expansion_model !== DEFAULT_EXPANSION_MODEL
+    ? cfg.expansion_model : undefined;
+  const userChat = cfg.chat_model && cfg.chat_model !== DEFAULT_CHAT_MODEL
+    ? cfg.chat_model : undefined;
   const newExpansion = await resolveModel(engine, {
     configKey: 'models.expansion',
     tier: 'utility',
+    userFallback: userExpansion,
     fallback: cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL,
   });
   const newChat = await resolveModel(engine, {
     configKey: 'models.chat',
     tier: 'reasoning',
+    userFallback: userChat,
     fallback: cfg.chat_model ?? DEFAULT_CHAT_MODEL,
   });
 
@@ -2889,6 +2903,37 @@ function deepMergeRecords(
     }
   }
   return out;
+}
+
+/**
+ * Read the Anthropic-style extended-thinking budget configured for a model
+ * via `provider_chat_options` (`<provider>.thinking.budgetTokens`, provider-
+ * or model-scoped). The Anthropic API requires `max_tokens` to exceed
+ * `thinking.budgetTokens`, so callers that cap output tightly (the
+ * `gbrain models doctor` reachability probe) must widen their cap above this
+ * budget or the provider rejects the request outright — falsely failing a
+ * reachable model. Returns undefined when no budget is configured, the model
+ * string is malformed, or the gateway is unconfigured. Read-only, never throws.
+ *
+ * @internal exported for the doctor probe + tests; not part of the public gateway API.
+ */
+export function getConfiguredThinkingBudget(modelStr: string): number | undefined {
+  try {
+    if (!_config) return undefined;
+    // Mirror chat()'s resolution (resolveChatProvider → resolveRecipe): map
+    // recipe aliases to the canonical model id BEFORE the model-scoped
+    // provider_chat_options lookup, so a request made under a stale alias
+    // still sees the budget configured under the canonical id.
+    const { parsed, recipe } = resolveRecipe(modelStr);
+    const merged: Record<string, any> = {};
+    applyConfiguredChatProviderOptions(merged, _config, recipe.id, parsed.modelId);
+    const budget = merged[recipe.id]?.thinking?.budgetTokens;
+    return typeof budget === 'number' && Number.isFinite(budget) && budget > 0
+      ? budget
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function applyConfiguredChatProviderOptions(
