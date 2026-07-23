@@ -42,6 +42,10 @@ export async function startMcpServer(engine: BrainEngine) {
     // `gbrain call <op>` (sets remote=false in src/cli.ts).
     return dispatchToolCall(engine, name, params, {
       remote: true,
+      // Identify the stdio local pipe so whoami reports an unprivileged
+      // stdio identity instead of fail-closing on the by-design absence of
+      // per-token auth. Does NOT loosen trust — remote stays true.
+      transport: 'stdio',
       takesHoldersAllowList: ['world'],
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
       // Operators who want a different source on stdio MCP should set

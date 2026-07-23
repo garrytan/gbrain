@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   GIT_SSRF_FLAGS,
+  GIT_SSRF_FLAGS_LOCAL,
   GIT_SSRF_SUBCOMMAND_FLAGS,
   parseRemoteUrl,
   RemoteUrlError,
@@ -23,6 +24,7 @@ import { withEnv } from './helpers/with-env.ts';
 const FAKE_GIT_DIR = join(tmpdir(), `gbrain-git-remote-test-${process.pid}`);
 const FAKE_GIT_LOG = join(FAKE_GIT_DIR, 'argv.log');
 const FAKE_GIT_MODE = join(FAKE_GIT_DIR, 'mode');
+const FAKE_GIT_ORIGIN = join(FAKE_GIT_DIR, 'origin-url');
 
 function writeFakeGit(): void {
   mkdirSync(FAKE_GIT_DIR, { recursive: true });
@@ -30,6 +32,8 @@ function writeFakeGit(): void {
   writeFileSync(FAKE_GIT_MODE, 'ok');
   // Per-invocation argv goes into argv.log (one JSON array per line).
   writeFileSync(FAKE_GIT_LOG, '');
+  // Origin URL emitted by fake-git for `remote get-url` in local-origin mode.
+  writeFileSync(FAKE_GIT_ORIGIN, '');
   const script = `#!/usr/bin/env bash
 # Fake git for git-remote.test.ts
 { printf '['; for arg in "$@"; do printf '%s,' "$(printf '%s' "$arg" | jq -Rs .)"; done; printf 'null]\\n'; } >> "${FAKE_GIT_LOG}"
@@ -38,6 +42,13 @@ case "$mode" in
   fail) exit 1 ;;
   url-drift) echo "https://github.com/different/url" ;;
   url-match) echo "https://github.com/expected/url" ;;
+  local-origin)
+    case " $* " in
+      *" symbolic-ref "*) echo "main" ;;
+      *" get-url "*) cat "${FAKE_GIT_ORIGIN}" 2>/dev/null || true ;;
+      *) : ;;
+    esac
+    ;;
   *) ;;
 esac
 exit 0
@@ -62,8 +73,12 @@ function clearArgvLog(): void {
   writeFileSync(FAKE_GIT_LOG, '');
 }
 
-function setMode(mode: 'ok' | 'fail' | 'url-drift' | 'url-match'): void {
+function setMode(mode: 'ok' | 'fail' | 'url-drift' | 'url-match' | 'local-origin'): void {
   writeFileSync(FAKE_GIT_MODE, mode);
+}
+
+function setOrigin(url: string): void {
+  writeFileSync(FAKE_GIT_ORIGIN, url);
 }
 
 beforeAll(() => writeFakeGit());
@@ -348,6 +363,113 @@ describe('pullRepo', () => {
     await withEnv({ PATH: fakePath() }, async () => {
       expect(() => pullRepo(repo)).toThrow(GitOperationError);
     });
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // local-file origin gating (#2709, security-sensitive). pullRepo is strict
+  // by default and only relaxes protocol.file.allow to `always` when opted-in
+  // AND the resolved pull origin is a local-file path physically contained
+  // under the trusted root. We observe the recorded argv's `-c` block
+  // (between the `-C <repo>` prefix and the `pull` verb).
+  // -------------------------------------------------------------------------
+
+  test('default (no opts): -c block is strict — protocol.file.allow=never, origin never resolved', async () => {
+    const repo = join(FAKE_GIT_DIR, 'pull-strict-default');
+    mkdirSync(repo, { recursive: true });
+    await withEnv({ PATH: fakePath() }, async () => {
+      pullRepo(repo);
+    });
+    const calls = readArgvLog();
+    // Strict path short-circuits origin resolution: exactly one git call.
+    expect(calls.length).toBe(1);
+    const argv = calls[0];
+    const flagBlock = argv.slice(2, argv.indexOf('pull'));
+    expect(flagBlock).toEqual([...GIT_SSRF_FLAGS]);
+    expect(flagBlock).toContain('protocol.file.allow=never');
+    expect(flagBlock).not.toContain('protocol.file.allow=always');
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('allowLocalFileOrigin + local origin under trusted root: -c block relaxes to GIT_SSRF_FLAGS_LOCAL (protocol.file.allow=always)', async () => {
+    const repo = join(FAKE_GIT_DIR, 'pull-local-trusted');
+    mkdirSync(repo, { recursive: true });
+    // A REAL local bare-repo dir as origin, physically under the trusted root
+    // (realpathSync requires both to exist for the containment check).
+    const originPath = join(FAKE_GIT_DIR, 'local-origin.git');
+    mkdirSync(originPath, { recursive: true });
+    setMode('local-origin');
+    setOrigin(originPath);
+    await withEnv({ PATH: fakePath() }, async () => {
+      pullRepo(repo, { allowLocalFileOrigin: true, trustedOriginRoot: FAKE_GIT_DIR });
+    });
+    const pullCall = readArgvLog().find(c => c.includes('pull'));
+    expect(pullCall).toBeDefined();
+    const flagBlock = pullCall!.slice(2, pullCall!.indexOf('pull'));
+    expect(flagBlock).toEqual([...GIT_SSRF_FLAGS_LOCAL]);
+    expect(flagBlock).toContain('protocol.file.allow=always');
+    expect(flagBlock).not.toContain('protocol.file.allow=never');
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(originPath, { recursive: true, force: true });
+  });
+
+  test('allowLocalFileOrigin + local origin OUTSIDE trusted root: -c block stays strict (protocol.file.allow=never)', async () => {
+    const repo = join(FAKE_GIT_DIR, 'pull-local-outside');
+    mkdirSync(repo, { recursive: true });
+    const originPath = join(FAKE_GIT_DIR, 'local-origin.git');
+    mkdirSync(originPath, { recursive: true });
+    // A real trusted root that does NOT contain originPath.
+    const outsideRoot = join(tmpdir(), `gbrain-outside-root-${process.pid}`);
+    mkdirSync(outsideRoot, { recursive: true });
+    setMode('local-origin');
+    setOrigin(originPath);
+    await withEnv({ PATH: fakePath() }, async () => {
+      pullRepo(repo, { allowLocalFileOrigin: true, trustedOriginRoot: outsideRoot });
+    });
+    const pullCall = readArgvLog().find(c => c.includes('pull'));
+    expect(pullCall).toBeDefined();
+    const flagBlock = pullCall!.slice(2, pullCall!.indexOf('pull'));
+    expect(flagBlock).toEqual([...GIT_SSRF_FLAGS]);
+    expect(flagBlock).toContain('protocol.file.allow=never');
+    expect(flagBlock).not.toContain('protocol.file.allow=always');
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(originPath, { recursive: true, force: true });
+    rmSync(outsideRoot, { recursive: true, force: true });
+  });
+
+  test('allowLocalFileOrigin + https origin: -c block stays strict (network remote never relaxed)', async () => {
+    const repo = join(FAKE_GIT_DIR, 'pull-https-origin');
+    mkdirSync(repo, { recursive: true });
+    setMode('local-origin');
+    setOrigin('https://github.com/example/repo.git');
+    await withEnv({ PATH: fakePath() }, async () => {
+      pullRepo(repo, { allowLocalFileOrigin: true, trustedOriginRoot: FAKE_GIT_DIR });
+    });
+    const pullCall = readArgvLog().find(c => c.includes('pull'));
+    expect(pullCall).toBeDefined();
+    const flagBlock = pullCall!.slice(2, pullCall!.indexOf('pull'));
+    expect(flagBlock).toEqual([...GIT_SSRF_FLAGS]);
+    expect(flagBlock).toContain('protocol.file.allow=never');
+    expect(flagBlock).not.toContain('protocol.file.allow=always');
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('relative origin resolves against the repo dir (matching `git -C`), not process.cwd()', async () => {
+    // git resolves a relative file remote against the repo dir (`git -C repo
+    // pull`), so the containment guard must too. The relative name exists
+    // under repo (inside the trusted root) but NOT under process.cwd() — a
+    // cwd-based guard would realpath-fail and stay strict.
+    const repo = join(FAKE_GIT_DIR, 'pull-rel-origin');
+    mkdirSync(join(repo, 'rel-origin.git'), { recursive: true });
+    setMode('local-origin');
+    setOrigin('rel-origin.git');
+    await withEnv({ PATH: fakePath() }, async () => {
+      pullRepo(repo, { allowLocalFileOrigin: true, trustedOriginRoot: FAKE_GIT_DIR });
+    });
+    const pullCall = readArgvLog().find(c => c.includes('pull'));
+    expect(pullCall).toBeDefined();
+    const flagBlock = pullCall!.slice(2, pullCall!.indexOf('pull'));
+    expect(flagBlock).toEqual([...GIT_SSRF_FLAGS_LOCAL]);
     rmSync(repo, { recursive: true, force: true });
   });
 });

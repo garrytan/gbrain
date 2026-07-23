@@ -1245,6 +1245,29 @@ export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolea
 }
 
 /**
+ * Read the auto_link_allow_remote config flag. Defaults to FALSE
+ * (remote callers are not trusted for auto-link/timeline).
+ *
+ * When TRUE: auto-link and auto-timeline post-hooks fire even for
+ * remote (MCP) callers. This is safe for single-user personal brains
+ * where the MCP client is trusted (e.g., a local agent talking to a
+ * local GBrain instance). Multi-tenant deployments should leave this
+ * FALSE — untrusted MCP clients can plant link-targeted pages to
+ * manipulate search ranking via the backlink boost.
+ *
+ * Note the inverted default vs isAutoLinkEnabled: this is an OPT-IN
+ * (['true','1','yes','on'] enable), everything else — including
+ * null/unset — stays fail-closed. `config set` is CLI-only, so a
+ * remote caller cannot flip it for itself.
+ */
+export async function isAutoLinkRemoteAllowed(engine: BrainEngine): Promise<boolean> {
+  const val = await engine.getConfig('auto_link_allow_remote');
+  if (val == null) return false; // default deny
+  const normalized = val.trim().toLowerCase();
+  return ['true', '1', 'yes', 'on'].includes(normalized);
+}
+
+/**
  * Read the `link_resolution.global_basename` config flag. Defaults to
  * FALSE (opt-in only; existing brains keep ancestor-walk resolution).
  *

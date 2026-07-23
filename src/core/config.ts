@@ -995,6 +995,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
+  // #2478: opt-in — let remote (MCP) put_page callers run auto-link/timeline
+  // post-hooks. Default FALSE (fail-closed); safe only for single-user brains
+  // whose MCP client is trusted. See isAutoLinkRemoteAllowed.
+  'auto_link_allow_remote',
   // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.

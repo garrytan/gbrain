@@ -94,12 +94,62 @@ describe('whoami op contract', () => {
     expect(result.expires_at).toBeNull();
   });
 
+  // stdio MCP pipe (`gbrain serve`): remote/untrusted by the trust boundary
+  // but auth-less BY DESIGN (a local pipe has no per-token auth). This is NOT
+  // the "transport dropped auth" bug below — it is the expected shape for
+  // stdio, so whoami reports an unprivileged stdio identity instead of
+  // throwing. Regression guard for the long-standing unknown_transport thrown
+  // on every stdio whoami call. Crucially the shape is 'stdio', NOT 'local':
+  // 'local' is the trusted-CLI marker clients special-case, and an untrusted
+  // stdio caller must never be indistinguishable from it.
+  test('stdio transport returns stdio identity with empty scopes (no auth by design)', async () => {
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, transport: 'stdio', auth: undefined }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('stdio');
+    expect(result.scopes).toEqual([]);
+  });
+
+  test('stdio transport never reports the trusted local shape, even with a stale auth blob', async () => {
+    // Empty scopes regardless of auth: the stdio pipe must never surface
+    // privileges, and must never masquerade as the trusted 'local' shape.
+    const result = (await whoami.handler(
+      ctxWith({
+        remote: true,
+        transport: 'stdio',
+        auth: {
+          token: 'x',
+          clientId: 'gbrain_cl_123',
+          scopes: ['admin'],
+          expiresAt: 999999,
+        } as AuthInfo,
+      }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('stdio');
+    expect(result.transport).not.toBe('local');
+    expect(result.scopes).toEqual([]);
+  });
+
   // Q3: ambiguous transport — fail-closed. The footgun this guards against
   // is a future transport that lands without threading auth, where a buggy
   // caller might trust whoami's output to gate sensitive ops.
   test('unknown_transport throws when remote=true AND auth is missing', async () => {
     try {
       await whoami.handler(ctxWith({ remote: true, auth: undefined }), {});
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(OperationError);
+      expect((e as OperationError).message).toMatch(/unknown_transport|did not thread/);
+    }
+  });
+
+  test('unknown_transport still throws for an auth-less HTTP transport (fail-closed preserved)', async () => {
+    // The stdio relaxation must NOT extend to HTTP: an HTTP transport that
+    // drops auth is a genuine bug and stays fail-closed.
+    try {
+      await whoami.handler(ctxWith({ remote: true, transport: 'http', auth: undefined }), {});
       throw new Error('expected throw');
     } catch (e) {
       expect(e).toBeInstanceOf(OperationError);
