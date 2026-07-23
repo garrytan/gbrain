@@ -2,6 +2,25 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.64.4] - 2026-07-23
+
+### Fixed
+
+- Conversation fact backfills now use versioned, snapshot-bound terminal audit rows as durable page-completion authority, so checkpoint garbage collection cannot make completed pages repeat extraction and model spend.
+- Successfully recognized pages with no eligible multi-message segment receive a separate scanned-not-extractable outcome. Parser misses, cleanup failures, provider failures, malformed or refused model output, and insert failures remain unfinished and retryable.
+- Database pages bind outcomes to content hash plus effective date; raw transcript sidecars bind them to a SHA-256 digest of parser input and metadata. Under-lock refetch and final snapshot verification prevent concurrent edits, including sub-millisecond writes, from certifying stale work.
+- Legacy terminal rows replay once under the strict v2 protocol. A checkpoint without a matching v2 outcome is discarded before delete-first full replay.
+- `--limit` is applied after completed pages are filtered, so it caps pages that need work rather than pages merely inspected.
+- CLI, cycle details, and doctor now report completed, scanned-not-extractable, and genuinely unfinished pages separately.
+
+### Documentation
+
+- Added an operator and maintainer guide for outcome identity, strict success, page and sidecar freshness, concurrency, force replay, checkpoint authority, observability, and focused verification.
+
+Contributed by @danwiggins.
+
+No schema migrations.
+
 ## [0.42.64.0] - 2026-07-20
 
 ### Fixed

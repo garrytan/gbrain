@@ -43,11 +43,10 @@
  *     (source_id, source_markdown_slug, row_num); per-segment row_num
  *     would collide on segment 2. Per-page counter increments across
  *     segments.
- *   - Terminal audit row on completion. After all segments commit, one
- *     extra fact row with source='cli:extract-conversation-facts:terminal'
- *     marks the page complete. Doctor's backlog query checks for the
- *     terminal row, NOT any fact — partial extraction → no terminal →
- *     next run resumes.
+ *   - Snapshot-bound terminal audit row on completion. After all segments
+ *     commit, one v2 row binds completion to the exact page version or raw
+ *     transcript digest. Partial extraction has no matching terminal and the
+ *     next claim performs a delete-first full replay.
  *   - Optional budgetTracker via opts. If a tracker is in opts, use it
  *     as-is (NO `withBudgetTracker` wrap, which would REPLACE the active
  *     tracker per gateway.ts AsyncLocalStorage semantics, defeating an
@@ -68,7 +67,7 @@
 import type { BrainEngine, NewFact } from '../core/engine.ts';
 import type { Page } from '../core/types.ts';
 import {
-  extractFactsFromTurn,
+  extractFactsFromTurnWithOutcome,
   isFactsExtractionEnabled,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
@@ -172,7 +171,15 @@ export const PER_SEGMENT_SOURCE_PREFIX = 'cli:extract-conversation-facts';
  * the per-segment source. Partial extraction = no terminal row = page
  * stays in backlog.
  */
-export const TERMINAL_AUDIT_SOURCE = 'cli:extract-conversation-facts:terminal';
+export const TERMINAL_AUDIT_SOURCE = 'cli:extract-conversation-facts:terminal:v2';
+
+/**
+ * Durable outcome for a successfully scanned page that contains no eligible
+ * multi-message segment. Kept distinct from successful extraction so operator
+ * surfaces can report the truth without rescanning the page forever.
+ */
+export const NON_EXTRACTABLE_AUDIT_SOURCE =
+  'cli:extract-conversation-facts:non-extractable:v2';
 
 // ---------------------------------------------------------------------------
 // Public types.
@@ -253,6 +260,14 @@ export interface ExtractConversationFactsResult {
   pages_skipped: number;
   pages_skipped_too_large: number;
   pages_skipped_disappeared: number;
+  /** Fresh terminal outcomes skipped before parsing or model work. */
+  pages_skipped_completed: number;
+  /** Fresh scanned-not-extractable outcomes skipped before parser work. */
+  pages_skipped_non_extractable: number;
+  /** Durable scanned-not-extractable outcomes written by this run. */
+  pages_marked_non_extractable: number;
+  /** Pages whose claim reached extraction but failed before durable outcome. */
+  pages_failed: number;
   /**
    * v0.41.15.0 (D6): pages we attempted to claim but skipped because
    * another worker / parallel process held the advisory lock. The pages
@@ -583,31 +598,21 @@ async function deleteOrphanFactsForPage(
   sourceId: string,
   slug: string,
 ): Promise<number> {
-  try {
-    // The two write-source variants this command may have left behind:
-    //   - PER_SEGMENT_SOURCE_PREFIX  ('cli:extract-conversation-facts')
-    //   - TERMINAL_AUDIT_SOURCE      ('cli:extract-conversation-facts:terminal')
-    // Using a LIKE prefix match covers both with one statement.
-    const rows = await engine.executeRaw<{ count: string }>(
-      `WITH del AS (
-         DELETE FROM facts
-         WHERE source_id = $1
-           AND source_markdown_slug = $2
-           AND source LIKE 'cli:extract-conversation-facts%'
-         RETURNING 1
-       )
-       SELECT COUNT(*)::text AS count FROM del`,
-      [sourceId, slug],
-    );
-    const n = parseInt(rows[0]?.count ?? '0', 10);
-    return Number.isFinite(n) ? n : 0;
-  } catch {
-    // Best-effort: a missing source_markdown_slug column on pre-v0.32
-    // brains (or other rare DDL drift) falls through to "no orphans
-    // cleaned." The subsequent insertFacts call will surface any real
-    // schema issues with a clearer error.
-    return 0;
-  }
+  // A cleanup failure is authoritative: callers must not write a terminal or
+  // non-extractable marker while facts from an older snapshot may remain.
+  const rows = await engine.executeRaw<{ count: string }>(
+    `WITH del AS (
+       DELETE FROM facts
+       WHERE source_id = $1
+         AND source_markdown_slug = $2
+         AND source LIKE 'cli:extract-conversation-facts%'
+       RETURNING 1
+     )
+     SELECT COUNT(*)::text AS count FROM del`,
+    [sourceId, slug],
+  );
+  const n = parseInt(rows[0]?.count ?? '0', 10);
+  return Number.isFinite(n) ? n : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -663,11 +668,150 @@ function cpEntriesToMap(entries: string[]): Map<string, string> {
   return map;
 }
 
+export type DurableExtractionOutcome = 'complete' | 'non_extractable';
+
+interface ConversationPageSnapshot {
+  page: Page;
+  body: string;
+  versionToken: string;
+}
+
+function hasRawTranscriptSidecar(page: Page): boolean {
+  const raw = page.frontmatter?.raw_transcript;
+  return typeof raw === 'string' && raw.trim().length > 0;
+}
+
+function regularPageVersionToken(page: Page): string {
+  // content_hash covers title, type, compiled_truth, timeline, and frontmatter.
+  // Unlike JavaScript Date, it cannot collapse distinct PostgreSQL updates that
+  // happen within the same millisecond. effective_date is parser input too.
+  const hash = page.content_hash ?? createHash('sha256')
+    .update(JSON.stringify({
+      title: page.title,
+      type: page.type,
+      compiled_truth: page.compiled_truth,
+      timeline: page.timeline || '',
+      frontmatter: page.frontmatter || {},
+    }))
+    .digest('hex');
+  const effectiveDate = page.effective_date
+    ? new Date(page.effective_date).toISOString().slice(0, 10)
+    : 'none';
+  return `page-${hash}-${effectiveDate}`;
+}
+
+function snapshotVersionToken(page: Page, body: string): string {
+  if (!hasRawTranscriptSidecar(page)) return regularPageVersionToken(page);
+  // Sidecar contents can change without touching pages.updated_at. Hash the
+  // exact parser input plus parser-relevant page metadata so those edits reopen
+  // the page without a schema migration.
+  return `sidecar-${createHash('sha256')
+    .update(
+      JSON.stringify({
+        body,
+        title: page.title,
+        type: page.type,
+        frontmatter: page.frontmatter,
+        effective_date: page.effective_date ?? null,
+      }),
+    )
+    .digest('hex')}`;
+}
+
+async function preparePageSnapshot(
+  engine: BrainEngine,
+  page: Page,
+): Promise<ConversationPageSnapshot> {
+  const body = await readConversationBodyForParsing(engine, page);
+  return { page, body, versionToken: snapshotVersionToken(page, body) };
+}
+
+function outcomeSession(source: string, slug: string, versionToken: string): string {
+  return `${source}:${slug}:${versionToken}`;
+}
+
+/**
+ * Find v2 outcomes bound to the exact parser input snapshot. Legacy outcome
+ * rows deliberately do not match and are replayed once under the strict v2
+ * protocol. Sidecar files are hashed because pages.updated_at cannot see them.
+ */
+export async function findFreshExtractionOutcomes(
+  engine: BrainEngine,
+  sourceId: string,
+  pages: readonly Page[],
+): Promise<Map<string, DurableExtractionOutcome>> {
+  if (pages.length === 0) return new Map();
+  const expected = new Map<string, string>();
+  for (const page of pages) {
+    // Batch enumeration can already be stale. Refresh before deciding to skip
+    // so an edit between listPages and this check cannot match an old marker.
+    const current = await engine.getPage(page.slug, { sourceId });
+    if (!current) continue;
+    const token = hasRawTranscriptSidecar(current)
+      ? (await preparePageSnapshot(engine, current)).versionToken
+      : regularPageVersionToken(current);
+    expected.set(current.slug, token);
+  }
+  const rows = await engine.executeRaw<{
+    slug: string;
+    source: string;
+    source_session: string | null;
+  }>(
+    `SELECT source_markdown_slug AS slug, source, source_session
+       FROM facts
+      WHERE source_id = $1
+        AND source_markdown_slug = ANY($2::text[])
+        AND source = ANY($3::text[])
+      ORDER BY source_markdown_slug,
+        CASE WHEN source = $4 THEN 0 ELSE 1 END`,
+    [
+      sourceId,
+      pages.map((page) => page.slug),
+      [TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE],
+      TERMINAL_AUDIT_SOURCE,
+    ],
+  );
+  const outcomes = new Map<string, DurableExtractionOutcome>();
+  for (const row of rows) {
+    if (outcomes.has(row.slug)) continue;
+    const token = expected.get(row.slug);
+    if (!token || row.source_session !== outcomeSession(row.source, row.slug, token)) {
+      continue;
+    }
+    outcomes.set(
+      row.slug,
+      row.source === TERMINAL_AUDIT_SOURCE ? 'complete' : 'non_extractable',
+    );
+  }
+  return outcomes;
+}
+
+function recordDurableOutcomeSkip(
+  state: ExtractCoreState,
+  outcome: DurableExtractionOutcome,
+): void {
+  state.result.pages_considered++;
+  if (outcome === 'complete') state.result.pages_skipped_completed++;
+  else state.result.pages_skipped_non_extractable++;
+}
+
+async function snapshotIsCurrent(
+  engine: BrainEngine,
+  sourceId: string,
+  snapshot: ConversationPageSnapshot,
+): Promise<boolean> {
+  const current = await engine.getPage(snapshot.page.slug, { sourceId });
+  if (!current) return false;
+  const currentSnapshot = await preparePageSnapshot(engine, current);
+  return currentSnapshot.versionToken === snapshot.versionToken;
+}
+
 async function processPage(
   state: ExtractCoreState,
-  page: Page,
+  snapshot: ConversationPageSnapshot,
   sinceIso: string | undefined,
 ): Promise<{ newEndIso: string | null }> {
+  const { page, body } = snapshot;
   state.result.pages_considered++;
 
   // Body cap check first — pre-parse, pre-segment, pre-extraction.
@@ -680,7 +824,6 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  const body = await readConversationBodyForParsing(state.engine, page);
   // v0.41.13.0: thread the full Page through the orchestrator so D8
   // date-derivation chain (frontmatter.date > effective_date >
   // '1970-01-01') AND timezone_policy warnings apply. The historical
@@ -692,9 +835,40 @@ async function processPage(
   if (parseResult.timezone_warning) {
     process.stderr.write(parseResult.timezone_warning + '\n');
   }
+  const allSegments = splitIntoSegments(messages);
   const segments = splitIntoSegments(messages, { sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;
+    if (
+      !state.dryRun &&
+      parseResult.phase !== 'no_match' &&
+      allSegments.length === 0
+    ) {
+      if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
+        const cleaned = await deleteOrphanFactsForPage(
+          state.engine,
+          state.sourceId,
+          page.slug,
+        );
+        state.result.orphan_facts_cleaned += cleaned;
+        const rowNum = await peekRowNumStart(
+          state.engine,
+          state.sourceId,
+          page.slug,
+        );
+        await writeNonExtractableAuditRow(
+          state.engine,
+          state.sourceId,
+          page.slug,
+          rowNum,
+          snapshot.versionToken,
+          messages.length === 0
+            ? 'no conversation messages found'
+            : 'fewer than two eligible messages',
+        );
+        state.result.pages_marked_non_extractable++;
+      }
+    }
     return { newEndIso: null };
   }
 
@@ -730,24 +904,22 @@ async function processPage(
     const text = renderSegmentForExtraction(page.title || page.slug, seg);
     const sessionId = `${PER_SEGMENT_SOURCE_PREFIX}:${page.slug}`;
 
-    let extracted: Awaited<ReturnType<typeof extractFactsFromTurn>> = [];
-    try {
-      extracted = await extractFactsFromTurn({
-        turnText: text,
-        sessionId,
-        source: PER_SEGMENT_SOURCE_PREFIX,
-        engine: state.engine,
-        abortSignal: state.signal,
-      });
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      if (err instanceof BudgetExhausted) throw err;
-      // Per-segment LLM failures are best-effort; loop continues.
-      process.stderr.write(
-        `[extract-conversation-facts] segment ${seg.startIso}..${seg.endIso} extractor failed: ${(err as Error).message}\n`,
+    const extraction = await extractFactsFromTurnWithOutcome({
+      turnText: text,
+      sessionId,
+      source: PER_SEGMENT_SOURCE_PREFIX,
+      engine: state.engine,
+      abortSignal: state.signal,
+    });
+    if (!extraction.ok) {
+      const detail = extraction.error instanceof Error
+        ? `: ${extraction.error.message}`
+        : '';
+      throw new Error(
+        `segment ${seg.startIso}..${seg.endIso} extraction failed (${extraction.reason})${detail}`,
       );
-      extracted = [];
     }
+    const extracted = extraction.facts;
 
     state.result.segments_processed++;
     segmentsThisPage++;
@@ -772,19 +944,9 @@ async function processPage(
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));
-      try {
-        const ins = await state.engine.insertFacts(rows, { source_id: state.sourceId }); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
-        pageInsertedTotal += ins.inserted;
-        state.result.facts_inserted += ins.inserted;
-      } catch (err) {
-        if (isAbortError(err)) throw err;
-        // Batch failure is best-effort — segment is the transactional
-        // boundary, so a duplicate-key or constraint error rolls back
-        // this segment only. Loop continues.
-        process.stderr.write(
-          `[extract-conversation-facts] segment ${seg.startIso}..${seg.endIso} insertFacts failed: ${(err as Error).message}\n`,
-        );
-      }
+      const ins = await state.engine.insertFacts(rows, { source_id: state.sourceId }); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
+      pageInsertedTotal += ins.inserted;
+      state.result.facts_inserted += ins.inserted;
       rowNum += extracted.length;
     } else {
       // dry-run: count for reporting, no DB write.
@@ -800,20 +962,28 @@ async function processPage(
   // segment (no break on segmentLimit; that's an explicit partial run).
   const fullyProcessed =
     state.segmentLimit === 0 || segmentsThisPage < state.segmentLimit;
-  if (!state.dryRun && fullyProcessed && newestEnd !== null) {
-    try {
-      await writeTerminalAuditRow(state.engine, state.sourceId, page.slug, rowNum);
-      rowNum++;
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      // Terminal-row write failure: page is NOT marked complete; next
-      // run resumes. Loud stderr so users see partial-success state.
-      process.stderr.write(
-        `[extract-conversation-facts] ${page.slug} terminal audit write failed: ${(err as Error).message}\n`,
-      );
-      // Suppress the resume-state update so doctor still flags this page.
-      newestEnd = null;
-    }
+  if (
+    !state.dryRun &&
+    fullyProcessed &&
+    newestEnd !== null &&
+    await snapshotIsCurrent(state.engine, state.sourceId, snapshot)
+  ) {
+    // A terminal insert is part of the page transaction contract. Propagate
+    // failure so bulk accounting, CLI exit status, cycle status, and rollups all
+    // report the page as unfinished.
+    await writeTerminalAuditRow(
+      state.engine,
+      state.sourceId,
+      page.slug,
+      rowNum,
+      snapshot.versionToken,
+    );
+    rowNum++;
+  } else if (!state.dryRun && fullyProcessed && newestEnd !== null) {
+    process.stderr.write(
+      `[extract-conversation-facts] ${page.slug} changed during extraction; leaving it unfinished for replay\n`,
+    );
+    newestEnd = null;
   }
 
   if (!state.dryRun && newestEnd !== null) {
@@ -838,13 +1008,14 @@ async function writeTerminalAuditRow(
   sourceId: string,
   slug: string,
   rowNum: number,
+  versionToken: string,
 ): Promise<void> {
   const fact: NewFact & { row_num: number; source_markdown_slug: string } = {
     fact: 'EXTRACTION_COMPLETE',
     kind: 'fact',
     entity_slug: null,
     source: TERMINAL_AUDIT_SOURCE,
-    source_session: `${TERMINAL_AUDIT_SOURCE}:${slug}`,
+    source_session: outcomeSession(TERMINAL_AUDIT_SOURCE, slug, versionToken),
     confidence: 1.0,
     notability: 'low',
     row_num: rowNum,
@@ -863,6 +1034,33 @@ async function writeTerminalAuditRow(
  *   - If absent: create a fresh tracker scoped to `opts.maxCostUsd`
  *     and run the body inside `withBudgetTracker`.
  */
+async function writeNonExtractableAuditRow(
+  engine: BrainEngine,
+  sourceId: string,
+  slug: string,
+  rowNum: number,
+  versionToken: string,
+  reason: string,
+): Promise<void> {
+  const fact: NewFact & { row_num: number; source_markdown_slug: string } = {
+    fact: 'EXTRACTION_NOT_APPLICABLE',
+    kind: 'fact',
+    entity_slug: null,
+    source: NON_EXTRACTABLE_AUDIT_SOURCE,
+    source_session: outcomeSession(
+      NON_EXTRACTABLE_AUDIT_SOURCE,
+      slug,
+      versionToken,
+    ),
+    confidence: 1.0,
+    notability: 'low',
+    context: `scanned, not extractable: ${reason}`,
+    row_num: rowNum,
+    source_markdown_slug: slug,
+  };
+  await engine.insertFacts([fact], { source_id: sourceId }); // gbrain-allow-direct-insert: durable non-extractable audit outcome prevents repeated scans while remaining distinct from successful extraction
+}
+
 export async function runExtractConversationFactsCore(
   engine: BrainEngine,
   opts: ExtractConversationFactsCoreOpts,
@@ -879,6 +1077,10 @@ export async function runExtractConversationFactsCore(
     pages_skipped: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
+    pages_skipped_completed: 0,
+    pages_skipped_non_extractable: 0,
+    pages_marked_non_extractable: 0,
+    pages_failed: 0,
     pages_lock_skipped: 0,
     orphan_facts_cleaned: 0,
     segments_processed: 0,
@@ -957,21 +1159,41 @@ export async function runExtractConversationFactsCore(
      */
     const processPageWithLock = async (page: Page): Promise<void> => {
       const lockId = extractConversationFactsLockId(sourceId, page.slug);
-
-      let sinceIso: string | undefined;
-      // Per-page resume: --force clears prior entries; normal path uses
-      // the latest endIso for this (sourceId, slug) from the shared map.
       if (opts.force) {
         state.cpMap.delete(cpMapKey(sourceId, page.slug));
       }
-      const checkpointed = state.cpMap.get(cpMapKey(sourceId, page.slug)) ?? null;
-      sinceIso = pickLaterIso(checkpointed, opts.sinceIso);
 
       try {
         await withRefreshingLock(
           engine,
           lockId,
-          () => processPage(state, page, sinceIso),
+          async () => {
+            // Re-fetch under the advisory lock. Batch enumeration is only a
+            // candidate list; it must never become the snapshot we certify.
+            const currentPage = await engine.getPage(page.slug, { sourceId });
+            if (!currentPage) {
+              state.result.pages_skipped_disappeared++;
+              return { newEndIso: null };
+            }
+
+            // Close the race between batch selection and lock acquisition.
+            if (!opts.force) {
+              const outcome = (
+                await findFreshExtractionOutcomes(engine, sourceId, [currentPage])
+              ).get(currentPage.slug);
+              if (outcome) {
+                recordDurableOutcomeSkip(state, outcome);
+                return { newEndIso: null };
+              }
+            }
+
+            // A checkpoint without a matching durable v2 outcome cannot prove
+            // which page snapshot it describes. Clear it and replay safely;
+            // delete-orphans-first makes that replay deterministic.
+            state.cpMap.delete(cpMapKey(sourceId, currentPage.slug));
+            const snapshot = await preparePageSnapshot(engine, currentPage);
+            return processPage(state, snapshot, opts.sinceIso);
+          },
           { ttlMinutes: PER_PAGE_LOCK_TTL_MINUTES },
         ).then(() => undefined);
       } catch (err) {
@@ -1022,21 +1244,48 @@ export async function runExtractConversationFactsCore(
           });
           if (batch.length === 0) break;
 
-          // Respect --limit at batch granularity: clip the batch so we
-          // never overshoot the cap by `workers - 1` extra pages.
           let claimable = batch;
-          if (opts.limit) {
-            const remaining = opts.limit - processedPagesCount;
-            if (remaining < batch.length) claimable = batch.slice(0, remaining);
+          // Checkpoints are an intra-page cursor; fresh durable outcomes are
+          // the page-level selection authority and survive checkpoint GC.
+          if (!opts.force && claimable.length > 0) {
+            const fresh = await findFreshExtractionOutcomes(
+              engine,
+              sourceId,
+              claimable,
+            );
+            claimable = claimable.filter((page) => {
+              const outcome = fresh.get(page.slug);
+              if (!outcome) return true;
+              recordDurableOutcomeSkip(state, outcome);
+              return false;
+            });
           }
 
-          await runSlidingPool({
+          // Apply --limit after durable filtering. The limit caps pages that
+          // need work, not already-completed pages scanned to find that work.
+          if (opts.limit) {
+            const remaining = opts.limit - processedPagesCount;
+            if (remaining < claimable.length) {
+              claimable = claimable.slice(0, remaining);
+            }
+          }
+
+          const poolResult = await runSlidingPool({
             items: claimable,
             workers,
             signal,
             onItem: (page) => processPageWithLock(page),
             failureLabel: (page) => page.slug,
           });
+          result.pages_failed += poolResult.errored;
+          for (const failure of poolResult.failures) {
+            const message = failure.error instanceof Error
+              ? failure.error.message
+              : String(failure.error);
+            process.stderr.write(
+              `[extract-conversation-facts] ${failure.label} failed: ${message}\n`,
+            );
+          }
 
           processedPagesCount += claimable.length;
           offset += batch.length;
@@ -1134,7 +1383,12 @@ async function writeRunReceiptAndRollup(
         extracted_at: now,
         total_rows: result.facts_inserted,
         cost_usd: result.spent_usd ?? 0,
-        summary: `Extracted ${result.facts_inserted} facts from ${result.pages_processed}/${result.pages_considered} eligible pages.`,
+        summary:
+          `Extracted ${result.facts_inserted} facts from ` +
+          `${result.pages_processed}/${result.pages_considered} eligible pages` +
+          (result.pages_failed > 0
+            ? `; ${result.pages_failed} page(s) failed and remain unfinished.`
+            : '.'),
       });
     } catch (err) {
       // Best-effort: receipt write failure shouldn't kill the run.
@@ -1148,12 +1402,13 @@ async function writeRunReceiptAndRollup(
   // Rollup UPSERT: ALWAYS fire so doctor's extract_health sees the
   // cycle ran (even no-op runs are signal — they prove the extractor
   // was alive). Best-effort per F-OUT-19.
+  const incomplete = halted || result.pages_failed > 0;
   await upsertExtractRollup(engine, {
     kind: 'facts.conversation',
     source_id: sourceId,
     cost_delta: result.spent_usd ?? 0,
-    round_completed_delta: halted ? 0 : 1,
-    halt_delta: halted ? 1 : 0,
+    round_completed_delta: incomplete ? 0 : 1,
+    halt_delta: incomplete ? 1 : 0,
   });
 }
 
@@ -1381,6 +1636,10 @@ export async function runExtractConversationFacts(
     pages_skipped: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
+    pages_skipped_completed: 0,
+    pages_skipped_non_extractable: 0,
+    pages_marked_non_extractable: 0,
+    pages_failed: 0,
     pages_lock_skipped: 0,
     orphan_facts_cleaned: 0,
     segments_processed: 0,
@@ -1421,6 +1680,10 @@ export async function runExtractConversationFacts(
       aggregate.pages_skipped += perSource.pages_skipped;
       aggregate.pages_skipped_too_large += perSource.pages_skipped_too_large;
       aggregate.pages_skipped_disappeared += perSource.pages_skipped_disappeared;
+      aggregate.pages_skipped_completed += perSource.pages_skipped_completed;
+      aggregate.pages_skipped_non_extractable += perSource.pages_skipped_non_extractable;
+      aggregate.pages_marked_non_extractable += perSource.pages_marked_non_extractable;
+      aggregate.pages_failed += perSource.pages_failed;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
@@ -1452,6 +1715,18 @@ export async function runExtractConversationFacts(
   if (aggregate.pages_skipped_disappeared > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped_disappeared} page(s) that disappeared between enumeration and fetch.`);
   }
+  if (aggregate.pages_skipped_completed > 0) {
+    console.log(`  Skipped ${aggregate.pages_skipped_completed} page(s) with fresh durable completion outcomes.`);
+  }
+  if (aggregate.pages_skipped_non_extractable > 0) {
+    console.log(`  Skipped ${aggregate.pages_skipped_non_extractable} page(s) previously scanned as not extractable.`);
+  }
+  if (aggregate.pages_marked_non_extractable > 0) {
+    console.log(`  Marked ${aggregate.pages_marked_non_extractable} page(s) as scanned, not extractable.`);
+  }
+  if (aggregate.pages_failed > 0) {
+    console.error(`  Failed ${aggregate.pages_failed} page(s); they remain unfinished and will retry.`);
+  }
   if (aggregate.pages_lock_skipped > 0) {
     console.log(`  Skipped ${aggregate.pages_lock_skipped} page(s) held by another worker / process (will retry next run).`);
   }
@@ -1468,6 +1743,9 @@ export async function runExtractConversationFacts(
   // anyBudgetExhausted doesn't trigger exit 3; the budget message
   // above already tells the user what to do, and exit 0 is the right
   // signal for "ran to the cap intentionally."
+  if (aggregate.pages_failed > 0) {
+    process.exit(1);
+  }
   if (aggregate.pages_lock_skipped > 0 && !anyBudgetExhausted) {
     process.exit(3);
   }
