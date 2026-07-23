@@ -4962,11 +4962,11 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
-             similarity(t.claim, ${query})::real AS score
+             word_similarity(${query}, t.claim)::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
-        AND t.claim % ${query}
+        AND ${query} <% t.claim
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])

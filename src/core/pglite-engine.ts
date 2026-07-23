@@ -4835,11 +4835,11 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(
       `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
               t.claim, t.kind, t.holder, t.weight,
-              similarity(t.claim, $1)::real AS score
+              word_similarity($1, t.claim)::real AS score
        FROM takes t
        JOIN pages p ON p.id = t.page_id
        WHERE t.active
-         AND t.claim % $1
+         AND $1 <% t.claim
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
          AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
          AND ($5::text IS NULL OR p.source_id = $5::text)
