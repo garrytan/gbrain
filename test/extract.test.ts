@@ -185,6 +185,49 @@ describe('extractTimelineFromContent', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].summary).toBe('Landed the enterprise pilot with acme-example.');
   });
+
+  // Format 4: the plain bullet `- YYYY-MM-DD — Summary` that gbrain's own
+  // enrich skill writes. Before this was supported, every brain-authored
+  // timeline entry was invisible and timeline_coverage was stuck at 0%.
+  it('extracts plain bullet format (- YYYY-MM-DD — Summary)', () => {
+    const content = `## Timeline\n- 2026-06-01 — Catch-up call with alice-example; intros offered.`;
+    const entries = extractTimelineFromContent(content, 'people/alice-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-06-01');
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Catch-up call with alice-example; intros offered.');
+  });
+
+  it('files exactly one entry for a plain bullet that carries its own citation', () => {
+    // quality.md mandates this shape; it must not double-count via the
+    // citation arm (Format 3) AND the plain-bullet arm (Format 4).
+    const content = `- 2026-05-31 — Confirmed full name. [Source: User, 2026-05-31]`;
+    const entries = extractTimelineFromContent(content, 'people/charlie-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-05-31');
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toContain('Confirmed full name.');
+  });
+
+  it('does not double-count bold (Format 1) lines as plain bullets', () => {
+    const content = `- **2025-03-18** | Meeting — Discussed partnership`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Meeting');
+  });
+
+  it('does not start a spurious entry from a date inside a summary', () => {
+    const content = `- 2026-06-01 — See [meeting](meetings/2026-06-01).`;
+    const entries = extractTimelineFromContent(content, 'people/alice-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-06-01');
+  });
+
+  it('handles en dash and hyphen separators in plain bullets', () => {
+    const content = `- 2026-06-01 – First\n- 2026-06-02 - Second`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(2);
+  });
 });
 
 describe('walkMarkdownFiles', () => {

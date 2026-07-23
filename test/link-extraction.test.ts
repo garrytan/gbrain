@@ -791,6 +791,30 @@ More prose here.
     const entries = parseTimelineEntries(content);
     expect(entries.length).toBe(2);
   });
+
+  // Plain bullet (extract.ts Format 4 parity — the db-source path must see
+  // the same entries as the fs-source path).
+  test('parses plain bullet: - YYYY-MM-DD — summary', () => {
+    const entries = parseTimelineEntries('## Timeline\n- 2026-06-01 — Catch-up call with alice-example');
+    expect(entries.length).toBe(1);
+    expect(entries[0].date).toBe('2026-06-01');
+    expect(entries[0].summary).toBe('Catch-up call with alice-example');
+  });
+
+  test('files exactly one entry for a plain bullet carrying its own citation', () => {
+    const entries = parseTimelineEntries('- 2026-05-31 — Confirmed full name. [Source: User, 2026-05-31]');
+    expect(entries.length).toBe(1);
+    expect(entries[0].date).toBe('2026-05-31');
+  });
+
+  test('skips invalid dates in plain bullets', () => {
+    expect(parseTimelineEntries('- 2026-13-45 — Bad date').length).toBe(0);
+  });
+
+  test('does not double-count a bold bullet as a plain bullet', () => {
+    const entries = parseTimelineEntries('- **2026-01-15** | Met with Alice');
+    expect(entries.length).toBe(1);
+  });
 });
 
 // ─── isAutoLinkEnabled ─────────────────────────────────────────

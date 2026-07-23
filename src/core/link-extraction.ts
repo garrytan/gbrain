@@ -1125,6 +1125,11 @@ export interface TimelineCandidate {
 // Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+// Plain bullet: `- YYYY-MM-DD — summary` (no bold, no source pipe). Kept in
+// sync with extractTimelineFromContent's Format 4 (the fs-source path).
+// Anchored flush-left so a date inside an indented continuation line cannot
+// start a spurious entry.
+const PLAIN_TIMELINE_LINE_RE = /^-\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+?)\s*$/;
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -1141,7 +1146,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
 
   let i = 0;
   while (i < lines.length) {
-    const m = TIMELINE_LINE_RE.exec(lines[i]);
+    const m = TIMELINE_LINE_RE.exec(lines[i]) ?? PLAIN_TIMELINE_LINE_RE.exec(lines[i]);
     if (!m) {
       i++;
       continue;
@@ -1158,7 +1163,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     let j = i + 1;
     while (j < lines.length) {
       const next = lines[j];
-      if (TIMELINE_LINE_RE.test(next)) break;
+      if (TIMELINE_LINE_RE.test(next) || PLAIN_TIMELINE_LINE_RE.test(next)) break;
       if (/^#{1,6}\s/.test(next)) break;
       if (next.trim().length === 0 && detailLines.length === 0) {
         // skip leading blank line; if we hit a blank after detail content
@@ -1188,7 +1193,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
   // bullet pass are skipped (a bullet often carries its own citation).
   const citationRe = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
   for (const line of lines) {
-    if (TIMELINE_LINE_RE.test(line)) continue;
+    if (TIMELINE_LINE_RE.test(line) || PLAIN_TIMELINE_LINE_RE.test(line)) continue;
     const matches = [...line.matchAll(citationRe)];
     if (matches.length === 0) continue;
     const summary = line
