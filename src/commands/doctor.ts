@@ -529,6 +529,60 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   };
 }
 
+/**
+ * Raw-source persistence guarantee (#1978, warn-only v1).
+ *
+ * Invariant: every synthesized/derived page (dream_generated:true frontmatter
+ * or type:synthesis) must either carry a raw trace or declare an explicit
+ * exemption. Accepted traces:
+ *   - frontmatter key `raw_trace` / `raw_source` / `source_uri`
+ *   - an attached `raw_data` row
+ *   - `synthesis_evidence` rows (think-op citations)
+ *   - explicit `raw_trace_exempt: true` (reason in `raw_trace_exempt_reason`)
+ *
+ * v1 is deliberately warn-only — no write path is blocked. Escalation to
+ * fail-closed enforcement in the synthesis/import write paths is the v2
+ * follow-up once real brains run clean.
+ *
+ * Pure helper (engine.executeRaw only) for parity with
+ * childTableOrphansCheck so tests can target it directly.
+ */
+export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
+  const where = `
+        (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
+    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
+    AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
+    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
+  try {
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE ${where}`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    if (n === 0) {
+      return {
+        name: 'raw_provenance',
+        status: 'ok',
+        message: 'All synthesized pages carry a raw trace or explicit exemption',
+      };
+    }
+    const sample = await engine.executeRaw<{ slug: string }>(
+      `SELECT p.slug FROM pages p WHERE ${where} ORDER BY p.slug LIMIT 5`,
+    );
+    const slugs = sample.map(r => r.slug).join(', ');
+    return {
+      name: 'raw_provenance',
+      status: 'warn',
+      message:
+        `${n} synthesized page(s) lack a raw trace (no raw_trace/raw_source/source_uri frontmatter, ` +
+        `raw_data row, or synthesis evidence) and carry no raw_trace_exempt marker. e.g. ${slugs}. ` +
+        `Fix: stamp raw_source (path/URI of the source material) or raw_trace_exempt: true + ` +
+        `raw_trace_exempt_reason in frontmatter. Warn-only (#1978).`,
+    };
+  } catch {
+    return { name: 'raw_provenance', status: 'warn', message: 'Could not check raw provenance (older schema?)' };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -6289,6 +6343,12 @@ export async function buildChecks(
   // surfaces them with paste-ready cleanup SQL.
   progress.heartbeat('child_table_orphans');
   checks.push(await childTableOrphansCheck(engine));
+
+  // 10d. Raw-source persistence guarantee (#1978, warn-only v1).
+  // Every synthesized/derived page must carry a raw trace or an explicit
+  // exemption. Warn-only in v1 — surfaces violations, blocks nothing.
+  progress.heartbeat('raw_provenance');
+  checks.push(await rawProvenanceCheck(engine));
 
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the
