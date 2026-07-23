@@ -47,6 +47,11 @@ function buildMockEngine(opts: {
 
   const engine = {
     kind: 'pglite',
+    // #2516: resolvePhaseChatModel consults engine config keys; the mock
+    // answers null so the model falls through to the static default.
+    async getConfig() {
+      return null;
+    },
     async listPages() {
       return opts.pages;
     },
@@ -434,5 +439,28 @@ New prose appended here.`;
     } finally {
       resetGateway();
     }
+  });
+});
+
+// ─── #2516: per-phase model config key ──────────────────────────────
+
+describe('models.dream.propose_takes config key (#2516)', () => {
+  test('config-selected model reaches the extractor AND the proposal row', async () => {
+    const { engine, captured } = buildMockEngine({
+      pages: [buildPage({ slug: 'notes/one', body: 'I bet acme-example wins the market.' })],
+    });
+    (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
+      async (key: string) => (key === 'models.dream.propose_takes' ? 'openai:gpt-4o-mini' : null);
+    const hints: Array<string | undefined> = [];
+    const extractor: ProposeTakesExtractor = async ({ modelHint }) => {
+      hints.push(modelHint);
+      return [{ claim_text: 'acme wins', kind: 'take', holder: 'brain', weight: 0.7 }];
+    };
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    // Pre-#2516 the extractor received modelHint=undefined while the row
+    // recorded whatever the gateway default was — the two could disagree.
+    expect(hints).toEqual(['openai:gpt-4o-mini']);
+    const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(insert!.params[11]).toBe('openai:gpt-4o-mini');
   });
 });

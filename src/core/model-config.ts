@@ -58,7 +58,10 @@ export const DEFAULT_ALIASES: Record<string, string> = {
   opus:   'anthropic:claude-opus-4-7',
   sonnet: 'anthropic:claude-sonnet-4-6',
   haiku:  'anthropic:claude-haiku-4-5-20251001',
-  gemini: 'google:gemini-3-pro',
+  // #2507: gemini-3-pro 404s on the Generative Language API (v1beta); point
+  // the alias at a model that exists today AND is in the google recipe
+  // allowlist so ad-hoc (non-config-registered) uses pass assertTouchpoint.
+  gemini: 'google:gemini-2.5-pro',
   gpt:    'openai:gpt-5',
 };
 

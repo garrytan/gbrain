@@ -29,6 +29,7 @@ import {
   DEFAULT_DIMENSIONS,
   DEFAULT_SLOTS,
   estimateCost,
+  resolveSlots,
   runEval,
 } from '../core/cross-modal-eval/runner.ts';
 import type {
@@ -76,9 +77,9 @@ FLAGS:
                            dimensions (goal, depth, sourcing, specificity, useful).
   --cycles N               1-3. Default: 3 in TTY, 1 in non-TTY (T11). Each
                            cycle is 3 model calls; verdict aggregates over them.
-  --slot-a-model <id>      Override default 'openai:gpt-4o'.
-  --slot-b-model <id>      Override default 'anthropic:claude-opus-4-7'.
-  --slot-c-model <id>      Override default 'google:gemini-1.5-pro'.
+  --slot-a-model <id>      Override default 'gpt' alias (resolved via models.aliases).
+  --slot-b-model <id>      Override default 'opus' alias.
+  --slot-c-model <id>      Override default 'gemini' alias.
   --receipt-dir <path>     Default: gbrainPath('eval-receipts').
   --max-tokens N           Output token budget per call. Default: 4000.
   --json                   Emit final aggregate as JSON to stdout (progress to stderr).
@@ -353,11 +354,13 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   const receiptDir = parsed.receiptDir ?? gbrainPath('eval-receipts');
   const maxTokens = parsed.maxTokens ?? 4000;
 
-  const slots: SlotConfig[] = [
+  // #1270: resolve alias-form defaults (gpt/opus/gemini) to full ids here so
+  // the cost banner and receipts show real model ids.
+  const slots: SlotConfig[] = await resolveSlots([
     { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
     { id: 'B', model: parsed.slotBModel ?? DEFAULT_SLOTS[1]!.model },
     { id: 'C', model: parsed.slotCModel ?? DEFAULT_SLOTS[2]!.model },
-  ];
+  ]);
 
   // Configure the AI gateway. Without this, every chat() call throws
   // "AI gateway is not configured" because the cli.ts no-DB branch skips
@@ -615,11 +618,12 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   const maxTokens = parsed.maxTokens ?? 4000;
   const maxUsd = parsed.maxUsd ?? 5.0;
 
-  const slots: SlotConfig[] = [
+  // #1270: resolve alias-form defaults (gpt/opus/gemini) to full ids.
+  const slots: SlotConfig[] = await resolveSlots([
     { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
     { id: 'B', model: parsed.slotBModel ?? DEFAULT_SLOTS[1]!.model },
     { id: 'C', model: parsed.slotCModel ?? DEFAULT_SLOTS[2]!.model },
-  ];
+  ]);
 
   // v0.40.1.0 Track D (codex CDX-2): --limit must be >= 1. Passing
   // --limit 0 would let an empty result fall through to PASS with

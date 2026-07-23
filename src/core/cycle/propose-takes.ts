@@ -38,8 +38,8 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto';
-import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { BaseCyclePhase, resolvePhaseChatModel, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
@@ -330,7 +330,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
     }
 
-    const modelId = opts.model ?? getChatModel();
+    // #2516: per-phase config key + tier resolver instead of the gateway
+    // default alone, so `gbrain config set models.dream.propose_takes ...`
+    // (or models.default / GBRAIN_MODEL) routes this phase.
+    const modelId = await resolvePhaseChatModel(engine, 'models.dream.propose_takes', opts.model);
 
     for (const page of pages) {
       result.pages_scanned += 1;
@@ -380,7 +383,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          // #2516: pass the RESOLVED model so the extractor's chat call uses
+          // the same model the budget check priced and the row records.
+          modelHint: modelId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

@@ -18,6 +18,9 @@ import { importFromContent } from '../core/import-file.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
 import { resolveModel } from '../core/model-config.ts';
+import { splitProviderModelId } from '../core/model-id.ts';
+import { configureGatewayIfUninitialized } from '../core/ai/gateway.ts';
+import { __thinkAdapter } from '../core/think/index.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -54,6 +57,8 @@ interface ParsedArgs {
   datasetPath?: string;
   limit?: number;
   model?: string;
+  /** #2099 — override the trajectory claim-extractor model. */
+  extractorModel?: string;
   retrievalOnly: boolean;
   keywordOnly: boolean;
   expansion: boolean;
@@ -109,6 +114,7 @@ function parseArgs(args: string[]): ParsedArgs {
     if (a === '--no-trajectory') { out.noTrajectory = true; continue; }
     if (a === '--limit') { out.limit = Number(args[++i]); continue; }
     if (a === '--model') { out.model = args[++i]; continue; }
+    if (a === '--extractor-model') { out.extractorModel = args[++i]; continue; }
     if (a === '--top-k') { out.topK = Number(args[++i]); continue; }
     if (a === '--output') { out.outputPath = args[++i]; continue; }
     if (a === '--resume-from') { out.resumeFromPath = args[++i]; continue; }
@@ -147,6 +153,8 @@ function printHelp(): void {
     `Options:\n` +
     `  --limit N                 Run only the first N questions.\n` +
     `  --model M                 Override answer-generation model (default: resolveModel).\n` +
+    `  --extractor-model M       Override the trajectory claim-extractor model (default:\n` +
+    `                            tier-utility via resolveModel).\n` +
     `  --retrieval-only          Skip LLM answer generation; emit retrieved sessions instead.\n` +
     `  --keyword-only            Skip vector embedding; pure keyword retrieval.\n` +
     `  --expansion               Enable multi-query expansion (off by default for benchmarks).\n` +
@@ -363,6 +371,34 @@ async function generateAnswer(
   return '';
 }
 
+/**
+ * #2099 — strip the `provider:` prefix off params.model at the raw-SDK
+ * boundary. resolveModel returns provider-prefixed ids; the raw Anthropic SDK
+ * wants bare model ids and 404s on prefixed ones. Exported for tests.
+ */
+export function toRawSdkParams(
+  params: Anthropic.MessageCreateParamsNonStreaming,
+): Anthropic.MessageCreateParamsNonStreaming {
+  return { ...params, model: splitProviderModelId(String(params.model)).model };
+}
+
+/**
+ * #2099 — build a ThinkLLMClient for `modelStr`: gateway-backed when the
+ * gateway can serve the model's provider (any recipe, not just Anthropic),
+ * raw Anthropic SDK with a prefix-stripped model id otherwise. `explicit`
+ * makes an unusable user-typed --model a hard error instead of a silent
+ * fallback (same contract as think's tryBuildGatewayClient).
+ */
+export async function buildLLMClient(modelStr: string, explicit: boolean): Promise<ThinkLLMClient> {
+  configureGatewayIfUninitialized();
+  const gatewayClient = await __thinkAdapter.tryBuildGatewayClient(modelStr, { explicitModel: explicit });
+  if (gatewayClient) return gatewayClient;
+  const real = new Anthropic();
+  return {
+    create: (params, callOpts) => real.messages.create(toRawSdkParams(params), callOpts),
+  };
+}
+
 export interface RunOpts {
   /** Inject an Anthropic client for tests; defaults to a fresh SDK client. */
   client?: ThinkLLMClient;
@@ -468,24 +504,25 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     fallback: 'sonnet',
   });
 
-  // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
-  // Same pattern as src/core/think/index.ts:247-249.
-  const realClient = new Anthropic();
-  const client: ThinkLLMClient = runOpts.client ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
-  // v0.40.2.0 — separate extractor client (defaults to same SDK).
-  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
   const trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
     ? await resolveModel(null, {
-        cliFlag: runOpts.extractorModel,
+        cliFlag: opts.extractorModel ?? runOpts.extractorModel,
         tier: 'utility',
         fallback: 'haiku',
       })
     : '';
+
+  // #2099: resolveModel returns provider-prefixed ids ('anthropic:claude-...');
+  // feeding those verbatim into the raw Anthropic SDK 404s every call. Route
+  // through the gateway client seam think/synthesize already use; when the
+  // gateway can't serve the model (e.g. missing key for the resolved
+  // provider), fall back to the raw SDK with the provider prefix stripped so
+  // the pre-gateway behavior (clear auth error at call time) is preserved.
+  const client: ThinkLLMClient = runOpts.client ?? (await buildLLMClient(model, !!opts.model));
+  // v0.40.2.0 — separate extractor client (defaults to the same seam).
+  const extractorClient: ThinkLLMClient = runOpts.extractorClient ??
+    (trajectoryEnabled ? await buildLLMClient(extractorModel, !!(opts.extractorModel ?? runOpts.extractorModel)) : client);
 
   process.stderr.write(`[longmemeval] estimated 20-60 minutes for ${questions.length} questions; use --limit N for shorter runs\n`);
   process.stderr.write(`[longmemeval] connecting in-memory brain...\n`);
