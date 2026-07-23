@@ -27,7 +27,11 @@ import { execFileSync } from 'node:child_process';
 export type GitHeadProbe = (localPath: string) => string | null;
 // `null` distinguishes probe error from known-dirty (false). Doctor treats
 // both as "do not short-circuit", but tests need to assert which path fired.
-export type GitCleanProbe = (localPath: string) => boolean | null;
+// `ignoreUntracked` (v0.41.32.0): when true, untracked files (`git status`
+// `??` rows) do NOT count as dirty — they are not part of the repo and sync's
+// incremental path (commit-diff at sync.ts:1057) never imports them, so a
+// quiet repo with stray untracked dirs is still "unchanged".
+export type GitCleanProbe = (localPath: string, ignoreUntracked?: boolean) => boolean | null;
 
 const DEFAULT_HEAD_PROBE: GitHeadProbe = (localPath) => {
   try {
@@ -42,9 +46,16 @@ const DEFAULT_HEAD_PROBE: GitHeadProbe = (localPath) => {
   }
 };
 
-const DEFAULT_CLEAN_PROBE: GitCleanProbe = (localPath) => {
+const DEFAULT_CLEAN_PROBE: GitCleanProbe = (localPath, ignoreUntracked) => {
   try {
-    const out = execFileSync('git', ['-C', localPath, 'status', '--porcelain'], {
+    // `--untracked-files=no` makes `git status --porcelain` emit ONLY tracked
+    // changes. Empty output then means "clean ignoring untracked." This is the
+    // v0.41.32.0 fix for the false-SEVERE bug: untracked dirs (`?? companies/`,
+    // `?? media/`) on an otherwise-caught-up repo previously made the tree look
+    // dirty and defeated the short-circuit.
+    const args = ['-C', localPath, 'status', '--porcelain'];
+    if (ignoreUntracked) args.push('--untracked-files=no');
+    const out = execFileSync('git', args, {
       encoding: 'utf8',
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -71,15 +82,17 @@ export function _setGitCleanProbeForTests(fn: GitCleanProbe | null): void {
 
 export interface GitFreshnessOpts {
   /**
-   * When true, additionally require working tree to be clean (no
-   * uncommitted changes). Doctor uses this to mirror `gbrain sync`'s
-   * working-tree-dirty gate at sync.ts:1075 — otherwise doctor would
-   * say "unchanged" for a repo with pending local edits that sync would
-   * actually re-walk on the next run.
-   *
-   * Default false (HEAD comparison only). Doctor-callers set true.
+   * Working-tree cleanliness requirement on top of the HEAD==lastCommit check:
+   *   - `false`/omitted: HEAD comparison only.
+   *   - `true`: require a fully clean tree (tracked AND untracked) — the
+   *     v0.41.27.0 posture mirroring `gbrain sync`'s gate at sync.ts:1075.
+   *   - `'ignore-untracked'` (v0.41.32.0): require no TRACKED changes but allow
+   *     untracked files. This is what doctor/sources should use: sync's
+   *     incremental path keys off the commit diff and never imports untracked
+   *     files, so a quiet repo with stray untracked dirs is genuinely caught up.
+   *     Fixes the false-SEVERE bug without weakening the commit-hash gate.
    */
-  requireCleanWorkingTree?: boolean;
+  requireCleanWorkingTree?: boolean | 'ignore-untracked';
 }
 
 /**
@@ -102,7 +115,8 @@ export function isSourceUnchangedSinceSync(
   const head = _headProbe(localPath);
   if (head === null || head !== lastCommit) return false;
   if (opts?.requireCleanWorkingTree) {
-    const isClean = _cleanProbe(localPath);
+    const ignoreUntracked = opts.requireCleanWorkingTree === 'ignore-untracked';
+    const isClean = _cleanProbe(localPath, ignoreUntracked);
     // null (probe error) AND false (known dirty) both fail the gate.
     if (isClean !== true) return false;
   }

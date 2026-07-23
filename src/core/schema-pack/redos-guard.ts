@@ -37,6 +37,28 @@ import { runInContext, createContext } from 'node:vm';
 export const LINK_EXTRACTION_TOTAL_BUDGET_MS = 500 as const;
 export const PER_REGEX_TIMEOUT_MS = 50 as const;
 
+// v0.41.37.0 #1569: hard input-length cap. Catastrophic backtracking needs a
+// long input to blow up; a pack regex run against a multi-KB body is the blast
+// radius. Capping the input length removes it cheaply — a link-extraction
+// `context` is normally a sentence or short paragraph, so 64KB is generous.
+// Over the cap, the regex is skipped (degrade-to-mentions) without even
+// entering the vm. This is the real runtime safety net (the star-height lint
+// rule is advisory). Env-overridable for power users with huge contexts.
+export const MAX_REGEX_INPUT_CHARS = (() => {
+  const raw = process.env.GBRAIN_MAX_REGEX_INPUT_CHARS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 64_000;
+})();
+
+/** Tagged error thrown when input exceeds MAX_REGEX_INPUT_CHARS. Treated as
+ *  degrade-to-mentions by `PageRegexBudget.runBounded` (counts against budget). */
+export class RegexInputTooLargeError extends Error {
+  constructor(public readonly length: number) {
+    super(`regex input ${length} chars exceeds cap ${MAX_REGEX_INPUT_CHARS}`);
+    this.name = 'RegexInputTooLargeError';
+  }
+}
+
 export class RegexTimeoutError extends Error {
   readonly verb: string;
   readonly pattern: string;
@@ -123,6 +145,13 @@ export function runRegexBounded(
   text: string,
   timeoutMs: number = PER_REGEX_TIMEOUT_MS,
 ): RegExpMatchArray | null {
+  // v0.41.37.0 #1569: input-length cap BEFORE the vm. Over the cap, skip the
+  // regex entirely (the surrounding budget treats the throw as degrade). This
+  // is the primary ReDoS safety net — catastrophic backtracking can't blow up
+  // on input it never sees.
+  if (text.length > MAX_REGEX_INPUT_CHARS) {
+    throw new RegexInputTooLargeError(text.length);
+  }
   // Create a fresh context so the pack's regex can't leak state across
   // runs. Pass pattern + text as primitives only.
   const ctx = createContext({ pattern, text });

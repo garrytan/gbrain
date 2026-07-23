@@ -60,6 +60,12 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCodeRetrieval } = await import('./eval-code-retrieval.ts');
     return runEvalCodeRetrieval(engine, args.slice(1));
   }
+  if (sub === 'retrieval-quality') {
+    // T6 — NamedThingBench. Gold query set vs hybrid retrieval; gates the
+    // families that ARE the retrieval-maxpool incident (title/alias/dilution).
+    const { runEvalRetrievalQuality } = await import('./eval-retrieval-quality.ts');
+    return runEvalRetrievalQuality(engine, args.slice(1));
+  }
   if (sub === 'brainstorm') {
     // v0.37.0 (D3 + codex r2 #11) — three-axis evaluation gate for the
     // brainstorm + LSD wave. Engine connected (calls hybridSearch +

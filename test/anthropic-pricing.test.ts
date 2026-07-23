@@ -41,6 +41,14 @@ describe('estimateMaxCostUsd', () => {
     expect(cost).toBeCloseTo(1.75, 5);
   });
 
+  test('opus 4.8 priced same as 4.7 ($5/$25) — closes #1819', () => {
+    // 100K in + 50K out = 0.1*5 + 0.05*25 = 0.5 + 1.25 = 1.75. Pre-fix this
+    // model was absent from the pricing table → estimateMaxCostUsd returned
+    // null and the dream-cycle budget gate silently no-op'd on 4.8 runs.
+    const cost = estimateMaxCostUsd('anthropic:claude-opus-4-8', 100_000, 50_000);
+    expect(cost).toBeCloseTo(1.75, 5);
+  });
+
   test('unknown model → returns null (caller warn-once + bypass)', () => {
     expect(estimateMaxCostUsd('mistral:medium', 1_000, 1_000)).toBeNull();
     expect(estimateMaxCostUsd('gpt-5', 1_000, 1_000)).toBeNull();

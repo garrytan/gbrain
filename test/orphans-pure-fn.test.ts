@@ -169,6 +169,7 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
 
   test('raw segment is excluded', () => {
     expect(shouldExclude('media/x/raw/post')).toBe(true);
+    expect(shouldExclude('raw/chats/claude-code/session')).toBe(true);
   });
 
   test('deny-prefixes are excluded', () => {
@@ -183,11 +184,69 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('thoughts/today')).toBe(true);
     expect(shouldExclude('catalog/movies')).toBe(true);
     expect(shouldExclude('entities/anonymous')).toBe(true);
+    expect(shouldExclude('atoms/fact-123')).toBe(true);
+    expect(shouldExclude('skills/gbrain-operations')).toBe(true);
+    expect(shouldExclude('dreaming/light/2026-07-20')).toBe(true);
+    expect(shouldExclude('daily/2026-07-20')).toBe(true);
+    expect(shouldExclude('agent-openclaw/daily/2026-07-20')).toBe(true);
+  });
+
+  test('workspace convention slugs are excluded', () => {
+    expect(shouldExclude('_brain-conventions')).toBe(true);
+    expect(shouldExclude('_templates/decision')).toBe(true);
+    expect(shouldExclude('extracts/2026-06-30/takes.proposed/round-single')).toBe(true);
+    expect(shouldExclude('2026-07-20')).toBe(true);
+    expect(shouldExclude('2026-07-20-qa-sweep')).toBe(true);
+    expect(shouldExclude('agents/arya/identity')).toBe(true);
+    expect(shouldExclude('agents/arya/memory/dreaming/deep/2026-07-20')).toBe(true);
   });
 
   test('regular slugs are NOT excluded', () => {
     expect(shouldExclude('people/alice')).toBe(false);
     expect(shouldExclude('companies/acme')).toBe(false);
     expect(shouldExclude('writing/post-1')).toBe(false);
+    expect(shouldExclude('agents/arya/qa-reports/launch-review')).toBe(false);
+  });
+});
+
+describe('getHealth orphan_pages uses shared exclusion policy', () => {
+  test('excluded convention islands do not count against health', async () => {
+    await engine.putPage('_templates/decision', {
+      type: 'template', title: 'Decision', compiled_truth: 'template', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('skills/arya/source-check', {
+      type: 'concept', title: 'Skill', compiled_truth: 'skill', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('agents/arya/identity', {
+      type: 'note', title: 'Identity', compiled_truth: 'identity', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'real island', timeline: '', frontmatter: {},
+    });
+
+    const health = await engine.getHealth();
+
+    expect(health.orphan_pages).toBe(1);
+  });
+
+  test('per-brain config overrides (orphans.exclude_*) also apply to health', async () => {
+    await engine.putPage('my-private-folder/secret-ref', {
+      type: 'note', title: 'Ref', compiled_truth: 'ref', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('one-off-fixture-page', {
+      type: 'note', title: 'Fixture', compiled_truth: 'fixture', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'real island', timeline: '', frontmatter: {},
+    });
+
+    expect((await engine.getHealth()).orphan_pages).toBe(3);
+
+    await engine.setConfig('orphans.exclude_prefixes', 'my-private-folder/');
+    await engine.setConfig('orphans.exclude_slugs', 'one-off-fixture-page');
+    expect((await engine.getHealth()).orphan_pages).toBe(1);
+
+    await engine.unsetConfig('orphans.exclude_prefixes');
+    await engine.unsetConfig('orphans.exclude_slugs');
   });
 });

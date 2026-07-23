@@ -33,7 +33,8 @@ import { createHash } from 'node:crypto';
 import { chat as gatewayChat, type ChatOpts, type ChatResult } from '../ai/gateway.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
 import { AIConfigError } from '../ai/errors.ts';
-import { loadConfig } from '../config.ts';
+import { normalizeModelId } from '../model-id.ts';
+import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import type { BrainEngine } from '../engine.ts';
 
 /**
@@ -79,26 +80,14 @@ function cacheKey(shape: CallShape, modelId: string, content: string): string {
 }
 
 /**
- * Anthropic-only key probe. Mirrors `hasAnthropicKey` in
- * `src/core/cycle/synthesize.ts:811` + `src/core/think/index.ts`.
- * Other providers' key checks happen lazily at `gatewayChat` time and
- * surface as AIConfigError, which the caller's try/catch absorbs.
- */
-function hasAnthropicKey(): boolean {
-  if (process.env.ANTHROPIC_API_KEY) return true;
-  try {
-    const cfg = loadConfig();
-    if (cfg?.anthropic_api_key) return true;
-  } catch {
-    // loadConfig may throw on first-run; treat as no key.
-  }
-  return false;
-}
-
-/**
  * Construction-time provider probe. Mirrors `makeJudgeClient`'s
  * "return null on unavailable" semantics. Caller short-circuits on
  * null without spending any tokens.
+ *
+ * v0.41.x (#1698): the Anthropic-only key probe is now the shared
+ * `hasAnthropicKey` from `src/core/ai/anthropic-key.ts` (was a private
+ * copy here). Other providers' key checks happen lazily at `gatewayChat`
+ * time and surface as AIConfigError, which the caller's try/catch absorbs.
  *
  * Returns a normalized model id (`provider:model`) when available, or
  * null when:
@@ -106,7 +95,7 @@ function hasAnthropicKey(): boolean {
  *   - Anthropic provider with no key (env or config).
  */
 export function probeLlmAvailability(modelStr: string): string | null {
-  const normalized = modelStr.includes(':') ? modelStr : `anthropic:${modelStr}`;
+  const normalized = normalizeModelId(modelStr);
   let providerId: string;
   try {
     const { parsed } = resolveRecipe(normalized);
@@ -277,13 +266,13 @@ async function writeDbCache<T>(
 ): Promise<void> {
   const [, , contentSha] = splitCacheKey(key);
   if (!contentSha) return;
-  // executeRaw with positional binding for JSONB. Per the sql-query.ts
-  // contract: object values passed via positional params reach the
-  // wire as proper jsonb when cast.
+  // #2339 class: this binds JSON.stringify(value) (a STRING) positionally, so it
+  // must cast through $4::text::jsonb — a bare $4::jsonb double-encodes under
+  // postgres.js .unsafe() (PGLite hides it). Pass a raw object to use $N::jsonb.
   await engine.executeRaw(
     `INSERT INTO conversation_parser_llm_cache
        (content_sha256, model_id, call_shape, value_json)
-     VALUES ($1, $2, $3, $4::jsonb)
+     VALUES ($1, $2, $3, $4::text::jsonb)
      ON CONFLICT (content_sha256, model_id, call_shape) DO NOTHING`,
     [contentSha, modelStr, shape, JSON.stringify(value)],
   );

@@ -21,28 +21,16 @@
 
 import type { CostBreakdown } from './types.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
 
 /**
- * Per-million-token prices (USD). Update when models bump. These are
- * approximate — provider accounting after the call is authoritative.
- *
- * NOTE: duplicate of the canonical `src/core/anthropic-pricing.ts` table.
- * Slated for consolidation (TODOS.md #3 from v0.41.20.0 plan); keys differ
- * (this table uses both bare and `anthropic:`-prefixed forms; canonical
- * is bare-only). For now we route lookup through `parseModelId` so the
- * slash-prefix bug class is closed at this site too.
+ * Chat prices come from the canonical table via the bare-keyed
+ * `ANTHROPIC_PRICING` view (`src/core/anthropic-pricing.ts` → `model-pricing.ts`).
+ * This site used to carry its own duplicate (TODOS.md #3); folding it in closes
+ * that consolidation. `pricingFor` still routes through `splitProviderModelId`
+ * so colon/slash forms hit, and keeps the legacy silent-Haiku fallback for
+ * genuinely-unknown models (pinned by test/eval-contradictions/cost-tracker-slash.test.ts).
  */
-const ANTHROPIC_PRICING: Record<string, { input: number; output: number }> = {
-  // Haiku 4.5: ~$1/Mtok in, $5/Mtok out (current as of 2026-05).
-  'claude-haiku-4-5': { input: 1.0, output: 5.0 },
-  'anthropic:claude-haiku-4-5': { input: 1.0, output: 5.0 },
-  // Sonnet 4.6: ~$3/Mtok in, $15/Mtok out.
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  'anthropic:claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  // Opus 4.7: ~$5/Mtok in, $25/Mtok out.
-  'claude-opus-4-7': { input: 5.0, output: 25.0 },
-  'anthropic:claude-opus-4-7': { input: 5.0, output: 25.0 },
-};
 
 /** OpenAI text-embedding-3-large: ~$0.13/Mtok (current as of 2026-05). */
 const OPENAI_EMBEDDING_PRICE_PER_MTOK = 0.13;

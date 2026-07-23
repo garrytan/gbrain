@@ -246,3 +246,213 @@ describe('gbrain extract --dir default resolution', () => {
     }
   });
 });
+
+// ─── issue #972: pure-function tests for resolveSlugAll + helpers ────────
+
+import {
+  resolveSlug,
+  resolveSlugAll,
+  resolveBasenameMatchesFromSlugs,
+  extractLinksFromFile,
+} from '../src/commands/extract.ts';
+
+describe('extractLinksFromFile — code-fence stripping (codex P2b)', () => {
+  test('a bare wikilink inside a code fence does NOT create an FS edge', async () => {
+    const allSlugs = new Set(['projects/struktura', 'concepts/x']);
+    const content = [
+      '---', 'title: X', 'type: concept', '---', '',
+      'Real ref: [[struktura]].',
+      '',
+      '```', 'code mentions [[struktura]] but must be ignored', '```',
+    ].join('\n');
+    const links = await extractLinksFromFile(content, 'concepts/x.md', allSlugs, { globalBasename: true });
+    const toStruktura = links.filter(l => l.to_slug === 'projects/struktura');
+    // Exactly one edge — from the prose ref, NOT the fenced one.
+    expect(toStruktura.length).toBe(1);
+    expect(toStruktura[0].link_source).toBe('wikilink-resolved');
+  });
+});
+
+describe('resolveBasenameMatchesFromSlugs (pure)', () => {
+  test('returns ALL slugs whose tail matches', () => {
+    const all = new Set([
+      'projects/struktura',
+      'archive/struktura',
+      'notes/other',
+    ]);
+    const matches = resolveBasenameMatchesFromSlugs('struktura', all);
+    expect(matches.sort()).toEqual(['archive/struktura', 'projects/struktura']);
+  });
+
+  test('case-insensitive tail match', () => {
+    const all = new Set(['companies/fast-weigh']);
+    expect(resolveBasenameMatchesFromSlugs('Fast-Weigh', all))
+      .toEqual(['companies/fast-weigh']);
+    expect(resolveBasenameMatchesFromSlugs('FAST-WEIGH', all))
+      .toEqual(['companies/fast-weigh']);
+  });
+
+  test('slugified fallback (spaces → hyphens)', () => {
+    const all = new Set(['companies/fast-weigh']);
+    expect(resolveBasenameMatchesFromSlugs('Fast Weigh', all))
+      .toEqual(['companies/fast-weigh']);
+  });
+
+  test('top-level slugs (no `/`) match by themselves', () => {
+    const all = new Set(['struktura', 'notes/struktura']);
+    const matches = resolveBasenameMatchesFromSlugs('struktura', all);
+    expect(matches.sort()).toEqual(['notes/struktura', 'struktura']);
+  });
+
+  test('no match returns []', () => {
+    const all = new Set(['projects/struktura']);
+    expect(resolveBasenameMatchesFromSlugs('never-existed', all)).toEqual([]);
+  });
+
+  test('empty/whitespace input returns []', () => {
+    const all = new Set(['projects/struktura']);
+    expect(resolveBasenameMatchesFromSlugs('', all)).toEqual([]);
+    expect(resolveBasenameMatchesFromSlugs('   ', all)).toEqual([]);
+  });
+
+  test('stable sort: shorter slug first, then lexical', () => {
+    const all = new Set([
+      'zzz/struktura',
+      'projects/struktura',
+      'archive/struktura',
+      'a/struktura',
+    ]);
+    const matches = resolveBasenameMatchesFromSlugs('struktura', all);
+    // Lengths: a/struktura(11), zzz/struktura(13), archive/struktura(17), projects/struktura(18)
+    expect(matches).toEqual([
+      'a/struktura',
+      'zzz/struktura',
+      'archive/struktura',
+      'projects/struktura',
+    ]);
+  });
+});
+
+describe('resolveSlugAll', () => {
+  test('ancestor walk wins → single-element array, no basename fallback', () => {
+    // resolveSlug already finds notes/struktura via ancestor walk.
+    // resolveSlugAll must return only that one even though basename
+    // would find others.
+    const all = new Set([
+      'notes/struktura',
+      'archive/struktura',
+      'projects/struktura',
+    ]);
+    const out = resolveSlugAll('notes/sub', 'struktura.md', all,
+      { globalBasename: true });
+    expect(out).toEqual(['notes/struktura']);
+  });
+
+  test('ancestor walk misses + globalBasename off → []', () => {
+    const all = new Set(['projects/struktura']);
+    const out = resolveSlugAll('concepts', 'struktura.md', all);
+    expect(out).toEqual([]);
+  });
+
+  test('ancestor walk misses + globalBasename on → all basename matches', () => {
+    const all = new Set([
+      'projects/struktura',
+      'archive/struktura',
+    ]);
+    const out = resolveSlugAll('concepts', 'struktura.md', all,
+      { globalBasename: true });
+    expect(out.sort()).toEqual(['archive/struktura', 'projects/struktura']);
+  });
+
+  test('zero basename matches when globalBasename on returns []', () => {
+    const all = new Set(['projects/struktura']);
+    const out = resolveSlugAll('concepts', 'phantom.md', all,
+      { globalBasename: true });
+    expect(out).toEqual([]);
+  });
+
+  test('strips dirname from relTarget when applying basename lookup', () => {
+    // [[notes/struktura]] with no `notes` ancestor: ancestor walk strips
+    // `concepts` → tries `notes/struktura` which DOES exist → emits.
+    // This case verifies the basename fallback only fires when ancestor
+    // walk truly fails. (Sanity check on the fallback ordering.)
+    const all = new Set(['notes/struktura']);
+    expect(resolveSlugAll('concepts', 'notes/struktura.md', all))
+      .toEqual(['notes/struktura']);
+  });
+
+  test('resolveSlug back-compat: existing single-match callers unaffected', () => {
+    const all = new Set(['notes/struktura']);
+    // The legacy resolveSlug must keep returning the string|null shape.
+    expect(resolveSlug('notes', 'struktura.md', all)).toBe('notes/struktura');
+    expect(resolveSlug('concepts', 'phantom.md', all)).toBeNull();
+  });
+});
+
+describe('issue #972 repro: bare wikilinks resolve when flag is on', () => {
+  // End-to-end: reproduces the issue's exact repro inside a tempdir +
+  // PGLite, then asserts edge count under both flag states.
+  test('flag OFF → 0 edges (back-compat)', async () => {
+    await engine.putPage('projects/struktura',
+      { type: 'project', title: 'Struktura', compiled_truth: 'A project page.', timeline: '' });
+    await engine.putPage('concepts/knowledge-graph',
+      { type: 'concept', title: 'Knowledge Graph',
+        compiled_truth: 'This concept relates to [[struktura]].', timeline: '' });
+
+    // Mirror to disk: the FS extractor walks files, not DB pages.
+    writeFile('projects/struktura.md', '---\ntitle: Struktura\ntype: project\n---\n\nA project page.\n');
+    writeFile('concepts/knowledge-graph.md',
+      '---\ntitle: Knowledge Graph\ntype: concept\n---\n\nThis concept relates to [[struktura]].\n');
+
+    // Ensure flag is off (default)
+    await engine.setConfig('link_resolution.global_basename', 'false');
+
+    await runExtract(engine, ['links', '--dir', brainDir]);
+    const links = await engine.getLinks('concepts/knowledge-graph');
+    expect(links.find(l => l.to_slug === 'projects/struktura')).toBeUndefined();
+  });
+
+  test('flag ON → 1 edge with wikilink_basename type', async () => {
+    await engine.putPage('projects/struktura',
+      { type: 'project', title: 'Struktura', compiled_truth: 'A project page.', timeline: '' });
+    await engine.putPage('concepts/knowledge-graph',
+      { type: 'concept', title: 'Knowledge Graph',
+        compiled_truth: 'This concept relates to [[struktura]].', timeline: '' });
+
+    writeFile('projects/struktura.md', '---\ntitle: Struktura\ntype: project\n---\n\nA project page.\n');
+    writeFile('concepts/knowledge-graph.md',
+      '---\ntitle: Knowledge Graph\ntype: concept\n---\n\nThis concept relates to [[struktura]].\n');
+
+    await engine.setConfig('link_resolution.global_basename', 'true');
+
+    await runExtract(engine, ['links', '--dir', brainDir]);
+    const links = await engine.getLinks('concepts/knowledge-graph');
+    const strk = links.find(l => l.to_slug === 'projects/struktura');
+    expect(strk).toBeDefined();
+    expect(strk!.link_type).toBe('wikilink_basename');
+  });
+
+  test('flag ON + ambiguous basename → one edge per match', async () => {
+    await engine.putPage('projects/struktura',
+      { type: 'project', title: 'Struktura', compiled_truth: '', timeline: '' });
+    await engine.putPage('archive/struktura',
+      { type: 'concept' as any, title: 'Struktura (archived)',
+        compiled_truth: '', timeline: '' });
+    await engine.putPage('concepts/knowledge-graph',
+      { type: 'concept', title: 'Knowledge Graph',
+        compiled_truth: 'See [[struktura]].', timeline: '' });
+
+    writeFile('projects/struktura.md', '---\ntitle: Struktura\ntype: project\n---\n');
+    writeFile('archive/struktura.md', '---\ntitle: Struktura\ntype: concept\n---\n');
+    writeFile('concepts/knowledge-graph.md',
+      '---\ntitle: Knowledge Graph\ntype: concept\n---\n\nSee [[struktura]].\n');
+
+    await engine.setConfig('link_resolution.global_basename', 'true');
+
+    await runExtract(engine, ['links', '--dir', brainDir]);
+    const links = await engine.getLinks('concepts/knowledge-graph');
+    const basenameLinks = links.filter(l => l.link_type === 'wikilink_basename');
+    const targets = basenameLinks.map(l => l.to_slug).sort();
+    expect(targets).toEqual(['archive/struktura', 'projects/struktura']);
+  });
+});

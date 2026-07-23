@@ -10,13 +10,41 @@ change automatically.
 this mismatch and refuse to silently proceed. This doc is the recipe
 they point at.
 
+## Same-dimension model swaps (v0.41.31.0 — automatic)
+
+If you switch to a different model at the **same** dimension count
+(e.g. one 1536-dim provider to another, or a re-tuned model that keeps
+its width), the column type doesn't change, so no `ALTER`/wipe recipe
+is needed. As of v0.41.31.0, gbrain stamps an embedding-provenance
+signature (`<provider:model>:<dims>`) onto each page when its chunks are
+embedded. After you point the config at the new model, the stored
+signatures differ from the current one, and `gbrain embed --stale`
+re-embeds exactly those pages:
+
+```bash
+# After switching to the new same-dim model in your config:
+gbrain embed --stale          # re-embeds signature-drifted pages
+gbrain embed --stale --dry-run # preview the count without re-embedding
+```
+
+Under federated_v2, the same drift is picked up by the per-source
+`embed-backfill` jobs that `gbrain sync --all` enqueues (capped
+`$X/source/24h`). **Grandfather:** pages embedded before v0.41.31.0
+carry a NULL signature and are NEVER flagged stale, so upgrading to
+v0.41.31.0 does NOT trigger a whole-corpus re-embed. Signatures only
+get stamped going forward.
+
+A **dimension** change still requires the wipe-and-reinit (PGLite) or
+column-alter (Postgres) recipe below — the on-disk `vector(N)` width
+genuinely has to change.
+
 ## Why we don't do this automatically
 
 Switching dimensions requires:
 
 1. Dropping the HNSW vector index (pgvector won't survive an `ALTER COLUMN TYPE`).
-2. Altering the column type (Postgres only — PGLite cannot do this).
-3. Wiping every existing embedding (the old vectors are unusable in the new space).
+2. Wiping every existing embedding (the old vectors are unusable in the new space — and pgvector refuses to cast them across dimensions, so this must happen before the alter).
+3. Altering the column type (Postgres only — PGLite cannot do this).
 4. Re-embedding the entire corpus (can take hours on a 50K-page brain and costs $1-100 in API calls depending on model).
 5. Conditionally recreating the index (HNSW supports up to 2000 dimensions per pgvector; above that you must use exact scans).
 
@@ -87,11 +115,16 @@ BEGIN;
 -- 1. Drop the HNSW index. It can't survive the column type change.
 DROP INDEX IF EXISTS idx_chunks_embedding;
 
--- 2. Alter the column type.
-ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(<NEW_DIMS>);
-
--- 3. Clear stale embeddings so they don't survive into the new space.
+-- 2. Clear stale embeddings FIRST. This must happen BEFORE the column
+--    alter: pgvector refuses to cast existing vectors across dimensions
+--    ("expected <NEW_DIMS> dimensions, not <OLD_DIMS>"), so altering a
+--    column that still holds old-width vectors aborts the transaction.
+--    NULLs cast fine. (The old vectors are unusable in the new space
+--    anyway — this is the wipe step from the rationale above.)
 UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
+
+-- 3. Alter the column type (all rows are NULL now, so the cast succeeds).
+ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(<NEW_DIMS>);
 
 -- 4. Recreate the HNSW index ONLY IF dims <= 2000. Above that, leave it
 --    indexless and rely on exact scans (gbrain searchVector handles this

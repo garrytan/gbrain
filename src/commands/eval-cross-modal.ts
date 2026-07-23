@@ -24,6 +24,7 @@ import { createHash } from 'crypto';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { configureGateway, isAvailable } from '../core/ai/gateway.ts';
 import { runWithLimit } from '../core/worker-pool.ts';
+import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
 import {
   DEFAULT_DIMENSIONS,
   DEFAULT_SLOTS,
@@ -274,6 +275,7 @@ function configureGatewayForCli(): boolean {
       chat_model: undefined,
       chat_fallback_chain: undefined,
       base_urls: undefined,
+      provider_chat_options: undefined,
       env: { ...process.env },
     });
     return true;
@@ -285,6 +287,7 @@ function configureGatewayForCli(): boolean {
     chat_model: config.chat_model,
     chat_fallback_chain: config.chat_fallback_chain,
     base_urls: config.provider_base_urls,
+    provider_chat_options: config.provider_chat_options,
     env: { ...process.env },
   });
   return true;
@@ -342,7 +345,10 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   }
 
   const slug = parsed.slug ?? inferSlugFromOutputPath(parsed.output);
-  const cycles = parsed.cycles ?? (isTTY() ? 3 : 1);
+  // #1784: resolve the cycle default once; annotate the cost banner below when
+  // it's the silent non-TTY fallback so the 1-vs-3 difference isn't a surprise.
+  const cycleDef = resolveCycleDefault(parsed.cycles, isTTY());
+  const cycles = cycleDef.cycles;
   const dimensions = parsed.dimensions ?? DEFAULT_DIMENSIONS;
   const receiptDir = parsed.receiptDir ?? gbrainPath('eval-receipts');
   const maxTokens = parsed.maxTokens ?? 4000;
@@ -372,7 +378,7 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   const cost = estimateCost(slots, cycles, maxTokens);
   process.stderr.write(
     `[eval cross-modal] estimated cost: ~$${cost.perCycleUSD.toFixed(2)}/cycle, ` +
-      `~$${cost.perRunMaxUSD.toFixed(2)} max for ${cycles} cycle(s).\n`,
+      `~$${cost.perRunMaxUSD.toFixed(2)} max for ${cycles} cycle(s)${cycleDefaultSuffix(cycleDef)}.\n`,
   );
   for (const note of cost.notes) {
     process.stderr.write(`[eval cross-modal] note: ${note}\n`);

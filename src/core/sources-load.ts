@@ -28,6 +28,14 @@ export interface SourceRow {
   config: Record<string, unknown> | string;
   created_at: Date;
   archived?: boolean;
+  /**
+   * v0.41.32.0: newest COMMIT timestamp observed at last sync (HEAD committer
+   * time). The REMOTE staleness path reads this column so it never shells out
+   * to git on a DB-supplied local_path. Optional because the forward-reference
+   * fallback SELECT below omits it on pre-v109 brains; null/undefined → the
+   * reader falls back to wall-clock.
+   */
+  newest_content_at?: Date | null;
 }
 
 export interface LoadAllSourcesOpts {
@@ -67,13 +75,14 @@ export async function loadAllSources(
   let rows: SourceRow[];
   try {
     rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived
+      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources
        ORDER BY (id = 'default') DESC, id`,
     );
   } catch (err) {
-    // Forward-reference safety: pre-v0.26.5 brains have no `archived` column.
-    // Re-issue without it; archived defaults to false.
+    // Forward-reference safety: pre-v0.26.5 brains lack `archived`; pre-v109
+    // brains lack `newest_content_at`. Re-issue with the historical minimal
+    // set; archived defaults false, newest_content_at undefined → wall-clock.
     if (isUndefinedColumnError(err)) {
       rows = await engine.executeRaw<SourceRow>(
         `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
@@ -102,7 +111,7 @@ export async function fetchSource(
 ): Promise<SourceRow | null> {
   try {
     const rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived
+      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources WHERE id = $1`,
       [id],
     );

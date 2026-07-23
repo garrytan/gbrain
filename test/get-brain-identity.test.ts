@@ -109,7 +109,9 @@ describe('get_brain_identity op', () => {
       'chunk_count',
       'engine',
       'last_sync_iso',
+      'latest_version',
       'page_count',
+      'update_available',
       'version',
     ]);
   });

@@ -79,8 +79,11 @@ SEED_ELAPSED=$((SECONDS - SEED_START))
 echo "[fm_wallclock] fixture seeded in ${SEED_ELAPSED}s" | tee -a "$LOG"
 
 # Step 2: init brain + register the source.
+# `--no-embedding` opts out of the embedding-provider hard-require (v0.37 D9).
+# This script measures doctor's frontmatter-scan wallclock — it never embeds —
+# so the CI runner doesn't need OPENAI_API_KEY / ZEROENTROPY_API_KEY / VOYAGE_API_KEY.
 echo "[fm_wallclock] init brain..." | tee -a "$LOG"
-timeout 120s bun run src/cli.ts init --pglite --yes >> "$LOG" 2>&1 || {
+timeout 120s bun run src/cli.ts init --pglite --yes --no-embedding >> "$LOG" 2>&1 || {
   echo "[fm_wallclock] FAIL: gbrain init exited non-zero" >&2
   echo "Log tail:" >&2
   tail -30 "$LOG" >&2
@@ -89,11 +92,22 @@ timeout 120s bun run src/cli.ts init --pglite --yes >> "$LOG" 2>&1 || {
 
 # Register the brain dir as a source. Use raw SQL since `gbrain sources add`
 # might not exist in this version-window; the schema is what doctor reads.
+# NOTE: must be `bun -e`, not `bun run -e` — `bun run` treats -e as an
+# unknown script name and dumps its usage/script listing with exit 0, so the
+# INSERT silently never ran and doctor scanned zero sources (vacuous pass).
+# Resolve the engine the same way the CLI does (config + env), so the source
+# lands in the DB doctor actually reads (Postgres when CI sets DATABASE_URL,
+# the PGLite brain otherwise) — a hardcoded `connect({})` is in-memory and
+# the INSERT would vanish.
 echo "[fm_wallclock] register source..." | tee -a "$LOG"
-bun run -e "
-import { PGLiteEngine } from './src/core/pglite-engine.ts';
-const e = new PGLiteEngine();
-await e.connect({});
+bun -e "
+import { loadConfig, toEngineConfig } from './src/core/config.ts';
+import { createEngine } from './src/core/engine-factory.ts';
+const cfg = loadConfig();
+if (!cfg) throw new Error('no gbrain config — init failed?');
+const engineConfig = toEngineConfig(cfg);
+const e = await createEngine(engineConfig);
+await e.connect(engineConfig);
 await e.initSchema();
 await e.executeRaw(
   \"INSERT INTO sources (id, name, local_path) VALUES ('fm-wallclock', 'Frontmatter wallclock test', \\\$1)\",
