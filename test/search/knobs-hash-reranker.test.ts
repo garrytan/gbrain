@@ -27,7 +27,7 @@ import {
   MODE_BUNDLES,
   type ResolvedSearchKnobs,
 } from '../../src/core/search/mode.ts';
-import { resolveHardExcludes } from '../../src/core/search/source-boost.ts';
+import { resolveHardExcludes, resolveBoostMap } from '../../src/core/search/source-boost.ts';
 
 /** Build a baseline resolved knob set with all reranker fields filled. */
 function baseKnobs(): ResolvedSearchKnobs {
@@ -44,7 +44,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 12 (…; 9→10 relational recall; 10→11 asymmetric input_type #1400; 11→12 hard-excludes #2825)', () => {
+  test('version is 13 (…; 10→11 asymmetric input_type #1400; 11→12 hard-excludes #2825; 12→13 source-boost map)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -64,7 +64,9 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // pre-fix document-side query vectors must not be served.
     // #2825: 11→12 to fold the resolved hard-exclude prefix list (hx=) —
     // cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across processes.
-    expect(KNOBS_HASH_VERSION).toBe(12);
+    // 12→13 to fold the resolved source-boost map (sb=) — a ranking-policy
+    // change must not be served rows ranked under the previous policy.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {
@@ -241,6 +243,37 @@ describe('v=12 hard-exclude participation (#2825)', () => {
     // caller can never collide with a policy-carrying cache row.
     expect(knobsHash(k)).not.toBe(
       knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, undefined) }),
+    );
+  });
+});
+
+describe('v=13 source-boost map participation', () => {
+  test('different boost maps → different hashes', () => {
+    const k = baseKnobs();
+    const defaults = knobsHash(k, { sourceBoostMap: resolveBoostMap(undefined) });
+    const tuned = knobsHash(k, { sourceBoostMap: resolveBoostMap('originals/:1.8,daily/:0.4') });
+    expect(defaults).not.toBe(tuned);
+  });
+
+  test('same map with different key insertion order → SAME hash (canonicalization)', () => {
+    const k = baseKnobs();
+    const a = knobsHash(k, { sourceBoostMap: { 'a/': 1.2, 'b/': 0.7 } });
+    const b = knobsHash(k, { sourceBoostMap: { 'b/': 0.7, 'a/': 1.2 } });
+    expect(a).toBe(b);
+  });
+
+  test('factor change on a single prefix changes the hash', () => {
+    const k = baseKnobs();
+    const a = knobsHash(k, { sourceBoostMap: { 'skills/': 1.2 } });
+    const b = knobsHash(k, { sourceBoostMap: { 'skills/': 1.3 } });
+    expect(a).not.toBe(b);
+  });
+
+  test('undefined sourceBoostMap is stable and distinct from an explicit map (legacy-caller fallback)', () => {
+    const k = baseKnobs();
+    expect(knobsHash(k)).toBe(knobsHash(k));
+    expect(knobsHash(k)).not.toBe(
+      knobsHash(k, { sourceBoostMap: resolveBoostMap(undefined) }),
     );
   });
 });
