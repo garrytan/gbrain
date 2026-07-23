@@ -1318,7 +1318,7 @@ in the facts table (source='${TERMINAL_AUDIT_SOURCE}'). gbrain doctor's
 conversation_facts_backlog check counts pages without this row.
 `;
 
-function buildJobParams(args: string[]): Record<string, unknown> {
+export function buildJobParams(args: string[]): Record<string, unknown> {
   const parsed = parseArgs(args);
   return {
     sourceId: parsed.sourceId,
@@ -1340,6 +1340,56 @@ function buildJobParams(args: string[]): Record<string, unknown> {
   };
 }
 
+/**
+ * issue #3227: `--background` with no `--source-id` used to submit ONE job
+ * with `sourceId: undefined`, which the Minion handler rejects fail-closed
+ * ("requires data.sourceId") — the exact invocation `gbrain doctor`
+ * prescribes always died instantly. Fan out one job per eligible source
+ * (job_id is per-call by design), printing every job_id. The per-job
+ * `--max-cost-usd` cap matches foreground semantics ("per-source budget cap
+ * defaults to --max-cost-usd").
+ *
+ * Returns true when it handled submission (caller exits). Returns false to
+ * fall through to the plain single-job path when: no --background, PGLite
+ * (maybeBackground degrades to inline; the foreground loop already
+ * multi-sources), explicit --source-id, or a parse error (let the
+ * foreground path report it).
+ *
+ * `submit` is injectable for tests; production routes each per-source arg
+ * vector through the shared maybeBackground helper.
+ */
+export async function fanOutBackgroundBySource(
+  engine: BrainEngine,
+  args: string[],
+  submit: (perSourceArgs: string[]) => Promise<boolean> = (perSourceArgs) =>
+    maybeBackground({
+      engine,
+      args: perSourceArgs,
+      jobName: 'extract-conversation-facts',
+      paramBuilder: buildJobParams,
+    }),
+): Promise<boolean> {
+  if (!args.includes('--background') || engine.kind === 'pglite') return false;
+  const parsed = parseArgs(args.filter((a) => a !== '--background' && a !== '--follow'));
+  if (parsed.error || parsed.sourceId) return false;
+
+  if (args.includes('--follow')) {
+    process.stderr.write(
+      '[--background] --follow is skipped for multi-source fan-out; use `gbrain jobs follow <id>` per job.\n',
+    );
+  }
+  const base = args.filter((a) => a !== '--follow');
+  const sourceIds = (await listSources(engine)).map((s) => s.id);
+  if (sourceIds.length === 0) {
+    process.stderr.write('[--background] no sources found; nothing to submit.\n');
+    return true;
+  }
+  for (const id of sourceIds) {
+    await submit([...base, '--source-id', id]);
+  }
+  return true;
+}
+
 export async function runExtractConversationFacts(
   engine: BrainEngine,
   args: string[],
@@ -1350,7 +1400,13 @@ export async function runExtractConversationFacts(
     return;
   }
 
-  // --background path.
+  // --background path. issue #3227: the Minion handler is single-source
+  // fail-closed (`data.sourceId` required), but doctor prescribes
+  // `--background` with no --source-id — that submission produced an
+  // instantly-dead job. Mirror the foreground multi-source loop by fanning
+  // out one job per source before the plain single-job path runs.
+  const fannedOut = await fanOutBackgroundBySource(engine, args);
+  if (fannedOut) return;
   const backgrounded = await maybeBackground({
     engine,
     args,
