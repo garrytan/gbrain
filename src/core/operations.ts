@@ -1161,9 +1161,18 @@ async function runAutoLink(
   const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
   // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // #3190: consult the active custom pack (path_prefixes / link verbs /
+  // frontmatter_links) so put_page auto-link matches what `gbrain extract
+  // links --source db` produces. Best-effort: null for base packs or on
+  // any load failure.
+  const { loadActivePackBestEffort } = await import('./schema-pack/best-effort.ts');
+  const { packLinkExtractionView } = await import('./schema-pack/link-inference.ts');
+  const pack = packLinkExtractionView(
+    await loadActivePackBestEffort({ engine, sourceId: opts?.sourceId } as never),
+  );
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-    { globalBasename },
+    { globalBasename, pack },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK

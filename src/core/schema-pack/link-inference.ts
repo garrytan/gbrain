@@ -116,3 +116,58 @@ export function frontmatterLinkTypeFromPack(
   }
   return null;
 }
+
+// #3190 — pack-aware plain link extraction.
+//
+// The codegen'd base packs are generated FROM the in-code tables
+// (inferLinkType's production regexes + FRONTMATTER_LINK_MAP + the
+// DIR_PATTERN dirs — see scripts/generate-gbrain-base.ts). Consulting them
+// at extraction time would double-apply WORSE copies of the same semantics:
+// the YAML carries simplified sketch regexes, and its frontmatter_links
+// entries have no direction field (the hardcoded map's `incoming` entries
+// like key_people would come back reversed). Custom packs are the ones
+// extraction must honor.
+const CODEGEN_BASE_PACKS = new Set(['gbrain-base', 'gbrain-base-v2']);
+
+/**
+ * The slice of a resolved pack that plain link extraction
+ * (`extractPageLinks` / `extractFrontmatterLinks`) consumes.
+ */
+export interface PackLinkExtraction {
+  link_types: SchemaPackManifest['link_types'];
+  frontmatter_links: SchemaPackManifest['frontmatter_links'];
+  /**
+   * Entity-dir alternatives derived from `page_types[].path_prefixes`
+   * (leading/trailing slashes stripped). Unioned into DIR_PATTERN so
+   * markdown/wikilink targets under pack-declared layouts (e.g.
+   * `wiki/people/…`) become extraction candidates.
+   */
+  entity_dirs: string[];
+}
+
+/**
+ * Project a resolved active pack down to what link extraction needs.
+ * Returns null (extraction stays purely legacy) when there is no pack or
+ * the pack is one of the codegen'd base packs.
+ */
+export function packLinkExtractionView(
+  pack: { manifest: SchemaPackManifest } | null | undefined,
+): PackLinkExtraction | null {
+  const m = pack?.manifest;
+  if (!m || CODEGEN_BASE_PACKS.has(m.name)) return null;
+  const dirs = new Set<string>();
+  for (const pt of m.page_types) {
+    for (const prefix of pt.path_prefixes ?? []) {
+      const d = prefix.replace(/^\/+/, '').replace(/\/+$/, '');
+      // Only slug-shaped prefixes participate in regex union; anything
+      // else (globs, regex metachars) is skipped rather than escaped so
+      // the entity regexes stay predictable.
+      if (d && /^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(d)) dirs.add(d);
+    }
+  }
+  return {
+    link_types: m.link_types,
+    frontmatter_links: m.frontmatter_links,
+    entity_dirs: [...dirs],
+  };
+}

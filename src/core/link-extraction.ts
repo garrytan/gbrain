@@ -14,6 +14,8 @@
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
+import { inferLinkTypeFromPack, type PackLinkExtraction } from './schema-pack/link-inference.ts';
+import { PageRegexBudget } from './schema-pack/redos-guard.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -28,7 +30,7 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-23T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -83,7 +85,22 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_ALTERNATIVES = 'people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities';
+const DIR_PATTERN = `(?:${DIR_ALTERNATIVES})`;
+
+/**
+ * #3190 — union the built-in dir whitelist with pack-declared entity dirs
+ * (from `page_types[].path_prefixes`, pre-validated to a slug-safe charset
+ * by `packLinkExtractionView`). Longer alternatives sort first so a nested
+ * prefix like `wiki/people` wins over a hypothetical `wiki`.
+ */
+function dirPatternWith(extraDirs?: string[]): string {
+  if (!extraDirs || extraDirs.length === 0) return DIR_PATTERN;
+  const extras = [...new Set(extraDirs)]
+    .sort((a, b) => (b.length - a.length) || a.localeCompare(b))
+    .map(d => d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return `(?:${extras.join('|')}|${DIR_ALTERNATIVES})`;
+}
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -95,8 +112,8 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  * The regex permits an optional `../` prefix (any number) and an optional
  * `.md` suffix so the same function works for both filesystem and DB content.
  */
-const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+const entityRefRe = (dirPattern: string) => new RegExp(
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${dirPattern}\\/[^)\\s]+?)(?:\\.md)?\\)`,
   'g',
 );
 
@@ -104,12 +121,12 @@ const ENTITY_REF_RE = new RegExp(
  * Match Obsidian-style `[[path]]` or `[[path|Display Text]]` wikilinks.
  * Captures: slug (dir/...), displayName (optional).
  *
- * Same dir whitelist as ENTITY_REF_RE. Strips trailing `.md`, strips section
+ * Same dir whitelist as entityRefRe. Strips trailing `.md`, strips section
  * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
  * exclusively so missing it leaves the graph empty.
  */
-const WIKILINK_RE = new RegExp(
-  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+const wikilinkRe = (dirPattern: string) => new RegExp(
+  `\\[\\[(${dirPattern}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -121,12 +138,12 @@ const WIKILINK_RE = new RegExp(
  *
  * Captures: sourceId, slug (dir/...), displayName (optional).
  *
- * Matched BEFORE WIKILINK_RE so `[[wiki:topics/ai]]` isn't mis-parsed by
- * the unqualified regex (the source prefix would not satisfy DIR_PATTERN
- * anyway, but the two-pass approach keeps intent crystal-clear).
+ * Matched BEFORE the unqualified wikilink pass so `[[wiki:topics/ai]]` isn't
+ * mis-parsed by the unqualified regex (the source prefix would not satisfy
+ * DIR_PATTERN anyway, but the two-pass approach keeps intent crystal-clear).
  */
-const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+const qualifiedWikilinkRe = (dirPattern: string) => new RegExp(
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${dirPattern}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -298,17 +315,19 @@ export function extractCodeRefs(content: string): CodeRef[] {
  * here; caller dedups). Slugs appearing inside fenced or inline code blocks
  * are excluded — those are typically code samples, not real entity references.
  */
-export function extractEntityRefs(content: string): EntityRef[] {
+export function extractEntityRefs(content: string, extraDirs?: string[]): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
   let match: RegExpExecArray | null;
+  // #3190: pack-declared entity dirs widen the whitelist for this call.
+  const dirPattern = dirPatternWith(extraDirs);
 
   // 1. Markdown links: [Name](path)
   //    Markdown links have no source-qualification syntax — they're
   //    always unqualified. Omit sourceId so the shape stays compatible
   //    with pre-v0.17 consumers doing strict equality.
   const markdownRanges: Array<[number, number]> = [];
-  const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
+  const mdPattern = entityRefRe(dirPattern);
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
     const fullPath = match[2];
@@ -322,7 +341,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //     Must run BEFORE the unqualified pass or we'd double-emit. We also
   //     mask out the matched spans so pass 2b can't grab them.
   const qualifiedRanges: Array<[number, number]> = [];
-  const qualPattern = new RegExp(QUALIFIED_WIKILINK_RE.source, QUALIFIED_WIKILINK_RE.flags);
+  const qualPattern = qualifiedWikilinkRe(dirPattern);
   while ((match = qualPattern.exec(stripped)) !== null) {
     const sourceId = match[1];
     let slug = match[2].trim();
@@ -339,7 +358,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //     Same shape rule: omit sourceId when unqualified.
   const unqualifiedRanges: Array<[number, number]> = [];
   const unmasked = maskRanges(stripped, qualifiedRanges);
-  const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
+  const wikiPattern = wikilinkRe(dirPattern);
   while ((match = wikiPattern.exec(unmasked)) !== null) {
     let slug = match[1].trim();
     if (!slug) continue;
@@ -468,12 +487,35 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: PackLinkExtraction | null } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
+  // #3190: pack-aware extraction. When the caller threads the active
+  // (non-base) pack, three things widen:
+  //   - entity-dir whitelist unions in pack path_prefixes,
+  //   - link-verb inference consults pack link_types BEFORE the legacy
+  //     matchers (the documented wrap in schema-pack/link-inference.ts),
+  //   - frontmatter_links mappings extend FRONTMATTER_LINK_MAP.
+  // No pack (or a codegen'd base pack) → behavior is byte-identical to
+  // the legacy path.
+  const pack = opts.pack ?? null;
+  const extraDirs = pack?.entity_dirs;
+  // One ReDoS budget per page, shared across every per-candidate inference
+  // call (mirrors extract-ner's per-page budget).
+  const regexBudget = pack ? new PageRegexBudget() : null;
+  const inferType = (context: string, targetSlug: string): string => {
+    if (pack) {
+      try {
+        const verb = inferLinkTypeFromPack(pack, pageType as string, context, regexBudget ?? undefined);
+        if (verb) return verb;
+      } catch { /* pack inference is best-effort; fall through to legacy */ }
+    }
+    return inferLinkType(pageType, context, content, targetSlug);
+  };
+
   // 1. Markdown entity refs.
-  for (const ref of extractEntityRefs(content)) {
+  for (const ref of extractEntityRefs(content, extraDirs)) {
     // Issue #972: refs from the generic `[[bare-name]]` pass carry the
     // literal wikilink text, not a real page slug. When global_basename
     // mode is on AND the resolver implements basename lookup, resolve
@@ -529,7 +571,7 @@ export async function extractPageLinks(
     const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
     candidates.push({
       targetSlug: ref.slug,
-      linkType: inferLinkType(pageType, context, content, ref.slug),
+      linkType: inferType(context, ref.slug),
       context,
       linkSource: 'markdown',
     });
@@ -540,7 +582,7 @@ export async function extractPageLinks(
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
   const bareRe = new RegExp(
-    `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
+    `\\b(${dirPatternWith(extraDirs)}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
     'g',
   );
   let m: RegExpExecArray | null;
@@ -551,7 +593,7 @@ export async function extractPageLinks(
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
-      linkType: inferLinkType(pageType, context, content, m[1]),
+      linkType: inferType(context, m[1]),
       context,
       linkSource: 'markdown',
     });
@@ -567,7 +609,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, pack);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1047,11 +1089,34 @@ export async function extractFrontmatterLinks(
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  pack?: PackLinkExtraction | null,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
 
-  for (const mapping of FRONTMATTER_LINK_MAP) {
+  // #3190: pack-declared frontmatter_links extend the hardcoded map.
+  // The hardcoded map WINS on any (pageType, field) it already covers —
+  // it carries direction + dir hints the pack schema doesn't — so a pack
+  // restating a built-in field can't emit reversed/duplicate edges.
+  // Pack mappings are outgoing (page → resolved value); the pack's
+  // entity dirs serve as resolution hints so bare-name values resolve
+  // into pack-declared layouts (e.g. `wiki/people/<slug>`).
+  const mappings: FrontmatterFieldMapping[] = [...FRONTMATTER_LINK_MAP];
+  for (const fl of pack?.frontmatter_links ?? []) {
+    const freeFields = fl.fields.filter(f =>
+      !FRONTMATTER_LINK_MAP.some(m =>
+        m.fields.includes(f) && (m.pageType === undefined || m.pageType === fl.page_type)));
+    if (freeFields.length === 0) continue;
+    mappings.push({
+      fields: freeFields,
+      pageType: fl.page_type,
+      type: fl.link_type,
+      direction: 'outgoing',
+      dirHint: pack?.entity_dirs ?? '',
+    });
+  }
+
+  for (const mapping of mappings) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];
