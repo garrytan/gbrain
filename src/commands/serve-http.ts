@@ -54,6 +54,100 @@ import {
  */
 export const HEALTH_TIMEOUT_MS = 3000;
 
+// Maximum time the HTTP path will wait for engine.disconnect() (PGLite close
+// + advisory lock release) before forcing exit. Mirrors CLEANUP_DEADLINE_MS
+// in serve.ts's stdio lifecycle (v0.31.3, #801) — that fix only covered the
+// stdio transport; this transport was added afterward (v0.26.0) and shipped
+// with no signal handling at all, so SIGTERM (systemd stop, `gbrain serve
+// --http` killed directly, etc.) left the `.gbrain-lock` directory behind,
+// wedging every subsequent `sources`/`sync` call until `--break-lock`.
+const HTTP_CLEANUP_DEADLINE_MS = 5_000;
+
+/**
+ * Test seam for `installHttpLifecycle` — same shape as serve.ts's
+ * `StdioLifecycleDeps`, scoped down to what the HTTP path actually needs.
+ * Defaults to the live process; tests inject stubs so shutdown can be
+ * driven deterministically without sending a real signal or exiting the
+ * test runner.
+ */
+export interface HttpLifecycleDeps {
+  signals?: Pick<NodeJS.Process, 'on'>;
+  exit?: (code?: number) => void;
+  log?: (msg: string) => void;
+}
+
+/**
+ * Installs SIGTERM/SIGINT/SIGHUP handlers that release the PGLite write
+ * lock (via `engine.disconnect()`) before the process exits. Exported
+ * standalone (not folded into `runServeHttp`) so it's unit-testable without
+ * booting express or a real HTTP listener.
+ */
+/**
+ * Structural subset of `http.Server` this module needs. Declared standalone
+ * (rather than `Pick<http.Server, 'close'>`) because `http.Server#close`'s
+ * real signature returns `this`, which forces any Pick-derived type to
+ * demand a full `http.Server` back — a plain `{ close(): void }` test stub
+ * would fail to typecheck against that. We only ever call `close()` and
+ * discard the return value, so `void` is the correct (and sufficient)
+ * contract here; a real `http.Server` satisfies it structurally.
+ */
+export interface CloseableServer {
+  close(callback?: (err?: Error) => void): void;
+}
+
+export function installHttpLifecycle(
+  engine: BrainEngine,
+  server: CloseableServer,
+  deps: HttpLifecycleDeps = {},
+): void {
+  const signals = deps.signals ?? process;
+  const exit = deps.exit ?? ((code?: number) => { process.exit(code); });
+  const log = deps.log ?? ((msg: string) => console.error(msg));
+
+  let shuttingDown = false;
+  const beginShutdown = (reason: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    log(`GBrain HTTP MCP server: graceful exit (${reason})`);
+
+    // Race cleanup against a deadline — a wedged PGLite WASM close
+    // shouldn't be able to trap the process forever. If we hit the
+    // deadline we still exit; the lock dir is advisory and the next
+    // process's stale-lock check (process.kill(pid, 0) -> ESRCH) reclaims it.
+    const deadline = setTimeout(() => {
+      log(`GBrain HTTP MCP server: cleanup deadline (${HTTP_CLEANUP_DEADLINE_MS}ms) exceeded — forcing exit`);
+      exit(0);
+    }, HTTP_CLEANUP_DEADLINE_MS);
+    deadline.unref?.();
+
+    // server.close() stops accepting new connections but does NOT force-
+    // close existing keep-alive sockets, so it's fire-and-forget here — a
+    // lingering client must never be able to hold up the lock-release path
+    // below, which is what this fix actually exists for.
+    try {
+      server.close();
+    } catch {
+      /* already closed / never started listening */
+    }
+
+    Promise.resolve()
+      .then(() => engine.disconnect())
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`GBrain HTTP MCP server: cleanup error: ${msg}`);
+      })
+      .finally(() => {
+        clearTimeout(deadline);
+        exit(0);
+      });
+  };
+
+  signals.on('SIGTERM', () => beginShutdown('SIGTERM'));
+  signals.on('SIGINT', () => beginShutdown('SIGINT'));
+  signals.on('SIGHUP', () => beginShutdown('SIGHUP'));
+}
+
 /**
  * v0.36.1.x #1024: bootstrap token resolution.
  *
@@ -2305,7 +2399,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  app.listen(port, bind, () => {
+  const server = app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
@@ -2330,4 +2424,6 @@ ${bootstrapFromEnv
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });
+
+  installHttpLifecycle(engine, server);
 }

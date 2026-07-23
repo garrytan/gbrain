@@ -1,5 +1,37 @@
 # TODOS
 
+## Found during v0.42.56.0 ship verification (2026-07-23)
+
+- [ ] **P1 — `test/brain-repo-durability.serial.test.ts` has a real intermittent flake, root-caused but not fixed.**
+  `root`/`work`/`bare` are declared as shared module-level `let` variables and reassigned
+  in `beforeEach`, rather than being scoped per-test. Under bun's test scheduling this
+  occasionally lets one test's fixture setup race against another's still-in-flight state,
+  producing a genuine git error (`cannot lock ref 'refs/heads/main': is at X but expected Y`)
+  from `commitScaffolding`'s push in `src/core/brain-repo-durability.ts`. Confirmed via 10x
+  repro loop with temporary instrumentation (not committed) — reproduces standalone
+  (no parallel-shard interaction needed), ~1-in-3 to 1-in-10 depending on load. Root cause
+  is NOT in the source (`hardenBrainRepo`/`commitScaffolding`/`pushProbe` all look correct on
+  inspection) — it's the test file's shared-state fixture pattern. Fix: scope `root`/`work`/`bare`
+  per-test (e.g. return them from a `makePair()` call captured in each test's own local
+  const, or a per-test context object) across all 19 tests in the file, matching the
+  already-correct pattern other test files in this repo use (see the save/restore pattern
+  in `test/subagent-audit.test.ts`/`test/supervisor.test.ts` for the analogous env-var
+  version of this class of bug). Deliberately not attempted same-night: a blind refactor
+  touching all 19 tests risks introducing a new regression without full read-through, and
+  this is unrelated to the branch that surfaced it (`fix/http-lock-cleanup-shutdown` only
+  touches `serve-http.ts`).
+
+  **Related occurrence, same root-cause class:** `test/facts-classify.test.ts`'s
+  `classifyAgainstCandidates` tests failed twice under a full parallel-shard run
+  (`below cheap threshold but at-or-above fallback threshold`, `no embedding on new fact`)
+  but pass clean standalone (9/9, 0 fail, confirmed same night). `classifyAgainstCandidates`
+  reads `src/core/ai/gateway.ts`'s module-level `_config` singleton via `isAvailable('chat')`
+  — any other test file that calls `configureGateway()` and shares a shard/worker process
+  can race this the same way `brain-repo-durability`'s shared `let` fixtures do. Both are
+  symptoms of the same underlying gap: module-level/shared mutable state isn't safe under
+  bun's concurrent-shard test scheduling. Worth a repo-wide sweep for this pattern rather
+  than fixing each occurrence as it's independently discovered.
+
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
 - [ ] **P1 — take-writes source scoping fails open when source resolution errors (#2684 residual).**

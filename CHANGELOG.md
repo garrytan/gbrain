@@ -2,6 +2,21 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.65.0] - 2026-07-23
+
+**The HTTP MCP server now shuts down cleanly.** `gbrain serve --http` never installed signal handling, so stopping it (a service manager restart, a plain `kill`, a container stop) skipped releasing the PGLite write lock — the next `sources`/`sync` call would hang until manually cleared. The stdio transport got this fix back in v0.31.3; the HTTP transport, added afterward, never did. It now shuts down the same way: SIGTERM/SIGINT/SIGHUP trigger a graceful lock release with a bounded cleanup deadline, so a wedged close still exits instead of hanging forever.
+
+### Fixed
+
+- **`gbrain serve --http` releases the PGLite write lock on shutdown.** New `installHttpLifecycle()` in `serve-http.ts` mirrors the stdio path's existing SIGTERM/SIGINT/SIGHUP handling, with the same cleanup-deadline safety net. (test/serve-http-lifecycle.test.ts)
+- **`logDeliveredReflexPointers` no longer risks dropping its own telemetry write.** It deferred registering its fire-and-forget write through a dynamic `import()`, so a fast-exiting CLI invocation could tear down before the write was tracked for drain-on-exit. Now imports statically and registers synchronously.
+- A dev-machine-only test-isolation gap where a global test preload spread the real host environment into the AI gateway's test config, making `isAvailable('chat')` see a real local `ANTHROPIC_API_KEY` and take the wrong code path in several tests that assume a keyless CI environment.
+- Two more dev-machine-only test-isolation gaps: a spawned `git` helper that inherited the wrong `HOME`, and a check-resolvable test that didn't fully neutralize a real local OpenClaw workspace.
+- A test file's `afterAll` unconditionally cleared a shared audit-directory env var instead of restoring its prior value, occasionally leaking into a neighboring test under parallel-shard scheduling.
+- A test's own fixture setup didn't isolate `GBRAIN_HOME`, so it could pick up a real local brain config instead of the intended test scenario.
+
+No schema migrations.
+
 ## [0.42.64.0] - 2026-07-20
 
 ### Fixed
