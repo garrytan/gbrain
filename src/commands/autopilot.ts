@@ -871,9 +871,19 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         } catch {
           embeddingModel = (await engine.getConfig('embedding_model')) ?? undefined;
         }
-        const embedKeyCfg: Record<string, string | null> = {};
+        // #2662 (codex round-3): HOSTED_EMBED_KEY_CONFIG entries are keys
+        // buildGatewayConfig folds from the FILE plane only — `gbrain config
+        // set <key> X` writes the DB plane, which never reaches the gateway
+        // for these fields. Reading via engine.getConfig() here (DB plane)
+        // would report a provider "configured" from a DB-only key that the
+        // gateway can never actually use, dispatching a doomed embed job.
+        // Read the same file-plane source context.ts (doctor) reads instead,
+        // so autopilot and doctor agree with what the gateway can see.
+        const { loadConfigFileOnly } = await import('../core/config.ts');
+        const fileCfg = loadConfigFileOnly() as Record<string, unknown> | null;
+        const embedKeyCfg: Record<string, unknown> = {};
         for (const field of Object.values(HOSTED_EMBED_KEY_CONFIG)) {
-          embedKeyCfg[field] = await engine.getConfig(field);
+          embedKeyCfg[field] = fileCfg?.[field];
         }
         const ctx = {
           repoPath,
