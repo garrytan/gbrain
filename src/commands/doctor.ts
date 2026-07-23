@@ -88,6 +88,19 @@ export interface Check {
 }
 
 /**
+ * Conversation parser coverage applies to raw turn-oriented records, not to
+ * normalized summaries that merely point back to a raw source. Running the
+ * parser against a generated meeting summary produces a guaranteed no-match
+ * and turns a healthy ingestion pipeline into a false doctor warning.
+ */
+export function isConversationParserCandidate(
+  page: Pick<import('../core/types.ts').Page, 'type' | 'frontmatter'>,
+): boolean {
+  const rawSource = page.frontmatter?.raw_source;
+  return !(typeof rawSource === 'string' && rawSource.trim().length > 0);
+}
+
+/**
  * Structured doctor report. Stable shape consumed by:
  *   - gbrain doctor --json (CLI)
  *   - run_doctor MCP op (remote callers)
@@ -4933,7 +4946,7 @@ export async function buildChecks(
       const sample: import('../core/types.ts').Page[] = [];
       for (const t of allowedTypes) {
         const slice = await engine.listPages({ limit: 50, type: t as import('../core/types.ts').PageType });
-        sample.push(...slice);
+        sample.push(...slice.filter(isConversationParserCandidate));
       }
       if (sample.length === 0) {
         checks.push({
