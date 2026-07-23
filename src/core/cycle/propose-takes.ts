@@ -388,16 +388,20 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Write proposals to take_proposals. Each row is a separate INSERT
-      // because the composite idempotency key is on the per-page tuple — a
-      // bulk UPSERT would collapse a same-page-multi-claim run into one row.
+      // Write proposals to take_proposals. #2138: the idempotency key is
+      // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
+      // the per-page tuple (migration v125), so a multi-claim page keeps every
+      // claim; the old per-page key made ON CONFLICT DO NOTHING silently drop
+      // claim #2+. RETURNING id so a conflict-dropped duplicate (extractor
+      // repeating itself) doesn't inflate proposals_inserted.
       for (const p of proposals) {
-        await engine.executeRaw(
+        const inserted = await engine.executeRaw<{ id: number }>(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
+           RETURNING id`,
           [
             sourceId,
             page.slug,
@@ -413,7 +417,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             modelId,
           ],
         );
-        result.proposals_inserted += 1;
+        result.proposals_inserted += inserted.length;
       }
     }
 

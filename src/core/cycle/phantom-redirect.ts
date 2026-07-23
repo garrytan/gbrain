@@ -483,7 +483,9 @@ export async function tryRedirectPhantom(
   await engine.softDeletePage(page.slug, { sourceId });
   // Wipe any stale phantom DB facts that may have escaped the migration
   // (e.g. expired rows that the migration WHERE clause skipped).
-  await engine.deleteFactsForPage(page.slug, sourceId);
+  // #2412: same #1928 guard as extract-facts.ts — `cli:` conversation facts
+  // are DB-only (not fence-owned) and must survive the straggler wipe.
+  await engine.deleteFactsForPage(page.slug, sourceId, { excludeSourcePrefixes: ['cli:'] });
   const phantomPath = path.join(brainDir, `${page.slug}.md`);
   if (fs.existsSync(phantomPath)) {
     try {

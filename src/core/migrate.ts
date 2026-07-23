@@ -5671,6 +5671,29 @@ export const MIGRATIONS: Migration[] = [
 `);
     },
   },
+  {
+    version: 125,
+    name: 'take_proposals_per_claim_idempotency',
+    // #2138: the idempotency key was per-PAGE — (source_id, page_slug,
+    // content_hash, prompt_version), where content_hash is a hash of the whole
+    // page body — so propose_takes' per-claim INSERT ... ON CONFLICT DO NOTHING
+    // silently dropped claim #2+ on every multi-claim page. Fold
+    // md5(claim_text) into the unique index so the key is per-claim. An
+    // expression index needs no new column or backfill, and the new key is
+    // strictly finer than the old one, so the recreate cannot hit duplicate
+    // rows. The per-page reprocessing cache is unaffected: propose-takes.ts
+    // still short-circuits via its (source_id, page_slug, content_hash,
+    // prompt_version) SELECT before calling the extractor.
+    //
+    // Mirrors in src/schema.sql / schema-embedded.ts / pglite-schema.ts
+    // (fresh-install blobs) updated in the same commit.
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -52,6 +52,28 @@ import { isUndefinedColumnError } from '../core/utils.ts';
 import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../core/search/source-boost.ts';
 import { escapeLikePattern, buildVisibilityClause } from '../core/search/sql-ranking.ts';
 
+/**
+ * #1835: resolve a files.storage_path to the absolute path the image_assets
+ * check should stat. Windows-form paths ('D:/brain/img.png', 'D:\\brain\\img.png')
+ * are NOT absolute under posix path semantics, so pre-fix they were joined onto
+ * repoRoot and every asset ingested from the Windows side was flagged missing
+ * under WSL. Translate them to the WSL drive mount (/mnt/d/brain/img.png)
+ * instead. On native Windows isAbsolute() already accepts the drive form, so
+ * the translation branch never fires there.
+ */
+export function resolveImageAssetPath(
+  storagePath: string,
+  repoRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (isAbsolute(storagePath)) return storagePath;
+  if (platform !== 'win32') {
+    const drive = /^([A-Za-z]):[\\/](.*)$/.exec(storagePath);
+    if (drive) return `/mnt/${drive[1].toLowerCase()}/${drive[2].replace(/\\/g, '/')}`;
+  }
+  return join(repoRoot, storagePath);
+}
+
 export interface Check {
   name: string;
   status: 'ok' | 'warn' | 'fail';
@@ -7177,15 +7199,12 @@ export async function buildChecks(
       let vanished = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
-      const nodePath = await import('node:path');
       // storage_path is repo-relative for sync-ingested assets. Resolving
       // against cwd made this check a false-positive WARN whenever doctor
       // ran outside the brain repo.
       const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
-        const abs = nodePath.isAbsolute(r.storage_path)
-          ? r.storage_path
-          : nodePath.join(repoRoot, r.storage_path);
+        const abs = resolveImageAssetPath(r.storage_path, repoRoot);
         try {
           fs.statSync(abs);
         } catch {
