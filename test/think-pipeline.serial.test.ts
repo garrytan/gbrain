@@ -18,6 +18,9 @@ beforeAll(async () => {
     title: 'Alice', type: 'person', compiled_truth: 'Alice founded Acme.',
   });
   alicePageId = alice.id;
+  await engine.upsertChunks('people/alice-example', [
+    { chunk_index: 0, chunk_text: 'Alice founded Acme and is a strong technical founder.', chunk_source: 'compiled_truth' },
+  ]);
   await engine.addTakesBatch([
     { page_id: alicePageId, row_num: 1, claim: 'CEO of Acme', kind: 'fact', holder: 'world', weight: 1.0 },
     { page_id: alicePageId, row_num: 2, claim: 'Strong technical founder', kind: 'take', holder: 'garry', weight: 0.85 },
@@ -177,6 +180,53 @@ describe('runThink (with stub client)', () => {
     expect(result.gaps).toEqual(['no info on funding history']);
     expect(result.takesGathered).toBeGreaterThan(0);
     expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
+  });
+
+  test('repairs once when synthesis omits the top-ranked page citation', async () => {
+    let calls = 0;
+    let repairPrompt = '';
+    const stubClient: ThinkLLMClient = {
+      create: async (params) => {
+        calls += 1;
+        if (calls === 2) {
+          const last = params.messages.at(-1);
+          repairPrompt = typeof last?.content === 'string' ? last.content : '';
+        }
+        return {
+          id: `msg_repair_${calls}`,
+          type: 'message',
+          role: 'assistant',
+          model: 'stub',
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+          content: [{
+            type: 'text',
+            text: JSON.stringify(calls === 1 ? {
+              answer: 'Alice founded Acme.',
+              citations: [],
+              gaps: [],
+            } : {
+              answer: 'Alice founded Acme [people/alice-example].',
+              citations: [{ page_slug: 'people/alice-example', row_num: null, citation_index: 1 }],
+              gaps: [],
+            }),
+          }],
+        };
+      },
+    };
+
+    const result = await runThink(engine, {
+      question: 'Alice founded Acme',
+      client: stubClient,
+    });
+
+    expect(calls).toBe(2);
+    expect(repairPrompt).toContain('top-ranked retrieval page');
+    expect(result.diagnostics.topPageCited).toBe(true);
+    expect(result.diagnostics.citedPageSlugs).toContain('people/alice-example');
+    expect(result.warnings).toContain('TOP_PAGE_CITATION_REPAIR_APPLIED: people/alice-example');
+    expect(result.warnings).not.toContain('TOP_PAGE_NOT_CITED: people/alice-example');
   });
 
   test('handles malformed LLM output gracefully (regex citation fallback)', async () => {

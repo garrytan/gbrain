@@ -147,6 +147,12 @@ export interface ThinkResult {
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
+    /** Page slugs in the same rank order used to render <pages>. */
+    pageSlugsByRank: string[];
+    /** Unique page slugs present in resolved structured or fallback citations. */
+    citedPageSlugs: string[];
+    /** False when a synthesis ran but the rank-1 page is absent from resolved citations. */
+    topPageCited: boolean;
   };
 }
 
@@ -186,6 +192,66 @@ function tryParseJSON(text: string): unknown {
     }
     return null;
   }
+}
+
+function thinkMessageToResponse(result: Anthropic.Message): {
+  response: ThinkResponse;
+  synthesisOk: boolean;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const block = result.content.find(b => b.type === 'text');
+  const text = block && 'text' in block ? block.text : '';
+  const parsed = tryParseJSON(text);
+  if (!parsed || typeof parsed !== 'object') {
+    warnings.push('LLM_OUTPUT_NOT_JSON');
+    return {
+      response: { answer: text, citations: [], gaps: [] },
+      synthesisOk: false,
+      warnings,
+    };
+  }
+  const r = parsed as Partial<ThinkResponse>;
+  return {
+    response: {
+      answer: typeof r.answer === 'string' ? r.answer : '',
+      citations: Array.isArray(r.citations) ? (r.citations as ThinkResponse['citations']) : [],
+      gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
+    },
+    synthesisOk: true,
+    warnings,
+  };
+}
+
+function summarizeCitationCoverage(citations: ParsedCitation[], pageSlugsByRank: string[]): {
+  citedPageSlugs: string[];
+  topPageSlug: string | null;
+  topPageCited: boolean;
+} {
+  const citedPageSlugSet = new Set(
+    citations
+      .map(c => c.page_slug)
+      .filter(slug => typeof slug === 'string' && slug.length > 0)
+      .map(slug => slug.toLowerCase()),
+  );
+  const citedPageSlugs = [...citedPageSlugSet].sort();
+  const topPageSlug = pageSlugsByRank[0] ?? null;
+  const topPageCited = topPageSlug === null || citedPageSlugSet.has(topPageSlug.toLowerCase());
+  return { citedPageSlugs, topPageSlug, topPageCited };
+}
+
+function buildTopPageCitationRepairMessage(topPageSlug: string, response: ThinkResponse): string {
+  return [
+    'The previous JSON response did not cite the top-ranked retrieval page.',
+    `Top-ranked page slug: ${topPageSlug}`,
+    'Revise the same answer as a single valid JSON object matching the original schema.',
+    `If the top-ranked page is relevant, cite [${topPageSlug}] inline and include it in the citations array with row_num null.`,
+    'If the top-ranked page is not relevant, keep the answer but add a gaps item explaining why it is insufficient or irrelevant.',
+    'Do not fabricate facts, slugs, or row numbers. Do not add prose outside JSON.',
+    '',
+    'Previous JSON response:',
+    JSON.stringify(response),
+  ].join('\n');
 }
 
 /**
@@ -286,6 +352,7 @@ export async function runThink(
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
   });
+  const pageSlugsByRank = gather.pages.map(p => p.slug);
 
   // Render evidence blocks for the prompt
   const pagesBlock = renderPagesBlock(gather.pages);
@@ -437,6 +504,7 @@ export async function runThink(
   // return ANDs it with a non-empty-answer check (catches valid-but-empty JSON).
   let synthesisOk = true;
   let response: ThinkResponse;
+  let repairClient: ThinkLLMClient | null = null;
   if (opts.stubResponse) {
     response = opts.stubResponse;
   } else {
@@ -491,36 +559,74 @@ export async function runThink(
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
           takesFromVector: gather.diagnostics.takesFromVector,
           graphHits: gather.diagnostics.graphHits,
+          pageSlugsByRank,
+          citedPageSlugs: [],
+          topPageCited: false,
         },
       };
     }
+    repairClient = client;
     const result = await client.create({
       model: modelUsed,
       max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)),
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
-    const block = result.content.find(b => b.type === 'text');
-    const text = block && 'text' in block ? block.text : '';
-    const parsed = tryParseJSON(text);
-    if (!parsed || typeof parsed !== 'object') {
-      warnings.push('LLM_OUTPUT_NOT_JSON');
-      synthesisOk = false;  // #1698: malformed output (and the non-JSON graceful sentinel)
-      response = { answer: text, citations: [], gaps: [] };
-    } else {
-      const r = parsed as Partial<ThinkResponse>;
-      response = {
-        answer: typeof r.answer === 'string' ? r.answer : '',
-        citations: Array.isArray(r.citations) ? (r.citations as ThinkResponse['citations']) : [],
-        gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
-      };
-    }
+    const parsed = thinkMessageToResponse(result);
+    for (const w of parsed.warnings) warnings.push(w);
+    synthesisOk = parsed.synthesisOk;
+    response = parsed.response;
   }
 
   // Resolve citations: prefer structured, fall back to inline-marker regex scan.
-  const resolved = resolveCitations(response.citations, response.answer);
+  let resolved = resolveCitations(response.citations, response.answer);
+  let citationCoverage = summarizeCitationCoverage(resolved.citations, pageSlugsByRank);
+  if (
+    repairClient
+    && synthesisOk
+    && response.answer.trim().length > 0
+    && citationCoverage.topPageSlug !== null
+    && !citationCoverage.topPageCited
+  ) {
+    const topPageSlug = citationCoverage.topPageSlug;
+    warnings.push(`TOP_PAGE_CITATION_REPAIR_ATTEMPTED: ${topPageSlug}`);
+    const repairResult = await repairClient.create({
+      model: modelUsed,
+      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: userMessage },
+        { role: 'assistant', content: JSON.stringify(response) },
+        { role: 'user', content: buildTopPageCitationRepairMessage(topPageSlug, response) },
+      ],
+    });
+    const repairParsed = thinkMessageToResponse(repairResult);
+    if (repairParsed.synthesisOk && repairParsed.response.answer.trim().length > 0) {
+      const repairResolved = resolveCitations(repairParsed.response.citations, repairParsed.response.answer);
+      const repairCoverage = summarizeCitationCoverage(repairResolved.citations, pageSlugsByRank);
+      if (repairCoverage.topPageCited) {
+        warnings.push(`TOP_PAGE_CITATION_REPAIR_APPLIED: ${topPageSlug}`);
+        for (const w of repairParsed.warnings) warnings.push(`TOP_PAGE_CITATION_REPAIR_${w}`);
+        response = repairParsed.response;
+        resolved = repairResolved;
+        citationCoverage = repairCoverage;
+      } else {
+        warnings.push(`TOP_PAGE_CITATION_REPAIR_FAILED: ${topPageSlug}`);
+      }
+    } else {
+      warnings.push(`TOP_PAGE_CITATION_REPAIR_INVALID: ${topPageSlug}`);
+    }
+  }
   if (resolved.warnings.length > 0) {
     for (const w of resolved.warnings) warnings.push(w);
+  }
+  if (
+    synthesisOk
+    && response.answer.trim().length > 0
+    && citationCoverage.topPageSlug !== null
+    && !citationCoverage.topPageCited
+  ) {
+    warnings.push(`TOP_PAGE_NOT_CITED: ${citationCoverage.topPageSlug}`);
   }
 
   // Round-loop scaffolding (rounds > 1 currently re-runs without gap-driven retrieval).
@@ -549,6 +655,9 @@ export async function runThink(
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
+      pageSlugsByRank,
+      citedPageSlugs: citationCoverage.citedPageSlugs,
+      topPageCited: citationCoverage.topPageCited,
     },
   };
 }
