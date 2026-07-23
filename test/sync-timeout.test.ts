@@ -106,8 +106,8 @@ describe('SyncResult partial envelope (v0.41.13.0 T1)', () => {
     // Compile-time only: TypeScript would reject this assignment if the
     // status union narrowed in a way that broke existing values.
     const existing: Array<
-      'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures'
-    > = ['up_to_date', 'synced', 'first_sync', 'dry_run', 'blocked_by_failures'];
-    expect(existing).toHaveLength(5);
+      'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures' | 'blocked_by_reconcile'
+    > = ['up_to_date', 'synced', 'first_sync', 'dry_run', 'blocked_by_failures', 'blocked_by_reconcile'];
+    expect(existing).toHaveLength(6);
   });
 });

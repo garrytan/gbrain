@@ -33,10 +33,14 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import type { SyncResult } from '../src/commands/sync.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let repoPath: string;
+let brainHome: string;
 
 async function pageCountBySource(): Promise<Record<string, number>> {
   const rows = await engine.executeRaw<{ source_id: string; n: number }>(
@@ -45,6 +49,17 @@ async function pageCountBySource(): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   for (const r of rows) out[r.source_id] = r.n;
   return out;
+}
+
+function operationContext(sourceId: string): OperationContext {
+  return {
+    engine,
+    config: {} as OperationContext['config'],
+    logger: { info() {}, warn() {}, error() {}, debug() {} } as OperationContext['logger'],
+    dryRun: false,
+    remote: false,
+    sourceId,
+  };
 }
 
 describe('performFullSync threads sourceId end-to-end', () => {
@@ -68,6 +83,7 @@ describe('performFullSync threads sourceId end-to-end', () => {
     }
 
     repoPath = mkdtempSync(join(tmpdir(), 'gbrain-pfs-'));
+    brainHome = mkdtempSync(join(tmpdir(), 'gbrain-pfs-home-'));
     execSync('git init', { cwd: repoPath, stdio: 'pipe' });
     execSync('git config user.email "test@test.com"', { cwd: repoPath, stdio: 'pipe' });
     execSync('git config user.name "Test"', { cwd: repoPath, stdio: 'pipe' });
@@ -93,17 +109,16 @@ describe('performFullSync threads sourceId end-to-end', () => {
 
   afterEach(() => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+    if (brainHome) rmSync(brainHome, { recursive: true, force: true });
   });
 
-  test('performFullSync with --source routes pages to named source (not default)', async () => {
-    const { performSync } = await import('../src/commands/sync.ts');
-    const result = await performSync(engine, {
-      repoPath,
-      full: true,
-      sourceId: 'testsrc-pfs',
-      noPull: true,
-      noEmbed: true,
-    });
+  test('sync_brain actual handler threads ctx.sourceId into full sync', async () => {
+    const result = await withEnv({ GBRAIN_HOME: brainHome }, () =>
+      operationsByName.sync_brain.handler(
+        operationContext('testsrc-pfs'),
+        { repo: repoPath, full: true, no_pull: true, no_embed: true },
+      ) as Promise<SyncResult>,
+    );
 
     // status is 'first_sync' for fresh imports, 'synced' for incremental — accept both
     expect(['first_sync', 'synced']).toContain(result.status);
@@ -119,13 +134,15 @@ describe('performFullSync threads sourceId end-to-end', () => {
 
   test('performFullSync WITHOUT --source still targets default (back-compat preserved)', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
-    const result = await performSync(engine, {
-      repoPath,
-      full: true,
-      // no sourceId — expect default-source behavior
-      noPull: true,
-      noEmbed: true,
-    });
+    const result = await withEnv({ GBRAIN_HOME: brainHome }, () =>
+      performSync(engine, {
+        repoPath,
+        full: true,
+        // no sourceId — expect default-source behavior
+        noPull: true,
+        noEmbed: true,
+      }),
+    );
 
     // status is 'first_sync' for fresh imports, 'synced' for incremental — accept both
     expect(['first_sync', 'synced']).toContain(result.status);

@@ -34,6 +34,10 @@ describe('shouldNudgeAfterSync (D5 status gate)', () => {
     expect(shouldNudgeAfterSync('blocked_by_failures')).toBe(false);
   });
 
+  test('does NOT fire on blocked_by_reconcile (bookmark unchanged)', () => {
+    expect(shouldNudgeAfterSync('blocked_by_reconcile')).toBe(false);
+  });
+
   test('does NOT fire on partial (inconsistent state)', () => {
     expect(shouldNudgeAfterSync('partial')).toBe(false);
   });
