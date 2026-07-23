@@ -34,11 +34,12 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
 import { resolvePageFilePath } from '../markdown.ts';
 import { withPageLock } from '../page-lock.ts';
+import { isWriteTargetContained } from '../path-confine.ts';
 import { gbrainPath } from '../config.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
@@ -172,17 +173,75 @@ export async function writeFactsToFence(
   // the put_page write-through and dream-cycle reverse-render compute. The
   // bare join wrote main-source fences to the repo ROOT (the default source's
   // tree), polluting ~/brain with stray root-level fence files.
-  const filePath = resolvePageFilePath(target.localPath, target.slug, target.sourceId);
-  const tmpPath = `${filePath}.tmp`;
+  let filePath = resolvePageFilePath(target.localPath, target.slug, target.sourceId);
 
   return withPageLock(
     target.slug,
     async () => {
       // 1. Read existing body or stub-create.
-      let body: string;
+      let body: string | null = null;
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
       } else {
+        // #3069: the slug-derived path missed, but the page may still exist
+        // on disk under a different basename — vault files like
+        // `10-people/First Last.md` import with slug `10-people/first-last`,
+        // so `<root>/<slug>.md` doesn't exist even though the page does.
+        // Stub-creating next to the real file (a) duplicates the page and
+        // (b) restarts fence row_num at 1 on the empty stub, colliding with
+        // the real page's existing DB rows on idx_facts_fence_key. Resolve
+        // via the page row (sync stamps source_path + import_filename)
+        // before concluding the page doesn't exist.
+        let pageRow: { source_path: string | null; import_filename: string | null } | null = null;
+        try {
+          const rows = await engine.executeRaw<{ source_path: string | null; import_filename: string | null }>(
+            `SELECT source_path, import_filename FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL LIMIT 1`,
+            [target.slug, target.sourceId],
+          );
+          pageRow = rows[0] ?? null;
+        } catch {
+          // Lookup failed (pre-migration schema, transient) — fall through
+          // to the pre-#3069 stub path rather than dropping the facts.
+        }
+        if (pageRow !== null) {
+          const candidates: string[] = [];
+          if (pageRow.source_path) {
+            candidates.push(join(target.localPath!, pageRow.source_path));
+          }
+          if (pageRow.import_filename) {
+            const name = pageRow.import_filename.endsWith('.md')
+              ? pageRow.import_filename
+              : `${pageRow.import_filename}.md`;
+            candidates.push(join(dirname(filePath), name));
+          }
+          // Containment guard (same threat class write-through covers with
+          // isWriteTargetContained, #1647-slug): source_path/import_filename
+          // come from the DB, not from a validated slug — a hostile or
+          // corrupt page row with `../` must not steer the fence write (read
+          // + rename-over) outside the source tree.
+          const hit = candidates.find(
+            (c) => isWriteTargetContained(c, target.localPath!) && existsSync(c),
+          );
+          if (hit !== undefined) {
+            filePath = hit;
+            body = readFileSync(filePath, 'utf-8');
+          } else {
+            // A page row exists but its backing file can't be located.
+            // Refuse to stub-create (the empty stub's fence would restart
+            // row_num at 1 → unique violation against the row's existing
+            // facts, and a later sync would import the stub OVER the real
+            // page content). Route to the legacy DB-only path instead so
+            // the facts aren't dropped.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[facts] page row exists for slug=${target.slug} (source=${target.sourceId}) but its backing file was not found on disk — refusing to stub-create a duplicate page; routing to legacy DB-only path.`,
+            );
+            return { inserted: 0, ids: [], stubGuardBlocked: true };
+          }
+        }
+      }
+      if (body === null) {
+        // No page row for this slug — genuinely new entity page.
         // Stub-creation guard. Phantom entity pages at the brain root were
         // being spawned when resolveEntitySlug fell through to a bare
         // slugify because pg_trgm scored too low on short bare names. The
@@ -238,6 +297,7 @@ export async function writeFactsToFence(
       }
 
       // 3. Atomic write: .tmp first, then parse-validate, then rename.
+      const tmpPath = `${filePath}.tmp`;
       writeFileSync(tmpPath, body, 'utf-8');
 
       // 4. Parse-before-rename: re-read the .tmp content and verify the

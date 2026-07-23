@@ -273,6 +273,103 @@ describe('writeFactsToFence — stub guard (v0.34.5)', () => {
   });
 });
 
+describe('writeFactsToFence — basename ≠ slug (#3069)', () => {
+  test('resolves the real file via the page row instead of stub-creating a duplicate', async () => {
+    // Vault file whose basename differs from its slug — the way sync imports
+    // `10-people/Joey Example.md` as slug `10-people/joey-example`.
+    mkdirSync(join(brainDir, '10-people'), { recursive: true });
+    const realPath = join(brainDir, '10-people/Joey Example.md');
+    writeFileSync(
+      realPath,
+      '---\ntype: person\ntitle: Joey Example\nslug: 10-people/joey-example\n---\n\n# Joey Example\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Existing claim | fact | 1.0 | world | medium | 2024-01-01 |  | import |  |\n<!--- gbrain:facts:end -->\n',
+      'utf-8',
+    );
+    await engine.putPage('10-people/joey-example', {
+      type: 'person',
+      title: 'Joey Example',
+      compiled_truth: '# Joey Example',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'x',
+      source_path: '10-people/Joey Example.md',
+      import_filename: 'Joey Example',
+    });
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: '10-people/joey-example' },
+      [baseInput({ fact: 'New claim after rename' })],
+    );
+
+    expect(result.inserted).toBe(1);
+    expect(result.stubGuardBlocked).toBeUndefined();
+    // No duplicate stub next to the real page.
+    expect(existsSync(join(brainDir, '10-people/joey-example.md'))).toBe(false);
+    // The fact landed on the REAL file, continuing the fence's row_num
+    // sequence (a stub would have restarted at 1 → idx_facts_fence_key
+    // collision against the real page's DB rows).
+    const body = readFileSync(realPath, 'utf-8');
+    expect(body).toContain('New claim after rename');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT row_num FROM facts WHERE source_markdown_slug = '10-people/joey-example'`,
+    );
+    expect(rows.rows[0].row_num).toBe(2);
+  });
+
+  test('page row exists but backing file is gone → stubGuardBlocked, no stub created', async () => {
+    await engine.putPage('10-people/ghost-page', {
+      type: 'person',
+      title: 'Ghost',
+      compiled_truth: '',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'y',
+      source_path: '10-people/Ghost Page.md', // never written to disk
+      import_filename: 'Ghost Page',
+    });
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: '10-people/ghost-page' },
+      [baseInput()],
+    );
+
+    expect(result.inserted).toBe(0);
+    expect(result.stubGuardBlocked).toBe(true);
+    expect(existsSync(join(brainDir, '10-people/ghost-page.md'))).toBe(false);
+  });
+
+  test('hostile source_path with ../ cannot steer the fence write outside the source tree', async () => {
+    // A corrupt/hostile page row must not make fence-write read + rename-over
+    // a file OUTSIDE localPath (same threat class write-through guards with
+    // isWriteTargetContained).
+    const victim = join(brainDir, '..', 'fence-victim.md');
+    writeFileSync(victim, '# victim\n', 'utf-8');
+    const before = readFileSync(victim, 'utf-8');
+    await engine.putPage('10-people/evil-row', {
+      type: 'person',
+      title: 'Evil',
+      compiled_truth: '',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'z',
+      source_path: '../fence-victim.md',
+      import_filename: null,
+    });
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: '10-people/evil-row' },
+      [baseInput()],
+    );
+
+    // Escaping candidate is rejected → treated as file-not-found → blocked.
+    expect(result.stubGuardBlocked).toBe(true);
+    expect(readFileSync(victim, 'utf-8')).toBe(before);
+  });
+});
+
 describe('lookupSourceLocalPath', () => {
   test('returns the configured local_path for an existing source', async () => {
     const got = await lookupSourceLocalPath(engine, 'default');
