@@ -18,7 +18,29 @@ import {
 import type { SchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
 import { SCHEMA_PACK_API_VERSION } from '../src/core/schema-pack/manifest-v1.ts';
 
-function makeManifest(name: string, extendsName: string | null = null): SchemaPackManifest {
+function makePageType(
+  name: string,
+  opts: Partial<SchemaPackManifest['page_types'][number]> = {},
+): SchemaPackManifest['page_types'][number] {
+  return {
+    name,
+    primitive: 'concept',
+    path_prefixes: [`${name}/`],
+    aliases: [],
+    extractable: false,
+    expert_routing: false,
+    ...opts,
+  };
+}
+
+function makeManifest(
+  name: string,
+  extendsName: string | null = null,
+  opts: {
+    borrowFrom?: SchemaPackManifest['borrow_from'];
+    pageTypes?: SchemaPackManifest['page_types'];
+  } = {},
+): SchemaPackManifest {
   return {
     api_version: SCHEMA_PACK_API_VERSION,
     name,
@@ -26,8 +48,8 @@ function makeManifest(name: string, extendsName: string | null = null): SchemaPa
     description: '',
     gbrain_min_version: '0.38.0',
     extends: extendsName,
-    borrow_from: [],
-    page_types: [],
+    borrow_from: opts.borrowFrom ?? [],
+    page_types: opts.pageTypes ?? [],
     link_types: [],
     frontmatter_links: [],
     takes_kinds: ['fact', 'take', 'bet', 'hunch'],
@@ -76,6 +98,158 @@ describe('resolvePack — happy path', () => {
     const ra = await resolvePack(a, noop);
     const rb = await resolvePack(b, noop);
     expect(ra.identity).not.toBe(rb.identity);
+  });
+});
+
+describe('resolvePack — page type inheritance', () => {
+  test('gbrain-investor shape inherits gbrain-base page types plus its own additions', async () => {
+    const baseTypeNames = [
+      'writing',
+      'analysis',
+      'guide',
+      'hardware',
+      'architecture',
+      'concept',
+      'person',
+      'company',
+      'deal',
+      'yc',
+      'civic',
+      'project',
+      'source',
+      'media',
+      'email',
+      'slack',
+      'calendar-event',
+      'note',
+      'meeting',
+      'conversation',
+      'atom',
+      'code',
+      'image',
+      'synthesis',
+      'extract_receipt',
+    ];
+    expect(baseTypeNames).toHaveLength(25);
+
+    const base = makeManifest('gbrain-base', null, {
+      pageTypes: baseTypeNames.map((name) => makePageType(name)),
+    });
+    const investor = makeManifest('gbrain-investor', 'gbrain-base', {
+      pageTypes: [
+        makePageType('thesis'),
+        makePageType('bet_resolution_log'),
+      ],
+    });
+
+    const resolved = await resolvePack(investor, chainLoader({ 'gbrain-base': base }));
+    const names = resolved.manifest.page_types.map((pt) => pt.name);
+    expect(names).toHaveLength(27);
+    expect(names).toContain('person');
+    expect(names).toContain('thesis');
+    expect(names).toContain('bet_resolution_log');
+  });
+
+  test('child page type overrides parent type with the same name', async () => {
+    const parent = makeManifest('parent', null, {
+      pageTypes: [
+        makePageType('person', {
+          primitive: 'entity',
+          path_prefixes: ['people/'],
+          expert_routing: true,
+        }),
+        makePageType('company', { primitive: 'entity' }),
+      ],
+    });
+    const child = makeManifest('child', 'parent', {
+      pageTypes: [
+        makePageType('person', {
+          primitive: 'concept',
+          path_prefixes: ['humans/'],
+          expert_routing: false,
+        }),
+      ],
+    });
+
+    const resolved = await resolvePack(child, chainLoader({ parent }));
+    const people = resolved.manifest.page_types.filter((pt) => pt.name === 'person');
+    expect(people).toHaveLength(1);
+    expect(people[0].path_prefixes).toEqual(['humans/']);
+    expect(people[0].primitive).toBe('concept');
+    expect(people[0].expert_routing).toBe(false);
+    expect(resolved.manifest.page_types.map((pt) => pt.name)).toContain('company');
+  });
+
+  test('multi-level extends chain merges each level once and selected borrow_from types', async () => {
+    const base = makeManifest('gbrain-base', null, {
+      pageTypes: [
+        makePageType('person', { primitive: 'entity' }),
+        makePageType('company', { primitive: 'entity' }),
+        makePageType('deal', { primitive: 'temporal' }),
+        makePageType('atom', { primitive: 'annotation', path_prefixes: ['base-atoms/'] }),
+      ],
+    });
+    const investor = makeManifest('gbrain-investor', 'gbrain-base', {
+      pageTypes: [
+        makePageType('thesis'),
+        makePageType('bet_resolution_log', { primitive: 'temporal' }),
+      ],
+    });
+    const creator = makeManifest('gbrain-creator', 'gbrain-base', {
+      pageTypes: [
+        makePageType('atom', { primitive: 'concept', path_prefixes: ['creator-atoms/'] }),
+      ],
+    });
+    const engineer = makeManifest('gbrain-engineer', 'gbrain-base', {
+      pageTypes: [
+        makePageType('learning', { primitive: 'annotation' }),
+      ],
+    });
+    const everything = makeManifest('gbrain-everything', 'gbrain-investor', {
+      borrowFrom: [
+        { pack: 'gbrain-creator', types: ['atom'] },
+        { pack: 'gbrain-engineer', types: ['learning'] },
+      ],
+    });
+
+    const resolved = await resolvePack(
+      everything,
+      chainLoader({
+        'gbrain-base': base,
+        'gbrain-investor': investor,
+        'gbrain-creator': creator,
+        'gbrain-engineer': engineer,
+      }),
+    );
+
+    const names = resolved.manifest.page_types.map((pt) => pt.name);
+    expect(names).toHaveLength(7);
+    expect(new Set(names).size).toBe(7);
+    expect(names).toEqual(expect.arrayContaining([
+      'person',
+      'company',
+      'deal',
+      'thesis',
+      'bet_resolution_log',
+      'atom',
+      'learning',
+    ]));
+    const atom = resolved.manifest.page_types.find((pt) => pt.name === 'atom');
+    expect(atom?.path_prefixes).toEqual(['creator-atoms/']);
+  });
+
+  test('extends:null packs resolve to exactly their inline page types', async () => {
+    const base = makeManifest('gbrain-base', null, {
+      pageTypes: [
+        makePageType('person'),
+        makePageType('company'),
+      ],
+    });
+
+    const resolved = await resolvePack(base, async () => {
+      throw new Error('loader should not be called');
+    });
+    expect(resolved.manifest.page_types).toEqual(base.page_types);
   });
 });
 

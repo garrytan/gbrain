@@ -52,7 +52,7 @@
 //     inside the registry.
 
 import { statSync } from 'node:fs';
-import type { SchemaPackManifest } from './manifest-v1.ts';
+import type { PackPageType, SchemaPackManifest } from './manifest-v1.ts';
 import { computeManifestSha8, packIdentity } from './manifest-v1.ts';
 import { computeAliasClosureHash, buildAliasGraph, type AliasGraph } from './closure.ts';
 
@@ -177,6 +177,47 @@ function snapshotMatches(files: ReadonlyArray<{ path: string; mtimeMs: number }>
   return true;
 }
 
+function mergePageTypesInto(byName: Map<string, PackPageType>, pageTypes: ReadonlyArray<PackPageType>): void {
+  for (const pageType of pageTypes) byName.set(pageType.name, pageType);
+}
+
+async function borrowedPageTypes(
+  manifest: SchemaPackManifest,
+  loadByName: (name: string) => Promise<SchemaPackManifest>,
+  opts: {
+    onDepthWarn?: (depth: number, chain: string[]) => void;
+    loadByPath?: (name: string) => string | null;
+  },
+): Promise<PackPageType[]> {
+  const out: PackPageType[] = [];
+  for (const entry of manifest.borrow_from ?? []) {
+    const borrowedManifest = await loadByName(entry.pack);
+    const resolvedBorrowed = await resolvePack(borrowedManifest, loadByName, opts);
+    const typeFilter = entry.types ? new Set(entry.types) : null;
+    for (const pageType of resolvedBorrowed.manifest.page_types) {
+      if (typeFilter && !typeFilter.has(pageType.name)) continue;
+      out.push(pageType);
+    }
+  }
+  return out;
+}
+
+async function mergeResolvedPageTypes(
+  manifestsLeafToRoot: ReadonlyArray<SchemaPackManifest>,
+  loadByName: (name: string) => Promise<SchemaPackManifest>,
+  opts: {
+    onDepthWarn?: (depth: number, chain: string[]) => void;
+    loadByPath?: (name: string) => string | null;
+  },
+): Promise<PackPageType[]> {
+  const byName = new Map<string, PackPageType>();
+  for (const layer of [...manifestsLeafToRoot].reverse()) {
+    mergePageTypesInto(byName, await borrowedPageTypes(layer, loadByName, opts));
+    mergePageTypesInto(byName, layer.page_types);
+  }
+  return [...byName.values()];
+}
+
 /**
  * Walk the reverse extends-graph: every cached entry whose `chain`
  * contains `name`. The set is unbounded in principle but bounded in
@@ -258,6 +299,7 @@ export async function resolvePack(
   // cache snapshot (codex C6 — child cache entry must remember every
   // parent so invalidatePackCache(parentName) can cascade).
   const chain: string[] = [manifest.name];
+  const manifests: SchemaPackManifest[] = [manifest];
   let cursor: SchemaPackManifest | null = manifest;
   while (cursor?.extends) {
     const parentName = cursor.extends;
@@ -272,15 +314,18 @@ export async function resolvePack(
       opts.onDepthWarn?.(chain.length, chain);
     }
     cursor = await loadByName(parentName);
+    manifests.push(cursor);
   }
 
-  // For v0.38 skeleton: closure is computed on the manifest itself.
-  // Full extends-merging (child-wins) is the v0.41+ T20 follow-up.
-  const alias_graph = buildAliasGraph(manifest);
-  const alias_closure_hash = await computeAliasClosureHash(manifest);
+  const resolvedManifest: SchemaPackManifest = {
+    ...manifest,
+    page_types: await mergeResolvedPageTypes(manifests, loadByName, opts),
+  };
+  const alias_graph = buildAliasGraph(resolvedManifest);
+  const alias_closure_hash = await computeAliasClosureHash(resolvedManifest);
 
   const resolved: ResolvedPack = {
-    manifest,
+    manifest: resolvedManifest,
     identity: id,
     manifest_sha8: sha8,
     alias_closure_hash,
