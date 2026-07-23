@@ -163,20 +163,38 @@ const EXTRACTOR_SYSTEM = [
 
 const MAX_TURN_TEXT_CHARS = 8000;
 
-export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
-  if (input.isDreamGenerated) return [];
-  if (!input.turnText) return [];
+export type ExtractFactsOutcome =
+  | { ok: true; facts: ExtractedFact[] }
+  | {
+      ok: false;
+      reason:
+        | 'chat_unavailable'
+        | 'provider_error'
+        | 'refusal'
+        | 'content_filter'
+        | 'non_terminal_stop'
+        | 'malformed_output'
+        | 'truncated_output';
+      error?: unknown;
+    };
+
+/** Strict extraction contract for callers that persist completion authority. */
+export async function extractFactsFromTurnWithOutcome(
+  input: ExtractInput,
+): Promise<ExtractFactsOutcome> {
+  if (input.isDreamGenerated) return { ok: true, facts: [] };
+  if (!input.turnText) return { ok: true, facts: [] };
 
   // Anti-loop + sanitization.
   let cleaned = input.turnText.slice(0, MAX_TURN_TEXT_CHARS);
   for (const p of INJECTION_PATTERNS) cleaned = cleaned.replace(p.rx, p.replacement);
   cleaned = cleaned.trim();
-  if (!cleaned) return [];
+  if (!cleaned) return { ok: true, facts: [] };
 
   if (!isAvailable('chat')) {
     // No chat gateway → no extraction. Caller still inserts facts via direct
     // `gbrain take add` paths.
-    return [];
+    return { ok: false, reason: 'chat_unavailable' };
   }
 
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
@@ -219,19 +237,29 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
           `(model=${model}); facts for this turn are likely lost. ` +
           `Raise the cap: gbrain config set facts.extraction_max_tokens <n>\n`,
         );
+        return { ok: false, reason: 'truncated_output' };
       }
     }
   } catch (err) {
-    // Re-throw aborts; absorb other errors as "no extraction" — caller's
-    // `put_page` backstop will still record the page itself.
+    // Re-throw aborts. Strict callers receive a failure outcome; the historical
+    // wrapper below converts that outcome to [] for best-effort call sites.
     if (isAbort(err)) throw err;
-    return [];
+    return { ok: false, reason: 'provider_error', error: err };
   }
 
-  if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return [];
+  if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal' };
+  if (result.stopReason === 'content_filter') {
+    return { ok: false, reason: 'content_filter' };
+  }
+  if (result.stopReason !== 'end') {
+    return { ok: false, reason: 'non_terminal_stop' };
+  }
 
-  const parsedRaw = parseExtractorJson(result.text);
-  if (!parsedRaw) return [];
+  const parsedShape = parseExtractorJsonDetailed(result.text);
+  if (!parsedShape || parsedShape.invalidCandidates > 0) {
+    return { ok: false, reason: 'malformed_output' };
+  }
+  const parsedRaw = parsedShape.facts;
 
   const facts: ExtractedFact[] = [];
   for (const candidate of parsedRaw.slice(0, cap)) {
@@ -289,7 +317,13 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     });
   }
 
-  return facts;
+  return { ok: true, facts };
+}
+
+/** Historical best-effort API retained for interactive callers. */
+export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
+  const outcome = await extractFactsFromTurnWithOutcome(input);
+  return outcome.ok ? outcome.facts : [];
 }
 
 interface RawExtracted {
@@ -312,30 +346,46 @@ interface RawExtracted {
  * the model included it. Production callers should use extractFactsFromTurn.
  */
 export function parseExtractorJson(raw: string): RawExtracted[] | null {
+  return parseExtractorJsonDetailed(raw)?.facts ?? null;
+}
+
+interface ParsedExtractorShape {
+  facts: RawExtracted[];
+  invalidCandidates: number;
+}
+
+function parseExtractorJsonDetailed(raw: string): ParsedExtractorShape | null {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
   // Strict.
-  const direct = tryArrayShape(cleaned);
+  const direct = tryArrayShapeDetailed(cleaned);
   if (direct) return direct;
   // Substring scan for embedded {"facts":[...]} shape.
   const m = cleaned.match(/\{[\s\S]*?"facts"[\s\S]*\}/);
   if (m) {
-    const sub = tryArrayShape(m[0]);
+    const sub = tryArrayShapeDetailed(m[0]);
     if (sub) return sub;
   }
   return null;
 }
 
-function tryArrayShape(s: string): RawExtracted[] | null {
+function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
   try {
     const parsed = JSON.parse(s) as unknown;
     if (typeof parsed !== 'object' || parsed === null) return null;
     const arr = (parsed as Record<string, unknown>).facts;
     if (!Array.isArray(arr)) return null;
     const out: RawExtracted[] = [];
+    let invalidCandidates = 0;
     for (const item of arr) {
-      if (typeof item !== 'object' || item === null) continue;
+      if (typeof item !== 'object' || item === null) {
+        invalidCandidates++;
+        continue;
+      }
       const o = item as Record<string, unknown>;
-      if (typeof o.fact !== 'string' || typeof o.kind !== 'string') continue;
+      if (typeof o.fact !== 'string' || typeof o.kind !== 'string') {
+        invalidCandidates++;
+        continue;
+      }
       out.push({
         fact: o.fact,
         kind: o.kind,
@@ -352,7 +402,7 @@ function tryArrayShape(s: string): RawExtracted[] | null {
         period: typeof o.period === 'string' ? o.period : null,
       });
     }
-    return out;
+    return { facts: out, invalidCandidates };
   } catch {
     return null;
   }

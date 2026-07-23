@@ -3216,18 +3216,10 @@ export function computeNightlyQualityProbeHealthCheck(
  *   - OK when enabled=true AND backlog==0 OR no eligible pages exist.
  *   - WARN when enabled=true AND backlog>10.
  *
- * Backlog query uses the page-level TERMINAL audit row check (Eng-v2
- * C7), source-scoped via explicit predicate (Eng-v2 C2). Partial-
- * extraction pages stay in backlog because the terminal row isn't
- * written until ALL segments complete.
- *
- * Known approximation (documented in the details field): "complete"
- * means "terminal row exists" which means "all segments completed in
- * a prior run." A page with the terminal row from one run + new
- * messages since shows OK until the next run picks up new messages
- * and writes a fresh terminal row. The backlog is therefore an UPPER
- * BOUND on "pages with NO extraction at all", not "pages whose facts
- * are current."
+ * Backlog uses versioned, source-scoped outcomes. Regular pages bind the marker
+ * to pages.updated_at; raw-transcript sidecars carry a SHA-256 snapshot token
+ * and are revalidated by the extraction command before it skips model work.
+ * Legacy/unversioned rows and partial extraction remain in backlog.
  */
 export async function computeConversationFactsBacklogCheck(
   engine: BrainEngine,
@@ -3269,35 +3261,112 @@ export async function computeConversationFactsBacklogCheck(
       }
     }
 
-    // Source-scoped NOT EXISTS (Eng-v2 C2 + C7):
-    //   - facts.source matches TERMINAL audit source
-    //   - source_session matches terminal:<slug>
-    //   - source_id matches page's source_id (cross-source safety)
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `SELECT COUNT(*) AS count FROM pages p
-       WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM facts f
-           WHERE f.source = 'cli:extract-conversation-facts:terminal'
-             AND f.source_session = 'cli:extract-conversation-facts:terminal:' || p.slug
-             AND f.source_id = p.source_id
-         )`,
+    const rows = await engine.executeRaw<{
+      backlog: string | number;
+      completed: string | number;
+      non_extractable: string | number;
+    }>(
+      `WITH outcomes AS (
+         SELECT
+           p.source_id,
+           p.slug,
+           MAX(CASE WHEN f.source = 'cli:extract-conversation-facts:terminal:v2' THEN 1 ELSE 0 END) AS completed,
+           MAX(CASE WHEN f.source = 'cli:extract-conversation-facts:non-extractable:v2' THEN 1 ELSE 0 END) AS non_extractable
+         FROM pages p
+         LEFT JOIN facts f
+           ON f.source_id = p.source_id
+          AND f.source_markdown_slug = p.slug
+          AND f.source IN (
+            'cli:extract-conversation-facts:terminal:v2',
+            'cli:extract-conversation-facts:non-extractable:v2'
+          )
+          AND p.content_hash IS NOT NULL
+          AND f.source_session = f.source || ':' || p.slug || ':page-' ||
+            p.content_hash || '-' ||
+            COALESCE(TO_CHAR(p.effective_date AT TIME ZONE 'UTC', 'YYYY-MM-DD'), 'none')
+         WHERE p.type = ANY($1::text[])
+           AND p.deleted_at IS NULL
+           AND COALESCE(BTRIM(p.frontmatter->>'raw_transcript'), '') = ''
+           AND p.content_hash IS NOT NULL
+         GROUP BY p.source_id, p.slug
+       )
+       SELECT
+         COALESCE(SUM(CASE WHEN completed = 0 AND non_extractable = 0 THEN 1 ELSE 0 END), 0) AS backlog,
+         COALESCE(SUM(completed), 0) AS completed,
+         COALESCE(SUM(CASE WHEN completed = 0 THEN non_extractable ELSE 0 END), 0) AS non_extractable
+       FROM outcomes`,
       [types],
     );
 
-    const backlog = Number(rows[0]?.count ?? 0);
+    let backlog = Number(rows[0]?.backlog ?? 0);
+    let completed = Number(rows[0]?.completed ?? 0);
+    let nonExtractable = Number(rows[0]?.non_extractable ?? 0);
+
+    // SQL cannot read raw_transcript files or reproduce the fallback hash for a
+    // legacy NULL content_hash. Recompute those tokens through the command's
+    // canonical verifier. Pagination keeps memory bounded.
+    const { findFreshExtractionOutcomes } = await import(
+      './extract-conversation-facts.ts'
+    );
+    const verifierSources = await engine.executeRaw<{ source_id: string }>(
+      `SELECT DISTINCT source_id
+         FROM pages
+        WHERE type = ANY($1::text[])
+          AND deleted_at IS NULL
+          AND (
+            COALESCE(BTRIM(frontmatter->>'raw_transcript'), '') <> ''
+            OR content_hash IS NULL
+          )
+        ORDER BY source_id`,
+      [types],
+    );
+    for (const { source_id: sourceId } of verifierSources) {
+      for (const type of types) {
+        let offset = 0;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const batch = await engine.listPages({
+            type: type as NonNullable<Parameters<BrainEngine['listPages']>[0]>['type'],
+            sourceId,
+            limit: 10,
+            offset,
+          });
+          if (batch.length === 0) break;
+          const verifyInProcess = batch.filter((page) => {
+            const raw = page.frontmatter?.raw_transcript;
+            return (typeof raw === 'string' && raw.trim().length > 0) ||
+              page.content_hash == null;
+          });
+          if (verifyInProcess.length > 0) {
+            const outcomes = await findFreshExtractionOutcomes(
+              engine,
+              sourceId,
+              verifyInProcess,
+            );
+            for (const page of verifyInProcess) {
+              const outcome = outcomes.get(page.slug);
+              if (outcome === 'complete') completed++;
+              else if (outcome === 'non_extractable') nonExtractable++;
+              else backlog++;
+            }
+          }
+          offset += batch.length;
+          if (batch.length < 10) break;
+        }
+      }
+    }
 
     if (backlog === 0) {
       return {
         name,
         status: 'ok',
-        message: 'all eligible pages have extraction terminal audit rows',
+        message: 'all eligible pages have fresh durable extraction outcomes',
         details: {
           backlog,
+          completed,
+          scanned_not_extractable: nonExtractable,
           types,
-          known_approximation:
-            'backlog counts pages with NO extraction terminal row; pages with new messages since prior extraction may show OK until next run',
+          freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
         },
       };
     }
@@ -3311,10 +3380,11 @@ export async function computeConversationFactsBacklogCheck(
         message: `${backlog} eligible pages without extraction. Fix: ${fixHint}`,
         details: {
           backlog,
+          completed,
+          scanned_not_extractable: nonExtractable,
           types,
           fix_hint: fixHint,
-          known_approximation:
-            'backlog counts pages with NO extraction terminal row; pages with new messages since prior extraction may show OK until next run',
+          freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
         },
       };
     }
@@ -3323,7 +3393,13 @@ export async function computeConversationFactsBacklogCheck(
       name,
       status: 'ok',
       message: `${backlog} eligible page(s) below warn threshold (>10)`,
-      details: { backlog, types },
+      details: {
+        backlog,
+        completed,
+        scanned_not_extractable: nonExtractable,
+        types,
+        freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
+      },
     };
   } catch (err) {
     return {
