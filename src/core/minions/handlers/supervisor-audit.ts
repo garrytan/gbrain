@@ -118,16 +118,47 @@ export function readSupervisorEvents(opts: { sinceMs?: number } = {}): Superviso
 }
 
 /**
+ * Cross-week supervisor read for windows that can straddle a Monday boundary
+ * (issue #1685, CODEX #7). The single-file `readSupervisorEvents` above can lose
+ * a Sunday-night OOM loop when read on Monday because it only opens the current
+ * ISO-week file. This variant delegates to the shared writer's `readRecent`,
+ * which walks current + previous week (the same prev-week walk db-disconnect and
+ * the other audits already use), then applies an hour-precision cutoff.
+ *
+ * Used by `worker_oom_loop` in doctor.ts so the OOM-loop verdict can't silently
+ * miss a week-boundary incident. The legacy `readSupervisorEvents` keeps its
+ * single-file semantics so the existing `supervisor` check's assertions don't
+ * shift (and PR #1688, concurrently editing that check, doesn't conflict).
+ */
+export function readRecentSupervisorEvents(
+  hours = 24,
+  now: Date = new Date(),
+): SupervisorEmission[] {
+  const days = hours / 24;
+  const events = writer.readRecent(days, now);
+  const cutoff = now.getTime() - hours * 3_600_000;
+  return events.filter((e) => {
+    if (!e.event || !e.ts) return false;
+    const t = Date.parse(e.ts);
+    return !Number.isFinite(t) || t >= cutoff;
+  });
+}
+
+/**
  * Denylist of clean-exit `likely_cause` values. Anything not in this set —
  * including future unrecognized values — counts as a crash. Matches the
  * domain asymmetry: clean exits are explicit (the worker exited because we
- * asked it to); crashes are an open catch-all. If a future maintainer adds a
+ * asked it to); crashes are an open catch-all. `wedge_restart` (issue #1801)
+ * is a deliberate supervisor self-heal of an alive-but-wedged worker — counted
+ * as clean here so doctor / `jobs supervisor status` don't inflate the crash
+ * count on self-heals; the wedge itself surfaces via the
+ * `restarting_wedged_worker` / `wedge_restart_loop` health_warn instead. If a future maintainer adds a
  * new `likely_cause` upstream in `child-worker-supervisor.ts` (e.g.
  * `lock_lost`, `panic`), the doctor surfaces it by default instead of
  * silently underreporting — denylist semantics close the bug class this
  * helper was added to fix.
  */
-const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown']);
+const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown', 'wedge_restart']);
 
 /**
  * Per-cause crash bucket shape returned by `summarizeCrashes()`. Bucket names
@@ -141,6 +172,11 @@ export interface CrashSummary {
   by_cause: {
     runtime_error: number;
     oom_or_external_kill: number;
+    /** v0.42.5.0: worker drained itself because RSS crossed the watchdog cap
+     *  (issue #1678). A real problem (the cap is too low for the workload, or a
+     *  leak) but distinct from an OOM-killer SIGKILL — surfaced as its own
+     *  bucket so operators see "raise --max-rss" signal, not generic crashes. */
+    rss_watchdog: number;
     unknown: number;
     legacy: number;
   };
@@ -185,7 +221,7 @@ export function isCrashExit(event: SupervisorEmission): boolean {
 export function summarizeCrashes(events: SupervisorEmission[]): CrashSummary {
   const summary: CrashSummary = {
     total: 0,
-    by_cause: { runtime_error: 0, oom_or_external_kill: 0, unknown: 0, legacy: 0 },
+    by_cause: { runtime_error: 0, oom_or_external_kill: 0, rss_watchdog: 0, unknown: 0, legacy: 0 },
     clean_exits: 0,
   };
   for (const e of events) {
@@ -198,6 +234,7 @@ export function summarizeCrashes(events: SupervisorEmission[]): CrashSummary {
     const cause = e.likely_cause as string | undefined;
     if (cause === 'runtime_error') summary.by_cause.runtime_error++;
     else if (cause === 'oom_or_external_kill') summary.by_cause.oom_or_external_kill++;
+    else if (cause === 'rss_watchdog') summary.by_cause.rss_watchdog++;
     else if (cause === 'unknown') summary.by_cause.unknown++;
     else summary.by_cause.legacy++;  // pre-v0.34 fallback OR future unrecognized cause
   }

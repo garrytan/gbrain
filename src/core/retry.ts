@@ -76,6 +76,7 @@ export const BATCH_AUDIT_SITES = [
   // Engine-method defaults (used when caller doesn't supply auditSite).
   'addLinksBatch',
   'addTimelineEntriesBatch',
+  'addTakesBatch',
   'upsertChunks',
   // extract.ts per-site labels.
   'extract.links_inc',
@@ -85,6 +86,8 @@ export const BATCH_AUDIT_SITES = [
   'extract.links_db',
   'extract.timeline_db',
   'extract.by_mention',
+  // v0.42.7 (#1696): extract --stale incremental sweep.
+  'extract.stale',
   // operations.ts MCP put_page auto-link path.
   'mcp.put_page.autolink',
   // sync.ts/reindex.ts orchestrator labels.
@@ -93,6 +96,10 @@ export const BATCH_AUDIT_SITES = [
   'reindex.multimodal',
   // backfill-base.ts outer connection-retry layer.
   'backfill.outer',
+  // queue.ts Minion hot-path lock recovery (issue #1678): promoteDelayed
+  // self-heal on a reaped pooler socket. claim/renewLock deliberately do NOT
+  // route here (Codex #1/#2) — the poll loop and renewal-tick recover those.
+  'minion-lock',
 ] as const;
 
 export type BatchAuditSite = (typeof BATCH_AUDIT_SITES)[number];
@@ -131,10 +138,15 @@ export interface WithRetryOpts {
    * for hours when DB credentials are bad.
    *
    * Engine-level callers (PostgresEngine.batchRetry) inject
-   * `() => this.reconnect()` which already handles both module and
-   * instance pools, race-safe via `_reconnecting` guard.
+   * `(ctx) => this.reconnect(ctx)` which already handles both module and
+   * instance pools, race-safe via the `_reconnecting` guard.
+   *
+   * v0.42.x (#1685 CODEX #8): receives the triggering error so the engine can
+   * classify it (pooler reap vs network/auth) for the pool-recovery audit. The
+   * arg is optional — back-compat zero-arg callbacks (`() => this.reconnect()`)
+   * still satisfy the type.
    */
-  reconnect?: () => Promise<void>;
+  reconnect?: (ctx?: { error?: unknown }) => Promise<void>;
 }
 
 /**
@@ -266,7 +278,9 @@ export async function withRetry<T>(
       // immediate-recovery half of that pair.
       if (opts.reconnect) {
         if (signal?.aborted) throw new RetryAbortError();
-        await opts.reconnect();
+        // Thread the triggering error so the engine can classify it (pooler
+        // reap vs other) for the pool-recovery audit (#1685 CODEX #8).
+        await opts.reconnect({ error: err });
       }
       const delay = computeNextDelay(attempt, prevDelay, baseDelay, maxDelay, jitter);
       prevDelay = delay;

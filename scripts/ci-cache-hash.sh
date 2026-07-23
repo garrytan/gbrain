@@ -30,6 +30,14 @@
 #   - everything else under src/, test/, scripts/, .github/, package.json,
 #     bun.lock, tsconfig*.json, the schema files — obviously test-affecting
 #
+# POLICY-DOC RE-ADMIT (the docs/ exception): some docs/*.md files carry
+# CI / release / test CONTRACTS that the test suite reads (e.g. the
+# build-llms content-contract test, the doc-history guard). The broad
+# `^docs/.*\.md$` deny above would let a policy edit to those skip CI — a
+# false-pass. The ALLOW_PATTERNS list below re-admits them into the hash
+# AFTER the deny. ADD a path there whenever you move a policy/contract doc
+# under docs/ (current entries: docs/TESTING.md, docs/RELEASING.md).
+#
 # Locale-stable: LC_ALL=C on the sort step so byte-order is identical
 # across runners (different default locales would re-order the line list
 # and change the final hash).
@@ -112,6 +120,33 @@ DENY_RE=$(printf '\t(%s)' "$DENY_ALT")
 # from each but kept `$`, so the composed regex is `\t(CHANGELOG\.md$|
 # TODOS\.md$|docs/.*\.md$|...)`. Each alternative anchors its own end.
 INCLUDED=$(printf '%s\n' "$LS_FILES" | grep -vE "$DENY_RE" || true)
+
+# Re-admit test-affecting policy docs that live under docs/ but carry CI /
+# release / test contracts. The broad `^docs/.*\.md$` deny above removed
+# them; without this re-admit a policy edit to docs/TESTING.md or
+# docs/RELEASING.md would produce the SAME hash and skip the test shard
+# that runs the build-llms + doc-history guards — a false-pass. Patterns
+# anchor on the `\t<path>` boundary in `git ls-files -s` output, matching
+# the deny-list convention above. Re-admitted lines that don't exist yet
+# (pre-relocation) simply match nothing.
+# Path predicates only (no leading tab here) — the `\t` boundary is added
+# via printf below so it is a REAL tab byte, not the two-char string `\t`.
+# GNU grep (CI/Ubuntu) does not interpret `\t` in an ERE as a tab the way
+# BSD grep (macOS) does, so an inline `\t` matches nothing on CI and the
+# re-admit silently no-ops. Mirror the DENY_RE construction exactly.
+ALLOW_PATTERNS=(
+  'docs/TESTING\.md$'
+  'docs/RELEASING\.md$'
+)
+ALLOW_ALT=""
+for p in "${ALLOW_PATTERNS[@]}"; do
+  if [ -z "$ALLOW_ALT" ]; then ALLOW_ALT="$p"; else ALLOW_ALT="$ALLOW_ALT|$p"; fi
+done
+ALLOW_RE=$(printf '\t(%s)' "$ALLOW_ALT")
+READMIT=$(printf '%s\n' "$LS_FILES" | grep -E "$ALLOW_RE" || true)
+if [ -n "$READMIT" ]; then
+  INCLUDED=$(printf '%s\n%s\n' "$INCLUDED" "$READMIT" | grep -v '^$' | LC_ALL=C sort -u)
+fi
 
 if [ -z "$INCLUDED" ]; then
   echo "error: every tracked file is deny-listed — refusing to hash empty set" >&2

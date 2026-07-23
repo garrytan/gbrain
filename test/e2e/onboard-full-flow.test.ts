@@ -54,15 +54,21 @@ describe('onboard E2E — captureMetric', () => {
 });
 
 describe('onboard E2E — runAllOnboardChecks', () => {
-  test('returns all 4 check shapes', async () => {
+  test('returns all 7 check shapes', async () => {
+    // v0.42 (T13-T15): type-unification cathedral added 3 onboard checks
+    // — pack_upgrade_available, type_proliferation, dangling_aliases — for
+    // a total of 7. Pre-v0.42 was 4.
     const results = await runAllOnboardChecks(engine);
-    expect(results.length).toBe(4);
+    expect(results.length).toBe(7);
     const names = results.map((r) => r.check.name).sort();
     expect(names).toEqual([
+      'dangling_aliases',
       'embed_staleness',
       'entity_link_coverage',
+      'pack_upgrade_available',
       'takes_count',
       'timeline_coverage',
+      'type_proliferation',
     ]);
   });
 
@@ -75,12 +81,20 @@ describe('onboard E2E — runAllOnboardChecks', () => {
     expect(byName.takes_count).toBe('warn'); // 0 takes is a warn
   });
 
-  test('empty brain returns 0 remediations (takes_count gated by bootstrap_enabled=false)', async () => {
+  test('empty brain remediations: takes_count gated, pack_upgrade_available may surface', async () => {
     const results = await runAllOnboardChecks(engine);
     const total = results.reduce((s, r) => s + r.remediations.length, 0);
-    // takes_count warns but does NOT emit a remediation because
-    // takes.bootstrap_enabled defaults to false (A12 two-gate consent).
-    expect(total).toBe(0);
+    // takes_count warns but does NOT emit a remediation (takes.bootstrap_enabled
+    // defaults to false — A12 two-gate consent).
+    // v0.42 (T13): pack_upgrade_available CAN emit a manual_only remediation
+    // when gbrain-base@1.x is active and gbrain-base-v2 is declared as the
+    // successor (the unify-types Minion handler). Allow 0-1 remediations
+    // depending on whether a successor pack is registered in the test brain.
+    expect(total).toBeLessThanOrEqual(1);
+    const takesRemediations = results
+      .filter((r) => r.check.name === 'takes_count')
+      .reduce((s, r) => s + r.remediations.length, 0);
+    expect(takesRemediations).toBe(0);
   });
 });
 

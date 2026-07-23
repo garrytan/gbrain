@@ -25,6 +25,8 @@ import {
   type ProposeTakesExtractor,
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
@@ -383,5 +385,54 @@ New prose appended here.`;
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);
+  });
+
+  test('records the configured gateway chat model when no phase model override is passed', async () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5',
+      env: { OPENAI_API_KEY: 'test-key' },
+    });
+    try {
+      const pages = [buildPage({ slug: 'wiki/model-default', body: 'configured model should be recorded' })];
+      const { engine, captured } = buildMockEngine({ pages });
+      const extractor: ProposeTakesExtractor = async () => [
+        { claim_text: 'configured model should be recorded', kind: 'take', holder: 'brain', weight: 0.5 },
+      ];
+
+      await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+      const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
+      expect(insert).toBeDefined();
+      expect(insert!.params[11]).toBe('openai:gpt-5');
+    } finally {
+      resetGateway();
+    }
+  });
+
+  test('keeps nested provider model ids intact for budget checks and proposal records', async () => {
+    configureGateway({
+      chat_model: 'openrouter:anthropic/claude-sonnet-4-6',
+      env: { OPENROUTER_API_KEY: 'test-key' },
+    });
+    try {
+      const pages = [buildPage({ slug: 'wiki/openrouter-model', body: 'nested provider model should stay intact' })];
+      const { engine, captured } = buildMockEngine({ pages });
+      const extractor: ProposeTakesExtractor = async () => [
+        { claim_text: 'nested provider model should stay intact', kind: 'take', holder: 'brain', weight: 0.5 },
+      ];
+
+      const result = await runPhaseProposeTakes(buildCtx(engine), {
+        extractor,
+        meter: new BudgetMeter({ budgetUsd: 0.000001, phase: 'propose_takes' }),
+      });
+
+      expect(result.status).toBe('ok');
+      expect(result.details.budget_exhausted).toBe(false);
+      const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
+      expect(insert).toBeDefined();
+      expect(insert!.params[11]).toBe('openrouter:anthropic/claude-sonnet-4-6');
+    } finally {
+      resetGateway();
+    }
   });
 });

@@ -66,6 +66,24 @@ export HOME="$E2E_TMP_HOME"
 export GBRAIN_HOME="$E2E_TMP_HOME"
 mkdir -p "$E2E_TMP_HOME/.gbrain"
 
+# --- Hermetic env scrub: operator/agent context must not bleed into E2E ---
+# A dev shell or a Conductor workspace exports CONDUCTOR_*, MCP_*, OPENCLAW_*,
+# and GBRAIN_* config overrides (e.g. a stray GBRAIN_BRAIN_ID, GBRAIN_SOURCE,
+# GBRAIN_*_THRESHOLD, GBRAIN_SUPERVISOR_PID_FILE) that would silently change
+# test behavior — making "hermetic" E2E non-hermetic and its failures
+# unreproducible across machines. Drop them before bun starts. This is a
+# DENYLIST of operator-context prefixes (not an allowlist rebuild), so PATH,
+# HOME, TMPDIR, CI, DATABASE_URL, and bun internals survive untouched. We keep
+# GBRAIN_HOME (just set above for HOME isolation); everything else GBRAIN_* is
+# an operator override the suite must not inherit. Adapts GStack's
+# buildHermeticEnv() allowlist to gbrain's shell E2E runner.
+for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
+  case "$_e2e_var" in
+    GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
+    *) unset "$_e2e_var" || true ;;
+  esac
+done
+
 # --dry-run-list: print the resolved file list (one per line) and exit. Used
 # by scripts/ci-local.sh to smoke-test the argv branching at startup.
 DRY_RUN_LIST=0

@@ -138,6 +138,10 @@ describeE2E('E2E: Minions resilience (OpenClaw real-world patterns)', () => {
 
       const final = await queue.getJob(job.id);
       expect(final?.error_text).toMatch(/timeout exceeded/i);
+      // #1737 regression: the runaway run is counted as a spent attempt by
+      // handleTimeouts (it's the first killer to fire), so accounting reads
+      // honestly instead of `attempts: 0/1 (started: 1)`.
+      expect(final?.attempts_made).toBe(1);
     } finally {
       await a.disconnect();
       await b.disconnect();

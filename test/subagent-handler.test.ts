@@ -90,6 +90,7 @@ async function makeCtx(input: unknown): Promise<MinionJobContext> {
     data: (input as Record<string, unknown>) ?? {},
     attempts_made: 0,
     signal: ac.signal,
+    deadlineAtMs: null,
     shutdownSignal: shutdown.signal,
     async updateProgress() {},
     async updateTokens() {},
@@ -594,5 +595,117 @@ describe('makeSubagentHandler default client construction', () => {
     expect(calls.length).toBe(1);
     expect(result.stop_reason).toBe('end_turn');
     expect(result.result).toBe('ok');
+  });
+});
+
+// ── #2778: per-turn output-token cap + max_tokens stop handling ─────
+
+import { resolveMaxOutputTokens } from '../src/core/minions/handlers/subagent.ts';
+
+describe('resolveMaxOutputTokens (#2778)', () => {
+  test('defaults to 8192 when nothing set', () => {
+    expect(resolveMaxOutputTokens(undefined, null)).toBe(8192);
+    expect(resolveMaxOutputTokens(undefined, undefined)).toBe(8192);
+  });
+
+  test('per-job value wins over config', () => {
+    expect(resolveMaxOutputTokens(2048, '5000')).toBe(2048);
+  });
+
+  test('config value used when per-job unset', () => {
+    expect(resolveMaxOutputTokens(undefined, '5000')).toBe(5000);
+  });
+
+  test('invalid values fall through to next tier', () => {
+    expect(resolveMaxOutputTokens(0, '5000')).toBe(5000);
+    expect(resolveMaxOutputTokens(-1, null)).toBe(8192);
+    expect(resolveMaxOutputTokens(Number.NaN, 'garbage')).toBe(8192);
+    expect(resolveMaxOutputTokens(undefined, '')).toBe(8192);
+    expect(resolveMaxOutputTokens(undefined, '0')).toBe(8192);
+  });
+});
+
+describe('subagent handler output-token cap (#2778)', () => {
+  test('default: SDK call carries max_tokens=8192 (was hardcoded 4096)', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'ok' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hi' });
+    await handler(ctx);
+    expect(client.calls[0]!.max_tokens).toBe(8192);
+  });
+
+  test('data.max_tokens flows to the SDK call', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'ok' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hi', max_tokens: 2048 });
+    await handler(ctx);
+    expect(client.calls[0]!.max_tokens).toBe(2048);
+  });
+
+  test('agent.max_output_tokens config flows to the SDK call', async () => {
+    await engine.setConfig('agent.max_output_tokens', '5000');
+    try {
+      const client = new FakeMessagesClient([
+        { content: [{ type: 'text', text: 'ok' }] as any, stop_reason: 'end_turn' },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      await handler(ctx);
+      expect(client.calls[0]!.max_tokens).toBe(5000);
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'agent.max_output_tokens'`);
+    }
+  });
+
+  test('final turn hitting the cap surfaces stop_reason=max_tokens, not a silent end_turn', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'truncated tex' }] as any, stop_reason: 'max_tokens' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hi' });
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('max_tokens');
+    expect(result.result).toBe('truncated tex');
+  });
+
+  test('max_tokens stop with tool_use: truncation note injected so the model re-issues the dropped call', async () => {
+    const tool = makeEchoTool();
+    const client = new FakeMessagesClient([
+      {
+        // A complete tool_use survived, but the turn stopped on max_tokens —
+        // the API dropped whatever came after (e.g. a big put_page call).
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'echo', input: { value: 'v1' } } as any],
+        stop_reason: 'max_tokens' as any,
+      },
+      { content: [{ type: 'text', text: 'recovered' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const ctx = await makeCtx({ prompt: 'go' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toBe('recovered');
+
+    // The synthesized user turn (persisted + fed to the second call) must
+    // carry the truncation note alongside the tool_result. Assert on the
+    // persisted row — client.calls[].messages is the live array the loop
+    // keeps mutating, so positional checks there are unreliable.
+    const rows = await engine.executeRaw<{ content_blocks: unknown }>(
+      `SELECT content_blocks FROM subagent_messages
+        WHERE job_id = $1 AND role = 'user' AND message_idx > 0
+        ORDER BY message_idx ASC`,
+      [ctx.id],
+    );
+    expect(rows.length).toBe(1);
+    const blocks = (typeof rows[0]!.content_blocks === 'string'
+      ? JSON.parse(rows[0]!.content_blocks as string)
+      : rows[0]!.content_blocks) as Array<{ type: string; text?: string }>;
+    expect(blocks.some(b => b.type === 'tool_result')).toBe(true);
+    const texts = blocks.filter(b => b.type === 'text').map(b => b.text ?? '');
+    expect(texts.some(t => t.includes('truncated') && t.includes('DROPPED'))).toBe(true);
   });
 });

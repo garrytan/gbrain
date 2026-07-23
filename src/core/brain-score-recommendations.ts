@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { BrainHealth } from './types.ts';
-import { ANTHROPIC_PRICING } from './anthropic-pricing.ts';
+import { canonicalLookup } from './model-pricing.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 import { parseModelId } from './ai/model-resolver.ts';
@@ -433,7 +433,7 @@ export function estimateAnthropicCost(
   estInputTokensPerCall = 5_000,
   estOutputTokensPerCall = 1_000,
 ): number {
-  const pricing = ANTHROPIC_PRICING[modelId];
+  const pricing = canonicalLookup(modelId);
   if (!pricing) return 0;
   const inputCost = (estInputTokensPerCall * estCallsPerInvocation / 1_000_000) * pricing.input;
   const outputCost = (estOutputTokensPerCall * estCallsPerInvocation / 1_000_000) * pricing.output;

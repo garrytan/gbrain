@@ -13,6 +13,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'crypto';
 import { hasDatabase } from './helpers.ts';
 
 const skip = !hasDatabase();
@@ -210,6 +211,12 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.grant_types_supported).toContain('authorization_code');
     expect(meta.grant_types_supported).toContain('refresh_token');
     expect(meta.grant_types_supported).toContain('client_credentials');
+    expect(meta.token_endpoint_auth_methods_supported).toEqual(
+      expect.arrayContaining(['client_secret_post', 'client_secret_basic', 'none']),
+    );
+    expect(meta.revocation_endpoint_auth_methods_supported).toEqual(
+      expect.arrayContaining(['client_secret_post', 'client_secret_basic']),
+    );
   });
 
   test('OAuth metadata issuer matches public URL', async () => {
@@ -406,6 +413,194 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const data = await res.json() as any;
     expect(data.error).toBe('invalid_grant');
   });
+
+  test('confidential client can revoke its token only with its valid secret', async () => {
+    const { access_token } = await mintToken('read');
+    const wrongSecret = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=gbrain_cs_wrong_secret`,
+    });
+    expect(wrongSecret.status).toBe(401);
+    expect((await wrongSecret.json() as any).error).toBe('invalid_client');
+
+    // A rejected revoke request must leave the token usable.
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(200);
+
+    const revoke = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(revoke.status).toBe(200);
+    expect(revoke.headers.get('cache-control')).toBe('no-store');
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(401);
+  }, 15_000);
+
+  test('confidential client_secret_basic revoke returns canonical auth responses', async () => {
+    const { access_token: wrongSecretToken } = await mintToken('read');
+    const wrongBasic = Buffer.from(`${encodeURIComponent(clientId!)}:${encodeURIComponent('wrong-secret')}`).toString('base64');
+    const rejected = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${wrongBasic}`,
+      },
+      body: `token=${encodeURIComponent(wrongSecretToken)}`,
+    });
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get('www-authenticate')).toMatch(/^Basic /);
+    expect((await mcpCall(wrongSecretToken, 'tools/list')).status).toBe(200);
+
+    const { access_token } = await mintToken('read');
+    const validBasic = Buffer.from(`${encodeURIComponent(clientId!)}:${encodeURIComponent(clientSecret!)}`).toString('base64');
+    const revoked = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${validBasic}`,
+      },
+      body: `token=${encodeURIComponent(access_token)}`,
+    });
+    expect(revoked.status).toBe(200);
+    expect(revoked.headers.get('cache-control')).toBe('no-store');
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(401);
+  }, 15_000);
+
+  test('revoke validates request shape and rejects mixed client authentication', async () => {
+    const { access_token } = await mintToken('read');
+    const validBasic = Buffer.from(`${encodeURIComponent(clientId!)}:${encodeURIComponent(clientSecret!)}`).toString('base64');
+
+    const mixed = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${validBasic}`,
+      },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(mixed.status).toBe(400);
+    expect((await mixed.json() as any).error).toBe('invalid_request');
+
+    const repeatedToken = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&token=duplicate&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(repeatedToken.status).toBe(400);
+    expect((await repeatedToken.json() as any).error).toBe('invalid_request');
+
+    const missingToken = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(missingToken.status).toBe(400);
+    expect((await missingToken.json() as any).error).toBe('invalid_request');
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(200);
+  }, 15_000);
+
+  test('unknown and cross-client tokens are opaque 200 no-ops', async () => {
+    const unknown = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=unknown-token&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(unknown.status).toBe(200);
+
+    const { execSync } = await import('child_process');
+    const attackerRegistration = execSync(
+      `bun run src/cli.ts auth register-client e2e-revoke-attacker-${Date.now()} --grant-types client_credentials --scopes read`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+    const attackerId = attackerRegistration.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    const attackerSecret = attackerRegistration.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    expect(attackerId).toBeTruthy();
+    expect(attackerSecret).toBeTruthy();
+    dcrClientIds.push(attackerId!);
+
+    const { access_token: ownerToken } = await mintToken('read');
+    const crossClient = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(ownerToken)}&client_id=${attackerId}&client_secret=${attackerSecret}`,
+    });
+    expect(crossClient.status).toBe(200);
+    expect((await mcpCall(ownerToken, 'tools/list')).status).toBe(200);
+  }, 30_000);
+
+  test('public client revoke falls through to the SDK handler', async () => {
+    const { execSync } = await import('child_process');
+    const registration = execSync(
+      `bun run src/cli.ts auth register-client e2e-revoke-public-${Date.now()} --grant-types authorization_code --scopes read --token-endpoint-auth-method none`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+    const publicClientId = registration.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    expect(publicClientId).toBeTruthy();
+    dcrClientIds.push(publicClientId!);
+
+    const publicToken = `gbrain_at_public_${Date.now()}`;
+    const tokenHash = createHash('sha256').update(publicToken).digest('hex');
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    try {
+      await sql`
+        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+        VALUES (${tokenHash}, ${'access'}, ${publicClientId!}, ${sql.array(['read'])}, ${Math.floor(Date.now() / 1000) + 3600})
+      `;
+    } finally {
+      await sql.end();
+    }
+
+    expect((await mcpCall(publicToken, 'tools/list')).status).toBe(200);
+    const revoked = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(publicToken)}&client_id=${publicClientId}`,
+    });
+    expect(revoked.status).toBe(200);
+    expect((await mcpCall(publicToken, 'tools/list')).status).toBe(401);
+  }, 30_000);
+
+  test('retryable revoke backend failure returns 503 and leaves token usable', async () => {
+    const { access_token } = await mintToken('read');
+    const tokenHash = createHash('sha256').update(access_token).digest('hex');
+    const suffix = Date.now().toString();
+    const functionName = `e2e_fail_revoke_${suffix}`;
+    const triggerName = `e2e_fail_revoke_trigger_${suffix}`;
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    try {
+      await sql.unsafe(`
+        CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF OLD.token_hash = '${tokenHash}' THEN
+            RAISE EXCEPTION 'injected retryable revoke failure' USING ERRCODE = '08006';
+          END IF;
+          RETURN OLD;
+        END;
+        $$
+      `);
+      await sql.unsafe(`
+        CREATE TRIGGER ${triggerName}
+        BEFORE DELETE ON oauth_tokens
+        FOR EACH ROW EXECUTE FUNCTION ${functionName}()
+      `);
+
+      const failed = await fetch(`${BASE}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+      });
+      expect(failed.status).toBe(503);
+      expect((await failed.json() as any).error).toBe('temporarily_unavailable');
+      expect((await mcpCall(access_token, 'tools/list')).status).toBe(200);
+    } finally {
+      await sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON oauth_tokens`);
+      await sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+      await sql.end();
+    }
+  }, 30_000);
 
   // =========================================================================
   // v0.26.2: DCR /register response shape (RFC 7591 §3.2.1 number contract)

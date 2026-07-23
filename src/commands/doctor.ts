@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
@@ -21,14 +22,35 @@ import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
+import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { gbrainPath } from '../core/config.ts';
+import { gbrainPath, loadConfig } from '../core/config.ts';
+import { reflexEnabled } from '../core/context/reflex.ts';
+import { resolveSocketPath } from '../core/context/resolve-ipc.ts';
+import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import {
+  extractEntityRefs,
+  isGlobalBasenameEnabled,
+  buildBasenameIndex,
+  queryBasenameIndex,
+} from '../core/link-extraction.ts';
 import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
+// v0.41.32.0: remote staleness reads the stored newest_content_at column via
+// this pure comparator (no git subprocess on the HTTP MCP doctor path).
+import { lagFromContentMs } from '../core/source-health.ts';
 import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from '../core/link-extraction.ts';
+import { isUndefinedColumnError } from '../core/utils.ts';
+// issue #1777: hidden_by_search_policy — count chunked pages withheld from
+// default search by the hard-exclude prefix policy. Reuses the canonical
+// exclude resolver + LIKE escaper + visibility clause so the doctor count can't
+// drift from what search actually filters.
+import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../core/search/source-boost.ts';
+import { escapeLikePattern, buildVisibilityClause } from '../core/search/sql-ranking.ts';
 
 export interface Check {
   name: string;
@@ -110,6 +132,12 @@ export interface DoctorReport {
     meta: number;
   };
   checks: Check[];
+  /**
+   * v0.42.x (#1685 GAP C) — non-ok checks ranked by cause (root before symptom,
+   * fail before warn). Lets an agent act on the root cause without re-deriving
+   * the ranking. Additive + optional; schema_version stays at 2.
+   */
+  top_issues?: RankedIssue[];
 }
 
 function _penaltyScore(checks: Check[]): number {
@@ -162,6 +190,7 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
       meta: _penaltyScore(meta),
     },
     checks: tagged,
+    top_issues: rankIssues(tagged),
   };
 }
 
@@ -294,6 +323,70 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
       status: 'warn',
       message: `Could not check whoknows fixture: ${msg}`,
     };
+  }
+}
+
+/**
+ * Doctor check: pgvector availability.
+ *
+ * Use the active engine instead of the module-level Postgres singleton.
+ * PGLite exposes pg_extension through its engine connection, but does not
+ * connect db.ts's Postgres singleton; using db.getConnection() here turns a
+ * healthy PGLite brain into a false warning.
+ */
+export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const ext = await engine.executeRaw<{ extname: string }>(
+      `SELECT extname FROM pg_extension WHERE extname = 'vector'`,
+    );
+    if (ext.length > 0) {
+      return { name: 'pgvector', status: 'ok', message: 'Extension installed' };
+    }
+    return { name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' };
+  } catch {
+    return { name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' };
+  }
+}
+
+/**
+ * Doctor check: JSONB columns are not double-encoded as strings.
+ *
+ * This check is valid on both Postgres and PGLite. Route through
+ * engine.executeRaw() so embedded PGLite brains are checked through their
+ * actual connection instead of the unrelated Postgres singleton.
+ */
+export async function jsonbIntegrityCheck(
+  engine: BrainEngine,
+  progress?: Pick<ProgressReporter, 'heartbeat'>,
+): Promise<Check> {
+  try {
+    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',      col: 'data',           expected: 'object' },
+      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',         col: 'metadata',       expected: 'object' },
+      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+    ];
+    let totalBad = 0;
+    const breakdown: string[] = [];
+    for (const { table, col } of targets) {
+      progress?.heartbeat(`jsonb_integrity.${table}.${col}`);
+      const rows = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+      );
+      const n = Number(rows[0]?.n ?? 0);
+      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+    }
+    if (totalBad === 0) {
+      return { name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' };
+    }
+    return {
+      name: 'jsonb_integrity',
+      status: 'warn',
+      message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+    };
+  } catch {
+    return { name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' };
   }
 }
 
@@ -482,6 +575,60 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }
 
+  // 2b. #2038: idx_timeline_dedup shape. A renumbered-during-merge migration
+  // (v102) can be recorded-as-applied without its DDL running, leaving the
+  // 3-column index in place — every timeline write then fails the 4-column
+  // ON CONFLICT. The version counter can't see this, so check the index SHAPE.
+  try {
+    const { checkTimelineDedupIndex } = await import('../core/timeline-dedup-repair.ts');
+    const idx = await checkTimelineDedupIndex(engine);
+    if (!idx.tablePresent || !idx.needsRepair) {
+      checks.push({
+        name: 'timeline_dedup_index',
+        status: 'ok',
+        message: idx.tablePresent ? 'idx_timeline_dedup has the 4-column shape' : 'no timeline_entries table yet',
+      });
+    } else {
+      checks.push({
+        name: 'timeline_dedup_index',
+        status: 'fail',
+        message:
+          `idx_timeline_dedup is ${idx.indexPresent ? `(${idx.columns.join(', ')})` : 'absent'}, ` +
+          `expected (page_id, date, summary, source) — timeline writes are failing (#2038). ` +
+          `Run \`gbrain apply-migrations --force-schema\` to heal it.`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'timeline_dedup_index', status: 'warn', message: 'Could not check idx_timeline_dedup shape' });
+  }
+
+  // v0.42.x — Life Chronicle (#2390): orphaned event projections. Reads already
+  // hide projections whose event page is soft-deleted (read-time correctness);
+  // this always-run probe surfaces the cleanup backlog. Keyed off the real
+  // schema (event_page_id), NOT a migration verify-hook, per
+  // migration-verify-hook-never-runs-on-stamped-brains.
+  try {
+    const orphans = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM timeline_entries te
+       JOIN pages ep ON ep.id = te.event_page_id
+       WHERE te.event_page_id IS NOT NULL AND ep.deleted_at IS NOT NULL`,
+    );
+    const n = Number(orphans[0]?.n ?? 0);
+    checks.push(
+      n === 0
+        ? { name: 'chronicle_projection_health', status: 'ok', message: 'No orphaned event projections' }
+        : {
+            name: 'chronicle_projection_health',
+            status: 'warn',
+            message:
+              `${n} timeline projection(s) point to soft-deleted event pages ` +
+              '(hidden at read time; clean up with `gbrain integrity auto`).',
+          },
+    );
+  } catch {
+    checks.push({ name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' });
+  }
+
   // 3. Brain score
   try {
     const health = await engine.getHealth();
@@ -544,29 +691,24 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     // remote doctor.
   }
 
-  // 4. Sync failures (file-plane state, not in-DB; see src/core/sync.ts).
-  // Read the JSONL file directly at the canonical path; cheap and engine-agnostic.
+  // 4. Sync failures (file-plane ledger; see src/core/sync-failure-ledger.ts).
+  // issue #1939: read via the shared loader + severity decision so this remote
+  // surface agrees with the local buildChecks emitter by construction. Stays
+  // subprocess-free (file read + Date.parse only, no git), preserving the remote
+  // trust boundary. Escalates to FAIL when a stuck bookmark has blocked past the
+  // sync-freshness fail cadence or unresolved count is large.
   try {
-    const { readFileSync, existsSync } = await import('fs');
-    const { gbrainPath } = await import('../core/config.ts');
-    const path = gbrainPath('sync-failures.jsonl');
-    let unacked = 0;
-    if (existsSync(path)) {
-      const lines = readFileSync(path, 'utf-8').split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line) as { acknowledged_at?: string | null };
-          if (!entry.acknowledged_at) unacked++;
-        } catch { /* skip malformed line */ }
-      }
-    }
-    checks.push({
-      name: 'sync_failures',
-      status: unacked === 0 ? 'ok' : 'warn',
-      message: unacked === 0
-        ? 'No unacked failures'
-        : `${unacked} unacked failure(s) — run \`gbrain sync --skip-failed\` on the host to acknowledge`,
-    });
+    const { loadSyncFailures, decideSyncFailureSeverity } = await import('../core/sync.ts');
+    const entries = loadSyncFailures();
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const sev = decideSyncFailureSeverity({ entries, nowMs: Date.now(), failHours });
+    const msg =
+      sev.unresolved === 0
+        ? 'No unresolved sync failures'
+        : `${sev.unresolved} unresolved sync failure(s)` +
+          (sev.auto_skipped > 0 ? ` (${sev.auto_skipped} auto-skipped — pages NOT indexed)` : '') +
+          ` — run \`gbrain sync --skip-failed\` on the host to acknowledge`;
+    checks.push({ name: 'sync_failures', status: sev.status, message: msg });
   } catch {
     checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
   }
@@ -617,9 +759,12 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // shape; skip the check there with an informational message.
   if (engine.kind === 'postgres') {
     try {
+      // issue #1801: column is `status`, not `state` (schema.sql:780). The
+      // pre-fix query errored every run and the catch silently returned "No
+      // queue activity," so this remote/thin-client check was a no-op.
       const rows = await engine.executeRaw<{ stalled: string | number }>(
         `SELECT COUNT(*) AS stalled FROM minion_jobs
-          WHERE state = 'active'
+          WHERE status = 'active'
             AND started_at IS NOT NULL
             AND started_at < NOW() - INTERVAL '1 hour'`,
       );
@@ -637,6 +782,12 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   } else {
     checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
   }
+
+  // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
+  checks.push(await computeWedgedQueueCheck(engine));
+
+  // #2194 fix #5 — warn when autopilot fan-out exceeds worker concurrency.
+  checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));
 
   // v0.41 Bug 2 / Eng D8 — subagent_health surfaces rate-lease pressure to the operator.
   checks.push(await checkSubagentHealth(engine));
@@ -665,6 +816,15 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // v0.41.19.0 (Issue 5): sync --all consolidation nudge for multi-source brains.
   checks.push(await checkSyncConsolidation(engine));
+
+  // v0.42.x (#1794, 4A): pool-budget nudge when GBRAIN_MAX_CONNECTIONS is set.
+  checks.push(await checkPoolBudget(engine));
+
+  // v0.42.7 (#1696): link-extraction lag. Strictly SQL (single indexed COUNT),
+  // safe on the thin-client/remote path — remote operators on checkout-less
+  // Postgres brains are exactly who can't otherwise see the extraction backlog.
+  // Brain-wide here (remote --source scoping is a separate TODO, like orphan_ratio).
+  checks.push(await checkLinksExtractionLag(engine));
 
   // v0.39 T7 + T9 — schema-pack health checks (3 checks per v0.38 plan):
   //   schema_pack_active        — active pack resolves cleanly
@@ -717,13 +877,87 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   //   - synopsis-failures audit JSONL entries from the last 7 days
   checks.push(await checkContextualRetrievalCoverage(engine));
 
+  // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
+  // search by the hard-exclude prefix policy. Pure SQL COUNT, safe on the
+  // remote/thin-client path.
+  checks.push(await checkHiddenBySearchPolicy(engine));
+
+  // 11a. issue #972 link_resolution_opportunity — same check the local
+  // doctor runs at the equivalent slot in buildChecks. Mirrored for
+  // thin-client parity so `gbrain remote doctor` sees the same hint.
+  checks.push(await checkLinkResolutionOpportunity(engine));
+
   // 12. v0.40.5.0 Federated Sync v2 (T12) — federation_health:
   //   - Per-source lag, embed coverage, failed-job rate.
   //   - Single-source brain short-circuits to ok.
   //   - Three-state: ok / warn / fail.
   checks.push(await checkFederationHealth(engine));
 
+  // 13. v0.42 self_upgrade_health: mode, whether behind, recent failures.
+  // File-plane only (no engine) — works on thin clients too.
+  checks.push(checkSelfUpgradeHealth());
+
   return computeDoctorReport(checks);
+}
+
+/**
+ * v0.42 self_upgrade_health. Surfaces the self-upgrade mode, whether an update
+ * is pending (from the cache), and any recent failed auto-upgrade attempts.
+ * File-plane only (no DB) so it runs on thin clients. Three-state: warn on
+ * recent failures, otherwise ok.
+ */
+export function checkSelfUpgradeHealth(): Check {
+  try {
+    const { loadConfig } = require('../core/config.ts');
+    const {
+      resolveSelfUpgradeMode,
+      readUpdateCache,
+      isCacheFresh,
+    } = require('../core/self-upgrade.ts');
+    const { readRecentSelfUpgrades } = require('../core/audit/self-upgrade-audit.ts');
+
+    const cfg = loadConfig();
+    const mode = resolveSelfUpgradeMode(cfg);
+    if (mode === 'off') {
+      return {
+        name: 'self_upgrade_health',
+        status: 'ok',
+        message: 'Self-upgrade disabled (mode=off). Enable: gbrain config set self_upgrade.mode notify',
+      };
+    }
+
+    const parts: string[] = [`mode=${mode}`];
+    const entry = readUpdateCache();
+    if (entry && isCacheFresh(entry, Date.now()) && entry.marker.kind === 'upgrade_available') {
+      parts.push(`update available: ${entry.marker.current} -> ${entry.marker.latest} (run: gbrain self-upgrade)`);
+    }
+    const failedVersions: string[] = cfg?.self_upgrade?.failed_versions ?? [];
+    if (failedVersions.length > 0) {
+      parts.push(`skipping known-bad: ${failedVersions.join(', ')}`);
+    }
+
+    const recent = readRecentSelfUpgrades(7) as Array<{ outcome?: string; error?: string; latest?: string | null }>;
+    const failures = recent.filter((e) => e.outcome === 'failed');
+    if (failures.length > 0) {
+      const last = failures[failures.length - 1];
+      return {
+        name: 'self_upgrade_health',
+        status: 'warn',
+        message:
+          `${failures.length} self-upgrade failure(s) in 7d (${parts.join('; ')}). ` +
+          `Last: ${last.latest ?? '?'}${last.error ? ` — ${last.error}` : ''}. ` +
+          `Check ~/.gbrain/upgrade-errors.jsonl; apply manually with gbrain self-upgrade.`,
+      };
+    }
+
+    return { name: 'self_upgrade_health', status: 'ok', message: parts.join('; ') };
+  } catch (e) {
+    return {
+      name: 'self_upgrade_health',
+      status: 'ok',
+      message: `Self-upgrade status unavailable (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
 }
 
 // --- v0.36.1.0 calibration doctor checks (T12) ---
@@ -814,6 +1048,206 @@ export async function checkContextualRetrievalCoverage(engine: BrainEngine): Pro
       name: 'contextual_retrieval_coverage',
       status: 'warn',
       message: `Could not check contextual retrieval coverage: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * issue #1777 — hidden_by_search_policy
+ *
+ * Counts CHUNKED pages that are withheld from default search by the
+ * hard-exclude prefix policy (`test/`, `attachments/`, `.raw/`, plus any
+ * `GBRAIN_SEARCH_EXCLUDE` env additions). Makes the surviving exclude policy
+ * auditable so an empty search result is distinguishable from "withheld by
+ * policy" — the deeper bug the archive-demote fix only half-closes.
+ *
+ * HONEST SUPERSET: the count is "chunked pages under an excluded prefix", NOT
+ * "searchable pages". Keyword search additionally filters
+ * `search_vector @@ ... AND modality='text'` and vector search filters text
+ * modality + non-null embedding, so `EXISTS (content_chunks)` over-includes
+ * image-only / non-text pages. Tightening to the exact per-modality predicate
+ * would couple this check to search internals for a number nobody paginates on;
+ * the superset is the right operator signal. The message says "chunked page(s)".
+ *
+ * Status (CV-1a): pages hidden ONLY under DEFAULT excludes → `ok` (intentional
+ * noise; warning would make every healthy brain look unhealthy). Pages hidden
+ * under a NON-default (env-supplied) prefix → `warn`. The message is
+ * agent-prescriptive: move content out of the excluded prefix or pass
+ * `include_slug_prefixes` on the query.
+ *
+ * NOTE: this does NOT verify `archive/` pages are embedded/graphed — after the
+ * #1777 fix `archive/` is no longer excluded, so it never appears here.
+ */
+export async function checkHiddenBySearchPolicy(engine: BrainEngine): Promise<Check> {
+  const name = 'hidden_by_search_policy';
+  try {
+    const prefixes = resolveHardExcludes();
+    if (prefixes.length === 0) {
+      return { name, status: 'ok', message: 'No search-exclude prefixes active.' };
+    }
+
+    // ONE query: COUNT(DISTINCT p.id) per prefix in a single pass. Prefixes are
+    // bound params, LIKE-escaped (env-supplied prefixes may contain %/_/\) with
+    // an explicit ESCAPE clause. Candidate gate is EXISTS(content_chunks);
+    // buildVisibilityClause mirrors search's page-level visibility (soft-delete,
+    // archived source, quarantine) and REQUIRES the `sources s` join.
+    const visibility = buildVisibilityClause('p', 's');
+    const filters = prefixes
+      .map((_, i) => `COUNT(DISTINCT p.id) FILTER (WHERE p.slug LIKE $${i + 1} ESCAPE '\\')::int AS c${i}`)
+      .join(',\n         ');
+    const params = prefixes.map((pfx) => `${escapeLikePattern(pfx)}%`);
+    const sql =
+      `SELECT
+         ${filters}
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+       WHERE EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+         ${visibility}`;
+    const rows = await engine.executeRaw<Record<string, number>>(sql, params);
+    const row = rows[0] ?? {};
+
+    const defaults = new Set(DEFAULT_HARD_EXCLUDES);
+    const perPrefix = prefixes
+      .map((pfx, i) => ({ prefix: pfx, count: Number(row[`c${i}`] ?? 0), isDefault: defaults.has(pfx) }))
+      .filter((e) => e.count > 0);
+
+    if (perPrefix.length === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: 'No pages hidden by search-exclude policy.',
+        details: { prefixes, counts: {} },
+      };
+    }
+
+    const counts: Record<string, number> = {};
+    for (const e of perPrefix) counts[e.prefix] = e.count;
+    const breakdown = perPrefix.map((e) => `${e.count} under '${e.prefix}'`).join(', ');
+    const hasNonDefault = perPrefix.some((e) => !e.isDefault);
+    const guidance =
+      'If any hold content you want findable, move them out of the excluded ' +
+      "prefix or pass `include_slug_prefixes` on the query.";
+    return {
+      name,
+      status: hasNonDefault ? 'warn' : 'ok',
+      message: `${breakdown} chunked page(s) are excluded from default search by prefix policy. ${guidance}`,
+      details: { prefixes, counts },
+    };
+  } catch (e) {
+    return {
+      name,
+      status: 'warn',
+      message: `Could not check hidden-by-search-policy: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * Issue #972 — link_resolution_opportunity check.
+ *
+ * Walks every page in the brain, scans for bare wikilinks
+ * (`[[struktura]]` outside DIR_PATTERN) that would resolve to at least
+ * one page under global-basename mode, and surfaces a paste-ready
+ * `gbrain config set link_resolution.global_basename true` hint when
+ * the count is meaningful (>=5 would-resolve AND >=20% of bare
+ * wikilinks have matches). Skipped silently when the flag is already
+ * enabled (no signal to surface) or the brain is empty.
+ *
+ * Bounded scan: batch-loads the 1000 most-recent pages in one query (not a
+ * per-page getPage walk) with a 60s backstop. On DB error, downgrades to an
+ * informational `ok` so doctor never blocks on this check.
+ */
+export async function checkLinkResolutionOpportunity(
+  engine: BrainEngine,
+  progress?: ProgressReporter,
+): Promise<Check> {
+  const name = 'link_resolution_opportunity';
+  try {
+    if (await isGlobalBasenameEnabled(engine)) {
+      return { name, status: 'ok', message: 'global_basename mode already enabled' };
+    }
+    const allSlugs = await engine.getAllSlugs();
+    if (allSlugs.size === 0) {
+      return { name, status: 'ok', message: 'Brain is empty — nothing to scan' };
+    }
+    // Build a basename → slug[] index ONCE for the entire scan via the shared
+    // builder (issue #972 codex [P2] DRY) — same key set (raw/lower/slugified)
+    // as extraction, so this estimate matches what extraction actually
+    // resolves. Pre-fix the doctor omitted the slugified key and undercounted.
+    const basenameIndex = buildBasenameIndex(allSlugs);
+
+    let bareCount = 0;
+    let wouldResolveCount = 0;
+    const distinctTargets = new Set<string>();
+
+    // Issue #972 (codex [P2] perf): batch-load the most-recent N pages in ONE
+    // query instead of listAllPageRefs() + a getPage() per page. The prior
+    // full N-page walk hit the 60s budget every run on large brains and
+    // returned a perpetual partial; this bounds the work to a fixed sample.
+    const SAMPLE_LIMIT = 1000;
+    const sampled = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
+      `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}`,
+    );
+    const totalPages = allSlugs.size;
+    const sampledNote = totalPages > SAMPLE_LIMIT
+      ? ` (scanned the ${SAMPLE_LIMIT} most-recent of ${totalPages} pages)`
+      : '';
+    const deadline = Date.now() + 60_000;
+    const hb = progress ? startHeartbeat(progress, `scanning ${sampled.length} pages for bare wikilinks…`) : null;
+    try {
+      for (const row of sampled) {
+        if (Date.now() > deadline) break; // backstop; in-memory scan rarely hits it
+        const content = (row.compiled_truth ?? '') + '\n' + (row.timeline ?? '');
+        for (const e of extractEntityRefs(content)) {
+          if (!e.needsResolution) continue;
+          bareCount++;
+          // Issue #972 (codex): match on the wikilink TARGET (e.slug), not
+          // the display alias (e.name), via the shared query so the doctor
+          // estimate equals what extraction actually resolves.
+          const matches = queryBasenameIndex(basenameIndex, e.slug);
+          if (matches.length > 0) {
+            wouldResolveCount++;
+            for (const m of matches) distinctTargets.add(m);
+          }
+        }
+      }
+    } finally {
+      hb?.();
+    }
+
+    if (bareCount === 0) {
+      return { name, status: 'ok', message: 'No bare wikilinks found' };
+    }
+    if (wouldResolveCount === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: `${bareCount} bare wikilink(s) found, but none have basename matches in the brain.`,
+      };
+    }
+    const ratio = wouldResolveCount / bareCount;
+    if (wouldResolveCount >= 5 && ratio >= 0.20) {
+      const pct = Math.round(ratio * 100);
+      return {
+        name,
+        status: 'warn',
+        message:
+          `${wouldResolveCount} of ${bareCount} bare wikilinks (${pct}%) would resolve to ` +
+          `${distinctTargets.size} distinct page(s) under global_basename mode${sampledNote}. ` +
+          `Enable with: gbrain config set link_resolution.global_basename true`,
+      };
+    }
+    const pct = Math.round(ratio * 100);
+    return {
+      name,
+      status: 'ok',
+      message: `${wouldResolveCount}/${bareCount} bare wikilinks (${pct}%) would resolve — below the 20% / 5-link threshold for surfacing a hint${sampledNote}.`,
+    };
+  } catch (e) {
+    return {
+      name,
+      status: 'ok',
+      message: `Skipped (${e instanceof Error ? e.message : String(e)})`,
     };
   }
 }
@@ -1151,6 +1585,121 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
  * Also surfaces (codex M-10): runs resolveBulkRetryOpts(process.env) at
  * startup so bad GBRAIN_BULK_* config fails at doctor time, not first-retry.
  */
+/**
+ * issue #1801 — `wedged_queue` check. Surfaces the alive-but-wedged-worker
+ * signature (a queue with claimable work waiting, zero live-lock active jobs,
+ * and stale completions) as a health ERROR, so an operator / the daily doctor
+ * catches a silent processing halt in minutes, not 15 hours.
+ *
+ * Postgres-only (PGLite has no multi-process worker surface). Grouped BY queue
+ * (Codex #15) so a healthy worker on one queue can't mask a wedged one.
+ * `active_healthy` counts only live-lock active rows, so an expired-lock active
+ * row (a worker that died mid-job) does NOT mask the wedge (Codex #6). The
+ * check is conservative for the advisory surface: it fails only on stale-after-
+ * progress (mins_since_completion > threshold, non-null); a queue that never
+ * completed anything is left to the supervisor's startup-grace-aware watchdog
+ * to avoid crying wolf on a freshly-submitted queue with no worker yet.
+ *
+ * Exported so `test/doctor.test.ts` drives it directly. Reads
+ * GBRAIN_WEDGED_QUEUE_WARN_MINUTES (default 15).
+ */
+export async function computeWedgedQueueCheck(engine: BrainEngine): Promise<Check> {
+  if (engine.kind !== 'postgres') {
+    return { name: 'wedged_queue', status: 'ok', message: 'PGLite — no queue to check' };
+  }
+  const thresholdMin = _resolveEnvNumber('GBRAIN_WEDGED_QUEUE_WARN_MINUTES', 15);
+  try {
+    const rows = await engine.executeRaw<{
+      queue: string;
+      active_healthy: string | number;
+      waiting: string | number;
+      mins_since_completion: string | number | null;
+    }>(
+      `SELECT queue,
+         count(*) FILTER (WHERE status = 'active' AND lock_until > now()) AS active_healthy,
+         count(*) FILTER (WHERE status = 'waiting') AS waiting,
+         EXTRACT(EPOCH FROM (now() - max(updated_at) FILTER (WHERE status = 'completed'))) / 60
+           AS mins_since_completion
+       FROM minion_jobs
+       GROUP BY queue`,
+    );
+    const wedged: string[] = [];
+    for (const r of rows) {
+      const activeHealthy = Number(r.active_healthy ?? 0);
+      const waiting = Number(r.waiting ?? 0);
+      const mins = r.mins_since_completion === null ? null : Number(r.mins_since_completion);
+      // Conservative: only flag stale-after-progress (non-null mins past
+      // threshold). The null-completions case is the supervisor's job.
+      if (activeHealthy === 0 && waiting > 0 && mins !== null && mins > thresholdMin) {
+        wedged.push(`'${r.queue}' (${waiting} waiting, 0 active, ${Math.round(mins)}m since last completion)`);
+      }
+    }
+    if (wedged.length === 0) {
+      return { name: 'wedged_queue', status: 'ok', message: 'No wedged queues' };
+    }
+    return {
+      name: 'wedged_queue',
+      status: 'fail',
+      message:
+        `Wedged queue(s) — worker alive but not claiming work: ${wedged.join('; ')}. ` +
+        `Restart the worker so it rebuilds a fresh DB pool: ` +
+        `\`gbrain jobs supervisor stop && gbrain jobs supervisor start\`, ` +
+        `then \`gbrain jobs retry <id>\` on any dead-lettered jobs.`,
+      details: { wedged_queues: wedged.length, threshold_minutes: thresholdMin },
+    };
+  } catch (e) {
+    // Pre-migration brains / transient errors: advisory check stays ok.
+    return {
+      name: 'wedged_queue',
+      status: 'ok',
+      message: `Skipped (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
+}
+
+/**
+ * #2194 fix #5: warn when autopilot's per-tick fan-out exceeds the worker's
+ * effective concurrency. Fanning out more cycles than there are worker slots
+ * guarantees waiters that race the stalled-sweeper — a silent misconfig today.
+ * Advisory (started-event concurrency is fine here; the behavior-changing clamp
+ * in resolveEffectiveFanoutMax is the one that gates on liveness). Surfaces only
+ * when a supervisor has actually started (no noise on never-supervised brains).
+ */
+export async function computeAutopilotFanoutConcurrencyCheck(engine: BrainEngine): Promise<Check> {
+  if (engine.kind !== 'postgres') {
+    return { name: 'autopilot_fanout_concurrency', status: 'ok', message: 'PGLite — single-writer, fan-out is 1' };
+  }
+  try {
+    const { resolveFanoutMax, readSupervisorConcurrency } = await import('./autopilot-fanout.ts');
+    const concurrency = await readSupervisorConcurrency('default');
+    if (concurrency === null) {
+      return { name: 'autopilot_fanout_concurrency', status: 'ok', message: 'No supervisor observed — skipping fan-out/concurrency check' };
+    }
+    const fanoutMax = await resolveFanoutMax(engine);
+    const effectiveSlots = Math.max(1, concurrency - 1);
+    if (fanoutMax > effectiveSlots) {
+      return {
+        name: 'autopilot_fanout_concurrency',
+        status: 'warn',
+        message:
+          `autopilot fan-out (${fanoutMax}/tick) exceeds worker concurrency (${concurrency}). ` +
+          `Surplus cycles queue behind the worker and race the stalled-sweeper. ` +
+          `Lower fan-out: \`gbrain config set autopilot.fanout_max_per_tick ${effectiveSlots}\`, ` +
+          `or raise the supervisor's \`--concurrency\` to ${fanoutMax + 1}. ` +
+          `(The clamp in autopilot does this automatically unless disabled.)`,
+        details: { fanout_max: fanoutMax, concurrency, effective_slots: effectiveSlots },
+      };
+    }
+    return {
+      name: 'autopilot_fanout_concurrency',
+      status: 'ok',
+      message: `fan-out ${fanoutMax}/tick within worker concurrency ${concurrency}`,
+    };
+  } catch (e) {
+    return { name: 'autopilot_fanout_concurrency', status: 'ok', message: `Skipped (${e instanceof Error ? e.message : String(e)})` };
+  }
+}
+
 export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check> {
   try {
     // Codex M-10: surface bad env config at doctor time.
@@ -1965,25 +2514,62 @@ export function checkAutopilotLockScope(): Check {
  * but the main work is blocked. Requires explicit heartbeat probe;
  * speculation until production data shows the case.
  */
-export async function checkStaleLocks(engine: BrainEngine): Promise<Check> {
+export async function checkStaleLocks(
+  engine: BrainEngine,
+  opts: { fix?: boolean; dryRun?: boolean } = {},
+): Promise<Check> {
   try {
-    const { listStaleLocks } = await import('../core/db-lock.ts');
+    const { listStaleLocks, reapDeadHolderLocks } = await import('../core/db-lock.ts');
+
+    // #1972: under `gbrain doctor --fix`, reap dead-holder sync/cycle locks
+    // using the SAME namespace-scoped, host-scoped, snapshot-matched reaper the
+    // cycle runs at start. This is the self-heal path for no-autopilot brains: a
+    // brain that never runs `gbrain dream` never hits the cycle-start sweep, so
+    // doctor --fix is how its crashed-sync locks get cleared. DB-only, so it's
+    // orthogonal to (and unaffected by) the skills-dir --fix safety gate above.
+    // Best-effort: a reap failure falls through to the warn path below.
+    let reapedIds: string[] = [];
+    if (opts.fix && !opts.dryRun) {
+      try {
+        reapedIds = (await reapDeadHolderLocks(engine)).reapedIds;
+      } catch { /* fall through; listStaleLocks still surfaces remaining locks */ }
+    }
+    const reapedNote = reapedIds.length > 0
+      ? `Reaped ${reapedIds.length} dead-holder lock(s): ${reapedIds.join(', ')}.`
+      : null;
+
     const stale = await listStaleLocks(engine);
     if (stale.length === 0) {
-      return { name: 'stale_locks', status: 'ok', message: 'No stale locks (no rows with ttl_expires_at < NOW())' };
+      return {
+        name: 'stale_locks',
+        status: 'ok',
+        message: reapedNote
+          ? `${reapedNote} No stale locks remain.`
+          : 'No stale locks (no rows with ttl_expires_at < NOW())',
+      };
     }
     const lines = stale.slice(0, 10).map(s => {
       const ageH = Math.floor(s.age_ms / 3600_000);
-      const source = s.id.startsWith('gbrain-sync:') ? s.id.slice('gbrain-sync:'.length) : null;
-      const breakHint = source ? `gbrain sync --break-lock --source ${source}` : `gbrain sync --break-lock`;
+      let breakHint = 'gbrain doctor';
+      if (s.id.startsWith('gbrain-sync:')) {
+        breakHint = `gbrain sync --break-lock --source ${s.id.slice('gbrain-sync:'.length)}`;
+      } else if (s.id.startsWith('gbrain-cycle:')) {
+        breakHint = `gbrain dream --break-lock --source ${s.id.slice('gbrain-cycle:'.length)}`;
+      } else if (s.id === 'gbrain-cycle') {
+        breakHint = 'gbrain dream --break-lock';
+      }
       return `  ${s.id} (pid ${s.holder_pid} on ${s.holder_host}, age ${ageH}h) → ${breakHint}`;
     });
     const tail = stale.length > 10 ? `  ... and ${stale.length - 10} more.` : null;
+    const header = opts.fix
+      ? `${stale.length} stale lock(s) remain that could not be auto-reaped (live holder, cross-host, or within the PID-reuse grace):`
+      : `${stale.length} stale lock(s) detected (ttl_expires_at < NOW()):`;
     return {
       name: 'stale_locks',
       status: 'warn',
       message: [
-        `${stale.length} stale lock(s) detected (ttl_expires_at < NOW()):`,
+        reapedNote,
+        header,
         ...lines,
         tail,
       ].filter(Boolean).join('\n'),
@@ -2199,7 +2785,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
   };
 }
 
-async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
+export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
@@ -2260,8 +2846,11 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
+      const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+      const gatewayLoopEnabled = typeof gatewayLoopRaw === 'string'
+        && ['true', '1', 'yes', 'on'].includes(gatewayLoopRaw.trim().toLowerCase());
       const { isAnthropicProvider } = await import('../core/model-config.ts');
-      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY && !gatewayLoopEnabled) {
         return {
           name: 'subagent_capability',
           status: 'warn',
@@ -2295,23 +2884,47 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
 const checkSubagentProvider = checkSubagentCapability;
 void checkSubagentProvider;
 
-// Module-scoped flag so the NaN-fallback warning fires once per process.
-let _syncFreshnessEnvWarned = false;
+// Module-scoped set so each invalid-env-var warning fires once per process,
+// per variable name (v0.42.7 #1696: was a single bool shared across all vars).
+const _envNumberWarned = new Set<string>();
 
-function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+/**
+ * v0.42.7 (#1696): single source of truth for the extraction-lag warn
+ * threshold (percent). Both the `links_extraction_lag` doctor check AND the
+ * end-of-sync nudge (`sync.ts:maybeExtractionNudge`) resolve through this +
+ * `_resolveEnvNumber` so "the nudge fires iff doctor would warn" can't drift.
+ */
+export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
+/** Min non-deleted page count below which extraction-lag is vacuous-skipped
+ *  (unless an explicit --source scope is set). Shared by doctor + the sync
+ *  nudge (D6/C4) so their skip predicates match exactly. */
+export const EXTRACTION_LAG_MIN_PAGES = 100;
+
+/**
+ * v0.42.7 (#1696, C1): generic "read a positive number from an env var, warn
+ * once + fall back on garbage." Extracted from _resolveSyncFreshnessHours so
+ * the percent-threshold doctor checks don't reuse a `...Hours`-named helper.
+ * `opts.unit` is purely cosmetic for the warning string ('h', '%', '').
+ * Exported (D3) so the sync nudge resolves the threshold the same way.
+ */
+export function _resolveEnvNumber(varName: string, fallback: number, opts?: { unit?: string }): number {
   const raw = process.env[varName];
   if (raw === undefined || raw === '') return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    if (!_syncFreshnessEnvWarned) {
-      _syncFreshnessEnvWarned = true;
+    if (!_envNumberWarned.has(varName)) {
+      _envNumberWarned.add(varName);
       console.warn(
-        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}h.`,
+        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}${opts?.unit ?? ''}.`,
       );
     }
     return fallback;
   }
   return n;
+}
+
+function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+  return _resolveEnvNumber(varName, fallback, { unit: 'h' });
 }
 
 /**
@@ -2443,7 +3056,7 @@ export async function computeConversationFactsBacklogCheck(
     const typesRaw = await engine.getConfig(
       'cycle.conversation_facts_backfill.types',
     );
-    let types = ['conversation', 'meeting', 'slack', 'email'];
+    let types = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'];
     if (typesRaw) {
       try {
         const parsed = JSON.parse(typesRaw);
@@ -2520,6 +3133,159 @@ export async function computeConversationFactsBacklogCheck(
       status: 'warn',
       message: `backlog query failed: ${(err as Error).message}`,
     };
+  }
+}
+
+/**
+ * v0.42.7 (#1696) — links_extraction_lag doctor check.
+ *
+ * The signal that surfaces the "imported ≠ curated" root cause: pages whose
+ * link/timeline extraction is stale (never run, edited-since, or extractor
+ * bumped). Without it, a brain can run for months at 0% typed-edge coverage
+ * with nothing warning the operator.
+ *
+ * Warn-only by DEFAULT (>20% stale). Hard-fail ONLY when the operator opts in
+ * via GBRAIN_EXTRACTION_LAG_FAIL_PCT — so a just-upgraded 280K-page brain
+ * (every page NULL → 100% stale) gets a loud WARN, never a non-zero exit that
+ * would break a CI/cron pipeline gating on `gbrain doctor`.
+ *
+ * Vacuous-skip on tiny brains (<100 pages, no --source) like orphan_ratio.
+ * Pre-v112 brains (column missing) degrade to OK via isUndefinedColumnError.
+ * Strictly SQL — no filesystem/git access — so it's safe to wire into the
+ * thin-client doctorReportRemote path (CDX-5 trust boundary).
+ *
+ * `opts.sourceId` scopes both the denominator and the stale count to one
+ * source (the explicit-only `--source` parse, like orphan_ratio).
+ */
+export async function checkLinksExtractionLag(
+  engine: BrainEngine,
+  opts?: { sourceId?: string },
+): Promise<Check> {
+  const name = 'links_extraction_lag';
+  const sourceId = opts?.sourceId;
+  const fix = "Run: gbrain extract --stale";
+  try {
+    const totalRows = await engine.executeRaw<{ count: number }>(
+      sourceId
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+      sourceId ? [sourceId] : [],
+    );
+    const total = Number(totalRows[0]?.count ?? 0);
+    if (total === 0) {
+      return { name, status: 'ok', message: 'Extraction lag not applicable (no pages)' };
+    }
+    // Vacuous-skip tiny brains unless explicitly source-scoped. Shared floor
+    // const so the sync nudge (D6/C4) skips on the exact same predicate.
+    if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) {
+      return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)` };
+    }
+
+    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const pct = (stale / total) * 100;
+    const pctStr = pct.toFixed(0);
+    const scope = sourceId ? ` in source '${sourceId}'` : '';
+
+    const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
+    // Fail threshold is DISABLED unless explicitly set (warn-only default). A
+    // bare unset env var → no hard-fail; invalid value → warn-once + disabled.
+    let failPct: number | undefined;
+    const failRaw = process.env.GBRAIN_EXTRACTION_LAG_FAIL_PCT;
+    if (failRaw !== undefined && failRaw !== '') {
+      const n = Number(failRaw);
+      if (Number.isFinite(n) && n > 0) {
+        failPct = n;
+      } else if (!_envNumberWarned.has('GBRAIN_EXTRACTION_LAG_FAIL_PCT')) {
+        _envNumberWarned.add('GBRAIN_EXTRACTION_LAG_FAIL_PCT');
+        console.warn(`[gbrain doctor] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
+      }
+    }
+
+    const details = { total, stale, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
+    if (failPct !== undefined && pct > failPct) {
+      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}`, details };
+    }
+    if (pct > warnPct) {
+      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}`, details };
+    }
+    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}`, details };
+  } catch (e) {
+    // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
+    // (migration/bootstrap adds it; nothing to assess until then).
+    if (isUndefinedColumnError(e, 'links_extracted_at')) {
+      return { name, status: 'ok', message: 'links_extracted_at not present (pre-v112 brain)' };
+    }
+    return { name, status: 'warn', message: `Could not check links_extraction_lag: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #1678 — extract_atoms_backlog doctor check.
+ *
+ * Closes the "silent backlog" gap: extract_atoms is pack-gated, so on a brain
+ * whose active pack doesn't declare the phase it NEVER runs in the routine
+ * cycle and pages accumulate forever with zero signal (the cycle reports a
+ * clean `skipped`). This check counts the eligible-but-unextracted pages and,
+ * when the pack doesn't run the phase AND the backlog is real, WARNs with the
+ * exact `--drain` command.
+ *
+ * PAGE-BACKLOG-ONLY (Codex #11): extract_atoms also discovers transcript files
+ * at runtime; this counts DB pages only — labeled in details. No
+ * synthesize_concepts sibling this wave (Codex #12: that phase is a stub with
+ * no real eligibility predicate; a check would be a fake signal).
+ */
+export async function computeExtractAtomsBacklogCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'extract_atoms_backlog';
+  const approx = 'page backlog only; transcript corpus not counted';
+  try {
+    const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+    const backlog = await countExtractAtomsBacklog(engine); // brain-wide
+    if (backlog === null) {
+      return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
+    }
+
+    const { packDeclaresPhase } = await import('../core/cycle.ts');
+    let declared = false;
+    try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
+
+    if (backlog === 0) {
+      return {
+        name, status: 'ok',
+        message: 'no pages awaiting atom extraction',
+        details: { backlog, pack_declares_phase: declared, known_approximation: approx },
+      };
+    }
+
+    // The incident: pack does NOT run the phase but a real backlog exists →
+    // it will grow forever without a signal. WARN with the drain command.
+    if (!declared && backlog > 10) {
+      const fix = 'gbrain dream --phase extract_atoms --drain --window 120 (or declare extract_atoms in your active schema pack)';
+      return {
+        name, status: 'warn',
+        message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
+        details: { backlog, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
+      };
+    }
+
+    if (declared) {
+      // Pack runs it; the routine cycle drains in bounded batches. Informational.
+      return {
+        name, status: 'ok',
+        message: `${backlog} page(s) pending; active pack runs extract_atoms each cycle`,
+        details: { backlog, pack_declares_phase: true, known_approximation: approx },
+      };
+    }
+
+    // Not declared but below the warn threshold.
+    return {
+      name, status: 'ok',
+      message: `${backlog} page(s) eligible (below warn threshold; pack does not run extract_atoms)`,
+      details: { backlog, pack_declares_phase: false, known_approximation: approx },
+    };
+  } catch (err) {
+    return { name, status: 'warn', message: `extract_atoms_backlog check failed: ${(err as Error).message}` };
   }
 }
 
@@ -2710,8 +3476,11 @@ export async function checkSyncFreshness(
       last_sync_at: Date | null;
       last_commit: string | null;
       chunker_version: string | null;
+      newest_content_at: Date | null;
     }>(
-      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version FROM sources WHERE local_path IS NOT NULL`,
+      // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
+      // doctorReportRemote never shells out to git on a DB-supplied local_path.
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
     );
 
     if (sources.length === 0) {
@@ -2762,12 +3531,55 @@ export async function checkSyncFreshness(
     let hasWarnings = false;
     let hasFailures = false;
 
+    // BUG 4 (v0.42.x): a source with a LIVE, non-expired per-source sync lock is
+    // actively syncing RIGHT NOW — it must not read as stale or never-synced.
+    // The live lock is the only honest "in progress" signal. Checkpoint banking
+    // is NOT usable: a blocked sync banks the good files then writes no anchor
+    // (test/sync-resumable-import.serial.test.ts), so banking can't tell
+    // in-progress from wedged. A blocked/failed sync's process has exited (no
+    // lock row) and a wedged holder stops refreshing (TTL lapses), so either
+    // correctly falls through to the stale path and is NEVER masked. Same
+    // dynamic import as the stale_locks check; any throw (stub engine in unit
+    // tests, pre-lock-table brain) is swallowed to false, so this can only ADD
+    // an in-progress verdict, never suppress a real stale one.
+    // Notes for sources caught actively syncing (surfaced in the result
+    // message so the operator sees "in progress", not just a silent healthy
+    // bucket). Empty when nothing is syncing — keeps the steady-state messages
+    // byte-for-byte unchanged.
+    const inProgress: string[] = [];
+    let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string } | null> =
+      async () => null;
+    try {
+      const { inspectLock, syncLockId } = await import('../core/db-lock.ts');
+      liveSyncSnap = async (sourceId: string) => {
+        try {
+          const snap = await inspectLock(engine, syncLockId(sourceId));
+          return snap && !snap.ttl_expired
+            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host }
+            : null;
+        } catch {
+          return null;
+        }
+      };
+    } catch {
+      /* db-lock unavailable — skip in-progress detection, staleness stands. */
+    }
+
     for (const source of sources) {
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+
+      // BUG 4: actively syncing (live lock) → healthy, count as synced_recently
+      // and skip the staleness checks. Keeps the 3-bucket invariant intact.
+      const liveSnap = await liveSyncSnap(source.id);
+      if (liveSnap) {
+        inProgress.push(`${display} sync in progress (pid ${liveSnap.holder_pid} on ${liveSnap.holder_host})`);
+        synced_recently_count++;
+        continue;
+      }
 
       if (!source.last_sync_at) {
         issues.push(`Source ${display} has never been synced`);
@@ -2791,8 +3603,14 @@ export async function checkSyncFreshness(
       // v0.41.27.0: git short-circuit (D4 + D7 combined). Only fires when:
       //   1. caller opted in via localOnly=true (trust boundary)
       //   2. HEAD === last_commit (no new commits to sync)
-      //   3. working tree is clean (no uncommitted edits sync would re-walk)
-      //   4. chunker_version matches CURRENT (no post-upgrade re-chunk pending)
+      //   3. working tree has no TRACKED changes — untracked files ignored
+      //      (v0.41.32.0: `'ignore-untracked'`. Sync's incremental path keys off
+      //      the commit diff and never imports untracked files, so a quiet repo
+      //      with stray untracked dirs is genuinely caught up. The pre-v0.41.30
+      //      `true` mode counted those as dirty and produced the false-SEVERE
+      //      alarm this wave fixes.)
+      //   4. chunker_version matches CURRENT (no post-upgrade re-chunk pending —
+      //      still ANDed, so a re-chunk need is never masked)
       // All four must hold; otherwise fall through to the time-based check.
       // The chunker version match is computed here (not in the helper)
       // because it depends on engine state, not git state.
@@ -2800,7 +3618,7 @@ export async function checkSyncFreshness(
         const gitUnchanged = isSourceUnchangedSinceSync(
           source.local_path,
           source.last_commit,
-          { requireCleanWorkingTree: true },
+          { requireCleanWorkingTree: 'ignore-untracked' },
         );
         const chunkerMatch = source.chunker_version === currentChunkerVersion;
         if (gitUnchanged && chunkerMatch) {
@@ -2809,14 +3627,35 @@ export async function checkSyncFreshness(
         }
       }
 
-      const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+      // v0.41.32.0: REMOTE path (doctorReportRemote, !localOnly) computes lag
+      // from the stored newest_content_at column — NO git subprocess on a
+      // DB-supplied local_path (preserves the v0.41.27.0 trust boundary). A
+      // quiet repo whose newest commit predates its last sync reports 0; NULL
+      // column → wall-clock fallback. LOCAL fall-through keeps wall-clock: the
+      // short-circuit already failed, so the source genuinely has work and
+      // "hours since last sync" is the right staleness measure. The `ageMs < 0`
+      // skew check above still runs on raw wall-clock for both paths (A1).
+      let thresholdAgeMs = ageMs;
+      if (!localOnly) {
+        const contentMs = source.newest_content_at
+          ? new Date(source.newest_content_at).getTime()
+          : null;
+        const lagSec = lagFromContentMs(
+          contentMs !== null && Number.isFinite(contentMs) ? contentMs : null,
+          lastSync,
+          now,
+        );
+        thresholdAgeMs = lagSec === null ? ageMs : lagSec * 1000;
+      }
+
+      const ageHours = Math.floor(thresholdAgeMs / (1000 * 60 * 60));
       const ageDays = Math.floor(ageHours / 24);
 
-      if (ageMs > failMs) {
+      if (thresholdAgeMs > failMs) {
         issues.push(`Source ${display} last synced ${ageDays}d ago — brain search is stale!`);
         hasFailures = true;
         stale_count++;
-      } else if (ageMs > warnMs) {
+      } else if (thresholdAgeMs > warnMs) {
         issues.push(`Source ${display} last synced ${ageHours}h ago`);
         hasWarnings = true;
         stale_count++;
@@ -2827,12 +3666,15 @@ export async function checkSyncFreshness(
 
     // D6 invariant: every source incremented exactly one bucket.
     const details = { unchanged_count, synced_recently_count, stale_count };
+    // BUG 4: append in-progress context when any source is actively syncing.
+    // Empty otherwise, so steady-state messages are byte-for-byte unchanged.
+    const inProgressNote = inProgress.length ? `. ${inProgress.join('; ')}` : '';
 
     if (hasFailures) {
       return {
         name: 'sync_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source${inProgressNote}`,
         details,
       };
     }
@@ -2840,7 +3682,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh${inProgressNote}`,
         details,
       };
     }
@@ -2851,7 +3693,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)`,
+        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
         details,
       };
     }
@@ -2859,14 +3701,14 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync`,
+        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
         details,
       };
     }
     return {
       name: 'sync_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) synced recently`,
+      message: `All ${sources.length} federated source(s) synced recently${inProgressNote}`,
       details,
     };
   } catch (e) {
@@ -2928,6 +3770,65 @@ export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check
       name: 'sync_consolidation',
       status: 'warn',
       message: `Could not check sync consolidation: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * v0.42.x (#1794, 4A) — pure pool-budget check. When `GBRAIN_MAX_CONNECTIONS`
+ * is set (the operator opted into the single-source connection clamp), verify
+ * the parent pool leaves room for at least one parallel worker. If even the
+ * parent pool alone is at/over the budget, sync clamps to serial AND every
+ * other gbrain process competes for the same cap — the operator should lower
+ * `GBRAIN_POOL_SIZE`. Pure so it's unit-testable without env/engine.
+ */
+export function computePoolBudgetCheck(
+  maxConnections: number | undefined,
+  parentPool: number,
+  perWorkerPool: number,
+): Check {
+  if (maxConnections === undefined) {
+    return {
+      name: 'pool_budget',
+      status: 'ok',
+      message: 'GBRAIN_MAX_CONNECTIONS not set — connection budget clamp disabled (default behavior).',
+    };
+  }
+  if (parentPool + perWorkerPool > maxConnections) {
+    return {
+      name: 'pool_budget',
+      status: 'warn',
+      message:
+        `GBRAIN_MAX_CONNECTIONS=${maxConnections} leaves no room for a parallel sync worker ` +
+        `(parent pool ${parentPool} + ${perWorkerPool} per-worker > ${maxConnections}). ` +
+        `Sync will run serial. If you hit EMAXCONNSESSION, lower the parent pool: ` +
+        '`gbrain config` / set GBRAIN_POOL_SIZE=2 (recommended for low-cap poolers like Supabase Supavisor).',
+    };
+  }
+  const maxWorkers = Math.floor((maxConnections - parentPool) / perWorkerPool);
+  return {
+    name: 'pool_budget',
+    status: 'ok',
+    message:
+      `GBRAIN_MAX_CONNECTIONS=${maxConnections}: room for up to ${maxWorkers} parallel sync ` +
+      `worker(s) (parent pool ${parentPool} + ${perWorkerPool} per-worker).`,
+  };
+}
+
+/** Thin env/engine wrapper over `computePoolBudgetCheck`. */
+export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
+  try {
+    const { resolveMaxConnections } = await import('../core/sync-concurrency.ts');
+    const { resolvePoolSize } = await import('../core/db.ts');
+    const maxConnections = resolveMaxConnections();
+    const parentPool = resolvePoolSize();
+    const perWorkerPool = Math.min(2, resolvePoolSize(2));
+    return computePoolBudgetCheck(maxConnections, parentPool, perWorkerPool);
+  } catch (err) {
+    return {
+      name: 'pool_budget',
+      status: 'ok',
+      message: `Skipped (${err instanceof Error ? err.message : String(err)})`,
     };
   }
 }
@@ -3064,6 +3965,263 @@ export async function checkCycleFreshness(
  *   - `progress` reporter writes to stderr (heartbeats per check)
  *   - `engine.executeRaw` / handler-leaf calls (the actual probe work)
  */
+/**
+ * issue #1685 (GAP A) — the single authoritative "worker is OOM-looping" signal.
+ *
+ * One `gbrain doctor` line replaces the hours of log archaeology the #1678
+ * incident required: `cap=8192MB, N watchdog kills/24h → raise --max-rss`.
+ *
+ * UNIONS two sources so it's authoritative for BOTH worker modes (CODEX #5):
+ *   - SUPERVISED workers: supervisor audit `worker_exited likely_cause=rss_watchdog`,
+ *     read cross-week (CODEX #7) so a Mon read doesn't lose a Sun loop.
+ *   - BARE `gbrain jobs work`: NO supervisor event is written; the only trace is
+ *     `minion_jobs.error_text = 'aborted: watchdog'` (the same source queue_health
+ *     subcheck 3 reads). Reading supervisor-only would miss bare workers entirely
+ *     and the queue_health cross-reference would point at an unemitted check.
+ *
+ * Cap (CODEX #6): the breaker alert stamps `max_rss_mb`, but a fail from
+ * oomKills>=5 spread over 24h may have no breaker event → no stamped cap. Fall
+ * back to `resolveDefaultMaxRssMb()` so the message always renders a number.
+ *
+ * Returns null when the worker never OOM'd (don't warn installs that never hit
+ * it). Pure-ish: filesystem audit read + one minion_jobs count; no process.exit.
+ * Exported so `test/doctor-worker-oom-loop.test.ts` drives it directly.
+ */
+export async function computeWorkerOomLoopCheck(
+  engine: BrainEngine | null,
+): Promise<Check | null> {
+  let supervisorKills = 0;
+  let capFromBreaker: number | null = null;
+  let breakerTripped = false;
+  try {
+    const { readRecentSupervisorEvents, summarizeCrashes } = await import(
+      '../core/minions/handlers/supervisor-audit.ts'
+    );
+    const events = readRecentSupervisorEvents(24);
+    supervisorKills = summarizeCrashes(events).by_cause.rss_watchdog;
+    // Latest rss_watchdog_loop breaker alert carries the cap the supervisor
+    // spawned with (supervisor.ts:521); its presence also means the breaker
+    // tripped. Walk all events; last one wins for the cap.
+    for (const e of events) {
+      const row = e as Record<string, unknown>;
+      if (e.event === 'health_warn' && row.reason === 'rss_watchdog_loop') {
+        breakerTripped = true;
+        const cap = Number(row.max_rss_mb);
+        if (Number.isFinite(cap) && cap > 0) capFromBreaker = cap;
+      }
+    }
+  } catch {
+    // supervisor-audit read is best-effort; fall through to minion_jobs.
+  }
+
+  let bareWorkerKills = 0;
+  if (engine && engine.kind !== 'pglite') {
+    try {
+      const sql = db.getConnection();
+      const rows: Array<{ cnt: number }> = await sql`
+        SELECT count(*)::int AS cnt
+          FROM minion_jobs
+         WHERE status IN ('dead', 'failed')
+           AND finished_at > now() - interval '24 hours'
+           AND error_text = 'aborted: watchdog'
+      `;
+      bareWorkerKills = rows[0]?.cnt ?? 0;
+    } catch {
+      // minion_jobs may not exist on a fresh brain; best-effort.
+    }
+  }
+
+  // De-dup note (CODEX #5 accepted trade-off): a supervised watchdog kill aborts
+  // in-flight jobs, so it can show in BOTH counts. We accept slight over-count
+  // rather than miss bare workers — the signal is "is it OOM-looping," not an
+  // exact tally. `details` keeps the two sources separate for honesty.
+  const oomKills = supervisorKills + bareWorkerKills;
+  if (oomKills < 1 && !breakerTripped) return null;
+
+  let capMb: number;
+  let capSource: 'breaker' | 'default';
+  if (capFromBreaker !== null) {
+    capMb = capFromBreaker;
+    capSource = 'breaker';
+  } else {
+    let def = 16384;
+    try {
+      const { resolveDefaultMaxRssMb } = await import('../core/minions/rss-default.ts');
+      def = resolveDefaultMaxRssMb();
+    } catch {
+      // keep the conservative ceiling fallback.
+    }
+    capMb = def;
+    capSource = 'default';
+  }
+
+  const fixHint =
+    'raise --max-rss (gbrain jobs work --max-rss <bigger>; auto-sizes to min(0.5×RAM,16GB))';
+  const capLabel = capSource === 'breaker' ? `cap=${capMb}MB` : `cap≈${capMb}MB (auto-sized default)`;
+  const status: Check['status'] = breakerTripped || oomKills >= 5 ? 'fail' : 'warn';
+  return {
+    name: 'worker_oom_loop',
+    status,
+    message:
+      `Worker OOM-looping: ${capLabel}, ${oomKills} watchdog kill(s)/24h → ${fixHint}. ` +
+      `Peak RSS: see worker stderr.`,
+    details: {
+      oom_kills: oomKills,
+      supervisor_kills: supervisorKills,
+      bare_worker_kills: bareWorkerKills,
+      cap_mb: capMb,
+      cap_source: capSource,
+      breaker_tripped: breakerTripped,
+      fix_hint: fixHint,
+    },
+  };
+}
+
+/**
+ * issue #1685 (GAP B) — DB pool reap health (Postgres-only).
+ *
+ * Answers the #1685 line "DB pool reaped N times/hr AND not auto-recovering"
+ * that no existing signal expresses. Reads the pool-recovery audit
+ * (`reconnect()` emits reap_detected / reconnect_succeeded / reconnect_failed):
+ *   - fail: reaps>0 AND reconnect failures>0 → the pool is being reaped and
+ *           rebuilds are throwing (genuinely not recovering).
+ *   - warn: reaps>=10/hr, all recovered → pooler thrash (self-heal works but the
+ *           cap is likely too low / concurrency too high).
+ *   - else: null (quiet — a few reaps that all recovered is normal).
+ *
+ * Returns null on PGLite / no engine / audit-read failure. Exported so
+ * `test/doctor-pool-reap-health.test.ts` drives it directly.
+ */
+export async function computePoolReapHealthCheck(
+  engine: BrainEngine | null,
+): Promise<Check | null> {
+  if (!engine || engine.kind === 'pglite') return null;
+  let r: { reaps: number; recoveries: number; failures: number };
+  try {
+    const { readRecentPoolRecoveries } = await import('../core/audit/pool-recovery-audit.ts');
+    r = readRecentPoolRecoveries(1);
+  } catch {
+    return null;
+  }
+
+  // CODEX (impl review #3): the audit counts independent event kinds — it does
+  // NOT correlate a reconnect_failed to a preceding reap. So `reaps>0 AND
+  // failures>0` would falsely report "not auto-recovering" when a recovered reap
+  // and an unrelated reconnect failure merely co-occur in the same hour. Fail on
+  // the reconnect FAILURES themselves (reconnect throwing is the real, actionable
+  // problem regardless of reaps); report reaps as context, not as a causal claim.
+  if (r.failures > 0) {
+    const fix = 'check DB reachability / credentials (reconnect is throwing)';
+    return {
+      name: 'pool_reap_health',
+      status: 'fail',
+      message:
+        `DB reconnect FAILED ${r.failures}× in last hour (${r.reaps} pooler reap(s) detected) ` +
+        `— reconnect is throwing; ${fix}.`,
+      details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, fix_hint: fix },
+    };
+  }
+  if (r.reaps >= 10) {
+    const fix = 'raise --max-rss or reduce worker concurrency (pooler thrash)';
+    return {
+      name: 'pool_reap_health',
+      status: 'warn',
+      message:
+        `DB pool reaped ${r.reaps}× in last hour (self-heal recovered each) ` +
+        `— ${fix}.`,
+      details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, fix_hint: fix },
+    };
+  }
+  return null;
+}
+
+/**
+ * Retrieval Reflex health (#1981). Read-only, fail-open. The deterministic
+ * pointer layer is on by default; this reports the TRUTH, not an aspiration:
+ *   - config/env disabled            → warn (pointer layer off)
+ *   - heartbeat fired recently       → ok, "active" (it's demonstrably working,
+ *                                       whatever path — Postgres/IPC/host)
+ *   - enabled, no recent heartbeat   → ok if a viable path looks present
+ *                                       (postgres, or pglite serve socket),
+ *                                       else warn (likely inactive — policy
+ *                                       skill carries). Never claims a host
+ *                                       capability it can't observe.
+ * Policy-skill install state is reported in details (it ships into the HOST
+ * repo, so absence in gbrain's own skills dir is expected, not a failure).
+ */
+export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
+  const name = 'retrieval_reflex_health';
+  try {
+    const cfg = loadConfig();
+    const enabled = reflexEnabled(cfg);
+    const engineKind = cfg?.engine ?? 'unknown';
+    const skillInstalled = !!skillsDir && existsSync(join(skillsDir, 'retrieval-reflex', 'SKILL.md'));
+
+    if (!enabled) {
+      return {
+        name,
+        status: 'ok',
+        message: 'retrieval reflex intentionally disabled (config/env) — entity pointer layer off',
+        details: { enabled: false, engine: engineKind, policy_skill_installed: skillInstalled },
+      };
+    }
+
+    // Heartbeat is the authority for "is it firing".
+    const hbPath = join(homedir(), '.gbrain', 'integrations', 'retrieval-reflex', 'heartbeat.jsonl');
+    let lastFired: string | null = null;
+    try {
+      if (existsSync(hbPath)) {
+        const lines = readFileSync(hbPath, 'utf8').trim().split('\n').filter(Boolean);
+        const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+        if (last && typeof last.ts === 'string') lastFired = last.ts;
+      }
+    } catch { /* heartbeat unreadable — treat as never fired */ }
+    const firedRecently =
+      !!lastFired && Date.now() - new Date(lastFired).getTime() < 7 * 24 * 60 * 60 * 1000;
+
+    // Detect a viable resolve path the doctor CAN see (host ctx.brainQuery is invisible).
+    let pathDesc: string;
+    let viablePathVisible: boolean;
+    if (engineKind === 'postgres') {
+      pathDesc = 'postgres direct';
+      viablePathVisible = true;
+    } else if (engineKind === 'pglite' && cfg?.database_path) {
+      const socket = resolveSocketPath(cfg.database_path);
+      viablePathVisible = existsSync(socket);
+      pathDesc = viablePathVisible ? 'pglite via serve IPC' : 'pglite — serve IPC socket not present';
+    } else {
+      pathDesc = `engine ${engineKind}`;
+      viablePathVisible = false;
+    }
+
+    const runtimeMsg = firedRecently
+      ? `active (last fired ${lastFired})`
+      : viablePathVisible
+        ? 'enabled; not observed firing yet'
+        : 'enabled but no observed activity and no visible resolve path (host capability may still supply it; policy skill carries otherwise)';
+
+    const status: Check['status'] = firedRecently || viablePathVisible ? 'ok' : 'warn';
+    const skillHint = skillInstalled
+      ? ''
+      : ' — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`';
+    return {
+      name,
+      status,
+      message: `${pathDesc}; ${runtimeMsg}${skillHint}`,
+      details: {
+        enabled: true,
+        engine: engineKind,
+        path: pathDesc,
+        fired_recently: firedRecently,
+        last_fired: lastFired,
+        policy_skill_installed: skillInstalled,
+      },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `could not check: ${(e as Error).message}` };
+  }
+}
+
 export async function buildChecks(
   engine: BrainEngine | null,
   args: string[],
@@ -3176,9 +4334,18 @@ export async function buildChecks(
     checks.push({ name: 'resolver_health', status: 'warn', message: 'Could not find skills directory' });
   }
 
+  // 1b. Retrieval Reflex health (#1981, SKILL group — gated). Truthful runtime
+  // status: the deterministic pointer layer is on by default; the heartbeat file
+  // (written by the context engine when it actually injects) is the authority for
+  // "is it firing". The doctor cannot see the OpenClaw host capability directly,
+  // so it never claims "enabled via host"; it reports observed activity instead.
+  if (scope === 'all') {
+    checks.push(buildRetrievalReflexCheck(skillsDir));
+  }
+
   // 2. Skill conformance (SKILL group — gated)
   if (scope === 'all' && skillsDir) {
-    const conformanceResult = checkSkillConformance(skillsDir);
+    const conformanceResult = skillConformanceCheck(skillsDir);
     checks.push(conformanceResult);
   }
 
@@ -3314,19 +4481,26 @@ export async function buildChecks(
   try {
     const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
     const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
+    const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
 
-    let supervisorPid: number | null = null;
-    let running = false;
-    if (existsSync(DEFAULT_PID_FILE)) {
+    const pidStatus = readSupervisorPid(DEFAULT_PID_FILE);
+    const supervisorPid = pidStatus.pid;
+    const pidfileRunning = pidStatus.running;
+
+    // issue #2227 fix #1/#3: DEFAULT_PID_FILE is HOME-derived, so a supervisor
+    // started under a different $HOME reads as "not running" even when healthy.
+    // Consult the queue-scoped DB singleton lock (#1849, HOME-independent) before
+    // warning. PID-reuse-safe (isLockHolderLive keys on lock freshness).
+    let detectedViaDbLock = false;
+    if (!pidfileRunning && engine) {
       try {
-        const line = readFileSync(DEFAULT_PID_FILE, 'utf8').trim().split('\n')[0];
-        const parsed = parseInt(line, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          supervisorPid = parsed;
-          try { process.kill(parsed, 0); running = true; } catch { running = false; }
-        }
-      } catch { /* unreadable */ }
+        const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+        const { supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import('../core/minions/supervisor.ts');
+        const snap = await inspectLock(engine, supervisorLockId('default'));
+        if (snap && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN)) detectedViaDbLock = true;
+      } catch { /* pre-migration / transient: pidfile-only */ }
     }
+    const running = pidfileRunning || detectedViaDbLock;
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
@@ -3343,7 +4517,7 @@ export async function buildChecks(
     // shape is the right contract.
     const summary = summarizeCrashes(events);
     const crashes24h = summary.total;
-    const causeStr = `runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy}`;
+    const causeStr = `runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} rss=${summary.by_cause.rss_watchdog} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy}${summary.by_cause.rss_watchdog > 0 ? ' (see worker_oom_loop)' : ''}`;
     const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
     // Only surface a Check if the supervisor was ever observed (stops the
@@ -3374,12 +4548,161 @@ export async function buildChecks(
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
+          message: `running=true${detectedViaDbLock ? ' (detected via DB lock; pidfile not at the HOME-derived path)' : ` pid=${supervisorPid}`} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
         });
       }
     }
   } catch {
     // Audit read / import failure is best-effort; skip silently.
+  }
+
+  // 3b-bis-2. Supervisor SINGLETON + effective max-rss (#1849). Separate check
+  // from `supervisor` above (same Codex #11 precedent as the niceness split) so
+  // a singleton-divergence warn can't clobber the crash/liveness precedence.
+  //
+  // The #1849 fix makes a queue-scoped DB lock the real singleton authority. A
+  // second supervisor on the same (db, queue) now fails fast at start — but if
+  // a rogue one slipped in BEFORE upgrade (or someone ran one with an explicit
+  // --pid-file on a pre-fix binary), the lock holder's (host, pid) won't match
+  // the local pidfile. Surface that mismatch + the effective --max-rss (the cap
+  // a rogue supervisor would have fought over). Bare pid is meaningless across
+  // hosts/containers, so we compare host+pid (Codex #25).
+  try {
+    const { DEFAULT_PID_FILE, supervisorLockId, classifySupervisorSingleton } = await import('../core/minions/supervisor.ts');
+    const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+    const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
+    const { hostname } = await import('os');
+
+    const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const lastStarted = events.filter(e => e.event === 'started').pop() as
+      | (Record<string, unknown> & { ts?: string })
+      | undefined;
+
+    // Only run when a supervisor was actually observed (no noise on installs
+    // that never used it) and we have a live engine to read the lock row.
+    if (lastStarted && engine) {
+      const queue = typeof lastStarted.queue === 'string' ? lastStarted.queue : 'default';
+      const effectiveMaxRss = typeof lastStarted.max_rss_mb === 'number' ? lastStarted.max_rss_mb : null;
+      const localPid = readSupervisorPid(DEFAULT_PID_FILE).pid;
+      const localHost = hostname();
+
+      // Read the DB singleton lock holder for this queue.
+      const lockRows = await engine.executeRaw<{ holder_pid: number; holder_host: string; live: boolean }>(
+        `SELECT holder_pid, holder_host, ttl_expires_at > now() AS live
+           FROM gbrain_cycle_locks WHERE id = $1`,
+        [supervisorLockId(queue)],
+      );
+      const lock = lockRows[0] ?? null;
+      const rssStr = effectiveMaxRss !== null ? `${effectiveMaxRss}MB` : 'unknown';
+
+      const verdict = classifySupervisorSingleton({
+        lockLive: !!lock?.live,
+        lockHolderHost: lock?.holder_host ?? null,
+        lockHolderPid: lock?.holder_pid ?? null,
+        localHost,
+        localPid,
+      });
+      if (verdict === 'mismatch') {
+        checks.push({
+          name: 'supervisor_singleton',
+          status: 'warn',
+          message:
+            `Queue '${queue}' singleton lock is held by ${lock!.holder_host}:${lock!.holder_pid}, ` +
+            `but the local pidfile points to ${localHost}:${localPid ?? 'none'}. A second supervisor may be ` +
+            `running with a different --max-rss (effective cap here: ${rssStr}). Stop the extra one ` +
+            `and keep a single supervisor per queue: gbrain jobs supervisor stop.`,
+          details: { queue, lock_holder: `${lock!.holder_host}:${lock!.holder_pid}`, local: `${localHost}:${localPid ?? 'none'}`, effective_max_rss_mb: effectiveMaxRss },
+        });
+      } else if (verdict === 'single') {
+        checks.push({
+          name: 'supervisor_singleton',
+          status: 'ok',
+          message: `Single supervisor on queue '${queue}' (holder=${lock!.holder_host}:${lock!.holder_pid}, max_rss=${rssStr}).`,
+          details: { queue, effective_max_rss_mb: effectiveMaxRss },
+        });
+      }
+    }
+  } catch {
+    // Best-effort (lock table may not exist on a very old brain); skip silently.
+  }
+
+  // 3b-sexies. Supervisor/worker scheduling priority (niceness, issue #1815).
+  // SEPARATE check from `supervisor` above so a niceness divergence warn can
+  // never clobber the supervisor check's max_crashes_exceeded fail/warn
+  // precedence (Codex #11). Only surfaces when --nice was actually used (a live
+  // worker exists or the supervisor recorded a niceness), so installs that never
+  // touched --nice get no noise.
+  try {
+    const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
+    const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
+    const { readWorkers } = await import('../core/minions/worker-registry.ts');
+    const { getEffectiveNiceness, formatNice } = await import('../core/minions/niceness.ts');
+
+    const sup = readSupervisorPid(DEFAULT_PID_FILE);
+    const supervisorNice = sup.running && sup.pid !== null ? getEffectiveNiceness(sup.pid) : null;
+    const workers = readWorkers().map(w => ({
+      pid: w.pid,
+      queue: w.queue,
+      brain_id: w.brain_id,
+      nice_requested: w.nice_requested,
+      nice_effective: w.nice_now,
+    }));
+
+    if (workers.length > 0 || supervisorNice !== null) {
+      // Divergence: a worker (or the supervisor) asked for a niceness it didn't
+      // get — usually negative nice without privilege, or an RLIMIT_NICE clamp.
+      const diverged = workers.filter(
+        w => w.nice_requested !== null && w.nice_effective !== null && w.nice_requested !== w.nice_effective,
+      );
+
+      const workerSummary = workers
+        .map(w => `pid ${w.pid}=${w.nice_effective !== null ? formatNice(w.nice_effective) : '?'}`)
+        .join(', ');
+      const supPart = supervisorNice !== null ? `supervisor=${formatNice(supervisorNice)}` : '';
+      const okMsg = [supPart, workerSummary && `workers: ${workerSummary}`].filter(Boolean).join('; ');
+
+      if (diverged.length > 0) {
+        const detail = diverged
+          .map(w => `pid ${w.pid} requested ${formatNice(w.nice_requested!)} but running at ${formatNice(w.nice_effective!)}`)
+          .join('; ');
+        checks.push({
+          name: 'supervisor_niceness',
+          status: 'warn',
+          message: `Niceness not applied as requested (${detail}). Negative nice needs privilege; the OS may also clamp to RLIMIT_NICE. Workers run at their inherited priority.`,
+          details: { supervisor_nice: supervisorNice, workers },
+        });
+      } else {
+        checks.push({
+          name: 'supervisor_niceness',
+          status: 'ok',
+          message: okMsg || 'No niceness override active',
+          details: { supervisor_nice: supervisorNice, workers },
+        });
+      }
+    }
+  } catch {
+    // Registry / import failure is best-effort; skip silently.
+  }
+
+  // 3b-quater. Worker OOM-loop (issue #1685 GAP A) — the single authoritative
+  // "is the worker OOM-looping" line, unioning supervised (supervisor audit)
+  // and bare-worker (minion_jobs watchdog-abort) kills. Returns null when the
+  // worker never OOM'd, so clean installs see nothing.
+  try {
+    const oomCheck = await computeWorkerOomLoopCheck(engine);
+    if (oomCheck) checks.push(oomCheck);
+  } catch {
+    // best-effort.
+  }
+
+  // 3b-quinquies. DB pool reap health (issue #1685 GAP B) — Postgres pooler
+  // reap frequency + recovered-vs-stuck split. Quiet unless reaps thrash or
+  // reconnect is failing.
+  try {
+    const reapCheck = await computePoolReapHealthCheck(engine);
+    if (reapCheck) checks.push(reapCheck);
+  } catch {
+    // best-effort.
   }
 
   // 3b-tris. Stub-guard fire count (last 24h). The v0.34.5 stub guard in
@@ -3433,19 +4756,25 @@ export async function buildChecks(
   // Without this doctor check, users see "sync blocked" and have no
   // surface showing which files to fix.
   try {
-    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode } = await import('../core/sync.ts');
-    const unacked = unacknowledgedSyncFailures();
+    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode, decideSyncFailureSeverity } = await import('../core/sync.ts');
     const all = loadSyncFailures();
-    if (unacked.length > 0) {
-      const codeSummary = summarizeFailuresByCode(unacked);
+    // issue #1939: "unresolved" = open + auto_skipped. Severity (ok/warn/fail)
+    // comes from the SAME shared decision the remote surface uses, so a stuck
+    // bookmark blocked past the fail cadence (or a large unresolved count)
+    // escalates to FAIL instead of staying a quiet WARN forever.
+    const unresolved = unacknowledgedSyncFailures();
+    if (unresolved.length > 0) {
+      const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+      const sev = decideSyncFailureSeverity({ entries: all, nowMs: Date.now(), failHours });
+      const codeSummary = summarizeFailuresByCode(unresolved);
       const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
+      const preview = unresolved.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
       // v0.40.3.0 T8b (D8 + D12 Bug 3): emit a single sync-retry-failed
       // step. sync-skip-failed is DELIBERATELY NOT emitted as a remediation
       // — auto-skipping failed syncs hides data loss. Operators can still
       // run `gbrain sync --skip-failed` manually.
       const { makeRemediationStep } = await import('../core/remediation-step.ts');
-      const oldestTs = unacked.reduce(
+      const oldestTs = unresolved.reduce(
         (acc, f) => (acc === '' || f.ts < acc ? f.ts : acc),
         '',
       );
@@ -3454,18 +4783,20 @@ export async function buildChecks(
         job: 'sync-retry-failed',
         // Content-stable per codex D12 Bug 2: count + oldest_ts captures
         // the relevant state without using a real timestamp.
-        params: { failure_count: unacked.length, oldest_failure: oldestTs },
-        severity: unacked.length >= 10 ? 'high' : 'medium',
+        params: { failure_count: unresolved.length, oldest_failure: oldestTs },
+        severity: sev.status === 'fail' ? 'high' : 'medium',
         est_seconds: 30,
         est_usd_cost: 0,
-        rationale: `Retry ${unacked.length} unacked sync failure(s) (codes: ${codeBreakdown})`,
+        rationale: `Retry ${unresolved.length} unresolved sync failure(s) (codes: ${codeBreakdown})`,
       });
       checks.push({
         name: 'sync_failures',
-        status: 'warn',
+        status: sev.status,
         message:
-          `${unacked.length} unacknowledged sync failure(s) [${codeBreakdown}]. ${preview}` +
-          `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
+          `${unresolved.length} unresolved sync failure(s) [${codeBreakdown}]` +
+          (sev.auto_skipped > 0 ? ` — ${sev.auto_skipped} auto-skipped (pages NOT indexed)` : '') +
+          `. ${preview}` +
+          `${unresolved.length > 3 ? `, and ${unresolved.length - 3} more` : ''}. ` +
           `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
         remediation: [retryStep],
         remediation_status: 'remediable',
@@ -3574,6 +4905,18 @@ export async function buildChecks(
     }
   }
 
+  // 3d.2b issue #1678 — extract_atoms_backlog. Surfaces the silent
+  // pack-gated-phase backlog: when the active pack doesn't run extract_atoms
+  // but eligible pages pile up, WARN with the `--drain` command. OK when the
+  // pack runs the phase (routine cycle drains it) or there's no backlog.
+  if (engine) {
+    try {
+      checks.push(await computeExtractAtomsBacklogCheck(engine));
+    } catch {
+      // Best-effort; backlog query failure shouldn't stop doctor.
+    }
+  }
+
   // 3d.3 v0.41.13.0 — conversation_format_coverage. Scans up to 200
   // most-recent conversation-type pages, runs parseConversation in
   // dry mode, reports per-pattern hit counts + unmatched count. Warn
@@ -3582,9 +4925,10 @@ export async function buildChecks(
   // triage the misses interactively.
   if (engine) {
     try {
+      const { readConversationBodyForParsing } = await import('../core/conversation-parser/body.ts');
       const { parseConversation } = await import('../core/conversation-parser/parse.ts');
-      const allowedTypes = ['conversation', 'meeting', 'slack', 'email'] as const;
-      // PageFilters supports singular `type` only; iterate the 4 types
+      const allowedTypes = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'] as const;
+      // PageFilters supports singular `type` only; iterate the allowed types
       // and cap at ~50/each to land at ~200 total max.
       const sample: import('../core/types.ts').Page[] = [];
       for (const t of allowedTypes) {
@@ -3601,7 +4945,7 @@ export async function buildChecks(
         const hitsByPattern: Record<string, number> = {};
         let unmatched = 0;
         for (const page of sample) {
-          const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`.trim();
+          const body = await readConversationBodyForParsing(engine, page);
           const result = parseConversation(body, { page, noPolish: true, noFallback: true });
           const id = result.matched_pattern_id ?? '_no_match';
           hitsByPattern[id] = (hitsByPattern[id] ?? 0) + 1;
@@ -3794,13 +5138,7 @@ export async function buildChecks(
         checks.push({
           name: 'multi_source_drift',
           status: 'warn',
-          message:
-            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
-            `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
-            `(2) source X never completed initial sync and the default page is unrelated. ` +
-            `Verify with 'gbrain sources status', then either re-sync with ` +
-            `'gbrain sync --source <id> --full' or 'gbrain delete <slug>' if the default-source ` +
-            `row is the misroute. (A 'gbrain sources rehome' cleanup command is tracked for v0.32.0.)`,
+          message: multiSourceDriftAdvice(result.count, sampleStr),
         });
       } else {
         checks.push({
@@ -3909,17 +5247,7 @@ export async function buildChecks(
 
   // 4. pgvector extension
   progress.heartbeat('pgvector');
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
-    }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
-  }
+  checks.push(await pgvectorCheck(engine));
 
   // 4b. PgBouncer / prepared-statement compatibility.
   // URL-only inspection — no DB roundtrip — so this is cheap and works
@@ -4502,8 +5830,29 @@ export async function buildChecks(
       "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
     ))[0]?.count ?? 0;
 
-    const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
-    const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
+    // Compute coverage against eligible entities only — exclude test fixtures
+    // (`tools/gbrain/test/*`) and template stubs (`templates/new-person`) so
+    // that brains seeded only with code sources don't get spurious warnings
+    // about missing link/timeline coverage on pages that are test fixtures, not
+    // real knowledge entities.
+    const eligibleStats = (await engine.executeRaw<{ entities: number; linked_from: number; timeline: number }>(
+      `WITH eligible AS (
+        SELECT id FROM pages
+        WHERE type IN ('entity','person','company','organization')
+          AND slug NOT LIKE 'tools/gbrain/test/%'
+          AND slug <> 'templates/new-person'
+      )
+      SELECT
+        (SELECT count(*)::int FROM eligible) AS entities,
+        (SELECT count(DISTINCT from_page_id)::int FROM links WHERE from_page_id IN (SELECT id FROM eligible)) AS linked_from,
+        (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`,
+    ))[0] ?? { entities: entityCount, linked_from: 0, timeline: 0 };
+
+    const eligibleEntityCount = Number(eligibleStats.entities ?? entityCount);
+    const linkCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.linked_from ?? 0) / eligibleEntityCount : 0;
+    const timelineCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.timeline ?? 0) / eligibleEntityCount : 0;
+    const linkPct = (linkCoverage * 100).toFixed(0);
+    const timelinePct = (timelineCoverage * 100).toFixed(0);
     if (entityCount === 0) {
       // Markdown-only / journal / wiki brain — no entity pages to compute
       // coverage against. Coverage formula is structurally inapplicable.
@@ -4512,13 +5861,19 @@ export async function buildChecks(
         status: 'ok',
         message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
       });
-    } else if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
+    } else if (eligibleEntityCount === 0) {
+      checks.push({
+        name: 'graph_coverage',
+        status: 'ok',
+        message: `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
+      });
+    } else if (linkCoverage >= 0.5 && timelineCoverage >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
       });
     }
 
@@ -4678,37 +6033,7 @@ export async function buildChecks(
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
   progress.heartbeat('jsonb_integrity');
-  try {
-    const sql = db.getConnection();
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
-    ];
-    let totalBad = 0;
-    const breakdown: string[] = [];
-    for (const { table, col } of targets) {
-      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
-      );
-      const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
-    }
-    if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
-    } else {
-      checks.push({
-        name: 'jsonb_integrity',
-        status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
-      });
-    }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
-  }
+  checks.push(await jsonbIntegrityCheck(engine, progress));
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).
   //
@@ -5054,12 +6379,29 @@ export async function buildChecks(
         .slice(0, 3)
         .map(([s, n]) => `${s}=${n}`)
         .join(', ');
+      // Audit events are evidence, not automatically breakage. A large code
+      // source can legitimately emit many WARN events (oversize/markup-heavy)
+      // while remaining searchable and intentionally flagged. Fail on hard
+      // dispositions (content actually blocked or hidden); warn on soft
+      // dispositions or volume. This keeps doctor from treating expected
+      // code-corpus telemetry as an unhealthy brain.
+      //
+      // v0.42 renamed the hard path: a rejected page emits `reject` and a
+      // quarantined (hidden) junk page emits `quarantine`; `hard_block` is now
+      // only the pre-v0.42 legacy alias. Counting `hard_block` alone let fresh
+      // junk-ingest evidence (`reject`/`quarantine`) clear as `ok` whenever
+      // fewer than 10 events landed. `flag` is a warn disposition (still
+      // searchable, agent warned on retrieval), so it joins `soft_block`.
+      const hardBlocked =
+        summary.by_type.hard_block + summary.by_type.reject + summary.by_type.quarantine;
+      const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
       const status: 'ok' | 'warn' | 'fail' =
-        events.length >= 100 ? 'fail' : events.length >= 10 ? 'warn' : 'ok';
+        hardBlocked > 0 ? 'fail' :
+          (softBlocked > 0 || events.length >= 10) ? 'warn' : 'ok';
       checks.push({
         name: 'content_sanity_audit_recent',
         status,
-        message: `${events.length} events (hard=${summary.by_type.hard_block} soft=${summary.by_type.soft_block} warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+        message: `${events.length} events (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
       });
     }
   } catch (err) {
@@ -5069,6 +6411,50 @@ export async function buildChecks(
       status: 'ok',
       message: `Skipped (${msg})`,
     });
+  }
+
+  // v0.42 (#1699) content-quality gate: quarantined (hidden junk) +
+  // flagged (warned, still searchable) page counts. Both are simple
+  // JSONB key-existence scans (cheap; the marked subset stays small).
+  progress.heartbeat('quarantined_pages');
+  try {
+    // engine.executeRaw (NOT db.getConnection() — that's the postgres singleton,
+    // dead on the default PGLite engine). The JSONB `?` existence operator is
+    // literal SQL through executeRaw on both engines.
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'quarantine'`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    checks.push({
+      name: 'quarantined_pages',
+      status: n > 0 ? 'warn' : 'ok',
+      message: n > 0
+        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug>'.`
+        : 'No quarantined pages',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+  }
+
+  progress.heartbeat('flagged_pages');
+  try {
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'content_flag'`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    // Flagged pages are "examine me", not "broken" — warn so they're visible
+    // but the message is non-alarming.
+    checks.push({
+      name: 'flagged_pages',
+      status: n > 0 ? 'warn' : 'ok',
+      message: n > 0
+        ? `${n} page(s) flagged (markup-heavy or oversize) — still searchable, agent warned on retrieval. Review with 'gbrain quarantine list --include-flagged'.`
+        : 'No flagged pages',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
   }
 
   // 11a. Frontmatter integrity (v0.22.4, hardened in v0.38.2.0).
@@ -5647,9 +7033,8 @@ export async function buildChecks(
       if (rssKillCount > 0) {
         problems.push(
           `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
-          `v0.22.14 changed the bare-worker --max-rss default from 0 (off) to 2048 MB. ` +
           `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
-          `See skills/migrations/v0.22.14.md.`
+          `→ see worker_oom_loop for the cap + fix (the authoritative OOM-loop signal).`
         );
       }
       if (promptTooLongCount > 0) {
@@ -5793,9 +7178,17 @@ export async function buildChecks(
       let vanished = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
+      const nodePath = await import('node:path');
+      // storage_path is repo-relative for sync-ingested assets. Resolving
+      // against cwd made this check a false-positive WARN whenever doctor
+      // ran outside the brain repo.
+      const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
+        const abs = nodePath.isAbsolute(r.storage_path)
+          ? r.storage_path
+          : nodePath.join(repoRoot, r.storage_path);
         try {
-          fs.statSync(r.storage_path);
+          fs.statSync(abs);
         } catch {
           vanished++;
           if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
@@ -5860,6 +7253,10 @@ export async function buildChecks(
     // v0.41.19.0 (Issue 5): sync --all consolidation nudge.
     progress.heartbeat('sync_consolidation');
     checks.push(await checkSyncConsolidation(engine));
+    // v0.42.7 (#1696): link-extraction lag. --source scopes it (explicit-only
+    // parse, like orphan_ratio); bare doctor stays brain-wide. Fix: extract --stale.
+    progress.heartbeat('links_extraction_lag');
+    checks.push(await checkLinksExtractionLag(engine, { sourceId: orphanRatioSourceId }));
     // v0.38 — full-cycle freshness, sibling to sync_freshness. Reads
     // last_full_cycle_at from sources.config; mirrors what autopilot's
     // per-source dispatch gate sees.
@@ -5872,6 +7269,10 @@ export async function buildChecks(
   if (engine !== null) {
     progress.heartbeat('search_mode');
     checks.push(await checkSearchMode(engine));
+    // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
+    // search by the hard-exclude prefix policy (audit the surviving excludes).
+    progress.heartbeat('hidden_by_search_policy');
+    checks.push(await checkHiddenBySearchPolicy(engine));
     progress.heartbeat('eval_drift');
     checks.push(await checkEvalDrift(engine));
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
@@ -5881,6 +7282,13 @@ export async function buildChecks(
     // surfacing via the batch-retry audit JSONL. Codex H-9 thresholds.
     progress.heartbeat('batch_retry_health');
     checks.push(await checkBatchRetryHealth(engine));
+    // issue #1801 wedged_queue — alive-but-wedged worker (claimable work
+    // waiting, zero live-lock active, stale completions) as a health error.
+    progress.heartbeat('wedged_queue');
+    checks.push(await computeWedgedQueueCheck(engine));
+    // #2194 fix #5 — autopilot fan-out vs worker concurrency mismatch.
+    progress.heartbeat('autopilot_fanout_concurrency');
+    checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));
     // v0.40.4 graph_signals_coverage — global inbound-link density when
     // graph_signals is enabled in the active mode bundle.
     progress.heartbeat('graph_signals_coverage');
@@ -5888,6 +7296,13 @@ export async function buildChecks(
     // v0.37.0 brainstorm_health — migration v79, track_retrieval, calibration cold-start.
     progress.heartbeat('brainstorm_health');
     checks.push(await checkBrainstormHealth(engine));
+    // issue #972 link_resolution_opportunity — full scan: count bare wikilinks
+    // that would resolve under global_basename mode. Surfaces a paste-ready
+    // enable hint when ≥5 hits AND ≥20% of bare wikilinks would resolve.
+    // Skipped silently when the flag is already enabled. Bounded by a 60s
+    // budget so a huge brain never wedges doctor on this check.
+    progress.heartbeat('link_resolution_opportunity');
+    checks.push(await checkLinkResolutionOpportunity(engine, progress));
     // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
     progress.heartbeat('ze_embedding_health');
     checks.push(await checkZeEmbeddingHealth(engine));
@@ -5911,7 +7326,7 @@ export async function buildChecks(
     checks.push(checkAutopilotLockScope());
     // v0.41.6.0 D3 — stale_locks (gbrain_cycle_locks rows with ttl_expires_at < NOW())
     progress.heartbeat('stale_locks');
-    checks.push(await checkStaleLocks(engine));
+    checks.push(await checkStaleLocks(engine, { fix: doFix, dryRun }));
     // v0.38 — cycle_phase_scope (informational; no DB cost)
     progress.heartbeat('cycle_phase_scope');
     checks.push(checkCyclePhaseScope());
@@ -5975,7 +7390,10 @@ export async function runDoctor(
     } catch { /* best-effort */ }
   }
 
-  process.exit(hasFail ? 1 : 0);
+  // Use process.exitCode instead of process.exit() so cleanup handlers
+  // (e.g. Bun unload events, open database connections) still run before
+  // the process terminates. process.exit() is a hard kill that bypasses them.
+  setCliExitVerdict(hasFail ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -6014,15 +7432,13 @@ function printAutoFixReport(report: AutoFixReport, dryRun: boolean, jsonOutput: 
 
 
 /** Quick skill conformance check — frontmatter + required sections */
-function checkSkillConformance(skillsDir: string): Check {
-  const manifestPath = join(skillsDir, 'manifest.json');
-  if (!existsSync(manifestPath)) {
-    return { name: 'skill_conformance', status: 'warn', message: 'manifest.json not found' };
-  }
-
+export function skillConformanceCheck(skillsDir: string): Check {
   try {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    const skills = manifest.skills || [];
+    // Host workspaces are allowed to omit a gbrain-specific manifest. Keep
+    // conformance aligned with resolver_health and skill_brain_first by using
+    // the canonical fallback that derives entries from direct SKILL.md files.
+    const manifest = loadOrDeriveManifest(skillsDir);
+    const skills = manifest.skills;
     let passing = 0;
     const failing: string[] = [];
 
@@ -6042,7 +7458,8 @@ function checkSkillConformance(skillsDir: string): Check {
     }
 
     if (failing.length === 0) {
-      return { name: 'skill_conformance', status: 'ok', message: `${passing}/${skills.length} skills pass` };
+      const derivedNote = manifest.derived ? ' (derived from SKILL.md files)' : '';
+      return { name: 'skill_conformance', status: 'ok', message: `${passing}/${skills.length} skills pass${derivedNote}` };
     }
     return {
       name: 'skill_conformance',
@@ -6050,7 +7467,7 @@ function checkSkillConformance(skillsDir: string): Check {
       message: `${passing}/${skills.length} pass. Failing: ${failing.join(', ')}`,
     };
   } catch {
-    return { name: 'skill_conformance', status: 'warn', message: 'Could not parse manifest.json' };
+    return { name: 'skill_conformance', status: 'warn', message: 'Could not load or derive skills manifest' };
   }
 }
 
@@ -6212,6 +7629,25 @@ function outputResults(checks: Check[], json: boolean): boolean {
 
   console.log('\nGBrain Health Check');
   console.log('===================');
+
+  // #1685 GAP C — cause-ranked summary so the operator reads the root cause
+  // first instead of scrolling the full list. Caps at 5; clean brains skip it.
+  const topIssues = report.top_issues ?? [];
+  if (topIssues.length > 0) {
+    console.log('');
+    console.log('Top issues (ranked by cause):');
+    const shown = topIssues.slice(0, 5);
+    for (const issue of shown) {
+      const icon = issue.status === 'fail' ? 'FAIL' : 'WARN';
+      const dn = issue.downstream_of ? ` (likely downstream of ${issue.downstream_of})` : '';
+      console.log(`  [${icon}] ${issue.name}${dn} → ${issue.fix}`);
+    }
+    if (topIssues.length > shown.length) {
+      console.log(`  +${topIssues.length - shown.length} more — see full list below`);
+    }
+    console.log('');
+  }
+
   for (const c of report.checks) {
     const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
@@ -6638,4 +8074,25 @@ async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<Check> {
       message: `Skipped: ${(e as Error).message}`,
     };
   }
+}
+
+/**
+ * #1123 — multi_source_drift remediation advice. Exported so the regression
+ * test can pin that it only references CLI surfaces that actually exist
+ * (the pre-fix text pointed at 'gbrain sources rehome', which was never
+ * built, and at 'gbrain delete <slug>' without explaining that delete
+ * targets the ACTIVE source — following it literally on a multi-source
+ * brain deletes the correctly-routed row).
+ */
+export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
+  return (
+    `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
+    `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
+    `(2) the intended source never completed initial sync and the default page is unrelated. ` +
+    `Verify with 'gbrain sources status', then re-sync with ` +
+    `'gbrain sync --source <id> --full' (reconciles drift without deleting data). ` +
+    `If a misrouted default-source row remains after re-sync, remove it with ` +
+    `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
+    `so pin it to 'default' explicitly.`
+  );
 }
