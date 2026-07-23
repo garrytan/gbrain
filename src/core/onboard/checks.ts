@@ -359,16 +359,31 @@ export async function checkTakesCount(
 export async function runAllOnboardChecks(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult[]> {
-  return Promise.all([
-    checkEmbedStaleness(engine),
-    checkEntityLinkCoverage(engine),
-    checkTimelineCoverage(engine),
-    checkTakesCount(engine),
+  // Run SEQUENTIALLY, not via Promise.all. Several of these checks acquire one
+  // (or more, nested) DB connection. On a pooled remote engine (managed
+  // Postgres) with a small pool (e.g. GBRAIN_POOL_SIZE=2, a typical free-tier
+  // pooler size), running them concurrently exhausts the pool and deadlocks
+  // indefinitely — each check holds a connection while waiting for one that
+  // never frees. PGLite has no connection pool, so this was invisible there.
+  // Sequential execution keeps in-flight connections at the per-check level so
+  // onboard checks fit any pool size. Each check already try/catches internally
+  // (safeCount returns 0 on throw), so a single failure can't break the
+  // aggregate, and the whole group is cheap counts (serial cost ~ms).
+  const steps: Array<(e: BrainEngine) => Promise<OnboardCheckResult>> = [
+    checkEmbedStaleness,
+    checkEntityLinkCoverage,
+    checkTimelineCoverage,
+    checkTakesCount,
     // v0.42 type-unification (T13-T15): 3 new checks added to onboard.
-    checkPackUpgradeAvailable(engine),
-    checkTypeProliferation(engine),
-    checkDanglingAliases(engine),
-  ]);
+    checkPackUpgradeAvailable,
+    checkTypeProliferation,
+    checkDanglingAliases,
+  ];
+  const results: OnboardCheckResult[] = [];
+  for (const step of steps) {
+    results.push(await step(engine));
+  }
+  return results;
 }
 
 // ===========================================================================
