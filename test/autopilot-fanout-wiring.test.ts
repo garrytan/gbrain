@@ -15,6 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
 
 const AUTOPILOT_SRC = readFileSync(
   join(import.meta.dir, '..', 'src', 'commands', 'autopilot.ts'),
@@ -22,6 +23,19 @@ const AUTOPILOT_SRC = readFileSync(
 );
 
 describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
+  test('applies the 30-minute floor only to full-cycle dispatch', () => {
+    const baseIntervalSeconds = 60;
+    const intervalDerived = Math.max(baseIntervalSeconds * 2 * 1000, 300_000);
+
+    expect(resolveAutopilotDispatchTimeoutMs(baseIntervalSeconds, true)).toBe(30 * 60_000);
+    expect(resolveAutopilotDispatchTimeoutMs(baseIntervalSeconds, false)).toBe(intervalDerived);
+    expect(AUTOPILOT_SRC).toContain(
+      'const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);',
+    );
+    expect(AUTOPILOT_SRC).toMatch(
+      /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: resolveAutopilotDispatchTimeoutMs\(baseInterval, true\)/,
+    );
+  });
   test('imports dispatchPerSource from the fan-out helper', () => {
     expect(AUTOPILOT_SRC).toMatch(
       /(import\s+.*dispatchPerSource.*from\s+['"]\.\/autopilot-fanout\.ts['"]|await import\(['"]\.\/autopilot-fanout\.ts['"]\))/,
