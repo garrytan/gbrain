@@ -90,6 +90,8 @@ describe('engine: stale-page extraction methods', () => {
     expect(batch1[0].compiled_truth).toBeTruthy();
     expect(batch1[0].title).toBeTruthy();
     expect(batch1[0].frontmatter).toBeDefined();
+    expect(batch1[0].effective_date).toBeNull();
+    expect(batch1[0].effective_date_source).toBeNull();
     const batch2 = await engine.listStalePagesForExtraction({ batchSize: 10, afterPageId: batch1[0].id });
     expect(batch2.length).toBe(1);
     expect(batch2[0].id).toBeGreaterThan(batch1[0].id);
@@ -102,6 +104,25 @@ describe('engine: stale-page extraction methods', () => {
 });
 
 describe('gbrain extract --stale', () => {
+  test('creates the effective_date fallback timeline row and remains idempotent', async () => {
+    await engine.putPage('people/alice', {
+      ...personPage('Alice'),
+      effective_date: new Date('2026-07-16T21:08:00Z'),
+      effective_date_source: 'date',
+    });
+
+    await runExtract(engine, ['--stale']);
+    let entries = await engine.getTimeline('people/alice');
+    expect(entries).toHaveLength(1);
+    expect(new Date(entries[0].date).toISOString().slice(0, 10)).toBe('2026-07-16');
+    expect(entries[0].source).toBe('page.effective_date:date');
+
+    await engine.executeRaw(`UPDATE pages SET links_extracted_at = NULL WHERE slug = 'people/alice'`);
+    await runExtract(engine, ['--stale']);
+    entries = await engine.getTimeline('people/alice');
+    expect(entries).toHaveLength(1);
+  });
+
   test('extracts typed edges + stamps every processed page (incl. zero-link)', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) is the CEO of [Acme](companies/acme).'));

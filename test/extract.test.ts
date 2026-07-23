@@ -3,6 +3,7 @@ import {
   extractMarkdownLinks,
   extractLinksFromFile,
   extractTimelineFromContent,
+  extractTimelineEntriesForPage,
   walkMarkdownFiles,
 } from '../src/commands/extract.ts';
 
@@ -184,6 +185,59 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'companies/acme-example');
     expect(entries).toHaveLength(1);
     expect(entries[0].summary).toBe('Landed the enterprise pilot with acme-example.');
+  });
+});
+
+describe('extractTimelineEntriesForPage', () => {
+  it('falls back to effective_date when markdown has no explicit timeline row', () => {
+    const entries = extractTimelineEntriesForPage('No timeline here.', {
+      slug: 'people/test',
+      title: 'Test Person',
+      effective_date: new Date('2026-07-16T21:08:00Z'),
+      effective_date_source: 'date',
+    });
+    expect(entries).toEqual([{
+      date: '2026-07-16',
+      source: 'page.effective_date:date',
+      summary: 'Test Person',
+      detail: '',
+    }]);
+  });
+
+  it('skips mtime-derived (fallback) provenance — no noise row per imported page', () => {
+    // computeEffectiveDate stamps source='fallback' (updated_at/created_at)
+    // on nearly every imported page; emitting a row for it would flood the
+    // timeline with one mtime-dated entry per timeline-less page brain-wide.
+    const entries = extractTimelineEntriesForPage('No timeline here.', {
+      slug: 'people/test',
+      title: 'Test Person',
+      effective_date: new Date('2026-07-16T21:08:00Z'),
+      effective_date_source: 'fallback',
+    });
+    expect(entries).toEqual([]);
+  });
+
+  it('skips null/unknown provenance', () => {
+    const entries = extractTimelineEntriesForPage('No timeline here.', {
+      slug: 'people/test',
+      title: 'Test Person',
+      effective_date: new Date('2026-07-16T21:08:00Z'),
+      effective_date_source: null,
+    });
+    expect(entries).toEqual([]);
+  });
+
+  it('prefers explicit timeline rows over the effective_date fallback', () => {
+    const entries = extractTimelineEntriesForPage('- **2026-07-15** | Explicit event', {
+      slug: 'people/test',
+      title: 'Test Person',
+      effective_date: new Date('2026-07-16T00:00:00Z'),
+      effective_date_source: 'date',
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-07-15');
+    expect(entries[0].summary).toBe('Explicit event');
+    expect(entries[0].source).toBeUndefined();
   });
 });
 
