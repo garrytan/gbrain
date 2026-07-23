@@ -892,3 +892,48 @@ describeBoth('Engine parity — federated sourceIds[] secondary reads (#2200)', 
     }
   });
 });
+
+// #1144 — brain_score is composition-aware: code / calendar-index pages are
+// orphans-by-design and must not feed the orphan/link-density/timeline
+// denominators. Both engines must agree.
+async function seedComposition(eng: BrainEngine) {
+  await eng.putPage('people/comp-alice', { type: 'person', title: 'Alice', compiled_truth: 'a', timeline: '' });
+  await eng.putPage('people/comp-bob', { type: 'person', title: 'Bob', compiled_truth: 'b', timeline: '' });
+  await eng.addLink('people/comp-alice', 'people/comp-bob', 'knows', 'mentions', 'markdown');
+  for (let i = 0; i < 5; i++) {
+    await eng.putPage(`code/src/comp-f${i}.py`, { type: 'code', title: `f${i}.py`, compiled_truth: 'def f(): pass', timeline: '' });
+  }
+  await eng.putPage('daily/calendar/2026-01-01', { type: 'calendar-index', title: '2026-01-01', compiled_truth: 'events', timeline: '' });
+}
+
+describeBoth('Engine parity — getHealth composition-aware brain_score (#1144)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedComposition(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedComposition(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('orphan/link-density/timeline components identical and exclude code + calendar-index pages', async () => {
+    const pg = await pgEngine.getHealth();
+    const pglite = await pgliteEngine.getHealth();
+    for (const k of ['orphan_pages', 'no_orphans_score', 'link_density_score', 'timeline_coverage_score', 'brain_score'] as const) {
+      expect(pg[k]).toBe(pglite[k]);
+    }
+    // 6 non-narrative pages exist but both narrative pages are linked → 0 orphans.
+    expect(pg.orphan_pages).toBe(0);
+    expect(pg.no_orphans_score).toBe(15);
+    // 1 link / 2 narrative pages, not / 8 total pages.
+    expect(pg.link_density_score).toBe(Math.round(0.5 * 25));
+  });
+});

@@ -23,7 +23,7 @@ health_checks:
     label: "Auth provider"
     checks:
       - type: http
-        url: "$CLAWVISOR_URL/health"
+        url: "$CLAWVISOR_URL/ready"
         label: "ClawVisor"
       - type: env_exists
         name: GOOGLE_CLIENT_ID
@@ -75,7 +75,7 @@ Tell the user:
 3. Activate the services you need:
    - **Gmail** (for email-to-brain)
    - **Google Calendar** (for calendar-to-brain)
-   - **Google Contacts** (for enrichment)
+   - **Google Contacts** (for contacts-to-brain)
 4. Create a standing task with a broad purpose. CRITICAL: be EXPANSIVE.
 
    Good purpose: 'Full executive assistant access to Gmail, Calendar, and
@@ -88,7 +88,7 @@ Tell the user:
 
 Validate:
 ```bash
-curl -sf "$CLAWVISOR_URL/health" \
+curl -sf "$CLAWVISOR_URL/ready" \
   && echo "PASS: ClawVisor reachable" \
   || echo "FAIL: ClawVisor not reachable — check the URL"
 ```
@@ -171,7 +171,7 @@ can now access your Google services."
 
 ## How to Verify
 
-1. **ClawVisor:** `curl $CLAWVISOR_URL/health` returns OK.
+1. **ClawVisor:** `curl $CLAWVISOR_URL/ready` returns OK.
 2. **Google OAuth:** Tokens exist at `~/.gbrain/google-tokens.json`.
 3. **Gmail access:** Run the email collector — it should pull recent messages.
 4. **Calendar access:** Run the calendar sync — it should pull today's events.

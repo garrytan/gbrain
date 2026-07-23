@@ -119,6 +119,40 @@ describe('Bug 11 — orphan_pages is "no inbound links"', () => {
   });
 });
 
+describe('#1144 — brain_score is composition-aware', () => {
+  test('code and calendar-index pages do not count as orphans or dilute density metrics', async () => {
+    // Two linked narrative pages + a flood of orphan-by-design pages.
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: 'a', frontmatter: {} });
+    await engine.putPage('people/bob', { type: 'person', title: 'Bob', compiled_truth: 'b', frontmatter: {} });
+    const aId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='people/alice'`)).rows[0].id;
+    const bId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='people/bob'`)).rows[0].id;
+    await (engine as any).db.query(
+      `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
+      [aId, bId],
+    );
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`code/src/f${i}.py`, { type: 'code', title: `f${i}.py`, compiled_truth: 'def f(): pass', frontmatter: {} });
+    }
+    await engine.putPage('daily/calendar/2026-01-01', { type: 'calendar-index', title: '2026-01-01', compiled_truth: 'events', frontmatter: {} });
+
+    const h = await engine.getHealth();
+    // 11 unlinked code/calendar pages exist, but both narrative pages are
+    // linked → 0 orphans, full no-orphans marks.
+    expect(h.orphan_pages).toBe(0);
+    expect(h.no_orphans_score).toBe(15);
+    // Link density: 1 link / 2 narrative pages, not 1 / 13 total pages.
+    expect(h.link_density_score).toBe(Math.round(0.5 * 25));
+  });
+
+  test('a brain with ONLY non-narrative pages gets full composition marks', async () => {
+    await engine.putPage('code/src/only.py', { type: 'code', title: 'only.py', compiled_truth: 'x = 1', frontmatter: {} });
+    const h = await engine.getHealth();
+    expect(h.no_orphans_score).toBe(15);
+    expect(h.link_density_score).toBe(25);
+    expect(h.timeline_coverage_score).toBe(15);
+  });
+});
+
 describe('Bug 11 — doctor renders brain_score breakdown', () => {
   test('doctor source contains brain_score breakdown rendering', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();

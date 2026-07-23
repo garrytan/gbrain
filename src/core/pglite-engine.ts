@@ -5259,9 +5259,18 @@ export class PGLiteEngine implements BrainEngine {
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      ),
+      narrative_pages AS (
+        -- Composition-aware score: code source files and calendar daily
+        -- files are orphans-by-design (no inbound wikilinks, no Timeline
+        -- fence). Excluding them from the orphan/link-density/timeline
+        -- denominators keeps a bulk code/calendar import from cratering
+        -- brain_score.
+        SELECT id FROM pages WHERE type IS NULL OR type NOT IN ('code', 'calendar-index')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM narrative_pages) as narrative_page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         0 as stale_pages,
@@ -5273,7 +5282,8 @@ export class PGLiteEngine implements BrainEngine {
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
+         WHERE te.page_id IN (SELECT id FROM narrative_pages)) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -5295,12 +5305,19 @@ export class PGLiteEngine implements BrainEngine {
     const { rows: islandedRows } = await this.db.query(`
       SELECT p.slug
       FROM pages p
-      WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+      -- Narrative pages only (same type filter as the narrative_pages CTE):
+      -- code/calendar-index pages are orphans-by-design and must not count
+      -- against the noOrphans component (#1144).
+      WHERE (p.type IS NULL OR p.type NOT IN ('code', 'calendar-index'))
+        AND NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
     `);
 
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);
+    // Composition-aware denominators (excludes code/calendar-index pages);
+    // a code-only brain has nothing narrative to penalize → full marks.
+    const narrativePageCount = Number(r.narrative_page_count);
     const embedCoverage = Number(r.embed_coverage);
     const stalePages = await this.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS });
     const orphanOverrides = await loadOrphanPolicyOverrides(this);
@@ -5310,9 +5327,9 @@ export class PGLiteEngine implements BrainEngine {
     const linkCount = Number(r.link_count);
     const pagesWithTimeline = Number(r.pages_with_timeline);
 
-    const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageDensity = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
-    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    const linkDensity = narrativePageCount > 0 ? Math.min(linkCount / narrativePageCount, 1) : 1;
+    const timelineCoverageDensity = narrativePageCount > 0 ? Math.min(pagesWithTimeline / narrativePageCount, 1) : 1;
+    const noOrphans = narrativePageCount > 0 ? 1 - (orphanPages / narrativePageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Bug 11 — per-component points. Sum equals brainScore by construction
     // so `doctor` can render a breakdown that adds up to the total.

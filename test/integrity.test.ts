@@ -201,6 +201,15 @@ describe('scanIntegrity', () => {
       timeline: '',
       frontmatter: { validate: false },
     });
+    // Indexed source file — 'tweeted about' in a comment must NOT be flagged
+    // as a bare-tweet citation gap (#1143: auto-repair would corrupt source).
+    await engine.putPage('code/src/bot.py', {
+      type: 'code',
+      title: 'src/bot.py (python)',
+      compiled_truth: '# the user tweeted about this feature\ndef send_tweet():\n    pass',
+      timeline: '',
+      frontmatter: { language: 'python', file: 'src/bot.py' },
+    });
   }, 60_000);
 
   afterAll(async () => {
@@ -221,6 +230,13 @@ describe('scanIntegrity', () => {
     const res = await scanIntegrity(engine);
     const slugs = res.bareHits.map(h => h.slug);
     expect(slugs).not.toContain('people/legacy');
+  });
+
+  test('skips type:code pages (#1143 — bare-tweet false positives on source files)', async () => {
+    const res = await scanIntegrity(engine);
+    const slugs = res.bareHits.map(h => h.slug);
+    expect(slugs).not.toContain('code/src/bot.py');
+    expect(res.pagesScanned).toBe(2);
   });
 
   test('honors limit', async () => {
