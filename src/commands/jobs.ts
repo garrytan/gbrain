@@ -106,6 +106,21 @@ export function parseMaxRssFlag(args: string[]): number | undefined {
   return parsed;
 }
 
+/** Terminal statuses `jobs prune --status` accepts (PR #2282). Matches what
+ *  queue.prune can safely delete; anything else (waiting/active/…) is live. */
+export const PRUNE_STATUSES = ['completed', 'failed', 'dead', 'cancelled'] as const satisfies readonly MinionJobStatus[];
+
+/** Parse a `--status a,b,c` value into prune statuses. Throws on any value
+ *  outside PRUNE_STATUSES (fail-fast, mirrors parseNiceValue). */
+export function parsePruneStatuses(raw: string): MinionJobStatus[] {
+  const requested = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const invalid = requested.filter(s => !(PRUNE_STATUSES as readonly string[]).includes(s));
+  if (requested.length === 0 || invalid.length > 0) {
+    throw new Error(`--status accepts a comma-separated subset of [${PRUNE_STATUSES.join(', ')}]${invalid.length ? `. Invalid: ${invalid.join(', ')}` : ''}`);
+  }
+  return requested as MinionJobStatus[];
+}
+
 /** Parse `--nice N` (then `GBRAIN_NICE` env). Returns:
  *  - undefined if absent (no priority change — inherit)
  *  - the validated integer in [-20, 19] otherwise
@@ -208,7 +223,9 @@ USAGE
   gbrain jobs get <id>
   gbrain jobs cancel <id>
   gbrain jobs retry <id>
-  gbrain jobs prune [--older-than 30d]
+  gbrain jobs prune [--older-than 30d] [--status completed,failed,dead,cancelled]
+                            (--older-than 0d = no age floor: deletes ALL
+                             matching terminal jobs; pair with --status)
   gbrain jobs delete <id>
   gbrain jobs stats
   gbrain jobs smoke
@@ -600,16 +617,27 @@ HANDLER TYPES (built in)
     case 'prune': {
       const olderThanStr = parseFlag(args, '--older-than') ?? '30d';
       const days = parseInt(olderThanStr, 10);
-      if (isNaN(days) || days <= 0) {
-        console.error('Error: --older-than must be a positive number (days). Example: --older-than 30d');
+      if (isNaN(days) || days < 0) {
+        console.error('Error: --older-than must be a non-negative number (days). Example: --older-than 30d; --older-than 0d removes the age floor (deletes ALL matching terminal jobs).');
         process.exit(1);
+      }
+      const statusFlag = parseFlag(args, '--status');
+      let statuses: MinionJobStatus[] | undefined;
+      if (statusFlag !== undefined) {
+        try { statuses = parsePruneStatuses(statusFlag); }
+        catch (e) { console.error(`Error: ${e instanceof Error ? e.message : String(e)}`); process.exit(1); }
       }
 
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
-      const count = await queue.prune({ olderThan: new Date(Date.now() - days * 86400000) });
-      console.log(`Pruned ${count} jobs older than ${days} days.`);
+      const count = await queue.prune({
+        olderThan: new Date(Date.now() - days * 86400000),
+        ...(statuses ? { status: statuses } : {}),
+      });
+      const statusLabel = statuses ? statuses.join('+') : 'completed+dead+cancelled';
+      const ageLabel = days === 0 ? 'regardless of age' : `older than ${days} days`;
+      console.log(`Pruned ${count} ${statusLabel} jobs ${ageLabel}.`);
       break;
     }
 
