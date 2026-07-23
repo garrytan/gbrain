@@ -35,6 +35,7 @@ import { tryAcquireDbLock } from '../../db-lock.ts';
 import { BudgetTracker, BudgetExhausted } from '../../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../../ai/gateway.ts';
 import { embedStaleForSource } from '../../embed-stale.ts';
+import { resolveWriteColumnForEngine } from '../../search/embedding-column.ts';
 import { currentEmbeddingSignature } from '../../embedding.ts';
 import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../../pace-mode.ts';
@@ -164,12 +165,16 @@ export function makeEmbedBackfillHandler(engine: BrainEngine) {
     // the supervisor, so pacing it is the headline win.
     const { pacer, concurrency } = await resolveBackfillPacer(engine, job.data);
 
+    // #1262: resolve the write-side embedding column once at the job boundary.
+    const embeddingColumn = await resolveWriteColumnForEngine(engine);
+
     try {
       const result = await withBudgetTracker(tracker, async () =>
         embedStaleForSource(engine, sourceId, {
           batchSize,
           signal: job.signal,
           pacer,
+          ...(embeddingColumn && { embeddingColumn }),
           ...(concurrency !== undefined && { concurrency }),
           // v0.41.31: re-embed pages whose model signature drifted + stamp
           // provenance as chunks land.

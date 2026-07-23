@@ -18,7 +18,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import type { ChunkInput } from './types.ts';
+import type { ChunkInput, ResolvedColumn } from './types.ts';
 import { embedBatchWithBackoff } from '../commands/embed.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
@@ -61,6 +61,13 @@ export interface EmbedStaleOpts {
    * Omit to keep the legacy `embedding IS NULL`-only behavior.
    */
   embeddingSignature?: string;
+  /**
+   * #1262: caller-resolved write-side embedding column. Threaded into BOTH
+   * listStaleChunks (staleness predicate) and upsertChunks (write target) so
+   * an alt-column brain converges instead of re-selecting embedded rows.
+   * Resolve at the boundary via `resolveWriteColumnForEngine()`.
+   */
+  embeddingColumn?: ResolvedColumn;
   /**
    * DB-contention pacer (paced-backfill). When enabled it (a) supplies the
    * worker count via the caller passing `concurrency = bundle.maxConcurrency`
@@ -156,6 +163,7 @@ export async function embedStaleForSource(
         afterPageId,
         afterChunkIndex,
         sourceId,
+        ...(opts.embeddingColumn && { embeddingColumn: opts.embeddingColumn }),
       }),
     );
     if (batch.length === 0) {
@@ -223,7 +231,10 @@ export async function embedStaleForSource(
           doc_comment: c.doc_comment ?? undefined,
           symbol_name_qualified: c.symbol_name_qualified ?? undefined,
         }));
-        await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
+        await observed(pacer, () => engine.upsertChunks(slug, merged, {
+          sourceId: keySourceId,
+          ...(opts.embeddingColumn && { embeddingColumn: opts.embeddingColumn }),
+        }));
         // v0.41.31: stamp provenance only when EVERY chunk was stale (fully
         // re-embedded this pass) — a partially-stale page keeps preserved
         // chunks of unknown provenance, so don't claim current. After the

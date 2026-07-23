@@ -444,6 +444,80 @@ export function resolveEmbeddingColumn(
 }
 
 /**
+ * Resolves the WRITE-side embedding column for the currently configured
+ * embedding model (#1262). The read-side resolver above answers "which
+ * column does this query search?"; this one answers "which column should
+ * newly produced text embeddings land in?".
+ *
+ * Unlike read-side search, writes take no per-call column override. The
+ * import/embed boundary resolves once from merged config + gateway state
+ * and passes the descriptor into `engine.upsertChunks`; engines stay
+ * config-free (same contract as the read-side descriptor).
+ *
+ * Behavior:
+ *   - no user-declared `embedding_columns` => undefined (legacy brain,
+ *     writes keep targeting the default `embedding` column)
+ *   - a user-declared entry whose `provider` matches the current
+ *     embedding model => that entry's descriptor
+ *   - no provider match => undefined (fall back to legacy `embedding`)
+ *
+ * Only USER-declared entries are consulted — never the cfg-derived
+ * builtins. The `embedding_image` builtin's provider is the multimodal
+ * model; matching it here would misroute text embeddings into the image
+ * column. The no-match fallback is intentional: switching models before
+ * registering a matching column must not silently write vectors into an
+ * arbitrary column.
+ */
+export function resolveWriteColumn(cfg: GBrainConfig): ResolvedColumn | undefined {
+  const userColumns = cfg.embedding_columns;
+  if (
+    !userColumns ||
+    typeof userColumns !== 'object' ||
+    Array.isArray(userColumns) ||
+    Object.keys(userColumns).length === 0
+  ) {
+    return undefined;
+  }
+
+  // Same model-resolution chain as the registry builtin: cfg > gateway > default.
+  let gwModel: string | undefined;
+  try {
+    const gw = require('../ai/gateway.ts') as typeof import('../ai/gateway.ts');
+    gwModel = gw.getEmbeddingModel();
+  } catch {
+    // Gateway unconfigured — fall through to the canonical default.
+  }
+  const currentModel = cfg.embedding_model ?? gwModel ?? DEFAULT_EMBEDDING_MODEL;
+
+  for (const [name, entry] of Object.entries(userColumns)) {
+    if (!entry) continue;
+    validateColumnKey(name);
+    validateColumnConfig(name, entry);
+    if (entry.provider !== currentModel) continue;
+    return {
+      name,
+      type: entry.type,
+      dimensions: entry.dimensions,
+      embeddingModel: entry.provider,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Engine-boundary convenience: merged config (file/env + DB plane) →
+ * resolveWriteColumn. Dynamic import keeps config.ts out of this module's
+ * static graph (mirrors the gateway require above).
+ */
+export async function resolveWriteColumnForEngine(
+  engine: { getConfig(key: string): Promise<string | null | undefined> },
+): Promise<ResolvedColumn | undefined> {
+  const { loadConfigWithEngine } = await import('../config.ts');
+  const cfg = await loadConfigWithEngine(engine);
+  return cfg ? resolveWriteColumn(cfg) : undefined;
+}
+
+/**
  * True when the resolved column is the default `embedding` name.
  * Name-based check; does not compare embedding space.
  */

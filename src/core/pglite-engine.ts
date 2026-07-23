@@ -40,6 +40,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  ResolvedColumn,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
@@ -2242,12 +2243,20 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void> {
+  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn } & BatchOpts): Promise<void> {
     return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal, () => this._upsertChunksOnce(slug, chunks, opts), chunks.length);
   }
 
-  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
+  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
+    // #1262: caller-resolved write target for TEXT embeddings. Descriptor
+    // names are identifier-validated + quoted by buildVectorCastFragment;
+    // omitted => legacy `embedding vector`. Mirrors postgres-engine.ts.
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
+    const embeddingCast = targetFragment?.castSql.replace('$1::', '') ?? 'vector';
 
     // Source-scope the page-id lookup so duplicate slugs in different sources
     // do not return multiple rows or target the wrong page.
@@ -2282,7 +2291,7 @@ export class PGLiteEngine implements BrainEngine {
     // list. Image chunks pass embedding=null + embedding_image=Float32Array
     // (1024-dim Voyage). Text/code chunks pass embedding=Float32Array +
     // embedding_image=null. Default modality='text' when omitted.
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${targetCol}, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     const rowParts: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -2300,7 +2309,7 @@ export class PGLiteEngine implements BrainEngine {
       const modality = chunk.modality ?? 'text';
 
       // Inline ::vector NULL literals to avoid a per-branch placeholder.
-      const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
+      const embeddingPh = embeddingStr ? `$${paramIdx++}::${embeddingCast}` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
       const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
 
@@ -2343,19 +2352,19 @@ export class PGLiteEngine implements BrainEngine {
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding
-           WHEN content_chunks.embedding IS NULL THEN EXCLUDED.embedding
+         ${targetCol} = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.${targetCol}
+           WHEN content_chunks.${targetCol} IS NULL THEN EXCLUDED.${targetCol}
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
-                THEN EXCLUDED.embedding
-           ELSE content_chunks.embedding
+                THEN EXCLUDED.${targetCol}
+           ELSE content_chunks.${targetCol}
          END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
-           WHEN content_chunks.embedding IS NULL AND EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedded_at
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.${targetCol} IS NULL THEN NULL
+           WHEN content_chunks.${targetCol} IS NULL AND EXCLUDED.${targetCol} IS NOT NULL THEN EXCLUDED.embedded_at
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
                 THEN EXCLUDED.embedded_at
@@ -2393,14 +2402,19 @@ export class PGLiteEngine implements BrainEngine {
    * drift (NULL grandfathered → never stale). Shared by countStaleChunks +
    * sumStaleChunkChars so they can't drift.
    */
-  private buildStaleChunkWhere(opts?: { sourceId?: string; signature?: string }): { where: string; params: unknown[] } {
+  private buildStaleChunkWhere(opts?: { sourceId?: string; signature?: string; embeddingColumn?: ResolvedColumn }): { where: string; params: unknown[] } {
+    // #1262: staleness targets the caller-resolved write column when set
+    // (identifier-validated + quoted); legacy `embedding` otherwise.
+    const staleCol = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn).col
+      : 'embedding';
     const params: unknown[] = [];
     const conds: string[] = [];
     if (opts?.signature !== undefined) {
       params.push(opts.signature);
-      conds.push(`(cc.embedding IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`);
+      conds.push(`(cc.${staleCol} IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`);
     } else {
-      conds.push(`cc.embedding IS NULL`);
+      conds.push(`cc.${staleCol} IS NULL`);
     }
     conds.push(`NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
     if (opts?.sourceId !== undefined) {
@@ -2410,7 +2424,7 @@ export class PGLiteEngine implements BrainEngine {
     return { where: conds.join(' AND '), params };
   }
 
-  async countStaleChunks(opts?: { sourceId?: string; signature?: string }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; signature?: string; embeddingColumn?: ResolvedColumn }): Promise<number> {
     // D7: source-scoped count for `gbrain embed --stale --source X`. Always
     // JOIN pages so embed-skip + signature predicates apply. PGLite is
     // PostgreSQL 17.5 in WASM and supports the full JSONB operator set.
@@ -2426,7 +2440,7 @@ export class PGLiteEngine implements BrainEngine {
     return Number(count);
   }
 
-  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string }): Promise<number> {
+  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; embeddingColumn?: ResolvedColumn }): Promise<number> {
     // Sibling of countStaleChunks: same stale predicate, summing chunk_text
     // length for the sync cost preview. ::bigint guards int4 overflow.
     const { where, params } = this.buildStaleChunkWhere(opts);
@@ -2479,11 +2493,17 @@ export class PGLiteEngine implements BrainEngine {
     sourceId?: string;
     orderBy?: 'page_id' | 'updated_desc';
     afterUpdatedAt?: string | null;
+    embeddingColumn?: ResolvedColumn;
   }): Promise<StaleChunkRow[]> {
     const limit = opts?.batchSize ?? 2000;
     const afterPid = opts?.afterPageId ?? 0;
     const afterIdx = opts?.afterChunkIndex ?? -1;
     const orderBy = opts?.orderBy ?? 'page_id';
+    // #1262: staleness follows the caller-resolved write column (validated +
+    // quoted identifier); legacy `embedding` otherwise.
+    const staleCol = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn).col
+      : 'embedding';
 
     // v0.41.18.0 (A13, codex #9): --priority recent path. See postgres-engine
     // sibling for full rationale. Same composite cursor + ORDER BY.
@@ -2497,7 +2517,7 @@ export class PGLiteEngine implements BrainEngine {
                   p.updated_at
              FROM content_chunks cc
              JOIN pages p ON p.id = cc.page_id
-            WHERE cc.embedding IS NULL
+            WHERE cc.${staleCol} IS NULL
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
             LIMIT $1`,
@@ -2508,7 +2528,7 @@ export class PGLiteEngine implements BrainEngine {
                   p.updated_at
              FROM content_chunks cc
              JOIN pages p ON p.id = cc.page_id
-            WHERE cc.embedding IS NULL
+            WHERE cc.${staleCol} IS NULL
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
               AND (
                 p.updated_at < $1::timestamptz
@@ -2527,7 +2547,7 @@ export class PGLiteEngine implements BrainEngine {
                 p.updated_at
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE cc.${staleCol} IS NULL
             AND p.source_id = $1
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
@@ -2539,7 +2559,7 @@ export class PGLiteEngine implements BrainEngine {
                 p.updated_at
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE cc.${staleCol} IS NULL
             AND p.source_id = $1
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (
@@ -2564,7 +2584,7 @@ export class PGLiteEngine implements BrainEngine {
                 cc.model, cc.token_count, p.source_id, cc.page_id
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE cc.${staleCol} IS NULL
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (cc.page_id, cc.chunk_index) > ($1, $2)
           ORDER BY cc.page_id, cc.chunk_index
@@ -2578,7 +2598,7 @@ export class PGLiteEngine implements BrainEngine {
               cc.model, cc.token_count, p.source_id, cc.page_id
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
+        WHERE cc.${staleCol} IS NULL
           AND p.source_id = $1
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           AND (cc.page_id, cc.chunk_index) > ($2, $3)

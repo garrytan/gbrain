@@ -12,6 +12,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  ResolvedColumn,
   CodeEdgeInput, CodeEdgeResult,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
@@ -987,8 +988,13 @@ export interface BrainEngine {
    * — Postgres rolls back automatically on conn drop, so commit-ambiguous
    * failure replays to the same end state. Callers MUST NOT wrap externally;
    * see {@link BatchOpts} retry-contract block.
+   *
+   * `opts.embeddingColumn` (optional) selects the content_chunks column that
+   * receives TEXT embeddings (#1262). The caller resolves the descriptor at
+   * the import/embed boundary via `resolveWriteColumn()`; engines never read
+   * config or choose columns themselves. Omitted => legacy `embedding`.
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. `opts.sourceId` source-scopes the page
    * lookup; without it, multi-source brains return chunks from every
@@ -1005,8 +1011,13 @@ export interface BrainEngine {
    * counts across every source in the brain. Operators running
    * `gbrain embed --stale --source media-corpus` expect only that
    * source's NULLs touched; the caller threads `sourceId` here.
+   *
+   * `opts.embeddingColumn` switches the staleness predicate from the legacy
+   * `embedding` column to the resolved write-side column, so alt-column
+   * brains do not perpetually re-select rows whose target column is already
+   * populated (#1262). Must match the eventual upsertChunks target.
    */
-  countStaleChunks(opts?: { sourceId?: string; signature?: string }): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string; signature?: string; embeddingColumn?: ResolvedColumn }): Promise<number>;
   /**
    * Sum of LENGTH(chunk_text) over stale chunks — the character-count
    * backlog the embed phase / embed-backfill will process. Sibling of
@@ -1020,8 +1031,13 @@ export interface BrainEngine {
    * model signature (a model/dims swap). NULL signature is GRANDFATHERED
    * (never counted) so the post-migration corpus isn't flagged en masse.
    * Omit `signature` for the legacy `embedding IS NULL`-only count.
+   *
+   * `opts.embeddingColumn` switches the staleness predicate to the resolved
+   * write-side column (#1262) — same contract as countStaleChunks — so the
+   * sync cost gate doesn't count an alt-column brain's fully-embedded corpus
+   * as phantom backlog.
    */
-  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string }): Promise<number>;
+  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; embeddingColumn?: ResolvedColumn }): Promise<number>;
   /**
    * Stamp `pages.embedding_signature = signature` for one page. Called after
    * a page's chunks are (re)embedded so a later model swap can detect it as
@@ -1069,6 +1085,9 @@ export interface BrainEngine {
     // both round-trip TIMESTAMPTZ as Date | string; ISO string is the
     // common denominator on the wire).
     afterUpdatedAt?: string | null;
+    // #1262: staleness predicate targets this column when set (must match
+    // countStaleChunks and the eventual upsertChunks write target).
+    embeddingColumn?: ResolvedColumn;
   }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
