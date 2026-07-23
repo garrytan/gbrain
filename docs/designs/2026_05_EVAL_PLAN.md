@@ -1,5 +1,11 @@
 # Embedder Shootout — May 2026 Eval Plan
 
+> Status: DESIGN.
+> This page is an approved eval plan, not current benchmark results or
+> operational guidance. Current eval commands and methodology live in
+> [`../eval-bench.md`](../eval-bench.md) and
+> [`../eval/SEARCH_MODE_METHODOLOGY.md`](../eval/SEARCH_MODE_METHODOLOGY.md).
+
 **Status:** approved, ready to execute
 **Owner:** Garry
 **Plan source:** `~/.claude/plans/system-instruction-you-are-working-linear-origami.md` (review log)

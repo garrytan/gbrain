@@ -3,6 +3,20 @@
 Run these checks after install to confirm every part of GBrain is working.
 Each check includes the command, expected output, and what to do if it fails.
 
+Not every check applies to every route:
+
+| Route | Required checks |
+|---|---|
+| Local keyword-only PGLite | 1 and 4c for imported content; 2, 3, 6, and 7 only when those features were configured |
+| Provider-backed PGLite | 1, 4b, 4c, and 5; 2, 3, 6, and 7 when configured |
+| Synced Postgres/shared brain | 1, 4, 5, and 8; 2, 3, 6, and 7 when configured |
+
+An optional check that was never configured is not a failure. A keyword-only
+brain is healthy with embeddings unavailable. PGLite never needs Postgres RLS
+checks. Provider-backed PGLite does require its vector extension, vector
+columns, and indexes to pass doctor checks; only the deliberate keyword-only
+route may treat the embedding/vector path as not applicable.
+
 The most important check is #4 (live sync). "Sync ran" is not the same as
 "sync worked." A sync that silently skips pages because of a pooler bug is
 worse than no sync at all, because you think it's working.
@@ -17,12 +31,15 @@ worse than no sync at all, because you think it's working.
 gbrain doctor --json
 ```
 
-**Expected:** All checks return `"ok"`:
+**Expected:** Engine and schema checks for the selected route return `"ok"`:
 - `connection`: connected, N pages
-- `pgvector`: extension installed
-- `rls`: enabled on all tables
 - `schema_version`: current
-- `embeddings`: coverage percentage
+- PGLite keyword-only: the current doctor still emits an `embeddings` warning
+  such as `No embeddings yet. Run: gbrain embed --stale` and lowers the health
+  score. That warning is expected for this deliberate route; doctor does not
+  currently classify it as intentionally provider-free.
+- Provider-backed brain: embeddings report a coverage percentage
+- Postgres: pgvector is installed and the configured RLS checks pass
 
 **If it fails:** The doctor output includes specific fix instructions for each
 check. See `skills/setup/SKILL.md` Error Recovery table.
@@ -44,6 +61,8 @@ install paste (read `docs/GBRAIN_SKILLPACK.md`).
 
 ## 3. Auto-Update Configured
 
+Skip this check when the operator did not choose automatic update checks.
+
 **Command:**
 
 ```bash
@@ -61,6 +80,10 @@ Section 17.
 ## 4. Live Sync Actually Works
 
 This is the most important check. Three parts.
+
+For a one-time `gbrain import` route with no configured sync repo, run 4c
+immediately after a repeat import instead of waiting for a sync cycle. Checks
+4a and the scheduled-sync parts of 4c apply to registered Git-backed sources.
 
 ### 4a. Coverage Check
 
@@ -150,6 +173,9 @@ gbrain search "<text from the correction>"
 
 ## 5. Embedding Coverage
 
+Skip this check on the deliberate keyword-only route. Embedding coverage is a
+requirement only after an embedding provider has been configured.
+
 **Command:**
 
 ```bash
@@ -158,13 +184,22 @@ gbrain stats
 
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
-**If zero or very low:** `OPENAI_API_KEY` may be missing or invalid. Check:
+**If zero or very low:** identify the configured embedding provider and test
+that provider's credentials or endpoint:
 
 ```bash
-echo $OPENAI_API_KEY | head -c 10
+gbrain models
+gbrain models doctor
+gbrain providers test --touchpoint embedding --model <provider:model>
 ```
 
-If blank, set the key. Then:
+Use the actual model id from the active configuration. Hosted providers need
+their own credential (`OPENAI_API_KEY`, `VOYAGE_API_KEY`,
+`ZEROENTROPY_API_KEY`, Google/Azure/OpenRouter configuration, or another
+recipe-specific key); local providers need their configured server to be
+reachable. Do not print credential values while diagnosing. See
+[`integrations/embedding-providers.md`](integrations/embedding-providers.md)
+for provider-specific setup. After the provider test succeeds:
 
 ```bash
 gbrain embed --stale
@@ -228,6 +263,8 @@ heuristics won't find them — file an issue with a sample page.
 
 ## 8. JSONB Frontmatter Integrity (v0.12.2)
 
+This check is for Postgres-backed brains. Skip it for PGLite.
+
 Postgres-backed brains created before v0.12.2 had double-encoded JSONB columns
 (`frontmatter->>'key'` returned NULL, GIN indexes were inert). `gbrain upgrade`
 runs `gbrain repair-jsonb` automatically via the `v0_12_2` orchestrator.
@@ -263,13 +300,15 @@ If this returns rows on a brain with person pages, the JSONB path is healthy.
 
 ---
 
-## Quick Verification (all checks in one pass)
+## Route verification checklist
+
+Run only the commands that apply to the route table at the top of this page.
 
 ```bash
 # 1. Schema
 gbrain doctor --json
 
-# 2. Sync recency
+# 2. Sync recency (registered sync sources only)
 gbrain config get sync.last_run
 
 # 3. Page count + embed coverage
@@ -278,18 +317,19 @@ gbrain stats
 # 4. Search works
 gbrain search "test query from your brain content"
 
-# 5. Catch any unembedded chunks
+# 5. Catch any unembedded chunks (provider-backed routes only)
 gbrain embed --stale
 
-# 6. Auto-update
+# 6. Auto-update (only when configured)
 gbrain check-update --json
 
-# 7. Knowledge graph populated (links + timeline > 0)
+# 7. Knowledge graph populated (only when graph extraction was configured)
 gbrain stats | grep -E 'links|timeline'
 
-# 8. JSONB integrity (v0.12.2 — Postgres only, PGLite always 0)
+# 8. JSONB integrity (Postgres only)
 gbrain repair-jsonb --dry-run --json
 ```
 
-If all eight return successfully, the installation is healthy. For the full
-end-to-end sync test (4c), push a real change and verify it appears in search.
+If every applicable check returns successfully, the installation is healthy
+for its selected route. For the full end-to-end sync test (4c), push a real
+change and verify it appears in search.

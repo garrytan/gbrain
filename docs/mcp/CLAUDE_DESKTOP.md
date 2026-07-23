@@ -7,8 +7,8 @@ Remote HTTP servers must be added through the GUI.
 ## Setup
 
 1. Open Claude Desktop
-2. Go to **Settings > Integrations**
-3. Click **Add Integration** (or **Add Connector**)
+2. Go to **Settings > Connectors**
+3. Click **Add custom connector**
 4. Enter the MCP server URL:
    ```
    https://YOUR-DOMAIN.ngrok.app/mcp
@@ -33,7 +33,7 @@ Claude Desktop will use your GBrain tools automatically.
 
 **Using claude_desktop_config.json for remote servers** — this silently fails
 with no error message. The JSON config only works for local stdio MCP servers.
-Remote HTTP servers must be added via Settings > Integrations in the GUI.
+Remote HTTP servers must be added via Settings > Connectors in the GUI.
 
 **Using the wrong URL** — make sure the URL ends with `/mcp` (not `/health`
 or just the base domain).

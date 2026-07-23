@@ -1,7 +1,73 @@
-# GBrain Installation Guide for AI Agents
+# GBrain agent installation and operation guide
 
-Read this entire file, then follow the steps. Ask the user for API keys when needed.
-Target: ~30 minutes to a fully working brain.
+Read this entire file, then follow the branch that matches the user's setup.
+Ask the user for API keys, deployment choices, and search mode when prompted.
+Target for a normal local install: about 30 minutes to a working brain.
+
+This is the canonical coding-agent protocol. Human operators use
+[`docs/INSTALL.md`](docs/INSTALL.md).
+
+Machine-readable context:
+
+- [`llms.txt`](llms.txt) is the curated documentation map.
+- [`llms-full.txt`](llms-full.txt) is the same map with core docs inlined for
+  one-shot ingestion.
+- Both files are generated from [`scripts/llms-config.ts`](scripts/llms-config.ts).
+  Forks should regenerate them with `LLMS_REPO_BASE` set to the fork's raw URL.
+- [`AGENTS.md`](AGENTS.md) is the non-Claude-agent repo protocol.
+- [`CLAUDE.md`](CLAUDE.md) is the Claude Code orientation and resolver.
+- [`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) explains
+  when to use retrieval, synthesis, maintenance, and push-based context
+  commands or channels.
+
+## Agent operating map
+
+Classify the user's operating model before choosing a deployment topology. Use
+[`docs/architecture/topologies.md#operating-model-decision-tree`](docs/architecture/topologies.md#operating-model-decision-tree)
+and
+[`docs/architecture/topologies.md#deployment-topology-decision-tree`](docs/architecture/topologies.md#deployment-topology-decision-tree)
+when the setup is not one local brain on one machine.
+
+| User situation | Agent path | Extra gate |
+|---|---|---|
+| User wants a local personal brain | Follow Steps 1 through 9. | Stop at Step 3.5 and confirm search mode. |
+| User already has a human-installed brain | Read `docs/INSTALL.md`, then run only the verification and agent-wiring steps the user approves. | Do not reinitialize or migrate unless asked. |
+| User wants a remote or thin-client setup | Use the [deployment-topology decision tree](docs/architecture/topologies.md#deployment-topology-decision-tree) and [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md). | Confirm OAuth/scopes and remote MCP exposure before configuring clients. |
+| User wants a team, family, household, or company brain | Use the [operating-model decision tree](docs/architecture/topologies.md#operating-model-decision-tree), the production branch in [`docs/INSTALL.md`](docs/INSTALL.md), and [`docs/tutorials/company-brain.md`](docs/tutorials/company-brain.md). | Confirm single-agent vs auth-scoped mode, source/brain ownership, scopes, backups, and restore plan. |
+| User is upgrading an existing brain | Use [Upgrade](#upgrade). | Stop on the search-mode post-upgrade banner and ask the user. |
+
+## Safety gates for agents
+
+- Never invent API keys, tokens, provider URLs, or hostnames.
+- Do not silently accept the search-mode default. Step 3.5 is mandatory.
+- Do not turn a local-only install into remote HTTP MCP without user approval.
+- Do not widen OAuth scopes, enable Dynamic Client Registration, or bind
+  `gbrain serve --http` beyond loopback unless the user chose a remote setup.
+- Do not install cron, `--watch`, autopilot, or recurring jobs without the
+  operator confirming the cadence.
+- Do not treat `gbrain doctor` success as proof that live sync works. Use the
+  live-sync verification in Step 9 or `docs/GBRAIN_VERIFY.md`.
+- Before adding retrieval reflex, `volunteer_context`, `gbrain
+  volunteer-context`, or `gbrain watch` to an agent loop, read
+  `docs/guides/mode-selection.md` and confirm the operator wants push-based
+  context.
+
+## Trust boundary
+
+GBrain distinguishes trusted local CLI callers from untrusted agent-facing
+callers:
+
+- Local CLI calls set `OperationContext.remote = false` in `src/cli.ts`.
+- MCP calls set `remote = true` in `src/mcp/server.ts`.
+- Operations declare scopes in `src/core/operations.ts`.
+- HTTP dispatch enforces scopes and `localOnly` before handlers run.
+- Security-sensitive operations such as file upload use stricter confinement
+  unless the caller is explicitly trusted local CLI.
+
+Agent rule: do not work around `localOnly`, scope, or protected-job refusals.
+They are the contract. For detail, read `AGENTS.md`, `CLAUDE.md`,
+[`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md), and
+[`docs/architecture/thin-client.md`](docs/architecture/thin-client.md).
 
 ## Step 0: If you are not Claude Code
 
@@ -10,13 +76,14 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 `CLAUDE.md` automatically and can skip ahead.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md`: start here
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt`: generated doc map
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt`: generated inlined doc bundle
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md`: human install and operating center
 
 ## Step 1: Install GBrain
 
-Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
+Default path. GBrain requires the Bun TypeScript runtime:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -40,25 +107,69 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
-(as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
-set embedding_model <provider:model>`.
+Ask the user whether they want semantic retrieval, synthesis, or a keyword-only
+first test. GBrain can use ZeroEntropy, OpenAI,
+Voyage, local servers, and other providers documented in
+`docs/integrations/embedding-providers.md`. Select the embedding model during
+`gbrain init` with `--embedding-model` and `--embedding-dimensions`. For an
+existing PGLite brain, use `gbrain reinit-pglite`; for Postgres, use
+`docs/embedding-migrations.md`. Never try to switch an existing schema with
+`gbrain config set embedding_model`.
 
 ```bash
-export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
-export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
+export ZEROENTROPY_API_KEY=replace_me
+export OPENAI_API_KEY=replace_me
+export ANTHROPIC_API_KEY=replace_me
 ```
 
-Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
-or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
-keyword search still works. Without Anthropic, search works but skips query expansion.
+An embedding provider enables semantic retrieval. `gbrain think` synthesis
+also requires a chat-capable recipe. Do not infer chat capability from the
+presence of an embedding key: Voyage and ZeroEntropy, for example, are
+embedding/reranking providers. A single recipe may cover both capabilities, or
+the user may choose separate providers. `claude-cli` is a chat-only
+subscription route and still needs a separate embedding provider.
+
+If the user chooses a keyword-only first test, initialize with
+`gbrain init --pglite --no-embedding`. Do not run plain non-interactive
+`gbrain init` with no configured provider: it exits with a setup hint rather
+than silently creating a provider-backed brain.
+
+Save keys to the user's shell profile or the GBrain config file plane. Do not
+paste secrets into shared agent config, chat transcripts, Git commits, or issue
+comments. Without any embedding provider, keyword search still works. Without
+Anthropic, search works but skips query expansion.
+
+Provider and base URL rules:
+
+- Full provider matrix: `docs/integrations/embedding-providers.md`.
+- Prefer provider-specific env vars where they exist:
+  `OPENROUTER_BASE_URL`, `LITELLM_BASE_URL`, `OLLAMA_BASE_URL`,
+  `LLAMA_SERVER_BASE_URL`, and `LLAMA_SERVER_RERANKER_BASE_URL`.
+- Persistent overrides use `provider_base_urls.<provider-id>`, for example
+  `provider_base_urls.dashscope`.
+- Do not assume a generic `OPENAI_BASE_URL` retargets every provider.
+- Azure OpenAI needs `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+  `AZURE_OPENAI_DEPLOYMENT`.
 
 ## Step 3: Create the Brain
 
 ```bash
-gbrain init                           # PGLite, no server needed
-gbrain doctor --json                  # verify all checks pass
+gbrain init --pglite --no-embedding  # deterministic keyword-only path
+gbrain doctor --json                  # verify engine and schema state
+```
+
+On this path, `doctor` should report an initialized engine and non-zero schema
+version while identifying embeddings as intentionally unconfigured. Do not
+misreport that expected limitation as a fully provider-ready brain.
+
+For the provider-backed path, export the selected key first and pass the model
+and dimensions explicitly, or let an interactive TTY choose among env-ready
+providers:
+
+```bash
+gbrain init --pglite \
+  --embedding-model your_provider:your_model \
+  --embedding-dimensions 1234
 ```
 
 The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool repo.
@@ -68,9 +179,11 @@ Ask the user where their files are, or create a new brain repo:
 mkdir -p ~/brain && cd ~/brain && git init
 ```
 
-Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
-structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
-NOT inside ~/gbrain.
+Read `docs/architecture/brain-repo-layout.md` for the Brain Repo Layout before
+creating folders. Set up the editable Markdown structure inside the user's brain
+repo, NOT inside the GBrain tool repo. Use `docs/GBRAIN_RECOMMENDED_SCHEMA.md`
+only as the long-form design reference; the active schema pack decides the
+current path/type mapping.
 
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
@@ -103,17 +216,23 @@ Per-query cost @ 10K queries/mo (typical single-user volume):
 >   1) conservative — tight 4K budget, no LLM expansion, 10 chunks max.
 >      Best for Haiku subagents, cost-sensitive setups, high-volume loops.
 >
->   2) balanced — 12K budget, no expansion, 25 chunks. Sonnet-tier sweet spot.
+>   2) balanced: 12K budget, no expansion, 25 chunks, reranking, graph
+>      signals, title context, autocut, and relational recall. Moderate
+>      general-purpose choice.
 >
->   3) tokenmax (recommended default — preserves v0.31.x retrieval shape) —
->      no budget, LLM expansion ON, 50 chunks. Best for Opus/frontier models.
+>   3) tokenmax (normally recommended; preserves v0.31.x retrieval shape):
+>      no budget, LLM expansion ON, 50 chunks, reranking, graph signals,
+>      per-chunk context, autocut, and relational recall. Best when recall
+>      matters more than latency or downstream token cost.
 >
 > Cost depends on BOTH the mode AND the downstream model you run. See the
 > matrix above for the 9-cell breakdown.
 
-If the operator picks a non-default mode, run:
+If the operator picks a non-default mode, run the command with that exact
+choice. For example:
+
 ```bash
-gbrain config set search.mode <mode>
+gbrain config set search.mode balanced
 ```
 
 If they pick tokenmax AND want to preserve the literal v0.31.x default
@@ -129,13 +248,44 @@ An agent that silently accepts the default and starts running queries against
 a user who didn't expect tokenmax-class context loads can rack up surprise
 spend. Confirm before continuing.
 
+After the search mode is confirmed, read
+[`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) before choosing
+between `gbrain search`, `gbrain think`, `gbrain dream` / autopilot, retrieval
+reflex, `volunteer_context`, `gbrain volunteer-context`, or `gbrain watch`.
+
 ## Step 4: Import and Index
 
+If the user chose the keyword-only path, import without embeddings and verify a
+phrase that exists in the Markdown:
+
 ```bash
-gbrain import ~/brain/ --no-embed     # import markdown files
-gbrain embed --stale                  # generate vector embeddings
-gbrain query "key themes across these documents?"
+gbrain import ~/brain/ --no-embed
+gbrain search "known phrase from the brain"
 ```
+
+Report that exact-word search works. Semantic search and provider-dependent
+reranking remain unavailable until the user configures embeddings. `think`
+without a chat provider may return gather-only output; maintenance phases vary
+and must be checked against their provider requirements.
+
+If the user chose the provider-backed path, import, embed, and verify
+retrieval:
+
+```bash
+gbrain import ~/brain/
+gbrain embed --stale
+gbrain search "known concept from the brain"
+```
+
+Only when a chat-capable model is configured, verify synthesis separately:
+
+```bash
+gbrain think "What are the key themes across these documents?" --json
+```
+
+Require `synthesisOk: true` in the JSON result. A zero exit status without that
+field is not proof: the command can deliberately return gather-only output
+when no usable chat provider is available.
 
 ## Step 4.5: Wire the Knowledge Graph
 
@@ -191,7 +341,7 @@ scaffold the bundled skills into it:
 
 ```bash
 cd /path/to/agent/workspace
-gbrain skillpack scaffold --all       # copy 43 curated skills + RESOLVER.md
+gbrain skillpack scaffold --all       # copy bundled skills + RESOLVER.md
 ```
 
 Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
@@ -234,6 +384,10 @@ If skipped, minimal defaults are installed automatically.
 Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
 platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon):
 
+- **Daemon PATH prerequisite**: make Bun available to non-interactive
+  processes before installing autopilot. On macOS with zsh, add
+  `export PATH="$HOME/.bun/bin:$PATH"` to `~/.zshenv`. The generated wrapper
+  sources that file but does not add Bun to `PATH`.
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
   — or `gbrain sync --watch` for a continuous loop.
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
@@ -241,7 +395,8 @@ platform glue entirely with `gbrain autopilot --install` (built-in self-maintain
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
   synthesis and cross-session pattern detection. One cron-friendly command. This is what
   makes the brain compound. Do not skip it. See `docs/guides/cron-schedule.md` for the
-  full protocol.
+  full protocol and `docs/guides/mode-selection.md` for when to use dream/autopilot
+  instead of retrieval or synthesis.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations
@@ -254,8 +409,85 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-Read `docs/GBRAIN_VERIFY.md` and run all 7 verification checks. Check #4 (live sync
-actually works) is the most important.
+Read `docs/GBRAIN_VERIFY.md` and run every check that applies to the selected
+engine and provider route. The runbook contains eight checks; embedding checks
+are expected to be limited on the keyword-only route, and the JSONB repair
+check is Postgres-specific. Check #4 (live sync actually works) is the most
+important for a synced repo.
+
+## MCP, auth, and remote operation
+
+Use local stdio MCP when the agent and brain are on the same machine:
+
+```bash
+claude mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve
+```
+
+Use HTTP MCP only when the user chose a remote, shared, or cloud-client path.
+Before configuring it, confirm:
+
+- public URL and bind address;
+- OAuth client type;
+- scopes: `read`, `write`, `admin`, or narrower source-scoped grants;
+- whether Dynamic Client Registration stays disabled;
+- where the token or OAuth secret will be stored;
+- which brain/source the client may read and write.
+
+Remote setup references:
+
+- `docs/mcp/DEPLOY.md` for HTTP MCP, OAuth 2.1, scopes, localOnly behavior, and
+  remote deployment. Treat it as the protocol truth; client pages are recipes.
+- `docs/guides/mode-selection.md` for agent-facing choice between pull
+  retrieval, `think`, maintenance, and push-context channels.
+- `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`,
+  `docs/mcp/CLAUDE_DESKTOP.md`, `docs/mcp/CHATGPT.md`, and
+  `docs/mcp/PERPLEXITY.md` for client-specific setup.
+- `docs/architecture/topologies.md` for operating-model, thin-client,
+  split-engine, mounted-brain, and security-isolation decision trees.
+
+Remote-call boundary:
+
+- `sync_brain`, `file_upload`, `file_list`, and `file_url` are `localOnly` and
+  rejected over HTTP regardless of scope.
+- Protected job submissions are CLI-only. If MCP refuses a protected job, do
+  not retry through another route unless the user explicitly switches to local
+  CLI operation.
+- `run_onboard` is remote-callable with admin scope for health checks and
+  non-protected remediation. Protected LLM-bearing onboard handlers remain
+  skipped over OAuth in the current CLI allowlist; use trusted local CLI
+  operation for those until the dedicated protected-onboard grant is exposed
+  through the supported registration path.
+
+Thin-client verification:
+
+```bash
+gbrain doctor
+gbrain remote doctor
+```
+
+Call `get_brain_identity` through the connected MCP client for the read-scope
+smoke test. `gbrain remote doctor` and full health/status checks need the
+admin-scope diagnostics described in `docs/mcp/DEPLOY.md`. Do not use
+`gbrain remote ping` as a connectivity probe: it submits an `autopilot-cycle`
+that can sync, extract, embed, mutate the remote brain, and incur provider
+costs.
+
+## Safe verification checklist
+
+Use the strongest check that matches the branch:
+
+- Local install: `gbrain --version`, `gbrain doctor --json`, `gbrain models`,
+  `gbrain models doctor`, `gbrain search modes`, `gbrain stats`.
+- Search mode: `gbrain search modes` after the user chooses.
+- Provider setup: `gbrain models doctor` or the provider-specific test in
+  `docs/integrations/embedding-providers.md`.
+- Live sync: edit a brain markdown file, let sync run, then search for text
+  from the edit. Do not claim live sync works from `gbrain sync` output alone.
+- Remote MCP: use the client's smoke test or `gbrain connect --install`, then
+  call `get_brain_identity` from the agent.
+- Production/shared brain: verify OAuth scopes with a least-privilege client
+  before giving the endpoint to users.
 
 ## Upgrade
 
@@ -330,14 +562,21 @@ Refuses without `--max-usd N`. Runs auto-eligible items only. The
 autopilot daemon also consults onboard recommendations on its tick — no
 explicit agent action needed for the autonomous path.
 
+When evaluating a remediation plan, request JSON and inspect
+`target_unreachable`, `max_reachable_score`, and `blocked`. On current
+`master`, human output can still print "Brain is at target" after reporting
+an unreachable target when the plan is empty. Do not relay that sentence as
+success unless the score meets the requested target.
+
 **Remote / federated brain installs (MCP):**
 The `run_onboard` MCP op (admin scope) lets thin-client agents probe
 brain health + drive remediation over OAuth-authenticated MCP. Protected
 LLM-bearing handlers (synthesize, patterns, consolidate, takes-bootstrap,
-contextual_reindex_per_chunk) require the additional `run_protected_onboard`
-scope — admin alone is insufficient. The MCP op returns
-`skipped_missing_scope[]` listing what would have run with the right
-grants.
+contextual_reindex_per_chunk) are not enabled by admin alone. In the current
+OAuth allowlist, `gbrain auth register-client` cannot mint the dedicated
+protected-onboard grant that the operation checks internally, so those handlers
+remain reported in `skipped_missing_scope[]`. Run protected remediation from a
+trusted local CLI session when the operator explicitly approves it.
 
 **Privacy + consent gates:**
 - `gbrain takes extract --from-pages` sends concept/atom/lore/briefing/

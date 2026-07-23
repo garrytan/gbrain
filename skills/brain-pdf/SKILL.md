@@ -42,8 +42,8 @@ $HOME/.claude/skills/gstack/make-pdf/dist/pdf
 ```
 
 The user must have gstack co-installed. If absent, the skill cannot run.
-A future v0.26+ may bundle a fallback PDF renderer; for v0.25.1 gstack
-is a soft prereq.
+There is no bundled fallback PDF renderer in this repo; gstack is the
+current rendering path.
 
 Verify it exists before invoking:
 

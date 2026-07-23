@@ -1,5 +1,10 @@
 # Doctor Auto-Heal and Scoring Improvements
 
+> Status: DESIGN.
+> This issue writeup ranks proposed doctor improvements. Current verification
+> and remediation guidance lives in [`../GBRAIN_VERIFY.md`](../GBRAIN_VERIFY.md)
+> and [`../INSTALL.md`](../INSTALL.md).
+
 ## Summary
 
 The `gbrain doctor` health score system has several false-positive patterns and missing auto-heal capabilities. After the crash classification fix (shipped in this PR), these are the remaining improvements ranked by impact.

@@ -26,15 +26,31 @@ picks up the pack's declared phases on the next `gbrain dream` run.
 ### gbrain-creator
 Atom + concept content-creator lifecycle. Drives two cycle phases:
 
-- `extract_atoms` — per source, Haiku extracts 1-3 atoms from each
+- `extract_atoms`: per source, the model configured at
+  `models.dream.extract_atoms` extracts 1-3 atoms from each
   transcript with the closed 11-value `atom_type` enum (insight,
   anecdote, quote, framework, statistic, story_angle, strategy_angle,
   strategy, endorsement, critique, collection). Writes
-  `atoms/{YYYY-MM-DD}/{slug}` pages. Budget cap $0.30/source/run.
+  `atoms/{YYYY-MM-DD}/{slug}` pages. The default model is
+  `anthropic:claude-haiku-4-5`. The default budget cap is
+  $0.30/source/run and can be changed with
+  `cycle.extract_atoms.budget_usd`. Phase results report the selected model,
+  actual estimated spend, the configured budget, and whether the budget was
+  exhausted.
 - `synthesize_concepts` — globally aggregates atoms by frontmatter
   `concepts:` ref. Tier by count: T1 ≥10, T2 ≥5, T3 ≥2. T1/T2 get
   Sonnet narratives; T3 falls back to a deterministic stub. Writes
   `concepts/{slug}` pages. Budget cap $1.50/run.
+
+Current `master` does not add `concepts:` labels to newly extracted atoms.
+Concept synthesis therefore works only for atoms that already carry those
+labels, such as imported or manually tagged atoms. Run `gbrain dream` for the
+phases, but do not expect untagged atoms to become concept pages automatically.
+
+The atom drain also stops after a batch that extracts and skips zero atoms.
+Pages that produce no atoms are not tombstoned, so they can remain in the
+reported backlog and be rediscovered on a later run. Treat `remaining` and
+`stopped` as the result. Do not infer that a zero-yield run drained the backlog.
 
 One calibration domain: `concept_themes` / cluster_summary / [concept]
 — tier histogram + page count, not Brier (concepts don't have binary
@@ -111,10 +127,10 @@ investment in Anthropic" can land in BOTH `deal_success` AND
 
 ## What this enables for the user
 
-- **Atoms + concepts ship in the binary.** Your OpenClaw's parallel
-  atom-pipeline-coordinator + atom-backfill-coordinator + concept-
-  synthesis crons can retire (T12 follow-up). One `gbrain dream` cron
-  covers everything.
+- **Atom extraction and concept synthesis ship in the binary.** One
+  `gbrain dream` schedule can run both phases. Newly extracted atoms do not
+  receive concept labels on current `master`, so imported or manual labels are
+  still required before concept synthesis can group them.
 - **gstack learnings reach gbrain.** Engineer-pack-active brains
   surface every gstack-logged learning as a queryable page within
   seconds of being written.

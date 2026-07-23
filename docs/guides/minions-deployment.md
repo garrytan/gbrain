@@ -218,6 +218,11 @@ just-submitted job reaches a terminal state (`completed` / `failed` /
 `dead` / `cancelled`). 2-3 s startup overhead per job; negligible vs job
 duration for scheduled work.
 
+Idempotency keys prevent duplicate active or completed work. A `dead` or
+`cancelled` job no longer permanently reserves its key: GBrain keeps the old
+row for audit history, clears its key, and inserts a fresh job when the same
+operation is submitted again.
+
 ```bash
 GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
   --queue nightly-enrich \

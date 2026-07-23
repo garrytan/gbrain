@@ -1,9 +1,10 @@
 # GBrain — Full Context
 
-> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
+> GBrain is a knowledge system for people, teams, and their agents. It uses PGLite by default or Postgres with pgvector for shared and larger deployments. The documentation covers installation, search, synthesis, maintenance, identity, access control, and agent integration.
 
 This file concatenates core GBrain documentation for single-fetch ingestion.
 For the link-only index, see `llms.txt`. Source of truth: https://github.com/garrytan/gbrain.
+Generated from `scripts/llms-config.ts`; forks should set `LLMS_REPO_BASE` and rerun `bun run build:llms` before publishing.
 
 # Core entry points
 
@@ -112,7 +113,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   them.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
-  single-fetch ingestion.
+  single-fetch ingestion. They are generated from `scripts/llms-config.ts`; do
+  not hand-edit generated map output without updating the generator source.
 
 ## Before shipping
 
@@ -138,8 +140,9 @@ use generic placeholders (`alice-example`, `acme-example`, `fund-a`).
 
 ## Forks
 
-If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL base before
-publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
+If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL
+base before publishing:
+`LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
 
 ---
 
@@ -174,8 +177,10 @@ understand both, or queries misroute silently.
 
 - **Brain** — WHICH DATABASE. Your personal brain is `host`. You can mount
   additional brains (team-published, each with their own DB and access policy)
-  via `gbrain mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
-  `.gbrain-mount` dotfile.
+  via `gbrain mounts add` (v0.19+). Resolver inputs include an explicit brain
+  id from command paths that wire the brain resolver, `GBRAIN_BRAIN_ID`, and
+  `.gbrain-mount` dotfiles. Do not assume every generic CLI verb accepts
+  `--brain`; check the command help.
 - **Source** — WHICH REPO INSIDE THE DATABASE. A brain can hold many sources
   (wiki, gstack, openclaw, essays). Slugs scope per source. Routing:
   `--source`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile.
@@ -268,6 +273,20 @@ discipline used to live inline here. They moved to the docs above so this file
 stays small enough to load every session. Nothing was lost — the pre-move content
 is in git, and the docs carry every load-bearing invariant (compressed to
 current-state).
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for this repository. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default five-label triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain docs layout. See `docs/agents/domain.md`.
 
 ## Maintaining CLAUDE.md and the reference docs
 
@@ -408,21 +427,16 @@ audit trail lives in the source repo's git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
-organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
-
-**Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
-briefing, migrate, setup, publish.
-
-**Brain skills (ported from an upstream agent fork):** signal-detector, brain-ops, idea-ingest, media-ingest,
-meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
-
-**Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
-v0.20.4, `minion-orchestrator` is the single unified skill for both lanes of background
-work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
-the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
-routing is narrowed to what the skill actually covers.
+Read `skills/RESOLVER.md`, then read the specific skill files in `skills/`
+before doing brain operations. The resolver is the source of truth for the
+current bundled skill surface (`AGENTS.md` is also accepted as of v0.19).
+Skill families include setup, ingestion, query, enrichment, maintenance,
+publishing, testing, scheduling, identity, media, meeting, research, reporting,
+and minion orchestration. As of v0.20.4, `minion-orchestrator` is the unified
+skill for both lanes of background work (shell jobs via `gbrain jobs submit
+shell`, LLM subagents via `gbrain agent run`); the prior `gbrain-jobs` skill was
+merged in, Preconditions are shared, and trigger routing is narrowed to what the
+skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
@@ -984,14 +998,1165 @@ Key routing rules:
 
 ---
 
+## docs/INSTALL.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md
+
+# Install and operate GBrain
+
+This guide takes a person from no installation to a working GBrain. You do not
+need to understand the internal architecture before you begin. Choose the row
+that describes your situation, follow that route from start to finish, and use
+the linked detail only when your route asks for it.
+
+If a coding agent is doing the installation for you, give it
+[`../INSTALL_FOR_AGENTS.md`](../INSTALL_FOR_AGENTS.md). That guide follows the
+same routes but adds stop-and-ask gates so an agent cannot silently choose your
+cost, access, or deployment settings.
+
+Current version: [`../VERSION`](../VERSION). Release history:
+[`../CHANGELOG.md`](../CHANGELOG.md).
+
+## Before you begin
+
+For the first local route you need:
+
+- a terminal on macOS or Linux; on Windows, use WSL 2 for the command journey
+  on this page;
+- permission to install Bun and the `gbrain` CLI for your user;
+- a writable folder for Markdown notes;
+- Git only if you use the source-install fallback or want to version the notes.
+
+Before initialization, decide whether you want semantic retrieval and
+synthesis now or only a local keyword-search test:
+
+- **Semantic retrieval:** prepare an embedding provider before `gbrain init`.
+  This enables meaning-based search and provider-dependent reranking.
+- **Synthesis:** `gbrain think` also needs a usable chat provider. One provider
+  can supply both capabilities, but embedding-only providers such as Voyage or
+  ZeroEntropy do not enable synthesis by themselves.
+- **Keyword-only first test:** initialize with `--no-embedding`. You can import
+  and search exact words without a provider, then add one later by rebuilding
+  the PGLite index with `gbrain reinit-pglite`.
+
+Keep provider keys out of Markdown, Git, screenshots, and shared chat.
+
+## Choose your install route
+
+Start with the simplest route that meets your needs. You can move to a shared or
+remote setup later without learning every advanced option now.
+
+**If this is your first installation and the brain is only for you on this
+computer, choose Route A.** Choose Route C only when a remote host already
+exists. Choose Routes D or E only when sharing, remote access, or isolation is a
+current requirement.
+
+| Your situation | Start here | What you will have at the end |
+|---|---|---|
+| This is my first GBrain and it is only for me on this computer | [A. Local personal brain](#route-a-local-personal-brain-end-to-end) | A local database, searchable Markdown, and an optional connection to your coding agent |
+| I own the brain, but its knowledge lives in several folders or repos | [B. Personal multi-source brain](#route-b-personal-multi-source-brain-end-to-end) | One database with separately routed sources |
+| The brain already runs on another machine | [C. Thin client](#route-c-thin-client-end-to-end) | This computer can use the remote brain without creating a local database |
+| A family, household, team, or company will share the brain, and an operator will manage it | [D. Shared group or production brain](#route-d-shared-group-or-production-brain-end-to-end) | A shared database with an explicit access, backup, and client model |
+| My security or implementation needs require extra isolation | [E. Advanced topology modifiers](#route-e-advanced-topology-modifiers) | One of the routes above, modified with split, mounted, or isolated components |
+
+Three terms are enough to get started:
+
+- A **brain** is the database GBrain searches.
+- A **brain repo** is the Git-backed folder of Markdown that you own and edit.
+- A **source** is one named repo or content area inside a brain. A brain can
+  contain several sources.
+
+Other terms appear only when a route needs them. Bun installs and runs the
+GBrain CLI. PGLite is the embedded local database. An embedding is a numeric
+representation that lets GBrain find related meaning, not only matching words.
+MCP is the connection an AI client uses to call GBrain. OAuth gives each remote
+client an identity and permissions.
+
+The operating model answers who uses the brain. The deployment topology answers
+where its parts run. You only need these terms for Routes D and E. Their full
+decision trees are in
+[`architecture/topologies.md`](architecture/topologies.md).
+
+## Route A. Local personal brain, end to end
+
+Use this if the brain belongs to you and will run on this computer. This is the
+right first route for most people.
+
+1. Install the CLI with [Install GBrain](#install-gbrain).
+2. Choose either a complete provider-backed setup or a keyword-only first test,
+   then initialize the local database with [Local install](#local-install).
+3. During initialization, review the recommended search mode. For a first
+   install, you can accept the recommendation after reading the three options.
+   You can change it later.
+4. Create one sample note, import it, and search for a known phrase.
+5. If you started without providers, add embeddings for meaning-based search
+   and a chat-capable provider for synthesis or maintenance phases that call an
+   LLM.
+6. Replace the sample with your real
+   [brain repo and sources](#brain-repo-and-sources).
+7. Connect an agent with [Connect an agent](#connect-an-agent) if you want one
+   to use the brain.
+8. Finish with the [route-aware local verification](#verify). Provider probes
+   apply only after you configure the corresponding providers.
+
+The following commands use the keyword-only path so the first test does not
+require an account or API key:
+
+On Windows, install WSL 2 with a current Linux distribution, open its terminal,
+and run the same commands there. Paths such as `~/gbrain-notes`, `export`, and
+shell redirection below are Linux shell syntax, not native PowerShell syntax.
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+export PATH="$HOME/.bun/bin:$PATH"
+bun install -g github:garrytan/gbrain
+gbrain --version
+gbrain init --pglite --no-embedding
+gbrain doctor --json
+gbrain search modes
+sample_dir="$(mktemp -d "$HOME/gbrain-install-sample.XXXXXX")"
+printf '# First note\n\nThe cedar lighthouse is the verification beacon for this guide.\n' \
+  > "$sample_dir/first-note.md"
+gbrain import "$sample_dir" --no-embed
+gbrain search "cedar lighthouse"
+```
+
+`gbrain init` validates option names before it starts migration work. If it
+reports `Unknown option`, correct the command and run it again; the rejected
+invocation did not begin migrations.
+
+Check each milestone:
+
+- `gbrain --version` prints a version number.
+- `doctor` reports an initialized PGLite brain with a non-zero schema version.
+  It also reports that embeddings are not configured, which is expected on
+  this route.
+- `gbrain search modes` reports the mode selected during initialization. With
+  no OpenAI key, the current installer normally recommends `conservative`.
+- The final search returns `first-note` or the phrase `cedar lighthouse`.
+
+If the final search returns the sample, the basic local path works. You can now
+replace `~/gbrain-notes` with your own Markdown folder and repeat the import.
+
+To start with semantic retrieval and synthesis instead, create an account with
+a provider recipe that supports both embedding and chat, or configure one
+provider for each capability. Provider use may incur charges. The following
+example uses OpenAI; replace `replace_me` with your real key
+before running it:
+
+```bash
+export OPENAI_API_KEY=replace_me
+gbrain init --pglite \
+  --embedding-model openai:text-embedding-3-large \
+  --embedding-dimensions 1536
+```
+
+If you already completed the keyword-only path, use `reinit-pglite` instead of
+changing the embedding model in config:
+
+```bash
+export OPENAI_API_KEY=replace_me
+gbrain reinit-pglite \
+  --embedding-model openai:text-embedding-3-large \
+  --embedding-dimensions 1536
+```
+
+The reinitialization keeps the previous database at `<path>.bak` and syncs the
+configured brain repo. If you have not configured a repo, import the sample
+folder again. Then create embeddings and try semantic retrieval:
+
+```bash
+gbrain embed --stale
+gbrain search "where is the verification beacon described?"
+```
+
+`gbrain embed --stale` may take time on a large brain. The search should find
+the sample note even though the query does not repeat its exact phrase. To ask
+for a written answer based on brain evidence, first confirm that a chat model
+is configured, then run `gbrain think "<question>" --json` and verify that
+`synthesisOk` is `true`. Exit status alone is not proof of synthesis: without a
+usable chat provider, `think` can return gather-only output.
+If embedding reports a provider or dimension problem, stop and use
+[Configure providers and keys](#configure-providers-and-keys).
+
+If you also want a coding agent on this computer to use the brain, add the
+relevant MCP connection:
+
+```bash
+claude mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve
+```
+
+## Route B. Personal multi-source brain, end to end
+
+Use this when one person owns the brain, but its knowledge lives in several
+repos, folders, or areas of life and work. A source lets you search each area
+alone without creating a separate database.
+
+1. Complete [Route A](#route-a-local-personal-brain-end-to-end) through local
+   database initialization.
+2. Keep one database unless the data owner, lifecycle, or access policy changes.
+3. Add each repo/domain as a source in
+   [Brain repo and sources](#brain-repo-and-sources).
+4. Add `.gbrain-source` in source checkouts that should default to a specific
+   source.
+5. If this brain existed before `v0.42.62.0`, run `gbrain extract all` once
+   after upgrading so existing pages receive current source identity.
+6. Sync and verify each source independently with
+   [Import, sync, and operate](#import-sync-and-operate) and [Verify](#verify).
+
+Minimum source-routing shape, using two new collision-safe sample repos:
+
+```bash
+notes_dir="$(mktemp -d "$HOME/gbrain-notes.XXXXXX")"
+work_dir="$(mktemp -d "$HOME/gbrain-work.XXXXXX")"
+printf '# Notes source\n\nThe cedar lighthouse belongs to the notes source.\n' \
+  > "$notes_dir/first-note.md"
+printf '# Work source\n\nThe amber compass belongs to the work source.\n' \
+  > "$work_dir/work-note.md"
+
+git -C "$notes_dir" init
+git -C "$notes_dir" add first-note.md
+git -C "$notes_dir" -c user.name="GBrain User" \
+  -c user.email="gbrain-user@example.invalid" commit -m "docs: add first note"
+
+git -C "$work_dir" init
+git -C "$work_dir" add work-note.md
+git -C "$work_dir" -c user.name="GBrain User" \
+  -c user.email="gbrain-user@example.invalid" commit -m "docs: add work note"
+
+gbrain sources add notes --path "$notes_dir"
+gbrain sources add work --path "$work_dir"
+gbrain sync --repo "$notes_dir" --source notes
+gbrain sync --repo "$work_dir" --source work
+gbrain search "cedar lighthouse" --source notes
+gbrain search "amber compass" --source work
+```
+
+Both directories must be Git repos with committed tracked files before
+registration. Replace the sample paths with existing committed repos when you
+already have them. A source-specific result proves that GBrain is routing the
+query to the intended content area.
+
+## Route C. Thin client, end to end
+
+Use this when someone already operates the brain on another machine and this
+computer only needs to use it. A thin client stores connection settings, not a
+second copy of the database.
+
+1. Confirm the host operator has deployed HTTP MCP and registered an OAuth
+   client. Use [mcp/DEPLOY.md](mcp/DEPLOY.md) for host-side mechanics.
+2. Install the CLI with [Install GBrain](#install-gbrain) if `gbrain` is not
+   already available on this machine.
+3. Initialize the local config as MCP-only with
+   [Thin-client branch](#thin-client-branch).
+4. Run `gbrain doctor`, then call `get_brain_identity` through the connected
+   MCP client as the read-only smoke test. Run `gbrain remote doctor` only
+   when the client has the required admin scope.
+5. Let local agents call the thin-client `gbrain` CLI directly, or point their
+   MCP config at the host's `/mcp` URL using [`mcp/DEPLOY.md`](mcp/DEPLOY.md)
+   and the client-specific pages under [`mcp/`](mcp/). Do not configure local
+   stdio MCP with `gbrain serve` on the thin client.
+
+Client-side command shape:
+
+```bash
+# Load GBRAIN_REMOTE_CLIENT_SECRET from your secret manager or protected
+# process environment before running this block.
+: "${GBRAIN_REMOTE_CLIENT_SECRET:?set GBRAIN_REMOTE_CLIENT_SECRET first}"
+gbrain init --mcp-only \
+  --issuer-url https://brain-host.example.com \
+  --mcp-url https://brain-host.example.com/mcp \
+  --oauth-client-id your_oauth_client_id_here
+gbrain doctor
+```
+
+From the connected MCP client, call `get_brain_identity`. If the identity call
+fails, do not initialize a local brain as a workaround. Check the host URL,
+client credentials, and server-side access with the host operator. Do not use
+`gbrain remote ping` as a connectivity probe: it submits an
+`autopilot-cycle` that can sync, extract, embed, mutate the remote brain, and
+incur provider costs.
+
+## Route D. Shared group or production brain, end to end
+
+Use this for a family brain, household brain, team brain, company brain, or any
+installation exposed to more than one client.
+
+This is an operator-led route. If nobody is responsible for the database,
+access policy, backups, and recovery, complete Route A first and do not expose
+the brain to a network yet.
+
+Choose one of two access patterns:
+
+- **One trusted agent or service:** the group shares the knowledge, but one
+  controlled client accesses GBrain on everyone’s behalf.
+- **Several people or agents:** each client receives its own OAuth identity,
+  scopes, source boundaries, and optional tool or budget constraints.
+
+The second pattern takes more setup, but it lets you revoke or narrow one client
+without disrupting everyone else.
+
+1. Choose the operating model and deployment topology in
+   [Production and shared-brain branch](#production-and-shared-brain-branch).
+2. Choose Postgres or Supabase for shared, multi-machine, or remote HTTP use.
+3. Define the brain repo and source layout before importing data. See
+   [Brain repo and sources](#brain-repo-and-sources) and
+   [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md).
+4. Configure provider keys and base URLs with
+   [Configure providers and keys](#configure-providers-and-keys).
+5. Expose MCP deliberately and scope clients before handoff. See
+   [Production and shared-brain branch](#production-and-shared-brain-branch)
+   and [`mcp/DEPLOY.md`](mcp/DEPLOY.md).
+6. Back up the Markdown repos, database, config, OAuth inventory, and routing
+   files, then prove restore.
+7. Verify production health and remote clients with the checklist in
+   [Production and shared-brain branch](#production-and-shared-brain-branch).
+
+Do not hand a shared brain to people or agents until you have proved the chosen
+sync path, client access, backup and restore path, and remote MCP connection.
+
+## Route E. Advanced topology modifiers
+
+These are modifiers on top of Routes A to D. They do not answer who owns or uses
+the brain:
+
+- Split-engine/worktree: separate local homes or MCP aliases for per-worktree
+  code brains plus a shared artifact brain. Start with
+  [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree).
+- Mounted/cross-team brains: add another governed brain beside the host brain.
+  Start with
+  [`architecture/topologies.md#topology-mounted-cross-team-brains`](architecture/topologies.md#topology-mounted-cross-team-brains).
+- Security-driven isolation: choose thin client, split homes, source scoping, or
+  mounted brains because of agent isolation, cloud-client exposure, or data
+  boundary requirements. Start with
+  [`architecture/topologies.md#topology-modifier-security-driven-isolation`](architecture/topologies.md#topology-modifier-security-driven-isolation).
+
+## Install GBrain
+
+GBrain is a Bun and TypeScript CLI.
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+export PATH="$HOME/.bun/bin:$PATH"
+bun install -g github:garrytan/gbrain
+gbrain --version
+```
+
+The final command should print a version number. If the shell cannot find
+`gbrain`, restart the terminal or add `$HOME/.bun/bin` to `PATH`.
+
+If `bun install -g` aborts, or `gbrain doctor` later reports
+`schema_version: 0`, the global install may have skipped the postinstall
+migration hook. Run:
+
+```bash
+gbrain apply-migrations --yes
+```
+
+If that still fails, use the deterministic source install:
+
+```bash
+git clone https://github.com/garrytan/gbrain.git ~/gbrain
+cd ~/gbrain
+bun install
+bun link
+```
+
+## Configure providers and keys
+
+GBrain can run keyword search without embeddings, but semantic search,
+reranking, `gbrain think`, and maintenance flows need model providers.
+
+Common env vars:
+
+```bash
+export ZEROENTROPY_API_KEY=replace_me
+export OPENAI_API_KEY=replace_me
+export VOYAGE_API_KEY=replace_me
+export ANTHROPIC_API_KEY=replace_me
+```
+
+Replace a placeholder only for a provider account you actually use. A key is a
+secret and may authorize paid requests. ZeroEntropy, OpenAI, and Voyage can
+supply embeddings. Anthropic is used for language-model work such as synthesis;
+it is not an embedding-provider choice.
+
+Provider setup is source-backed in
+[`integrations/embedding-providers.md`](integrations/embedding-providers.md).
+Use it for the full provider matrix, dimensions, local providers, and
+enterprise options such as Azure OpenAI.
+
+For a first provider-backed setup, configure one embedding provider, follow its
+row in the provider guide, and use the model and dimension values shown there.
+If exactly one configured provider is available, interactive `gbrain init` can
+select it. You can also choose explicitly. This OpenAI example requires an
+OpenAI account and may create billable usage:
+
+```bash
+gbrain init --pglite \
+  --embedding-model openai:text-embedding-3-large \
+  --embedding-dimensions 1536
+```
+
+Providers whose models are supplied by the user, including LiteLLM and
+`llama-server`, require both flags. GBrain cannot infer their vector size.
+
+Embedding dimensions are part of the database schema. Do not use
+`gbrain config set embedding_model` or
+`gbrain config set embedding_dimensions` on an existing brain. Those commands
+are refused because changing only the setting would leave the schema at the old
+size.
+
+To change an existing PGLite brain, use:
+
+```bash
+gbrain reinit-pglite \
+  --embedding-model your_provider:your_model \
+  --embedding-dimensions 1234
+```
+
+The command keeps the previous PGLite database at `<path>.bak`, recreates the
+schema, and syncs the configured brain repo unless you pass `--no-sync`. For
+Postgres, follow [`embedding-migrations.md`](embedding-migrations.md).
+
+Base URL gotchas:
+
+- Prefer provider-specific env vars where they exist:
+  `OPENROUTER_BASE_URL`, `LITELLM_BASE_URL`, `OLLAMA_BASE_URL`,
+  `LLAMA_SERVER_BASE_URL`, and `LLAMA_SERVER_RERANKER_BASE_URL`.
+- Persistent GBrain overrides use config keys under
+  `provider_base_urls.<provider-id>`, for example
+  `provider_base_urls.dashscope` or
+  `provider_base_urls.llama-server-reranker`.
+- Do not assume a generic `OPENAI_BASE_URL` retargets every provider. Use the
+  provider recipe and the docs above.
+- Azure OpenAI needs `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+  `AZURE_OPENAI_DEPLOYMENT`.
+
+## Local install
+
+Use this for a solo machine, a local coding-agent memory, or a first install.
+
+For a provider-backed setup, export the provider key first. Interactive
+`gbrain init` chooses among providers whose required environment variables are
+available. You can also pass `--embedding-model` and
+`--embedding-dimensions` explicitly, as shown above.
+
+For a deterministic keyword-only setup:
+
+```bash
+gbrain init --pglite --no-embedding
+gbrain doctor --json
+```
+
+`gbrain init` defaults to PGLite. It suggests Postgres or Supabase for large
+brains, multi-machine use, or shared deployments.
+
+When initialization finishes, `doctor` should report the PGLite engine and a
+non-zero schema version. On the keyword-only path, a missing embedding provider
+is expected. Keep PGLite to one active GBrain process at a time. If PGLite
+reports lock corruption, use `gbrain reinit-pglite`; do not delete lock files
+by hand.
+
+To initialize against Supabase or Postgres instead:
+
+```bash
+gbrain init --supabase
+```
+
+Use a namespaced database URL when you deliberately point GBrain at Postgres:
+
+```bash
+export GBRAIN_DATABASE_URL='postgresql://user:password@host:5432/database'
+```
+
+GBrain ignores a `DATABASE_URL` that Bun auto-loaded from the current
+checkout's `.env` if it looks like it belongs to that project. This protects
+you from accidentally migrating an unrelated app database. Set
+`GBRAIN_DATABASE_URL` for deliberate overrides.
+
+Non-interactive Postgres initialization requires an explicit `--url` or
+`GBRAIN_DATABASE_URL`. Schema commands in current releases also respect a custom
+PGLite `database_path`.
+
+## Choose search mode
+
+Search mode controls how much context GBrain returns and which retrieval
+features it uses. It affects answer quality, latency, provider calls, and the
+number of downstream tokens. Choose it deliberately.
+Agents must follow the stop-and-ask protocol in
+[`../INSTALL_FOR_AGENTS.md#step-35-confirm-search-mode-with-the-user-do-not-skip`](../INSTALL_FOR_AGENTS.md#step-35-confirm-search-mode-with-the-user-do-not-skip).
+For day-to-day command selection after install, use
+[`guides/mode-selection.md`](guides/mode-selection.md). It separates raw
+retrieval, synthesis, maintenance, and push-based context.
+
+| Mode | Choose it when | Current default shape |
+|---|---|---|
+| `conservative` | You want the smallest and cheapest context for frequent lightweight calls | 4K token budget, 10 results, no expansion or reranker |
+| `balanced` | You want a moderate general-purpose starting point | 12K token budget, 25 results, reranking, graph signals, and title context |
+| `tokenmax` | Missing relevant material costs more than extra latency or spend | No token cap, 50 results, expansion, reranking, graph signals, and per-chunk context |
+
+For a first human install, read the table and accept the installer's
+recommendation unless you already have a cost or recall requirement. The
+recommendation is a starting point, not a permanent choice.
+
+`gbrain init` recommends a mode from the providers and model tiers it can
+detect. In current releases it normally recommends `tokenmax`, but recommends
+`conservative` for a Haiku-class subagent or when no OpenAI key is configured.
+Interactive installs let you choose; non-interactive installs apply the
+recommendation and print an `[AGENT]` instruction to confirm it with the
+operator. This recommendation is distinct from the internal `balanced`
+fallback used only when `search.mode` is unset.
+
+`gbrain init` also prints the current mode and downstream-model cost matrix. Treat
+that live matrix as the source for cost estimates because model prices and mode
+features change.
+
+Inspect and change the mode:
+
+```bash
+gbrain search modes
+gbrain config set search.mode balanced
+```
+
+Run `gbrain search modes` again after changing the setting. The active mode and
+resolved values should reflect your choice.
+
+## Brain repo and sources
+
+Your Markdown files are separate from the GBrain tool repository. Keep them in
+a normal Git repo that you can back up and review.
+
+The central layout guide is
+[`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md). Use
+that for editable files, generated/managed surfaces, schema-pack expectations,
+and backup implications.
+
+Recommended starter shape for a personal brain:
+
+```text
+brain/
+  README.md
+  RESOLVER.md
+  people/
+  companies/
+  projects/
+  notes/
+  sources/
+  inbox/
+  archive/
+```
+
+Use sources when one database should hold several repos or domains:
+
+```bash
+gbrain sources add notes --path ~/brain-notes
+gbrain sources add work --path ~/work-brain
+```
+
+Source routing keeps slugs scoped per repo. Inside a source checkout, a
+`.gbrain-source` file can pin commands to that source. Use a separate brain
+when the data owner, lifecycle, or access policy changes.
+
+For shared/team/company layouts, read:
+
+- [`architecture/topologies.md`](architecture/topologies.md)
+- [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md)
+- [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
+- [`tutorials/company-brain.md`](tutorials/company-brain.md)
+
+Obsidian-style imports are supported, but "brain repo" and "source" are the
+GBrain terms used in these docs.
+
+## Import, sync, and operate
+
+For a folder of existing Markdown:
+
+```bash
+gbrain import ~/brain --no-embed
+gbrain embed --stale
+gbrain search "known concept from these documents"
+gbrain think "What are the key themes across these documents?"
+```
+
+For an ongoing brain repo, keep sync and embedding chained:
+
+```bash
+gbrain sync --repo ~/brain && gbrain embed --stale
+```
+
+For near-real-time local operation:
+
+```bash
+gbrain sync --watch --repo ~/brain
+```
+
+`--watch` polls. It is not a filesystem watcher and exits after repeated
+failures, so production use should pair it with a scheduler or process
+manager. The full sync guide is [`guides/live-sync.md`](guides/live-sync.md).
+
+After upgrading a multi-source brain from a release before `v0.42.62.0`, run
+this once:
+
+```bash
+gbrain extract all
+```
+
+That rebuilds derived facts with the current source identity. Then search each
+source separately and check `gbrain sources status`.
+
+Maintenance commands:
+
+```bash
+gbrain dream
+gbrain autopilot --install
+gbrain doctor --remediation-plan --json
+```
+
+`gbrain dream` and autopilot run maintenance, extraction, synthesis, and
+consolidation flows. `doctor --remediation-plan` previews fix work before
+you let GBrain apply it.
+
+Before installing the autopilot daemon, make Bun available to non-interactive
+shells. On macOS with zsh, put this in `~/.zshenv`:
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+```
+
+The generated daemon wrapper sources `~/.zshenv`, but it does not add Bun to
+`PATH`. Without this setting, the scheduled process can fail with
+`env: bun: No such file or directory`.
+
+On current `master`, the human remediation-plan output can print both "Target
+unreachable" and "Brain is at target" when no autonomous step can raise the
+score. Use the JSON fields as the authority. Check `target_unreachable`,
+`max_reachable_score`, and `blocked` before deciding that remediation is
+complete.
+
+To choose between `gbrain search`, `gbrain think`, maintenance cycles, and
+push-context channels such as `volunteer_context` or `gbrain watch`, read
+[`guides/mode-selection.md`](guides/mode-selection.md).
+
+## Connect an agent
+
+For a local coding agent on the same machine:
+
+```bash
+claude mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve
+```
+
+This uses stdio MCP. It needs no token, no tunnel, and no HTTP server.
+Do not use this path on a thin-client install; thin-client homes have no local
+database and refuse `serve`.
+
+For an agent that connects to a remote brain with a bearer token:
+
+```bash
+gbrain connect https://brain-host.example.com/mcp \
+  --token your_legacy_bearer_token_here --install
+gbrain connect https://brain-host.example.com/mcp \
+  --token your_legacy_bearer_token_here --agent codex --install
+```
+
+For OAuth remote clients, use [`mcp/DEPLOY.md`](mcp/DEPLOY.md) and the
+client-specific pages under [`mcp/`](mcp/) instead of the local stdio command.
+
+Full walkthrough:
+[`tutorials/connect-coding-agent.md`](tutorials/connect-coding-agent.md).
+HTTP MCP deployment and OAuth setup live in
+[`mcp/DEPLOY.md`](mcp/DEPLOY.md).
+
+## Thin-client branch
+
+Use thin-client mode when this machine should consume a hosted brain without
+creating a local database.
+
+```bash
+# Load GBRAIN_REMOTE_CLIENT_SECRET from your secret manager or protected
+# process environment before running this block.
+: "${GBRAIN_REMOTE_CLIENT_SECRET:?set GBRAIN_REMOTE_CLIENT_SECRET first}"
+gbrain init --mcp-only \
+  --issuer-url https://brain-host.example.com \
+  --mcp-url https://brain-host.example.com/mcp \
+  --oauth-client-id your_oauth_client_id_here
+```
+
+Thin-client installs refuse DB-bound commands such as local sync, embed,
+migrate, and serve. `gbrain doctor` runs remote-MCP checks instead. See
+[`architecture/topologies.md`](architecture/topologies.md).
+
+Agents running on the thin-client machine can either call `gbrain search`,
+`gbrain query`, and other MCP-eligible CLI commands directly, or connect their
+own MCP client to the remote host's `/mcp` endpoint. They should not launch a
+local `gbrain serve` process from the thin-client home.
+
+## Production and shared-brain branch
+
+Use this branch for a family brain, household brain, team brain, company brain,
+or any installation exposed to more than one client. Complete all nine steps
+before giving clients access.
+
+This section is for the person operating that shared service. It assumes you
+can provision Postgres or Supabase, control the host and network, manage OAuth
+clients, and test backups. Other users of the brain do not need to perform
+these steps.
+
+### 1. Choose the production shape
+
+- Pick the operating model first: solo, personal multi-source, shared group,
+  single-agent shared mode, or auth-scoped shared mode. See
+  [`architecture/topologies.md#operating-model-decision-tree`](architecture/topologies.md#operating-model-decision-tree).
+- Pick the deployment topology second: local/default, remote/thin client,
+  split-engine/worktree, mounted/cross-team brains, or security-driven
+  isolation. See
+  [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree).
+- Use Postgres or Supabase for shared, multi-machine, or remote HTTP operation.
+  Treat PGLite as a single-machine database with one active GBrain process.
+- Decide the Brain Repo Layout for each source before importing data. See
+  [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md).
+- Decide whether the shared unit is one source with folder conventions, many
+  sources with OAuth scoping, or multiple mounted brains. See
+  [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
+  and [`tutorials/company-brain.md`](tutorials/company-brain.md).
+
+### 2. Choose production modes
+
+Before wiring clients, choose the mode for each job:
+
+- Use `gbrain search` for read-only agent context by default.
+- Use `gbrain think` only where synthesized prose, citations, and gap analysis
+  are required.
+- Schedule `gbrain dream` or autopilot only after the operator approves
+  cadence, provider keys, and cost boundaries.
+- Use retrieval reflex or `volunteer_context` for agent push context. Use
+  `gbrain watch` for transcript streams, and prefer Postgres when it must run
+  concurrently with MCP serving.
+- Choose `conservative`, `balanced`, or `tokenmax` based on downstream model
+  tier, query volume, and recall tolerance.
+- Choose spend posture separately from search mode. `spend.posture=tokenmax`
+  makes embedding cost gates informational; `gated` remains the default. See
+  [`operations/spend-controls.md`](operations/spend-controls.md).
+- For large embed backfills or busy transaction-mode poolers, opt in to pacing
+  per run with `gbrain embed --stale --pace` or for the current process with
+  `GBRAIN_PACE_MODE=balanced`. Do not persist `pace.mode` with `--force`; the
+  current config allowlist does not accept it as a supported persistent key.
+- Use `gbrain advisor` after install or upgrade for a read-only ranked list of
+  actions with the largest expected effect. Expose it to thin clients only when
+  `mcp.publish_advisor` is deliberately enabled.
+
+The central decision guide is
+[`guides/mode-selection.md`](guides/mode-selection.md).
+
+### 3. Expose MCP deliberately
+
+- Use local stdio MCP for agents on the same machine:
+  `claude mcp add gbrain -- gbrain serve` or
+  `codex mcp add gbrain -- gbrain serve`.
+- Use `gbrain serve --http` only when a remote client, cloud connector, shared
+  user, or thin client needs network access.
+- Set `--public-url` to the issuer URL clients actually use. OAuth discovery
+  must match the external URL.
+- If the server must accept non-loopback connections, bind explicitly with
+  `--bind`. Do not assume a tunnel can reach a loopback-only server.
+- Keep Dynamic Client Registration off unless clients need to register
+  themselves.
+- `--enable-dcr` permits the browser and consent based
+  `authorization_code` flow. `--enable-dcr-insecure` also permits
+  `client_credentials`, which bypasses user consent. Use the insecure option
+  only inside a boundary where that tradeoff is explicitly accepted.
+- For browser or cloud MCP clients, configure the CORS allowlist and reverse
+  proxy trust deliberately. See [`SECURITY.md`](../SECURITY.md).
+- Agent-specific setup lives in [`mcp/DEPLOY.md`](mcp/DEPLOY.md),
+  [`mcp/CODEX.md`](mcp/CODEX.md), [`mcp/CLAUDE_CODE.md`](mcp/CLAUDE_CODE.md),
+  [`mcp/CHATGPT.md`](mcp/CHATGPT.md), and
+  [`../INSTALL_FOR_AGENTS.md#mcp-auth-and-remote-operation`](../INSTALL_FOR_AGENTS.md#mcp-auth-and-remote-operation).
+
+### 4. Scope clients before handing them to agents
+
+- Prefer OAuth clients with explicit scopes over legacy bearer tokens.
+- Use `read` for search, query, get, list, and graph traversal.
+- Add `write` only for clients that should write pages, links, or timeline
+  entries.
+- Add `admin` only for clients that must manage clients, run remote doctor, or
+  submit admin-scoped work.
+- For team or company brains, use source-scoped clients when one agent should
+  write to one source but read a curated federated set.
+- Bind agent clients more narrowly when needed:
+
+  ```bash
+  gbrain auth register-client team-agent \
+    --scopes "read write agent" \
+    --source team \
+    --federated-read team,shared \
+    --bound-tools search,get_page,put_page \
+    --bound-source team \
+    --bound-slug-prefixes team/ \
+    --bound-max-concurrent 1 \
+    --budget-usd-per-day 5
+  ```
+
+  These `bound-*` flags constrain `submit_agent`; they do not replace ordinary
+  `read` and `write` scopes. Add `--redirect-uri` for an authorization-code
+  client. GBrain then includes `authorization_code,refresh_token` as the grant
+  types.
+- Remote agents cannot bypass `localOnly` or protected-job refusals. If a tool
+  is refused over MCP, switch to a trusted local host operation only when the
+  operator approves that path.
+- Smoke-test remote clients before handoff. Run `gbrain connect` with the
+  approved connection arguments and `--install`
+  performs a token probe for Claude Code and Codex; connector-style clients
+  should use the setup checks in `docs/mcp/`.
+
+### 5. Configure providers and secrets
+
+- Keep provider keys in environment variables or the protected GBrain config.
+  Do not paste long-lived tokens into shared agent config, issue comments,
+  documentation, or transcripts.
+- Prefer provider-specific base URL env vars:
+  `OPENROUTER_BASE_URL`, `LITELLM_BASE_URL`, `OLLAMA_BASE_URL`,
+  `LLAMA_SERVER_BASE_URL`, and `LLAMA_SERVER_RERANKER_BASE_URL`.
+- Persistent overrides use `provider_base_urls.<provider-id>`, for example
+  `provider_base_urls.dashscope`.
+- Do not assume `OPENAI_BASE_URL` retargets every provider.
+- Azure OpenAI needs `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+  `AZURE_OPENAI_DEPLOYMENT`.
+- Smoke-test provider configuration with `gbrain providers test`, `gbrain
+  models`, or `gbrain models doctor` before scheduling maintenance.
+- Use [`integrations/embedding-providers.md`](integrations/embedding-providers.md)
+  for dimensions, provider constraints, and migration paths.
+
+### 6. Back up and prove restore
+
+Back up every layer that would be painful to rebuild:
+
+1. Markdown brain repos for every source.
+2. The database: PGLite file, Postgres dump, or Supabase backup.
+3. `~/.gbrain/config.json`, OAuth client records, bearer-token inventory, and
+   provider configuration.
+4. Schema packs, `gbrain.yml`, `.gbrain-source`, `.gbrain-mount`, and source
+   routing dotfiles.
+
+A source Git remote is not a complete backup, but repo-backed sources can now
+be hardened for source durability. For sources added from a GitHub URL with a
+PAT, or existing sources audited with `gbrain sources harden <source-id>`,
+GBrain installs local pull/push safety rails and a committed
+`scripts/brain-commit-push.sh` helper. Keep token storage out of the repo and
+still back up the database.
+
+Do a restore test on a separate machine, user account, or home directory. A
+backup that has not been restored is only an archive.
+
+### 7. Keep sync and maintenance observable
+
+- Always chain sync and embeddings for repo-backed brains:
+  `gbrain sync --repo /path/to/brain && gbrain embed --stale`.
+- If a large embed backlog or sync competes with a busy transaction-mode
+  pooler, pace the work with `gbrain embed --stale --pace` or
+  `GBRAIN_PACE_MODE=balanced`.
+- `gbrain sync --watch` is a polling loop, not a filesystem watcher. It exits
+  after repeated failures. Pair it with a scheduler or process manager.
+- For Supabase, use the Transaction pooler for normal reads when appropriate,
+  but give sync, migrations, DDL, and bulk work a direct/session-capable path.
+- On IPv4-only hosts, set `GBRAIN_DIRECT_DATABASE_URL` to the Supabase Session
+  pooler URL, or enable Supabase's IPv4 add-on.
+- If reads work but sync imports only a few pages, check the direct connection
+  first. The detailed runbook is [`guides/live-sync.md`](guides/live-sync.md).
+- `gbrain doctor` distinguishes an active sync from a stale lock. Treat a live
+  process as work to observe, not a lock to break.
+- `gbrain sources status` shows active work per source. Use
+  `gbrain status --fast` or `gbrain status --deadline-ms=<n>` when monitoring
+  needs a bounded response time.
+- The sync stall watchdog releases a source lock after no file progress for
+  `GBRAIN_SYNC_STALL_ABORT_SECONDS` seconds, which defaults to 900. The next
+  sync resumes from its checkpoint.
+- Current multi-source sync preserves source identity across links, timeline
+  events, webhooks, background jobs, renames, and nested source trees. If an
+  upgraded brain contains older derived facts, run `gbrain extract all` once.
+- Malformed sync checkpoints are repaired and structurally constrained by
+  upgrade migrations. If sync still appears wedged after upgrade, use `doctor`
+  and the live-sync runbook before reaching for `--force-break-lock`.
+- Review `gbrain doctor --remediation-plan --json` before running automated
+  remediation. If `target_unreachable` is true, resolve the entries in
+  `blocked`; an empty `plan` does not mean the brain reached the target.
+
+### 8. Verify production health
+
+Run after deploy and after upgrades:
+
+```bash
+gbrain --version
+gbrain doctor --json
+gbrain models
+gbrain models doctor
+gbrain stats
+gbrain status --fast
+gbrain search modes
+```
+
+For synced repos, prove the end-to-end path:
+
+1. Edit a Markdown page in the brain repo.
+2. Let the production sync path run.
+3. Search for text from the edit.
+4. Confirm the new text appears, not the old version.
+
+For remote clients:
+
+- Verify OAuth discovery and token exchange.
+- Verify a read call such as `search` or `get_page`.
+- Verify a write call only for clients that should have `write`.
+- Run `gbrain doctor` on mcp-only clients, call `get_brain_identity` through
+  the connected MCP client for a read-only smoke test, and run
+  `gbrain remote doctor` only for clients with the required admin scope.
+
+Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full install verification
+runbook.
+
+### 9. Failure-mode checklist
+
+| Symptom | First check |
+|---|---|
+| Remote client cannot connect | `--public-url`, bind address, tunnel/proxy routing, OAuth issuer URL, and token validity. |
+| Browser connector fails before auth | CORS allowlist and redirect URI registration. |
+| Client has too much access | OAuth scopes, source-scoped client settings, and old bearer tokens. |
+| Reads work but writes fail | Missing `write` scope, source grant mismatch, or `localOnly` operation. |
+| Thin-client commands return empty local results | Confirm `remote_mcp` config and rerun thin-client doctor; mcp-only clients should not open a local DB. |
+| Search returns stale text | Live-sync path failed; edit/search verification is the deciding proof. |
+| Page count is far below file count | Direct/session DB path is unreachable or sync is skipping files. |
+| Embeddings are missing | Provider key/dimensions mismatch or `gbrain embed --stale` is not running after sync. |
+| Sync aborts at the first checkpoint on managed Postgres | Upgrade first, rerun sync, then inspect the checkpoint and JSONB path if it still fails. |
+| Search costs are higher than expected | Search mode is too broad for the downstream model or push context is overused. Review [`guides/mode-selection.md`](guides/mode-selection.md). |
+| Embed backfill starves other jobs | Enable pacing with `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE=balanced`. |
+| Status polling hangs or is too slow | Use `gbrain status --fast` or `gbrain status --deadline-ms=<n>` and treat partial sections as an observability budget, not data loss. |
+| Sync looks stale during a long import | Run `gbrain doctor --json` and `gbrain sources status --json`. Break a lock only after confirming that its process is dead. |
+| Sync aborts with `stall_timeout` | Inspect the last file or provider operation, then rerun sync to resume from checkpoint. |
+| Autopilot submits repeated dead jobs | Upgrade before tuning. Current releases recover stale locks from live process state and back off failed sources. |
+| Brain repo writes stay local-only | Harden repo-backed sources with `gbrain sources harden <source-id>` or `gbrain sources harden --all`, then use the committed `scripts/brain-commit-push.sh` helper. |
+| Admin dashboard or logs show unexpected clients | Revoke the client, rotate affected secrets, and review DCR, CORS, and proxy exposure. Confidential OAuth clients can revoke their own tokens in current releases. |
+
+## Upgrade
+
+```bash
+gbrain upgrade
+gbrain doctor --json
+```
+
+`gbrain upgrade` applies binary updates, schema migrations, and post-upgrade
+prompts. It is TTY-oriented. Non-TTY upgrades skip prompts with informational
+stderr lines, so production automation should review upgrade output.
+
+If you only need schema recovery after a broken global install:
+
+```bash
+gbrain apply-migrations --yes
+```
+
+After an upgrade, re-check:
+
+- `gbrain --version`
+- `gbrain doctor --json`
+- `gbrain search modes`
+- provider/model checks with `gbrain models` and `gbrain models doctor`
+- spend-control posture and process-level pacing if this installation runs
+  large embed backfills or syncs
+- sync freshness and checkpoint health with `gbrain doctor --json`
+- active per-source sync state with `gbrain status --fast` and
+  `gbrain sources status --json`
+- live sync if this install owns a brain repo
+- brain repo durability hardening if this install owns source Git repos
+- MCP connectivity if this install serves agents
+
+Current upgrade notes that require an operator action:
+
+- Brains created before migrations `v120`, `v121`, or `v122` should use
+  `gbrain upgrade` so security, Life Chronicle, and schema migrations are
+  applied together.
+- Multi-source brains upgraded from before `v0.42.62.0` should run
+  `gbrain extract all` once, then check `gbrain doctor --json`,
+  `gbrain stats`, and a source-scoped search.
+- A custom PGLite `database_path` is respected by current schema commands.
+  Upgrade before diagnosing migrations against the wrong PGLite file.
+
+## Verify
+
+Minimum local verification for every route:
+
+```bash
+gbrain doctor --json
+gbrain stats
+gbrain search "known phrase from your brain"
+```
+
+After configuring embedding or chat providers, also verify their routing and
+credentials:
+
+```bash
+gbrain models
+gbrain models doctor
+```
+
+Do not run provider probes as a success condition for the keyword-only route.
+That route intentionally has no provider credentials.
+
+For a synced repo, confirm the content changed after sync:
+
+1. Edit a Markdown file in the brain repo.
+2. Let the sync path run.
+3. Search for text from the edit.
+4. Confirm the updated text appears.
+
+Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
+
+## Common failure modes
+
+### PGLite fails to initialize
+
+Read the complete error before changing the database engine. Current releases
+classify common failures and print a next step:
+
+1. **The message names a Bun virtual filesystem or `pglite.data` problem.**
+   Run `bun upgrade`, open a new terminal, and retry the same GBrain command.
+   If the error remains, use the source-install fallback under
+   [Install GBrain](#install-gbrain) and follow the Node instruction printed by
+   the error.
+2. **The message names the macOS 26.3 WASM regression.** Check
+   [issue #223](https://github.com/garrytan/gbrain/issues/223) for the current
+   compatibility status. If you need an immediate alternative, use the
+   [Postgres or Supabase route](#route-d-shared-group-or-production-brain-end-to-end)
+   even when the brain is personal.
+3. **The message says the PGLite store is corrupted.** Restore a known-good
+   backup if you have one, or rebuild it from the Markdown brain repo with
+   `gbrain reinit-pglite --embedding-model <provider:model> --embedding-dimensions <number>`.
+   This command preserves the previous database as `<path>.bak`. Do not delete
+   `.gbrain-lock` or `postmaster.pid`; that does not repair a damaged store.
+   On a fresh install with no important data, rebuilding is normally the
+   simpler path.
+4. **The cause is unknown.** Run `gbrain doctor --json` and keep both its output
+   and the original initialization error when opening an issue.
+
+Retry `gbrain doctor --json` after the selected recovery. The database is usable
+when doctor reports an initialized engine and a non-zero schema version. A
+missing embedding provider is still expected if you deliberately chose the
+keyword-only route.
+
+| Symptom | Likely cause | Next step |
+|---|---|---|
+| `gbrain` command not found | Bun bin path not in the shell | Add `$HOME/.bun/bin` to `PATH` or restart the shell. |
+| `schema_version: 0` | Global postinstall hook did not run | Run `gbrain apply-migrations --yes`; fall back to source install if needed. |
+| Semantic search returns little or nothing | Embeddings missing or provider misconfigured | Run `gbrain doctor --json`, then `gbrain embed --stale` after fixing the provider. |
+| Keyword search works but `query` is weak | Embeddings or reranker are stale/missing | Check provider keys, dimensions, and `gbrain stats`. |
+| Sync says it ran but page count is low | Direct/session DB path unreachable on an IPv4-only Supabase host | Set `GBRAIN_DIRECT_DATABASE_URL` to the Session pooler or enable IPv4. |
+| `sync --force-break-lock` says no lock was held | No active sync lock existed | Use `gbrain doctor --json` and the live-sync runbook to inspect the actual stale or wedged condition. |
+| Remote agent cannot connect | HTTP server bound to loopback or issuer URL mismatch | Set `--public-url`; use `--bind` only when remote access is intended. |
+| Token works for too much | Client has broad scopes or legacy bearer access | Register a scoped OAuth client and revoke old tokens. |
+| Local checkout's `.env` points GBrain at the wrong DB | Generic `DATABASE_URL` belongs to another app | Use `GBRAIN_DATABASE_URL` for deliberate GBrain DB overrides. |
+| Large embed jobs block queue progress | Unpaced backfill on a busy pooler | Use `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE=balanced`. |
+| PGLite reports lock corruption | More than one process opened the database, or a previous process ended uncleanly | Stop other GBrain processes and use `gbrain reinit-pglite`. Do not delete lock files manually. |
+| Changing the embedding model with `config set` is refused | Embedding dimensions are part of the schema | Use `gbrain reinit-pglite` or the Postgres embedding migration guide. |
+| An upgraded multi-source brain returns content under the wrong source | Older derived facts predate current source identity | Run `gbrain extract all` once, then verify each source independently. |
+| Brain repo changes do not reach GitHub | Source durability not hardened or push helper not used | Run `gbrain sources harden <source-id>` or `gbrain sources harden --all` for repo-backed sources and verify push access. |
+
+## Reference map
+
+- [`architecture/topologies.md`](architecture/topologies.md): operating model
+  and deployment topology decision trees.
+- [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md):
+  editable Markdown layout, managed surfaces, schema packs, and backups.
+- [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md):
+  database vs source routing.
+- [`integrations/embedding-providers.md`](integrations/embedding-providers.md):
+  provider setup, dimensions, and base URL overrides.
+- [`guides/live-sync.md`](guides/live-sync.md): sync, embed, Supabase poolers,
+  and verification.
+- [`guides/search-modes.md`](guides/search-modes.md): command-level lookup
+  choices.
+- [`guides/mode-selection.md`](guides/mode-selection.md): when to use
+  retrieval, synthesis, maintenance, and push-based context commands.
+- [`operations/spend-controls.md`](operations/spend-controls.md): embedding
+  cost gates, `spend.posture`, and off/unlimited controls.
+- [`mcp/DEPLOY.md`](mcp/DEPLOY.md): HTTP MCP, OAuth clients, scopes, and
+  remote deployment.
+- [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md): install verification runbook.
+
+---
+
 ## INSTALL_FOR_AGENTS.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 
-# GBrain Installation Guide for AI Agents
+# GBrain agent installation and operation guide
 
-Read this entire file, then follow the steps. Ask the user for API keys when needed.
-Target: ~30 minutes to a fully working brain.
+Read this entire file, then follow the branch that matches the user's setup.
+Ask the user for API keys, deployment choices, and search mode when prompted.
+Target for a normal local install: about 30 minutes to a working brain.
+
+This is the canonical coding-agent protocol. Human operators use
+[`docs/INSTALL.md`](docs/INSTALL.md).
+
+Machine-readable context:
+
+- [`llms.txt`](llms.txt) is the curated documentation map.
+- [`llms-full.txt`](llms-full.txt) is the same map with core docs inlined for
+  one-shot ingestion.
+- Both files are generated from [`scripts/llms-config.ts`](scripts/llms-config.ts).
+  Forks should regenerate them with `LLMS_REPO_BASE` set to the fork's raw URL.
+- [`AGENTS.md`](AGENTS.md) is the non-Claude-agent repo protocol.
+- [`CLAUDE.md`](CLAUDE.md) is the Claude Code orientation and resolver.
+- [`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) explains
+  when to use retrieval, synthesis, maintenance, and push-based context
+  commands or channels.
+
+## Agent operating map
+
+Classify the user's operating model before choosing a deployment topology. Use
+[`docs/architecture/topologies.md#operating-model-decision-tree`](docs/architecture/topologies.md#operating-model-decision-tree)
+and
+[`docs/architecture/topologies.md#deployment-topology-decision-tree`](docs/architecture/topologies.md#deployment-topology-decision-tree)
+when the setup is not one local brain on one machine.
+
+| User situation | Agent path | Extra gate |
+|---|---|---|
+| User wants a local personal brain | Follow Steps 1 through 9. | Stop at Step 3.5 and confirm search mode. |
+| User already has a human-installed brain | Read `docs/INSTALL.md`, then run only the verification and agent-wiring steps the user approves. | Do not reinitialize or migrate unless asked. |
+| User wants a remote or thin-client setup | Use the [deployment-topology decision tree](docs/architecture/topologies.md#deployment-topology-decision-tree) and [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md). | Confirm OAuth/scopes and remote MCP exposure before configuring clients. |
+| User wants a team, family, household, or company brain | Use the [operating-model decision tree](docs/architecture/topologies.md#operating-model-decision-tree), the production branch in [`docs/INSTALL.md`](docs/INSTALL.md), and [`docs/tutorials/company-brain.md`](docs/tutorials/company-brain.md). | Confirm single-agent vs auth-scoped mode, source/brain ownership, scopes, backups, and restore plan. |
+| User is upgrading an existing brain | Use [Upgrade](#upgrade). | Stop on the search-mode post-upgrade banner and ask the user. |
+
+## Safety gates for agents
+
+- Never invent API keys, tokens, provider URLs, or hostnames.
+- Do not silently accept the search-mode default. Step 3.5 is mandatory.
+- Do not turn a local-only install into remote HTTP MCP without user approval.
+- Do not widen OAuth scopes, enable Dynamic Client Registration, or bind
+  `gbrain serve --http` beyond loopback unless the user chose a remote setup.
+- Do not install cron, `--watch`, autopilot, or recurring jobs without the
+  operator confirming the cadence.
+- Do not treat `gbrain doctor` success as proof that live sync works. Use the
+  live-sync verification in Step 9 or `docs/GBRAIN_VERIFY.md`.
+- Before adding retrieval reflex, `volunteer_context`, `gbrain
+  volunteer-context`, or `gbrain watch` to an agent loop, read
+  `docs/guides/mode-selection.md` and confirm the operator wants push-based
+  context.
+
+## Trust boundary
+
+GBrain distinguishes trusted local CLI callers from untrusted agent-facing
+callers:
+
+- Local CLI calls set `OperationContext.remote = false` in `src/cli.ts`.
+- MCP calls set `remote = true` in `src/mcp/server.ts`.
+- Operations declare scopes in `src/core/operations.ts`.
+- HTTP dispatch enforces scopes and `localOnly` before handlers run.
+- Security-sensitive operations such as file upload use stricter confinement
+  unless the caller is explicitly trusted local CLI.
+
+Agent rule: do not work around `localOnly`, scope, or protected-job refusals.
+They are the contract. For detail, read `AGENTS.md`, `CLAUDE.md`,
+[`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md), and
+[`docs/architecture/thin-client.md`](docs/architecture/thin-client.md).
 
 ## Step 0: If you are not Claude Code
 
@@ -1000,13 +2165,14 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 `CLAUDE.md` automatically and can skip ahead.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md`: start here
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt`: generated doc map
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt`: generated inlined doc bundle
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md`: human install and operating center
 
 ## Step 1: Install GBrain
 
-Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
+Default path. GBrain requires the Bun TypeScript runtime:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -1030,25 +2196,69 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
-(as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
-set embedding_model <provider:model>`.
+Ask the user whether they want semantic retrieval, synthesis, or a keyword-only
+first test. GBrain can use ZeroEntropy, OpenAI,
+Voyage, local servers, and other providers documented in
+`docs/integrations/embedding-providers.md`. Select the embedding model during
+`gbrain init` with `--embedding-model` and `--embedding-dimensions`. For an
+existing PGLite brain, use `gbrain reinit-pglite`; for Postgres, use
+`docs/embedding-migrations.md`. Never try to switch an existing schema with
+`gbrain config set embedding_model`.
 
 ```bash
-export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
-export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
+export ZEROENTROPY_API_KEY=replace_me
+export OPENAI_API_KEY=replace_me
+export ANTHROPIC_API_KEY=replace_me
 ```
 
-Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
-or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
-keyword search still works. Without Anthropic, search works but skips query expansion.
+An embedding provider enables semantic retrieval. `gbrain think` synthesis
+also requires a chat-capable recipe. Do not infer chat capability from the
+presence of an embedding key: Voyage and ZeroEntropy, for example, are
+embedding/reranking providers. A single recipe may cover both capabilities, or
+the user may choose separate providers. `claude-cli` is a chat-only
+subscription route and still needs a separate embedding provider.
+
+If the user chooses a keyword-only first test, initialize with
+`gbrain init --pglite --no-embedding`. Do not run plain non-interactive
+`gbrain init` with no configured provider: it exits with a setup hint rather
+than silently creating a provider-backed brain.
+
+Save keys to the user's shell profile or the GBrain config file plane. Do not
+paste secrets into shared agent config, chat transcripts, Git commits, or issue
+comments. Without any embedding provider, keyword search still works. Without
+Anthropic, search works but skips query expansion.
+
+Provider and base URL rules:
+
+- Full provider matrix: `docs/integrations/embedding-providers.md`.
+- Prefer provider-specific env vars where they exist:
+  `OPENROUTER_BASE_URL`, `LITELLM_BASE_URL`, `OLLAMA_BASE_URL`,
+  `LLAMA_SERVER_BASE_URL`, and `LLAMA_SERVER_RERANKER_BASE_URL`.
+- Persistent overrides use `provider_base_urls.<provider-id>`, for example
+  `provider_base_urls.dashscope`.
+- Do not assume a generic `OPENAI_BASE_URL` retargets every provider.
+- Azure OpenAI needs `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+  `AZURE_OPENAI_DEPLOYMENT`.
 
 ## Step 3: Create the Brain
 
 ```bash
-gbrain init                           # PGLite, no server needed
-gbrain doctor --json                  # verify all checks pass
+gbrain init --pglite --no-embedding  # deterministic keyword-only path
+gbrain doctor --json                  # verify engine and schema state
+```
+
+On this path, `doctor` should report an initialized engine and non-zero schema
+version while identifying embeddings as intentionally unconfigured. Do not
+misreport that expected limitation as a fully provider-ready brain.
+
+For the provider-backed path, export the selected key first and pass the model
+and dimensions explicitly, or let an interactive TTY choose among env-ready
+providers:
+
+```bash
+gbrain init --pglite \
+  --embedding-model your_provider:your_model \
+  --embedding-dimensions 1234
 ```
 
 The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool repo.
@@ -1058,9 +2268,11 @@ Ask the user where their files are, or create a new brain repo:
 mkdir -p ~/brain && cd ~/brain && git init
 ```
 
-Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
-structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
-NOT inside ~/gbrain.
+Read `docs/architecture/brain-repo-layout.md` for the Brain Repo Layout before
+creating folders. Set up the editable Markdown structure inside the user's brain
+repo, NOT inside the GBrain tool repo. Use `docs/GBRAIN_RECOMMENDED_SCHEMA.md`
+only as the long-form design reference; the active schema pack decides the
+current path/type mapping.
 
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
@@ -1093,17 +2305,23 @@ Per-query cost @ 10K queries/mo (typical single-user volume):
 >   1) conservative — tight 4K budget, no LLM expansion, 10 chunks max.
 >      Best for Haiku subagents, cost-sensitive setups, high-volume loops.
 >
->   2) balanced — 12K budget, no expansion, 25 chunks. Sonnet-tier sweet spot.
+>   2) balanced: 12K budget, no expansion, 25 chunks, reranking, graph
+>      signals, title context, autocut, and relational recall. Moderate
+>      general-purpose choice.
 >
->   3) tokenmax (recommended default — preserves v0.31.x retrieval shape) —
->      no budget, LLM expansion ON, 50 chunks. Best for Opus/frontier models.
+>   3) tokenmax (normally recommended; preserves v0.31.x retrieval shape):
+>      no budget, LLM expansion ON, 50 chunks, reranking, graph signals,
+>      per-chunk context, autocut, and relational recall. Best when recall
+>      matters more than latency or downstream token cost.
 >
 > Cost depends on BOTH the mode AND the downstream model you run. See the
 > matrix above for the 9-cell breakdown.
 
-If the operator picks a non-default mode, run:
+If the operator picks a non-default mode, run the command with that exact
+choice. For example:
+
 ```bash
-gbrain config set search.mode <mode>
+gbrain config set search.mode balanced
 ```
 
 If they pick tokenmax AND want to preserve the literal v0.31.x default
@@ -1119,13 +2337,44 @@ An agent that silently accepts the default and starts running queries against
 a user who didn't expect tokenmax-class context loads can rack up surprise
 spend. Confirm before continuing.
 
+After the search mode is confirmed, read
+[`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) before choosing
+between `gbrain search`, `gbrain think`, `gbrain dream` / autopilot, retrieval
+reflex, `volunteer_context`, `gbrain volunteer-context`, or `gbrain watch`.
+
 ## Step 4: Import and Index
 
+If the user chose the keyword-only path, import without embeddings and verify a
+phrase that exists in the Markdown:
+
 ```bash
-gbrain import ~/brain/ --no-embed     # import markdown files
-gbrain embed --stale                  # generate vector embeddings
-gbrain query "key themes across these documents?"
+gbrain import ~/brain/ --no-embed
+gbrain search "known phrase from the brain"
 ```
+
+Report that exact-word search works. Semantic search and provider-dependent
+reranking remain unavailable until the user configures embeddings. `think`
+without a chat provider may return gather-only output; maintenance phases vary
+and must be checked against their provider requirements.
+
+If the user chose the provider-backed path, import, embed, and verify
+retrieval:
+
+```bash
+gbrain import ~/brain/
+gbrain embed --stale
+gbrain search "known concept from the brain"
+```
+
+Only when a chat-capable model is configured, verify synthesis separately:
+
+```bash
+gbrain think "What are the key themes across these documents?" --json
+```
+
+Require `synthesisOk: true` in the JSON result. A zero exit status without that
+field is not proof: the command can deliberately return gather-only output
+when no usable chat provider is available.
 
 ## Step 4.5: Wire the Knowledge Graph
 
@@ -1181,7 +2430,7 @@ scaffold the bundled skills into it:
 
 ```bash
 cd /path/to/agent/workspace
-gbrain skillpack scaffold --all       # copy 43 curated skills + RESOLVER.md
+gbrain skillpack scaffold --all       # copy bundled skills + RESOLVER.md
 ```
 
 Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
@@ -1224,6 +2473,10 @@ If skipped, minimal defaults are installed automatically.
 Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
 platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon):
 
+- **Daemon PATH prerequisite**: make Bun available to non-interactive
+  processes before installing autopilot. On macOS with zsh, add
+  `export PATH="$HOME/.bun/bin:$PATH"` to `~/.zshenv`. The generated wrapper
+  sources that file but does not add Bun to `PATH`.
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
   — or `gbrain sync --watch` for a continuous loop.
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
@@ -1231,7 +2484,8 @@ platform glue entirely with `gbrain autopilot --install` (built-in self-maintain
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
   synthesis and cross-session pattern detection. One cron-friendly command. This is what
   makes the brain compound. Do not skip it. See `docs/guides/cron-schedule.md` for the
-  full protocol.
+  full protocol and `docs/guides/mode-selection.md` for when to use dream/autopilot
+  instead of retrieval or synthesis.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations
@@ -1244,8 +2498,85 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-Read `docs/GBRAIN_VERIFY.md` and run all 7 verification checks. Check #4 (live sync
-actually works) is the most important.
+Read `docs/GBRAIN_VERIFY.md` and run every check that applies to the selected
+engine and provider route. The runbook contains eight checks; embedding checks
+are expected to be limited on the keyword-only route, and the JSONB repair
+check is Postgres-specific. Check #4 (live sync actually works) is the most
+important for a synced repo.
+
+## MCP, auth, and remote operation
+
+Use local stdio MCP when the agent and brain are on the same machine:
+
+```bash
+claude mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve
+```
+
+Use HTTP MCP only when the user chose a remote, shared, or cloud-client path.
+Before configuring it, confirm:
+
+- public URL and bind address;
+- OAuth client type;
+- scopes: `read`, `write`, `admin`, or narrower source-scoped grants;
+- whether Dynamic Client Registration stays disabled;
+- where the token or OAuth secret will be stored;
+- which brain/source the client may read and write.
+
+Remote setup references:
+
+- `docs/mcp/DEPLOY.md` for HTTP MCP, OAuth 2.1, scopes, localOnly behavior, and
+  remote deployment. Treat it as the protocol truth; client pages are recipes.
+- `docs/guides/mode-selection.md` for agent-facing choice between pull
+  retrieval, `think`, maintenance, and push-context channels.
+- `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`,
+  `docs/mcp/CLAUDE_DESKTOP.md`, `docs/mcp/CHATGPT.md`, and
+  `docs/mcp/PERPLEXITY.md` for client-specific setup.
+- `docs/architecture/topologies.md` for operating-model, thin-client,
+  split-engine, mounted-brain, and security-isolation decision trees.
+
+Remote-call boundary:
+
+- `sync_brain`, `file_upload`, `file_list`, and `file_url` are `localOnly` and
+  rejected over HTTP regardless of scope.
+- Protected job submissions are CLI-only. If MCP refuses a protected job, do
+  not retry through another route unless the user explicitly switches to local
+  CLI operation.
+- `run_onboard` is remote-callable with admin scope for health checks and
+  non-protected remediation. Protected LLM-bearing onboard handlers remain
+  skipped over OAuth in the current CLI allowlist; use trusted local CLI
+  operation for those until the dedicated protected-onboard grant is exposed
+  through the supported registration path.
+
+Thin-client verification:
+
+```bash
+gbrain doctor
+gbrain remote doctor
+```
+
+Call `get_brain_identity` through the connected MCP client for the read-scope
+smoke test. `gbrain remote doctor` and full health/status checks need the
+admin-scope diagnostics described in `docs/mcp/DEPLOY.md`. Do not use
+`gbrain remote ping` as a connectivity probe: it submits an `autopilot-cycle`
+that can sync, extract, embed, mutate the remote brain, and incur provider
+costs.
+
+## Safe verification checklist
+
+Use the strongest check that matches the branch:
+
+- Local install: `gbrain --version`, `gbrain doctor --json`, `gbrain models`,
+  `gbrain models doctor`, `gbrain search modes`, `gbrain stats`.
+- Search mode: `gbrain search modes` after the user chooses.
+- Provider setup: `gbrain models doctor` or the provider-specific test in
+  `docs/integrations/embedding-providers.md`.
+- Live sync: edit a brain markdown file, let sync run, then search for text
+  from the edit. Do not claim live sync works from `gbrain sync` output alone.
+- Remote MCP: use the client's smoke test or `gbrain connect --install`, then
+  call `get_brain_identity` from the agent.
+- Production/shared brain: verify OAuth scopes with a least-privilege client
+  before giving the endpoint to users.
 
 ## Upgrade
 
@@ -1320,14 +2651,21 @@ Refuses without `--max-usd N`. Runs auto-eligible items only. The
 autopilot daemon also consults onboard recommendations on its tick — no
 explicit agent action needed for the autonomous path.
 
+When evaluating a remediation plan, request JSON and inspect
+`target_unreachable`, `max_reachable_score`, and `blocked`. On current
+`master`, human output can still print "Brain is at target" after reporting
+an unreachable target when the plan is empty. Do not relay that sentence as
+success unless the score meets the requested target.
+
 **Remote / federated brain installs (MCP):**
 The `run_onboard` MCP op (admin scope) lets thin-client agents probe
 brain health + drive remediation over OAuth-authenticated MCP. Protected
 LLM-bearing handlers (synthesize, patterns, consolidate, takes-bootstrap,
-contextual_reindex_per_chunk) require the additional `run_protected_onboard`
-scope — admin alone is insufficient. The MCP op returns
-`skipped_missing_scope[]` listing what would have run with the right
-grants.
+contextual_reindex_per_chunk) are not enabled by admin alone. In the current
+OAuth allowlist, `gbrain auth register-client` cannot mint the dedicated
+protected-onboard grant that the operation checks internally, so those handlers
+remain reported in `skipped_missing_scope[]`. Run protected remediation from a
+trusted local CLI session when the operator explicitly approves it.
 
 **Privacy + consent gates:**
 - `gbrain takes extract --from-pages` sends concept/atom/lore/briefing/
@@ -1511,7 +2849,33 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
-> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+## Start here
+
+- **Current release.** Read [`VERSION`](VERSION) for the exact version and
+  [`CHANGELOG.md`](CHANGELOG.md) for what changed. Upgrade instructions live in
+  [`docs/INSTALL.md`](docs/INSTALL.md). Coding agents should follow
+  [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).
+- **Install or operate GBrain.** Start with
+  [`docs/INSTALL.md`](docs/INSTALL.md). It covers local PGLite, Postgres or
+  Supabase, thin clients, MCP, and verification.
+- **Install with a coding agent.** Follow
+  [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md). Non-Claude agents start with
+  [`AGENTS.md`](AGENTS.md). Claude Code starts with [`CLAUDE.md`](CLAUDE.md).
+- **Run a shared or production brain.** Choose an
+  [operating model](docs/architecture/topologies.md#operating-model-decision-tree)
+  and a
+  [deployment topology](docs/architecture/topologies.md#deployment-topology-decision-tree),
+  then continue with [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md),
+  [`SECURITY.md`](SECURITY.md), and
+  [`docs/GBRAIN_VERIFY.md`](docs/GBRAIN_VERIFY.md).
+- **Choose a working mode.** Use the
+  [mode selection guide](docs/guides/mode-selection.md) after installation. It
+  distinguishes direct search, synthesis, background maintenance, retrieval
+  reflex, volunteered context, and watch mode.
+- **Load the docs into an LLM.** Fetch [`llms.txt`](llms.txt) for the curated
+  map or [`llms-full.txt`](llms-full.txt) for the map with core docs inlined.
+  The build reads [`scripts/llms-config.ts`](scripts/llms-config.ts). Forks
+  should set `LLMS_REPO_BASE` before running `bun run build:llms`.
 
 ## What this looks like
 
@@ -1559,90 +2923,27 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-GBrain is designed to be installed and operated by an AI agent. The fastest path is to have your agent do it for you. The CLI and MCP paths below are for people who want to wire it up themselves.
+Choose one complete installation guide:
 
-### Have your agent install it (recommended)
+- **Installing it yourself:** follow [`docs/INSTALL.md`](docs/INSTALL.md). It
+  starts with plain-language choices for a personal, multi-source, remote, or
+  shared brain and takes that route through verification. For the simplest
+  local test, start with Route A.
+- **Asking a coding agent to install it:** give the agent
+  [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md). It uses the same routes but
+  stops for your approval before cost, credentials, network exposure, and
+  recurring jobs.
 
-If you don't already have an AI agent platform running, start with one of these. Both are designed to read GBrain's install protocol and execute it:
+Paste this into an agent that can read HTTPS and run shell commands:
 
-- **[OpenClaw](https://github.com/openclaw/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
-- **[Hermes](https://github.com/NousResearch/hermes-agent)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
-
-Then paste this into your agent:
-
-```
+```text
 Retrieve and follow the instructions at:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-The agent installs GBrain, creates the brain, asks for your API keys, loads 43 skills, configures the dream cycle, and verifies the install end-to-end. ~30 minutes. You answer questions, it does the work.
-
-> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
-
-### Quick start: Claude Code or Codex
-
-Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
-
-**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
-
-```bash
-gbrain init --pglite                     # 2-second local brain (no Docker)
-claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
-```
-
-**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
-
-```bash
-gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
-gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
-```
-
-**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — both paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
-
-### Install the full autonomous setup into your existing agent
-
-Want the whole thing — local brain, 43 skills, the overnight dream cycle that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or another coding agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-This works in any agent that can read files over HTTPS and execute shell commands. Tested with Codex, Claude Code, Claude Cowork, Cursor, and AlphaClaw.
-
-### CLI standalone (no agent)
-
-```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite     # 2 seconds; no server, no Docker
-gbrain doctor            # verify health
-gbrain import ~/notes/   # index your markdown
-gbrain query "what themes show up across my notes?"
-```
-
-Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.md`](docs/INSTALL.md).
-
-### Connect GBrain to your AI client (MCP)
-
-GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
-
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
-- **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
-- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
-- **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
-- **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
-- **[ChatGPT](docs/mcp/CHATGPT.md)** — uses OAuth 2.1 with PKCE (the hard requirement). Register a `chatgpt` client from the admin dashboard with grant type `authorization_code`.
-
-For the HTTP server itself:
-
-```bash
-gbrain serve              # stdio MCP (local subprocess; for Claude Code, Cursor, Windsurf)
-gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard at /admin
-                          # (required for Claude Desktop, Cowork, Perplexity, ChatGPT)
-```
-
-The HTTP server includes DCR-style client registration, scope-gated access (`read` / `write` / `admin`), and rate limiting. Deployment guides (ngrok, Railway, Fly.io) live under [`docs/mcp/`](docs/mcp/).
+Do not combine snippets from several setup pages. The human and agent guides
+route to the relevant MCP, provider, topology, security, and verification detail
+at the point where each choice is needed.
 
 ## Two ways to query your brain
 
@@ -1746,7 +3047,13 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 ## Capabilities
 
-**Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). Default: `balanced` with ZeroEntropy reranker on. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns. Vector retrieval pools the best chunk per page, so a page surfaces on its strongest evidence instead of losing to a neighbor on one weak chunk. Queries that match a page's title phrase or a declared free-text alias (`gbrain reindex --aliases` backfills existing pages) get boosted to the page they name. Every result carries an `evidence` tag (why it matched) and a `create_safety` hint (`exists` / `probable` / `unknown`) so an agent decides whether a page already exists instead of guessing from a raw score. `gbrain search diagnose "<query>" --target <slug>` traces which retrieval layer surfaces (or misses) a page.
+**Hybrid search.** GBrain combines vectors, BM25 keywords, reciprocal-rank fusion, source-tier boosts, and intent-aware query rewriting.
+
+Three search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost and quality settings. Fresh initialization recommends a mode from detected provider and model-tier inputs. An unset mode falls back to `balanced`. Check the persisted choice with `gbrain search modes`. Live cost and recall comparisons are in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
+
+Graph signals adjust results that are connected, corroborated across sources, or crowded out by weak session chunks. Run `gbrain search "your query" --explain` to inspect every score adjustment. `gbrain doctor` checks graph-signal coverage, and `gbrain search stats` reports usage and failures. Vector retrieval keeps the strongest chunk from each page. Title phrases and declared aliases can also promote the page they name.
+
+Every result includes an `evidence` tag and a `create_safety` hint. Agents use those fields to decide whether a page already exists. Run `gbrain search diagnose "your query" --target page-slug` to trace which retrieval layer finds or misses a page.
 
 **Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG. **Obsidian-style vaults:** bare `[[note-name]]` wikilinks that point across folders — you wrote `[[struktura]]` but the page lives at `projects/struktura.md` — resolve by basename once you opt in with `gbrain config set link_resolution.global_basename true`. Off by default; `gbrain doctor` tells you how many edges you'd gain before you flip it. See [migrating an Obsidian vault](INSTALL_FOR_AGENTS.md#step-45-wire-the-knowledge-graph).
 
@@ -1770,7 +3077,11 @@ gbrain reindex-search-vector --yes        # recreate triggers + backfill
 
 The command is idempotent (re-running with the same language is a no-op for vector content) and uses the same recreate-and-backfill primitives as the migration. For accent-insensitive Portuguese (`pt_br`), see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md) for the `unaccent` + portuguese stemmer recipe.
 
-**43 curated skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
+**Bundled skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md).
+The skills cover signal capture, ingest, enrichment, querying, brain operations,
+citation repair, task management, scheduled jobs, reports, voice, audits, skill
+creation, evaluations, and migrations. The installer adds this Markdown-based
+skillpack to your agent workspace.
 
 **Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
@@ -1785,7 +3096,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: 16 recipes covering OpenAI (default fallback), OpenRouter, Voyage, ZeroEntropy (default), Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
-- **Rerankers**: ZeroEntropy `zerank-2` hosted (default in `tokenmax` mode) plus the v0.40.6.1 `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted ZeroEntropy weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
+- **Rerankers**: ZeroEntropy `zerank-2` hosted (enabled by default in `balanced` and `tokenmax` modes) plus the v0.40.6.1 `llama-server-reranker` recipe for local cross-encoder reranking through llama.cpp. It runs Qwen3-Reranker or self-hosted ZeroEntropy weights against the same `gateway.rerank()` interface. Follow the setup in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential gateway**: vault-aware secret distribution. [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 
@@ -1793,7 +3104,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 **Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines ~47 operations both engines implement; CLI and MCP server are generated from one source.
 
-**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Layout guidance: [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md). Topologies: [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
@@ -1801,9 +3112,17 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 ## Troubleshooting
 
-**`gbrain init --pglite` crashes on macOS 26.x (Tahoe)?** PGLite's embedded WASM engine is incompatible with macOS 26.x on Apple Silicon. The fix is to use native Homebrew PostgreSQL + pgvector instead. Full step-by-step setup in [`docs/INSTALL.md` — Troubleshooting: PGLite crashes on macOS 26.x](docs/INSTALL.md#pglite-crashes-on-macos-26x-tahoe).
+**`gbrain init --pglite` fails?** The current CLI distinguishes a Bun virtual
+filesystem problem, the macOS 26.3 WASM regression, a corrupted PGLite store,
+and an unknown failure. Follow
+[`docs/INSTALL.md` - PGLite fails to initialize](docs/INSTALL.md#pglite-fails-to-initialize)
+before changing database engines.
 
-**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment: set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
+**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. For an OpenAI-backed PGLite brain, for example, rebuild the index with `gbrain reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536`. For Postgres, use `gbrain retrieval-upgrade --to openai:text-embedding-3-large --reindex` or follow [`docs/embedding-migrations.md`](docs/embedding-migrations.md).
+
+Do not change only `embedding_model` or `embedding_dimensions` with `gbrain config set`. Current releases refuse that schema-breaking shortcut. You should not need to delete `~/.gbrain`.
+
+Fresh `gbrain init --pglite` detects embedding providers from API keys in your environment. Set `OPENAI_API_KEY`, `ZEROENTROPY_API_KEY`, or `VOYAGE_API_KEY` before initialization. You can also pass `--embedding-model your_provider:your_model` explicitly. With multiple keys set, init opens an interactive picker. In non-TTY contexts with no keys, init exits with a setup hint. Pass `--no-embedding` to defer the provider choice. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker and continuous integration sequencing.
 
 **Hourly cron sync keeps timing out on a federated brain?** v0.41.13.0 ships
 two flags + a recommended pattern. Switch your cron to a per-source loop
@@ -1823,10 +3142,10 @@ diff and `content_hash` short-circuits already-imported files. The
 `--max-age 1800` first command self-heals any wedged-but-alive locks
 left by a hung previous run, using the v98 `last_refreshed_at` semantic
 (NOT `acquired_at`) so healthy long-running holders are safe by
-construction. See the v0.41.13.0 entry in [`CHANGELOG.md`](CHANGELOG.md)
-for the honest scope notes (extract + embed phases run to completion;
-30-min rollout window for `--max-age` post-migration v98; full-sync
-triggers deferred to v0.42+).
+construction. See the sync entries in [`CHANGELOG.md`](CHANGELOG.md) for the
+honest scope notes: the original v0.41.13 timeout behavior was followed by
+v0.42 resumability, full-sync delete reconciliation, and additional recovery
+work. Keep cron runbooks pinned to the release behavior you actually run.
 
 **Dream cycle silently losing wiki links on Supabase?** v0.41.19.0 fixes
 the bug class structurally. The engine now self-retries every bulk batch
@@ -1926,6 +3245,7 @@ completes in ~1-2 seconds. (Closes #1605, #1581.)
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end
+- [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md): editable Markdown layout, managed/generated content, schema-pack expectations, and backup implications
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern (v0.40.7.0)
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory
@@ -2278,6 +3598,198 @@ Note: The original SQLite engine plan (`docs/SQLITE_ENGINE.md`) was superseded b
 
 ---
 
+## docs/architecture/brain-repo-layout.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/brain-repo-layout.md
+
+# Brain repo layout
+
+A Brain Repo Layout is the editable Markdown shape of your knowledge brain. It
+is separate from:
+
+- the GBrain tool repository;
+- the database that stores pages, chunks, embeddings, links, facts, jobs, and
+  OAuth clients;
+- the agent workspace repository that holds skills, prompts, crons, and runtime
+  configuration.
+
+Use **Brain Repo Layout** as the generic term. Use **vault** only when talking
+about Obsidian-style import or compatibility, such as bare `[[note-name]]`
+wikilinks from an existing Obsidian or Notion export.
+
+## Core nouns
+
+| Term | Meaning | Why it matters |
+|---|---|---|
+| Brain | One database: PGLite, Postgres, or Supabase. | It owns lifecycle, backup, access control, OAuth surface, and mounts. |
+| Source | A named content repo inside one brain. | Pages are scoped by `source_id`; the same slug can exist in two sources. |
+| Brain repo | The Git repo or folder holding Markdown for one source. | Humans and agents edit this; sync imports it into the database. |
+| Schema pack | The active typing and filing contract. | It maps paths to page types, extract behavior, expert routing, and migration rules. |
+
+Rule of thumb: use a new source when the owner stays the same but the repo,
+domain, or access scope changes. Use a new brain when ownership, lifecycle,
+backup, or access policy changes.
+
+## Recommended starter layout
+
+Start small. The active schema pack can support more directories than you need
+on day one.
+
+```text
+brain/
+  README.md              # human overview for this brain repo
+  RESOLVER.md            # filing decision tree for agents and humans
+  people/                # one page per person
+  companies/             # one page per organization, product, or company
+  projects/              # active initiatives and workstreams
+  notes/                 # catch-all notes, memos, principles, one-offs
+  sources/               # transcripts, references, raw import summaries
+  inbox/                 # incoming capture and triage
+  archive/               # historical or retired pages
+```
+
+Common optional directories, depending on the active pack and your use case:
+
+```text
+deals/
+emails/
+slack/
+writing/
+media/
+tweets/
+atoms/
+wiki/concepts/
+wiki/analysis/
+```
+
+Do not create every directory because it exists in an example. A useful
+layout is the smallest set of homes that lets humans and agents file new pages
+without guessing.
+
+## What a page looks like
+
+GBrain reads normal Markdown with optional YAML frontmatter. It can infer title,
+type, slug, and tags, but declaring them explicitly is useful for important
+pages.
+
+```markdown
+---
+title: Alice Example
+type: person
+tags: [customer, founder]
+aliases: ["Alice E."]
+---
+
+# Alice Example
+
+Current compiled truth goes here: who Alice is, why she matters, what changed
+recently, and what is still open.
+
+---
+
+## Timeline
+
+- 2026-06-01: Met Alice about the acme-example renewal.
+```
+
+The content between the second and third `---` delimiters is the current
+synthesis. The content below the third delimiter is the event/evidence
+timeline. Keep sourced claims in the timeline when they matter for provenance.
+
+## Safe human edits
+
+Humans may safely edit:
+
+- Markdown body text and headings;
+- frontmatter fields such as `title`, `tags`, `aliases`, `subtype`, `origin`,
+  or domain-specific metadata;
+- `RESOLVER.md`, directory `README.md` files, and local filing rules;
+- pages in `inbox/` while triaging them into stable homes;
+- source-owned repo structure, after checking the active schema pack.
+
+When changing frontmatter, keep scalar values as strings when they are meant to
+be strings. GBrain validates malformed frontmatter, but quoted values avoid YAML
+coercion surprises.
+
+## GBrain-managed or generated surfaces
+
+Treat these as managed or generated unless you are deliberately changing
+routing, provenance, or schema behavior:
+
+| Surface | Owner | Guidance |
+|---|---|---|
+| Database tables (`pages`, `chunks`, `embeddings`, links, facts, jobs) | GBrain | Do not hand-edit as layout work. Sync and operations own these. |
+| `.gbrain-source` | Routing | Pins a checkout or subdirectory to a source. Edit only when changing source routing. |
+| `.gbrain-mount` | Routing | Pins a checkout to another brain. Edit only when changing brain routing. |
+| `.sources/<source_id>/` | Multi-source render layout | Used when GBrain renders non-default source pages under one brain directory. Prefer registered source checkouts for normal authoring. |
+| `.raw/` and `sources/` provenance material | Ingestion/provenance | Prefer append-only updates. Do not rewrite raw evidence only to make prose cleaner. |
+| Generated frontmatter such as `dream_generated`, `ingested_via`, `captured_at`, `ingested_at`, `legacy_type` | GBrain or migration jobs | Preserve unless you understand the feature that stamped it. |
+
+The file layer is editable, but it is not the whole system of record. The
+database also stores derived retrieval state, source IDs, links, facts, schema
+pack state, and operational metadata.
+
+## Sources, sync, and layout
+
+One brain can hold many sources. Each source can have its own local path and its
+own layout. Sync imports each source into the same brain database while keeping
+slugs scoped by `source_id`.
+
+Common shapes:
+
+| Shape | Layout choice | Sync and backup implication |
+|---|---|---|
+| One personal brain | One source repo, usually `default`. | Back up the brain repo, the database, and `~/.gbrain/config.json`. |
+| Personal multi-source brain | Several source repos inside one brain. | Back up every source repo plus the shared database/config. |
+| Shared group brain | Shared sources such as `shared`, `customers`, `internal`. | Back up all source repos, OAuth/source-scope config, and the database. |
+| Mounted/cross-team brains | Separate brains with their own sources. | Back up each brain independently; a mount is not a backup. |
+
+Use `docs/architecture/brains-and-sources.md` for the full brain/source routing
+model and `docs/architecture/topologies.md` for operating-model and deployment
+decisions.
+
+## Schema-pack expectations
+
+The active schema pack decides how paths map to page types. In current GBrain
+installs, `gbrain-base-v2` is the canonical default taxonomy: 14 canonical types
+plus the `note` catch-all. It uses `path_prefixes` such as `people/`,
+`companies/`, `projects/`, `sources/`, `writing/`, and `notes/` to infer page
+types, with subtypes and legacy distinctions moved into frontmatter.
+
+Important consequences:
+
+- Layout is configurable; it is not hardcoded to one universal folder tree.
+- A custom or legacy brain can use a different pack.
+- If an imported Obsidian or Notion vault does not match the active pack, use
+  schema detection and review instead of forcing every file into the starter
+  layout.
+- For shared brains, schema-pack choice can be brain-wide or source-scoped
+  depending on the configured resolution tier.
+
+Deeper references:
+
+- `docs/architecture/type-taxonomy.md`: current `gbrain-base-v2` taxonomy.
+- `docs/architecture/schema-packs.md`: schema-pack resolution, authoring, and
+  recovery.
+- `docs/schema-author-tutorial.md`: short custom-pack walkthrough.
+- `docs/GBRAIN_RECOMMENDED_SCHEMA.md`: long-form operational-brain layout
+  manifesto; useful as design reference, not a mandatory starter tree.
+
+## Backup rule
+
+Back up all layers that would be painful to reconstruct:
+
+1. every Markdown brain repo or source checkout;
+2. the GBrain database for each brain;
+3. `~/.gbrain/config.json`, source registration, mount registration, OAuth
+   clients, and provider configuration;
+4. any custom schema packs or `gbrain.yml` layout overrides.
+
+A Git remote for one source is not a full brain backup. A database dump without
+the Markdown repos is not a full brain backup either.
+
+---
+
 ## docs/what-schemas-unlock.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/what-schemas-unlock.md
@@ -2375,7 +3887,7 @@ gbrain schema add-link-type filed-in --page-type motion --target-type case
 gbrain schema add-link-type cites    --page-type motion --target-type precedent
 ```
 
-Now `## Facts` fences in your case notes can carry typed claims (`damages=5000000`, `filed_date=2026-05-23`, `judge=jane-doe`) that gbrain stores as first-class columns. `gbrain eval trajectory legal/cases/acme-v-widget` prints the case history with regressions flagged. `gbrain founder scorecard` (renamed for legal: roll up plaintiff success rate, average damages, settlement-vs-trial ratio) gives you a structured view of how your practice is performing.
+Now `## Facts` fences in your case notes can carry typed claims (`damages=5000000`, `filed_date=2026-05-23`, `judge=jane-doe`) that gbrain stores as first-class columns. `gbrain eval trajectory legal/cases/acme-v-widget` prints the case history with regressions flagged. The same trajectory data can support a legal-specific scorecard layer; the built-in `gbrain founder scorecard` command remains founder/company focused today.
 
 This isn't possible without typed page kinds. You can write the same prose in any note-taking app. Only gbrain treats the numbers as comparable across pages of the same type.
 
@@ -2383,7 +3895,7 @@ This isn't possible without typed page kinds. You can write the same prose in an
 
 `gbrain mounts add` lets you stack additional brains alongside your personal one. Each mounted brain has its OWN schema pack. The eng team's brain has `incident`, `runbook`, `service`, `oncall-rotation`. The design team's brain has `component`, `experiment`, `ab-test`, `figma-link`. The legal team's brain has cases and depositions.
 
-When you query, the schema pack governs how each source's content is routed. An eng query against the mounted eng brain knows that `incidents/2026-05-23-db-outage.md` is an `incident` page with `severity=p0`, `mttr=47min`, `on_call=alice-example` — extractable typed facts. Your personal query against the same brain still works, but the routing is sharper because the eng team has invested in their ontology.
+When an agent or integration deliberately routes a query to the mounted eng brain, that brain's schema pack governs how it interprets the content. The eng brain treats `incidents/2026-05-23-db-outage.md` as an `incident` page with typed `severity=p0`, `mttr=47min`, and `on_call=alice-example` facts. Current generic CLI query dispatch does not document `gbrain query --brain 123` as a supported path, so the agent or integration must route cross-brain queries until the command layer supports them.
 
 The schema is the team's tribal knowledge made explicit. Two engineers on different teams searching the same brain get DIFFERENT routing because their personal packs declare different expert types.
 
@@ -3638,6 +5150,192 @@ never reach a prompt regardless of caller trust.
 
 ---
 
+## docs/guides/mode-selection.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/mode-selection.md
+
+# GBrain mode selection
+
+Use this guide after installation, whether you use GBrain yourself or through an
+agent. GBrain uses the word "mode" for two different choices:
+
+- **Task:** what you want GBrain to do now: find evidence, write an answer,
+  maintain the brain, or volunteer context.
+- **Search mode bundle:** the cost/quality profile behind retrieval:
+  `conservative`, `balanced`, or `tokenmax`.
+
+If you are unsure, use `gbrain search` for finding material and
+`gbrain think` for a written answer. For search mode, `balanced` is a moderate
+manual choice. The installer may recommend `tokenmax` or `conservative` from
+the providers and model tiers it detects, so check the selected mode with
+`gbrain search modes` instead of assuming a fixed default.
+
+## Choose a command
+
+| Need | Use | Why |
+|---|---|---|
+| Find raw pages, citations, or candidate context | `gbrain search "<query>"` | Cheap-hybrid retrieval. It returns ranked evidence without a synthesis LLM call. |
+| Get a written answer with citations and gap analysis | `gbrain think "<question>"` | Runs retrieval, then composes an answer and calls out stale, missing, or conflicting evidence. |
+| Keep the brain healthy over time | `gbrain dream` or `gbrain autopilot --install` | Runs maintenance, extraction, consolidation, and enrichment work instead of answering one question. |
+| Let the brain volunteer context during an agent session | retrieval reflex, `volunteer_context`, `gbrain volunteer-context`, or `gbrain watch` | Pushes confidence-gated page pointers from recent conversation turns, so agents do not need to guess when to ask. |
+
+The normal human path has two commands: use `gbrain search` for evidence and
+`gbrain think` for a written answer. There is no separate `chat` command.
+`gbrain query` is an advanced retrieval interface for image search, expansion
+controls, evaluation, and debugging.
+
+## Retrieval: `gbrain search`
+
+Use `gbrain search "<query>"` when you want evidence, not prose. Good cases:
+
+- find the page or quote behind a user question;
+- collect context before an agent writes or edits a page;
+- check whether a person, company, project, or topic already exists;
+- verify that sync/import made specific text discoverable.
+
+The command has two public shapes:
+
+```bash
+gbrain search "acme-example board meeting"
+gbrain search modes
+gbrain search stats --days 30
+gbrain search tune
+gbrain search diagnose "acme-example" --target companies/acme-example
+```
+
+Free-text `gbrain search "<query>"` is the cheap-hybrid path: vector + keyword +
+RRF + ranking improvements, with multi-query LLM expansion off. The
+`modes` / `stats` / `tune` / `diagnose` subcommands are the search dashboard and
+debug path, not searches for those literal words.
+
+Safety and cost notes:
+
+- `search` is a read-scoped operation and is the safest default for agents that
+  only need context.
+- Per-call `--mode` is honored only for trusted local callers. Remote callers
+  use the configured brain mode, so an OAuth client cannot silently escalate to
+  a more expensive retrieval bundle.
+- `search.mcp_keyword_only=true` forces keyword-only retrieval when the operator
+  wants to avoid sending query text to an embedding provider.
+- Search returns evidence snippets. Fetch the full page when the surrounding
+  context matters.
+
+Use the lower-level `gbrain query` operation only when you need a control that
+`search` intentionally hides. For example, image-similarity retrieval uses
+`query --image`; ordinary text lookup should stay on `search`.
+
+## Synthesis: `gbrain think`
+
+Use `gbrain think "<question>"` when the user wants the answer, not a list of
+pages.
+
+Good cases:
+
+- meeting prep;
+- "what do we know about X?";
+- "what changed since last time?";
+- cross-page questions that need graph context, typed facts, or trajectory
+  signals;
+- answer drafting where citations and gaps matter.
+
+`think` gathers relevant pages, takes, graph hits, and optional temporal /
+trajectory context, then writes a cited answer with gap analysis. It costs more
+than `search` because it uses a synthesis model when one is configured.
+
+Safety notes:
+
+- Without `--save`, CLI output is printed and discarded.
+- With `--save`, local CLI can persist a synthesis page. With `--take`, local
+  CLI can append a take to an anchor page.
+- Thin-client and remote MCP callers do not get to persist through `think`;
+  `save` and `take` are blocked at the trust boundary.
+- An explicit unresolved `--model` is a hard error. Omitted model selection can
+  follow configured defaults.
+
+## Maintenance: `gbrain dream` and autopilot
+
+Use maintenance modes when the goal is to improve the brain, not answer the
+current turn.
+
+| Surface | Best use | Operator gate |
+|---|---|---|
+| `gbrain dream` | Run one maintenance cycle from cron or an approved manual task. | Confirm provider keys, cost expectations, and phase scope before scheduling. |
+| `gbrain autopilot --install` | Keep a brain self-maintaining through a daemonized loop. | Confirm cadence, budget/cost caps, process ownership, and stop/recovery path. |
+| `gbrain doctor --remediation-plan --json` | Preview fix work before applying it. | Review the plan before `--remediate --yes`. |
+
+Maintenance can submit protected work such as synthesis, patterns, and
+consolidation. Those paths are for trusted local operation and controlled
+automation, not arbitrary remote agent escalation.
+
+## Advanced: push context
+
+Push context is for agent sessions where the brain should volunteer relevant
+pages before the agent explicitly searches. It is zero-LLM and confidence-gated:
+alias matches start high, exact title matches are strong, slug-suffix matches
+need a lower confidence gate, and the default cap is three pages.
+
+| Channel | Use when | How it behaves |
+|---|---|---|
+| Retrieval reflex | The host/plugin context engine supports it. | Ambient default. It reads the recent turn window and injects pointer markdown when salient entities clear the gate. It is fail-open and time-bounded. |
+| MCP `volunteer_context` | An agent can call tools but does not have the ambient context engine. | Send recent turns plus optional `prior_context`; get page pointers, rationales, and synopses back. |
+| `gbrain volunteer-context` | CLI or scripted one-shot push context. | Pipe recent turns on stdin. Use `--stats` to inspect approximate volunteered-vs-used precision. |
+| `gbrain watch` | You have a transcript stream and want volunteered pages as turns arrive. | Reads stdin continuously and emits volunteered pages, with `--json` for JSONL consumers. |
+
+For PGLite brains, `gbrain watch` holds the single-writer engine for the session
+and cannot run alongside `gbrain serve` or another GBrain process against the
+same brain. Use short piped bursts, the ambient reflex channel, or Postgres when
+you need concurrent long-running access.
+
+Push-context privacy notes:
+
+- Raw conversation text is not stored in the volunteer feedback log.
+- Logged volunteer events carry slug, arm, confidence, channel, and optional
+  session/turn attribution.
+- Usage stats are approximate: a volunteered page is counted as "used" when the
+  page was retrieved after it was volunteered.
+- Synopses strip private takes/facts fences before prompt delivery.
+
+## Search mode bundles
+
+Choose the search mode once per brain or source unless usage proves it is wrong.
+The bundle controls token budget, result count, expansion, reranker/autocut
+behavior, graph signals, and contextual retrieval defaults.
+
+| Mode | Use when | Cost/quality shape |
+|---|---|---|
+| `conservative` | Frequent lightweight calls or strict cost limits. | 4K token budget, 10 results, no expansion, reranker, graph signals, or relational recall. |
+| `balanced` | Most personal and shared brains. | 12K token budget, 25 results, reranking, graph signals, title context, autocut, and relational recall. No expansion. |
+| `tokenmax` | Missing relevant material costs more than extra latency or spend. | No token cap, 50 results, expansion, reranking, graph signals, per-chunk context, autocut, and relational recall. |
+
+Inspect and change the active mode:
+
+```bash
+gbrain search modes
+gbrain config set search.mode balanced
+```
+
+Agents must not silently accept the install default. Follow the stop-and-ask
+protocol in `INSTALL_FOR_AGENTS.md` and show the cost matrix before continuing.
+Humans can inspect that same live matrix during `gbrain init` or with
+`gbrain search modes`; fixed examples in prose should not replace it.
+
+## Production choices
+
+For production or shared-brain operation:
+
+1. Pick the operating model and deployment topology first.
+2. Pick the search mode based on downstream model tier, query volume, and
+   tolerance for recall loss.
+3. Use `search` for read-only context in agents by default.
+4. Use `think` only where the workflow needs synthesized prose and citations.
+5. Schedule `dream` or autopilot only after the operator approves cadence,
+   provider keys, and cost boundaries.
+6. Prefer ambient retrieval reflex or one-shot `volunteer_context` for agent
+   push context. Use `watch` for transcript streams, and prefer Postgres when
+   it must run concurrently with MCP serving.
+
+---
+
 ## docs/mcp/DEPLOY.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md
@@ -3649,13 +5347,19 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY
 > dashboard at `/admin`, scoped operations, and a live SSE activity feed.
 > Pre-v0.26 legacy bearer tokens still work — `verifyAccessToken` falls back
 > to the `access_tokens` table and grandfathers tokens to `read+write+admin`.
-> Postgres-only for the legacy fallback (the `access_tokens` table is Postgres-only);
-> OAuth tables work on both PGLite and Postgres. See [SECURITY.md](../../SECURITY.md)
-> for env vars and tunable defaults.
+> The HTTP/auth/logging path is engine-aware on current releases: OAuth tables,
+> legacy bearer tokens, and MCP request logs work through the active
+> `BrainEngine` on both PGLite and Postgres. Use Postgres or Supabase for
+> shared, large, multi-machine, or always-on production deployments; keep PGLite
+> for local/default and small self-hosted cases. See
+> [SECURITY.md](../../SECURITY.md) for env vars and tunable defaults.
 
 Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` (v0.26.0+)
 for remote clients over OAuth 2.1.
+
+This page is the protocol reference for remote MCP. Client-specific pages should
+link here instead of repeating auth, scope, engine, or `localOnly` rules.
 
 ## Three Paths
 
@@ -3670,10 +5374,18 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 
 ### Remote over OAuth 2.1 (recommended, v0.26.0+)
 
+Run the server and tunnel as two separate long-lived processes. In terminal 1:
+
 ```bash
-gbrain serve --http --port 3131
+# Keep the service on loopback; ngrok terminates TLS and forwards locally.
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
+```
+
+After the server is listening, run the tunnel in terminal 2:
+
+```bash
 ngrok http 3131 --url your-brain.ngrok.app
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
@@ -3682,40 +5394,49 @@ the only path that works with ChatGPT (OAuth 2.1 + PKCE is required by the
 ChatGPT MCP connector). Pass `--public-url` whenever the server is reachable
 at anything other than `http://localhost:<port>` so the OAuth issuer in
 discovery metadata matches what clients hit (RFC 8414 §3.3).
+For an always-on deployment, supervise both processes and restart them
+independently; do not place the two foreground commands sequentially in one
+shell script.
 
 Supported clients:
-- **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
-- **Claude Desktop / Cowork** — OAuth 2.1 or legacy bearer tokens.
-- **Perplexity** — OAuth 2.1 client credentials grant.
-- **Claude Code, Cursor, Windsurf** — can use OAuth or legacy bearer.
+- **ChatGPT**: requires OAuth 2.1 + PKCE. Works natively with `--http`.
+- **Claude Desktop**: add the remote connector through Settings >
+  Integrations. The current client guide documents bearer-token setup.
+- **Cowork**: use the remote MCP settings exposed by the client; bearer-token
+  setup is documented in the client guide.
+- **Perplexity**: OAuth 2.1 client credentials grant.
+- **Claude Code, Codex, Cursor, Windsurf, and other coding agents**: use the
+  matching client page. The GBrain server supports OAuth and legacy bearer
+  tokens, but each client has its own supported connector/auth shape.
 
-See the [OAuth 2.1 setup](#oauth-21-setup-v100) section below.
+See the OAuth 2.1 setup section below.
 
-### Remote with legacy bearer tokens (pre-v0.26 deployments) — Postgres only
+### Remote with legacy bearer tokens (compatibility path)
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
   → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app)
   → gbrain serve --http  (built-in transport with bearer auth)
-  → Postgres (pooler connection or self-hosted)
+  → active BrainEngine (PGLite or Postgres)
 ```
 
 This requires:
-1. A Postgres-backed brain (the `access_tokens` table only exists on Postgres;
-   running `gbrain serve --http` against a PGLite install fails fast at startup)
-2. A machine running `gbrain serve --http`
-3. A public tunnel (ngrok, Tailscale, or cloud host)
-4. A bearer token created via `gbrain auth create <name>`
+1. A machine running `gbrain serve --http`.
+2. A public tunnel, private mesh, or cloud host when the client is not local.
+3. A bearer token created via `gbrain auth create <name>`.
 
 Pre-v1.0 tokens are grandfathered as `read+write+admin` scopes when you upgrade
-to the HTTP server, so no migration is required.
+to the HTTP server, so no migration is required. Treat this as a compatibility
+path for existing local or trusted clients. For cloud connectors, team brains,
+and least-privilege deployments, register OAuth clients instead.
 
 ## OAuth 2.1 Setup (v0.26.0+)
 
 ### 1. Start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
 On first start in an interactive terminal, the server prints an **admin
@@ -3735,6 +5456,11 @@ force printing.
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
+
+For local-only OAuth testing, omit `--public-url` and use
+`http://localhost:3131` as the issuer. For any public tunnel, reverse proxy, or
+cloud MCP client, set `--public-url` to the exact external URL before
+registering clients.
 
 > **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
 > to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
@@ -3759,6 +5485,12 @@ Register clients from the **`/admin` dashboard**:
 6. Hit **Register**. The credential-reveal modal shows the `client_id` (and
    `client_secret` for confidential clients) once. Copy or Download JSON
    immediately — secrets are hashed on storage and never shown again.
+
+Register `authorization_code` clients only when an authenticated consent policy
+is enforced around `/authorize`. The built-in route currently issues codes
+without authenticating an operator or presenting a consent decision; manual
+pre-registration of a public PKCE client does not fix that boundary. See
+[`../../SECURITY.md`](../../SECURITY.md).
 
 Or from the CLI — faster for scripting:
 
@@ -3797,22 +5529,26 @@ await oauthProvider.registerClientManual(
 );
 ```
 
-For self-service client registration (Dynamic Client Registration, RFC 7591),
-start the server with `--enable-dcr`. DCR is off by default.
+Dynamic Client Registration (RFC 7591) is off by default. Do not enable it on a
+public stock server. `--enable-dcr` permits unauthenticated registration, and
+the current `/authorize` route has no authenticated consent gate.
+`--enable-dcr-insecure` additionally permits `client_credentials`. Use either
+flag only behind a deliberate authenticated registration and consent policy.
 
 ### 3. Expose the server
 
 **v0.34 — bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
-To accept connections from the ngrok tunnel (or any non-loopback source),
-restart with `--bind`:
+To accept connections from a reverse proxy, mesh, LAN, or tunnel process that is
+not on the same host, restart with `--bind`:
 
 ```bash
 gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.ngrok.app
 ```
 
-When `--public-url` is set without `--bind`, a stderr WARN fires at
-startup so the misconfiguration ("the tunnel is up but my agent gets
-ECONNREFUSED") is loud.
+When `--public-url` is set without `--bind`, a stderr WARN fires at startup
+because public deployments usually need an explicit network boundary. A
+same-machine tunnel can still use loopback; if the tunnel cannot reach the
+server, use the bound form above.
 
 ```bash
 brew install ngrok
@@ -3826,16 +5562,29 @@ router exposes the spec-compliant discovery endpoint at
 
 ### 4. Scopes and localOnly
 
-Every operation is tagged `read | write | admin`. Four operations are
-`localOnly` and rejected over HTTP regardless of scope: `sync_brain`,
-`file_upload`, `file_list`, `file_url`. Remote agents cannot reach local
-filesystem surface area.
+Every HTTP tool call is checked against two gates before the handler runs:
+
+1. Scope. Operations declare a required OAuth scope. `write` implies `read`;
+   `admin` implies `read`, `write`, `sources_admin`, and `users_admin`.
+   The `agent` scope is separate and is not implied by `admin`.
+2. Local-only filtering. The HTTP server exposes only operations whose
+   `localOnly` flag is false. Local filesystem and host-control surfaces are
+   rejected over HTTP regardless of scope.
+
+Current local-only examples include `sync_brain`, `file_upload`, `file_list`,
+and `file_url`. Remote agents cannot reach those local filesystem or host-sync
+surfaces through MCP.
 
 | Scope | What it allows |
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep, local-only ops |
+| `sources_admin` | Source-management operations without broad `admin` |
+| `users_admin` | User-account administration when enabled |
+| `admin` | Client management, token revocation, remote doctor/status, source/user admin, read/write |
+| `agent` | Remote agent job submission; not implied by `admin` |
+
+`admin` is powerful, but it still does not override `localOnly`.
 
 ## Legacy Bearer Token Setup
 
@@ -3887,15 +5636,26 @@ gbrain auth test \
 
 ## Operations
 
-All 30 GBrain operations are available remotely, including `sync_brain` and
-`file_upload` (no timeout limits with self-hosted server).
+The remote tool list is generated from the current operation registry after
+filtering out `localOnly` operations. Do not rely on a hard-coded operation
+count. In practice, normal read/write brain operations are remote-callable when
+the client has the right scope, while host-local operations such as sync and
+file upload stay local-only.
 
-**Security note on `file_upload`:** remote MCP callers are confined to the working
-directory where `gbrain serve` was launched. Symlinks, `..` traversal, and absolute
-paths outside cwd are rejected. Page slugs and filenames are allowlist-validated
-(alphanumeric + hyphens; no control chars, RTL overrides, or backslashes). Local
-CLI callers (`gbrain file upload ...`) keep unrestricted filesystem access since
-the user owns the machine.
+Useful remote identity and diagnostic operations:
+
+- `get_brain_identity` is `read` scope and returns `{version, engine,
+  page_count, chunk_count, last_sync_iso, update_available, latest_version}` for
+  thin-client banners and smoke tests.
+- `get_health` is `admin` scope and exposes the host health dashboard data.
+- `run_doctor` is `admin` scope and returns the remote/thin-client structured
+  doctor report. Thin-client `gbrain doctor` and `gbrain remote doctor` use
+  this class of checks instead of opening a local empty PGLite brain.
+
+Protected job names and protected onboard handlers have extra gates beyond
+plain `admin`; if MCP returns a protected-job or missing-scope error, do not
+retry through another route unless the operator intentionally switches to a
+trusted local CLI flow.
 
 ## Deployment Options
 
@@ -3911,7 +5671,9 @@ Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`
 Run `gbrain auth list` to see active tokens.
 
 **"service_unavailable" error**
-Database connection failed. Check your Supabase dashboard for outages.
+Database or engine liveness failed. Check the host's database, pooler, and
+`/health` output. On Supabase/Postgres, also check the dashboard and pooler
+mode.
 
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT
@@ -3949,6 +5711,20 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VER
 Run these checks after install to confirm every part of GBrain is working.
 Each check includes the command, expected output, and what to do if it fails.
 
+Not every check applies to every route:
+
+| Route | Required checks |
+|---|---|
+| Local keyword-only PGLite | 1 and 4c for imported content; 2, 3, 6, and 7 only when those features were configured |
+| Provider-backed PGLite | 1, 4b, 4c, and 5; 2, 3, 6, and 7 when configured |
+| Synced Postgres/shared brain | 1, 4, 5, and 8; 2, 3, 6, and 7 when configured |
+
+An optional check that was never configured is not a failure. A keyword-only
+brain is healthy with embeddings unavailable. PGLite never needs Postgres RLS
+checks. Provider-backed PGLite does require its vector extension, vector
+columns, and indexes to pass doctor checks; only the deliberate keyword-only
+route may treat the embedding/vector path as not applicable.
+
 The most important check is #4 (live sync). "Sync ran" is not the same as
 "sync worked." A sync that silently skips pages because of a pooler bug is
 worse than no sync at all, because you think it's working.
@@ -3963,12 +5739,15 @@ worse than no sync at all, because you think it's working.
 gbrain doctor --json
 ```
 
-**Expected:** All checks return `"ok"`:
+**Expected:** Engine and schema checks for the selected route return `"ok"`:
 - `connection`: connected, N pages
-- `pgvector`: extension installed
-- `rls`: enabled on all tables
 - `schema_version`: current
-- `embeddings`: coverage percentage
+- PGLite keyword-only: the current doctor still emits an `embeddings` warning
+  such as `No embeddings yet. Run: gbrain embed --stale` and lowers the health
+  score. That warning is expected for this deliberate route; doctor does not
+  currently classify it as intentionally provider-free.
+- Provider-backed brain: embeddings report a coverage percentage
+- Postgres: pgvector is installed and the configured RLS checks pass
 
 **If it fails:** The doctor output includes specific fix instructions for each
 check. See `skills/setup/SKILL.md` Error Recovery table.
@@ -3990,6 +5769,8 @@ install paste (read `docs/GBRAIN_SKILLPACK.md`).
 
 ## 3. Auto-Update Configured
 
+Skip this check when the operator did not choose automatic update checks.
+
 **Command:**
 
 ```bash
@@ -4007,6 +5788,10 @@ Section 17.
 ## 4. Live Sync Actually Works
 
 This is the most important check. Three parts.
+
+For a one-time `gbrain import` route with no configured sync repo, run 4c
+immediately after a repeat import instead of waiting for a sync cycle. Checks
+4a and the scheduled-sync parts of 4c apply to registered Git-backed sources.
 
 ### 4a. Coverage Check
 
@@ -4096,6 +5881,9 @@ gbrain search "<text from the correction>"
 
 ## 5. Embedding Coverage
 
+Skip this check on the deliberate keyword-only route. Embedding coverage is a
+requirement only after an embedding provider has been configured.
+
 **Command:**
 
 ```bash
@@ -4104,13 +5892,22 @@ gbrain stats
 
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
-**If zero or very low:** `OPENAI_API_KEY` may be missing or invalid. Check:
+**If zero or very low:** identify the configured embedding provider and test
+that provider's credentials or endpoint:
 
 ```bash
-echo $OPENAI_API_KEY | head -c 10
+gbrain models
+gbrain models doctor
+gbrain providers test --touchpoint embedding --model <provider:model>
 ```
 
-If blank, set the key. Then:
+Use the actual model id from the active configuration. Hosted providers need
+their own credential (`OPENAI_API_KEY`, `VOYAGE_API_KEY`,
+`ZEROENTROPY_API_KEY`, Google/Azure/OpenRouter configuration, or another
+recipe-specific key); local providers need their configured server to be
+reachable. Do not print credential values while diagnosing. See
+[`integrations/embedding-providers.md`](integrations/embedding-providers.md)
+for provider-specific setup. After the provider test succeeds:
 
 ```bash
 gbrain embed --stale
@@ -4174,6 +5971,8 @@ heuristics won't find them — file an issue with a sample page.
 
 ## 8. JSONB Frontmatter Integrity (v0.12.2)
 
+This check is for Postgres-backed brains. Skip it for PGLite.
+
 Postgres-backed brains created before v0.12.2 had double-encoded JSONB columns
 (`frontmatter->>'key'` returned NULL, GIN indexes were inert). `gbrain upgrade`
 runs `gbrain repair-jsonb` automatically via the `v0_12_2` orchestrator.
@@ -4209,13 +6008,15 @@ If this returns rows on a brain with person pages, the JSONB path is healthy.
 
 ---
 
-## Quick Verification (all checks in one pass)
+## Route verification checklist
+
+Run only the commands that apply to the route table at the top of this page.
 
 ```bash
 # 1. Schema
 gbrain doctor --json
 
-# 2. Sync recency
+# 2. Sync recency (registered sync sources only)
 gbrain config get sync.last_run
 
 # 3. Page count + embed coverage
@@ -4224,21 +6025,22 @@ gbrain stats
 # 4. Search works
 gbrain search "test query from your brain content"
 
-# 5. Catch any unembedded chunks
+# 5. Catch any unembedded chunks (provider-backed routes only)
 gbrain embed --stale
 
-# 6. Auto-update
+# 6. Auto-update (only when configured)
 gbrain check-update --json
 
-# 7. Knowledge graph populated (links + timeline > 0)
+# 7. Knowledge graph populated (only when graph extraction was configured)
 gbrain stats | grep -E 'links|timeline'
 
-# 8. JSONB integrity (v0.12.2 — Postgres only, PGLite always 0)
+# 8. JSONB integrity (Postgres only)
 gbrain repair-jsonb --dry-run --json
 ```
 
-If all eight return successfully, the installation is healthy. For the full
-end-to-end sync test (4c), push a real change and verify it appears in search.
+If every applicable check returns successfully, the installation is healthy
+for its selected route. For the full end-to-end sync test (4c), push a real
+change and verify it appears in search.
 
 ---
 

@@ -1,11 +1,12 @@
 # GBrain v0: Postgres-Native Personal Knowledge Brain
 
-> **Historical design doc.** This is the original v0 spec from before PGLite landed. Several
-> forward-looking sections — most notably the SQLite engine plan — were superseded by
-> PGLite (embedded Postgres via WASM), which uses the same SQL dialect as Postgres and
-> eliminates the need for a separate FTS5/sqlite-vss translation layer. Kept here for
-> historical context; see [`ENGINES.md`](ENGINES.md) for the current engine architecture and
-> the [`CHANGELOG.md`](../CHANGELOG.md) for the actual implementation history.
+> Status: HISTORICAL.
+> This is the original v0 spec from before PGLite landed. Several forward-looking
+> sections, including the SQLite engine plan, were superseded by PGLite
+> (embedded Postgres via WASM), which uses the same SQL dialect as Postgres and
+> eliminates the need for a separate FTS5/sqlite-vss translation layer. Current
+> engine guidance lives in [`ENGINES.md`](ENGINES.md); release history lives in
+> [`../CHANGELOG.md`](../CHANGELOG.md).
 
 ## What this is
 

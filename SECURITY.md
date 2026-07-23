@@ -10,35 +10,46 @@ Do not open a public issue for security vulnerabilities.
 
 ## Remote MCP Security
 
-### ⚠️ Do NOT use open OAuth client registration for remote MCP
+### Do not enable open OAuth client registration without a policy
 
-If you deploy GBrain's MCP server behind an HTTP wrapper with OAuth 2.1
-support, **never allow unauthenticated client registration**. An attacker
-who discovers your server URL can:
+If you expose GBrain's HTTP MCP server, keep Dynamic Client Registration
+disabled unless you have a deliberate registration policy in front of it.
+With `--enable-dcr`, an unauthenticated caller can register an OAuth client, but
+the current `/authorize` route does not authenticate an operator or present an
+approval/consent gate before issuing an authorization code. Treat public DCR as
+an unauthenticated token-minting surface even when registration is restricted
+to `authorization_code`. `--enable-dcr-insecure` additionally permits the
+machine-to-machine `client_credentials` grant.
 
-1. Register a new OAuth client via `POST /register`
-2. Use `client_credentials` grant to obtain a bearer token
-3. Access all brain data via the MCP tools
+Leave DCR off on public deployments unless an authenticated registration and
+consent policy is enforced in front of it. Pre-register confidential clients
+with narrowly scoped credentials where practical. Do not treat manual
+pre-registration as sufficient protection for a public
+`authorization_code`/PKCE client: it uses the same unauthenticated
+`/authorize` route, and possession of its public client id is not
+authentication. Public authorization-code clients require an authenticated
+consent policy around that route.
 
 ### Recommended: `gbrain serve --http`
 
-As of v0.22.7, GBrain ships a built-in HTTP transport that uses the
-existing `access_tokens` table for authentication:
+Use the built-in HTTP transport instead of a custom wrapper. Current releases
+ship OAuth 2.1, scoped operations, an admin dashboard, default-deny CORS,
+rate limiting, and a legacy bearer-token compatibility path:
 
 ```bash
-# Create a token
-gbrain auth create "my-client"
-
 # Start the HTTP server
 gbrain serve --http --port 8787
 
-# Connect via ngrok, Tailscale, or any tunnel
-ngrok http 8787 --url your-brain.ngrok.app
+# For remote/cloud clients, also set a public issuer URL and bind explicitly.
+gbrain serve --http --port 8787 --bind 0.0.0.0 --public-url https://your-brain.example.com
 ```
 
-This is the recommended way to expose GBrain remotely. No OAuth, no
-registration endpoint, no self-service tokens. Tokens are managed
-exclusively via `gbrain auth create/list/revoke`.
+Default posture: OAuth is available, Dynamic Client Registration is off unless
+you pass `--enable-dcr`, and clients should be pre-registered from `/admin` or
+`gbrain auth register-client`. Legacy `gbrain auth create/list/revoke` bearer
+tokens still work for compatibility, but they are long-lived broad secrets;
+prefer OAuth clients with explicit scopes for cloud connectors and shared
+brains.
 
 ### If you must use a custom HTTP wrapper
 
@@ -111,7 +122,7 @@ gbrain auth test <url> --token <tok>   # Smoke-test a remote server
 Tokens are stored as SHA-256 hashes in the `access_tokens` table. The
 plaintext token is shown once at creation and never stored.
 
-## `gbrain serve --http` hardening (v0.22.7+)
+## `gbrain serve --http` hardening
 
 The built-in HTTP transport ships with several layers of hardening on by
 default. All env vars below are optional; the defaults are intentionally
@@ -127,13 +138,19 @@ fires when `--public-url` is set without `--bind` so the operator sees
 the binding before the first request — common cause of "ngrok forwards
 to me but the agent can't reach the upstream" misconfigurations.
 
-### Postgres-only
+### Engine posture
 
-`gbrain serve --http` requires a Postgres engine. PGLite is local-only by
-design and the `access_tokens` / `mcp_request_log` tables don't exist in
-the PGLite schema. Local agents continue to use stdio (`gbrain serve`).
-Running `--http` against a PGLite-backed install fails fast with a clear
-error message at startup.
+The HTTP/auth/logging path is engine-aware on current releases. OAuth client
+tables, legacy bearer tokens, and `mcp_request_log` route through the active
+`BrainEngine`, so `gbrain serve --http` can run on either PGLite or Postgres.
+
+Security guidance is still topology-dependent:
+
+- Prefer local stdio MCP (`gbrain serve`) for same-machine agents.
+- Treat PGLite HTTP as a local/default or small self-hosted shape; stop the live
+  MCP server before large write-heavy syncs on single-writer PGLite.
+- Prefer Postgres or Supabase for shared, large, multi-machine, or always-on
+  remote deployments.
 
 ### CORS
 
@@ -249,6 +266,7 @@ body is materialized in memory.
 Every `/mcp` request writes one row to `mcp_request_log`:
 
 ```bash
+# Postgres/Supabase example
 psql "$DATABASE_URL" -c \
   "SELECT created_at, token_name, operation, status, latency_ms
    FROM mcp_request_log

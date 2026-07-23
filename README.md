@@ -17,7 +17,33 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
-> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+## Start here
+
+- **Current release.** Read [`VERSION`](VERSION) for the exact version and
+  [`CHANGELOG.md`](CHANGELOG.md) for what changed. Upgrade instructions live in
+  [`docs/INSTALL.md`](docs/INSTALL.md). Coding agents should follow
+  [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).
+- **Install or operate GBrain.** Start with
+  [`docs/INSTALL.md`](docs/INSTALL.md). It covers local PGLite, Postgres or
+  Supabase, thin clients, MCP, and verification.
+- **Install with a coding agent.** Follow
+  [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md). Non-Claude agents start with
+  [`AGENTS.md`](AGENTS.md). Claude Code starts with [`CLAUDE.md`](CLAUDE.md).
+- **Run a shared or production brain.** Choose an
+  [operating model](docs/architecture/topologies.md#operating-model-decision-tree)
+  and a
+  [deployment topology](docs/architecture/topologies.md#deployment-topology-decision-tree),
+  then continue with [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md),
+  [`SECURITY.md`](SECURITY.md), and
+  [`docs/GBRAIN_VERIFY.md`](docs/GBRAIN_VERIFY.md).
+- **Choose a working mode.** Use the
+  [mode selection guide](docs/guides/mode-selection.md) after installation. It
+  distinguishes direct search, synthesis, background maintenance, retrieval
+  reflex, volunteered context, and watch mode.
+- **Load the docs into an LLM.** Fetch [`llms.txt`](llms.txt) for the curated
+  map or [`llms-full.txt`](llms-full.txt) for the map with core docs inlined.
+  The build reads [`scripts/llms-config.ts`](scripts/llms-config.ts). Forks
+  should set `LLMS_REPO_BASE` before running `bun run build:llms`.
 
 ## What this looks like
 
@@ -65,90 +91,27 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-GBrain is designed to be installed and operated by an AI agent. The fastest path is to have your agent do it for you. The CLI and MCP paths below are for people who want to wire it up themselves.
+Choose one complete installation guide:
 
-### Have your agent install it (recommended)
+- **Installing it yourself:** follow [`docs/INSTALL.md`](docs/INSTALL.md). It
+  starts with plain-language choices for a personal, multi-source, remote, or
+  shared brain and takes that route through verification. For the simplest
+  local test, start with Route A.
+- **Asking a coding agent to install it:** give the agent
+  [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md). It uses the same routes but
+  stops for your approval before cost, credentials, network exposure, and
+  recurring jobs.
 
-If you don't already have an AI agent platform running, start with one of these. Both are designed to read GBrain's install protocol and execute it:
+Paste this into an agent that can read HTTPS and run shell commands:
 
-- **[OpenClaw](https://github.com/openclaw/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
-- **[Hermes](https://github.com/NousResearch/hermes-agent)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
-
-Then paste this into your agent:
-
-```
+```text
 Retrieve and follow the instructions at:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-The agent installs GBrain, creates the brain, asks for your API keys, loads 43 skills, configures the dream cycle, and verifies the install end-to-end. ~30 minutes. You answer questions, it does the work.
-
-> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
-
-### Quick start: Claude Code or Codex
-
-Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
-
-**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
-
-```bash
-gbrain init --pglite                     # 2-second local brain (no Docker)
-claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
-```
-
-**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
-
-```bash
-gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
-gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
-```
-
-**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — both paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
-
-### Install the full autonomous setup into your existing agent
-
-Want the whole thing — local brain, 43 skills, the overnight dream cycle that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or another coding agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-This works in any agent that can read files over HTTPS and execute shell commands. Tested with Codex, Claude Code, Claude Cowork, Cursor, and AlphaClaw.
-
-### CLI standalone (no agent)
-
-```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite     # 2 seconds; no server, no Docker
-gbrain doctor            # verify health
-gbrain import ~/notes/   # index your markdown
-gbrain query "what themes show up across my notes?"
-```
-
-Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.md`](docs/INSTALL.md).
-
-### Connect GBrain to your AI client (MCP)
-
-GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
-
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
-- **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
-- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
-- **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
-- **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
-- **[ChatGPT](docs/mcp/CHATGPT.md)** — uses OAuth 2.1 with PKCE (the hard requirement). Register a `chatgpt` client from the admin dashboard with grant type `authorization_code`.
-
-For the HTTP server itself:
-
-```bash
-gbrain serve              # stdio MCP (local subprocess; for Claude Code, Cursor, Windsurf)
-gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard at /admin
-                          # (required for Claude Desktop, Cowork, Perplexity, ChatGPT)
-```
-
-The HTTP server includes DCR-style client registration, scope-gated access (`read` / `write` / `admin`), and rate limiting. Deployment guides (ngrok, Railway, Fly.io) live under [`docs/mcp/`](docs/mcp/).
+Do not combine snippets from several setup pages. The human and agent guides
+route to the relevant MCP, provider, topology, security, and verification detail
+at the point where each choice is needed.
 
 ## Two ways to query your brain
 
@@ -252,7 +215,13 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 ## Capabilities
 
-**Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). Default: `balanced` with ZeroEntropy reranker on. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns. Vector retrieval pools the best chunk per page, so a page surfaces on its strongest evidence instead of losing to a neighbor on one weak chunk. Queries that match a page's title phrase or a declared free-text alias (`gbrain reindex --aliases` backfills existing pages) get boosted to the page they name. Every result carries an `evidence` tag (why it matched) and a `create_safety` hint (`exists` / `probable` / `unknown`) so an agent decides whether a page already exists instead of guessing from a raw score. `gbrain search diagnose "<query>" --target <slug>` traces which retrieval layer surfaces (or misses) a page.
+**Hybrid search.** GBrain combines vectors, BM25 keywords, reciprocal-rank fusion, source-tier boosts, and intent-aware query rewriting.
+
+Three search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost and quality settings. Fresh initialization recommends a mode from detected provider and model-tier inputs. An unset mode falls back to `balanced`. Check the persisted choice with `gbrain search modes`. Live cost and recall comparisons are in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
+
+Graph signals adjust results that are connected, corroborated across sources, or crowded out by weak session chunks. Run `gbrain search "your query" --explain` to inspect every score adjustment. `gbrain doctor` checks graph-signal coverage, and `gbrain search stats` reports usage and failures. Vector retrieval keeps the strongest chunk from each page. Title phrases and declared aliases can also promote the page they name.
+
+Every result includes an `evidence` tag and a `create_safety` hint. Agents use those fields to decide whether a page already exists. Run `gbrain search diagnose "your query" --target page-slug` to trace which retrieval layer finds or misses a page.
 
 **Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG. **Obsidian-style vaults:** bare `[[note-name]]` wikilinks that point across folders — you wrote `[[struktura]]` but the page lives at `projects/struktura.md` — resolve by basename once you opt in with `gbrain config set link_resolution.global_basename true`. Off by default; `gbrain doctor` tells you how many edges you'd gain before you flip it. See [migrating an Obsidian vault](INSTALL_FOR_AGENTS.md#step-45-wire-the-knowledge-graph).
 
@@ -276,7 +245,11 @@ gbrain reindex-search-vector --yes        # recreate triggers + backfill
 
 The command is idempotent (re-running with the same language is a no-op for vector content) and uses the same recreate-and-backfill primitives as the migration. For accent-insensitive Portuguese (`pt_br`), see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md) for the `unaccent` + portuguese stemmer recipe.
 
-**43 curated skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
+**Bundled skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md).
+The skills cover signal capture, ingest, enrichment, querying, brain operations,
+citation repair, task management, scheduled jobs, reports, voice, audits, skill
+creation, evaluations, and migrations. The installer adds this Markdown-based
+skillpack to your agent workspace.
 
 **Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
@@ -291,7 +264,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: 16 recipes covering OpenAI (default fallback), OpenRouter, Voyage, ZeroEntropy (default), Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
-- **Rerankers**: ZeroEntropy `zerank-2` hosted (default in `tokenmax` mode) plus the v0.40.6.1 `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted ZeroEntropy weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
+- **Rerankers**: ZeroEntropy `zerank-2` hosted (enabled by default in `balanced` and `tokenmax` modes) plus the v0.40.6.1 `llama-server-reranker` recipe for local cross-encoder reranking through llama.cpp. It runs Qwen3-Reranker or self-hosted ZeroEntropy weights against the same `gateway.rerank()` interface. Follow the setup in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential gateway**: vault-aware secret distribution. [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 
@@ -299,7 +272,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 **Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines ~47 operations both engines implement; CLI and MCP server are generated from one source.
 
-**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Layout guidance: [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md). Topologies: [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
@@ -307,9 +280,17 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 ## Troubleshooting
 
-**`gbrain init --pglite` crashes on macOS 26.x (Tahoe)?** PGLite's embedded WASM engine is incompatible with macOS 26.x on Apple Silicon. The fix is to use native Homebrew PostgreSQL + pgvector instead. Full step-by-step setup in [`docs/INSTALL.md` — Troubleshooting: PGLite crashes on macOS 26.x](docs/INSTALL.md#pglite-crashes-on-macos-26x-tahoe).
+**`gbrain init --pglite` fails?** The current CLI distinguishes a Bun virtual
+filesystem problem, the macOS 26.3 WASM regression, a corrupted PGLite store,
+and an unknown failure. Follow
+[`docs/INSTALL.md` - PGLite fails to initialize](docs/INSTALL.md#pglite-fails-to-initialize)
+before changing database engines.
 
-**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment: set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
+**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. For an OpenAI-backed PGLite brain, for example, rebuild the index with `gbrain reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536`. For Postgres, use `gbrain retrieval-upgrade --to openai:text-embedding-3-large --reindex` or follow [`docs/embedding-migrations.md`](docs/embedding-migrations.md).
+
+Do not change only `embedding_model` or `embedding_dimensions` with `gbrain config set`. Current releases refuse that schema-breaking shortcut. You should not need to delete `~/.gbrain`.
+
+Fresh `gbrain init --pglite` detects embedding providers from API keys in your environment. Set `OPENAI_API_KEY`, `ZEROENTROPY_API_KEY`, or `VOYAGE_API_KEY` before initialization. You can also pass `--embedding-model your_provider:your_model` explicitly. With multiple keys set, init opens an interactive picker. In non-TTY contexts with no keys, init exits with a setup hint. Pass `--no-embedding` to defer the provider choice. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker and continuous integration sequencing.
 
 **Hourly cron sync keeps timing out on a federated brain?** v0.41.13.0 ships
 two flags + a recommended pattern. Switch your cron to a per-source loop
@@ -329,10 +310,10 @@ diff and `content_hash` short-circuits already-imported files. The
 `--max-age 1800` first command self-heals any wedged-but-alive locks
 left by a hung previous run, using the v98 `last_refreshed_at` semantic
 (NOT `acquired_at`) so healthy long-running holders are safe by
-construction. See the v0.41.13.0 entry in [`CHANGELOG.md`](CHANGELOG.md)
-for the honest scope notes (extract + embed phases run to completion;
-30-min rollout window for `--max-age` post-migration v98; full-sync
-triggers deferred to v0.42+).
+construction. See the sync entries in [`CHANGELOG.md`](CHANGELOG.md) for the
+honest scope notes: the original v0.41.13 timeout behavior was followed by
+v0.42 resumability, full-sync delete reconciliation, and additional recovery
+work. Keep cron runbooks pinned to the release behavior you actually run.
 
 **Dream cycle silently losing wiki links on Supabase?** v0.41.19.0 fixes
 the bug class structurally. The engine now self-retries every bulk batch
@@ -432,6 +413,7 @@ completes in ~1-2 seconds. (Closes #1605, #1581.)
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end
+- [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md): editable Markdown layout, managed/generated content, schema-pack expectations, and backup implications
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern (v0.40.7.0)
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory

@@ -21,6 +21,11 @@ The same eight validation classes the `frontmatter-guard` skill and
 | `NON_STRING_FIELD` | `title`/`type`/`slug` is an unquoted non-string scalar (`title: 123`) |
 | `EMPTY_FRONTMATTER` | `---` ... `---` with nothing meaningful between                   |
 
+For a single-file validation, GBrain finds the nearest `.git` directory and
+derives the page slug relative to that brain root. This keeps pre-commit
+validation from reporting a false slug mismatch merely because the hook passed
+an absolute path.
+
 ## Install
 
 For all registered sources that are git repos:

@@ -57,23 +57,29 @@ Result: searching from neither directory returns the `default` source
 media hits. Searching from inside `~/writing` returns only garrys-list.
 Federation is opt-in, not leaked.
 
-To search across them explicitly on demand:
+To search one isolated source explicitly, choose one source context per
+invocation:
 
 ```bash
-gbrain search "tech layoffs" --source yc-media,garrys-list
+gbrain search "tech layoffs" --source yc-media
+gbrain search "tech layoffs" --source garrys-list
 ```
+
+Do not pass a comma-separated source list to `--source`. Source ids are
+single context keys; if you want both sources in default search, federate
+them with `gbrain sources federate <id>`.
 
 ### 3. Mixed (wiki federated + sessions isolated)
 
 Your main wiki is federated with a few trusted sources. Your session
-transcripts (coming in v0.18) land in a separate isolated source so
-they don't dominate every search result.
+transcripts or other high-volume capture streams can live in a separate
+isolated source so they don't dominate every search result.
 
 ```bash
 # Federated sources
 gbrain sources add gstack --path ~/.gstack --federated
 
-# Isolated source (future v0.18 — sessions use this shape today for ingest)
+# Isolated source for session transcripts or another noisy stream
 gbrain sources add sessions --path ~/.claude/sessions --no-federated
 ```
 
@@ -120,8 +126,23 @@ gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--
                                "The git requirement for --path sources" below. --force
                                skips that check to register before git-init exists.
 gbrain sources list [--json]   List all sources with page counts + federation state.
-gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
-                               Cascade-delete a source (pages, chunks, timeline).
+gbrain sources status [--json] Read-only per-source health: last sync,
+                               staleness, page count, embedding coverage,
+                               failures, and queue/backfill state.
+gbrain sources current [--source <id>] [--json]
+                               Show which source the resolver would target
+                               and which tier won.
+gbrain sources remove <id> [--confirm-destructive] [--dry-run]
+                               Permanently delete a source and all its data
+                               after impact preview.
+gbrain sources archive <id>    Soft-delete a source while preserving data
+                               for the configured grace window.
+gbrain sources archived [--json]
+                               List archived sources and expiry windows.
+gbrain sources restore <id> [--no-federate]
+                               Restore an archived source.
+gbrain sources purge [<id>] [--confirm-destructive]
+                               Permanently purge archived sources.
 gbrain sources rename <id> <new-name>
                                Change display name only; id is immutable.
 gbrain sources default <id>    Set the brain-level default.
@@ -129,6 +150,15 @@ gbrain sources attach <id>     Write .gbrain-source in CWD (like kubectl context
 gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
+gbrain sources set-cr-mode <id> <none|title|per_chunk_synopsis>
+                               Override contextual retrieval mode for one
+                               source; pass "unset" or "default" to clear.
+gbrain sources webhook <set|show|rotate|clear> <id> [...]
+                               Manage per-source GitHub webhook metadata.
+gbrain sources tracked-branch <id> [--set <branch>] [--detect]
+                               Read or pin the branch used by source sync.
+gbrain sources audit <id> [--json]
+                               Dry-run content sanity scan before or after sync.
 ```
 
 ## The git requirement for --path sources
@@ -266,13 +296,21 @@ cd ~/.gstack && gbrain sources attach gstack && gbrain sync
 
 Two commands. The existing default source is untouched.
 
-## Not in v0.18.0
+## Current boundaries
 
-- Session transcript ingest (`.jsonl`, raised size cap, session
-  PageType) — v0.18.
-- Per-source retention/TTL (`gbrain sources prune`) — v0.18.
-- ACL enforcement via caller-identity — v0.17.1.
-- `gbrain sources import-from-github <url>` one-shot bootstrap — patch
-  release after the core plumbing stabilizes.
+Sources are current infrastructure, not a roadmap placeholder. The current
+surface covers registration, attach/detach, default resolution,
+federation/unfederation, current-source inspection, status dashboards,
+soft-delete/restore/purge, source webhooks, tracked branches, contextual
+retrieval overrides, and dry-run source audits.
 
-All of these build on the `sources` primitive shipped here.
+Still do not assume a source id list works everywhere. The CLI resolver picks
+one source context at a time through `--source`, `GBRAIN_SOURCE`,
+`.gbrain-source`, local path, brain default, or the seeded `default` source.
+Cross-source default search comes from federation; OAuth clients get their
+read axis from `--federated-read`.
+
+Deferred or separate surfaces remain separate: there is no
+`gbrain sources prune` retention command in the current dispatcher, and there
+is no `gbrain sources import-from-github <url>` one-shot bootstrap command in
+the current dispatcher.

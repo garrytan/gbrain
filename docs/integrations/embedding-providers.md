@@ -1,6 +1,9 @@
 # Embedding providers
 
-GBrain ships with 16 embedding-provider recipes covering OpenAI, ZeroEntropy, Voyage, OpenRouter (single key, many hosted models), the major hosted alternatives, three local options, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
+GBrain ships with provider recipes for hosted and local embedding models, chat
+models, rerankers, and a universal escape hatch through a LiteLLM proxy. Run
+`gbrain providers list` to see the live registry; `gbrain providers explain
+--json` emits a machine-readable matrix for agents.
 
 This page is the human-readable counterpart: capability per provider, env-var setup, dimensions, cost, and known constraints.
 
@@ -37,6 +40,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | yes (backend permitting) |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
+| `claude-cli` | Claude CLI OAuth session (chat only) | n/a | n/a | yes | n/a |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
 | `groq` | (no embedding model — chat only) | — | — | — | — |
 
@@ -63,9 +67,12 @@ The doctor distinguishes two repair paths:
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
-- **Reranking pair**: ZeroEntropy `zerank-2` is the hosted default in `tokenmax` mode (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). Voyage `rerank-2.5` pairs cleanly with Voyage embeddings.
+- **Reranking pair**: ZeroEntropy `zerank-2` is the hosted default in `balanced` and `tokenmax` modes (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). Voyage `rerank-2.5` pairs cleanly with Voyage embeddings.
 - **Local reranking (no API spend)**: `llama-server-reranker` recipe (v0.40.6.1) — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
+- **Claude subscription for chat and subagent work**: `claude-cli`. Use an
+  existing authenticated Claude CLI session without setting
+  `ANTHROPIC_API_KEY`. This route does not provide embeddings.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
 - **China region**: DashScope (Alibaba) or Zhipu (BigModel). DashScope's international endpoint at `dashscope-intl.aliyuncs.com`; override `provider_base_urls.dashscope` for the China endpoint.
 - **OSS local, full control**: llama-server (`llama.cpp`) for any GGUF model; Ollama for the curated catalog.
@@ -107,6 +114,11 @@ Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek,
 
 **Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). OR's embedding catalog also includes `text-embedding-3-large`, `google/gemini-embedding-2-preview`, `qwen/qwen3-embedding-8b`, `bge-m3` — opt in via `--embedding-model openrouter:<id>`. Pricing matches the upstream provider (OR adds a small markup).
 
+Provider-prefixed OpenAI-compatible model IDs keep their configured
+Matryoshka dimensions. For example, `openai/text-embedding-3-large` is matched
+against the underlying model's dimension options rather than treated as an
+unknown model because of its prefix.
+
 **Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 8 curated entry points (GPT-5.2 family, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
 
 **Optional env**:
@@ -114,6 +126,43 @@ Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek,
 - `OPENROUTER_REFERER` (default `https://gbrain.ai`) and `OPENROUTER_TITLE` (default `gbrain`) — attribution headers for OR's leaderboard. Forks running gbrain inside a different agent stack (OpenClaw deployments etc.) should set these so their traffic gets attributed to them, not gbrain.
 
 **Subagent loops**: gbrain's subagent infrastructure hard-pins to Anthropic-direct (stable `tool_use_id` across crashes/replays). OR-routed Anthropic is rejected at submit time regardless of the recipe flag. If you want the price/availability story OR offers for tool-calling, use it for chat only and keep an Anthropic key for subagent work.
+
+### Claude CLI OAuth
+
+The `claude-cli` recipe uses the authenticated local `claude` binary for chat
+and subagent loops. It is useful when the machine already has a Claude
+subscription session and you do not want those calls billed through an
+Anthropic API key.
+
+```bash
+gbrain providers test --touchpoint chat --model claude-cli:claude-sonnet-4-6
+gbrain config set models.chat claude-cli:claude-sonnet-4-6
+```
+
+Supported recipe models are `claude-opus-4-7`, `claude-sonnet-4-6`, and
+`claude-haiku-4-5-20251001`. The `claude` binary must be on `PATH`; set
+`GBRAIN_CLAUDE_CLI_BIN` when it lives elsewhere.
+
+To route subagent jobs through the same subscription-backed adapter, configure
+the subagent model and opt into the gateway-native tool loop:
+
+```bash
+gbrain config set models.subagent claude-cli:claude-sonnet-4-6
+gbrain config set agent.use_gateway_loop true
+```
+
+Without both settings, subagents continue to resolve through their existing
+model route; non-Anthropic provider ids are rejected by the legacy
+Anthropic-direct loop.
+
+GBrain starts the CLI in a clean temporary working directory, uses a strict MCP
+configuration, disables slash commands and unrelated tools, and removes
+Anthropic API credentials from the child environment so the request stays on
+the CLI OAuth session. Budget reports still use nominal Claude API prices for
+per-call accounting; those figures are not a statement about separate
+per-token billing on the subscription route. This recipe is chat-only.
+Configure a separate embedding provider, or use the keyword-only install path,
+for retrieval.
 
 ### Azure OpenAI
 

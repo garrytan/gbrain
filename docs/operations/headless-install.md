@@ -34,32 +34,50 @@ Init writes `~/.gbrain/config.json` with the resolved `embedding_model` + `embed
 
 ## Pattern 2: Provider key only at runtime (deferred-setup)
 
-If the API key is a runtime secret (Kubernetes secret, runtime env injection, end-user-supplied), use `--no-embedding` at build time and configure the provider when the container actually runs:
+If the API key is a runtime secret, install the CLI in the image but initialize
+the brain only after the secret is available. Run initialization once against
+a persistent `GBRAIN_HOME`; do not put `reinit-pglite` in the steady-state
+entrypoint.
 
 ```dockerfile
 FROM oven/bun:1
 RUN bun install -g github:garrytan/gbrain
 
-# Build the brain shape without a provider — schema lands at the default
-# width, but no embed callsite will actually run until runtime config.
-RUN gbrain init --pglite --no-embedding
-
-# At container start (entrypoint), provide the real provider:
-ENTRYPOINT ["/bin/sh", "-c", "\
-  gbrain config set embedding_model openai:text-embedding-3-large \
-  && gbrain init --force --pglite \
-  && exec gbrain serve"]
+# The persistent runtime volume owns GBRAIN_HOME.
+ENV GBRAIN_HOME=/var/lib/gbrain
+CMD ["/bin/sh", "-c", ": \"${GBRAIN_PUBLIC_URL:?set GBRAIN_PUBLIC_URL}\"; exec gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url \"$GBRAIN_PUBLIC_URL\""]
 ```
 
-The `gbrain init --no-embedding` opt-in writes `embedding_disabled: true` to config. Every embed callsite (`gbrain import`, `gbrain embed`, the `runEmbedCore` library entry point) checks this and refuses cleanly with a `gbrain config set embedding_model <id>` hint rather than proceeding with a silent default.
+The container now exposes HTTP MCP inside its container network. Keep port
+3131 private to the workload network and terminate TLS at a trusted ingress,
+reverse proxy, or tunnel whose external URL is `GBRAIN_PUBLIC_URL`; do not
+publish the cleartext port directly to an untrusted network.
 
-The runtime `gbrain init --force` re-runs the init flow against the now-populated env, which:
+Before starting the steady-state container for the first time, have the
+deployment controller run an initialization job with the same persistent
+volume and runtime secret:
 
-- Removes `embedding_disabled` from config.
-- Resolves the provider via env detection.
-- Re-templates the PGLite schema if dim differs from the build-time default.
+```bash
+gbrain init --pglite --non-interactive \
+  --embedding-model openai:text-embedding-3-large \
+  --embedding-dimensions 1536
+```
 
-## What WON'T work
+Use a one-shot job or explicit deployment step and let the deployment layer
+record completion. `gbrain init --pglite` does not itself refuse an existing
+brain, and a retry without the original `--schema-pack` can replace its
+selected pack with the default. Do not use command success as the one-time
+guard. If the deployment must retry, pass the complete original initialization
+arguments, including the chosen schema pack. After initialization succeeds,
+the HTTP `gbrain serve` command is restart-safe and does not perform
+destructive setup.
+
+Do not bake a `--no-embedding` brain into the image and attempt to repair it on
+every start. `reinit-pglite` preserves `<path>.bak` and refuses to overwrite an
+existing backup; it is an operator migration command, not an idempotent
+entrypoint.
+
+## What will not work
 
 ```dockerfile
 # Don't do this — silent default leaves you with vector(1280) ZE column
@@ -67,7 +85,9 @@ The runtime `gbrain init --force` re-runs the init flow against the now-populate
 RUN gbrain init --pglite
 ```
 
-If you upgrade from a pre-v0.37 image that used this pattern, `gbrain doctor` will surface the mismatch on first run after upgrade and print a paste-ready repair command (`gbrain init --force --embedding-model …` for empty brains, `gbrain retrieval-upgrade --reindex` for non-empty).
+If you upgrade an older image that used this pattern, run `gbrain doctor` first.
+Repair PGLite with `gbrain reinit-pglite`; use
+[`../embedding-migrations.md`](../embedding-migrations.md) for Postgres.
 
 ## Verifying a headless install
 

@@ -1,69 +1,91 @@
 # Connect GBrain to ChatGPT
 
-**Status (v0.26.0):** Unblocked. GBrain's `gbrain serve --http` ships OAuth 2.1
-with PKCE, which is the ChatGPT MCP connector's hard requirement. Before v1.0,
-this was a P0 TODO — the only major AI client that could not connect.
+**Status:** Protocol-compatible, security-gated. GBrain's HTTP server exposes
+the OAuth 2.1 + PKCE endpoints ChatGPT requires, but the current built-in
+`/authorize` route does not authenticate an operator or present a consent
+decision before issuing a code.
 
 ChatGPT does not support bearer-token MCP servers. You must use the OAuth 2.1
 HTTP server.
 
+Do not expose the stock authorization-code flow publicly by itself. Continue
+only when the deployment places an authenticated consent policy around
+`/authorize` and verifies that the approving identity is allowed to grant the
+requested brain scopes. Without that policy, possession of the public client
+id is enough to complete a PKCE flow; stop and do not register the connector.
+See [`../../SECURITY.md`](../../SECURITY.md).
+
+For HTTP MCP protocol, engine, OAuth, scope, and `localOnly` rules, use
+[`DEPLOY.md`](DEPLOY.md). This page only covers ChatGPT wiring.
+
 ## Setup
 
-### 1. Start the HTTP server
+### 1. Enforce authenticated consent
+
+Put an identity-aware authorization/consent layer in front of `/authorize`.
+The exact proxy or identity-provider configuration is deployment-specific and
+is not supplied by GBrain today. Configure that layer to listen on a separate
+local port, proxy allowed traffic to GBrain on loopback port 3131, and require
+authenticated approval before forwarding `/authorize`. Prove with an
+unauthorized browser session that no authorization code is issued before
+continuing.
+
+### 2. Choose the public URL and start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
 Save the admin bootstrap token printed on stderr. Open
 `http://localhost:3131/admin` and paste it to access the dashboard.
 
-### 2. Register a ChatGPT client
+`--public-url` is the OAuth issuer URL ChatGPT will discover. If ngrok assigns a
+different URL, restart `gbrain serve` with that exact URL before connecting
+ChatGPT. Keep GBrain on its default loopback bind. Only the consent proxy may
+reach port 3131; public traffic must not tunnel or route directly to it.
+
+### 3. Register a ChatGPT client
 
 ChatGPT uses the authorization code flow with PKCE (browser-based OAuth).
-Register from the `/admin` dashboard:
+Copy the exact redirect URI from ChatGPT's connector setup screen, then
+register a public client explicitly from the host:
 
-1. Click **Register client**.
-2. Name: `chatgpt`.
-3. Grant type: `authorization_code`.
-4. Scopes: `read`, `write` (leave `admin` unchecked for ChatGPT).
-5. Redirect URI: ChatGPT's OAuth redirect (copy it from the ChatGPT
-   connector setup screen — something like
-   `https://chat.openai.com/connector_platform_oauth_redirect`).
-6. Hit **Register**. The credential-reveal modal shows the `client_id` once
-   with Copy and Download JSON buttons. There is no client secret for
-   PKCE-based public clients.
-
-Host-repo wrappers can register programmatically:
-
-```ts
-await oauthProvider.registerClientManual(
-  'chatgpt',
-  ['authorization_code'],
-  'read write',
-  ['https://chat.openai.com/connector_platform_oauth_redirect'],
-);
+```bash
+gbrain auth register-client chatgpt \
+  --grant-types authorization_code,refresh_token \
+  --scopes "read" \
+  --redirect-uri "https://chat.openai.com/connector_platform_oauth_redirect" \
+  --token-endpoint-auth-method none
 ```
 
-### 3. Expose the server publicly
+Replace the example redirect URI with the exact value ChatGPT provides. Add
+`write` to `--scopes` only when ChatGPT must modify the brain; never grant
+`admin`. Save the returned `client_id`. A public PKCE client uses
+`token_endpoint_auth_method=none` and has no client secret.
+
+### 4. Expose the server publicly
 
 ```bash
 brew install ngrok
-ngrok http 3131 --url your-brain.ngrok.app
+ngrok http <consent-proxy-port> --url your-brain.ngrok.app
 ```
 
-Your OAuth issuer URL becomes `https://your-brain.ngrok.app`. ChatGPT's
-connector auto-discovers the spec-compliant endpoint at
+Replace `<consent-proxy-port>` with the local listener owned by the
+authenticated consent layer, not GBrain's port 3131. Your OAuth issuer URL
+becomes `https://your-brain.ngrok.app`. ChatGPT's connector auto-discovers the
+spec-compliant endpoint at
 `/.well-known/oauth-authorization-server`.
 
-### 4. Add the connector in ChatGPT
+### 5. Add the connector in ChatGPT
 
 1. Open ChatGPT > Settings > Connectors.
 2. Click **Add connector**.
 3. MCP server URL: `https://your-brain.ngrok.app/mcp`.
-4. Client ID: the `client_id` you saved in step 2.
-5. Click **Connect**. ChatGPT opens the OAuth consent page, you approve, and
-   the connector is live.
+4. Client ID: the `client_id` you saved in step 3.
+5. Click **Connect**. ChatGPT opens the authorization page. The external
+   policy must authenticate the approving user and record their consent before
+   allowing the code flow to continue.
 
 Start a new conversation and ask ChatGPT to search your brain. The MCP tool
 calls show up in the admin dashboard's live SSE feed in real time.
@@ -71,13 +93,14 @@ calls show up in the admin dashboard's live SSE feed in real time.
 ## Scopes
 
 ChatGPT clients can request any combination of `read`, `write`, `admin`. The
-scopes granted at consent time are enforced on every tool call. Four
-operations are `localOnly` and rejected over HTTP regardless of scope:
-`sync_brain`, `file_upload`, `file_list`, `file_url`. The HTTP server fails
-closed for any attempt to reach local filesystem surface area.
+scopes granted at consent time are enforced on every tool call. Operations
+marked `localOnly` are rejected over HTTP regardless of scope. Examples include
+`sync_brain`, `file_upload`, `file_list`, and `file_url`. The registry in
+`src/core/operations.ts` is authoritative, and the HTTP server fails closed
+for attempts to reach local filesystem surface area.
 
-Recommended ChatGPT scope: `read write`. Leave `admin` for your local CLI
-and the admin dashboard.
+Recommended starting scope: `read`. Add `write` only for an explicit editing
+workflow. Leave `admin` for your local CLI and the admin dashboard.
 
 ## Troubleshooting
 
