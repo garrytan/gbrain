@@ -1491,7 +1491,7 @@ export function reportModStatus(): void {
     console.log('  cd ~/.claude/skills/gstack && ./setup');
   }
   console.log('Resolver: skills/RESOLVER.md');
-  console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  console.log('Soul audit: ask your agent to "run a soul audit" to customize its identity (see skills/soul-audit)');
   // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
   // (no action needed). The policy skill is installed into the HOST repo on
   // request — we PRINT the command rather than silently mutating the host repo.
