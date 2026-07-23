@@ -90,7 +90,7 @@ Create 5 scaffold files for a new skill:
   1. skills/<name>/SKILL.md                 frontmatter + body template
   2. skills/<name>/scripts/<name>.mjs       deterministic-code stub
   3. skills/<name>/routing-eval.jsonl       routing fixture seed
-  4. test/<name>.test.ts                    vitest skeleton
+  4. skills/test/<name>.test.ts              vitest skeleton
   5. (append) RESOLVER.md or AGENTS.md      trigger row under "## Uncategorized"
 
 All generated files carry the SKILLIFY_STUB sentinel until replaced.
@@ -293,7 +293,7 @@ export async function runSkillifyScaffold(args: string[]): Promise<void> {
     }
     console.log('\nNext:');
     console.log(`  1. Replace SKILLIFY_STUB sentinels in the generated files.`);
-    console.log(`  2. bun test test/${flags.name}.test.ts`);
+    console.log(`  2. bun test skills/test/${flags.name}.test.ts`);
     console.log(`  3. gbrain skillify check skills/${flags.name}/scripts/${flags.name}.mjs`);
     console.log(`  4. gbrain check-resolvable`);
   }
