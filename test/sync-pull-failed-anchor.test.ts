@@ -30,8 +30,15 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 describe('#3068: failed git pull + zero imports must not report up_to_date', () => {
   let engine: PGLiteEngine;
   const dirs: string[] = [];
+  // Hermetic GBRAIN_HOME: performFullSync (first sync) reads/writes the
+  // sync-failure ledger under the gbrain home — never touch the real one.
+  let isolatedHome: string;
+  let origGbrainHome: string | undefined;
 
   beforeAll(async () => {
+    origGbrainHome = process.env.GBRAIN_HOME;
+    isolatedHome = mkdtempSync(join(tmpdir(), 'gbrain-3068-home-'));
+    process.env.GBRAIN_HOME = isolatedHome;
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
@@ -39,6 +46,9 @@ describe('#3068: failed git pull + zero imports must not report up_to_date', () 
 
   afterAll(async () => {
     await engine.disconnect();
+    if (origGbrainHome !== undefined) process.env.GBRAIN_HOME = origGbrainHome;
+    else delete process.env.GBRAIN_HOME;
+    rmSync(isolatedHome, { recursive: true, force: true });
   });
 
   beforeEach(async () => {

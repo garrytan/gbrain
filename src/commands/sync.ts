@@ -4600,6 +4600,9 @@ See also:
           status: r.status,
           ...(r.result ? {
             sync_status: r.result.status,
+            // #3068: surface the partial reason (e.g. pull_failed) so JSON
+            // consumers can distinguish a self-healing timeout from a wedge.
+            ...(r.result.reason ? { reason: r.result.reason } : {}),
             added: r.result.added,
             modified: r.result.modified,
             deleted: r.result.deleted,
@@ -4621,7 +4624,14 @@ See also:
     // Best-effort, stderr-only; skipped on dry-run.
     if (!dryRun) await maybeExtractionNudge(engine);
 
-    if (errCount > 0) process.exit(1);
+    // #3068: any source wedged on a failed pull (partial/pull_failed) makes
+    // the whole --all run non-zero — it will not self-heal on retry, so a
+    // green exit would hide it from cron/monitoring. Timeout-class partials
+    // keep the pre-existing exit-0 behavior (they converge on retry).
+    const pullFailedCount = perSourceResults.filter(
+      (r) => r.status === 'ok' && r.result?.status === 'partial' && r.result.reason === 'pull_failed',
+    ).length;
+    if (errCount > 0 || pullFailedCount > 0) process.exit(1);
     return;
   }
 
@@ -4709,6 +4719,12 @@ See also:
       process.off('SIGINT', onSingleSourceSigint);
     }
     printSyncResult(result);
+    // #3068: a pull_failed partial is NOT a success — unlike timeout-class
+    // partials (which converge on retry), a failing pull will not self-heal.
+    // Exit non-zero so cron/monitoring sees the wedge instead of a green run.
+    if (result.status === 'partial' && result.reason === 'pull_failed') {
+      process.exitCode = 1;
+    }
     // v0.42.7 (#1696, D5): extraction-lag nudge after a completed single-source
     // sync. Fire on every non-error completion (synced | first_sync | up_to_date)
     // — NOT just 'synced'; a fresh/--full import (`first_sync`) is the biggest

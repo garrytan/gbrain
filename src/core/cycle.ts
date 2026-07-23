@@ -935,13 +935,21 @@ async function runPhaseSync(
                                            // sync's inline extract still runs to preserve prior behavior.
     });
     const syncedCount = result.added + result.modified;
+    // #3068: a pull_failed partial means the internal git pull failed and the
+    // run imported nothing — the source may be silently behind its remote and
+    // will not self-heal. Surface it as 'warn' (not 'ok') so a scheduled cycle
+    // doesn't report a clean run over a wedged source. Timeout-class partials
+    // keep the pre-existing 'ok' mapping (they converge on retry by design).
+    const pullFailedPartial = result.status === 'partial' && result.reason === 'pull_failed';
     return {
       phase: 'sync',
-      status: result.status === 'blocked_by_failures' ? 'warn' : 'ok',
+      status: result.status === 'blocked_by_failures' || pullFailedPartial ? 'warn' : 'ok',
       duration_ms: 0,
       summary: dryRun
         ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
-        : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted`,
+        : pullFailedPartial
+          ? `git pull failed, nothing imported — source may be behind its remote (sync anchor unchanged)`
+          : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted`,
       details: {
         added: result.added,
         modified: result.modified,
@@ -950,6 +958,7 @@ async function runPhaseSync(
         chunksCreated: result.chunksCreated,
         failedFiles: result.failedFiles ?? 0,
         syncStatus: result.status,
+        ...(result.reason ? { syncReason: result.reason } : {}),
         dryRun,
       },
       pagesAffected: result.pagesAffected,
