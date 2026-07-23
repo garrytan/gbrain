@@ -67,7 +67,8 @@ export interface RemediationOpts {
 
 /**
  * Result of one step. status mirrors Minion job terminal states + a few
- * synthetic ones ('skipped_dep_aborted', 'skipped_completed_in_checkpoint').
+ * synthetic ones ('skipped_dep_aborted', 'skipped_already_aborted',
+ * 'skipped_completed_in_checkpoint', 'dry_run').
  */
 export interface StepResult {
   step: number;
