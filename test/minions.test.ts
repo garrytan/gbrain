@@ -354,6 +354,13 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
     expect(sub.timeout_ms).toBe(30 * 60 * 1000);
   });
 
+  test('contextual per-chunk reindex gets the 60-min default', async () => {
+    const job = await queue.add('contextual_reindex_per_chunk', { page_slug: 'large-transcript' }, undefined, {
+      allowProtectedSubmit: true,
+    });
+    expect(job.timeout_ms).toBe(60 * 60 * 1000);
+  });
+
   test('explicit timeout_ms always wins over the default', async () => {
     const job = await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
     expect(job.timeout_ms).toBe(5000);
