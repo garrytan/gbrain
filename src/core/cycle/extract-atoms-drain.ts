@@ -53,6 +53,8 @@ export interface ExtractAtomsDrainOpts {
   windowMs: number;
   /** Hard cap on batches (belt-and-suspenders against a 0-progress loop). Default 1000. */
   maxBatches?: number;
+  /** Abort the drain and any in-flight provider call. */
+  signal?: AbortSignal;
 }
 
 export interface ExtractAtomsDrainResult {
@@ -87,6 +89,12 @@ export async function runExtractAtomsDrain(
     let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
 
     while (deps.now() < deadline) {
+      if (opts.signal?.aborted) {
+        const reason = opts.signal.reason instanceof Error
+          ? opts.signal.reason.message
+          : String(opts.signal.reason ?? 'aborted');
+        throw new Error(`extract_atoms drain aborted: ${reason}`);
+      }
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
 
       const before = await deps.countRemaining();
@@ -103,7 +111,10 @@ export async function runExtractAtomsDrain(
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
       // that spends budget without draining.
-      if (r.extracted === 0 && r.skipped === 0) { stopped = 'no_progress'; break; }
+      if (r.extracted === 0 && r.skipped === 0 && (r.processed ?? 0) === 0) {
+        stopped = 'no_progress';
+        break;
+      }
     }
 
     const remaining = await deps.countRemaining();
@@ -157,6 +168,8 @@ export interface DrainForSourceOpts {
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
   onBatch?: ExtractAtomsDrainDeps['onBatch'];
+  /** Abort the drain and the current chat request. */
+  signal?: AbortSignal;
 }
 
 export async function runExtractAtomsDrainForSource(
@@ -180,6 +193,7 @@ export async function runExtractAtomsDrainForSource(
           dryRun: false,
           brainDir: opts.brainDir,
           deadlineMs,
+          signal: opts.signal,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         return {
@@ -197,6 +211,6 @@ export async function runExtractAtomsDrainForSource(
       now: Date.now,
       onBatch: opts.onBatch,
     },
-    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },
+    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches, signal: opts.signal },
   );
 }

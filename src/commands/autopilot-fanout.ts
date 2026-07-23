@@ -77,6 +77,8 @@ export interface FanoutResult {
   skipped_cap: string[];
   /** Source ids skipped because they're in failure cooldown (#2194 fix #2). */
   skipped_cooldown: string[];
+  /** Sources already holding a waiting/active cycle from an earlier slot. */
+  skipped_inflight: string[];
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
@@ -405,7 +407,7 @@ export async function dispatchPerSource(
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
-    return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], legacy_fallback: true };
+    return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], skipped_inflight: [], legacy_fallback: true };
   }
 
   // #2194 fix #2: load recent per-source failures + cooldown knobs so a
@@ -428,8 +430,34 @@ export async function dispatchPerSource(
     selectSourcesForDispatch(sources, opts.fanoutMax, Date.now(), FULL_CYCLE_FLOOR_MIN, recentFailures, cooldownOpts);
 
   const dispatched: string[] = [];
+  const skippedInflight: string[] = [];
   for (const src of dispatch) {
     try {
+      // Per-source single-flight across time slots. Idempotency keys dedupe
+      // retries within one slot, but a slow 10-minute cycle spans multiple
+      // 5-minute slots; without this guard each tick stacks another waiting
+      // cycle for the same source. The autopilot process itself is singleton,
+      // so this read-before-add is sufficient; queue idempotency still closes
+      // same-slot retries.
+      let existing: Array<{ id: number }> = [];
+      try {
+        existing = await engine.executeRaw<{ id: number }>(
+          `SELECT id
+             FROM minion_jobs
+            WHERE name = 'autopilot-cycle'
+              AND status IN ('waiting', 'active')
+              AND data->>'source_id' = $1
+            LIMIT 1`,
+          [src.id],
+        );
+      } catch {
+        // Pre-migration or transient read failure: fail open. The slot-scoped
+        // idempotency key still prevents exact duplicate submission.
+      }
+      if (existing.length > 0) {
+        skippedInflight.push(src.id);
+        continue;
+      }
       const remoteUrl = typeof src.config?.remote_url === 'string' ? src.config.remote_url : null;
       const job = await queue.add(
         'autopilot-cycle',
@@ -501,12 +529,19 @@ export async function dispatchPerSource(
       sources: skippedCooldown.map(s => s.id),
     }));
   }
+  if (skippedInflight.length > 0 && opts.jsonMode) {
+    emit(JSON.stringify({
+      event: 'fanout_inflight_skipped',
+      sources: skippedInflight,
+    }));
+  }
 
   return {
     dispatched,
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
+    skipped_inflight: skippedInflight,
     legacy_fallback: false,
   };
 }

@@ -127,6 +127,8 @@ export interface ExtractAtomsOpts {
    * fixed-size discovery batch.
    */
   deadlineMs?: number;
+  /** Abort the in-flight provider call and stop before the next source item. */
+  signal?: AbortSignal;
   /** Test seam: alternative chat function (bypasses real LLM calls). */
   _chat?: typeof gatewayChat;
   /**
@@ -219,7 +221,11 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
 ): Promise<DiscoveredPage[]> {
-  const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+  // An explicit [] means the caller completed a no-op incremental sync: there
+  // are no changed pages to process. Treating [] like undefined silently
+  // widened a routine cycle into a 50-page historical backlog drain.
+  if (Array.isArray(affectedSlugs) && affectedSlugs.length === 0) return [];
+  const hasFilter = Array.isArray(affectedSlugs);
   const sql = `
     SELECT p.slug,
            p.compiled_truth,
@@ -559,6 +565,12 @@ export async function runPhaseExtractAtoms(
   }
 
   for (const item of work) {
+    if (opts.signal?.aborted) {
+      const reason = opts.signal.reason instanceof Error
+        ? opts.signal.reason.message
+        : String(opts.signal.reason ?? 'aborted');
+      throw new Error(`extract_atoms aborted: ${reason}`);
+    }
     await maybeYield();
     if (opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs) {
       stoppedDeadline = true;
@@ -581,6 +593,7 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: 2000,
+        abortSignal: opts.signal,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -672,6 +685,12 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (opts.signal?.aborted) {
+        const reason = opts.signal.reason instanceof Error
+          ? opts.signal.reason.message
+          : String(opts.signal.reason ?? 'aborted');
+        throw new Error(`extract_atoms aborted: ${reason}`);
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),

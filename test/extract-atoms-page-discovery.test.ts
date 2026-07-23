@@ -218,6 +218,14 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
     expect(discovered.map((d) => d.slug).sort()).toEqual(['meeting/a', 'meeting/c']);
   });
 
+  test('an explicit empty affectedSlugs list does not silently widen to the full backlog', async () => {
+    await seedPage({ slug: 'meeting/a', type: 'meeting' });
+    await seedPage({ slug: 'meeting/b', type: 'meeting' });
+
+    const discovered = await discoverExtractablePages(engine, 'default', []);
+    expect(discovered).toEqual([]);
+  });
+
   test('executeRaw failure returns [] (fail-soft, transcript path proceeds)', async () => {
     // Inject a SQL error by passing a sourceId that breaks the query —
     // actually easier: temporarily replace executeRaw to throw.

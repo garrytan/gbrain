@@ -1854,6 +1854,21 @@ export async function runCycle(
                 ...(synthesizeWrittenSlugs ?? []),
               ]
             : undefined;
+        // A routine source cycle must leave enough time for the remaining
+        // phases and for the worker to complete before its absolute timeout.
+        // Atom backlog convergence is intentionally incremental: cap this
+        // phase to the configured drain window (default 120s), and never run
+        // past 30s before the enclosing job deadline.
+        const xaWindowRaw = await engine.getConfig('autopilot.auto_drain.window_seconds');
+        const xaWindowSeconds = (() => {
+          const n = parseInt(xaWindowRaw ?? '', 10);
+          return Number.isFinite(n) && n > 0 ? n : 120;
+        })();
+        const xaWindowDeadline = Date.now() + xaWindowSeconds * 1000;
+        const xaJobDeadline =
+          opts.deadlineAtMs != null ? Math.max(Date.now(), opts.deadlineAtMs - 30_000) : null;
+        const xaDeadline =
+          xaJobDeadline == null ? undefined : Math.min(xaWindowDeadline, xaJobDeadline);
         const { result, duration_ms } = await timePhase(() => runPhaseExtractAtoms(engine, {
           brainDir: brainDir ?? undefined,
           sourceId: xaSourceId,
@@ -1864,6 +1879,8 @@ export async function runCycle(
           // v0.41.19.0 (T4): pass same reporter (not a child — cycle.ts
           // owns start/finish; phase only ticks).
           progress,
+          signal: opts.signal,
+          deadlineMs: xaDeadline,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
