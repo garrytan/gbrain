@@ -203,12 +203,87 @@ describe('PGLiteEngine: Search', () => {
     await engine.upsertChunks('concepts/rag', [
       { chunk_index: 0, chunk_text: 'RAG combines retrieval with generation', chunk_source: 'compiled_truth' },
     ]);
+    await engine.putPage('mail/example', {
+      type: 'note', title: 'Launch message',
+      compiled_truth: 'Launch evidence for citation metadata.',
+      frontmatter: {
+        message_id: '<launch@example.com>',
+        thread_id: 'thread-123',
+        subject: 'Example launch subject',
+      },
+    });
+    await engine.upsertChunks('mail/example', [
+      { chunk_index: 0, chunk_text: 'Launch evidence for citation metadata', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('notes/generated-title', {
+      type: 'note', title: 'Generated page title must stay a title',
+      compiled_truth: 'Non-email evidence for subject gating.',
+      frontmatter: {
+        subject: 'Frontmatter subject without an email identity',
+        thread_id: 'standalone-thread-id',
+      },
+    });
+    await engine.upsertChunks('notes/generated-title', [
+      { chunk_index: 0, chunk_text: 'Non-email evidence for subject gating', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('mail/whitespace-message-id', {
+      type: 'note', title: 'Whitespace message id',
+      compiled_truth: 'Whitespace-only email identity evidence.',
+      frontmatter: {
+        message_id: ' \t\n ',
+        thread_id: 'thread-whitespace',
+        subject: 'Subject must remain gated',
+      },
+    });
+    await engine.upsertChunks('mail/whitespace-message-id', [
+      { chunk_index: 0, chunk_text: 'Whitespace-only email identity evidence', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('notes/numeric-email-frontmatter', {
+      type: 'note', title: 'Numeric email frontmatter',
+      compiled_truth: 'Numeric email identity evidence.',
+      frontmatter: {
+        message_id: 12345,
+        thread_id: 67890,
+        subject: 98765,
+      },
+    });
+    await engine.upsertChunks('notes/numeric-email-frontmatter', [
+      { chunk_index: 0, chunk_text: 'Numeric email identity evidence', chunk_source: 'compiled_truth' },
+    ]);
   });
 
   test('searchKeyword returns results for matching term', async () => {
     const results = await engine.searchKeyword('NovaMind');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].slug).toBe('companies/novamind');
+  });
+
+  test('searchKeyword projects email citation identifiers from frontmatter', async () => {
+    const results = await engine.searchKeyword('Launch evidence');
+    expect(results[0].message_id).toBe('<launch@example.com>');
+    expect(results[0].thread_id).toBe('thread-123');
+    expect(results[0].source_subject).toBe('Example launch subject');
+  });
+
+  test('searchKeyword never promotes a non-email title or subject to source_subject', async () => {
+    const results = await engine.searchKeyword('Non-email evidence');
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBe('standalone-thread-id');
+    expect(results[0].source_subject).toBeUndefined();
+  });
+
+  test('searchKeyword treats whitespace-only message_id as absent', async () => {
+    const results = await engine.searchKeyword('Whitespace-only email identity');
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBe('thread-whitespace');
+    expect(results[0].source_subject).toBeUndefined();
+  });
+
+  test('searchKeyword rejects non-string email citation frontmatter', async () => {
+    const results = await engine.searchKeyword('Numeric email identity');
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBeUndefined();
+    expect(results[0].source_subject).toBeUndefined();
   });
 
   test('searchKeyword returns empty for non-matching term', async () => {
@@ -231,6 +306,42 @@ describe('PGLiteEngine: Search', () => {
     const fakeEmbedding = new Float32Array(CHUNK_EMBED_DIM);
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
+  });
+
+  test('searchVector carries email citation metadata through the outer CTE', async () => {
+    const embedding = new Float32Array(CHUNK_EMBED_DIM);
+    embedding[0] = 1;
+    await engine.upsertChunks('mail/example', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Launch evidence for citation metadata',
+        chunk_source: 'compiled_truth',
+        embedding,
+      },
+    ]);
+
+    const results = await engine.searchVector(embedding);
+    expect(results[0].message_id).toBe('<launch@example.com>');
+    expect(results[0].thread_id).toBe('thread-123');
+    expect(results[0].source_subject).toBe('Example launch subject');
+  });
+
+  test('searchVector treats whitespace-only message_id as absent', async () => {
+    const embedding = new Float32Array(CHUNK_EMBED_DIM);
+    embedding[1] = 1;
+    await engine.upsertChunks('mail/whitespace-message-id', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Whitespace-only email identity evidence',
+        chunk_source: 'compiled_truth',
+        embedding,
+      },
+    ]);
+
+    const results = await engine.searchVector(embedding);
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBe('thread-whitespace');
+    expect(results[0].source_subject).toBeUndefined();
   });
 });
 
@@ -275,6 +386,19 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
     await engine.upsertChunks('originals/english-essay', [
       { chunk_index: 0, chunk_text: 'NovaMind builds AI agents for enterprise', chunk_source: 'compiled_truth' },
     ]);
+
+    await engine.putPage('mail/cjk-example', {
+      type: 'note', title: 'Generated CJK page title',
+      compiled_truth: '郵件引用識別',
+      frontmatter: {
+        message_id: '<cjk@example.com>',
+        thread_id: 'thread-cjk',
+        subject: 'Example CJK email subject',
+      },
+    });
+    await engine.upsertChunks('mail/cjk-example', [
+      { chunk_index: 0, chunk_text: '郵件引用識別', chunk_source: 'compiled_truth' },
+    ]);
   });
 
   test('CJK query routes to LIKE branch and finds Chinese substring', async () => {
@@ -293,6 +417,17 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
     const results = await engine.searchKeyword('한글');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].slug).toBe('originals/korean-essay');
+  });
+
+  test('CJK keyword page and chunk paths project email citation metadata', async () => {
+    for (const result of [
+      (await engine.searchKeyword('郵件引用'))[0],
+      (await engine.searchKeywordChunks('郵件引用'))[0],
+    ]) {
+      expect(result.message_id).toBe('<cjk@example.com>');
+      expect(result.thread_id).toBe('thread-cjk');
+      expect(result.source_subject).toBe('Example CJK email subject');
+    }
   });
 
   test('bigram ranking: 3-hit page outranks 1-hit page', async () => {

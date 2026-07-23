@@ -14,6 +14,8 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+import { projectEmailCitationFrontmatter } from '../utils.ts';
+import { assertValidSourceId } from '../source-id.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
 import {
@@ -45,6 +47,7 @@ import {
   SemanticQueryCache,
   loadCacheConfig,
 } from './query-cache.ts';
+import { readPageGenerationClock } from './query-cache-gate.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -696,6 +699,7 @@ export async function applyAliasHop(
       score: injectScore,
       base_score: injectScore,
       alias_hit: true,
+      ...projectEmailCitationFrontmatter(page.frontmatter),
     } as SearchResult);
   }
   out.sort((a, b) => b.score - a.score);
@@ -1469,6 +1473,7 @@ export async function hybridSearch(
         walkDepth,
         nearSymbol: opts?.nearSymbol,
         sourceId: opts?.sourceId,
+        sourceIds: opts?.sourceIds,
       });
       // Resolve new chunk IDs (not already in fused) into full rows.
       const existingIds = new Set(fused.map(r => r.chunk_id));
@@ -1476,7 +1481,10 @@ export async function hybridSearch(
         .filter(e => !existingIds.has(e.chunk_id))
         .map(e => e.chunk_id);
       if (newIds.length > 0) {
-        const hydrated = await hydrateChunks(engine, newIds);
+        const hydrated = await hydrateChunks(engine, newIds, {
+          sourceId: opts?.sourceId,
+          sourceIds: opts?.sourceIds,
+        });
         const scoreById = new Map(expanded.map(e => [e.chunk_id, e.score]));
         for (const r of hydrated) {
           r.score = scoreById.get(r.chunk_id) ?? 0.01;
@@ -1651,7 +1659,18 @@ export async function hybridSearchCached(
     perCall: {
       cache_enabled: opts?.useCache,
       tokenBudget: opts?.tokenBudget,
-      expansion: opts?.expansion,
+      // Fold EFFECTIVE expansion into the cache key: the inner hybridSearch
+      // only expands when the resolved knob is on AND an expandFn is wired
+      // in (`expansionAllowed && opts?.expandFn`). Without an expandFn the
+      // knob can never fire, so force `false` here — otherwise a
+      // no-expandFn caller under a tokenmax bundle would share a cache row
+      // with the expanded results of an expandFn caller (and vice versa).
+      // This is what makes `expandFn` cache-SAFE (it is deliberately NOT in
+      // isSemanticCacheRequestSafe's unsafe list): its result-shaping effect
+      // is fully expressed by the expansion bit of the knobs hash. The
+      // production `query` op always passes expandFn, so listing it unsafe
+      // would silently disable the semantic cache for the flagship op.
+      expansion: opts?.expandFn ? opts?.expansion : false,
       intentWeighting: opts?.intentWeighting,
       searchLimit: opts?.limit,
       // v0.35.6.0 — floor-ratio threaded through cache resolver too so
@@ -1728,11 +1747,23 @@ export async function hybridSearchCached(
     opts?.adaptiveReturn,
     cfgCached as unknown as Record<string, unknown> | null,
   );
+  // Compute the scope key ONCE, fail-open. `cacheScopeKey` throws on a
+  // malformed source id (forged encodings, invalid charset) — that rejection
+  // is correct for direct callers, but inside the search hot path an invalid
+  // scope must degrade to "skip the cache", never break the search itself.
+  let cacheScope: string | null = null;
+  try {
+    cacheScope = cacheScopeKey(opts);
+  } catch {
+    // invalid scope id — cache lookup/store skipped below
+  }
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
+    !isSemanticCacheRequestSafe(opts) ||
+    cacheScope === null ||
     adaptiveReturnOn;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
@@ -1777,7 +1808,7 @@ export async function hybridSearchCached(
   }
 
   if (!skipCache && queryEmbedding && cacheStatus !== 'disabled') {
-    const hit = await cache.lookup(queryEmbedding, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash });
+    const hit = await cache.lookup(queryEmbedding, { sourceId: cacheScope!, knobsHash: cacheKnobsHash });
     if (hit.hit && hit.results) {
       cacheStatus = 'hit';
       cacheSimilarity = hit.similarity;
@@ -1851,6 +1882,10 @@ export async function hybridSearchCached(
   // we use a single-element box to keep the type stable.
   const innerMetaBox: { current: HybridSearchMeta | null } = { current: null };
   const userOnMeta = opts?.onMeta;
+  const maxGenerationAtSearchStart =
+    !skipCache && cacheStatus === 'miss' && queryEmbedding
+      ? await readPageGenerationClock(engine)
+      : null;
   const results = await hybridSearch(engine, query, {
     ...opts,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
@@ -1909,11 +1944,16 @@ export async function hybridSearchCached(
     cacheStatus === 'miss' &&
     queryEmbedding &&
     results.length > 0 &&
-    (innerMeta?.vector_enabled ?? false)
+    (innerMeta?.vector_enabled ?? false) &&
+    maxGenerationAtSearchStart !== null
   ) {
     trackCacheWrite(
       cache
-        .store(query, queryEmbedding, results, finalMeta, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash })
+        .store(query, queryEmbedding, results, finalMeta, {
+          sourceId: cacheScope!,
+          knobsHash: cacheKnobsHash,
+          maxGenerationAtSearchStart,
+        })
         .catch(() => { /* swallow */ }),
     );
   }
@@ -1945,16 +1985,51 @@ function rrfKey(r: SearchResult): string {
  * cache only saw scalar `sourceId`; a federated query fell through to
  * `'default'` and could cross-serve an unrelated scope.
  *
- *   - federated (sourceIds set) → `__set__:` + sorted, comma-joined ids
- *     (order-independent; two different source-sets get distinct keys)
- *   - scalar sourceId           → the id itself (single-source unchanged)
- *   - unscoped                  → `'default'` (single-source brains unchanged)
+ * Keys are typed JSON tuples so arbitrary scalar text cannot collide with a
+ * federated encoding. Every source id is validated before it reaches cache
+ * lookup/store; this keeps internal/trusted callers on the same boundary as
+ * registered sources.
  */
 export function cacheScopeKey(opts?: { sourceId?: string; sourceIds?: string[] }): string {
   if (opts?.sourceIds && opts.sourceIds.length > 0) {
-    return '__set__:' + [...opts.sourceIds].sort().join(',');
+    const ids = [...new Set(opts.sourceIds)].sort();
+    for (const id of ids) assertValidSourceId(id);
+    return JSON.stringify(['set', ...ids]);
   }
-  return opts?.sourceId ?? 'default';
+  if (opts?.sourceId !== undefined) {
+    assertValidSourceId(opts.sourceId);
+    return JSON.stringify(['scalar', opts.sourceId]);
+  }
+  return JSON.stringify(['all']);
+}
+
+/**
+ * Semantic-cache replay is safe only when every result-shaping input is either
+ * represented by the existing knobs/scope key or absent. Unsupported shapes
+ * bypass lookup and writeback rather than risk cross-serving a different view.
+ */
+export function isSemanticCacheRequestSafe(opts?: HybridSearchOpts): boolean {
+  if (!opts) return true;
+  return !(
+    (opts.offset !== undefined && opts.offset !== 0) ||
+    opts.type !== undefined ||
+    opts.types !== undefined ||
+    opts.exclude_slugs !== undefined ||
+    opts.detail !== undefined ||
+    opts.language !== undefined ||
+    opts.symbolKind !== undefined ||
+    opts.afterDate !== undefined ||
+    opts.beforeDate !== undefined ||
+    opts.recencyBoost !== undefined ||
+    opts.salience !== undefined ||
+    opts.recency !== undefined ||
+    opts.since !== undefined ||
+    opts.until !== undefined ||
+    opts.crossModal !== undefined ||
+    opts.reranker !== undefined ||
+    opts.rrfK !== undefined ||
+    opts.dedupOpts !== undefined
+  );
 }
 
 /**

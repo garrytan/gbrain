@@ -23,12 +23,34 @@ beforeAll(async () => {
 
   await eng.putPage('companies/widget-co', { type: 'company', title: 'Widget Co', compiled_truth: 'A payments company.', timeline: '' });
   // The investor's body deliberately NEVER mentions Widget Co — only the edge connects them.
-  await eng.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice is a seed-stage investor based in Lisbon.', timeline: '' });
+  await eng.putPage('people/alice-example', {
+    type: 'person',
+    title: 'Alice Example',
+    compiled_truth: 'Alice is a seed-stage investor based in Lisbon.',
+    timeline: '',
+    frontmatter: {
+      message_id: '<alice-investor@example.com>',
+      thread_id: 'thread-alice-investor',
+      subject: 'Investor profile update',
+    },
+  });
   await eng.upsertChunks('people/alice-example', [{
     chunk_index: 0, chunk_text: 'Alice is a seed-stage investor based in Lisbon.',
     chunk_source: 'compiled_truth', embedding: new Float32Array(dim), token_count: 8,
   }] satisfies ChunkInput[]);
   await eng.addLink('people/alice-example', 'companies/widget-co', '', 'invested_in', 'manual');
+  await eng.putPage('people/numeric-example', {
+    type: 'person',
+    title: 'Numeric Example',
+    compiled_truth: 'A second seed-stage investor.',
+    timeline: '',
+    frontmatter: { message_id: 12345, thread_id: 67890, subject: 98765 },
+  });
+  await eng.addLink('people/numeric-example', 'companies/widget-co', '', 'invested_in', 'manual');
+  await eng.putPage('people/hydrate-quarantined', {
+    type: 'person', title: 'Hydrate Quarantined', compiled_truth: 'Must remain hidden.', timeline: '',
+    frontmatter: { quarantine: true, message_id: '<hidden@example.com>', subject: 'Hidden exact subject' },
+  });
 }, 60_000);
 
 afterAll(async () => { await eng.disconnect(); });
@@ -43,6 +65,15 @@ describe('buildRelationalArm', () => {
     expect(alice!.relational_seed).toBe('companies/widget-co');
     // chunk-backed page → reinforces a REAL chunk id (not synthetic 0).
     expect(alice!.chunk_id).toBeGreaterThan(0);
+    expect(alice!.message_id).toBe('<alice-investor@example.com>');
+    expect(alice!.thread_id).toBe('thread-alice-investor');
+    expect(alice!.source_subject).toBe('Investor profile update');
+
+    const malformed = list.find(r => r.slug === 'people/numeric-example');
+    expect(malformed).toBeDefined();
+    expect(malformed!.message_id).toBeUndefined();
+    expect(malformed!.thread_id).toBeUndefined();
+    expect(malformed!.source_subject).toBeUndefined();
   });
 
   test('non-relational query is a pure no-op', async () => {
@@ -55,6 +86,21 @@ describe('buildRelationalArm', () => {
   test('unresolvable seed → no-op (never traverse from a guess)', async () => {
     const list = await buildRelationalArm(eng, 'who invested in nonexistent-phantom-xyz');
     expect(list).toEqual([]);
+  });
+
+  test('hydrate rejects a quarantined row even if fanout returns it', async () => {
+    const original = eng.relationalFanout.bind(eng);
+    eng.relationalFanout = async () => [{
+      source_id: 'default', slug: 'people/hydrate-quarantined', hop: 1,
+      edge_count: 1, via_link_types: ['invested_in'],
+      path: ['companies/widget-co', 'people/hydrate-quarantined'], canonical_chunk_id: null,
+    }];
+    try {
+      const list = await buildRelationalArm(eng, 'who invested in widget-co');
+      expect(list).toEqual([]);
+    } finally {
+      eng.relationalFanout = original;
+    }
   });
 
   test('fail-open: fanout error returns [] + errored meta, never throws', async () => {

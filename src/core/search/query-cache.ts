@@ -32,6 +32,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
+import { assertValidSourceId } from '../source-id.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
 
 /** Default cosine similarity threshold for cache hits. */
@@ -205,9 +206,20 @@ export class SemanticQueryCache {
     queryEmbedding: Float32Array | null,
     results: SearchResult[],
     meta: HybridSearchMeta,
-    opts: { sourceId?: string; ttlSeconds?: number; knobsHash?: string } = {},
+    opts: {
+      sourceId?: string;
+      ttlSeconds?: number;
+      knobsHash?: string;
+      /** Global generation captured immediately before the producing search. */
+      maxGenerationAtSearchStart?: number;
+    } = {},
   ): Promise<void> {
-    if (!this.enabled || !queryEmbedding || queryEmbedding.length === 0) return;
+    if (
+      !this.enabled ||
+      !queryEmbedding ||
+      queryEmbedding.length === 0 ||
+      opts.maxGenerationAtSearchStart === undefined
+    ) return;
     const sourceId = opts.sourceId ?? 'default';
     const knobsHash = opts.knobsHash ?? '';
     const ttl = clampTtl(opts.ttlSeconds ?? this.ttlSeconds);
@@ -222,6 +234,13 @@ export class SemanticQueryCache {
       .map((r) => r.page_id)
       .filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
     const snapshot = await buildPageGenerationsSnapshot(this.engine, pageIds);
+    // Production search captures the clock before materializing results. If
+    // any page write landed during that window, the serialized DTO may already
+    // be stale; skip writeback rather than certify it with the newer snapshot.
+    if (
+      opts.maxGenerationAtSearchStart !== undefined &&
+      snapshot.max_generation_at_store !== opts.maxGenerationAtSearchStart
+    ) return;
 
     try {
       // v0.32.3 [CDX-4]: knobs_hash threaded into the row so concurrent
@@ -269,10 +288,35 @@ export class SemanticQueryCache {
   async clear(opts: { sourceId?: string } = {}): Promise<number> {
     try {
       if (opts.sourceId) {
+        assertValidSourceId(opts.sourceId);
+        const typedScalar = JSON.stringify(['scalar', opts.sourceId]);
+        const typedSetMemberPattern = `%${JSON.stringify(opts.sourceId)}%`;
+        const legacySetOnly = `__set__:${opts.sourceId}`;
+        const legacySetFirst = `__set__:${opts.sourceId},%`;
+        const legacySetMiddle = `__set__:%,${opts.sourceId},%`;
+        const legacySetLast = `__set__:%,${opts.sourceId}`;
         const rows = await this.engine.executeRaw<{ n: number }>(
-          `WITH deleted AS (DELETE FROM query_cache WHERE source_id = $1 RETURNING 1)
+          `WITH deleted AS (
+             DELETE FROM query_cache
+             WHERE source_id = $1
+                OR source_id = $2
+                OR (source_id LIKE '["set",%' AND source_id LIKE $3)
+                OR source_id = $4
+                OR source_id LIKE $5
+                OR source_id LIKE $6
+                OR source_id LIKE $7
+             RETURNING 1
+           )
            SELECT COUNT(*)::int AS n FROM deleted`,
-          [opts.sourceId],
+          [
+            opts.sourceId,
+            typedScalar,
+            typedSetMemberPattern,
+            legacySetOnly,
+            legacySetFirst,
+            legacySetMiddle,
+            legacySetLast,
+          ],
         );
         return rows[0]?.n ?? 0;
       }

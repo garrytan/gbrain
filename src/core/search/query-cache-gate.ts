@@ -51,6 +51,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { buildVisibilityClause } from './sql-ranking.ts';
 
 /**
  * Snapshot of (pageId, generation) pairs plus the corpus-state MAX
@@ -69,6 +70,18 @@ export interface PageGenerationsSnapshot {
    * Zero when the brain has no pages (fresh install before first put_page).
    */
   max_generation_at_store: number;
+}
+
+/** Read the global page-generation clock. Null means the safety substrate is unavailable. */
+export async function readPageGenerationClock(engine: BrainEngine): Promise<number | null> {
+  try {
+    const rows = await engine.executeRaw<{ v: number }>(
+      `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
+    );
+    return Number(rows[0]?.v ?? 0);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -102,10 +115,7 @@ export async function buildPageGenerationsSnapshot(
       // Empty-result query: only need the Layer 1 bookmark (clock value).
       // Per D20, empty-result cache rows trust Layer 1 exclusively;
       // bumping the clock on subsequent writes correctly invalidates them.
-      const rows = await engine.executeRaw<{ v: number }>(
-        `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
-      );
-      snapshot.max_generation_at_store = Number(rows[0]?.v ?? 0);
+      snapshot.max_generation_at_store = (await readPageGenerationClock(engine)) ?? 0;
       return snapshot;
     }
 
@@ -185,6 +195,21 @@ export const CACHE_GATE_WHERE_CLAUSE = `
         WHERE p.id IS NULL                              -- page deleted → invalidate
            OR p.generation <> ((g.stored_gen)::text)::bigint  -- bumped → invalidate
       )
+    )
+  )
+  AND NOT EXISTS (
+    -- Visibility is independent of freshness. Archiving a source does not
+    -- mutate its pages or advance the page-generation clock, so this check
+    -- MUST sit outside the Layer 1 / Layer 2 OR. Otherwise Layer 1 can serve
+    -- a fresh-but-now-hidden cached result until TTL expiry.
+    SELECT 1
+    FROM jsonb_array_elements(qc.results) AS visible(result)
+    LEFT JOIN pages p_visible ON p_visible.id = (visible.result->>'page_id')::int
+    LEFT JOIN sources s_visible ON s_visible.id = p_visible.source_id
+    WHERE NOT (
+      p_visible.id IS NOT NULL
+      AND s_visible.id IS NOT NULL
+      ${buildVisibilityClause('p_visible', 's_visible')}
     )
   )
 `;

@@ -117,7 +117,16 @@ export function rowToPage(row: Record<string, unknown>): Page {
     title: row.title as string,
     compiled_truth: row.compiled_truth as string,
     timeline: row.timeline as string,
-    frontmatter: (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as Record<string, unknown>,
+    // Postgres and PGLite both decode JSONB objects. A string here means the
+    // JSONB top level itself is a string (legacy double-encoding), not a driver
+    // transport shape. Never decode it into trusted frontmatter.
+    frontmatter: (
+      row.frontmatter !== null &&
+      typeof row.frontmatter === 'object' &&
+      !Array.isArray(row.frontmatter)
+        ? row.frontmatter
+        : {}
+    ) as Record<string, unknown>,
     content_hash: row.content_hash as string | undefined,
     // v0.29 (column added in migration v40). Old brains pre-migration return undefined.
     emotional_weight: row.emotional_weight == null ? undefined : Number(row.emotional_weight),
@@ -162,7 +171,9 @@ export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
     title: (row.title as string | null) ?? '',
     compiled_truth: (row.compiled_truth as string | null) ?? '',
     timeline: (row.timeline as string | null) ?? '',
-    frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
+    frontmatter: (
+      fm !== null && typeof fm === 'object' && !Array.isArray(fm) ? fm : {}
+    ) as Record<string, unknown>,
     updated_at: new Date(row.updated_at as string),
     // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
     // Fallback derives an ISO string from the Date — NEVER String(Date), which
@@ -333,6 +344,39 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
+function projectCitationMetadata(
+  record: Record<string, unknown> | null | undefined,
+  subjectField: 'subject' | 'source_subject',
+): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
+  if (!record) return {};
+  const metadata: Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> = {};
+  if (typeof record.message_id === 'string' && record.message_id.trim().length > 0) {
+    metadata.message_id = record.message_id;
+  }
+  if (typeof record.thread_id === 'string' && record.thread_id.length > 0) {
+    metadata.thread_id = record.thread_id;
+  }
+  const subject = record[subjectField];
+  if (metadata.message_id && typeof subject === 'string' && subject.length > 0) {
+    metadata.source_subject = subject;
+  }
+  return metadata;
+}
+
+/** Project normalized SQL result columns. `source_subject` is an internal alias. */
+export function projectEmailCitationMetadata(
+  record: Record<string, unknown> | null | undefined,
+): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
+  return projectCitationMetadata(record, 'source_subject');
+}
+
+/** Project raw page frontmatter. Internal SQL aliases are never trusted here. */
+export function projectEmailCitationFrontmatter(
+  record: Record<string, unknown> | null | undefined,
+): Partial<Pick<SearchResult, 'message_id' | 'thread_id' | 'source_subject'>> {
+  return projectCitationMetadata(record, 'subject');
+}
+
 export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
   const result: SearchResult = {
     slug: row.slug as string,
@@ -381,6 +425,7 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
       result.effective_date_source = raw;
     }
   }
+  Object.assign(result, projectEmailCitationMetadata(row));
   return result;
 }
 

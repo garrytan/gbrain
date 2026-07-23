@@ -136,7 +136,7 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     return resolveSearchMode({ mode: 'balanced' });
   }
 
-  test('KNOBS_HASH_VERSION is 12 (cross-modal still appended; 11→12 hard-exclude fold #2825)', () => {
+  test('KNOBS_HASH_VERSION is 13 (12→13 email citation result-schema projection)', () => {
     // v0.35 ladder: 1→2 reranker, 2→3 floor_ratio. v0.36 piggybacks on v=3
     // with 7 cross-modal knobs + column/provider context. v0.40.4 (salem) +
     // v0.39 T21 (master) bump to v=4 for graph_signals + schema-pack fields.
@@ -146,7 +146,9 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     // v0.43: 9→10 relational recall arm. #1400: 10→11 query-side input_type
     // finally reaches asymmetric providers — pre-fix rows were keyed on
     // document-side query vectors. #2825: 11→12 hard-exclude fold (hx=).
-    expect(KNOBS_HASH_VERSION).toBe(12);
+    // Email citation metadata projection: 12→13 so cached SearchResult DTOs
+    // written before message_id/thread_id/source_subject cannot survive.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('flipping unified_multimodal changes the hash', () => {
