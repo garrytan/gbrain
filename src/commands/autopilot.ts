@@ -686,6 +686,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       try {
         const { MinionQueue } = await import('../core/minions/queue.ts');
         const { computeRecommendations, embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import('../core/brain-score-recommendations.ts');
+        const { countExtractionLag } = await import('../core/remediation/context.ts');
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
@@ -877,6 +878,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             return !!(process.env[envVar] || (cfgField ? embedKeyCfg[cfgField] : undefined));
           }),
           hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+          // Real extraction-lag gate for sync.repo/extract.all — same counter
+          // loadRecommendationContext uses (replaces the health.stale_pages proxy).
+          extractionLagPages: await countExtractionLag(engine),
         };
         // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
         // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new

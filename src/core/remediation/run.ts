@@ -16,7 +16,7 @@ import {
   computeRecommendations,
 } from '../brain-score-recommendations.ts';
 import type { RemediationStep } from '../remediation-step.ts';
-import { loadRecommendationContext } from './context.ts';
+import { countExtractionLag, loadRecommendationContext } from './context.ts';
 import { computeRemediationPlan } from './plan.ts';
 import type {
   RemediationHooks,
@@ -65,7 +65,7 @@ export async function runRemediation(
     clearRemediationCheckpoint,
   } = await import('../remediation-checkpoint.ts');
 
-  const ctx = await loadRecommendationContext(engine);
+  let ctx = await loadRecommendationContext(engine);
 
   // Pre-flight ceiling check via the shared plan computation.
   const initialPlan = await computeRemediationPlan(engine, { targetScore });
@@ -305,6 +305,11 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
+      // Refresh the extraction-lag gate alongside health: ctx was loaded once
+      // before the loop, and a completed sync/extract step is exactly what
+      // drives the count down. Reusing the frozen initial count would re-fire
+      // sync.repo/extract.all every recheck until maxJobs.
+      ctx = { ...ctx, extractionLagPages: await countExtractionLag(engine) };
       recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
     }
   };
