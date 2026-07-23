@@ -23,9 +23,10 @@
  *   --skip=<provider>         — narrow `doctor` probe to skip a provider
  *                               (e.g. cost-sensitive operators with rate limits)
  *
- * Per Codex F11 in plan review: no specific dollar cost claim. Probe uses
- * `max_tokens: 1` against each configured model; actual cost depends on
- * provider billing minimums.
+ * Per Codex F11 in plan review: no specific dollar cost claim. Probe caps
+ * output at PROBE_MAX_OUTPUT_TOKENS against each configured model (widened
+ * above any configured extended-thinking budget); actual cost depends on
+ * tokens actually generated and provider billing minimums.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -525,7 +526,14 @@ export const PROBE_MAX_OUTPUT_TOKENS = 64;
 export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
   const start = Date.now();
   try {
-    const { chat } = await import('../core/ai/gateway.ts');
+    const { chat, getConfiguredThinkingBudget } = await import('../core/ai/gateway.ts');
+    // Anthropic requires max_tokens > thinking.budgetTokens. When the user
+    // configured an extended-thinking budget for this model via
+    // provider_chat_options, a fixed small cap would be rejected outright —
+    // the same false-FAIL class this probe budget exists to prevent. Widen
+    // the cap above the configured budget; billing is still actual tokens.
+    const thinkingBudget = getConfiguredThinkingBudget(modelStr);
+    const maxTokens = (thinkingBudget ?? 0) + PROBE_MAX_OUTPUT_TOKENS;
     // Use AbortController so the 5s timeout doesn't hang on a stuck network.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
@@ -533,7 +541,7 @@ export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansi
       const res = await chat({
         model: modelStr,
         messages: [{ role: 'user', content: '.' }],
-        maxTokens: PROBE_MAX_OUTPUT_TOKENS,
+        maxTokens,
         abortSignal: controller.signal,
       });
       // A length-exhausted response with no text is still proof of
@@ -543,7 +551,7 @@ export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansi
       // generation limitation instead of a bare 'reachable'.
       const message =
         res.stopReason === 'length' && res.text.length === 0
-          ? `reachable (spent the ${PROBE_MAX_OUTPUT_TOKENS}-token probe budget on internal reasoning without emitting text; transport verified, text generation not exercised)`
+          ? `reachable (spent the ${maxTokens}-token probe budget on internal reasoning without emitting text; transport verified, text generation not exercised)`
           : 'reachable';
       return { model: modelStr, touchpoint, status: 'ok', message, elapsed_ms: Date.now() - start };
     } finally {

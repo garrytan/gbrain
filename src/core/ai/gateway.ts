@@ -2891,6 +2891,33 @@ function deepMergeRecords(
   return out;
 }
 
+/**
+ * Read the Anthropic-style extended-thinking budget configured for a model
+ * via `provider_chat_options` (`<provider>.thinking.budgetTokens`, provider-
+ * or model-scoped). The Anthropic API requires `max_tokens` to exceed
+ * `thinking.budgetTokens`, so callers that cap output tightly (the
+ * `gbrain models doctor` reachability probe) must widen their cap above this
+ * budget or the provider rejects the request outright — falsely failing a
+ * reachable model. Returns undefined when no budget is configured, the model
+ * string is malformed, or the gateway is unconfigured. Read-only, never throws.
+ *
+ * @internal exported for the doctor probe + tests; not part of the public gateway API.
+ */
+export function getConfiguredThinkingBudget(modelStr: string): number | undefined {
+  try {
+    if (!_config) return undefined;
+    const { providerId, modelId } = parseModelId(modelStr);
+    const merged: Record<string, any> = {};
+    applyConfiguredChatProviderOptions(merged, _config, providerId, modelId);
+    const budget = merged[providerId]?.thinking?.budgetTokens;
+    return typeof budget === 'number' && Number.isFinite(budget) && budget > 0
+      ? budget
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function applyConfiguredChatProviderOptions(
   providerOptions: Record<string, any>,
   cfg: AIGatewayConfig,

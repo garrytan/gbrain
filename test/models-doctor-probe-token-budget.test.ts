@@ -28,6 +28,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
+  configureGateway,
+  resetGateway,
   type ChatOpts,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
@@ -35,6 +38,8 @@ import { probeModel, PROBE_MAX_OUTPUT_TOKENS } from '../src/commands/models.ts';
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  __setGenerateTextTransportForTests(null);
+  resetGateway();
 });
 
 function stubResult(over: Partial<ChatResult> = {}): ChatResult {
@@ -116,6 +121,37 @@ describe('models doctor — probe token budget (#3221)', () => {
     const r = await probeModel('test:reasoner', 'chat');
 
     expect(r.status).toBe('auth');
+  });
+
+  test('probe cap widens above a configured extended-thinking budget', async () => {
+    // Anthropic rejects requests where max_tokens <= thinking.budgetTokens.
+    // A user who configured `provider_chat_options.anthropic.thinking`
+    // (e.g. budgetTokens: 1024) would have the fixed 64-token probe cap
+    // rejected outright — the same false-FAIL class. Exercised through the
+    // generate-text seam so provider-option resolution stays live.
+    let capturedMaxOutputTokens: number | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      capturedMaxOutputTokens = args.maxOutputTokens;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'enabled', budgetTokens: 1024 } },
+      },
+      env: { ANTHROPIC_API_KEY: 'sk-fake', OPENAI_API_KEY: 'sk-fake' },
+    });
+
+    const r = await probeModel('anthropic:claude-sonnet-4-6', 'chat');
+
+    expect(r.status).toBe('ok');
+    expect(capturedMaxOutputTokens).toBe(1024 + PROBE_MAX_OUTPUT_TOKENS);
   });
 
   test('human output renders ok-probe caveat messages, not only failure messages', () => {
