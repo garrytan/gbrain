@@ -35,6 +35,16 @@ export async function startMcpServer(engine: BrainEngine) {
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
+    // Owner opt-in: the stdio pipe is local + unauthenticated, so on a
+    // single-owner machine its caller is the owner. When facts.trust_local_reads
+    // is on, let fact reads (find_trajectory / recall) see this owner's own
+    // private facts. Narrow + read-only — every other remote protection stays
+    // on (remote stays true). HTTP transport never sets this. Best-effort: a
+    // config read blip falls back to the safe world-only default.
+    let trustedFactReads = false;
+    try {
+      trustedFactReads = (await engine.getConfig('facts.trust_local_reads')) === 'true';
+    } catch { /* keep world-only default */ }
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
@@ -42,6 +52,7 @@ export async function startMcpServer(engine: BrainEngine) {
     // `gbrain call <op>` (sets remote=false in src/cli.ts).
     return dispatchToolCall(engine, name, params, {
       remote: true,
+      trustedFactReads,
       takesHoldersAllowList: ['world'],
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
       // Operators who want a different source on stdio MCP should set

@@ -18,6 +18,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
+import { readableFactVisibilities } from './facts/reader-trust.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
 import { getContentFlag } from './quarantine.ts';
@@ -332,6 +333,15 @@ export interface OperationContext {
    * remote/untrusted (defense in depth in case the type is bypassed via cast).
    */
   remote: boolean;
+  /**
+   * Owner opt-in (`facts.trust_local_reads`): allow this remote caller to read
+   * `private` facts. A NARROW, read-only trust elevation decoupled from
+   * `remote` — every other remote protection (file confinement, source
+   * isolation, fence stripping, takes scoping) stays in force. Set ONLY by the
+   * stdio MCP server when the config is on; the HTTP transport never sets it.
+   * Consulted via `src/core/facts/reader-trust.ts`.
+   */
+  trustedFactReads?: boolean;
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -3633,6 +3643,7 @@ const find_trajectory: Operation = {
       entitySlug: p.entity_slug,
       ...scope,
       remote: ctx.remote === true,
+      trustedFactReads: ctx.trustedFactReads === true,
       metric,
       kind,
       since,
@@ -3993,13 +4004,9 @@ const recall: Operation = {
     const includeExpired = p.include_expired === true;
     const grep = typeof p.grep === 'string' ? p.grep.toLowerCase() : null;
 
-    // Visibility filter: remote callers see world-only unless their token
-    // grants elevated visibility (future-proofing; v0.31 ships world-only
-    // for remote, all for local CLI).
-    const visibility =
-      ctx.remote === false
-        ? undefined
-        : ['world'] as ('private' | 'world')[];
+    // Visibility filter: world-only for untrusted remote callers; all rows for
+    // trusted local CLI and owner-trusted reads (facts.trust_local_reads).
+    const visibility = readableFactVisibilities(ctx);
 
     let rows: Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>> = [];
 

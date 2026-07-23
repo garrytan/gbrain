@@ -17,6 +17,7 @@
 import type { OperationContext } from './../operations.ts';
 import type { FactRow } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
+import { readableFactVisibilities } from './reader-trust.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -50,7 +51,13 @@ export async function getBrainHotMemoryMeta(
   const sessionId = (ctx as { source_session?: string }).source_session
     ?? null;
   const allowListHash = hashAllowList(ctx.takesHoldersAllowList);
-  const cacheKey = `${sourceId}::${sessionId ?? '_'}::${allowListHash}`;
+  // Visibility tier: untrusted remote → world-only; trusted local +
+  // owner-trusted reads → all rows. Folded into the cache key (the header's
+  // "cache entries don't bleed across tiers" invariant): trustedFactReads is
+  // re-read from config per call, so a mid-session opt-out must not keep
+  // serving a private-inclusive cached payload for the TTL window.
+  const visibility = readableFactVisibilities(ctx);
+  const cacheKey = `${sourceId}::${sessionId ?? '_'}::${allowListHash}::${visibility ? 'world' : 'all'}`;
 
   const ttl = Math.max(1000, opts.ttlMs ?? DEFAULT_TTL_MS);
   const topK = Math.max(1, Math.min(opts.topK ?? DEFAULT_TOP_K, 25));
@@ -60,10 +67,6 @@ export async function getBrainHotMemoryMeta(
   if (cached && cached.expiresAt > Date.now()) {
     return cached.payload;
   }
-
-  // Build a fresh payload. Visibility tier: remote → world-only;
-  // local → all rows.
-  const visibility = ctx.remote === false ? undefined : ['world'] as ('world' | 'private')[];
 
   let rows: FactRow[] = [];
   if (sessionId) {
