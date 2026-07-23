@@ -295,8 +295,6 @@ export function isWellFormedEmptyExtraction(raw: string): boolean {
 export function parseExtractorOutput(raw: string): ProposedTake[] {
   if (!raw || raw.trim().length === 0) return [];
   let text = raw.trim();
-  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.).
-  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   // Strip markdown code fence wrapper.
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) text = (fenced[1] ?? '').trim();
@@ -309,21 +307,7 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
-    // markdown fences after <think> stripping). Try array-closing first.
-    const sliced = text.slice(start);
-    const lastArr = sliced.lastIndexOf(']');
-    const lastObj = sliced.lastIndexOf('}');
-    const end = Math.max(lastArr, lastObj);
-    if (end > 0) {
-      try {
-        parsed = JSON.parse(sliced.slice(0, end + 1));
-      } catch {
-        return [];
-      }
-    } else {
-      return [];
-    }
+    return [];
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const out: ProposedTake[] = [];
