@@ -10,6 +10,7 @@
 // module's internal contracts.
 
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import {
   buildAliasGraph,
@@ -348,6 +349,38 @@ describe('YAML mini-parser', () => {
   test('strips comments', () => {
     const result = parseYamlMini('# top comment\nname: value # inline comment') as Record<string, unknown>;
     expect(result.name).toBe('value');
+  });
+
+  // Regression: block scalars (`|`, `>`) are unsupported by design. Before
+  // the fix, `description: |` was read as the literal "|" and its indented
+  // body silently truncated the mapping — every key after it was dropped
+  // with no error (issue #1750). Now it fails loud.
+  test('throws a clear error on block scalars instead of silently truncating', () => {
+    expect(() => parseYamlMini('description: |\n  multi\n  line\npage_types:\n  - name: deal'))
+      .toThrow(/block scalars are not supported/);
+    expect(() => parseYamlMini('description: >\n  folded text')).toThrow(/block scalars/);
+    // Chomping / indent indicators (`|-`, `>+`, `|2`) are caught too.
+    expect(() => parseYamlMini('x: |-\n  body')).toThrow(/block scalars/);
+    expect(() => parseYamlMini('x: |2\n  body')).toThrow(/block scalars/);
+  });
+
+  test('a quoted "|" is still a normal string (not mistaken for a block scalar)', () => {
+    const result = parseYamlMini('sep: "|"') as Record<string, unknown>;
+    expect(result.sep).toBe('|');
+  });
+
+  // The bundled gbrain-recommended pack uses a (now inline) description and
+  // declares 12 page_types. Before #1750 it silently resolved to 0 types.
+  test('bundled gbrain-recommended.yaml parses with its full page_types', () => {
+    const yaml = readFileSync(
+      `${import.meta.dir}/../src/core/schema-pack/base/gbrain-recommended.yaml`,
+      'utf8',
+    );
+    const parsed = parseYamlMini(yaml) as { page_types?: Array<{ name: string }>; description?: string };
+    expect(Array.isArray(parsed.page_types)).toBe(true);
+    expect(parsed.page_types!.length).toBeGreaterThanOrEqual(12);
+    expect(parsed.page_types!.map(t => t.name)).toContain('deal');
+    expect(parsed.description).not.toBe('|');
   });
 });
 
