@@ -4722,8 +4722,12 @@ See also:
     // #3068: a pull_failed partial is NOT a success — unlike timeout-class
     // partials (which converge on retry), a failing pull will not self-heal.
     // Exit non-zero so cron/monitoring sees the wedge instead of a green run.
+    // Routed through the owned verdict channel (NOT bare `process.exitCode`,
+    // which PGLite's Emscripten runtime clobbers mid-run — see
+    // src/core/cli-force-exit.ts).
     if (result.status === 'partial' && result.reason === 'pull_failed') {
-      process.exitCode = 1;
+      const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+      setCliExitVerdict(1);
     }
     // v0.42.7 (#1696, D5): extraction-lag nudge after a completed single-source
     // sync. Fire on every non-error completion (synced | first_sync | up_to_date)
