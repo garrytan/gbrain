@@ -12,8 +12,8 @@ import { parseModelId } from './ai/model-resolver.ts';
  * `resolveKey` closure without re-parsing recipes.
  *
  * Only OPENAI_API_KEY and ZEROENTROPY_API_KEY appear here because those are the
- * only embedding keys `buildGatewayConfig` (src/cli.ts) folds from config into
- * the gateway env. VOYAGE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY are deliberately
+ * only embedding keys `buildGatewayConfig` (src/core/ai/build-gateway-config.ts)
+ * folds from config into the gateway env. VOYAGE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY are deliberately
  * absent: their config fields are NOT threaded to the gateway today, so the
  * producer closures fall through to checking `process.env` ONLY for them. That
  * matches what the gateway can actually use (the recipes read those keys from

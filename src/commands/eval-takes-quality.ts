@@ -21,7 +21,8 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { configureGateway } from '../core/ai/gateway.ts';
-import { loadConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { runEval, DEFAULT_MODEL_PANEL } from '../core/takes-quality-eval/runner.ts';
 import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
 import { writeReceipt } from '../core/takes-quality-eval/receipt-write.ts';
@@ -127,8 +128,12 @@ export async function runReplayNoBrain(argv: string[]): Promise<number> {
 export async function runEvalTakesQuality(engine: BrainEngine, args: string[]): Promise<void> {
   // Self-configure the AI gateway (mirrors eval-cross-modal pattern). The
   // gateway needs config.ai_gateway + env vars; configureGateway reads both.
+  // Route through buildGatewayConfig: the old `{ ...cfg, ...process.env }`
+  // spread never populated the gateway's `env` field (the gateway NEVER reads
+  // process.env at call time), so availability checks saw no keys at all and
+  // file-plane API keys / provider base URLs were dropped.
   const cfg = loadConfig();
-  configureGateway({ ...cfg, ...(process.env as Record<string, string>) } as any);
+  configureGateway(buildGatewayConfig(cfg ?? ({} as GBrainConfig)));
 
   const { subcmd, argv, json } = parseSubcmd(args);
 
