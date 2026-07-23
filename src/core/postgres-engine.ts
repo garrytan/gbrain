@@ -6293,6 +6293,12 @@ export class PostgresEngine implements BrainEngine {
           )`
       : sql``;
 
+    // Exclude dream/synthesize-generated pages (reflections, originals, cycle
+    // logs carrying frontmatter dream_generated:true). enrich develops ENTITY
+    // stubs; running it on a generated essay/log creates circular self-citation
+    // and drops the H1. IS DISTINCT FROM 'true' keeps NULL/'false' rows.
+    const dreamCondition = sql`AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true'`;
+
     // Whitelisted ORDER BY (no injection — enum maps to a literal fragment).
     const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
     const orderBy = sql.unsafe(ENRICH_ORDER_SQL[orderKey]);
@@ -6316,6 +6322,7 @@ export class PostgresEngine implements BrainEngine {
         AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < ${threshold}
         ${sourceCondition}
         ${recencyCondition}
+        ${dreamCondition}
       ORDER BY ${orderBy}
       LIMIT ${limit}
     `;

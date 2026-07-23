@@ -32,6 +32,7 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
@@ -213,6 +214,12 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'rerank' && providerId && FREE_LOCAL_RERANK_PROVIDERS.has(providerId)) {
     return { input: 0, output: 0 };
   }
+  // Fall back to the full canonical pricing table so non-Anthropic chat
+  // models with a known price (openai:*, google:*, deepseek:*) resolve under
+  // --max-cost instead of TX2 no_pricing hard-failing at $0. ANTHROPIC_PRICING
+  // above is only the bare-keyed Claude view.
+  const canon = canonicalLookup(modelId);
+  if (canon) return canon;
   return null;
 }
 

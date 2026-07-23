@@ -6007,6 +6007,9 @@ export class PGLiteEngine implements BrainEngine {
       );
     }
 
+    // Exclude dream/synthesize-generated pages (parity with postgres-engine).
+    where.push(`(p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true'`);
+
     const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
     const orderBy = ENRICH_ORDER_SQL[orderKey];
 
