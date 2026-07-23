@@ -60,6 +60,24 @@ describe('WARN-5 — `gbrain capture --help` reaches the detailed HELP constant'
   });
 });
 
+describe('issue #2356 — `gbrain dream --help` reaches source-scoped help', () => {
+  test('output documents the source flags doctor recommends', () => {
+    const { stdout, status } = runCli(['dream', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('--source <id>');
+    expect(stdout).toContain('--source-id <id>');
+    expect(stdout).toContain('cycle_freshness');
+    expect(stdout).toContain('gbrain dream --phase synthesize --input');
+  });
+
+  test('output is NOT the generic short-circuit fallback', () => {
+    const { stdout } = runCli(['dream', '--help']);
+    expect(stdout).toContain('Run one brain maintenance cycle');
+    expect(stdout.split('\n').length).toBeGreaterThan(20);
+    expect(stdout).not.toMatch(/^Usage: gbrain dream\s*$/m);
+  });
+});
+
 describe('WARN-6 — main `gbrain --help` lists capture/brainstorm/lsd', () => {
   test('output mentions all three commands by name', () => {
     const { stdout, status } = runCli(['--help']);

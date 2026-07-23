@@ -76,6 +76,10 @@ const CLI_ONLY_SELF_HELP = new Set([
   // runCapture saw --help. brainstorm + lsd were already in the set;
   // capture was the holdout.
   'capture',
+  // Issue #2356: `gbrain dream --help` must reach dream.ts's detailed
+  // usage, including --source / --source-id. The generic stub hides the
+  // exact command doctor recommends for cycle_freshness.
+  'dream',
   // v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   'self-upgrade',
   // maintain (#3015) prints its own usage block (modes + not-auto-applied list).
