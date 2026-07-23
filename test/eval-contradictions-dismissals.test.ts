@@ -1,5 +1,5 @@
 /**
- * Dismissal-ledger tests — v124 manual-review ledger for the contradiction
+ * Dismissal-ledger tests — v126 manual-review ledger for the contradiction
  * probe. Pins:
  *   - pair_key identity: order-invariance, kind separation, content drift
  *     re-flags, judge-config independence (by construction: no model/prompt

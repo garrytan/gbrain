@@ -186,7 +186,7 @@ export function proposeResolution(
  * v0.34 / Lane A2: threads the new `verdict: Verdict` enum into the finding
  * shape and the resolution classifier so the new verdicts route correctly.
  *
- * v124: also stamps `pair_id`, the content-stable dismissal-ledger handle
+ * v126: also stamps `pair_id`, the content-stable dismissal-ledger handle
  * (see dismissals.ts), so report consumers can match findings against the
  * manual-review ledger.
  */

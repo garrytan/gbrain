@@ -279,7 +279,7 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   const tracker = new CostTracker({ capUsd: budgetUsd });
   const cache = new JudgeCache({ engine: opts.engine, modelId: judgeModel, disabled: !!opts.noCache });
 
-  // v124: manual-review dismissal ledger, loaded once per run. Findings
+  // v126: manual-review dismissal ledger, loaded once per run. Findings
   // whose content-derived pair_key is active in the ledger are partitioned
   // into per-query `dismissed` (kept in full for audit /
   // `review --include-dismissed`) and excluded from `contradictions`,
@@ -424,7 +424,7 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
       }
     }
 
-    // v124: partition ledger-dismissed findings out BEFORE any counting so
+    // v126: partition ledger-dismissed findings out BEFORE any counting so
     // a human-reviewed false positive stops driving the headline metrics
     // and the Wilson-CI numerator. The query itself deliberately stays in
     // the CI denominator: the human verdict makes it a genuinely clean

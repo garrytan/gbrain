@@ -119,7 +119,7 @@ Each finding ships with a `resolution_command` field — paste-ready:
 Run `gbrain eval suspected-contradictions review --severity high` to
 inspect findings without re-running the probe.
 
-## Dismissing reviewed false positives (v124)
+## Dismissing reviewed false positives (v126)
 
 When a manual review rules a finding NOT a real contradiction, record the
 outcome so it stops resurfacing on every run:
