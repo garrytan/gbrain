@@ -16,6 +16,7 @@ import { createHash } from 'crypto';
 import { resolve } from 'path';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -441,7 +442,11 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     }
     console.error(`\nMigration INCOMPLETE: ${migrated} pages transferred, ${failedPages.length} failed.`);
     console.error('Config NOT switched; resume manifest kept. Fix the errors above and re-run the same migrate command to retry.');
-    process.exitCode = 1;
+    // #3194: route through the owned verdict channel — the one-shot exit seam
+    // (cli.ts flushThenExit(currentExitCode())) ignores raw process.exitCode
+    // writes (PGLite WASM can scribble over it), so a bare assignment here
+    // would let an INCOMPLETE migration exit 0.
+    setCliExitVerdict(1);
     await targetEngine.disconnect();
     return;
   }
