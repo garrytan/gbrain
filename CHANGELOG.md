@@ -4,7 +4,7 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.42.65.0] - 2026-07-23
 
-**A large maintenance release: 92 verified fixes and small features merged since v0.42.64.0, most of them community contributions.**
+**A large maintenance release: 93 verified fixes and small features merged since v0.42.64.0, most of them community contributions.**
 
 If you use gbrain day to day, this release makes the boring parts trustworthy. Importing and syncing notes is safer: a failed pull no longer pretends everything is up to date, imported pages are read back after writing to confirm they landed, and a page with real content can no longer be silently overwritten by an empty one. Search answers get better inputs: the think command now picks excerpts that actually match your question, and results respect your federated source settings. Background enrichment (the "dream" cycle) wastes less money and retries properly when an AI provider is down. Spending caps now fail closed, so a billing hiccup can never turn into an uncapped spend. And `gbrain doctor` is quieter, with several false alarms removed and real problems (like an embedding backlog with no worker running) now flagged.
 
@@ -121,6 +121,7 @@ More AI providers work out of the box, including OpenRouter prompt caching, Mini
 - The v0.32.2 migration dirty-check scopes to targeted sources and surfaces failed phase detail. (#3093, contributed by @time-attack)
 - Schema packs merge the full `extends` chain and `borrow_from` into the resolved manifest. (#1749, #3181, contributed by @time-attack)
 - The schema-pack stats catch-all is narrowed so masked errors surface instead of fake zero-page counts. (#2466, #3133, contributed by @time-attack)
+- Bundled schema-pack inspection reports the pack actually shipped in the binary, and minion subagent auth resolves through config. (#3110, contributed by @time-attack)
 - PGLite `putPage` guards against zero-row RETURNING. (#1649, contributed by @alexhawkins)
 
 #### MCP server and CLI surface
