@@ -229,6 +229,26 @@ describe('getPage / listPages includeDeleted contract (Q3 IRON RULE)', () => {
     expect(restored!.deleted_at).toBeFalsy();
   });
 
+  test('#3071: putPage after soft-delete resurrects the row (clears deleted_at)', async () => {
+    await seedPage(engine, 'people/zed');
+    await engine.softDeletePage('people/zed');
+    expect(await engine.getPage('people/zed')).toBeNull();
+
+    // Re-put over the soft-deleted row — must clear deleted_at, not leave
+    // the fresh content invisible to every deleted_at IS NULL read.
+    await engine.putPage('people/zed', {
+      type: 'note' as any,
+      title: 'Zed v2',
+      compiled_truth: 'Resurrected content',
+      timeline: '',
+      frontmatter: {},
+    });
+    const restored = await engine.getPage('people/zed');
+    expect(restored).not.toBeNull();
+    expect(restored!.compiled_truth).toBe('Resurrected content');
+    expect(restored!.deleted_at).toBeFalsy();
+  });
+
   test('listPages excludes soft-deleted by default', async () => {
     await seedPage(engine, 'people/kim');
     await seedPage(engine, 'people/larry');

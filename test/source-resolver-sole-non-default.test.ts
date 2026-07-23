@@ -26,10 +26,18 @@ import { withEnv } from './helpers/with-env.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean };
 
-function makeStub(sources: StubSource[], globalDefault: string | null = null) {
+function makeStub(
+  sources: StubSource[],
+  globalDefault: string | null = null,
+  defaultHasLivePages = false,
+) {
   return {
     kind: 'pglite' as const,
     async executeRaw<T>(sql: string, _params?: unknown[]): Promise<T[]> {
+      // #3070 guard probe: does 'default' hold live pages?
+      if (sql.includes(`FROM pages WHERE source_id = 'default'`)) {
+        return (defaultHasLivePages ? [{ one: 1 }] : []) as unknown as T[];
+      }
       // Two query shapes hit in the resolver:
       //   1. tier 4 (local_path match): SELECT id, local_path FROM sources WHERE local_path IS NOT NULL
       //   2. assertSourceExists: SELECT id FROM sources WHERE id = $1
@@ -130,6 +138,49 @@ describe('#1434 — sole_non_default tier', () => {
       expect(result.source_id).toBe('default');
       expect(result.tier).toBe('env');
     });
+  });
+
+  test('#3070: does NOT fire when default holds live pages (established corpus wins)', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      true, // default has live pages
+    );
+    const result = await resolveSourceWithTier(engine, null, '/tmp');
+    expect(result.source_id).toBe('default');
+    expect(result.tier).toBe('seed_default');
+  });
+
+  test('#3070: fires when default is empty (original #1434 charter preserved)', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      false, // default empty
+    );
+    const result = await resolveSourceWithTier(engine, null, '/tmp');
+    expect(result.source_id).toBe('studiovault');
+    expect(result.tier).toBe('sole_non_default');
+  });
+
+  test('#3070: probe failure fails open (legacy schema keeps the auto-route)', async () => {
+    const base = makeStub([
+      { id: 'default', local_path: null },
+      { id: 'studiovault', local_path: '/Users/india/vault' },
+    ]);
+    const origExecuteRaw = (base as any).executeRaw.bind(base);
+    (base as any).executeRaw = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM pages')) throw new Error('column "deleted_at" does not exist');
+      return origExecuteRaw(sql, params);
+    };
+    const result = await resolveSourceWithTier(base, null, '/tmp');
+    expect(result.source_id).toBe('studiovault');
+    expect(result.tier).toBe('sole_non_default');
   });
 
   test('archived non-default source is ignored (does not count toward the 1)', async () => {

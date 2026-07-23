@@ -167,6 +167,8 @@ export async function resolveSourceId(
  *   - 2+ non-default sources are registered (ambiguous — user must pick)
  *   - the only non-default source has a NULL local_path (no on-disk shape)
  *   - the only registered source IS 'default'
+ *   - the 'default' source holds live pages (#3070 — an established default
+ *     corpus means bare writes stay in 'default')
  *
  * Excludes archived sources (`archived = false`) so a soft-deleted source
  * doesn't auto-resolve. Shared by `resolveSourceId` and `resolveSourceWithTier`
@@ -185,8 +187,22 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
       `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default'`,
     );
   }
-  if (rows.length === 1) return rows[0].id;
-  return null;
+  if (rows.length !== 1) return null;
+
+  // #3070: this tier's charter (#1434) is rescuing brains whose 'default'
+  // source is EMPTY. When default holds live pages, a bare put/capture must
+  // not silently re-route into the side source — fall through to tier 6.
+  // Fail-open on query error (legacy schema without deleted_at) to preserve
+  // the pre-#3070 behavior.
+  try {
+    const live = await engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
+    );
+    if (live.length > 0) return null;
+  } catch {
+    // legacy schema — keep the sole-source auto-route
+  }
+  return rows[0].id;
 }
 
 /**
