@@ -41,12 +41,16 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  config?: Record<string, string>; // engine.getConfig plane (models.tier.* etc.)
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string) {
+      return opts.config?.[key] ?? null;
+    },
     async listPages() {
       return opts.pages;
     },
@@ -59,7 +63,12 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT — return nothing
+      // INSERT ... RETURNING id — emulate a successful insert so the
+      // honest proposals_inserted counter (counts RETURNING rows, not
+      // attempts) sees the row land. Conflicted inserts would return [].
+      if (sql.includes('INSERT INTO take_proposals') && sql.includes('RETURNING id')) {
+        return [{ id: 1 } as unknown as T];
+      }
       return [];
     },
   } as unknown as BrainEngine;
@@ -265,6 +274,29 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+  });
+
+  test('extractor model resolves through models.propose_takes config', async () => {
+    // Pre-fix the phase's only model knob was the gateway chat model — there
+    // was no per-phase config key. The phase now resolves once via
+    // resolveModel(models.propose_takes > models.default > env > gateway
+    // chat model); the extractor hint and the stored model_id must both
+    // reflect the configured override (full provider-prefixed string, #2451).
+    const pages = [buildPage({ slug: 'wiki/concepts/tier-routing', body: 'Tier-routed models will win.' })];
+    const { engine, captured } = buildMockEngine({
+      pages,
+      config: { 'models.propose_takes': 'anthropic:claude-sonnet-5' },
+    });
+    const seen: Array<string | undefined> = [];
+    const extractor: ProposeTakesExtractor = async ({ modelHint }) => {
+      seen.push(modelHint);
+      return [{ claim_text: 'tier-routed models win', kind: 'bet', holder: 'brain', weight: 0.7 }];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(result.status).toBe('ok');
+    expect(seen).toEqual(['anthropic:claude-sonnet-5']); // chat call gets the FULL string
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts[0]!.params[11]).toBe('anthropic:claude-sonnet-5'); // stored model_id matches the call
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {

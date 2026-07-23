@@ -26,8 +26,8 @@
  */
 
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
-import { TIER_DEFAULTS } from '../model-config.ts';
+import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
@@ -229,7 +229,16 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? TIER_DEFAULTS.reasoning;
+    // Resolved once (see propose-takes.ts for the chain): models.calibration_profile
+    // > models.default > env > the gateway's chat model (itself resolved
+    // through models.chat + the reasoning tier). Provider-prefixed per #2451
+    // — a bare id would make gateway.chat() throw "missing a provider
+    // prefix". Drives the generator's chat call, the budget label, and the
+    // persisted model_id, so the three can never disagree.
+    const modelId = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.calibration_profile',
+      fallback: getChatModel(),
+    });
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
@@ -265,6 +274,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard,
         holder,
         attempt,
+        modelHint: modelId,
         ...(feedback !== undefined ? { feedback } : {}),
       });
       return lines.join('\n');

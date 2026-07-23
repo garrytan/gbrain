@@ -46,12 +46,14 @@ interface CapturedResolve {
 function buildMockEngine(opts: {
   takes: Take[];
   cachedGrades?: Set<string>; // composite-key strings already in take_grade_cache
+  config?: Record<string, string>; // engine.getConfig plane (models.grade_takes etc.)
 }): { engine: BrainEngine; captured: CapturedSql[]; resolves: CapturedResolve[] } {
   const captured: CapturedSql[] = [];
   const resolves: CapturedResolve[] = [];
   const cached = opts.cachedGrades ?? new Set<string>();
 
   const engine = {
+    async getConfig(key: string) { return opts.config?.[key] ?? null; },
     kind: 'pglite',
     async listTakes() {
       return opts.takes;
@@ -222,6 +224,28 @@ describe('runPhaseGradeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe(0.98); // confidence
     expect(inserts[0]!.params[6]).toBe(false); // applied=false (auto-resolve OFF)
     expect(resolves).toHaveLength(0); // no canonical mutation
+  });
+
+  test('models.grade_takes config drives the judge call; cache key stays bare-tailed', async () => {
+    // Pre-fix the judge call rode the gateway's chat_model while the cache
+    // key / budget label recorded a hardcoded 'claude-sonnet-4-6'. The phase
+    // now resolves models.grade_takes; the judge gets the FULL string and
+    // the cache row keys on the bare tail (continuity with historical rows).
+    const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
+    const { engine, captured } = buildMockEngine({
+      takes,
+      config: { 'models.grade_takes': 'anthropic:claude-sonnet-5' },
+    });
+    const hints: Array<string | undefined> = [];
+    const judge: JudgeFn = async ({ modelHint }) => {
+      hints.push(modelHint);
+      return { verdict: 'correct', confidence: 0.9, reasoning: 'held' };
+    };
+    const result = await runPhaseGradeTakes(buildCtx(engine), { judge });
+    expect(result.status).toBe('ok');
+    expect(hints).toEqual(['anthropic:claude-sonnet-5']); // actual call gets the FULL string
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_grade_cache'));
+    expect(inserts[0]!.params[2]).toBe('claude-sonnet-5'); // judge_model_id is the bare tail
   });
 
   test('D17: auto-resolve OFF by default — even high-confidence verdict does NOT mutate takes', async () => {

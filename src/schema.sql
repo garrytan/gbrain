@@ -1270,8 +1270,14 @@ CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
   WHERE published = true;
 
 -- take_proposals: propose_takes phase queue. Idempotency cache via the
--- composite unique index (source_id, page_slug, content_hash, prompt_version)
--- mirrors v0.23 dream_verdicts. proposal_run_id supports --rollback by run.
+-- composite unique index (source_id, page_slug, content_hash, prompt_version,
+-- md5(claim_text)) — the 4-column prefix is the per-scan cache key (mirrors
+-- v0.23 dream_verdicts); md5(claim_text) makes rows per-claim so multi-claim
+-- pages keep every claim (v125). status='empty' rows are zero-claim scan
+-- sentinels: they hold the cache slot for a page version whose extraction
+-- yielded nothing — the phase never re-spends the LLM call on that page
+-- version. Excluded from the partial pending index. proposal_run_id supports
+-- --rollback by run.
 CREATE TABLE IF NOT EXISTS take_proposals (
   id                          BIGSERIAL PRIMARY KEY,
   source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -1282,7 +1288,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
   proposal_run_id             TEXT         NOT NULL,
   status                      TEXT         NOT NULL DEFAULT 'pending'
-                                           CHECK (status IN ('pending','accepted','rejected','superseded')),
+                                           CHECK (status IN ('pending','accepted','rejected','superseded','empty')),
   claim_text                  TEXT         NOT NULL,
   kind                        TEXT         NOT NULL,
   holder                      TEXT         NOT NULL,
@@ -1297,7 +1303,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier_bucket_n    INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
-  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+  ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)
   WHERE status = 'pending';

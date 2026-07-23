@@ -38,6 +38,7 @@ function buildMockEngine(opts: { scorecard: TakesScorecard }): {
 } {
   const captured: CapturedSql[] = [];
   const engine = {
+    async getConfig() { return null; },
     kind: 'pglite',
     async getScorecard() {
       return opts.scorecard;

@@ -36,7 +36,9 @@
 
 import { createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
+import { splitProviderModelId } from '../model-id.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../engine.ts';
@@ -395,7 +397,24 @@ class GradeTakesPhase extends BaseCyclePhase {
     const autoResolve = opts.autoResolve ?? false; // D17 default OFF
     const autoResolveThreshold = opts.autoResolveThreshold ?? 0.95; // D12 conservative
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
-    const judgeModelId = opts.model ?? 'claude-sonnet-4-6';
+    // Resolve the judge model ONCE (see propose-takes.ts for the chain —
+    // same label-vs-actual split fixed here: the judge call rode the
+    // gateway's chat_model while the grade cache key, evidence signature,
+    // and budget label recorded a hardcoded 4.6).
+    // NOTE: changing the resolved judge model invalidates the grade cache
+    // (judge_model_id is part of its key) — a one-time, budget-capped
+    // re-grade wave that is CORRECT, since the actual judge did change.
+    const judgeModelFull = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.grade_takes',
+      fallback: getChatModel(),
+    });
+    // Bare tail for cache keys / evidence signatures / stored ids — the
+    // grade cache has always been keyed on bare ids; the gateway default
+    // resolves provider-prefixed, and normalizing preserves cache continuity
+    // on stock installs (no spurious re-judge wave from a prefix change). A
+    // genuinely different configured judge still invalidates, which is
+    // correct. The FULL string drives the actual judge call.
+    const judgeModelId = splitProviderModelId(judgeModelFull).model || judgeModelFull;
 
     const useEnsemble = opts.useEnsemble ?? false;
     const ensembleThreshold = opts.ensembleThreshold ?? 0.85;
@@ -468,7 +487,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       // Call the single-model judge. Errors on a single take log warning + continue.
       let verdict: JudgeVerdict;
       try {
-        verdict = await judge({ take, evidence, modelHint: opts.model });
+        verdict = await judge({ take, evidence, modelHint: judgeModelFull });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`judge failed on take ${take.id}: ${msg}`);
