@@ -41,6 +41,12 @@ migration_from:
   pack: gbrain-base
   version: "1.x"
 
+# #2117 — cycle-phase participation. `phases:` is additive and pack-gated;
+# without this key extract_atoms is silently off on v2 brains even though
+# onboard + doctor recommend it (v2 declares the `atom` type it writes).
+phases:
+  - extract_atoms
+
 page_types:
   - name: person
     primitive: entity
@@ -319,6 +325,10 @@ page_types:
     extractable: false
     expert_routing: false
 
+# #2117 — inference rules ported from gbrain-base v1 so extract-ner keeps
+# working on v2 brains (it hard-skips with pack_unavailable when no
+# link_type declares an inference.regex). Same ReDoS-guarded sketch
+# regexes v1 ships; production matchers in link-extraction.ts still apply.
 link_types:
   - name: partner_of
     inverse: partner_of
@@ -328,14 +338,24 @@ link_types:
   - name: discusses
   - name: founded
     inverse: founded_by
+    inference:
+      regex: \b(founded|founder of|co-?founded|started)\b
   - name: works_at
     inverse: employs
+    inference:
+      regex: \b(works? at|employed by|works? for|joined|hired by|ceo of|cto of|cmo of)\b
   - name: invested_in
     inverse: investor_of
+    inference:
+      regex: \b(invested in|backed|seeded|funded|wrote a check)\b
   - name: sourced_from
   - name: derived_from
   - name: supersedes
   - name: redirects_to
+  # NOTE: v1's `attended` inference is page_type-bound to `meeting`, which
+  # v2 does not declare (lint: link_types_undeclared_page_type). Meeting
+  # pages retyped by unify-types are matched via frontmatter.legacy_type
+  # in extract-timeline-from-meetings (#2109) instead.
   - name: attended
     inverse: attended_by
   - name: authored

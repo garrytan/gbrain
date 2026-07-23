@@ -32,7 +32,7 @@ interface CapturedSql {
   params: unknown[];
 }
 
-function buildMockEngine(opts: { scorecard: TakesScorecard }): {
+function buildMockEngine(opts: { scorecard: TakesScorecard; config?: Record<string, string> }): {
   engine: BrainEngine;
   captured: CapturedSql[];
 } {
@@ -41,6 +41,9 @@ function buildMockEngine(opts: { scorecard: TakesScorecard }): {
     kind: 'pglite',
     async getScorecard() {
       return opts.scorecard;
+    },
+    async getConfig(key: string) {
+      return opts.config?.[key] ?? null;
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
@@ -239,6 +242,36 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(insert!.params[9]).toBe(true); // voice_gate_passed
     expect(insert!.params[10]).toBe(1); // voice_gate_attempts
     expect(insert!.params[11]).toEqual(['over-confident-geography']); // active_bias_tags
+  });
+
+  test('#1726: calibration.user_holder config drives the holder when no explicit opt', async () => {
+    const { engine, captured } = buildMockEngine({
+      scorecard: ENOUGH_RESOLVED_SCORECARD,
+      config: { 'calibration.user_holder': 'alice-example' },
+    });
+    await runPhaseCalibrationProfile(buildCtx(engine), {
+      patternsGenerator: async () => ['You call early-stage tactics well — 8 of 10 held up.'],
+      biasTagsGenerator: async () => [],
+      voiceGateJudge: passJudge,
+    });
+    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    expect(insert).toBeDefined();
+    expect(insert!.params[1]).toBe('alice-example'); // holder from config
+  });
+
+  test('#1726: explicit holder opt wins over calibration.user_holder config', async () => {
+    const { engine, captured } = buildMockEngine({
+      scorecard: ENOUGH_RESOLVED_SCORECARD,
+      config: { 'calibration.user_holder': 'alice-example' },
+    });
+    await runPhaseCalibrationProfile(buildCtx(engine), {
+      holder: 'charlie-example',
+      patternsGenerator: async () => ['You call early-stage tactics well — 8 of 10 held up.'],
+      biasTagsGenerator: async () => [],
+      voiceGateJudge: passJudge,
+    });
+    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    expect(insert!.params[1]).toBe('charlie-example');
   });
 
   test('default model is a provider-prefixed id, persisted to model_id (#2451)', async () => {

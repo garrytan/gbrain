@@ -152,6 +152,19 @@ describe('list_schema_packs', () => {
       expect(result.installed).toContain('mine');
     });
   });
+
+  it('reports the full bundled registry, not a hand-copied subset (#1726)', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir }, async () => {
+      const { BUNDLED_PACKS } = await import('../src/core/schema-pack/load-active.ts');
+      const result = await operationsByName.list_schema_packs!.handler(ctxOf(), {}) as { bundled: string[] };
+      expect(result.bundled.slice().sort()).toEqual([...BUNDLED_PACKS].sort());
+      // The lens packs that declare extract_atoms/synthesize_concepts phases
+      // were the ones dropped by the frozen 2-pack literal.
+      for (const name of ['gbrain-creator', 'gbrain-everything', 'gbrain-base-v2']) {
+        expect(result.bundled).toContain(name);
+      }
+    });
+  });
 });
 
 // ── schema_stats ───────────────────────────────────────────────────────
