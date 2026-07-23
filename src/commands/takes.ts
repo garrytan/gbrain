@@ -129,11 +129,9 @@ function writeBody(path: string, body: string): void {
 // --- Subcommands ---
 
 async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
-  const slug = args[0];
-  if (!slug) {
-    console.error('Usage: gbrain takes <slug> [--json]');
-    process.exit(1);
-  }
+  // #2079: `gbrain takes list` (no slug) lists all active takes brain-wide —
+  // CLI parity with the takes_list op. A leading flag also means "no slug".
+  const slug = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
   const json = flagPresent(args, '--json');
   const holder = flagValue(args, '--who');
   const kind = flagValue(args, '--kind') as string | undefined;
@@ -154,16 +152,17 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if (takes.length === 0) {
-    console.log(`No takes on ${slug}.`);
+    console.log(slug ? `No takes on ${slug}.` : 'No takes in brain.');
     return;
   }
-  console.log(`# Takes on ${slug}\n`);
+  console.log(slug ? `# Takes on ${slug}\n` : '# All takes\n');
   for (const t of takes) {
     const tag = t.active ? '' : ' [superseded]';
     const w = Number(t.weight).toFixed(2);
     const since = t.since_date ?? '';
     const src = t.source ? ` — ${t.source}` : '';
-    console.log(`#${t.row_num} [${t.kind} • ${t.holder} • w=${w}${since ? ` • ${since}` : ''}]${tag}\n  ${t.claim}${src}\n`);
+    const ref = slug ? `#${t.row_num}` : `${t.page_slug}#${t.row_num}`;
+    console.log(`${ref} [${t.kind} • ${t.holder} • w=${w}${since ? ` • ${since}` : ''}]${tag}\n  ${t.claim}${src}\n`);
   }
 }
 
@@ -291,11 +290,17 @@ async function cmdSupersede(engine: BrainEngine, args: string[], sourceId?: stri
   await withPageLock(slug, async () => {
     const pageId = await getPageId(engine, slug, sourceId);
 
-    // Read existing row to inherit kind/holder unless overridden
-    const existing = await engine.listTakes({ page_id: pageId, active: false, limit: 500 });
+    // Read existing row to inherit kind/holder unless overridden.
+    // #2078: the supersede target is an ACTIVE take — active:false could
+    // only ever find already-superseded rows, so every real supersede failed.
+    const existing = await engine.listTakes({ page_id: pageId, active: true, limit: 500 });
     const target = existing.find(t => t.row_num === rowNum);
     if (!target) {
-      console.error(`Row #${rowNum} not found on ${slug}.`);
+      const superseded = await engine.listTakes({ page_id: pageId, active: false, limit: 500 });
+      const stale = superseded.find(t => t.row_num === rowNum);
+      console.error(stale
+        ? `Row #${rowNum} on ${slug} is already superseded.`
+        : `Row #${rowNum} not found on ${slug}.`);
       process.exit(1);
     }
     const kind = ensureKind(flagValue(args, '--kind') ?? target.kind);
@@ -555,6 +560,7 @@ export async function runTakes(engine: BrainEngine, args: string[]): Promise<voi
 Subcommands:
   takes <slug> [--json] [--who h] [--kind k] [--sort weight|since_date|created_at] [--expired]
                                           List takes for a page
+  takes list [<slug>] [same flags]        List all active takes (or one page's)
   takes search "<query>" [--limit N] [--json]
                                           Keyword search across all takes
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
@@ -584,6 +590,9 @@ Common flags:
   const rest = args.slice(1);
 
   switch (sub) {
+    // #2079: reserved word — never a page slug. Bare `takes list` lists all
+    // active takes; `takes list <slug>` behaves like `takes <slug>`.
+    case 'list':        return cmdList(engine, rest);
     case 'search':      return cmdSearch(engine, rest);
     case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
     case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));

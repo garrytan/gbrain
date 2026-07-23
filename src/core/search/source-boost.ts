@@ -132,3 +132,30 @@ export function resolveHardExcludes(
   }
   return Array.from(union);
 }
+
+/**
+ * #2780 (privacy): true when a slug sits under any hard-excluded prefix
+ * (defaults ∪ GBRAIN_SEARCH_EXCLUDE). Derive phases (chronicle events,
+ * facts, atoms, takes) MUST skip such source pages — otherwise excluded
+ * content gets re-materialized as searchable rows/pages OUTSIDE the
+ * excluded prefix, silently defeating the exclusion.
+ */
+export function isHardExcludedSlug(
+  slug: string,
+  prefixes: string[] = resolveHardExcludes(),
+): boolean {
+  return prefixes.some(p => slug.startsWith(p));
+}
+
+/**
+ * #2780: prefixes derive phases must never read from. Deliberately the
+ * env-configured (privacy) excludes ONLY — the DEFAULT_HARD_EXCLUDES
+ * noise prefixes (test/, attachments/, .raw/) stay derivable: they are a
+ * search-ranking concern, not a privacy boundary, and extraction from
+ * test/ pages is pinned by existing suites.
+ */
+export function resolveDeriveExcludes(
+  envValue: string | undefined = process.env.GBRAIN_SEARCH_EXCLUDE,
+): string[] {
+  return parseHardExcludesEnv(envValue);
+}

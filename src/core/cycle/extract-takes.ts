@@ -24,6 +24,7 @@ import { join, relative, sep } from 'node:path';
 import type { BrainEngine, TakeBatchInput } from '../engine.ts';
 import { parseTakesFence, type ParsedTake } from '../takes-fence.ts';
 import { walkMarkdownFiles } from '../../commands/extract.ts';
+import { isHardExcludedSlug, resolveDeriveExcludes } from '../search/source-boost.ts';
 
 export interface ExtractTakesOpts {
   /** Brain repo root. Required for source='fs'. */
@@ -127,10 +128,13 @@ export async function extractTakesFromFs(
 
   const files = walkMarkdownFiles(opts.repoPath);
   const buffer: TakeBatchInput[] = [];
+  // #2780 (privacy): never derive takes from excluded-prefix pages.
+  const hardExcludes = resolveDeriveExcludes();
 
   for (const { path, relPath } of files) {
     const slug = relPath.replace(/\.md$/, '').split(sep).join('/');
     if (slugFilter && !slugFilter.has(slug)) continue;
+    if (isHardExcludedSlug(slug, hardExcludes)) continue;
     result.pagesScanned++;
 
     let body: string;
@@ -198,8 +202,11 @@ export async function extractTakesFromDb(
     ? opts.slugs.map(slug => ({ slug, source_id: 'default' }))
     : await engine.listAllPageRefs();
   const buffer: TakeBatchInput[] = [];
+  // #2780 (privacy): never derive takes from excluded-prefix pages.
+  const hardExcludes = resolveDeriveExcludes();
 
   for (const { slug, source_id } of refs) {
+    if (isHardExcludedSlug(slug, hardExcludes)) continue;
     result.pagesScanned++;
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;

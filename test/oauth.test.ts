@@ -363,6 +363,45 @@ describe('verifyAccessToken', () => {
     expect(authInfo.sourceId).toBe('default');
     expect(authInfo.allowedSources).toEqual(['default', 'src-a', 'src-b']);
   });
+
+  test('legacy access_tokens fallback honors permissions.takes_holders (#2529)', async () => {
+    await sql`
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb
+    `;
+
+    const legacyToken = generateToken('gbrain_');
+    const hash = hashToken(legacyToken);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, permissions)
+      VALUES (
+        ${crypto.randomUUID()},
+        ${'legacy-takes-agent'},
+        ${hash},
+        ${JSON.stringify({ takes_holders: ['self', 'world'] })}::jsonb
+      )
+    `;
+
+    const authInfo = await provider.verifyAccessToken(legacyToken) as CoreAuthInfo;
+    expect(authInfo.takesHoldersAllowList).toEqual(['self', 'world']);
+  });
+
+  test('legacy access_tokens without a takes_holders grant default to world (#2529)', async () => {
+    await sql`
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb
+    `;
+
+    const legacyToken = generateToken('gbrain_');
+    const hash = hashToken(legacyToken);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, permissions)
+      VALUES (${crypto.randomUUID()}, ${'legacy-nogrant-agent'}, ${hash}, ${'{}'}::jsonb)
+    `;
+
+    const authInfo = await provider.verifyAccessToken(legacyToken) as CoreAuthInfo;
+    expect(authInfo.takesHoldersAllowList).toEqual(['world']);
+  });
 });
 
 // ---------------------------------------------------------------------------
