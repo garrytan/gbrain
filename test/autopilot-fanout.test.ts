@@ -158,7 +158,7 @@ describe('resolveFanoutMax', () => {
 describe('dispatchPerSource — integration with stubbed engine + queue', () => {
   type AddedJob = { name: string; data: unknown; opts: Record<string, unknown> };
 
-  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean }) {
+  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean; inflight?: string[] }) {
     const added: AddedJob[] = [];
     let nextId = 100;
     const engine = {
@@ -167,6 +167,8 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
         if (opts?.listThrows) throw new Error('sources table missing');
         return sources;
       },
+      executeRaw: async (_sql: string, params?: unknown[]) =>
+        opts?.inflight?.includes(String(params?.[0])) ? [{ id: 999 }] : [],
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, addOpts: Record<string, unknown>) => {
@@ -220,6 +222,18 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     // source_id threaded through job data
     const sourceIds = added.map(j => (j.data as Record<string, unknown>).source_id).sort();
     expect(sourceIds).toEqual(['alpha', 'beta']);
+  });
+
+  test('does not stack a new slot while the same source has a waiting/active cycle', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs(
+      [src('alpha'), src('beta')],
+      { inflight: ['alpha'] },
+    );
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.dispatched).toEqual(['beta']);
+    expect(result.skipped_inflight).toEqual(['alpha']);
+    expect(added).toHaveLength(1);
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {

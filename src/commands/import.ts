@@ -4,7 +4,7 @@ import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
-import { loadConfig, gbrainPath } from '../core/config.ts';
+import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import {
@@ -121,6 +121,16 @@ export async function runImport(
     importActivePack = { page_types: resolved.manifest.page_types };
   } catch {
     importActivePack = undefined;
+  }
+  // Bulk imports may touch thousands of unchanged files. Resolve DB-plane
+  // configuration once per command instead of issuing the same config reads
+  // for every file before the content-hash short-circuit.
+  let importEffectiveConfig = loadConfig();
+  try {
+    importEffectiveConfig = await loadConfigWithEngine(engine, importEffectiveConfig);
+  } catch {
+    // Keep file/env configuration as the fail-open fallback, matching
+    // importFromContent's single-page behavior.
   }
 
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
@@ -294,7 +304,12 @@ export async function runImport(
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
+        : await importFile(eng, filePath, importRelPath, {
+            noEmbed,
+            sourceId,
+            activePack: importActivePack,
+            effectiveConfig: importEffectiveConfig,
+          });
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);

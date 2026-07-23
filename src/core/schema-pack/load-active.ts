@@ -123,6 +123,19 @@ function defaultPackLocator(name: string): string | null {
     // module path doesn't resolve to the source tree.
     const repoRootFallback = join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`);
     if (existsSync(repoRootFallback)) return repoRootFallback;
+    // Bun --compile rewrites import.meta.url into the embedded filesystem,
+    // while YAML assets remain beside the source checkout. Production builds
+    // live at <repo>/bin/gbrain, so resolve from the executable as well.
+    const executableRepoFallback = join(
+      dirname(process.execPath),
+      '..',
+      'src',
+      'core',
+      'schema-pack',
+      'base',
+      `${name}.yaml`,
+    );
+    if (existsSync(executableRepoFallback)) return executableRepoFallback;
     return null;
   }
   // User-installed pack at ~/.gbrain/schema-packs/<name>/pack.{yaml,json}

@@ -2065,6 +2065,7 @@ export async function registerBuiltinHandlers(
         sourceId,
         windowSeconds,
         brainDir: repoPath,
+        signal: job.signal,
       });
     } catch (e) {
       if (e instanceof LockUnavailableError) {

@@ -319,6 +319,15 @@ export interface OperationContext {
    */
   auth?: AuthInfo;
   /**
+   * Federated read scope resolved for a trusted local CLI invocation.
+   *
+   * Local CLI calls do not carry OAuth AuthInfo, but unqualified reads still
+   * need to honor sources.config.federated. When the CLI is not pinned by an
+   * explicit/env/dotfile/local-path source, it loads the federated source ids
+   * here. Read helpers prefer this array over the scalar write/default source.
+   */
+  localReadSourceIds?: string[];
+  /**
    * True when the caller is remote/untrusted (MCP over stdio/HTTP, or any agent-facing entry point).
    * False for local CLI invocations by the owner of the machine.
    *
@@ -448,6 +457,9 @@ export interface OperationContext {
  * same precedence ladder — drift between sites is the bug class.
  */
 export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  if (ctx.localReadSourceIds && ctx.localReadSourceIds.length > 0) {
+    return { sourceIds: ctx.localReadSourceIds };
+  }
   const allowed = ctx.auth?.allowedSources;
   // Treat an empty `allowedSources: []` as "no federated read scope" — the
   // op-handler defers to scalar `ctx.sourceId` below. An attacker-controlled

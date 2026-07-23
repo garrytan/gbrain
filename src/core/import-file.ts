@@ -26,7 +26,7 @@ import {
   buildContentFlagMarker,
   isQuarantined,
 } from './quarantine.ts';
-import { loadConfig, loadConfigWithEngine } from './config.ts';
+import { loadConfig, loadConfigWithEngine, type GBrainConfig } from './config.ts';
 import {
   buildContextualPrefix,
   modeRequiresHaiku,
@@ -267,6 +267,11 @@ export async function importFromContent(
      */
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
     /**
+     * Effective file/env/DB config preloaded by bulk import callers.
+     * Avoids repeating the DB-plane config lift for every unchanged file.
+     */
+    effectiveConfig?: GBrainConfig | null;
+    /**
      * v0.39.3.0 provenance write-through (WARN-8). When set, threaded to
      * `tx.putPage` so the page's `source_kind`, `source_uri`,
      * `ingested_via` DB columns get populated. The trust gate lives at the
@@ -384,16 +389,17 @@ export async function importFromContent(
   let pageFlagReason: 'markup_heavy' | 'oversized' | undefined;
   {
     const baseCfg = loadConfig();
-    let effectiveCfg = baseCfg;
-    try {
-      // loadConfigWithEngine merges DB-plane content_sanity.* on top
-      // of file/env. Wrapped in try/catch so a transient engine error
-      // doesn't kill the import — the gate falls back to file/env
-      // values (which include defaults via the assessor itself).
-      effectiveCfg = await loadConfigWithEngine(engine, baseCfg);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
+    let effectiveCfg = opts.effectiveConfig;
+    if (effectiveCfg === undefined) {
+      effectiveCfg = baseCfg;
+      try {
+        // Single-page callers resolve DB-plane configuration here. Bulk
+        // import resolves it once and threads effectiveConfig through.
+        effectiveCfg = await loadConfigWithEngine(engine, baseCfg);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
+      }
     }
     const cs = effectiveCfg?.content_sanity ?? {};
     // GBRAIN_NO_SANITY=1 fast-path: loadConfig() returns null when
@@ -934,6 +940,8 @@ export async function importFromFile(
      * never per file (codex perf finding #7).
      */
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+    /** Preloaded effective config for bulk imports; see importFromContent. */
+    effectiveConfig?: GBrainConfig | null;
   } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.

@@ -130,6 +130,7 @@ export type ProposeTakesExtractor = (input: {
   pageBody: string;
   existingTakes: Array<{ claim: string; kind: string; holder: string; weight: number }>;
   modelHint?: string;
+  signal?: AbortSignal;
 }) => Promise<ProposedTake[]>;
 
 export interface ProposeTakesOpts extends BasePhaseOpts {
@@ -145,6 +146,11 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   model?: string;
   /** Skip pages that already have a complete takes fence. Default: true. */
   skipPagesWithFence?: boolean;
+  /**
+   * Incremental page set from sync/synthesize. Undefined means an explicit
+   * full/manual run; an empty array means a successful no-op routine cycle.
+   */
+  affectedSlugs?: string[];
 }
 
 export interface ProposeTakesResult {
@@ -231,6 +237,7 @@ export async function defaultExtractor(
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 2048,
+    abortSignal: input.signal,
   });
 
   // ChatResult.text is already the concatenated text content.
@@ -319,12 +326,22 @@ class ProposeTakesPhase extends BaseCyclePhase {
     };
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
-    const pageFilters: PageFilters = {
-      ...scope,
-      limit: pageLimit,
-      sort: 'updated_desc',
-    };
-    const pages: Page[] = await engine.listPages(pageFilters);
+    let pages: Page[];
+    if (opts.affectedSlugs !== undefined) {
+      pages = [];
+      for (const slug of Array.from(new Set(opts.affectedSlugs)).slice(0, pageLimit)) {
+        if (opts.signal?.aborted) throw opts.signal.reason ?? new Error('propose_takes aborted');
+        const page = await engine.getPage(slug, scope);
+        if (page) pages.push(page);
+      }
+    } else {
+      const pageFilters: PageFilters = {
+        ...scope,
+        limit: pageLimit,
+        sort: 'updated_desc',
+      };
+      pages = await engine.listPages(pageFilters);
+    }
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
@@ -333,6 +350,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const modelId = opts.model ?? getChatModel();
 
     for (const page of pages) {
+      if (opts.signal?.aborted) throw opts.signal.reason ?? new Error('propose_takes aborted');
       result.pages_scanned += 1;
       this.tick(opts);
 
@@ -381,6 +399,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pageBody: body,
           existingTakes,
           modelHint: opts.model,
+          signal: opts.signal,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

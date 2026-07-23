@@ -80,6 +80,15 @@ export class UnknownPackError extends Error {
   }
 }
 
+export class PackDependencyCycleError extends Error {
+  readonly chain: string[];
+  constructor(chain: string[]) {
+    super(`schema pack dependency cycle: ${chain.join(' → ')}`);
+    this.name = 'PackDependencyCycleError';
+    this.chain = chain;
+  }
+}
+
 export interface ResolvedPack {
   manifest: SchemaPackManifest;
   identity: string;        // `<name>@<version>+<sha8>` (child only — wire-stable)
@@ -254,33 +263,63 @@ export async function resolvePack(
     return existing.resolved;
   }
 
-  // Walk extends chain to enforce depth cap AND collect names for the
-  // cache snapshot (codex C6 — child cache entry must remember every
-  // parent so invalidatePackCache(parentName) can cascade).
-  const chain: string[] = [manifest.name];
-  let cursor: SchemaPackManifest | null = manifest;
-  while (cursor?.extends) {
-    const parentName = cursor.extends;
-    if (chain.includes(parentName)) {
-      throw new ExtendsChainTooDeepError(chain.length, [...chain, parentName]);
+  // Resolve the complete effective manifest. Extends is parent-first with
+  // child-wins semantics. borrow_from selectively imports the requested
+  // page/link types (plus their type-bound rules) but deliberately does NOT
+  // import phases; a pack must opt into maintenance phases explicitly.
+  //
+  // This used to only *walk* the extends chain for depth/caching while
+  // returning the raw child manifest. Meta-packs such as gbrain-everything
+  // therefore resolved to zero page types despite validating successfully.
+  const dependencyNames = new Set<string>();
+
+  async function resolveEffective(
+    current: SchemaPackManifest,
+    path: string[],
+    extendsDepth: number,
+    edgeKind: 'root' | 'extends' | 'borrow' = 'root',
+  ): Promise<SchemaPackManifest> {
+    if (path.includes(current.name)) {
+      if (edgeKind === 'extends') {
+        throw new ExtendsChainTooDeepError(path.length, [...path, current.name]);
+      }
+      throw new PackDependencyCycleError([...path, current.name]);
     }
-    chain.push(parentName);
-    if (chain.length > EXTENDS_DEPTH_HARD_CAP) {
-      throw new ExtendsChainTooDeepError(chain.length, chain);
+    const nextPath = [...path, current.name];
+    dependencyNames.add(current.name);
+
+    let effective: SchemaPackManifest | null = null;
+    if (current.extends) {
+      const nextDepth = extendsDepth + 1;
+      const extendsChain = [...nextPath, current.extends];
+      if (nextDepth + 1 > EXTENDS_DEPTH_HARD_CAP) {
+        throw new ExtendsChainTooDeepError(nextDepth + 1, extendsChain);
+      }
+      if (nextDepth + 1 > EXTENDS_DEPTH_WARN) {
+        opts.onDepthWarn?.(nextDepth + 1, extendsChain);
+      }
+      const parent = await loadByName(current.extends);
+      effective = await resolveEffective(parent, nextPath, nextDepth, 'extends');
     }
-    if (chain.length > EXTENDS_DEPTH_WARN) {
-      opts.onDepthWarn?.(chain.length, chain);
+
+    for (const borrow of current.borrow_from) {
+      const borrowedRaw = await loadByName(borrow.pack);
+      const borrowed = await resolveEffective(borrowedRaw, nextPath, 0, 'borrow');
+      effective = mergeBorrowedManifest(effective ?? emptyManifestFor(current), borrowed, borrow);
     }
-    cursor = await loadByName(parentName);
+
+    return effective === null
+      ? current
+      : mergeExtendedManifest(effective, current);
   }
 
-  // For v0.38 skeleton: closure is computed on the manifest itself.
-  // Full extends-merging (child-wins) is the v0.41+ T20 follow-up.
-  const alias_graph = buildAliasGraph(manifest);
-  const alias_closure_hash = await computeAliasClosureHash(manifest);
+  const effectiveManifest = await resolveEffective(manifest, [], 0);
+  const chain = [...dependencyNames];
+  const alias_graph = buildAliasGraph(effectiveManifest);
+  const alias_closure_hash = await computeAliasClosureHash(effectiveManifest);
 
   const resolved: ResolvedPack = {
-    manifest,
+    manifest: effectiveManifest,
     identity: id,
     manifest_sha8: sha8,
     alias_closure_hash,
@@ -305,6 +344,103 @@ export async function resolvePack(
     lastStatMs: Date.now(),
   });
   return resolved;
+}
+
+function mergeByKey<T>(base: T[], overlay: T[], key: (item: T) => string): T[] {
+  const out = [...base];
+  const positions = new Map(out.map((item, index) => [key(item), index]));
+  for (const item of overlay) {
+    const k = key(item);
+    const existing = positions.get(k);
+    if (existing === undefined) {
+      positions.set(k, out.length);
+      out.push(item);
+    } else {
+      out[existing] = item;
+    }
+  }
+  return out;
+}
+
+function emptyManifestFor(child: SchemaPackManifest): SchemaPackManifest {
+  return {
+    ...child,
+    extends: null,
+    borrow_from: [],
+    page_types: [],
+    link_types: [],
+    frontmatter_links: [],
+    takes_kinds: [],
+    enrichable_types: [],
+    filing_rules: [],
+    phases: [],
+    calibration_domains: [],
+    mapping_rules: [],
+  };
+}
+
+/**
+ * Parent-first effective manifest. Named declarations are overridden by the
+ * child; additive string lists are unioned. Phases remain child-local by
+ * contract (borrow/extends never opts a child into an LLM maintenance phase).
+ */
+function mergeExtendedManifest(
+  parent: SchemaPackManifest,
+  child: SchemaPackManifest,
+): SchemaPackManifest {
+  return {
+    ...child,
+    page_types: mergeByKey(parent.page_types, child.page_types, x => x.name),
+    link_types: mergeByKey(parent.link_types, child.link_types, x => x.name),
+    frontmatter_links: mergeByKey(
+      parent.frontmatter_links,
+      child.frontmatter_links,
+      x => `${x.page_type}\0${x.link_type}`,
+    ),
+    takes_kinds: [...new Set([...parent.takes_kinds, ...child.takes_kinds])],
+    enrichable_types: mergeByKey(parent.enrichable_types, child.enrichable_types, x => x.type),
+    filing_rules: mergeByKey(parent.filing_rules, child.filing_rules, x => x.kind),
+    phases: child.phases ?? [],
+    calibration_domains: mergeByKey(
+      parent.calibration_domains ?? [],
+      child.calibration_domains ?? [],
+      x => x.name,
+    ),
+    mapping_rules: [...(parent.mapping_rules ?? []), ...(child.mapping_rules ?? [])],
+  };
+}
+
+function mergeBorrowedManifest(
+  target: SchemaPackManifest,
+  borrowed: SchemaPackManifest,
+  spec: SchemaPackManifest['borrow_from'][number],
+): SchemaPackManifest {
+  const typeNames = new Set(spec.types ?? []);
+  const linkNames = new Set(spec.link_types ?? []);
+  const pageTypes = borrowed.page_types.filter(x => typeNames.has(x.name));
+  const linkTypes = borrowed.link_types.filter(x => linkNames.has(x.name));
+  return {
+    ...target,
+    page_types: mergeByKey(target.page_types, pageTypes, x => x.name),
+    link_types: mergeByKey(target.link_types, linkTypes, x => x.name),
+    frontmatter_links: mergeByKey(
+      target.frontmatter_links,
+      borrowed.frontmatter_links.filter(
+        x => typeNames.has(x.page_type) && (linkNames.size === 0 || linkNames.has(x.link_type)),
+      ),
+      x => `${x.page_type}\0${x.link_type}`,
+    ),
+    enrichable_types: mergeByKey(
+      target.enrichable_types,
+      borrowed.enrichable_types.filter(x => typeNames.has(x.type)),
+      x => x.type,
+    ),
+    filing_rules: mergeByKey(
+      target.filing_rules,
+      borrowed.filing_rules.filter(x => typeNames.has(x.kind)),
+      x => x.kind,
+    ),
+  };
 }
 
 /**

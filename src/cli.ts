@@ -271,7 +271,11 @@ async function main() {
     const timeoutMs = isDiagnose ? 60_000 : 10_000;
     let engine: BrainEngine;
     try {
-      engine = await withTimeout(connectEngine(), timeoutMs, `${label}: connect`);
+      engine = await withTimeout(
+        connectEngine({ probeOnly: true }),
+        timeoutMs,
+        `${label}: connect`,
+      );
     } catch (e) {
       if (e instanceof OperationTimeoutError) { console.error(`${e.label} timed out.`); process.exit(124); }
       throw e;
@@ -389,7 +393,7 @@ async function main() {
   }
 
   // Local engine path (unchanged behavior for local installs).
-  const engine = await connectEngine();
+  const engine = await connectEngine(op.scope === 'read' ? { probeOnly: true } : undefined);
   // #2084: the teardown contract (bounded drain of every background-work sink,
   // bounded disconnect, computed-deadline backstop) lives in finishCliTeardown
   // — see src/core/cli-force-exit.ts for the full design. The hard-deadline
@@ -431,7 +435,7 @@ async function main() {
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        makeContext(engine, params),
+        makeContext(engine, params, op.scope),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -804,18 +808,37 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   return params;
 }
 
-async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+export async function makeContext(
+  engine: BrainEngine,
+  params: Record<string, unknown>,
+  operationScope?: Operation['scope'],
+): Promise<OperationContext> {
   // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
   // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
   // never set up sources still returns 'default' silently.
   let sourceId: string | undefined;
+  let localReadSourceIds: string[] | undefined;
   try {
-    const { resolveSourceId } = await import('./core/source-resolver.ts');
+    const { resolveSourceWithTier } = await import('./core/source-resolver.ts');
     // params.source is set when a CLI flag was parsed for the op (rare; most
     // CLI ops don't take --source). Falls through to env/dotfile/path-match.
     const explicit = (params.source as string | undefined) ?? null;
-    sourceId = await resolveSourceId(engine, explicit);
+    const resolved = await resolveSourceWithTier(engine, explicit);
+    sourceId = resolved.source_id;
+
+    // Late resolver tiers choose a default WRITE target. They must not narrow
+    // an unqualified READ: the federation contract says reads span every
+    // federated source unless the caller is pinned by flag/env/dotfile/path.
+    const sourcePinned = ['flag', 'env', 'dotfile', 'local_path'].includes(resolved.tier);
+    if (operationScope === 'read' && !sourcePinned) {
+      const { loadAllSources } = await import('./core/sources-load.ts');
+      const federated = await loadAllSources(engine, { federatedOnly: true });
+      localReadSourceIds = federated.map((row) => row.id);
+      if (localReadSourceIds.length === 0) {
+        localReadSourceIds = [resolved.source_id];
+      }
+    }
   } catch {
     // Source resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
@@ -836,6 +859,7 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // table). Matches dispatch.ts's auto-fill so the contract holds across
     // every transport.
     sourceId: sourceId ?? 'default',
+    localReadSourceIds,
   };
 }
 
@@ -1534,12 +1558,13 @@ async function handleCliOnly(command: string, args: string[]) {
   // covers connectEngine (so a hung schema probe / PgBouncer freeze actually
   // surfaces a timeout) AND the dispatch body (so a wedged runSearch /
   // runList honors the same deadline).
-  // Per-command default: search 30s, sources list 10s. User --timeout=Ns wins.
+  // Per-command default: sources list 10s. User --timeout=Ns wins.
+  // Free-text `search` is a shared read operation and must not be routed to
+  // the search-dashboard command (`modes|stats|tune`).
   // Other commands (import, embed, doctor, etc.) keep their existing
   // unbounded connect — destructive / long-running commands shouldn't get
   // a default kill switch.
   const readOnlyDefaultTimeoutMs =
-    command === 'search' ? 30_000 :
     command === 'sources' && (args[0] === 'list' || args[0] === undefined) ? 10_000 :
     null;
   const cliOptsResolved = getCliOptions();
@@ -1551,7 +1576,11 @@ async function handleCliOnly(command: string, args: string[]) {
     const label = `gbrain ${command}`;
     let engine: BrainEngine;
     try {
-      engine = await withTimeout(connectEngine(), readOnlyTimeoutMs, `${label}: connect`);
+      engine = await withTimeout(
+        connectEngine({ probeOnly: true }),
+        readOnlyTimeoutMs,
+        `${label}: connect`,
+      );
     } catch (e) {
       if (e instanceof OperationTimeoutError) {
         const hint = userTimeoutMs ? '' : ` (default ${e.ms}ms; pass --timeout=Ns to override)`;

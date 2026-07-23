@@ -121,6 +121,14 @@ export interface ExtractAtomsOpts {
   sourceId?: string;
   dryRun?: boolean;
   affectedSlugs?: string[];
+  /**
+   * Absolute wall-clock deadline for bounded drains. Checked before each
+   * source item so a nominal drain window cannot be overrun by the entire
+   * fixed-size discovery batch.
+   */
+  deadlineMs?: number;
+  /** Abort the in-flight provider call and stop before the next source item. */
+  signal?: AbortSignal;
   /** Test seam: alternative chat function (bypasses real LLM calls). */
   _chat?: typeof gatewayChat;
   /**
@@ -213,7 +221,11 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
 ): Promise<DiscoveredPage[]> {
-  const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+  // An explicit [] means the caller completed a no-op incremental sync: there
+  // are no changed pages to process. Treating [] like undefined silently
+  // widened a routine cycle into a 50-page historical backlog drain.
+  if (Array.isArray(affectedSlugs) && affectedSlugs.length === 0) return [];
+  const hasFilter = Array.isArray(affectedSlugs);
   const sql = `
     SELECT p.slug,
            p.compiled_truth,
@@ -229,11 +241,17 @@ export async function discoverExtractablePages(
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND atom.deleted_at IS NULL
+        FROM pages marker
+        WHERE marker.source_id = $1
+          AND marker.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+          AND (
+            marker.type = 'atom'
+            OR (
+              marker.type = 'extract_receipt'
+              AND marker.frontmatter->>'receipt_kind' = 'atoms_empty'
+            )
+          )
+          AND marker.deleted_at IS NULL
       )
     ORDER BY p.updated_at DESC
     LIMIT $4
@@ -299,10 +317,17 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            AND length(COALESCE(p.compiled_truth, '')) >= $3
            AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = $1
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND atom.deleted_at IS NULL
+             SELECT 1 FROM pages marker
+             WHERE marker.source_id = $1
+               AND marker.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+               AND (
+                 marker.type = 'atom'
+                 OR (
+                   marker.type = 'extract_receipt'
+                   AND marker.frontmatter->>'receipt_kind' = 'atoms_empty'
+                 )
+               )
+               AND marker.deleted_at IS NULL
            )`
       : `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.type = ANY($1::text[])
@@ -312,10 +337,17 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            AND length(COALESCE(p.compiled_truth, '')) >= $2
            AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = p.source_id
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND atom.deleted_at IS NULL
+             SELECT 1 FROM pages marker
+             WHERE marker.source_id = p.source_id
+               AND marker.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+               AND (
+                 marker.type = 'atom'
+                 OR (
+                   marker.type = 'extract_receipt'
+                   AND marker.frontmatter->>'receipt_kind' = 'atoms_empty'
+                 )
+               )
+               AND marker.deleted_at IS NULL
            )`;
     const extractableTypes = await resolveExtractableTypes();
     const params = scoped
@@ -356,9 +388,15 @@ export async function atomsExistingForHashes(
     const rows = await engine.executeRaw<{ h: string }>(
       `SELECT frontmatter->>'source_hash' AS h
          FROM pages
-        WHERE type = 'atom'
-          AND source_id = $1
+        WHERE source_id = $1
           AND deleted_at IS NULL
+          AND (
+            type = 'atom'
+            OR (
+              type = 'extract_receipt'
+              AND frontmatter->>'receipt_kind' = 'atoms_empty'
+            )
+          )
           AND frontmatter->>'source_hash' = ANY($2::text[])`,
       [sourceId, contentHash16s],
     );
@@ -498,6 +536,7 @@ export async function runPhaseExtractAtoms(
   let pagesProcessed = 0;
   let transcriptsSkipped = 0;
   let pagesSkipped = 0;
+  let stoppedDeadline = false;
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
@@ -526,7 +565,17 @@ export async function runPhaseExtractAtoms(
   }
 
   for (const item of work) {
+    if (opts.signal?.aborted) {
+      const reason = opts.signal.reason instanceof Error
+        ? opts.signal.reason.message
+        : String(opts.signal.reason ?? 'aborted');
+      throw new Error(`extract_atoms aborted: ${reason}`);
+    }
     await maybeYield();
+    if (opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs) {
+      stoppedDeadline = true;
+      break;
+    }
     if (estimatedSpendUsd >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
@@ -544,6 +593,7 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: 2000,
+        abortSignal: opts.signal,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -556,6 +606,36 @@ export async function runPhaseExtractAtoms(
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
+        if (!isValidEmptyAtomsResponse(result.text)) {
+          throw new Error(
+            `model returned invalid atom JSON (${atomResponseDiagnostic(result.text)}; stop=${result.stopReason})`,
+          );
+        }
+        if (!opts.dryRun) {
+          const sourceRefHash = createHash('sha256')
+            .update(`${sourceId}\0${originLabel}`)
+            .digest('hex')
+            .slice(0, 16);
+          await engine.putPage(
+            `receipts/atoms-empty/${sourceRefHash}`,
+            {
+              title: `Atom extraction: no qualifying atoms (${originLabel})`,
+              type: 'extract_receipt',
+              compiled_truth: `Atom extraction completed successfully for ${originLabel}; the model returned no qualifying atoms.`,
+              frontmatter: {
+                type: 'extract_receipt',
+                receipt_kind: 'atoms_empty',
+                source_hash: item.contentHash.slice(0, 16),
+                source_ref: originLabel,
+                extracted_at: new Date().toISOString(),
+                extracted_by: 'extract_atoms-v0.41.2.1',
+                dream_generated: true,
+              },
+              timeline: '',
+            },
+            { sourceId },
+          );
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -605,6 +685,12 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (opts.signal?.aborted) {
+        const reason = opts.signal.reason instanceof Error
+          ? opts.signal.reason.message
+          : String(opts.signal.reason ?? 'aborted');
+        throw new Error(`extract_atoms aborted: ${reason}`);
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
@@ -670,6 +756,7 @@ export async function runPhaseExtractAtoms(
       budget_usd: budgetCap,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
+      stopped_deadline: stoppedDeadline,
     },
   };
 }
@@ -732,6 +819,43 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
     });
   }
   return atoms;
+}
+
+function isValidEmptyAtomsResponse(raw: string): boolean {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+  const arrayStart = cleaned.indexOf('[');
+  const arrayEnd = cleaned.lastIndexOf(']');
+  if (arrayStart === -1 || arrayEnd < arrayStart) return false;
+  try {
+    const parsed = JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1));
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function atomResponseDiagnostic(raw: string): string {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+  const arrayStart = cleaned.indexOf('[');
+  const arrayEnd = cleaned.lastIndexOf(']');
+  if (arrayStart === -1) return `chars=${raw.length}, no_array`;
+  if (arrayEnd < arrayStart) return `chars=${raw.length}, unterminated_array`;
+  try {
+    const parsed = JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1));
+    if (!Array.isArray(parsed)) return `chars=${raw.length}, parsed_non_array`;
+    const first = parsed[0];
+    const keys =
+      first && typeof first === 'object' && !Array.isArray(first)
+        ? Object.keys(first as Record<string, unknown>).sort().join(',')
+        : typeof first;
+    return `chars=${raw.length}, items=${parsed.length}, first_keys=${keys || 'none'}`;
+  } catch {
+    return `chars=${raw.length}, malformed_array`;
+  }
 }
 
 function todayDate(): string {

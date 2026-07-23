@@ -128,6 +128,34 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     expect(jobs.length).toBe(1);
   });
 
+  test('standalone source sync prevents an overlapping full cycle', async () => {
+    await seedSource('alpha');
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    const queue = new MinionQueue(engine);
+    await queue.add(
+      'sync',
+      { sourceId: 'alpha', repoPath: '/tmp' },
+      { queue: 'default', idempotency_key: 'test-sync-alpha', timeout_ms: 60_000 },
+    );
+
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: '2026-05-22T13:05:00.000Z',
+      timeoutMs: 60_000,
+      fanoutMax: 10,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_inflight).toEqual(['alpha']);
+    const cycles = await engine.executeRaw<{ count: number }>(
+      `SELECT count(*)::int AS count FROM minion_jobs WHERE name = 'autopilot-cycle'`,
+    );
+    expect(cycles[0]?.count).toBe(0);
+  });
+
   test('source with last_full_cycle_at < 60min ago is skipped by gate', async () => {
     const recent = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     await seedSource('fresh');

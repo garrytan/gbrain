@@ -17,9 +17,9 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync, realpathSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
@@ -710,6 +710,25 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               const ageMs = now - lastSyncMs;
               if (ageMs < intervalMs) continue; // fresh enough
               try {
+                // Do not queue a redundant freshness sync while this source
+                // already has either a cycle (which includes sync) or a
+                // standalone sync in flight. Slot-based idempotency alone
+                // permits one duplicate every tick when a long cycle spans
+                // slots. maxWaiting is intentionally not used: it coalesces
+                // by name+queue, not source, and can starve another source.
+                const inFlight = await engine.executeRaw<{ one: number }>(
+                  `SELECT 1 AS one
+                     FROM minion_jobs
+                    WHERE status IN ('waiting', 'active')
+                      AND (
+                        (name = 'autopilot-cycle' AND data->>'source_id' = $1)
+                        OR
+                        (name = 'sync' AND data->>'sourceId' = $1)
+                      )
+                    LIMIT 1`,
+                  [src.id],
+                );
+                if (inFlight.length > 0) continue;
                 const job = await queue.add(
                   'sync',
                   {
@@ -723,7 +742,6 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     idempotency_key: `autopilot-sync:${src.id}:${slot}`,
                     max_attempts: 2,
                     timeout_ms: timeoutMs,
-                    maxWaiting: 1,
                   },
                 );
                 if (jsonMode) {
@@ -744,23 +762,14 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         }
 
         // ── #1685 GAP D: per-source extract_atoms auto-drain ───────────────
-        // The silent-backlog incident: a pack that doesn't declare extract_atoms
-        // never runs the phase in the routine cycle, so the atom backlog grows
-        // invisibly. Auto-submit a bounded, PROTECTED drain per source when the
-        // backlog exceeds the threshold AND the active pack doesn't declare the
-        // phase. Default-ON, daily-spend-capped, time-sloted key so a new slot
-        // opens each UTC day (CODEX #1/#2/#3, DECISION 3C). Postgres-only —
-        // PGLite has no multi-process worker to run the job.
+        // Historical backlog convergence is separate from routine incremental
+        // extraction. Routine cycles process only changed pages; this bounded,
+        // protected drain handles old eligible pages regardless of whether the
+        // active pack declares extract_atoms. Default-ON and daily-spend-capped.
         if (engine.kind === 'postgres') {
           try {
             const enabled = (await engine.getConfig('autopilot.auto_drain.enabled')) !== 'false';
             if (enabled) {
-              const { packDeclaresPhase } = await import('../core/cycle.ts');
-              // packDeclaresPhase reads the active pack (brain-wide, not
-              // per-source). If the pack declares extract_atoms the routine
-              // cycle already drains it for every source — nothing to do.
-              const declares = await packDeclaresPhase(engine, 'extract_atoms');
-              if (!declares) {
                 const parsePosInt = (v: string | null, d: number): number => {
                   if (v == null) return d;
                   const n = parseInt(v, 10);
@@ -779,6 +788,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                 const PER_RUN_USD = 0.3;
                 const maxJobsToday = Math.max(0, Math.floor(maxUsdPerDay / PER_RUN_USD));
                 const utcDay = new Date().toISOString().slice(0, 10);
+                const halfHourSlot = Math.floor(Date.now() / (30 * 60_000));
 
                 let submittedToday = 0;
                 try {
@@ -800,10 +810,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     if (!src.local_path) continue;
                     const backlog = await countExtractAtomsBacklog(engine, src.id);
                     if (backlog === null || backlog <= threshold) continue;
-                    // Time-sloted key (CODEX #2): a static key would block the
-                    // source FOREVER once the first job completes. A new UTC-day
-                    // slot reopens it each day.
-                    const idemKey = `autopilot-extract-atoms-drain:${src.id}:${utcDay}`;
+                    // A daily key allowed only one drain/source/day even when
+                    // the configured daily cap permitted more. Half-hour slots
+                    // allow continued convergence while the daily job count
+                    // remains the hard spend bound.
+                    const idemKey = `autopilot-extract-atoms-drain:${src.id}:${utcDay}:${halfHourSlot}`;
                     try {
                       // CODEX (impl review #4): DO NOT use maxWaiting here — it
                       // coalesces by (name, queue), NOT by source, so source B's
@@ -844,7 +855,6 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                       logError('dispatch.auto-drain', e);
                     }
                   }
-                }
               }
             }
           } catch (e) {
@@ -960,6 +970,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               skipped_fresh: result.skipped_fresh,
               skipped_cap: result.skipped_cap,
               skipped_cooldown: result.skipped_cooldown,
+              skipped_inflight: result.skipped_inflight,
               legacy_fallback: result.legacy_fallback,
               fanout_max: fanoutMax,
               score,
@@ -968,7 +979,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             console.log(
               `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
               `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
-              `${result.skipped_cooldown.length} cooldown ` +
+              `${result.skipped_cooldown.length} cooldown, ${result.skipped_inflight.length} in-flight ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }
@@ -1076,17 +1087,53 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // loop. Probe runs even when cycleOk=false (probe may surface signal
     // explaining why the cycle is failing).
     try {
-      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      // `gbrain config set` writes the DB plane, while legacy autopilot read
+      // only the file plane captured at process start. Honor both, dynamically,
+      // so the documented enable command actually takes effect without editing
+      // JSON by hand or restarting.
+      const dbProbeEnabled = await engine.getConfig('autopilot.nightly_quality_probe.enabled');
+      const probeEnabled =
+        cfg?.autopilot?.nightly_quality_probe?.enabled === true ||
+        dbProbeEnabled === 'true' ||
+        dbProbeEnabled === '1';
       if (probeEnabled) {
         const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
         const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
         const { isAvailable } = await import('../core/ai/gateway.ts');
-        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        const dbMaxUsd = await engine.getConfig('autopilot.nightly_quality_probe.max_usd');
+        const maxUsd = Number(
+          cfg?.autopilot?.nightly_quality_probe?.max_usd ??
+          dbMaxUsd ??
+          5,
+        );
         await runNightlyQualityProbe({
           isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
           hasEmbeddingProvider: () => isAvailable('embedding'),
           resolveMaxUsd: () => maxUsd,
-          resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
+          resolveRepoRoot: async () => {
+            const configured = await engine.getConfig('autopilot.nightly_quality_probe.repo_root');
+            const cliPath = (() => {
+              try { return resolveGbrainCliPath(); } catch { return ''; }
+            })();
+            const candidates = [
+              configured,
+              // Source checkout / locally compiled binary.
+              resolve(import.meta.dir, '..', '..'),
+              // Bun-compiled executables can collapse import.meta.dir to "/".
+              // process.execPath remains the real bin/gbrain path.
+              resolve(dirname(process.execPath), '..'),
+              cliPath ? (() => {
+                try { return resolve(dirname(realpathSync(cliPath)), '..'); } catch { return null; }
+              })() : null,
+              cliPath ? resolve(dirname(cliPath), '..') : null,
+              process.cwd(),
+              repoPath,
+              gbrainHomePath('.'),
+            ].filter((p): p is string => Boolean(p));
+            const fixture = join('test', 'fixtures', 'longmemeval-nightly.jsonl');
+            return candidates.find((root) => existsSync(join(root, fixture))) ??
+              candidates[0]!;
+          },
           runLongMemEval: runLongMemEvalForProbe,
           runCrossModalBatch: runCrossModalBatchForProbe,
           now: () => new Date(),

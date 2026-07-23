@@ -373,6 +373,7 @@ function packPathByName(name: string): string | null {
     const candidates = [
       join(here, '..', 'core', 'schema-pack', 'base', `${name}.yaml`),
       join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`),
+      join(dirname(process.execPath), '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`),
     ];
     for (const c of candidates) {
       if (existsSync(c)) return c;

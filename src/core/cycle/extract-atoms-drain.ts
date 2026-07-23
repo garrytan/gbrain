@@ -34,7 +34,12 @@ export interface ExtractAtomsDrainDeps {
    */
   withLock: <T>(work: () => Promise<T>) => Promise<T>;
   /** Process one bounded batch (rediscovers eligibility). Returns counts. */
-  runBatch: () => Promise<{ extracted: number; skipped: number }>;
+  runBatch: () => Promise<{
+    extracted: number;
+    skipped: number;
+    processed?: number;
+    failures?: Array<{ source: string; error: string }>;
+  }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
   countRemaining: () => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
@@ -48,6 +53,8 @@ export interface ExtractAtomsDrainOpts {
   windowMs: number;
   /** Hard cap on batches (belt-and-suspenders against a 0-progress loop). Default 1000. */
   maxBatches?: number;
+  /** Abort the drain and any in-flight provider call. */
+  signal?: AbortSignal;
 }
 
 export interface ExtractAtomsDrainResult {
@@ -55,6 +62,10 @@ export interface ExtractAtomsDrainResult {
   status: 'ok';
   extracted: number;
   skipped: number;
+  /** Source items successfully inspected, including valid zero-atom results. */
+  processed: number;
+  /** Per-item extraction failures surfaced from the most recent batches. */
+  failures: Array<{ source: string; error: string }>;
   /** Eligible pages still pending after the window. null if the count errored. */
   remaining: number | null;
   /** Batches actually processed. */
@@ -72,10 +83,18 @@ export async function runExtractAtomsDrain(
     const deadline = deps.now() + opts.windowMs;
     let extracted = 0;
     let skipped = 0;
+    let processed = 0;
+    const failures: Array<{ source: string; error: string }> = [];
     let batches = 0;
     let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
 
     while (deps.now() < deadline) {
+      if (opts.signal?.aborted) {
+        const reason = opts.signal.reason instanceof Error
+          ? opts.signal.reason.message
+          : String(opts.signal.reason ?? 'aborted');
+        throw new Error(`extract_atoms drain aborted: ${reason}`);
+      }
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
 
       const before = await deps.countRemaining();
@@ -84,18 +103,33 @@ export async function runExtractAtomsDrain(
       const r = await deps.runBatch();
       extracted += r.extracted;
       skipped += r.skipped;
+      processed += r.processed ?? 0;
+      failures.push(...(r.failures ?? []));
       batches++;
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
       // that spends budget without draining.
-      if (r.extracted === 0 && r.skipped === 0) { stopped = 'no_progress'; break; }
+      if (r.extracted === 0 && r.skipped === 0 && (r.processed ?? 0) === 0) {
+        stopped = 'no_progress';
+        break;
+      }
     }
 
     const remaining = await deps.countRemaining();
     if (remaining === 0) stopped = 'drained';
-    return { phase: 'extract_atoms', status: 'ok', extracted, skipped, remaining, batches, stopped };
+    return {
+      phase: 'extract_atoms',
+      status: 'ok',
+      extracted,
+      skipped,
+      processed,
+      failures,
+      remaining,
+      batches,
+      stopped,
+    };
   });
 }
 
@@ -134,6 +168,8 @@ export interface DrainForSourceOpts {
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
   onBatch?: ExtractAtomsDrainDeps['onBatch'];
+  /** Abort the drain and the current chat request. */
+  signal?: AbortSignal;
 }
 
 export async function runExtractAtomsDrainForSource(
@@ -146,6 +182,7 @@ export async function runExtractAtomsDrainForSource(
 
   const extractionSourceId = opts.sourceId ?? 'default';
   const lockId = cycleLockIdFor(opts.sourceId);
+  const deadlineMs = Date.now() + opts.windowSeconds * 1000;
 
   return runExtractAtomsDrain(
     {
@@ -155,17 +192,25 @@ export async function runExtractAtomsDrainForSource(
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          deadlineMs,
+          signal: opts.signal,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
+          processed:
+            Number(d.transcripts_processed ?? 0) +
+            Number(d.pages_processed ?? 0),
+          failures: Array.isArray(d.failures)
+            ? d.failures as Array<{ source: string; error: string }>
+            : [],
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
       now: Date.now,
       onBatch: opts.onBatch,
     },
-    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },
+    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches, signal: opts.signal },
   );
 }
