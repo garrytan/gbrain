@@ -83,16 +83,16 @@ describe('put_page facts backstop', () => {
       'note/substantive',
       `---\ntype: note\ntitle: Substantive\n---\n${'this is some real content with meaningful claims. '.repeat(10)}`,
     );
-    // Either queued (gateway configured) or skipped due to gateway absence
-    // is acceptable; we only insist the gating doesn't reject on the
-    // happy path.
+    // Either queued (gateway configured) or skipped: 'chat_unavailable'
+    // (#3062: the reset gateway has no chat credential, and the backstop
+    // now records that instead of enqueueing a job doomed to no-op) is
+    // acceptable; we only insist the gating doesn't reject on the happy path.
     expect(result).toBeDefined();
     const r = result!;
     if ('queued' in r) {
       expect(r.queued).toBe(true);
     } else {
-      // 'backstop_error' or 'queue_shutdown' would be a real failure.
-      expect(r.skipped).toMatch(/^(queue_shutdown|backstop_error)?$/);
+      expect(r.skipped).toBe('chat_unavailable');
     }
   });
 

@@ -621,6 +621,7 @@ export function resetGateway(): void {
   _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
+  _warnedUnavailable.clear();
   _extendedModels.clear();
 }
 
@@ -885,6 +886,47 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
   } catch {
     return false;
   }
+}
+
+/**
+ * Human-readable reason a chat-capable touchpoint is unavailable, or null
+ * when it IS available. Names the configured model, the missing
+ * `auth_env.required` keys, and the recipe's `setup_url` so silent-degrade
+ * guards (#3062: facts extraction, query expansion) can warn with an
+ * actionable message instead of no-oping invisibly.
+ */
+export function unavailableReason(touchpoint: 'chat' | 'expansion'): string | null {
+  if (isAvailable(touchpoint)) return null;
+  if (!_config) return `${touchpoint} gateway not configured (no AI gateway config loaded)`;
+  try {
+    const modelStr = touchpoint === 'expansion' ? getExpansionModel() : getChatModel();
+    const { recipe } = resolveRecipe(modelStr);
+    if (!recipe.touchpoints[touchpoint]) {
+      return `${touchpoint} model ${modelStr}: provider recipe "${recipe.id}" does not support the ${touchpoint} touchpoint`;
+    }
+    const missing = (recipe.auth_env?.required ?? []).filter(k => !_config!.env[k]);
+    if (missing.length > 0) {
+      const setup = recipe.auth_env?.setup_url ? ` (get a key: ${recipe.auth_env.setup_url})` : '';
+      return `${touchpoint} model ${modelStr} needs ${missing.join(', ')}${setup}`;
+    }
+    return `${touchpoint} model ${modelStr} is unavailable`;
+  } catch (e) {
+    return `${touchpoint} gateway unavailable: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+/**
+ * Once-per-process memo for silent-degrade warnings (#3062). Cleared by
+ * resetGateway() so a reconfigure gets a fresh warning if still broken.
+ */
+const _warnedUnavailable = new Set<string>();
+export function warnUnavailableOnce(touchpoint: 'chat' | 'expansion', context: string): void {
+  if (_warnedUnavailable.has(touchpoint)) return;
+  const reason = unavailableReason(touchpoint);
+  if (!reason) return;
+  _warnedUnavailable.add(touchpoint);
+  // eslint-disable-next-line no-console
+  console.warn(`[ai.gateway] WARN: ${context} — ${reason}`);
 }
 
 // ---- Embedding ----
@@ -2306,7 +2348,12 @@ const ExpansionSchema = z.object({
  */
 export async function expand(query: string): Promise<string[]> {
   if (!query || !query.trim()) return [query];
-  if (!isAvailable('expansion')) return [query];
+  if (!isAvailable('expansion')) {
+    // #3062: tokenmax's headline knob silently degrading to single-query
+    // was invisible. Warn once per process; still degrade gracefully.
+    warnUnavailableOnce('expansion', 'query expansion is configured but inert; searches run single-query');
+    return [query];
+  }
 
   // Guardrail seam: classify the query before the expansion model call.
   await classifyGatewayGuardrail({
