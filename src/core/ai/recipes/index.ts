@@ -22,6 +22,7 @@ import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
+import { opencodeGo } from './opencode-go.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
 import { moonshot } from './moonshot.ts';
@@ -46,6 +47,7 @@ const ALL: Recipe[] = [
   dashscope,
   zhipu,
   azureOpenAI,
+  opencodeGo,
   zeroentropyai,
   moonshot,
   mistral,

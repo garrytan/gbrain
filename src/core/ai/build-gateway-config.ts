@@ -38,6 +38,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // config.json) must reach the openrouter recipe's OPENROUTER_API_KEY.
   // process.env still wins via the later spread.
   if (c.openrouter_api_key) envFromConfig.OPENROUTER_API_KEY = c.openrouter_api_key;
+  if (c.opencode_go_api_key) envFromConfig.OPENCODE_GO_API_KEY = c.opencode_go_api_key;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
