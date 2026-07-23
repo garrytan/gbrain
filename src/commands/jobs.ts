@@ -1479,7 +1479,31 @@ export async function registerBuiltinHandlers(
       embedSkipReason = 'auto_embed_disabled';
     }
 
-    return { ...result, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason };
+    // #2849: large-sync extract deferral follow-up. performSync skips inline
+    // link/timeline extraction when totalChanges > 100, leaving
+    // links_extracted_at unstamped. A standalone sync job (webhook push,
+    // sync trigger) has no autopilot extract phase behind it, so the pages
+    // would stay extraction-stale until a manual `gbrain extract --stale`.
+    // Queue a source-scoped stale sweep instead. Best-effort + idempotent:
+    // a duplicate sweep finds 0 stale pages and no-ops.
+    let extractJobId: number | null = null;
+    if (result.extractDeferred) {
+      try {
+        const { MinionQueue } = await import('../core/minions/queue.ts');
+        const queue = new MinionQueue(engine);
+        const followUp = await queue.add(
+          'extract',
+          { stale: true, ...(sourceId ? { sourceId } : {}) },
+          {
+            idempotency_key: `sync-extract-stale:${sourceId ?? 'default'}:${Math.floor(Date.now() / 30_000)}`,
+            maxWaiting: 1,
+          },
+        );
+        extractJobId = followUp.id;
+      } catch { /* best-effort: extract --stale sweeps it later */ }
+    }
+
+    return { ...result, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason, extract_stale_job_id: extractJobId };
   });
 
   registerBuiltinJob(worker, engine, 'embed', async (job) => {
@@ -1652,6 +1676,20 @@ export async function registerBuiltinHandlers(
   });
 
   worker.register('extract', async (job) => {
+    // #2849: stale-sweep mode — the sync handler's large-sync deferral
+    // follow-up. DB-source (reads page content from the DB, so it runs on
+    // checkout-less brains), source-scopable, idempotent. Same core as
+    // `gbrain extract --stale`.
+    if (job.data.stale === true) {
+      const { extractStaleFromDB } = await import('./extract.ts');
+      return await extractStaleFromDB(engine, {
+        dryRun: !!job.data.dryRun,
+        jsonMode: false,
+        includeFrontmatter: false,
+        sourceIdFilter: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
+        catchUp: false,
+      });
+    }
     const { runExtractCore } = await import('./extract.ts');
     const mode = (typeof job.data.mode === 'string' && ['links', 'timeline', 'all'].includes(job.data.mode))
       ? (job.data.mode as 'links' | 'timeline' | 'all')

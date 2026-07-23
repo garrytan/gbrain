@@ -222,6 +222,14 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /**
+   * #2849: true when extraction was REQUESTED (noExtract false) but this sync
+   * skipped inline link/timeline extraction because totalChanges > 100 (the
+   * #1794 large-sync deferral). links_extracted_at stays unstamped for the
+   * imported pages. The standalone `sync` job handler queues a source-scoped
+   * `extract --stale` follow-up when set; CLI runs print the manual hint.
+   */
+  extractDeferred?: boolean;
 }
 
 /**
@@ -1423,6 +1431,10 @@ See also:
     {
       sourceId: sourceIdArg,
       repoPath: source.local_path,
+      // #2849: opt in to inline extraction — the standalone sync handler
+      // defaults noExtract to TRUE (dedupe for doctor's [sync, extract]
+      // remediation plan), which would leave triggered syncs extraction-stale.
+      noExtract: false,
       auto_embed_backfill: true,
       embed_reason: 'sync_trigger',
     },
@@ -3406,11 +3418,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the stale sweep scans the whole source, so banked-across-runs pages are
   // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  let extractDeferred = false;
   if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+    // #2849: surface the deferral to callers. A standalone sync job (webhook
+    // push, sync trigger) has no autopilot extract phase behind it, so the
+    // job handler queues an `extract --stale` follow-up off this flag.
+    extractDeferred = true;
     slog(
       `  Large sync: deferring link/timeline extraction. ` +
       `Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' ` +
-      `(or let the autopilot cycle's extract phase sweep it).`,
+      `(sync jobs queue this follow-up automatically).`,
     );
   }
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
@@ -3524,6 +3541,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     chunksCreated,
     embedded,
     pagesAffected,
+    extractDeferred,
   };
 }
 
