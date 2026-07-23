@@ -172,4 +172,20 @@ describe('executeRawJsonb (D1 wave / v0.31)', () => {
       ),
     ).rejects.toThrow(/only supports scalar bind values/);
   });
+
+  test('rejects a top-level array jsonb param (gbrain#1861 P2a guard)', async () => {
+    // A bare JS array bound to a $N::jsonb position can serialize as a Postgres
+    // array literal (not jsonb) through postgres.js, re-entering the
+    // "malformed array literal" class #1861 escaped. The helper must reject it
+    // and steer callers to the { rows: [...] } wrapper. Objects + null are fine
+    // (covered by the tests above).
+    await expect(
+      executeRawJsonb(
+        engine,
+        `INSERT INTO nope (j) VALUES ($1::jsonb)`,
+        [],
+        [[{ a: 1 }, { a: 2 }] as any],
+      ),
+    ).rejects.toThrow(/top-level array jsonb param/);
+  });
 });

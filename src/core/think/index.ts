@@ -24,10 +24,10 @@ import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveModel } from '../model-config.ts';
-import { chat as gatewayChat, type ChatResult } from '../ai/gateway.ts';
-import { resolveRecipe } from '../ai/model-resolver.ts';
+import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
-import { loadConfig } from '../config.ts';
+import { normalizeModelId } from '../model-id.ts';
+import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -46,6 +46,14 @@ export interface RunThinkOpts {
   take?: boolean;
   /** Model override (CLI flag). Falls through resolveModel's 6-tier chain. */
   model?: string;
+  /**
+   * v0.41.x (#1698) — true when the CALLER explicitly supplied a model
+   * (CLI `--model`, or the MCP `think` op's `model` param). When true, an
+   * unresolvable model is a HARD ERROR (throws before gather) instead of
+   * silently degrading to the no-LLM stub. Default false: the configured /
+   * default model path keeps its graceful-degrade behavior.
+   */
+  modelExplicit?: boolean;
   /** Optional time window for temporal questions. */
   since?: string;
   until?: string;
@@ -123,6 +131,14 @@ export interface ThinkResult {
   modelUsed: string;
   rounds: number;
   warnings: string[];
+  /**
+   * v0.41.x (#1698) — true only when an actual synthesis produced a NON-EMPTY
+   * answer. False for the no-LLM graceful stub, malformed (not-JSON) output, and
+   * valid-but-empty JSON (`{"answer":""}`). `persistSynthesis` refuses to write
+   * when this is `=== false`, so an empty page can never be saved. Undefined on
+   * pre-existing/test `ThinkResult` literals → treated as persistable (back-compat).
+   */
+  synthesisOk?: boolean;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
@@ -135,6 +151,19 @@ export interface ThinkResult {
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
+
+// Thinking-by-default Claude 5 models (`anthropic:claude-*-5`) spend a large
+// share of the output budget on internal reasoning before emitting any answer,
+// so the 4000 default leaves `think` with empty or truncated text. Give those
+// models headroom; providers bill actual tokens, not the cap. Everything else
+// keeps 4000.
+const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
+const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+export function maxOutputTokensFor(modelStr: string): number {
+  return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+    ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+}
 
 function inferIntent(question: string, anchor?: string): string {
   if (anchor) return 'entity';
@@ -222,6 +251,21 @@ export async function runThink(
     fallback: 'opus',  // think is the high-stakes synthesis op; opus is the right default
   });
 
+  // #1698: fail fast on an unresolvable EXPLICIT model (CLI --model, or the MCP op's
+  // model param) BEFORE gather, so we don't waste retrieval per failure (the 200-call
+  // batch case). The default/configured-model path is unaffected (modelExplicit false →
+  // it keeps the graceful no-LLM-stub degrade). Test/injected client + stub bypass.
+  if (opts.modelExplicit && !opts.client && !opts.stubResponse) {
+    const probe = probeChatModel(normalizeModelId(modelUsed));
+    if (!probe.ok) {
+      throw new Error(
+        `think: --model "${opts.model}" is not usable (${probe.reason}): ${probe.detail}. ` +
+        `Refusing to run synthesis with no model — fix the model id or omit --model.` +
+        (probe.fix ? ` Fix: ${probe.fix}` : ''),
+      );
+    }
+  }
+
   // Optional question embedding — caller decides whether to pay the embedder.
   let questionEmbedding: Float32Array | undefined;
   if (opts.embedQuestion) {
@@ -239,6 +283,8 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
   });
 
   // Render evidence blocks for the prompt
@@ -385,6 +431,11 @@ export async function runThink(
     ...(trajectoryBlock.length > 0 ? { trajectoryBlock } : {}),
   });
 
+  // #1698: true only when an actual synthesis produced a non-empty answer. Set false
+  // on the not-JSON branch (covers malformed output AND the buildGracefulMessage
+  // sentinel, which is non-JSON) and on the no-client early return below; the final
+  // return ANDs it with a non-empty-answer check (catches valid-but-empty JSON).
+  let synthesisOk = true;
   let response: ThinkResponse;
   if (opts.stubResponse) {
     response = opts.stubResponse;
@@ -401,21 +452,40 @@ export async function runThink(
     // That bypassed gateway config (gbrain config set anthropic_api_key)
     // because the Anthropic SDK only reads process.env.ANTHROPIC_API_KEY.
     // Closes #952 (think over MCP returns "no LLM available").
-    const client = opts.client ?? await tryBuildGatewayClient(modelUsed);
+    const client = opts.client ?? await tryBuildGatewayClient(modelUsed, { explicitModel: opts.modelExplicit });
     if (!client) {
-      warnings.push('NO_ANTHROPIC_API_KEY');
+      // Label the failure honestly: a missing key and an unusable model id are
+      // different incidents with different fixes. Pre-fix EVERY null client was
+      // stamped NO_ANTHROPIC_API_KEY, which sent operators chasing env/keychain
+      // problems when the real cause was a model id the recipe didn't know
+      // (e.g. a tier-configured model newer than the recipe list). The re-probe
+      // is pure and cheap (no IO): same predicate tryBuildGatewayClient used.
+      const probe = probeChatModel(normalizeModelId(modelUsed));
+      const modelProblem = !probe.ok && probe.reason !== 'unavailable';
+      warnings.push(
+        modelProblem ? `MODEL_NOT_USABLE:${(probe as { reason: string }).reason}` : 'NO_ANTHROPIC_API_KEY',
+      );
+      const detail = !probe.ok ? probe.detail : '';
+      const fix = !probe.ok && probe.fix ? ` Fix: ${probe.fix}` : '';
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
       return {
         question: opts.question,
-        answer: '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
+        answer: modelProblem
+          ? `(model "${modelUsed}" not usable — ${detail}${fix})`
+          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
         citations: [],
-        gaps: ['no LLM available; gather succeeded but synthesis skipped'],
+        gaps: [
+          modelProblem
+            ? `model "${modelUsed}" not usable (${(probe as { reason: string }).reason}); gather succeeded but synthesis skipped`
+            : 'no LLM available; gather succeeded but synthesis skipped',
+        ],
         pagesGathered: gather.pages.length,
         takesGathered: gather.takes.length,
         graphHits: gather.graphSlugs.length,
         modelUsed,
         rounds: 0,
         warnings,
+        synthesisOk: false,  // #1698: no LLM ran — never persist this
         diagnostics: {
           pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
@@ -426,7 +496,7 @@ export async function runThink(
     }
     const result = await client.create({
       model: modelUsed,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)),
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
@@ -435,6 +505,7 @@ export async function runThink(
     const parsed = tryParseJSON(text);
     if (!parsed || typeof parsed !== 'object') {
       warnings.push('LLM_OUTPUT_NOT_JSON');
+      synthesisOk = false;  // #1698: malformed output (and the non-JSON graceful sentinel)
       response = { answer: text, citations: [], gaps: [] };
     } else {
       const r = parsed as Partial<ThinkResponse>;
@@ -470,6 +541,9 @@ export async function runThink(
     modelUsed,
     rounds: 1,
     warnings,
+    // #1698: persistable only when a real synthesis produced a non-empty answer.
+    // ANDs the not-JSON/sentinel flag with a content check (catches valid-but-empty JSON).
+    synthesisOk: synthesisOk && response.answer.trim().length > 0,
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
@@ -521,6 +595,14 @@ export async function persistSynthesis(
   engine: BrainEngine,
   result: ThinkResult,
 ): Promise<{ slug: string; evidenceInserted: number; warnings: string[] }> {
+  // #1698: never persist an empty synthesis. Returned signal (NOT a throw, F3) so
+  // the MCP `think` op can return the gather result + warning instead of a bare error
+  // envelope; the CLI keys off this warning to exit non-zero. Guard on `=== false` so
+  // pre-existing/test ThinkResult literals without the field still persist (back-compat).
+  if (result.synthesisOk === false) {
+    return { slug: '', evidenceInserted: 0, warnings: ['SYNTHESIS_EMPTY_NOT_PERSISTED'] };
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const slugSafe = result.question
     .toLowerCase()
@@ -610,30 +692,31 @@ async function readThinkTrajectoryEnabled(engine: BrainEngine): Promise<boolean>
  * touchpoint not supported, etc.). Caller falls through to the graceful
  * "no LLM available" stub on null.
  */
-async function tryBuildGatewayClient(modelUsed: string): Promise<ThinkLLMClient | null> {
-  // Normalize: ensure provider:model shape. resolveModel returns bare
-  // anthropic ids (e.g. `claude-opus-4-7`); gateway.chat needs `anthropic:...`.
-  const modelStr = modelUsed.includes(':') ? modelUsed : `anthropic:${modelUsed}`;
+async function tryBuildGatewayClient(
+  modelUsed: string,
+  opts: { explicitModel?: boolean } = {},
+): Promise<ThinkLLMClient | null> {
+  // Normalize: ensure provider:model shape (and slash→colon — #1698). resolveModel
+  // returns bare anthropic ids (`claude-opus-4-7`); gateway.chat needs `anthropic:...`.
+  const modelStr = normalizeModelId(modelUsed);
 
-  // Availability probe: resolveRecipe throws on unknown provider; assertTouchpoint
-  // throws if the resolved recipe doesn't support chat. Both are AIConfigError.
-  let providerId: string;
-  try {
-    const { parsed } = resolveRecipe(modelStr);
-    providerId = parsed.providerId;
-  } catch (e) {
-    if (e instanceof AIConfigError) return null;
-    throw e;
+  // #1698: ONE shared probe (resolveRecipe + assertTouchpoint + isAvailable).
+  // assertTouchpoint catches typo'd native models; isAvailable catches missing keys.
+  // For an EXPLICIT model the user typed, an unusable model is a HARD ERROR (throw)
+  // — never silently degrade to the no-LLM stub. For the default/configured-model
+  // path, return null so the caller falls through to the graceful "no LLM" stub
+  // (preserves the documented no-key gather-only behavior).
+  const probe = probeChatModel(modelStr);
+  if (!probe.ok) {
+    if (opts.explicitModel) {
+      throw new Error(
+        `think: --model "${modelUsed}" is not usable (${probe.reason}): ${probe.detail}. ` +
+        `Refusing to run synthesis with no model — fix the model id or omit --model.` +
+        (probe.fix ? ` Fix: ${probe.fix}` : ''),
+      );
+    }
+    return null;
   }
-
-  // API-key availability probe. The gateway lazily checks keys inside
-  // instantiateChat at first .chat() call and throws AIConfigError on miss.
-  // Pre-checking here preserves the legacy "NO_ANTHROPIC_API_KEY" warning
-  // signal AND avoids paying for a wasted gateway call when the user clearly
-  // has no key configured. Reads BOTH the gbrain config file (`anthropic_api_key`
-  // set via `gbrain config set`) AND the process env, matching gateway's
-  // own loadConfig precedence.
-  if (providerId === 'anthropic' && !hasAnthropicKey()) return null;
 
   return {
     create: async (params): Promise<Anthropic.Message> => {
@@ -657,10 +740,13 @@ async function tryBuildGatewayClient(modelUsed: string): Promise<ThinkLLMClient 
           maxTokens: params.max_tokens,
         });
       } catch (e) {
-        // AIConfigError at chat time = missing API key for resolved provider.
-        // Surface as a sentinel "no LLM available"-shaped Message so the
+        // AIConfigError at chat time = e.g. key revoked mid-run. For an EXPLICIT
+        // model the user typed, this is a hard error (rethrow) — the early gate
+        // normally catches it first; this is defense-in-depth. For the default
+        // path, surface a sentinel "no LLM available"-shaped Message so the
         // existing JSON-parse path produces the graceful degradation answer.
         if (e instanceof AIConfigError) {
+          if (opts.explicitModel) throw e;
           return buildGracefulMessage(modelStr) as unknown as Anthropic.Message;
         }
         throw e;
@@ -697,17 +783,6 @@ function chatResultToMessage(result: ChatResult, modelStr: string): {
     },
     stop_reason: mapStopReason(result.stopReason),
   };
-}
-
-function hasAnthropicKey(): boolean {
-  if (process.env.ANTHROPIC_API_KEY) return true;
-  try {
-    const cfg = loadConfig();
-    if (cfg?.anthropic_api_key) return true;
-  } catch {
-    // loadConfig may throw on first-run installs; treat as no key available.
-  }
-  return false;
 }
 
 function mapStopReason(s: ChatResult['stopReason']): 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' {

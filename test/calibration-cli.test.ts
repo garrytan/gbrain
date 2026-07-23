@@ -61,7 +61,7 @@ function buildCtx(engine: BrainEngine, opts: { sourceId?: string; allowedSources
 
 function buildProfile(opts: Partial<CalibrationProfileRow> & { holder: string }): CalibrationProfileRow {
   return {
-    id: 1,
+    id: '1',
     source_id: opts.source_id ?? 'default',
     holder: opts.holder,
     wave_version: 'v0.36.1.0',
@@ -97,6 +97,10 @@ describe('parseArgs', () => {
 
   test('--regenerate flag', () => {
     expect(parseArgs(['--regenerate']).opts.regenerate).toBe(true);
+  });
+
+  test('--source <id> (so the reachable command can target a non-default source)', () => {
+    expect(parseArgs(['--source', 'canon']).opts.source).toBe('canon');
   });
 
   test('--undo-wave <version>', () => {
@@ -150,6 +154,19 @@ describe('getLatestProfile', () => {
     await getLatestProfile(engine, { holder: 'garry' });
     // SELECT clause names the column but WHERE clause omits source_id filter.
     expect(capturedSql[0]).not.toContain('AND source_id');
+  });
+
+  test('coerces BIGSERIAL bigint id to number so JSON.stringify is safe (#2450)', async () => {
+    const engine = {
+      kind: 'pglite',
+      async executeRaw<T>(): Promise<T[]> {
+        return [{ ...buildProfile({ holder: 'brain' }), id: 10n }] as unknown as T[];
+      },
+    } as unknown as BrainEngine;
+    const p = await getLatestProfile(engine, { holder: 'brain' });
+    expect(typeof p!.id).toBe('string');
+    expect(p!.id).toBe('10');
+    expect(() => JSON.stringify(p)).not.toThrow();
   });
 });
 

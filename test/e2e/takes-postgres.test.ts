@@ -87,8 +87,33 @@ d('v0.28 takes engine — Postgres', () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].claim.toLowerCase()).toContain('technical');
 
+    // #2450: int8 columns (take_id/page_id) arrive as native BigInt from the
+    // pg driver; the raw-row cast crashed JSON.stringify at the MCP boundary
+    // the moment a query matched. Only this suite runs the real driver that
+    // produces BigInt, so only these assertions fail if the takeHitRowToHit
+    // call sites regress.
+    expect(typeof hits[0].take_id).toBe('number');
+    expect(typeof hits[0].page_id).toBe('number');
+    expect(() => JSON.stringify(hits)).not.toThrow();
+
     const worldHits = await engine.searchTakes('founder', { takesHoldersAllowList: ['world'] });
     expect(worldHits.every(h => h.holder === 'world')).toBe(true);
+  });
+
+  test('searchTakesVector returns coerced, JSON-serializable hits (#2450)', async () => {
+    const engine = getEngine();
+    // Fixture takes carry no embeddings; give one a vector directly so the
+    // vector path (embedding IS NOT NULL) returns a real row.
+    const vec = `[${new Array(1536).fill(0.001).join(',')}]`;
+    await engine.executeRaw(
+      `UPDATE takes SET embedding = $1::vector WHERE page_id = $2 AND row_num = 1`,
+      [vec, alicePageId],
+    );
+    const hits = await engine.searchTakesVector(new Float32Array(1536).fill(0.001));
+    expect(hits.length).toBeGreaterThan(0);
+    expect(typeof hits[0].take_id).toBe('number');
+    expect(typeof hits[0].page_id).toBe('number');
+    expect(() => JSON.stringify(hits)).not.toThrow();
   });
 
   test('supersedeTake is transactional on real Postgres', async () => {

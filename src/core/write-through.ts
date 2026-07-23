@@ -22,10 +22,12 @@
  */
 
 import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
+import { isWriteTargetContained } from './path-confine.ts';
+import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -36,13 +38,26 @@ export interface WriteThroughResult {
   written: boolean;
   path?: string;
   /**
+   * True when the write was also committed to git (#2426). Only attempted on
+   * repos hardened via `gbrain sources harden` (durability hook installed);
+   * the hook then background-pushes the commit. Best-effort — a false/absent
+   * value never blocks the write.
+   */
+  committed?: boolean;
+  /**
    * Non-error reasons the file was not written:
-   *   - no_repo_configured: `sync.repo_path` is unset (DB-only by design).
-   *   - repo_not_found: `sync.repo_path` set but missing / not a directory.
+   *   - no_repo_configured: the resolved target (source `local_path` or, for a
+   *     sole-source brain, `sync.repo_path`) is unset (DB-only by design).
+   *   - repo_not_found: target set but missing / not a directory.
+   *   - source_repo_belongs_to_other_source: the assigned source has no
+   *     `local_path`, and `sync.repo_path` is another source's own working tree
+   *     — #2018: writing here would pollute that sibling's repo, so we skip.
    *   - page_not_found_after_write: the DB row isn't readable back (the caller's
    *     DB write failed or targeted a different source).
+   *   - path_escapes_source_root: the computed file path resolves outside the
+   *     source's working tree (hostile slug row / symlinked subtree) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'page_not_found_after_write';
+  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -67,12 +82,58 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
-    const repoPath = await engine.getConfig('sync.repo_path');
-    if (!repoPath) {
-      return { written: false, skipped: 'no_repo_configured' };
+    // #2018: pick the disk target so a page is NEVER written into a different
+    // source's working tree. Two legitimate topologies, plus the leak guard:
+    //   1. The assigned source has its OWN `local_path` (a separate working
+    //      tree) → write at that tree's root (matches how `scanOneSource` reads
+    //      it back; never nested under `.sources/`).
+    //   2. No per-source `local_path` → nest under the host repo
+    //      (`sync.repo_path`): default at the root, non-default under
+    //      `.sources/<id>/` (the established multi-source layout).
+    //   3. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
+    //      `local_path`, nesting this page there would pollute that sibling's
+    //      git repo (the reported bug). Skip instead.
+    let filePath: string;
+    let writeRoot: string;
+    const srcRows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const sourceLocalPath = srcRows[0]?.local_path ?? null;
+    if (sourceLocalPath) {
+      if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
+        return { written: false, skipped: 'repo_not_found' };
+      }
+      filePath = join(sourceLocalPath, `${slug}.md`);
+      writeRoot = sourceLocalPath;
+    } else {
+      const repoPath = await engine.getConfig('sync.repo_path');
+      if (!repoPath) {
+        return { written: false, skipped: 'no_repo_configured' };
+      }
+      if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+        return { written: false, skipped: 'repo_not_found' };
+      }
+      // Leak guard: refuse to write into a path that is some OTHER source's
+      // own working tree (#2018).
+      const collide = await engine.executeRaw<{ one: number }>(
+        `SELECT 1 AS one FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1`,
+        [sourceId, repoPath],
+      );
+      if (collide.length > 0) {
+        return { written: false, skipped: 'source_repo_belongs_to_other_source' };
+      }
+      filePath = resolvePageFilePath(repoPath, slug, sourceId);
+      writeRoot = repoPath;
     }
-    if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
-      return { written: false, skipped: 'repo_not_found' };
+
+    // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
+    // stays within the source's working tree before any mkdir/write. validateSlug
+    // already rejects `..`/backslash/control/%2e in the slug at write time, so
+    // this guards a pre-existing hostile row or a symlinked intermediate dir
+    // under the source tree from escaping to an arbitrary filesystem location.
+    if (!isWriteTargetContained(filePath, writeRoot)) {
+      return { written: false, skipped: 'path_escapes_source_root' };
     }
 
     const writtenPage = await engine.getPage(slug, { sourceId });
@@ -85,7 +146,6 @@ export async function writePageThrough(
       frontmatterOverrides: opts.frontmatterOverrides,
     });
 
-    const filePath = resolvePageFilePath(repoPath, slug, sourceId);
     mkdirSync(dirname(filePath), { recursive: true });
 
     // Atomic write: unique temp sibling + rename. Unique name (pid + random)
@@ -105,7 +165,20 @@ export async function writePageThrough(
       throw writeErr;
     }
 
-    return { written: true, path: filePath };
+    // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
+    // commit the artifact so it reaches git — pre-fix, write-through content
+    // stayed uncommitted forever: never pushed, `last_sync_at` frozen, and
+    // silently deleted by a later `sync --full` delete-reconcile. The local
+    // post-commit hook background-pushes the commit. Best-effort: a commit
+    // failure never fails the write (the DB row + file are the durable sinks).
+    let committed = false;
+    try {
+      if (isDurabilityHardened(writeRoot)) {
+        committed = commitWriteThroughFile(writeRoot, filePath, slug);
+      }
+    } catch { /* best-effort */ }
+
+    return { written: true, path: filePath, ...(committed ? { committed } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);

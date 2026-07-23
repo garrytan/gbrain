@@ -92,11 +92,19 @@ describeE2E('v0.41.6.0 — sync lock recovery scenarios', () => {
     expect(result.stdout + result.stderr).toMatch(/not held|nothing to break/i);
   });
 
-  test('--break-lock + --all is refused with shell-loop hint', () => {
+  test('--break-lock + --all is accepted and iterates sources (self-heal, no longer refused)', () => {
+    // v0.41.13.0 (T4 + D1) intentionally DROPPED the old --all refusal so cron
+    // can self-heal every source in one call: runBreakLock now widens to
+    // iterate sources when --all is set (sync.ts ~2550). This test pins that
+    // shipped contract. Deterministic: with no active sources OR only
+    // unlocked ones, every per-source break is a no-op and the exit is 0.
     const result = runCli(['sync', '--break-lock', '--all']);
-    expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(/cannot be combined with --all/);
-    expect(result.stderr).toMatch(/for src in/);
+    const out = result.stdout + result.stderr;
+    expect(result.code).toBe(0);
+    // The combination must NOT be rejected anymore.
+    expect(out).not.toMatch(/cannot be combined with --all/);
+    // It took the accepted iterate/no-sources path.
+    expect(out).toMatch(/No active sources to break-lock against|is not held \(nothing to break\)|Broke lock/i);
   });
 
   test('lock-busy error message includes PID + hostname + age + --break-lock hint', async () => {

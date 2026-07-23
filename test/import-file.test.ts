@@ -217,7 +217,11 @@ Same content.
     expect(putCall).toBeUndefined();
   });
 
-  test('reconciles tags: removes old, adds new', async () => {
+  test('reconciles tags: ADD-ONLY, never removes (v0.41.37.0 #1621)', async () => {
+    // Add-only reconciliation: re-import adds current frontmatter tags and
+    // NEVER deletes — so DB-side enrichment tags (here simulated as 'old-tag')
+    // survive. The pre-#1621 behavior deleted every existing tag not in the
+    // current frontmatter, wiping enrichment tags on every re-import/reindex.
     const filePath = join(TMP, 'retag.md');
     writeFileSync(filePath, `---
 type: concept
@@ -239,9 +243,11 @@ Content here.
     const removeCalls = calls.filter((c: any) => c.method === 'removeTag');
     const addCalls = calls.filter((c: any) => c.method === 'addTag');
 
-    expect(removeCalls.length).toBe(1);
-    expect(removeCalls[0].args[1]).toBe('old-tag');
+    // No removals — 'old-tag' (enrichment) is preserved.
+    expect(removeCalls.length).toBe(0);
+    // Both current frontmatter tags are added (idempotent via ON CONFLICT).
     expect(addCalls.length).toBe(2);
+    expect(addCalls.map((c: any) => c.args[1]).sort()).toEqual(['kept-tag', 'new-tag']);
   });
 
   test('chunks compiled_truth and timeline separately', async () => {

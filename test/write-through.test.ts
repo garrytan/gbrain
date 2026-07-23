@@ -120,6 +120,58 @@ describe('writePageThrough', () => {
     expect(res).toEqual({ written: false, skipped: 'page_not_found_after_write' });
   });
 
+  test('[REGRESSION #2018] default page (null local_path) in a multi-source brain → skipped, no leak into a sibling source repo', async () => {
+    // A sibling federated source with its OWN working tree.
+    const siblingDir = path.join(tmpRoot, 'housefax');
+    fs.mkdirSync(siblingDir, { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('housefax', 'Housefax', $1, '{}'::jsonb)`,
+      [siblingDir],
+    );
+    // The leak trigger: global sync.repo_path points at the sibling's tree
+    // while the default source (re-seeded by resetPgliteState) has no
+    // local_path of its own.
+    await engine.setConfig('sync.repo_path', siblingDir);
+
+    const slug = 'internal/cross-cutting-note';
+    await seedPage(slug); // sourceId 'default'
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res).toEqual({ written: false, skipped: 'source_repo_belongs_to_other_source' });
+    // The sibling source's repo stays clean — the whole point of #2018.
+    expect(walkFiles(siblingDir).some((f) => f.endsWith('.md'))).toBe(false);
+  });
+
+  test('[#2018] page assigned to a source with its own local_path writes to that tree root, not the global path', async () => {
+    const alphaDir = path.join(tmpRoot, 'alpha-repo');
+    fs.mkdirSync(alphaDir, { recursive: true });
+    const globalDir = path.join(tmpRoot, 'global-repo');
+    fs.mkdirSync(globalDir, { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('alpha', 'Alpha', $1, '{}'::jsonb)`,
+      [alphaDir],
+    );
+    // Must NOT be used — the assigned source has its own tree.
+    await engine.setConfig('sync.repo_path', globalDir);
+
+    const slug = 'notes/alpha-thing';
+    await importFromContent(engine, slug, `---\ntitle: T\ntype: note\n---\n\n# Body\n`, {
+      noEmbed: true,
+      sourceId: 'alpha',
+      sourcePath: `${slug}.md`,
+    });
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'alpha' });
+
+    expect(res.written).toBe(true);
+    // File at the source's tree ROOT, never nested under `.sources/<id>/`.
+    expect(res.path).toBe(path.join(alphaDir, `${slug}.md`));
+    expect(fs.existsSync(path.join(alphaDir, `${slug}.md`))).toBe(true);
+    // The global repo path is untouched.
+    expect(walkFiles(globalDir).some((f) => f.endsWith('.md'))).toBe(false);
+  });
+
   test('[REGRESSION] mkdir ENOTDIR (parent is a file) → error, no partial .md, no .tmp', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     // Block the `wiki/` directory by putting a FILE named "wiki" under the repo,

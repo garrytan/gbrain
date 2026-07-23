@@ -35,6 +35,20 @@ describe('Anthropic recipe model IDs', () => {
     expect(anthropic.aliases?.['claude-sonnet-4-6-20250929']).toBe('claude-sonnet-4-6');
   });
 
+  it('current-generation models are listed for chat (Fable 5 / Opus 4.8 / Sonnet 5)', () => {
+    // Regression guard for the tier-config incident: a brain with
+    // `models.tier.deep = anthropic:claude-opus-4-8` had think/auto_think
+    // silently degrade because the recipe list stopped at Opus 4.7.
+    const chatModels = anthropic.touchpoints?.chat?.models ?? [];
+    expect(chatModels).toContain('claude-fable-5');
+    expect(chatModels).toContain('claude-opus-4-8');
+    expect(chatModels).toContain('claude-sonnet-5');
+  });
+
+  it('Sonnet 5 is listed for expansion', () => {
+    expect(anthropic.touchpoints?.expansion?.models ?? []).toContain('claude-sonnet-5');
+  });
+
   it('all listed models follow naming conventions', () => {
     const allModels = [
       ...(anthropic.touchpoints?.chat?.models ?? []),

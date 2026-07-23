@@ -346,6 +346,12 @@ interface RegisterClientArgs {
   federatedRead: string[] | undefined;
   redirectUris: string[];
   tokenEndpointAuthMethod: string | undefined;
+  boundTools: string[] | undefined;
+  boundSourceId: string | undefined;
+  boundBrainId: string | undefined;
+  boundSlugPrefixes: string[] | undefined;
+  boundMaxConcurrent: number | undefined;
+  budgetUsdPerDay: string | undefined;
 }
 
 export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
@@ -356,6 +362,12 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
     federatedRead: undefined,
     redirectUris: [],
     tokenEndpointAuthMethod: undefined,
+    boundTools: undefined,
+    boundSourceId: undefined,
+    boundBrainId: undefined,
+    boundSlugPrefixes: undefined,
+    boundMaxConcurrent: undefined,
+    budgetUsdPerDay: undefined,
   };
   let i = 0;
   let grantTypesSet = false;
@@ -389,6 +401,34 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
       case '--token-endpoint-auth-method':
         out.tokenEndpointAuthMethod = requireValue();
         i += 2; break;
+      case '--bound-tools': {
+        const v = requireValue();
+        out.boundTools = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
+      case '--bound-source': out.boundSourceId = requireValue(); i += 2; break;
+      case '--bound-brain': out.boundBrainId = requireValue(); i += 2; break;
+      case '--bound-slug-prefixes': {
+        const v = requireValue();
+        out.boundSlugPrefixes = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
+      case '--bound-max-concurrent': {
+        const v = Number(requireValue());
+        if (!Number.isInteger(v) || v < 1) {
+          throw new Error('--bound-max-concurrent must be a positive integer');
+        }
+        out.boundMaxConcurrent = v;
+        i += 2; break;
+      }
+      case '--budget-usd-per-day': {
+        const v = requireValue();
+        if (!/^\d+(?:\.\d{1,2})?$/.test(v)) {
+          throw new Error('--budget-usd-per-day must be a non-negative decimal with at most 2 decimal places');
+        }
+        out.budgetUsdPerDay = v;
+        i += 2; break;
+      }
       default:
         throw new Error(`Unknown flag: ${flag}`);
     }
@@ -405,7 +445,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
 
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD]');
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
@@ -413,17 +453,28 @@ async function registerClient(name: string, args: string[]) {
     parsed = parseRegisterClientArgs(args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD]');
     process.exit(1);
   }
   const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
+  const agentBindings = parsed.boundTools || parsed.boundSourceId || parsed.boundBrainId ||
+    parsed.boundSlugPrefixes || parsed.boundMaxConcurrent !== undefined || parsed.budgetUsdPerDay !== undefined
+    ? {
+      boundTools: parsed.boundTools,
+      boundSourceId: parsed.boundSourceId,
+      boundBrainId: parsed.boundBrainId,
+      boundSlugPrefixes: parsed.boundSlugPrefixes,
+      boundMaxConcurrent: parsed.boundMaxConcurrent,
+      budgetUsdPerDay: parsed.budgetUsdPerDay,
+    }
+    : undefined;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod,
+        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings,
       );
       const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
       const effectiveAuthMethod = tokenEndpointAuthMethod || 'client_secret_post';
@@ -441,7 +492,16 @@ async function registerClient(name: string, args: string[]) {
         console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
       }
       console.log(`  Write source:        ${sourceId}`);
-      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}\n`);
+      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}`);
+      if (agentBindings) {
+        console.log(`  Bound tools:         ${(parsed.boundTools ?? []).join(', ') || '<none>'}`);
+        console.log(`  Bound source:        ${parsed.boundSourceId ?? '<none>'}`);
+        console.log(`  Bound brain:         ${parsed.boundBrainId ?? '<none>'}`);
+        console.log(`  Bound slug prefixes:${parsed.boundSlugPrefixes ? ' ' + parsed.boundSlugPrefixes.join(', ') : ' <none>'}`);
+        console.log(`  Max concurrency:     ${parsed.boundMaxConcurrent ?? 1}`);
+        console.log(`  Daily budget USD:    ${parsed.budgetUsdPerDay ?? '<none>'}`);
+      }
+      console.log('');
       if (clientSecret) {
         console.log('Save the client secret — it will not be shown again.');
       } else {
@@ -460,17 +520,32 @@ async function registerClient(name: string, args: string[]) {
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
  * still works.
  */
+/**
+ * Parse `auth create` args into `{ name, takesHolders }`.
+ *
+ * Exported + pure so the positional-vs-flag logic is unit-testable. Only
+ * excludes the --takes-holders VALUE from the positional search when the flag
+ * is present — the pre-v0.41 inline version used `rest[takesIdx + 1]` which
+ * resolved to `rest[0]` when `takesIdx === -1`, silently dropping the name on
+ * the bare `gbrain auth create <name>` form.
+ */
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[] } {
+  const takesIdx = rest.indexOf('--takes-holders');
+  const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
+    ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+    : undefined;
+  const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue);
+  return { name: positional || '', takesHolders };
+}
+
 export async function runAuth(args: string[]): Promise<void> {
   const [cmd, ...rest] = args;
   switch (cmd) {
     case 'create': {
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
-      const takesIdx = rest.indexOf('--takes-holders');
-      const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
-        ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
-        : undefined;
-      const positional = rest.find(a => !a.startsWith('--') && a !== rest[takesIdx + 1]);
-      await create(positional || '', { takesHolders });
+      const parsed = parseAuthCreateArgs(rest);
+      await create(parsed.name, { takesHolders: parsed.takesHolders });
       return;
     }
     case 'list': await list(); return;
@@ -512,6 +587,12 @@ Usage:
      --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
+     --bound-tools <tool1,tool2>                           Bind submit_agent to an allow-list of tools
+     --bound-source <id>                                   Bind submit_agent jobs to a source id
+     --bound-brain <id>                                    Bind submit_agent jobs to a brain id
+     --bound-slug-prefixes <prefix1,prefix2>               Bind submit_agent writes to slug prefixes
+     --bound-max-concurrent <n>                            Bound submit_agent concurrency (default: 1)
+     --budget-usd-per-day <usd>                            Bound submit_agent daily spend cap
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

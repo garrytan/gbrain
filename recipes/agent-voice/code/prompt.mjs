@@ -21,7 +21,7 @@
 
 import { getPersona, buildSharedContext } from './lib/personas/personas.mjs';
 import { getEffectiveAllowlist } from './tools.mjs';
-import { buildMarsContext, buildVenusContext } from './lib/context-builder.example.mjs';
+import { buildMarsContext, buildVenusContext, buildTopicContext } from './lib/context-builder.example.mjs';
 
 /**
  * Build the system prompt for a session.
@@ -33,6 +33,11 @@ import { buildMarsContext, buildVenusContext } from './lib/context-builder.examp
  * @param {string} [opts.dateTime] — ISO timestamp; defaults to now
  * @param {string} [opts.brainRoot] — absolute path to operator's brain repo
  * @param {string} [opts.timezone]
+ * @param {string} [opts.topicId] — #1851: topic the agent was summoned into.
+ *   The ONLY topic field accepted over the wire; the server resolves the
+ *   recent-conversation context from the brain (never pass topic CONTENT in —
+ *   that's prompt injection + a URL/log leak).
+ * @param {string} [opts.topicName] — human label for the topic (display only).
  * @returns {Promise<string>} sanitized system prompt
  */
 export async function buildSystemPrompt(opts = {}) {
@@ -43,12 +48,13 @@ export async function buildSystemPrompt(opts = {}) {
   let prompt = `# You ARE ${persona.name}\n`;
   prompt += `You are ${persona.name}, a voice AI. You are NOT a generic assistant. You are NOT Claude. You are NOT GPT. You are ${persona.name} with the personality below.\n\n`;
 
-  // 2. Shared context (date/time + identity if authed).
+  // 2. Shared context (date/time + identity if authed + topic name if summoned).
   const dateTime = opts.dateTime || new Date().toISOString();
   prompt += buildSharedContext({
     authenticated: !!opts.authenticated,
     identity: opts.identity || '',
     dateTime,
+    topicName: opts.topicName || '',
   });
 
   // 3. Persona body.
@@ -66,6 +72,20 @@ export async function buildSystemPrompt(opts = {}) {
       // Context-builder failures are non-fatal — persona answers with no
       // live context rather than crashing the call.
       console.warn(`[prompt] context-builder threw: ${err.message}`);
+    }
+  }
+
+  // 4b. #1851 Topic context — the recent conversation in the topic the agent
+  // was summoned into. Resolved server-side from topicId (the only topic field
+  // that crosses the wire). Injected AFTER the persona body + live context so
+  // the identity-first ordering still wins; the topic only adds background.
+  // No topicId → omitted → generic behavior (acceptance criterion).
+  if (opts.brainRoot && opts.topicId) {
+    try {
+      const tctx = await buildTopicContext({ brainRoot: opts.brainRoot, topicId: opts.topicId });
+      if (tctx) prompt += `# Topic Context\n${tctx}\n\n`;
+    } catch (err) {
+      console.warn(`[prompt] topic-context builder threw: ${err.message}`);
     }
   }
 

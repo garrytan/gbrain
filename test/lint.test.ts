@@ -32,6 +32,29 @@ describe('lintContent', () => {
     expect(issues.some(i => i.rule === 'code-fence-wrap')).toBe(true);
   });
 
+  test('no false positive: page CONTAINS an inner ```markdown code block', () => {
+    // Real-world case: a docs/SKILL page that shows a markdown example inline.
+    // Before this fix, the detector used the /m flag so ^/$ matched start/end
+    // of any line, which fired on any file that simply contained a ```markdown
+    // line. But fixContent's regex has no /m flag and can only strip whole-file
+    // wrappers, so the issue was reported as "fixable: true" yet never fixed.
+    const content =
+      '---\ntitle: Skill\n---\n\n# Skill\n\nExample input shape:\n\n' +
+      '```markdown\n# Inner page\nContent.\n```\n\nThat ends the example.\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.filter(i => i.rule === 'code-fence-wrap')).toHaveLength(0);
+  });
+
+  test('no false positive: multiple inner ```markdown blocks', () => {
+    // Documentation pages frequently include several markdown examples.
+    const content =
+      '---\ntitle: Examples\n---\n\n# Examples\n\nFirst:\n\n' +
+      '```markdown\nfoo\n```\n\nSecond:\n\n' +
+      '```markdown\nbar\n```\n\nDone.\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.filter(i => i.rule === 'code-fence-wrap')).toHaveLength(0);
+  });
+
   test('detects placeholder dates', () => {
     const content = '---\ntitle: Test\ntype: person\ncreated: YYYY-MM-DD\n---\n\n# Test';
     const issues = lintContent(content, 'test.md');

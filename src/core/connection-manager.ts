@@ -37,7 +37,7 @@
  */
 
 import postgres from 'postgres';
-import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize } from './db.ts';
+import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, endPoolBounded } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 
@@ -400,15 +400,21 @@ export class ConnectionManager {
    * (db.ts singleton path). Direct pool is always ours.
    */
   async disconnect(): Promise<void> {
+    // #1972: end both pools concurrently with a gbrain-owned hard bound, so the
+    // per-pool drains don't STACK (sequential 2s waits → ~4-6s once the
+    // instance/module pool is added downstream) and neither can hang teardown
+    // past the CLI's 10s force-exit. endPoolBounded never throws.
+    const ends: Promise<void>[] = [];
     if (this._directPool) {
-      try { await this._directPool.end(); } catch { /* idempotent */ }
+      ends.push(endPoolBounded(this._directPool));
       this._directPool = null;
       this._directInit = null;
     }
     if (this._readPool && !this._readPoolOwnedExternally) {
-      try { await this._readPool.end(); } catch { /* idempotent */ }
+      ends.push(endPoolBounded(this._readPool));
       this._readPool = null;
     }
+    await Promise.all(ends);
   }
 
   /**

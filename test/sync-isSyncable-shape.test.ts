@@ -25,8 +25,11 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
     { path: 'index.md', expected: 'metafile', note: 'top-level index.md' },
     { path: 'README.md', expected: 'metafile', note: 'top-level README' },
     { path: 'docs/README.md', expected: 'metafile', note: 'nested README' },
+    { path: 'RESOLVER.md', expected: 'metafile', note: 'top-level master routing config (closes #345)' },
+    { path: 'brain/RESOLVER.md', expected: 'metafile', note: 'RESOLVER.md anywhere is metafile (closes #345)' },
     { path: 'people/alice.txt', expected: 'strategy', note: '.txt rejected by markdown strategy' },
-    { path: 'ops/scratch/note.md', expected: 'pruned-dir', note: 'ops/ is pruned' },
+    { path: 'ops/scratch/note.md', expected: null, note: 'ops/ is ordinary content, not pruned (#2404)' },
+    { path: 'vendor/pkg/note.md', expected: 'pruned-dir', note: 'vendor/ is pruned' },
     { path: '.git/notes.md', expected: 'pruned-dir', note: 'hidden dir pruned' },
     { path: 'node_modules/foo/README.md', expected: 'pruned-dir', note: 'node_modules pruned' },
   ];
@@ -50,8 +53,8 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
     expect(isSyncable('drafts/wip.md', { exclude: ['drafts/**'] })).toBe(false);
   });
 
-  test('SYNC_SKIP_FILES export contains the canonical four basenames', () => {
-    expect([...SYNC_SKIP_FILES]).toEqual(['schema.md', 'index.md', 'log.md', 'README.md']);
+  test('SYNC_SKIP_FILES export contains the canonical structural metafiles', () => {
+    expect([...SYNC_SKIP_FILES]).toEqual(['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md']);
   });
 
   test('isSyncable(p) === (unsyncableReason(p) === null) — duality holds for all canonical cases', () => {

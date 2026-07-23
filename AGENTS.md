@@ -32,8 +32,12 @@ start here.
 ## Read this order
 
 1. `./AGENTS.md` (this file) — install + operating protocol.
-2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
-   test layout.
+2. [`./CLAUDE.md`](./CLAUDE.md) — orientation + resolver: architecture, cross-cutting
+   invariants, the reference map, inline ship rules. It routes to on-demand detail docs:
+   [`./docs/architecture/KEY_FILES.md`](./docs/architecture/KEY_FILES.md) (per-file index —
+   read a file's entry before editing it), [`./docs/TESTING.md`](./docs/TESTING.md) (test
+   tiers + isolation lint + E2E lifecycle), and
+   [`./docs/architecture/thin-client.md`](./docs/architecture/thin-client.md) (remote-MCP seam).
 3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
    — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
    query routes on both axes. Read before writing anything that touches brain ops.
@@ -100,15 +104,18 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 ## Before shipping
 
 Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
-unit tests with `DATABASE_URL` unset, then all 29 E2E files sequentially against a
-fresh pgvector container) and tears down. Use `bun run ci:local:diff` for the
+guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
+containers plus a transaction-mode PgBouncer; unit phase keeps `DATABASE_URL`
+unset) and tears down. Use `bun run ci:local:diff` for the
 diff-aware subset during fast iteration on a focused branch. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand.
+Ship via the `/ship` skill, not by hand. The full release + contributor process
+(CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
+[`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
 ## Privacy
 
