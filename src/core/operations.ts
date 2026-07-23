@@ -777,7 +777,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. On the CLI, `gbrain put SLUG --file PATH` reads content from a file (also `--content` or stdin). For provenance write-through and a binary-NUL guard, prefer `gbrain capture --file PATH --slug SLUG` (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -1421,7 +1421,10 @@ const list_pages: Operation = {
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
-    limit: { type: 'number', description: 'Max results (default 50)' },
+    limit: { type: 'number', description: 'Max results (default 50, capped at 100 — use offset to paginate beyond)' },
+    // #2876: the 100-row cap was silent and there was no way past it even
+    // though both engines already support OFFSET on listPages.
+    offset: { type: 'number', description: 'Skip first N results (pagination; pair with limit)' },
     // v0.29 — surface filter that already exists on PageFilters.
     updated_after: {
       type: 'string',
@@ -1452,6 +1455,10 @@ const list_pages: Operation = {
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      // #2876: thread pagination through (engines already honor offset).
+      offset: Number.isFinite(p.offset as number) && (p.offset as number) > 0
+        ? Math.floor(p.offset as number)
+        : undefined,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,

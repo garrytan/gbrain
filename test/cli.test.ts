@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -118,6 +118,76 @@ describe('CLI dispatch integration', () => {
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: gbrain get');
     expect(exitCode).toBe(0);
+  });
+
+  // #380 / PR #856: put --help documents the --file input path.
+  test('put --help documents --file input', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'put', '--help'], {
+      cwd: repoRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    expect(stdout).toContain('Usage: gbrain put');
+    expect(stdout).toContain('--file <path>');
+    expect(exitCode).toBe(0);
+  });
+
+  // #380: unknown flags on shared ops are a hard error (previously silently
+  // swallowed into params — `put --file` created empty pages). parseOpArgs
+  // runs BEFORE engine connect, so the error must fire without a brain.
+  test('unknown shared-op flags fail before DB connection', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-unknown-flag-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', 'people/alice', '--bogus'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stderr).toContain('Unknown option for gbrain get: --bogus');
+      expect(stderr).not.toContain('No brain configured');
+      expect(exitCode).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('put rejects combining --file and --content', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-put-conflict-'));
+    try {
+      const pagePath = join(home, 'page.md');
+      writeFileSync(pagePath, 'file body\n');
+      const proc = Bun.spawn(
+        ['bun', 'run', 'src/cli.ts', 'put', 'a/b', '--content', 'inline', '--file', pagePath],
+        { cwd: repoRoot, stdout: 'pipe', stderr: 'pipe', env: isolatedEnv(home) },
+      );
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stderr).toContain('use only one of --file, --content, or stdin');
+      expect(exitCode).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('put --file with a missing path errors instead of writing an empty page', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-put-missing-file-'));
+    try {
+      const proc = Bun.spawn(
+        ['bun', 'run', 'src/cli.ts', 'put', 'a/b', '--file', join(home, 'nope.md')],
+        { cwd: repoRoot, stdout: 'pipe', stderr: 'pipe', env: isolatedEnv(home) },
+      );
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stderr).toContain('cannot read --file');
+      expect(exitCode).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('upgrade --help prints usage without running upgrade', async () => {
