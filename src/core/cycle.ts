@@ -66,6 +66,10 @@ export type CyclePhase =
   //  - calibration_profile: aggregates the resolved subset into 2-4
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
+  // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
+  // soft-band takes against recent timeline evidence; report-only in v1
+  // (writes reports/drift-<date>; auto_update mutates nothing).
+  | 'drift'
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
@@ -151,6 +155,10 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // #2653 — drift detection. Default OFF (dream.drift.enabled). Runs AFTER
+  // the calibration trio (fresh take resolutions) and BEFORE embed so the
+  // drift report page gets embedded same-cycle. Report-only in v1.
+  'drift',
   // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
   // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
   // Ordered AFTER calibration_profile (matches the runCycle dispatch
@@ -221,6 +229,9 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   propose_takes: 'source',
   grade_takes: 'global',
   calibration_profile: 'global',
+  // #2653 — drift walks takes brain-wide (same posture as grade_takes) and
+  // writes one brain-global report page.
+  drift: 'global',
   embed: 'global',
   orphans: 'global',
   purge: 'global',
@@ -289,6 +300,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // #2653 — writes the reports/drift-<date> page.
+  'drift',
   // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
   // synthesize_concepts writes concept-typed pages + tier updates. Both
   // mutate DB state and need the lock.
@@ -2133,6 +2146,49 @@ export async function runCycle(
           }
         }
       }
+    }
+
+    // ── #2653: drift detection ──────────────────────────────────
+    // Default OFF (dream.drift.enabled). LLM-judges soft-band takes
+    // against recent timeline evidence; report-only in v1 — writes one
+    // reports/drift-<date> page, mutates no takes regardless of
+    // dream.drift.auto_update.
+    if (phases.includes('drift')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'drift',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.drift');
+        const { runPhaseDrift } = await import('./cycle/drift.ts');
+        const { result, duration_ms } = await timePhase(async (): Promise<PhaseResult> => {
+          const r = await runPhaseDrift(engine, {
+            dryRun,
+            brainDir: brainDir ?? undefined,
+            forceEnabled: opts.onceForPhase === 'drift',
+          });
+          const status: PhaseStatus =
+            r.status === 'complete' ? 'ok' :
+            r.status === 'partial' ? 'warn' :
+            r.status === 'failed' ? 'fail' : 'skipped';
+          return {
+            phase: 'drift',
+            status,
+            duration_ms: 0,
+            summary: r.detail,
+            details: { ...(r.totals ?? {}) },
+          };
+        });
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── v0.41.11.0: conversation_facts_backfill ─────────────────
