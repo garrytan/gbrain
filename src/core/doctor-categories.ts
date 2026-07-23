@@ -170,6 +170,7 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'eval_capture',
   'minions_migration',
   'multi_source_drift',
+  'pages_slug_unique_index',
   'schema_pack_active',
   'schema_pack_consistency',
   'schema_pack_source_drift',
