@@ -17,7 +17,7 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync, realpathSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { dirname, join, resolve } from 'path';
 import { execSync } from 'child_process';
@@ -1116,6 +1116,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               configured,
               // Source checkout / locally compiled binary.
               resolve(import.meta.dir, '..', '..'),
+              // Bun-compiled executables can collapse import.meta.dir to "/".
+              // process.execPath remains the real bin/gbrain path.
+              resolve(dirname(process.execPath), '..'),
+              cliPath ? (() => {
+                try { return resolve(dirname(realpathSync(cliPath)), '..'); } catch { return null; }
+              })() : null,
               cliPath ? resolve(dirname(cliPath), '..') : null,
               process.cwd(),
               repoPath,

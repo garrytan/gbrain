@@ -444,9 +444,12 @@ export async function dispatchPerSource(
         existing = await engine.executeRaw<{ id: number }>(
           `SELECT id
              FROM minion_jobs
-            WHERE name = 'autopilot-cycle'
-              AND status IN ('waiting', 'active')
-              AND data->>'source_id' = $1
+            WHERE status IN ('waiting', 'active')
+              AND (
+                (name = 'autopilot-cycle' AND data->>'source_id' = $1)
+                OR
+                (name = 'sync' AND data->>'sourceId' = $1)
+              )
             LIMIT 1`,
           [src.id],
         );
