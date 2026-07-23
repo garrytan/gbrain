@@ -191,7 +191,7 @@ filesystem surface area.
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep, local-only ops |
+| `admin` | Client management, token revocation, sweep, remote-safe admin ops |
 
 ## Legacy Bearer Token Setup
 
@@ -243,15 +243,16 @@ gbrain auth test \
 
 ## Operations
 
-All 30 GBrain operations are available remotely, including `sync_brain` and
-`file_upload` (no timeout limits with self-hosted server).
+HTTP exposes the scoped, non-`localOnly` operation set. `sync_brain`,
+`file_upload`, `file_list`, and `file_url` are intentionally hidden from remote
+MCP clients even when the client has `admin` scope. Use the local stdio server
+or CLI for those local filesystem surfaces.
 
-**Security note on `file_upload`:** remote MCP callers are confined to the working
-directory where `gbrain serve` was launched. Symlinks, `..` traversal, and absolute
-paths outside cwd are rejected. Page slugs and filenames are allowlist-validated
-(alphanumeric + hyphens; no control chars, RTL overrides, or backslashes). Local
-CLI callers (`gbrain file upload ...`) keep unrestricted filesystem access since
-the user owns the machine.
+Remote callers can still read and write brain content through the normal scoped
+operations (`get_page`, `put_page`, `search`, `query`, links, timeline entries,
+OAuth/admin management, and other non-`localOnly` tools). Self-hosting removes
+third-party MCP timeout ceilings, but it does not relax the local filesystem
+trust boundary.
 
 ## Deployment Options
 
