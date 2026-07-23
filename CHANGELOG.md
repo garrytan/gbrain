@@ -2,6 +2,23 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.64.3] - 2026-07-23
+
+### Fixed
+
+- `conversation_parser.llm_fallback_enabled` is now a registered config key and is consumed by conversation fact extraction. When explicitly enabled, pages that every deterministic conversation pattern rejects can use the existing cached utility-model parser instead of silently producing no segments.
+- The page date is part of both the fallback prompt and each chunk's content-hash cache key. Time-only transcripts use their real page date, identical bodies on different dates cannot share a parse, and completed pages advance their normal extraction checkpoint instead of cycling on epoch timestamps.
+- Long transcripts are processed completely in cached, overlapping 100-line windows. Common cross-boundary continuations are deduplicated in favor of the more complete body, and a later window failure returns no partial page.
+- Non-terminal model results, including length truncation, refusal, and content filtering, are rejected before parsing or caching, so a syntactically valid partial JSON array cannot advance a checkpoint.
+- Model-produced messages are validated before segmentation. Strict zoned RFC3339 timestamps are normalized to whole-second UTC, impossible or implausibly future values are discarded, and accepted messages are sorted chronologically before checkpointing.
+- Dry runs never call the fallback provider. Caller cancellation, including cancellation inside the final worker-pool batch, and hard budget stops propagate through the otherwise fail-open parser boundary. Provider timeouts remain fail-open, and final-call budget overages are reported even when no later reservation occurs.
+
+### Documentation
+
+- Added an operator and maintainer guide covering the privacy gate, dispatch boundary, data sent to the model, date and cache semantics, failure behavior, observability, and focused test surface.
+
+No schema migrations.
+
 ## [0.42.64.0] - 2026-07-20
 
 ### Fixed
