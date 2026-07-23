@@ -1423,6 +1423,7 @@ See also:
     {
       sourceId: sourceIdArg,
       repoPath: source.local_path,
+      noExtract: false,
       auto_embed_backfill: true,
       embed_reason: 'sync_trigger',
     },
