@@ -424,12 +424,17 @@ class ProposeTakesPhase extends BaseCyclePhase {
       // Write proposals to take_proposals. Each row is a separate INSERT
       // because the composite idempotency key is on the per-page tuple — a
       // bulk UPSERT would collapse a same-page-multi-claim run into one row.
-      for (const p of proposals) {
+      if (proposals.length === 0) {
+        // #2106 negative cache: insert a sentinel row when the extractor
+        // found nothing, so the idempotency check skips this page on future
+        // cycles. Without it, pages with no gradeable claims (the common
+        // case) re-spend LLM tokens every cycle. Same composite key rules:
+        // an edited page (new content_hash) or a prompt bump re-extracts.
         await engine.executeRaw(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           VALUES ($1, $2, $3, $4, $5, '__no_proposals__', 'take', 'brain', 0, NULL, $6, $7)
            ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
           [
             sourceId,
@@ -437,16 +442,35 @@ class ProposeTakesPhase extends BaseCyclePhase {
             ch,
             promptVersion,
             proposalRunId,
-            p.claim_text,
-            p.kind,
-            p.holder,
-            p.weight,
-            p.domain ?? null,
             JSON.stringify(existingTakes),
             modelId,
           ],
         );
-        result.proposals_inserted += 1;
+      } else {
+        for (const p of proposals) {
+          await engine.executeRaw(
+            `INSERT INTO take_proposals
+               (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+                claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+            [
+              sourceId,
+              page.slug,
+              ch,
+              promptVersion,
+              proposalRunId,
+              p.claim_text,
+              p.kind,
+              p.holder,
+              p.weight,
+              p.domain ?? null,
+              JSON.stringify(existingTakes),
+              modelId,
+            ],
+          );
+          result.proposals_inserted += 1;
+        }
       }
     }
 

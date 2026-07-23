@@ -334,6 +334,22 @@ New prose appended here.`;
     expect((details.warnings as string[])[0]).toContain('LLM timeout');
   });
 
+  test('zero-proposal page writes a __no_proposals__ sentinel so the next cycle cache-hits (#2106)', async () => {
+    const pages = [buildPage({ slug: 'wiki/no-claims', body: 'reference prose with nothing takeable' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(result.status).toBe('ok');
+    const details = result.details as Record<string, unknown>;
+    expect(details.proposals_inserted).toBe(0); // sentinel is not a proposal
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]!.sql).toContain("'__no_proposals__'");
+    expect(inserts[0]!.sql).toContain('ON CONFLICT (source_id, page_slug, content_hash, prompt_version)');
+    expect(inserts[0]!.params).toHaveLength(7); // model_id rides as the last param
+  });
+
   test('pages with empty compiled_truth are skipped silently (no extractor call)', async () => {
     const pages = [
       buildPage({ slug: 'wiki/empty', body: '' }),
