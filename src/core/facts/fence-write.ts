@@ -275,6 +275,13 @@ export async function writeFactsToFence(
       }));
 
       const result = await engine.insertFacts(enriched, { source_id: target.sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+      // v0.42 (#3014) — an unresolvable `superseded by #N` reference (self
+      // / dangling / struck target) leaves superseded_by NULL; log it rather
+      // than swallow it. The row still lands (expired_at set), never a bad FK.
+      for (const w of result.warnings) {
+        // eslint-disable-next-line no-console
+        console.warn(`[facts.supersession] ${w}`);
+      }
       return { inserted: result.inserted, ids: result.ids };
     },
     { timeoutMs: 5_000 },

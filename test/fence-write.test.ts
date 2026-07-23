@@ -273,6 +273,37 @@ describe('writeFactsToFence — stub guard (v0.34.5)', () => {
   });
 });
 
+describe('writeFactsToFence — v0.42 (#3014) supersession-warning seam', () => {
+  test('forwards an unresolvable `superseded by #N` warning to console.warn', async () => {
+    // The reachable shape through this path: writeFactsToFence appends
+    // active rows, but `context` is caller-controlled free text, so a
+    // "superseded by #N" context re-parses to supersededBy=N. When #N names
+    // no row, insertFacts resolves it to NULL + a warning; this test pins
+    // that writeFactsToFence forwards that warning to console.warn (the
+    // no-swallowed-errors seam) rather than dropping it.
+    const captured: string[] = [];
+    const original = console.warn;
+    // eslint-disable-next-line no-console
+    console.warn = (msg?: unknown) => { captured.push(String(msg)); };
+    let result;
+    try {
+      result = await writeFactsToFence(
+        engine,
+        { sourceId: 'default', localPath: brainDir, slug: 'people/alice' },
+        [baseInput({ fact: 'Points at a row that is not there', context: 'superseded by #99' })],
+      );
+    } finally {
+      // eslint-disable-next-line no-console
+      console.warn = original;
+    }
+
+    // The row still lands (the bad reference doesn't block the insert).
+    expect(result.inserted).toBe(1);
+    // The warning was logged with the category tag, not swallowed.
+    expect(captured.some(w => w.includes('[facts.supersession]') && w.includes('absent from the fence'))).toBe(true);
+  });
+});
+
 describe('lookupSourceLocalPath', () => {
   test('returns the configured local_path for an existing source', async () => {
     const got = await lookupSourceLocalPath(engine, 'default');

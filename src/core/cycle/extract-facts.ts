@@ -33,7 +33,7 @@
  * while legacy rows linger in the DB.
  */
 
-import type { BrainEngine } from '../engine.ts';
+import { resolveSupersededByRow, type BrainEngine, type SupersedeTarget } from '../engine.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
@@ -51,9 +51,18 @@ import { embed, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
 
 interface ExistingPageFact {
+  // v0.42 (#3014) — the row's own fact id. Read so the supersession-drift
+  // check can compare the DB's stored `superseded_by` (a fact id) against
+  // the fence reference re-resolved to the target row's current id.
+  id: number | string;
   fact: string;
   source: string | null;
   row_num: number | string | null;
+  // v0.42 (#3014) — supersession columns, read so a struck row whose
+  // fence says "superseded" but whose DB columns are still NULL counts as
+  // drifted and re-heals through the wipe+reinsert fallback.
+  superseded_by: number | string | null;
+  expired_at: Date | string | null;
 }
 
 function factContentKey(fact: string, source: string | null | undefined): string {
@@ -85,7 +94,7 @@ async function listExistingFactsForPage(
   sourceId: string,
 ): Promise<ExistingPageFact[]> {
   return engine.executeRaw<ExistingPageFact>(
-    `SELECT fact, source, row_num
+    `SELECT id, fact, source, row_num, superseded_by, expired_at
        FROM facts
       WHERE source_id = $1
         AND source_markdown_slug = $2
@@ -313,26 +322,82 @@ export async function runExtractFacts(
       const desired = desiredByKey.get(factContentKey(f.fact, f.source));
       return desired !== undefined && Number(f.row_num) !== desired.row_num;
     });
+    // v0.42 (#3014) — a struck row whose fence says "superseded" (or
+    // otherwise inactive) but whose DB columns are still NULL has an
+    // identical content key + row_num, so the checks above miss it. Treat
+    // a mismatch between the fence-desired supersession/expiry state and
+    // the DB columns as drift so the wipe+reinsert fallback re-heals the
+    // row (transports superseded_by + expired_at that a pre-fix cycle
+    // dropped).
+    //
+    // The supersession term keys off the RESOLVED reference, not merely
+    // "the fence carries a reference": we re-resolve the fence's
+    // `superseded by #N` against the current DB rows with the SAME resolver
+    // insertFacts uses, then compare the resolved target id to the id the
+    // DB stored. A permanently-unresolvable reference (self / dangling /
+    // chain) resolves to NULL every cycle and matches the DB's NULL, so it
+    // never churns; a pre-fix NULL, or a CHANGED reference (even between two
+    // resolvable targets), still differs and re-heals. Resolution stays
+    // page-local — `superseded_by` only ever points within this page — so a
+    // row_num → id lookup over `existing` is a faithful mirror of the
+    // insert-time SELECT.
+    const existingByRowNum = new Map<number, ExistingPageFact>();
+    for (const f of existing) {
+      const rn = f.row_num == null ? NaN : Number(f.row_num);
+      if (Number.isFinite(rn)) existingByRowNum.set(rn, f);
+    }
+    const hasSupersessionDrift = existing.some(f => {
+      const desired = desiredByKey.get(factContentKey(f.fact, f.source));
+      if (desired === undefined) return false;
+
+      // Expiry dimension: a struck row must carry expired_at; a pre-fix row
+      // (both columns NULL) drifts here and re-heals. Compare NULL-ness, NOT
+      // the timestamp value: the mapper stamps `expired_at = valid_until ??
+      // today`, so a value comparison would see the stored timestamp differ
+      // from a freshly-recomputed `today` every day and churn the page each
+      // cycle. NULL-ness is the stable "is this row struck?" signal.
+      const desiredExpired = desired.expired_at != null;
+      const dbExpired = f.expired_at != null;
+      if (desiredExpired !== dbExpired) return true;
+
+      // Supersession dimension: resolve the fence reference against the
+      // current DB rows and compare the resolved target id to what the DB
+      // stored.
+      const desiredRow = desired.superseded_by_row;
+      let resolvedTargetId: number | null = null;
+      if (desiredRow !== undefined) {
+        const targetExisting = existingByRowNum.get(desiredRow);
+        const target: SupersedeTarget | undefined = targetExisting
+          ? { id: Number(targetExisting.id), struck: targetExisting.expired_at != null }
+          : undefined;
+        resolvedTargetId = resolveSupersededByRow(Number(f.row_num), desiredRow, target, slug).superseded_by;
+      }
+      const dbTargetId = f.superseded_by == null ? null : Number(f.superseded_by);
+      return resolvedTargetId !== dbTargetId;
+    });
 
     if (
       existing.length === extracted.length &&
       !hasStaleExisting &&
       !hasDuplicateExisting &&
-      !hasRowNumDrift
+      !hasRowNumDrift &&
+      !hasSupersessionDrift
     ) {
       continue;
     }
 
     let toInsert = extracted.filter(f => !existingKeys.has(factContentKey(f.fact, f.source)));
-    if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift) {
-      // Fall back to the legacy page-level reconcile when old DB rows must
-      // be removed. Same delete scoping as above: legacy
-      // NULL-source_markdown_slug rows and `cli:`-origin conversation
-      // facts (#1928) survive.
-      const deleted = await engine.deleteFactsForPage(slug, sourceId, {
-        excludeSourcePrefixes: ['cli:'],
-      });
-      result.factsDeleted += deleted.deleted;
+    // v0.42 (#3014) — when old DB rows must be removed, defer the wipe into
+    // insertFacts' own transaction (deleteForPageFirst) rather than calling
+    // deleteFactsForPage here. A standalone delete self-commits, so a
+    // failing insert afterward left the page permanently emptied; running
+    // the delete as the first statement of the insert transaction makes the
+    // reconcile atomic — a failed insert rolls the delete back. Same delete
+    // scoping as above: legacy NULL-source_markdown_slug rows and
+    // `cli:`-origin conversation facts (#1928) survive.
+    let deleteForPageFirst: { slug: string; excludeSourcePrefixes: string[] } | undefined;
+    if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift || hasSupersessionDrift) {
+      deleteForPageFirst = { slug, excludeSourcePrefixes: ['cli:'] };
       toInsert = extracted;
     }
 
@@ -366,8 +431,21 @@ export async function runExtractFacts(
 
     if (toInsert.length === 0) continue;
 
-    const inserted = await engine.insertFacts(toInsert, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
+    const inserted = await engine.insertFacts(
+      toInsert,
+      { source_id: sourceId },
+      deleteForPageFirst ? { deleteForPageFirst } : undefined,
+    ); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
+    // v0.42 (#3014) — the wipe (when needed) ran inside insertFacts' txn;
+    // count it here from the atomic result rather than a separate delete.
+    result.factsDeleted += inserted.deleted;
+    // v0.42 (#3014) — surface unresolvable `superseded by #N` references
+    // (self / dangling / struck target) as cycle warnings; the row still
+    // inserts with superseded_by NULL + expired_at set (never a guessed FK).
+    // resolveSupersededByRow already prefixes each message with the slug +
+    // row, so push verbatim — no `${slug}: ` re-prefix.
+    for (const w of inserted.warnings) result.warnings.push(w);
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic

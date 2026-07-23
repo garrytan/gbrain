@@ -3981,7 +3981,7 @@ const recall: Operation = {
     since: { type: 'string', description: 'ISO datetime or duration shorthand (e.g. "8 hours ago"). Returns facts created since.' },
     session_id: { type: 'string', description: 'Source session id (e.g. topic-A). Returns facts captured in that session.' },
     include_expired: { type: 'boolean', description: 'When true, include expired_at IS NOT NULL rows. Default false.' },
-    supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (expired_at + superseded_by both set).' },
+    supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (facts with superseded_by set), newest first by COALESCE(expired_at, valid_until).' },
     limit: { type: 'number', description: 'Max rows to return. Default 50, cap 100.' },
     grep: { type: 'string', description: 'Substring filter on fact text (case-insensitive). Applied client-side after recall.' },
     include_pending: { type: 'boolean', description: 'v0.32: when true, response includes pending_consolidation_count (facts not yet promoted to takes by the dream-cycle consolidate phase). One round trip; backward-compatible (field omitted when false).' },

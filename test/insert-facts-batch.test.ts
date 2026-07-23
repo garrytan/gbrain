@@ -43,7 +43,7 @@ beforeEach(async () => {
   await (engine as any).db.query('DELETE FROM facts');
 });
 
-type BatchFact = NewFact & { row_num: number; source_markdown_slug: string };
+type BatchFact = NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number };
 
 const fixtureFact = (rowNum: number, overrides: Partial<BatchFact> = {}): BatchFact => ({
   fact: `Claim ${rowNum}`,
@@ -61,7 +61,7 @@ const fixtureFact = (rowNum: number, overrides: Partial<BatchFact> = {}): BatchF
 describe('engine.insertFacts — batch insert', () => {
   test('empty batch returns inserted:0, ids:[]', async () => {
     const r = await engine.insertFacts([], { source_id: 'default' });
-    expect(r).toEqual({ inserted: 0, ids: [] });
+    expect(r).toEqual({ inserted: 0, ids: [], warnings: [], deleted: 0 });
   });
 
   test('single-row batch inserts and persists v51 columns', async () => {
@@ -316,5 +316,181 @@ describe('insertFacts + deleteFactsForPage round-trip (the reconciliation patter
     expect(rows.rows).toHaveLength(2);
     expect(rows.rows[0]).toMatchObject({ fact: 'A', row_num: 1, source_markdown_slug: 'people/alice' });
     expect(rows.rows[1]).toMatchObject({ fact: 'B', row_num: 2, source_markdown_slug: 'people/alice' });
+  });
+});
+
+describe('engine.insertFacts — v0.42 (#3014) supersession transport', () => {
+  const struck = (rowNum: number, supersededByRow: number, overrides: Partial<BatchFact> = {}): BatchFact =>
+    fixtureFact(rowNum, {
+      expired_at: new Date('2026-06-01T00:00:00Z'),
+      superseded_by_row: supersededByRow,
+      ...overrides,
+    });
+
+  test('struck row resolves superseded by #N to the target fact id + persists expired_at', async () => {
+    // Row 1 struck, superseded by row 2 (active). Same batch.
+    const r = await engine.insertFacts(
+      [struck(1, 2, { fact: 'old claim' }), fixtureFact(2, { fact: 'new claim' })],
+      { source_id: 'default' },
+    );
+    expect(r.warnings).toEqual([]);
+    const targetId = r.ids[1];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT row_num, superseded_by, expired_at FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(Number(persisted.rows[0].superseded_by)).toBe(Number(targetId));
+    expect(persisted.rows[0].expired_at).not.toBeNull();
+    // The active target keeps superseded_by NULL.
+    expect(persisted.rows[1].superseded_by).toBeNull();
+
+    // The row surfaces in listSupersessions (superseded_by filter, option B).
+    const sup = await engine.listSupersessions('default');
+    expect(sup.some(s => s.id === r.ids[0] && s.superseded_by === Number(targetId))).toBe(true);
+  });
+
+  test('reference to a pre-existing target row (not in this batch) still resolves', async () => {
+    // Insert the target first (its own batch), then the struck row later.
+    const target = await engine.insertFacts([fixtureFact(2, { fact: 'survivor' })], { source_id: 'default' });
+    const r = await engine.insertFacts([struck(1, 2, { fact: 'retired' })], { source_id: 'default' });
+    expect(r.warnings).toEqual([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT superseded_by FROM facts WHERE row_num = 1 AND source_markdown_slug = 'people/alice'`,
+    );
+    expect(Number(persisted.rows[0].superseded_by)).toBe(Number(target.ids[0]));
+  });
+
+  test('dangling reference (#N absent) → superseded_by NULL + warning, expired_at still set', async () => {
+    const r = await engine.insertFacts([struck(1, 99, { fact: 'orphaned' })], { source_id: 'default' });
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('absent from the fence');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT superseded_by, expired_at FROM facts WHERE row_num = 1 AND source_markdown_slug = 'people/alice'`,
+    );
+    expect(persisted.rows[0].superseded_by).toBeNull();
+    expect(persisted.rows[0].expired_at).not.toBeNull();
+  });
+
+  test('self-reference (#N == own row) → superseded_by NULL + warning', async () => {
+    const r = await engine.insertFacts([struck(1, 1, { fact: 'ouroboros' })], { source_id: 'default' });
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('references itself');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT superseded_by FROM facts WHERE row_num = 1 AND source_markdown_slug = 'people/alice'`,
+    );
+    expect(persisted.rows[0].superseded_by).toBeNull();
+  });
+
+  test('chain (#N names another struck row) → superseded_by NULL + warning', async () => {
+    // Row 1 superseded by #2; row 2 is itself struck (superseded by #3).
+    const r = await engine.insertFacts(
+      [struck(1, 2, { fact: 'link a' }), struck(2, 3, { fact: 'link b' }), fixtureFact(3, { fact: 'live tail' })],
+      { source_id: 'default' },
+    );
+    // Row 1 → row 2 is a chain (row 2 struck) → NULL + warning.
+    // Row 2 → row 3 (live) resolves cleanly.
+    expect(r.warnings.some(w => w.includes('struck'))).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT row_num, superseded_by FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(persisted.rows[0].superseded_by).toBeNull();          // row 1: chain rejected
+    expect(Number(persisted.rows[1].superseded_by)).toBe(Number(r.ids[2])); // row 2 → row 3
+  });
+
+  test('int4-overflow reference (11-digit #N) resolves as dangling — never throws', async () => {
+    // The fence parser accepts any finite #N; an 11-digit value would
+    // overflow the int4 row_num comparison in the resolution SELECT and
+    // abort the whole cycle. The guard treats it as a dangling reference:
+    // NULL superseded_by + warning, expired_at still set, no exception.
+    const r = await engine.insertFacts(
+      [struck(1, 99999999999, { fact: 'points at an absurd row' })],
+      { source_id: 'default' },
+    );
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('absent from the fence');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT superseded_by, expired_at FROM facts WHERE row_num = 1 AND source_markdown_slug = 'people/alice'`,
+    );
+    expect(persisted.rows[0].superseded_by).toBeNull();
+    expect(persisted.rows[0].expired_at).not.toBeNull();
+  });
+});
+
+describe('engine.insertFacts — v0.42 (#3014) atomic deleteForPageFirst reconcile', () => {
+  test('replaces the page atomically and reports the deleted count', async () => {
+    await engine.insertFacts(
+      [fixtureFact(1, { fact: 'old one' }), fixtureFact(2, { fact: 'old two' })],
+      { source_id: 'default' },
+    );
+    const r = await engine.insertFacts(
+      [fixtureFact(1, { fact: 'new one' })],
+      { source_id: 'default' },
+      { deleteForPageFirst: { slug: 'people/alice', excludeSourcePrefixes: ['cli:'] } },
+    );
+    expect(r.inserted).toBe(1);
+    expect(r.deleted).toBe(2);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(rows.rows.map((x: { fact: string }) => x.fact)).toEqual(['new one']);
+  });
+
+  test('a failing insert rolls the wipe back — the page is never left emptied', async () => {
+    // Seed the page's current rows (the ones a pre-fix separate-commit delete
+    // would have destroyed before the insert threw).
+    await engine.insertFacts(
+      [fixtureFact(1, { fact: 'keeper one' }), fixtureFact(2, { fact: 'keeper two' })],
+      { source_id: 'default' },
+    );
+
+    // The insert batch collides with itself (two row_num=1) AFTER the delete
+    // has already run inside the same transaction. The v51 UNIQUE index
+    // throws on the second row_num=1, rolling the whole transaction back.
+    let threw = false;
+    try {
+      await engine.insertFacts(
+        [fixtureFact(1, { fact: 'replacement a' }), fixtureFact(1, { fact: 'dup collides' })],
+        { source_id: 'default' },
+        { deleteForPageFirst: { slug: 'people/alice', excludeSourcePrefixes: ['cli:'] } },
+      );
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+
+    // Atomicity: the delete rolled back with the failed insert, so the
+    // original rows survive rather than the page being silently emptied.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(rows.rows.map((x: { fact: string }) => x.fact)).toEqual(['keeper one', 'keeper two']);
+  });
+
+  test('cli:-origin rows survive the atomic wipe (excludeSourcePrefixes honored)', async () => {
+    await engine.insertFacts(
+      [
+        fixtureFact(1, { fact: 'fence row', source: 'fence:reconcile' }),
+        fixtureFact(2, { fact: 'conversation row', source: 'cli:think' }),
+      ],
+      { source_id: 'default' },
+    );
+    const r = await engine.insertFacts(
+      [fixtureFact(1, { fact: 'fresh fence row', source: 'fence:reconcile' })],
+      { source_id: 'default' },
+      { deleteForPageFirst: { slug: 'people/alice', excludeSourcePrefixes: ['cli:'] } },
+    );
+    expect(r.deleted).toBe(1); // only the fence row was wiped
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(rows.rows.map((x: { fact: string }) => x.fact)).toEqual(['fresh fence row', 'conversation row']);
   });
 });
