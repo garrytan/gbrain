@@ -801,7 +801,8 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
-    const { rows } = await this.db.query(
+    const PGLITE_SEARCH_TIMEOUT_MS = 8_000;
+    const queryPromise = this.db.query(
       `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -831,6 +832,13 @@ export class PGLiteEngine implements BrainEngine {
        LIMIT $3 OFFSET $4`,
       params
     );
+    const timeoutPromise = new Promise<null>(resolve => setTimeout(() => resolve(null), PGLITE_SEARCH_TIMEOUT_MS));
+    const result = await Promise.race([queryPromise, timeoutPromise]);
+    if (result === null) {
+      console.warn('[gbrain] searchKeyword timed out after 8s, returning empty');
+      return [];
+    }
+    const { rows } = result;
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
@@ -1138,7 +1146,8 @@ export class PGLiteEngine implements BrainEngine {
     // to the modality matching the column to avoid cross-mode dim leaks.
     const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
 
-    const { rows } = await this.db.query(
+    const PGLITE_SEARCH_TIMEOUT_MS = 8_000;
+    const queryPromise = this.db.query(
       `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
@@ -1164,6 +1173,13 @@ export class PGLiteEngine implements BrainEngine {
        OFFSET $4`,
       params
     );
+    const timeoutPromise = new Promise<null>(resolve => setTimeout(() => resolve(null), PGLITE_SEARCH_TIMEOUT_MS));
+    const result = await Promise.race([queryPromise, timeoutPromise]);
+    if (result === null) {
+      console.warn('[gbrain] searchVector timed out after 8s, returning empty');
+      return [];
+    }
+    const { rows } = result;
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
@@ -2730,6 +2746,8 @@ export class PGLiteEngine implements BrainEngine {
            OR ($6::boolean = false AND t.resolved_at IS NULL)
          )
          AND ($7::text[] IS NULL OR t.holder = ANY($7::text[]))
+         AND ($11::text IS NULL OR p.source_id = $11::text)
+         AND ($12::text[] IS NULL OR p.source_id = ANY($12::text[]))
        ORDER BY
          CASE WHEN $8 = 'weight'      THEN t.weight     END DESC NULLS LAST,
          CASE WHEN $8 = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -2746,6 +2764,8 @@ export class PGLiteEngine implements BrainEngine {
         sortBy,
         limit,
         offset,
+        opts.sourceId ?? null,
+        opts.sourceIds ?? null,
       ]
     );
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
@@ -2753,7 +2773,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async searchTakes(
     query: string,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const { rows } = await this.db.query(
@@ -2765,9 +2785,11 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.claim % $1
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         AND ($4::text IS NULL OR p.source_id = $4::text)
+         AND ($5::text[] IS NULL OR p.source_id = ANY($5::text[]))
        ORDER BY score DESC, t.weight DESC
        LIMIT $3`,
-      [query, opts.takesHoldersAllowList ?? null, limit]
+      [query, opts.takesHoldersAllowList ?? null, limit, opts.sourceId ?? null, opts.sourceIds ?? null]
     );
     return rows as unknown as TakeHit[];
   }
@@ -2960,6 +2982,13 @@ export class PGLiteEngine implements BrainEngine {
     if (opts.since !== undefined) { params.push(opts.since); clauses.push(`AND since_date >= $${params.length}`); }
     if (opts.until !== undefined) { params.push(opts.until); clauses.push(`AND since_date <= $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    if (opts.sourceIds !== undefined) {
+      params.push(opts.sourceIds);
+      clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`);
+    } else if (opts.sourceId !== undefined) {
+      params.push(opts.sourceId);
+      clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`);
+    }
     const where = clauses.join(' ');
     const res = await this.db.query(
       `SELECT
@@ -2991,6 +3020,13 @@ export class PGLiteEngine implements BrainEngine {
     const clauses: string[] = [];
     if (opts.holder !== undefined) { params.push(opts.holder); clauses.push(`AND holder = $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
+    if (opts.sourceIds !== undefined) {
+      params.push(opts.sourceIds);
+      clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($${params.length}::text[]))`);
+    } else if (opts.sourceId !== undefined) {
+      params.push(opts.sourceId);
+      clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $${params.length})`);
+    }
     const where = clauses.join(' ');
     // NUMERIC casts for exact decimal arithmetic — keeps PGLite + Postgres
     // bucket boundaries identical at FP-edge weights (e.g. 0.7/0.1).

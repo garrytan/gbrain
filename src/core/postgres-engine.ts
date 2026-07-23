@@ -1268,21 +1268,29 @@ export class PostgresEngine implements BrainEngine {
     // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL.
     // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
     // embedded_at must reset to NULL so `embed --stale` correctly picks up the row for re-embedding.
-    // Without this, embedded_at lies (says "embedded" while embedding=NULL), and any staleness
-    // predicate on embedded_at would silently skip the row. This is why the egress fix predicates
-    // on `embedding IS NULL` rather than `embedded_at IS NULL` — and it's why we now keep both
-    // columns honest at write time.
+    // FRESHNESS GUARD (v0.35.x): when chunk_text is unchanged, only overwrite an existing
+    // embedding if the row has none yet OR the incoming write is strictly newer. Prevents
+    // a slower concurrent embed --stale worker from regressing a fresher embedding.
     await sql.unsafe(
       `INSERT INTO content_chunks ${cols} VALUES ${rows.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
+         embedding = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding
+           WHEN content_chunks.embedding IS NULL THEN EXCLUDED.embedding
+           WHEN content_chunks.embedded_at IS NULL OR content_chunks.embedded_at < EXCLUDED.embedded_at
+             THEN COALESCE(EXCLUDED.embedding, content_chunks.embedding)
+           ELSE content_chunks.embedding
+         END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = CASE
            WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
-           ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+           WHEN content_chunks.embedding IS NULL THEN COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+           WHEN content_chunks.embedded_at IS NULL OR content_chunks.embedded_at < EXCLUDED.embedded_at
+             THEN COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+           ELSE content_chunks.embedded_at
          END,
          language = EXCLUDED.language,
          symbol_name = EXCLUDED.symbol_name,
@@ -1823,13 +1831,16 @@ export class PostgresEngine implements BrainEngine {
     for (const s of slugs) result.set(s, 0);
 
     const sql = this.sql;
-    const rows = await sql`
-      SELECT p.slug as slug, COUNT(l.id)::int as cnt
-      FROM pages p
-      LEFT JOIN links l ON l.to_page_id = p.id
-      WHERE p.slug = ANY(${slugs}::text[])
-      GROUP BY p.slug
-    `;
+    const rows = await sql.begin(async sql => {
+      await sql`SET LOCAL statement_timeout = '5s'`;
+      return await sql`
+        SELECT p.slug as slug, COUNT(l.id)::int as cnt
+        FROM pages p
+        LEFT JOIN links l ON l.to_page_id = p.id
+        WHERE p.slug = ANY(${slugs}::text[])
+        GROUP BY p.slug
+      `;
+    });
     for (const r of rows as unknown as { slug: string; cnt: number }[]) {
       result.set(r.slug, Number(r.cnt));
     }
@@ -1851,15 +1862,15 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const slugs = refs.map(r => r.slug);
     const sourceIds = refs.map(r => r.source_id);
-    // Composite-keyed: a page is unique by (source_id, slug). unnest the
-    // two arrays in lockstep so multi-source brains don't fan out across
-    // sources (codex pass-1 finding #3).
-    const rows = await sql`
-      SELECT p.slug, p.source_id, COALESCE(p.effective_date, p.updated_at, p.created_at) AS ts
-        FROM pages p
-        JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
-          ON p.slug = u.slug AND p.source_id = u.source_id
-    `;
+    const rows = await sql.begin(async sql => {
+      await sql`SET LOCAL statement_timeout = '5s'`;
+      return await sql`
+        SELECT p.slug, p.source_id, COALESCE(p.effective_date, p.updated_at, p.created_at) AS ts
+          FROM pages p
+          JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
+            ON p.slug = u.slug AND p.source_id = u.source_id
+      `;
+    });
     const out = new Map<string, Date>();
     for (const raw of rows as unknown as Array<Record<string, unknown>>) {
       const r = raw as { slug: string; source_id: string; ts: string | Date };
@@ -1874,19 +1885,19 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const slugs = refs.map(r => r.slug);
     const sourceIds = refs.map(r => r.source_id);
-    // Salience = emotional_weight × 5 + ln(1 + take_count). Pure mattering
-    // signal — NO time component (per D9: salience and recency are
-    // orthogonal axes). Composite-keyed for multi-source isolation.
-    const rows = await sql`
-      SELECT p.slug, p.source_id,
-             (COALESCE(p.emotional_weight, 0) * 5
-              + ln(1 + COUNT(DISTINCT t.id))) AS score
-        FROM pages p
-        JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
-          ON p.slug = u.slug AND p.source_id = u.source_id
-        LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
-       GROUP BY p.id
-    `;
+    const rows = await sql.begin(async sql => {
+      await sql`SET LOCAL statement_timeout = '5s'`;
+      return await sql`
+        SELECT p.slug, p.source_id,
+               (COALESCE(p.emotional_weight, 0) * 5
+                + ln(1 + COUNT(DISTINCT t.id))) AS score
+          FROM pages p
+          JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
+            ON p.slug = u.slug AND p.source_id = u.source_id
+          LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+         GROUP BY p.id
+      `;
+    });
     const out = new Map<string, number>();
     for (const raw of rows as unknown as Array<Record<string, unknown>>) {
       const r = raw as { slug: string; source_id: string; score: number | string };
@@ -2780,6 +2791,8 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        AND (${opts.sourceId ?? null}::text IS NULL OR p.source_id = ${opts.sourceId ?? null}::text)
+        AND (${opts.sourceIds ?? null}::text[] IS NULL OR p.source_id = ANY(${opts.sourceIds ?? null}::text[]))
       ORDER BY
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -2804,6 +2817,8 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        AND (${opts.sourceId ?? null}::text IS NULL OR p.source_id = ${opts.sourceId ?? null}::text)
+        AND (${opts.sourceIds ?? null}::text[] IS NULL OR p.source_id = ANY(${opts.sourceIds ?? null}::text[]))
       ORDER BY score DESC, t.weight DESC
       LIMIT ${limit}
     `;
@@ -2967,6 +2982,11 @@ export class PostgresEngine implements BrainEngine {
       : sql``;
     const sinceClause = opts.since ? sql`AND since_date >= ${opts.since}` : sql``;
     const untilClause = opts.until ? sql`AND since_date <= ${opts.until}` : sql``;
+    const sourceClause = opts.sourceIds
+      ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY(${opts.sourceIds}::text[]))`
+      : opts.sourceId
+        ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ${opts.sourceId})`
+        : sql``;
     const rows = await sql`
       SELECT
         COUNT(*) FILTER (WHERE kind = 'bet')::int                              AS total_bets,
@@ -2980,7 +3000,7 @@ export class PostgresEngine implements BrainEngine {
           END
         )::float                                                               AS brier
       FROM takes
-      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed}
+      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed} ${sourceClause}
     `;
     const r = rows[0] as { total_bets: number; resolved: number; correct: number; incorrect: number; partial: number; brier: number | null };
     return finalizeScorecard(r);
@@ -3002,11 +3022,11 @@ export class PostgresEngine implements BrainEngine {
     const maxIdx = Math.floor(1 / bucketSize) - 1;
     const allowed = allowList ? sql`AND holder = ANY(${allowList}::text[])` : sql``;
     const holderClause = opts.holder ? sql`AND holder = ${opts.holder}` : sql``;
-    // Bucketing uses NUMERIC for exact decimal arithmetic. Going through
-    // FLOAT introduces IEEE 754 rounding (e.g. 0.7/0.1 = 6.9999..., FLOOR=6
-    // instead of the expected 7), which makes Postgres and PGLite diverge
-    // at bucket boundaries. NUMERIC is exact, so the bucket index is
-    // engine-agnostic and the parity test holds.
+    const sourceClause = opts.sourceIds
+      ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY(${opts.sourceIds}::text[]))`
+      : opts.sourceId
+        ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ${opts.sourceId})`
+        : sql``;
     const rows = await sql`
       WITH binned AS (
         SELECT
@@ -3015,7 +3035,7 @@ export class PostgresEngine implements BrainEngine {
           (resolved_quality = 'correct')::int AS hit
         FROM takes
         WHERE resolved_quality IN ('correct','incorrect')
-          ${holderClause} ${allowed}
+          ${holderClause} ${allowed} ${sourceClause}
       )
       SELECT
         (bucket_idx::numeric * ${bucketSize}::numeric)::float       AS bucket_lo,

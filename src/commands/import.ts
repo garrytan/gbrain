@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
-import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import { importFile, importImageFile, isImageFilePath, batchImportImageFiles } from '../core/import-file.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -203,13 +203,76 @@ export async function runImport(
     }
   }
 
+  // v0.34.x: batch-consolidate image embedding when multimodal is on.
+  // Separates images from text files; images go through batchImportImageFiles
+  // (1 HTTP call per 32 images instead of 1 per image), text files use the
+  // existing worker pool.
+  const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+  const imageFiles: string[] = [];
+  const textFiles: string[] = [];
+  if (multimodalOn && !noEmbed) {
+    for (const f of files) {
+      const rel = relative(dir, f);
+      if (isImageFilePath(rel)) imageFiles.push(f);
+      else textFiles.push(f);
+    }
+  } else {
+    textFiles.push(...files);
+  }
+
+  async function processBatchResults(results: Array<{ slug: string; status: string; chunks: number; error?: string }>, paths: string[]) {
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const relPath = i < paths.length ? relative(dir, paths[i]) : result.slug;
+      if (result.status === 'imported') {
+        imported++;
+        chunksCreated += result.chunks;
+        importedSlugs.push(result.slug);
+        completed.add(relPath);
+      } else {
+        skipped++;
+        if (result.error && result.error !== 'unchanged') {
+          console.error(`  Skipped ${relPath}: ${result.error}`);
+          failures.push({ path: relPath, error: result.error });
+        } else {
+          completed.add(relPath);
+        }
+      }
+      processed++;
+      tickProgress();
+    }
+  }
+
+  const IMAGE_BATCH_SIZE = 32;
+  for (let i = 0; i < imageFiles.length; i += IMAGE_BATCH_SIZE) {
+    const batch = imageFiles.slice(i, i + IMAGE_BATCH_SIZE);
+    const batchInputs = batch.map(f => ({ filePath: f, relativePath: relative(dir, f) }));
+    try {
+      const results = await batchImportImageFiles(engine, batchInputs, { noEmbed, sourceId });
+      await processBatchResults(results, batch);
+      if (completed.size > 0 && completed.size % 100 === 0) {
+        saveCheckpoint(checkpointPath, { dir, completedPaths: Array.from(completed), timestamp: new Date().toISOString() });
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      for (const f of batch) {
+        const relPath = relative(dir, f);
+        errors++;
+        skipped++;
+        processed++;
+        failures.push({ path: relPath, error: msg });
+        tickProgress();
+      }
+    }
+  }
+
   if (actualWorkers > 1) {
     // v0.22.13 (PR #490 A1 + Q3): use engine.kind discriminator (not config.engine
     // string sniff) and fall back to serial when database_url is unset. Both
     // checks belt-and-suspenders so we never crash on a null assertion.
     const config = loadConfig();
     if (engine.kind === 'pglite' || !config?.database_url) {
-      for (const file of files) {
+      for (const file of textFiles) {
         await processFile(engine, file);
       }
     } else {
@@ -239,8 +302,8 @@ export async function runImport(
         await Promise.all(workerEngines.map(async (eng) => {
           while (true) {
             const idx = queueIndex++;
-            if (idx >= files.length) break;
-            await processFile(eng, files[idx]);
+            if (idx >= textFiles.length) break;
+            await processFile(eng, textFiles[idx]);
           }
         }));
       } finally {
@@ -258,7 +321,7 @@ export async function runImport(
     } // end else (postgres parallel)
   } else {
     // Sequential: use the provided engine
-    for (const filePath of files) {
+    for (const filePath of textFiles) {
       await processFile(engine, filePath);
     }
   }

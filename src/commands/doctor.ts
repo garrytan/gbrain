@@ -1482,6 +1482,49 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 7b. OAuth orphan source_id (v60 ON DELETE SET NULL aftermath)
+  progress.heartbeat('oauth_orphan_source_id');
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'oauth_orphan_source_id',
+      status: 'ok',
+      message: 'Skipped (PGLite — no OAuth clients)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const rows = await sql`
+        SELECT COUNT(*)::int AS count,
+               COALESCE(string_agg(client_name, ', ' ORDER BY client_name), '') AS client_names
+        FROM oauth_clients
+        WHERE source_id IS NULL
+      `;
+      const { count, client_names } = rows[0] as { count: number; client_names: string };
+      if (count === 0) {
+        checks.push({
+          name: 'oauth_orphan_source_id',
+          status: 'ok',
+          message: 'All OAuth clients have a valid source_id binding',
+        });
+      } else {
+        checks.push({
+          name: 'oauth_orphan_source_id',
+          status: 'warn',
+          message:
+            `${count} OAuth client(s) have NULL source_id (orphaned by source deletion): ${client_names}. ` +
+            `Fix: UPDATE oauth_clients SET source_id = '<valid-source>' WHERE source_id IS NULL; ` +
+            `or revoke via: gbrain auth revoke-client <id>`,
+        });
+      }
+    } catch {
+      checks.push({
+        name: 'oauth_orphan_source_id',
+        status: 'warn',
+        message: 'Could not check oauth_clients for orphaned source_id',
+      });
+    }
+  }
+
   // 8. Embedding health
   progress.heartbeat('embeddings');
   try {

@@ -192,6 +192,8 @@ export interface TakesListOpts {
   resolved?: boolean;       // true = only resolved; false = only unresolved; undefined = both
   /** Per-token MCP allow-list. Server applies AND holder = ANY($takesHoldersAllowList) when set. */
   takesHoldersAllowList?: string[];
+  sourceId?: string;
+  sourceIds?: string[];
   sortBy?: 'weight' | 'since_date' | 'created_at';
   limit?: number;
   offset?: number;
@@ -266,6 +268,8 @@ export interface TakesScorecardOpts {
   domainPrefix?: string; // e.g. 'companies/' to scope the scorecard
   since?: string;        // ISO date 'YYYY-MM-DD'
   until?: string;        // ISO date 'YYYY-MM-DD'
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 /** v0.30.0: calibration curve bucket. */
@@ -285,6 +289,8 @@ export interface CalibrationBucket {
 export interface CalibrationCurveOpts {
   holder?: string;
   bucketSize?: number; // default 0.1
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 /** Synthesis evidence row input (provenance from think synthesis pages). */

@@ -96,18 +96,39 @@ function dedupBySource(results: SearchResult[]): SearchResult[] {
  * Layer 2: Remove chunks that are too similar to already-kept results.
  * Uses Jaccard similarity on word sets as a proxy for cosine similarity.
  */
+const JACCARD_SKIP_THRESHOLD = 80;
+const JACCARD_PREFIX_LEN = 200;
+
 function dedupByTextSimilarity(results: SearchResult[], threshold: number): SearchResult[] {
   const kept: SearchResult[] = [];
+  const keptWords: Set<string>[] = [];
+  const usePrefix = results.length > JACCARD_SKIP_THRESHOLD;
 
   for (const r of results) {
-    const rWords = new Set(r.chunk_text.toLowerCase().split(/\s+/));
+    const rText = r.chunk_text.toLowerCase();
+    const rWords = new Set(rText.split(/\s+/));
     let tooSimilar = false;
 
-    for (const k of kept) {
-      const kWords = new Set(k.chunk_text.toLowerCase().split(/\s+/));
-      const intersection = new Set([...rWords].filter(w => kWords.has(w)));
-      const union = new Set([...rWords, ...kWords]);
-      const jaccard = intersection.size / union.size;
+    for (let i = 0; i < kept.length; i++) {
+      if (usePrefix) {
+        const rPre = rText.slice(0, JACCARD_PREFIX_LEN);
+        const kPre = kept[i].chunk_text.toLowerCase().slice(0, JACCARD_PREFIX_LEN);
+        if (rPre !== kPre) {
+          const rPWords = new Set(rPre.split(/\s+/));
+          const kPWords = new Set(kPre.split(/\s+/));
+          const pInter = [...rPWords].filter(w => kPWords.has(w)).length;
+          const pUnion = rPWords.size + kPWords.size - pInter;
+          if (pUnion > 0 && pInter / pUnion <= threshold) continue;
+        }
+      }
+
+      const kWords = keptWords[i];
+      let interCount = 0;
+      for (const w of rWords) {
+        if (kWords.has(w)) interCount++;
+      }
+      const unionSize = rWords.size + kWords.size - interCount;
+      const jaccard = unionSize > 0 ? interCount / unionSize : 0;
 
       if (jaccard > threshold) {
         tooSimilar = true;
@@ -117,6 +138,7 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
 
     if (!tooSimilar) {
       kept.push(r);
+      keptWords.push(rWords);
     }
   }
 

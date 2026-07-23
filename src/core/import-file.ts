@@ -1125,6 +1125,158 @@ export async function importImageFile(
   return { slug: imageSlug, status: 'imported', chunks: 1 };
 }
 
+interface PreparedImage {
+  filePath: string;
+  relativePath: string;
+  imageSlug: string;
+  filename: string;
+  hash: string;
+  stat: { size: number };
+  decoded: { buf: Buffer; mime: string };
+  exif: Record<string, unknown>;
+  ocrText: string;
+  hadExisting: boolean;
+}
+
+/**
+ * Batch-consolidated image import. Collapses N individual embedMultimodal
+ * calls into ceil(N/32) HTTP round-trips (Voyage pages at 32 inputs/request).
+ * Per-file error routing, checkpoint compatibility, and OCR/EXIF are preserved.
+ */
+export async function batchImportImageFiles(
+  engine: BrainEngine,
+  files: Array<{ filePath: string; relativePath: string }>,
+  opts: ImportImageOptions = {},
+): Promise<ImportResult[]> {
+  const results: ImportResult[] = [];
+  const prepared: PreparedImage[] = [];
+
+  for (const { filePath, relativePath } of files) {
+    const lstat = lstatSync(filePath);
+    if (lstat.isSymbolicLink()) {
+      results.push({ slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: `Skipping symlink: ${filePath}` });
+      continue;
+    }
+    const stat = statSync(filePath);
+    if (stat.size > MAX_IMAGE_BYTES) {
+      results.push({
+        slug: slugifyPath(relativePath), status: 'skipped', chunks: 0,
+        error: `Image too large (${stat.size} bytes, max ${MAX_IMAGE_BYTES}). Voyage multimodal caps at 20MB per input.`,
+      });
+      continue;
+    }
+
+    const ext = extname(relativePath).toLowerCase();
+    const imageSlug = relativePath.replace(/[\\\/]/g, '/').toLowerCase();
+    const buf = readFileSync(filePath);
+    const hash = createHash('sha256').update(buf).digest('hex');
+
+    const existing = await engine.getPage(imageSlug);
+    if (existing?.content_hash === hash) {
+      results.push({ slug: imageSlug, status: 'skipped', chunks: 0 });
+      continue;
+    }
+
+    let decoded: { buf: Buffer; mime: string };
+    try {
+      decoded = await decodeIfNeeded(ext, buf);
+    } catch (err) {
+      results.push({
+        slug: imageSlug, status: 'error', chunks: 0,
+        error: `Decode failed for ${relativePath}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      continue;
+    }
+
+    const exif = await readExifSafe(buf);
+    const ocrText: string = opts.noEmbed
+      ? ''
+      : await _ocrLimiter(() => maybeOcr(engine, decoded.buf, decoded.mime));
+
+    prepared.push({
+      filePath, relativePath, imageSlug,
+      filename: basename(relativePath),
+      hash, stat: { size: stat.size }, decoded, exif, ocrText,
+      hadExisting: !!existing,
+    });
+  }
+
+  if (prepared.length === 0) return results;
+
+  let embeddings: Float32Array[] | null = null;
+  if (!opts.noEmbed) {
+    const inputs = prepared.map(p => ({
+      kind: 'image_base64' as const,
+      data: p.decoded.buf.toString('base64'),
+      mime: p.decoded.mime,
+    }));
+    try {
+      embeddings = await embedMultimodal(inputs);
+    } catch (err) {
+      for (const p of prepared) {
+        results.push({
+          slug: p.imageSlug, status: 'error', chunks: 0,
+          error: `embedMultimodal failed for ${p.relativePath}: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+      return results;
+    }
+  }
+
+  for (let i = 0; i < prepared.length; i++) {
+    const p = prepared[i];
+    const embedding = embeddings?.[i] ?? null;
+
+    const frontmatter: Record<string, unknown> = {
+      type: 'image', title: p.filename, mime_type: p.decoded.mime,
+      bytes: p.stat.size, ...p.exif,
+    };
+
+    const chunk: ChunkInput & { modality?: string; embedding_image?: Float32Array } = {
+      chunk_index: 0,
+      chunk_text: p.ocrText || p.filename,
+      chunk_source: 'image_asset',
+      modality: 'image',
+      ...(embedding ? { embedding_image: embedding } : {}),
+    };
+
+    const fileSpec: FileSpec = {
+      filename: p.filename,
+      storage_path: p.relativePath.replace(/[\\\/]/g, '/'),
+      mime_type: p.decoded.mime,
+      size_bytes: p.stat.size,
+      content_hash: p.hash,
+    };
+
+    await withImportTransaction(engine, {
+      slug: p.imageSlug,
+      hadExisting: p.hadExisting,
+      page: {
+        type: 'image', page_kind: 'image', title: p.filename,
+        compiled_truth: p.ocrText || '', timeline: '', frontmatter,
+        content_hash: p.hash,
+      },
+      chunks: [chunk],
+      file: fileSpec,
+      after: async (tx) => {
+        for (const candidate of imageOfCandidates(p.imageSlug)) {
+          const sibling = await tx.getPage(candidate);
+          if (sibling) {
+            try {
+              await tx.addLink(p.imageSlug, candidate, p.filename, 'image_of', 'manual', p.imageSlug, 'frontmatter');
+            } catch { /* sibling vanished mid-tx; skip */ }
+            break;
+          }
+        }
+      },
+    });
+
+    results.push({ slug: p.imageSlug, status: 'imported', chunks: 1 });
+  }
+
+  return results;
+}
+
 /** Used by sync.isSyncable + import.ts walker. */
 export function isImageFilePath(relativePath: string): boolean {
   const ext = extname(relativePath).toLowerCase();

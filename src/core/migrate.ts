@@ -3055,6 +3055,11 @@ export const MIGRATIONS: Migration[] = [
           ALTER TABLE oauth_clients
             ADD CONSTRAINT oauth_clients_source_id_fkey
             FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE SET NULL;
+        ELSIF (
+          SELECT confdeltype FROM pg_constraint
+          WHERE conname = 'oauth_clients_source_id_fkey'
+        ) = 'r' THEN
+          RAISE NOTICE 'v60: FK already RESTRICT (v64 applied), skipping SET NULL re-add';
         END IF;
       END $$;
 

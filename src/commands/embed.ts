@@ -504,6 +504,79 @@ async function embedAllStale(
       // If we got fewer rows than PAGE_SIZE, we've reached the end.
       if (batch.length < PAGE_SIZE) break;
     }
+
+    // Second pass: pick up rows created behind the keyset cursor during
+    // the first pass (concurrent sync/put_page inserting at lower positions).
+    const MAX_PASSES = 3;
+    for (let pass = 2; pass <= MAX_PASSES; pass++) {
+      if (budgetSignal.aborted) break;
+      const remaining = await engine.countStaleChunks(sourceId ? { sourceId } : undefined);
+      if (remaining === 0) break;
+      console.error(`  [embed] pass ${pass}: ${remaining} stale rows created during prior pass`);
+      afterPageId = 0;
+      afterChunkIndex = -1;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (budgetSignal.aborted) break;
+        const batch = await engine.listStaleChunks({
+          batchSize: PAGE_SIZE,
+          afterPageId,
+          afterChunkIndex,
+          ...(sourceId && { sourceId }),
+        });
+        if (batch.length === 0) break;
+        totalChunksLoaded += batch.length;
+        const last = batch[batch.length - 1];
+        afterPageId = last.page_id;
+        afterChunkIndex = last.chunk_index;
+        const byKey = new Map<string, typeof batch>();
+        for (const row of batch) {
+          const key = `${row.source_id}::${row.slug}`;
+          const list = byKey.get(key);
+          if (list) list.push(row);
+          else byKey.set(key, [row]);
+        }
+        const keys = Array.from(byKey.keys());
+        result.total_chunks += batch.length;
+        let nextIdx = 0;
+        async function embedOneKeyPass(key: string) {
+          const stale = byKey.get(key)!;
+          const keySourceId = stale[0]?.source_id ?? 'default';
+          const slug = stale[0].slug;
+          try {
+            const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: budgetSignal });
+            const existing = await engine.getChunks(slug, { sourceId: keySourceId });
+            const staleIdxToEmbedding = new Map<number, Float32Array>();
+            for (let j = 0; j < stale.length; j++) {
+              staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+            }
+            const currentEmbeddingModel = getEmbeddingModelName();
+            const merged: ChunkInput[] = existing.map(c => ({
+              chunk_index: c.chunk_index,
+              chunk_text: c.chunk_text,
+              chunk_source: c.chunk_source,
+              embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+              ...(staleIdxToEmbedding.has(c.chunk_index) ? { model: currentEmbeddingModel } : {}),
+              token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+            }));
+            await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
+            result.embedded += stale.length;
+          } catch (e: unknown) {
+            if (budgetSignal.aborted) return;
+            throw e;
+          }
+        }
+        async function workerPass() {
+          while (nextIdx < keys.length && !budgetSignal.aborted) {
+            const idx = nextIdx++;
+            await embedOneKeyPass(keys[idx]);
+          }
+        }
+        const numWorkers = Math.min(CONCURRENCY, keys.length);
+        await Promise.all(Array.from({ length: numWorkers }, () => workerPass()));
+        if (batch.length < PAGE_SIZE) break;
+      }
+    }
   } finally {
     clearTimeout(budgetTimer);
   }

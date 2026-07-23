@@ -461,7 +461,7 @@ const get_page: Operation = {
     // resolves to no source), the engine two-branch query falls through to
     // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
     // (stdio + HTTP) populate ctx.sourceId via the transport layer.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
@@ -578,7 +578,7 @@ const put_page: Operation = {
     // just didn't pass it.
     const result = await importFromContent(ctx.engine, slug, p.content as string, {
       noEmbed,
-      ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+      ...sourceScopeOpts(ctx),
     });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -907,7 +907,7 @@ const delete_page: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'soft_delete_page', slug };
     // v0.31.8 (D7): thread ctx.sourceId so multi-source brains soft-delete the
     // intended row instead of always targeting (default, slug).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     // v0.26.5: rewired from hard-delete to soft-delete. The hard-delete primitive
     // (engine.deletePage) is now reserved for purgeDeletedPages and explicit
     // tests. softDeletePage returns null when the slug is unknown OR already
@@ -939,7 +939,7 @@ const restore_page: Operation = {
     const slug = p.slug as string;
     if (ctx.dryRun) return { dry_run: true, action: 'restore_page', slug };
     // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     const ok = await ctx.engine.restorePage(slug, sourceOpts);
     if (!ok) {
       // Distinguish "not found" from "already active" (idempotent-as-false).
@@ -1285,9 +1285,8 @@ const takes_list: Operation = {
       sortBy: p.sort_by as never,
       limit: p.limit as number | undefined,
       offset: p.offset as number | undefined,
-      // Per-token allow-list — server-side filter for MCP-bound calls.
-      // Local CLI callers leave takesHoldersAllowList unset and see all holders.
       takesHoldersAllowList: ctx.takesHoldersAllowList,
+      ...sourceScopeOpts(ctx),
     });
   },
   cliHints: { name: 'takes-list' },
@@ -1305,6 +1304,7 @@ const takes_search: Operation = {
     return ctx.engine.searchTakes(p.query as string, {
       limit: p.limit as number | undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
+      ...sourceScopeOpts(ctx),
     });
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
@@ -1335,6 +1335,7 @@ const takes_scorecard: Operation = {
         domainPrefix: p.domain_prefix as string | undefined,
         since: p.since as string | undefined,
         until: p.until as string | undefined,
+        ...sourceScopeOpts(ctx),
       },
       ctx.takesHoldersAllowList,
     );
@@ -1359,6 +1360,7 @@ const takes_calibration: Operation = {
       {
         holder: p.holder as string | undefined,
         bucketSize: p.bucket_size as number | undefined,
+        ...sourceScopeOpts(ctx),
       },
       ctx.takesHoldersAllowList,
     );
@@ -1433,7 +1435,7 @@ const add_tag: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
     // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     await ctx.engine.addTag(p.slug as string, p.tag as string, sourceOpts);
     return { status: 'ok' };
   },
@@ -1451,7 +1453,7 @@ const remove_tag: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     await ctx.engine.removeTag(p.slug as string, p.tag as string, sourceOpts);
     return { status: 'ok' };
   },
@@ -1466,7 +1468,7 @@ const get_tags: Operation = {
   },
   handler: async (ctx, p) => {
     // v0.31.8 (D20): thread ctx.sourceId for read-side ops on multi-source brains.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getTags(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1534,7 +1536,7 @@ const get_links: Operation = {
   handler: async (ctx, p) => {
     // v0.31.8 (D16): thread ctx.sourceId. When unset, engine falls through
     // to cross-source view (back-compat).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getLinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1547,7 +1549,7 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getBacklinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1631,7 +1633,7 @@ const add_timeline_entry: Operation = {
       throw new Error(`Invalid calendar date "${date}"`);
     }
     // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries
       date,
       source: (p.source as string) || '',
@@ -1750,7 +1752,7 @@ const get_versions: Operation = {
   },
   handler: async (ctx, p) => {
     // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
     // Same takes-allow-list privacy boundary as get_page. Snapshots persist
     // historical compiled_truth verbatim, including the takes fence, so
@@ -1777,7 +1779,7 @@ const revert_version: Operation = {
     // v0.31.8 (D7): thread ctx.sourceId so multi-source brains revert the
     // intended page row instead of whichever same-slug row Postgres returns
     // first.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     await ctx.engine.createVersion(p.slug as string, sourceOpts);
     await ctx.engine.revertToVersion(p.slug as string, p.version_id as number, sourceOpts);
     return { status: 'reverted' };
@@ -1828,7 +1830,7 @@ const put_raw_data: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'put_raw_data', slug: p.slug, source: p.source };
     // v0.31.8 (D7 + D21): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     await ctx.engine.putRawData(p.slug as string, p.source as string, p.data as object, sourceOpts);
     return { status: 'ok' };
   },
@@ -1843,7 +1845,7 @@ const get_raw_data: Operation = {
   },
   handler: async (ctx, p) => {
     // v0.31.8 (D20 + D21): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, sourceOpts);
   },
   scope: 'read',
@@ -1871,7 +1873,7 @@ const get_chunks: Operation = {
   },
   handler: async (ctx, p) => {
     // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getChunks(p.slug as string, sourceOpts);
   },
   scope: 'read',

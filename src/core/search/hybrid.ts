@@ -53,6 +53,16 @@ const _exactQueryCacheTtlMs = 300_000; // 5 minutes
 const BACKLINK_BOOST_COEF = 0.05;
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
+const SEARCH_WALL_CLOCK_MS = parseInt(process.env.GBRAIN_SEARCH_TIMEOUT_MS || '30000', 10);
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timeout (${ms}ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer!)) as Promise<T>;
+}
+
 /**
  * Apply backlink boost to a result list in place. Mutates each result's score
  * by (1 + BACKLINK_BOOST_COEF * log(1 + count)). Pure data transform; no DB call.
@@ -230,6 +240,22 @@ export interface HybridSearchOpts extends SearchOpts {
   onMeta?: (meta: HybridSearchMeta) => void;
 }
 
+const SEARCH_OPTS_KEYS = [
+  'language', 'symbolKind', 'types', 'sourceId', 'sourceIds',
+  'type', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes',
+  'offset', 'embeddingColumn',
+] as const satisfies ReadonlyArray<keyof HybridSearchOpts & keyof SearchOpts>;
+
+function pickSearchOpts(opts: HybridSearchOpts | undefined, overrides: Partial<SearchOpts>): SearchOpts {
+  const picked: Record<string, unknown> = {};
+  if (opts) {
+    for (const key of SEARCH_OPTS_KEYS) {
+      if (opts[key] !== undefined) picked[key] = opts[key];
+    }
+  }
+  return { ...picked, ...overrides } as SearchOpts;
+}
+
 export async function hybridSearch(
   engine: BrainEngine,
   query: string,
@@ -280,33 +306,12 @@ export async function hybridSearch(
   // Auto-detect detail level from query intent when caller doesn't specify
   const detail = opts?.detail ?? autoDetectDetail(query);
   const detailResolved: 'low' | 'medium' | 'high' | null = detail ?? null;
-  const searchOpts: SearchOpts = {
+  const searchOpts: SearchOpts = pickSearchOpts(opts, {
     limit: innerLimit,
     detail,
-    // v0.20.0 Cathedral II Layer 10 — thread language + symbolKind through so
-    // per-engine searchKeyword / searchVector apply the filters at SQL level.
-    language: opts?.language,
-    symbolKind: opts?.symbolKind,
-    // v0.33: multi-type filter for whoknows ('person','company'). Pushes
-    // type filter to SQL level so the limit budget goes to candidate-typed
-    // pages instead of being eaten by note/transcript/article pages.
-    types: opts?.types,
-    // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
-    // The engine still consumes the legacy field names; this aliasing keeps
-    // PR #618 callers compiling while the new names are the public surface.
     afterDate: opts?.since ?? opts?.afterDate,
     beforeDate: opts?.until ?? opts?.beforeDate,
-    // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
-    // inner engine.searchKeyword / engine.searchVector calls apply the
-    // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
-    // silently DROPPED these fields and every authenticated MCP client
-    // could see pages from foreign sources via the hybrid search hot
-    // path. New SearchOpts fields scoped to source isolation MUST be
-    // added here too; the rebuild shape is intentional (HNSW inner-CTE
-    // ordering means we can't lazy-spread the full opts).
-    sourceId: opts?.sourceId,
-    sourceIds: opts?.sourceIds,
-  };
+  });
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
   // surfaced. Capture wrapper passes a closure to receive the meta and
@@ -454,7 +459,9 @@ export async function hybridSearch(
     // post-fusion stages here too — without it, salience='on' silently
     // does nothing on embed failures.
     if (keywordResults.length > 0) {
-      await runPostFusionStages(engine, keywordResults, postFusionOpts);
+      try {
+        await withTimeout(runPostFusionStages(engine, keywordResults, postFusionOpts), 10_000, 'post_fusion');
+      } catch { /* non-fatal */ }
       keywordResults.sort((a, b) => b.score - a.score);
     }
     const kwSliced = dedupResults(keywordResults).slice(offset, offset + limit);
@@ -504,7 +511,9 @@ export async function hybridSearch(
   // both, or neither fires depending on resolved modes.
   const _tPostFusion = performance.now();
   if (fused.length > 0) {
-    await runPostFusionStages(engine, fused, postFusionOpts);
+    try {
+      await withTimeout(runPostFusionStages(engine, fused, postFusionOpts), 10_000, 'post_fusion');
+    } catch { /* non-fatal: timeout or DB error */ }
     // v0.32.x search-lite: intent exact-match boost (entity/event intents).
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
     if (intentWeights.exactMatchBoost !== 1.0) {
@@ -718,7 +727,7 @@ export async function hybridSearchCached(
       const { isAvailable } = await import('../ai/gateway.ts');
       if (isAvailable('embedding')) {
         // v0.35.0.0+: query-side embedding (cache lookup path).
-        queryEmbedding = await embedQuery(query);
+        queryEmbedding = await withTimeout(embedQuery(query), 5000, 'embed_query_cache');
       } else {
         cacheStatus = 'disabled';
       }
@@ -772,14 +781,21 @@ export async function hybridSearchCached(
   // we use a single-element box to keep the type stable.
   const innerMetaBox: { current: HybridSearchMeta | null } = { current: null };
   const userOnMeta = opts?.onMeta;
-  const results = await hybridSearch(engine, query, {
-    ...opts,
-    onMeta: (m) => {
-      innerMetaBox.current = m;
-      // Do NOT call userOnMeta here — we'll emit a merged meta below
-      // that also carries cache + budget info.
-    },
-  });
+  let results: SearchResult[];
+  try {
+    results = await withTimeout(hybridSearch(engine, query, {
+      ...opts,
+      onMeta: (m) => {
+        innerMetaBox.current = m;
+      },
+    }), SEARCH_WALL_CLOCK_MS, 'hybrid_search');
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('timeout')) {
+      console.error(`[hybridSearchCached] wall-clock timeout (${SEARCH_WALL_CLOCK_MS}ms) for query="${query.slice(0, 40)}"`);
+      return [];
+    }
+    throw e;
+  }
   const innerMeta = innerMetaBox.current;
 
   // Token budget pass (no-op when not set).
@@ -926,12 +942,19 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
  * Cosine re-scoring: blend RRF score with query-chunk cosine similarity.
  * Runs before dedup so semantically better chunks survive.
  */
+const COSINE_RESCORE_CAP = 100;
+
 async function cosineReScore(
   engine: BrainEngine,
   results: SearchResult[],
   queryEmbedding: Float32Array,
 ): Promise<SearchResult[]> {
-  const chunkIds = results
+  if (results.length === 0) return results;
+
+  const toScore = results.slice(0, COSINE_RESCORE_CAP);
+  const rest = results.slice(COSINE_RESCORE_CAP);
+
+  const chunkIds = toScore
     .map(r => r.chunk_id)
     .filter((id): id is number => id != null);
 
@@ -941,16 +964,14 @@ async function cosineReScore(
   try {
     embeddingMap = await engine.getEmbeddingsByChunkIds(chunkIds);
   } catch {
-    // DB error is non-fatal, return results without re-scoring
     return results;
   }
 
   if (embeddingMap.size === 0) return results;
 
-  // Normalize RRF scores to 0-1 for blending
-  const maxRrf = Math.max(...results.map(r => r.score));
+  const maxRrf = Math.max(...toScore.map(r => r.score));
 
-  return results.map(r => {
+  const rescored = toScore.map(r => {
     const chunkEmb = r.chunk_id != null ? embeddingMap.get(r.chunk_id) : undefined;
     if (!chunkEmb) return r;
 
@@ -963,7 +984,9 @@ async function cosineReScore(
     }
 
     return { ...r, score: blended };
-  }).sort((a, b) => b.score - a.score);
+  });
+
+  return [...rescored, ...rest].sort((a, b) => b.score - a.score);
 }
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
