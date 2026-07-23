@@ -2,6 +2,13 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.64.0] - 2026-07-20
+
+### Fixed
+
+- Confidential OAuth clients can now revoke access tokens through the standard revocation endpoint when client secrets are stored as hashes. Invalid credentials fail closed, malformed or mixed authentication is rejected, backend failures remain retryable, and discovery metadata accurately advertises supported authentication methods.
+
+No schema migrations.
 ## [0.42.63.0] - 2026-07-20
 
 **Schema commands now open the local brain you actually configured.**

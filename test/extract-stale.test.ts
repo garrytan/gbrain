@@ -209,6 +209,32 @@ describe('gbrain extract --stale', () => {
     expect(usRows[0]?.eq).toBe(true);
   });
 
+  test('REGRESSION: page with updated_at BEFORE LINK_EXTRACTOR_VERSION_TS clears (no permanent-stale loop)', async () => {
+    // The v112 watermark column ships with no backfill, so every pre-existing
+    // page starts NULL-stale — and most pre-date the version bump. Pre-fix,
+    // extractStaleFromDB stamped links_extracted_at = read updated_at; for a
+    // page edited before LINK_EXTRACTOR_VERSION_TS the stamp landed BELOW the
+    // version threshold, so the version arm (links_extracted_at < versionTs)
+    // re-flagged it stale forever — an infinite re-extract loop that never
+    // cleared the lag (observed: 97% of pages stuck permanently).
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) leads [Acme](companies/acme).'));
+    // Backdate every page to BEFORE the extractor version timestamp.
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2020-01-01T00:00:00Z'`);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(2);
+
+    await runExtract(engine, ['--stale']);
+    // Fixed: stamp = GREATEST(read updated_at, versionTs) → lifts old pages to
+    // the threshold so the version arm clears, while a real future edit still
+    // advances updated_at past the stamp (CDX-1 race protection preserved).
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+
+    // Second run must ALSO find 0 — the defining symptom of the bug was that it
+    // never converged.
+    await runExtract(engine, ['--stale']);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+  });
+
   test('CDX-4 (D2): a link-flush throw aborts the sweep and leaves pages UNSTAMPED', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) founded [Acme](companies/acme).'));

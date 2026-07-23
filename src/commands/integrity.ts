@@ -98,8 +98,17 @@ export function findBareTweetHits(compiledTruth: string, slug: string): BareTwee
     }
     // If the line already contains a tweet URL, it's cited — skip
     if (URL_NEARBY_RE.test(line)) continue;
+    // If the line carries an explicit source citation (e.g.
+    // "[Source: X, @handle, 2026-05-28]"), it's already attributed — skip.
+    // Catches instructional/example lines in recipe docs that demonstrate
+    // the CORRECT citation format. (v0.42.x)
+    if (/\[\s*source:/i.test(line)) continue;
+    // Strip inline-code spans (`...`) before matching: phrases shown as
+    // inline-code templates in docs are examples, not bare claims. The
+    // fenced-code skip above only covers ``` blocks, not inline backticks.
+    const lineForMatch = line.replace(/`[^`]*`/g, '');
     for (const re of BARE_TWEET_PHRASES) {
-      const m = line.match(re);
+      const m = lineForMatch.match(re);
       if (m) {
         hits.push({ slug, line: i + 1, rawLine: line.trim(), phrase: m[0] });
         break; // one finding per line is enough

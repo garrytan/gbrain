@@ -1218,11 +1218,21 @@ export interface BrainEngine {
    *
    * Uses the `%` trigram operator (GIN-indexed) + the standard `similarity()`
    * function. Both engines support pg_trgm (PGLite 0.3+, Postgres always).
+   *
+   * `sourceId` constrains the search to a single source and filters out
+   * soft-deleted pages. Mirrors the same filters `tryFuzzyMatch` in
+   * `src/core/entities/resolve.ts` got via #1436 (v0.41.13.0). Omit for the
+   * historical unscoped behavior — live-mode callers that already know
+   * the source should pass it to avoid cross-source slug suggestions that
+   * get silently dropped at the FK filter downstream. Batch-mode callers
+   * (e.g. `gbrain extract`) intentionally omit it to build a cross-source
+   * resolution map.
    */
   findByTitleFuzzy(
     name: string,
     dirPrefix?: string,
     minSimilarity?: number,
+    sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null>;
   /**
    * v0.34.1 (#861 — P0 leak seal): `opts.sourceId` / `opts.sourceIds`

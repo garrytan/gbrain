@@ -4963,8 +4963,7 @@ export async function buildChecks(
             message:
               `${unmatched}/${sample.length} conversation pages (${unmatchedPct.toFixed(1)}%) match NO built-in pattern. ` +
               `Breakdown: ${breakdown}. ` +
-              `Investigate: gbrain conversation-parser scan <slug> | ` +
-              `Enable LLM fallback (opt-in): gbrain config set conversation_parser.llm_fallback_enabled true`,
+              `Investigate: gbrain conversation-parser scan <slug>`,
           });
         } else {
           checks.push({

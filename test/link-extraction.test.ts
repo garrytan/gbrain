@@ -403,6 +403,77 @@ describe('extractPageLinks', () => {
     expect(candidates).toEqual([]);
   });
 
+  test('path-qualified wikilink outside DIR_PATTERN queries by final segment', async () => {
+    // `[[notes/struktura]]` (dir not in DIR_PATTERN) falls to the generic
+    // pass. The resolver's basename index is keyed by final path segments,
+    // so the lookup must strip the dirname — mirroring the FS path
+    // (resolveSlugAll). Regression: the raw literal was passed through,
+    // which never matched, so these links silently dropped.
+    const seen: string[] = [];
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => {
+        seen.push(name);
+        return name === 'struktura' ? ['notes/struktura'] : [];
+      },
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(seen).toContain('struktura');
+    expect(seen).not.toContain('notes/struktura');
+    expect(candidates.map(c => c.targetSlug)).toEqual(['notes/struktura']);
+    expect(candidates[0].linkType).toBe('wikilink_basename');
+    expect(candidates[0].linkSource).toBe('wikilink-resolved');
+  });
+
+  test('path-qualified wikilink keeps only matches ending with the written path', async () => {
+    // The written path disambiguates: `[[notes/struktura]]` must never
+    // attach to `wiki/struktura` even though both share the basename.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['notes/struktura', 'wiki/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['notes/struktura']);
+  });
+
+  test('path-qualified wikilink matches a deeper real slug by path suffix', async () => {
+    // The page lives at vault/notes/struktura; the author wrote the shorter
+    // tail `[[notes/struktura]]`. Suffix matching connects them, while the
+    // basename-only sibling `wiki/struktura` stays excluded.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['vault/notes/struktura', 'wiki/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['vault/notes/struktura']);
+  });
+
+  test('path-qualified self-link is dropped like the bare form', async () => {
+    // `[[notes/struktura]]` written on notes/struktura itself must not
+    // produce a self-loop (same guard as the bare `[[own-tail]]` case).
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['notes/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'notes/struktura', 'See [[notes/struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates).toEqual([]);
+  });
+
   test('bare wikilink resolution does not interfere with DIR_PATTERN wikilinks', async () => {
     // 2b refs (people/alice) take the verb-inferred type;
     // 2c refs (struktura) take wikilink_basename. Same call.
@@ -1164,6 +1235,43 @@ describe('makeResolver — fallback chain', () => {
     // Both should match because basename of `struktura` is `struktura`.
     const out = await r.resolveBasenameMatches!('struktura');
     expect(out.sort()).toEqual(['notes/struktura', 'struktura']);
+  });
+
+  test('opts.sourceId is forwarded to findByTitleFuzzy (twin of #1436 fix)', async () => {
+    // Captures every (name, dirPrefix, minSimilarity, sourceId) call so we
+    // can assert the resolver threads sourceId through. Without the wire-up,
+    // findByTitleFuzzy would be called with sourceId=undefined and the SQL
+    // could return cross-source slug suggestions that the FK filter
+    // downstream silently drops.
+    const calls: Array<{ name: string; dirPrefix?: string; minSimilarity?: number; sourceId?: string }> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy(name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) {
+        calls.push({ name, dirPrefix, minSimilarity, sourceId });
+        return null;
+      },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    await r.resolve('Alice Example', 'people');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(c => c.sourceId === 'src-a')).toBe(true);
+  });
+
+  test('opts.sourceId omitted → findByTitleFuzzy receives undefined (back-compat)', async () => {
+    const calls: Array<{ sourceId?: string }> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy(_name: string, _dirPrefix?: string, _min?: number, sourceId?: string) {
+        calls.push({ sourceId });
+        return null;
+      },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    await r.resolve('Alice Example', 'people');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(c => c.sourceId === undefined)).toBe(true);
   });
 });
 

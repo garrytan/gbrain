@@ -76,6 +76,18 @@ interface DreamArgs {
   drain: boolean;
   /** Drain wallclock budget in seconds. Default 300 (5 min). */
   windowSeconds: number;
+  /**
+   * issue #2860 — `--once`. One-shot bypass of the named `--phase`'s own
+   * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate, for this
+   * invocation only. Never reads or writes config — unlike the old
+   * "toggle enabled true, run, toggle back to false" workaround, a crash
+   * mid-run can't leave any global state stuck. Requires an explicit
+   * `--phase <name>`; bare `--once` is a usage error (there'd be no single
+   * phase to target). Applies only to phases with a config `.enabled` gate
+   * (patterns, synthesize, conversation_facts_backfill, enrich_thin,
+   * skillopt) — a no-op for phases that always run when named directly.
+   */
+  once: boolean;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -105,6 +117,14 @@ function collectFlagValues(args: string[], flag: string): string[] | null {
 
 function parseArgs(args: string[]): DreamArgs {
   const phaseIdx = args.indexOf('--phase');
+  // issue #2860 (Codex P3): captured BEFORE --input/--drain get a chance to
+  // implicitly default `phase` below, so --once's validation can require
+  // the user actually TYPED --phase, not merely that some phase ended up
+  // resolved. Without this, `--input <f> --once` and `--drain --once`
+  // slip past the "explicit --phase required" contract (the derived
+  // `phase` value is already non-null by the time that check runs) and
+  // --once becomes silently ineffective for both.
+  const phaseWasExplicit = phaseIdx !== -1;
   const rawPhase = phaseIdx !== -1 ? args[phaseIdx + 1] : null;
   let phase = rawPhase && (ALL_PHASES as string[]).includes(rawPhase)
     ? (rawPhase as CyclePhase)
@@ -214,6 +234,35 @@ function parseArgs(args: string[]): DreamArgs {
     }
   }
 
+  // issue #2860: --once requires an EXPLICIT single --phase target (typed
+  // by the user, not merely implied by --input/--drain — see
+  // `phaseWasExplicit` above). Bare `--once` (full/default cycle) has no
+  // single phase to bypass the gate for, and force-enabling EVERY
+  // currently-disabled phase at once would be exactly the kind of
+  // surprise-spend risk the flag exists to prevent. An implicit phase
+  // (from --input or --drain) is rejected too: --drain returns before
+  // onceForPhase is ever read, and --input already bypasses the
+  // synthesize gate on its own, so --once would silently do nothing in
+  // either case — reject loudly instead of pretending it worked (Codex
+  // review finding).
+  //
+  // Codex review finding: `--help` must short-circuit BEFORE this exits(2),
+  // matching the "IRON RULE" pinned by test/dream.test.ts's
+  // "--help --source whatever prints help and exits 0" case — `gbrain
+  // dream --help --once` (no --phase) must show help, not a usage error.
+  const once = args.includes('--once');
+  const wantsHelp = args.includes('--help') || args.includes('-h');
+  if (once && !phaseWasExplicit && !wantsHelp) {
+    console.error(
+      '--once requires an explicit --phase <name> (bypasses that one ' +
+      'phase\'s dream.<phase>.enabled / cycle.<phase>.enabled gate for ' +
+      'this run only; never touches config). A phase implied by --input ' +
+      'or --drain does not count — --once would silently do nothing for ' +
+      'those. Usage: gbrain dream --phase <name> --once',
+    );
+    process.exit(2);
+  }
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -229,6 +278,7 @@ function parseArgs(args: string[]): DreamArgs {
     source,
     drain,
     windowSeconds,
+    once,
   };
 }
 
@@ -310,6 +360,17 @@ Options:
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
+  --once              With --phase <name>: run that phase once even if its
+                      own dream.<phase>.enabled / cycle.<phase>.enabled
+                      config gate is false. Never reads or writes config —
+                      unlike toggling the flag on/off around the run, a
+                      crash mid-invocation can't leave it stuck. Applies to
+                      patterns, synthesize, conversation_facts_backfill,
+                      enrich_thin, skillopt; no-op on phases with no such
+                      gate. Requires an EXPLICIT --phase <name> — a phase
+                      implied by --input or --drain does not count (bare
+                      --once, or --once with --input/--drain and no
+                      explicit --phase, is a usage error).
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain). On a
                       postgres/remote brain with no local checkout, the
@@ -353,6 +414,7 @@ Examples:
   gbrain dream
   gbrain dream --dry-run --json
   gbrain dream --phase lint
+  gbrain dream --phase patterns --once   # run once, ignore dream.patterns.enabled=false
   gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
   gbrain dream --phase synthesize --from 2026-04-01 --to 2026-04-25
   0 2 * * * gbrain dream --json         # nightly via cron
@@ -594,6 +656,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    // issue #2860: opts.phase is guaranteed non-null here when opts.once is
+    // set (parseArgs enforces --once requires --phase).
+    onceForPhase: opts.once ? opts.phase! : undefined,
   });
 
   if (opts.json) {

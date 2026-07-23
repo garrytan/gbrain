@@ -21,6 +21,10 @@ import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
+if (skip) {
+  console.log('Skipping E2E JSONB roundtrip tests (DATABASE_URL not set)');
+}
+
 describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
   beforeAll(async () => { await setupDB(); });
   afterAll(async () => { await teardownDB(); });

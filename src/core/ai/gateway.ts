@@ -521,6 +521,20 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
+  // ALSO resolve the four tier models and register them as extended models.
+  // assertTouchpoint's contract (model-resolver.ts) says config-chosen models —
+  // `models.default` and `models.tier.*` included — bypass the native recipe
+  // allowlist, but pre-fix only chat/expansion/embedding/reranker were
+  // registered. A model reachable ONLY through a tier (e.g. `models.tier.deep`
+  // set to an Opus newer than the recipe list) failed `probeChatModel` at call
+  // time and silently degraded think/auto_think to the gather-only stub.
+  // Resolving per-tier also honors `models.default` (it sits above tiers in
+  // the resolveModel chain).
+  const tierModels: string[] = [];
+  for (const tier of ['utility', 'reasoning', 'deep', 'subagent'] as const) {
+    tierModels.push(await resolveModel(engine, { tier, fallback: TIER_DEFAULTS[tier] }));
+  }
+
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
   _modelCache.clear();
   _shrinkState.clear();
@@ -532,6 +546,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
     _config.chat_model,
     _config.reranker_model,
     ...(_config.chat_fallback_chain ?? []),
+    ...tierModels,
   ]) {
     if (m) registerExtendedModel(m);
   }
@@ -584,6 +599,8 @@ function warnRecipesMissingBatchTokens(): void {
     // LiteLLM proxy, llama-server) — they ship without a static cap because
     // the cap depends on a user-launched server. Warning is noise for them.
     if (embedding.no_batch_cap === true) continue;
+    // A declared item-count cap is a real batch cap — no warning needed.
+    if (embedding.max_batch_items !== undefined) continue;
     if (_warnedRecipes.has(recipe.id)) continue;
     _warnedRecipes.add(recipe.id);
     // eslint-disable-next-line no-console
@@ -1321,6 +1338,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'claude-cli':
+      throw new AIConfigError(
+        `claude-cli has no embedding model. Use openai or google for embeddings.`,
+      );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -1502,9 +1523,16 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
   // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
+  const tokenBatches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
+
+  // Hard COUNT cap (e.g. llama-server's "maximum allowed batch size 32").
+  // Token budget can't bound item count, so re-split any oversized batch.
+  const maxBatchItems = embedding?.max_batch_items;
+  const batches = maxBatchItems
+    ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems))
+    : tokenBatches;
 
   const allEmbeddings: Float32Array[] = [];
   let _embedThrew = false;
@@ -1578,6 +1606,23 @@ export function splitByTokenBudget(
   }
   if (current.length > 0) batches.push(current);
 
+  return batches;
+}
+
+/**
+ * Split a batch into sub-batches of at most `maxItems` inputs. Enforces a
+ * hard COUNT cap that the token-budget split can't (many tiny inputs fit
+ * under any token budget). Used for endpoints like llama.cpp's llama-server
+ * that reject requests exceeding their launch batch size.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function capBatchItems(texts: string[], maxItems: number): string[][] {
+  if (maxItems <= 0 || texts.length <= maxItems) return [texts];
+  const batches: string[][] = [];
+  for (let i = 0; i < texts.length; i += maxItems) {
+    batches.push(texts.slice(i, i + maxItems));
+  }
   return batches;
 }
 
@@ -2239,6 +2284,15 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
+    case 'claude-cli': {
+      // The CLI handles its own auth (OAuth session); spawn the subprocess
+      // directly via the same LanguageModelV2 implementation chat uses. There
+      // is no separate expansion path because claude-cli does not declare a
+      // separate expansion touchpoint — but routing here keeps the switch
+      // exhaustive and lets a future expansion touchpoint use the same code.
+      const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
+      return new ClaudeCliLanguageModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2726,6 +2780,15 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
+    }
+    case 'claude-cli': {
+      // The CLI handles its own auth (OAuth session managed by `claude`
+      // login). Subprocess-based LanguageModelV2 dispatches via the recipe
+      // path so per-call routing works: `claude-cli:claude-sonnet-4-6` lands
+      // here, while sibling `litellm:gpt-5.4` continues through the
+      // openai-compatible path below. No env-var switch, no global flag.
+      const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
+      return new ClaudeCliLanguageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).

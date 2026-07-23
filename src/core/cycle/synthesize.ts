@@ -252,6 +252,13 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /**
+   * issue #2860 — `gbrain dream --phase synthesize --once`. Bypasses the
+   * `dream.synthesize.enabled` gate for THIS call only (does NOT bypass
+   * the `session_corpus_dir` not-configured check — there's nothing to
+   * run without a corpus). Never reads or writes config.
+   */
+  once?: boolean;
 }
 
 export async function runPhaseSynthesize(
@@ -285,8 +292,14 @@ export async function runPhaseSynthesize(
         'dream.synthesize.session_corpus_dir is unset');
     }
     if (!opts.inputFile && !config.enabled) {
-      return skipped('not_configured',
-        'dream.synthesize.enabled is explicitly false');
+      if (!opts.once) {
+        return skipped('not_configured',
+          'dream.synthesize.enabled is explicitly false');
+      }
+      process.stderr.write(
+        '[dream] --once: dream.synthesize.enabled is false but ' +
+        '--phase synthesize --once forces this run (config untouched)\n',
+      );
     }
 
     // Cooldown check (skipped for explicit --input / --date / --from / --to runs).
@@ -1041,6 +1054,7 @@ OUTPUT POLICY (ALL of these are required)
 2. Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., \`[ref](people/jane-doe)\` or \`[[people/jane-doe]]\`) to existing brain content. Use the search tool to find existing pages first.
 3. Do NOT write to any path outside the allow-list shown in the put_page schema.
 4. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
+5. Self-contained opening: begin every new page's body with a 2-3 sentence summary that a reader unfamiliar with this transcript could understand on its own, before any quotes or detail. Do not assume the reader has the source conversation for context.
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):

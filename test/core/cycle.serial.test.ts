@@ -21,6 +21,7 @@ let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined;
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
+let orphansOpts: Array<{ sourceId?: string } | undefined> = [];
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
@@ -98,8 +99,9 @@ mock.module('../../src/commands/embed.ts', () => ({
 
 // Mock orphans
 mock.module('../../src/commands/orphans.ts', () => ({
-  findOrphans: async () => {
+  findOrphans: async (_engine: any, opts?: { sourceId?: string }) => {
     orphansCalls++;
+    orphansOpts.push(opts);
     return {
       orphans: [],
       total_orphans: 1,
@@ -148,6 +150,7 @@ beforeEach(() => {
   extractCalls = [];
   embedCalls = [];
   orphansCalls = 0;
+  orphansOpts = [];
 });
 
 // ─── dryRun propagation (regression guards) ────────────────────────
@@ -214,6 +217,11 @@ describe('runCycle — phase selection', () => {
     await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['orphans'] });
     expect(orphansCalls).toBe(1);
     expect(syncCalls.length).toBe(0);
+  });
+
+  test('--phase orphans preserves explicit source scope', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['orphans'], sourceId: 'source-a' });
+    expect(orphansOpts.at(-1)).toEqual({ sourceId: 'source-a' });
   });
 });
 
@@ -499,6 +507,28 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
     expect(syncCalls.at(-1)?.sourceId).toBe('default');
   });
 
+  test('seeded sources row → orphans phase receives matching sourceId', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['alpha', 'alpha', '/tmp/brain-2349-alpha'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-2349-alpha', phases: ['orphans'] });
+    expect(orphansOpts.at(-1)).toEqual({ sourceId: 'alpha' });
+  });
+
+  test('forceGlobalOrphans keeps orphans brain-wide even when brainDir maps to a source', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['global-source', 'global-source', '/tmp/brain-2349-global'],
+    );
+    await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain-2349-global',
+      phases: ['embed', 'orphans', 'purge'],
+      forceGlobalOrphans: true,
+    });
+    expect(orphansOpts.at(-1)).toEqual({});
+  });
+
   test('no matching sources row → performSync receives sourceId=undefined', async () => {
     await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-b' });
     expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
@@ -558,5 +588,70 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
     );
     await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-f' });
     expect(syncCalls.at(-1)?.sourceId).toBe('');
+  });
+});
+
+// ─── issue #2860: --once one-shot phase-enabled bypass (onceForPhase) ─
+//
+// CycleOpts.onceForPhase is deliberately typed as a single CyclePhase (not
+// a boolean) so the override can never leak to a phase other than the one
+// it names — even if a caller passes a wider `phases` array than the CLI
+// does (dream.ts always restricts to `phases: [phase]` when --once is
+// set). This exercises that boundary directly against runCycle, using the
+// real (unmocked) patterns.ts module — cheap because with zero reflections
+// seeded it never reaches an LLM call regardless of the enabled gate.
+describe('runCycle — onceForPhase bypasses only the named phase (issue #2860)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    await sharedEngine.setConfig('dream.patterns.enabled', 'false');
+  });
+
+  afterEach(async () => {
+    // Restore default so later describe blocks in this file (which run
+    // patterns as part of the full ALL_PHASES cycle) aren't affected.
+    await sharedEngine.setConfig('dream.patterns.enabled', 'true');
+  });
+
+  test('onceForPhase matching the requested phase bypasses its disabled gate', async () => {
+    const report = await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain-2860-a',
+      phases: ['patterns'],
+      onceForPhase: 'patterns',
+    });
+    const patternsResult = report.phases.find(p => p.phase === 'patterns');
+    // Bypassed 'disabled' → falls through to the next gate (no reflections
+    // seeded). If the override didn't work, this would read 'disabled'.
+    expect(patternsResult?.status).toBe('skipped');
+    expect((patternsResult?.details as { reason?: string })?.reason).toBe('insufficient_evidence');
+  });
+
+  test('onceForPhase naming a DIFFERENT phase does not leak the bypass', async () => {
+    const report = await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain-2860-b',
+      phases: ['patterns'],
+      onceForPhase: 'synthesize', // mismatched — must NOT bypass patterns' gate
+    });
+    const patternsResult = report.phases.find(p => p.phase === 'patterns');
+    expect(patternsResult?.status).toBe('skipped');
+    expect((patternsResult?.details as { reason?: string })?.reason).toBe('disabled');
+  });
+
+  test('no onceForPhase set → unchanged behavior (still gated)', async () => {
+    const report = await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain-2860-c',
+      phases: ['patterns'],
+    });
+    const patternsResult = report.phases.find(p => p.phase === 'patterns');
+    expect(patternsResult?.status).toBe('skipped');
+    expect((patternsResult?.details as { reason?: string })?.reason).toBe('disabled');
+  });
+
+  test('config is never written by the override', async () => {
+    await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain-2860-d',
+      phases: ['patterns'],
+      onceForPhase: 'patterns',
+    });
+    expect(await sharedEngine.getConfig('dream.patterns.enabled')).toBe('false');
   });
 });

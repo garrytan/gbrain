@@ -1582,6 +1582,73 @@ describe('MinionQueue: Idempotency', () => {
     expect(j2.id).toBe(j1.id);
     expect(j2.data).toEqual({ v: 1 }); // first wins
   });
+
+  test('dead job with idempotency_key allows re-submission', async () => {
+    const j1 = await queue.add('test-synth', { prompt: 'synthesize' }, {
+      idempotency_key: 'dream:synth:test:abc123',
+      max_attempts: 1,
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'dead', finished_at = now() WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('test-synth', { prompt: 'synthesize' }, {
+      idempotency_key: 'dream:synth:test:abc123',
+      max_attempts: 8,
+    });
+    expect(j2.id).not.toBe(j1.id);
+    expect(j2.status).toBe('waiting');
+    const oldRow = await engine.executeRaw<{ idempotency_key: string | null }>(
+      `SELECT idempotency_key FROM minion_jobs WHERE id = $1`,
+      [j1.id]
+    );
+    expect(oldRow[0].idempotency_key).toBeNull();
+  });
+
+  test('cancelled job with idempotency_key allows re-submission', async () => {
+    const j1 = await queue.add('test-synth', {}, {
+      idempotency_key: 'dream:synth:test:cancel',
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'cancelled', finished_at = now() WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('test-synth', {}, {
+      idempotency_key: 'dream:synth:test:cancel',
+    });
+    expect(j2.id).not.toBe(j1.id);
+    expect(j2.status).toBe('waiting');
+  });
+
+  test('completed job with idempotency_key still blocks re-submission', async () => {
+    const j1 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:completed',
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:completed',
+    });
+    expect(j2.id).toBe(j1.id);
+    expect(j2.status).toBe('completed');
+  });
+
+  test('active job with idempotency_key still blocks re-submission', async () => {
+    const j1 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:active',
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'active' WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:active',
+    });
+    expect(j2.id).toBe(j1.id);
+    expect(j2.status).toBe('active');
+  });
 });
 
 // --- v7 child_done auto-post ---

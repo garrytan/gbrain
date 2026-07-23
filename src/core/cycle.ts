@@ -195,8 +195,10 @@ export const ALL_PHASES: CyclePhase[] = [
  *   - `source`: safe to parallelize per source. Sync reads/writes the
  *     one source's rows; extract walks changed slugs.
  *   - `global`: must serialize across the brain. Embed walks all stale
- *     chunks; orphans/purge sweep brain-wide; grade_takes + calibration
- *     aggregate across sources; resolve_symbol_edges walks every chunk.
+ *     chunks; purge sweeps brain-wide; orphans can report a single
+ *     resolved source but still belongs in the serialized global lane;
+ *     grade_takes + calibration aggregate across sources;
+ *     resolve_symbol_edges walks every chunk.
  *   - `mixed`: per-phase decomposition needed before parallelizing.
  *     Synthesize reads the brain-global transcripts dir but writes to
  *     per-source slugs (via subagent allowlist). Patterns reads
@@ -454,6 +456,12 @@ export interface CycleOpts {
    */
   synthBypassDreamGuard?: boolean;
   /**
+   * Force the orphans phase to scan brain-wide even when `brainDir` resolves to
+   * a source. Used by autopilot global maintenance, whose phase set is
+   * intentionally brain-wide.
+   */
+  forceGlobalOrphans?: boolean;
+  /**
    * AbortSignal from the Minions worker (v0.22.1, #403). When aborted
    * (timeout, cancel, lock-loss), runCycle bails between phases and
    * returns a 'failed' report instead of running the next phase. Without
@@ -469,16 +477,39 @@ export interface CycleOpts {
    * + every existing caller).
    *
    * **Note for follow-up waves:** this only scopes the LOCK. Several
-   * cycle phases (`embed`, `orphans`, `purge`, `resolve_symbol_edges`,
-   * `grade_takes`, `calibration_profile`) still operate brain-wide
-   * regardless of sourceId — see the `PHASE_SCOPE` taxonomy. Per-source
-   * cycle locks let two cycles RUN, but the global-scoped phases
-   * inside each will still touch the same rows. Genuine per-source
-   * fan-out requires the deferred TODOs in the plan.
+   * cycle phases (`embed`, `purge`, `resolve_symbol_edges`, `grade_takes`,
+   * `calibration_profile`) still operate brain-wide regardless of sourceId
+   * — see the `PHASE_SCOPE` taxonomy. `orphans` uses the resolved source
+   * for its candidate set when one exists, but it remains in the serialized
+   * global lane for autopilot scheduling. Per-source cycle locks let two
+   * cycles RUN, but the global-scoped phases inside each will still touch
+   * the same rows. Genuine per-source fan-out requires the deferred TODOs
+   * in the plan.
    *
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /**
+   * issue #2860 — one-shot per-invocation bypass of a phase's own
+   * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate. Wired
+   * from `gbrain dream --phase <name> --once`.
+   *
+   * Deliberately typed as the SINGLE named `CyclePhase`, not a boolean —
+   * each gated phase's dispatch block below only honors the override when
+   * `onceForPhase` matches ITS OWN phase name, so the bypass can never leak
+   * to a different phase even if a caller passes a wider `phases` array
+   * than the CLI does (the CLI always restricts to `phases: [phase]`).
+   *
+   * Never reads or writes config — the phase still evaluates its config
+   * gate every call; this only overrides the boolean OUTCOME for that one
+   * call. Applies to: patterns, synthesize, conversation_facts_backfill,
+   * enrich_thin, skillopt (the phases that gate on a `.enabled` config
+   * key read inside the phase's own module). Does NOT apply to
+   * extract_atoms / synthesize_concepts — those are pack-gated via
+   * `packDeclaresPhase`, a different mechanism with its own existing
+   * one-shot escape hatch (`--drain` for extract_atoms).
+   */
+  onceForPhase?: CyclePhase;
   /**
    * Absolute wall-clock deadline (epoch ms) of the enclosing minion job,
    * from `MinionJobContext.deadlineAtMs` (the claim-time `timeout_at`
@@ -1370,10 +1401,10 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
  *  to avoid a static import (purge phase is only loaded in the autopilot path). */
 const SOFT_DELETE_TTL_HOURS_FOR_PURGE = 72;
 
-async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
+async function runPhaseOrphans(engine: BrainEngine, sourceId?: string): Promise<PhaseResult> {
   try {
     const { findOrphans } = await import('../commands/orphans.ts');
-    const result = await findOrphans(engine);
+    const result = await findOrphans(engine, sourceId !== undefined ? { sourceId } : {});
     const count = result.total_orphans;
     // Orphans are a code-smell signal, not a fatal condition. The
     // original `count > 20` cutoff was tuned for small dev brains; on
@@ -1392,8 +1423,10 @@ async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
       summary: `${count} orphan page(s) out of ${result.total_pages} total`,
       details: {
         total_orphans: count,
+        total_linkable: result.total_linkable,
         total_pages: result.total_pages,
         excluded: result.excluded,
+        ...(sourceId !== undefined ? { source_id: sourceId } : {}),
       },
     };
   } catch (e) {
@@ -1457,6 +1490,7 @@ export async function runCycle(
   const cycleSourceId: string | undefined = engine
     ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
     : opts.sourceId;
+  const orphansSourceId = opts.forceGlobalOrphans ? undefined : cycleSourceId;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
@@ -1695,6 +1729,7 @@ export async function runCycle(
           // #1586: scope synthesized writes to the cycle's resolved source
           // (explicit --source wins, else derived from the checkout dir).
           sourceId: cycleSourceId,
+          once: opts.onceForPhase === 'synthesize',
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1898,6 +1933,7 @@ export async function runCycle(
           brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
+          once: opts.onceForPhase === 'patterns',
           deadlineAtMs: opts.deadlineAtMs ?? null,
         }));
         result.duration_ms = duration_ms;
@@ -2114,7 +2150,11 @@ export async function runCycle(
         progress.start('cycle.conversation_facts_backfill');
         const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+          runPhaseConversationFactsBackfill(engine, {
+            dryRun,
+            signal: opts.signal,
+            once: opts.onceForPhase === 'conversation_facts_backfill',
+          }),
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2142,7 +2182,11 @@ export async function runCycle(
         progress.start('cycle.enrich_thin');
         const { runPhaseEnrichThin } = await import('./cycle/enrich-thin.ts');
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseEnrichThin(engine, { dryRun, signal: opts.signal }),
+          runPhaseEnrichThin(engine, {
+            dryRun,
+            signal: opts.signal,
+            once: opts.onceForPhase === 'enrich_thin',
+          }),
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2173,6 +2217,7 @@ export async function runCycle(
           runPhaseSkillopt({
             engine,
             dryRun,
+            once: opts.onceForPhase === 'skillopt',
             ...(opts.signal ? { signal: opts.signal } : {}),
           }),
         );
@@ -2217,7 +2262,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.orphans');
-        const { result, duration_ms } = await timePhase(() => runPhaseOrphans(engine));
+        const { result, duration_ms } = await timePhase(() => runPhaseOrphans(engine, orphansSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

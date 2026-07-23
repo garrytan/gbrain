@@ -1153,7 +1153,11 @@ async function runAutoLink(
 
   // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
   // Issue #972 (codex [P1]): pass sourceId so basename resolution stays
-  // within this page's source — no cross-source basename edges.
+  // within this page's source — no cross-source basename edges. Also scopes
+  // the fuzzy fallback (findByTitleFuzzy) to the same source the put_page is
+  // targeting — without it, cross-source slug suggestions get silently dropped
+  // at the FK filter and the link looks like it failed to resolve. Twin of
+  // #1436's `tryFuzzyMatch` fix.
   const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
   // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
   const globalBasename = await isGlobalBasenameEnabled(engine);

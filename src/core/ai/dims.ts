@@ -244,9 +244,10 @@ export function dimsProviderOptions(
       // configured for a smaller width (e.g. 1536) hard-fail at first embed.
       // Azure/OpenAI-compat embeddings are symmetric — inputType ignored.
       // v0.36.0.0 (D13): same range validation as native-openai path.
-      if (modelId.startsWith('text-embedding-3')) {
-        if (isOpenAITextEmbedding3Model(modelId) && !isValidOpenAITextEmbedding3Dim(modelId, dims)) {
-          const max = maxOpenAITextEmbedding3Dim(modelId)!;
+      const bareModelId = modelId.includes('/') ? modelId.split('/').pop()! : modelId;
+      if (bareModelId.startsWith('text-embedding-3')) {
+        if (isOpenAITextEmbedding3Model(bareModelId) && !isValidOpenAITextEmbedding3Dim(bareModelId, dims)) {
+          const max = maxOpenAITextEmbedding3Dim(bareModelId)!;
           throw new AIConfigError(
             `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
             `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
@@ -261,6 +262,15 @@ export function dimsProviderOptions(
       // silently ignored and the provider returns its default size.
       // Symmetric retrieval — inputType ignored.
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
+        return { openaiCompatible: { dimensions: dims } };
+      }
+      // Qwen3-Embedding family on Ollama (and any other openai-compatible
+      // provider serving it) supports Matryoshka truncation via `dimensions`.
+      // Native sizes: 0.6B=1024, 4B=2560, 8B=4096. Without `dimensions`,
+      // Ollama returns the native size and brains configured for narrower
+      // widths hard-fail with a dim-mismatch error. Pattern match the bare
+      // model name + any `:tag` (e.g. `qwen3-embedding:4b`, `qwen3-embedding:0.6b`).
+      if (modelId === 'qwen3-embedding' || modelId.startsWith('qwen3-embedding:')) {
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric

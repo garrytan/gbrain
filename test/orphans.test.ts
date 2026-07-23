@@ -66,6 +66,10 @@ describe('shouldExclude', () => {
     expect(shouldExclude('templates/meeting-note')).toBe(true);
   });
 
+  test('excludes deny-prefix: _templates/', () => {
+    expect(shouldExclude('_templates/meeting-note')).toBe(true);
+  });
+
   test('excludes deny-prefix: openclaw/config/', () => {
     expect(shouldExclude('openclaw/config/agent')).toBe(true);
   });
@@ -86,10 +90,44 @@ describe('shouldExclude', () => {
     expect(shouldExclude('entities/product-hunt')).toBe(true);
   });
 
+  test('excludes first-segment: skills, dreaming, and daily', () => {
+    expect(shouldExclude('skills/arya/source-check')).toBe(true);
+    expect(shouldExclude('dreaming/light/2026-07-20')).toBe(true);
+    expect(shouldExclude('daily/2026-07-20')).toBe(true);
+    expect(shouldExclude('agent-openclaw/daily/2026-07-20')).toBe(true);
+  });
+
+  test('excludes root date logs and agent workspace conventions', () => {
+    expect(shouldExclude('_brain-conventions')).toBe(true);
+    expect(shouldExclude('2026-07-20')).toBe(true);
+    expect(shouldExclude('2026-07-20-qa-sweep')).toBe(true);
+    expect(shouldExclude('agents/arya/identity')).toBe(true);
+    expect(shouldExclude('agents/arya/memory/dreaming/deep/2026-07-20')).toBe(true);
+  });
+
+  test('excludes generated extracts', () => {
+    expect(shouldExclude('extracts/2026-06-30/takes.proposed/round-single')).toBe(true);
+  });
+
+  test('brain-specific exclusions come from config overrides, not global defaults', () => {
+    // No baked-in defaults for these:
+    expect(shouldExclude('my-private-folder/some-secret-ref.md')).toBe(false);
+    expect(shouldExclude('one-off-fixture-page')).toBe(false);
+    // The per-brain config plane (orphans.exclude_prefixes / exclude_slugs):
+    const overrides = {
+      excludePrefixes: ['my-private-folder/'],
+      excludeSlugs: ['one-off-fixture-page'],
+    };
+    expect(shouldExclude('my-private-folder/some-secret-ref.md', overrides)).toBe(true);
+    expect(shouldExclude('one-off-fixture-page', overrides)).toBe(true);
+    expect(shouldExclude('people/jane-doe', overrides)).toBe(false);
+  });
+
   test('does NOT exclude a normal content page', () => {
     expect(shouldExclude('companies/acme')).toBe(false);
     expect(shouldExclude('people/jane-doe')).toBe(false);
     expect(shouldExclude('projects/gbrain')).toBe(false);
+    expect(shouldExclude('agents/arya/qa-reports/launch-review')).toBe(false);
   });
 
   test('does NOT exclude a page ending with log-like text that is not /log', () => {

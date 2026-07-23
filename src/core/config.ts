@@ -620,7 +620,10 @@ export function loadConfig(): GBrainConfig | null {
  * size the schema and must be stable across engine connect.
  */
 export async function loadConfigWithEngine(
-  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  engine: {
+    getConfig(key: string): Promise<string | null | undefined>;
+    listConfigKeys?(prefix: string): Promise<string[]>;
+  },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -657,11 +660,31 @@ export async function loadConfigWithEngine(
       return undefined;
     }
   }
+  async function dbPrefixMap(prefix: string): Promise<Record<string, string> | undefined> {
+    if (typeof engine.listConfigKeys !== 'function') return undefined;
+    let keys: string[];
+    try {
+      keys = await engine.listConfigKeys(prefix);
+    } catch {
+      return undefined;
+    }
+
+    const out: Record<string, string> = {};
+    for (const key of keys.sort()) {
+      if (!key.startsWith(prefix)) continue;
+      const leaf = key.slice(prefix.length);
+      if (!leaf) continue;
+      const value = await dbStr(key);
+      if (value !== undefined) out[leaf] = value;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
 
   const dbMultimodal = await dbBool('embedding_multimodal');
   const dbMultimodalModel = await dbStr('embedding_multimodal_model');
   const dbOcr = await dbBool('embedding_image_ocr');
   const dbOcrModel = await dbStr('embedding_image_ocr_model');
+  const dbProviderBaseUrls = await dbPrefixMap('provider_base_urls.');
   // v0.36 (D7) — embedding-column registry merge. Stored as JSON string in
   // the config table. Parse + shape-check here; full registry validation
   // (regex on keys, type/dim/provider field shapes) runs in the resolver at
@@ -684,6 +707,15 @@ export async function loadConfigWithEngine(
   }
   if (merged.embedding_image_ocr_model === undefined && dbOcrModel !== undefined) {
     merged.embedding_image_ocr_model = dbOcrModel;
+  }
+  if (dbProviderBaseUrls !== undefined) {
+    const next = { ...(merged.provider_base_urls ?? {}) };
+    for (const [providerId, baseUrl] of Object.entries(dbProviderBaseUrls)) {
+      if (next[providerId] === undefined) next[providerId] = baseUrl;
+    }
+    if (Object.keys(next).length > 0) {
+      merged.provider_base_urls = next;
+    }
   }
   if (merged.embedding_columns === undefined && dbEmbeddingColumns !== undefined) {
     try {
@@ -896,6 +928,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.tier.subagent',
   'models.aliases',
   'models.dream.synthesize',
+  'models.dream.extract_atoms',
+  'cycle.extract_atoms.budget_usd',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
   'models.drift',
