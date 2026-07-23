@@ -55,11 +55,20 @@ function makeGitRepo(commitDate: Date, registry: string[]): { dir: string; head:
 }
 
 let engine: PGLiteEngine;
+let embeddingDim = 1536;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // Schema width follows the module-global gateway state at initSchema time,
+  // which a neighboring test file in this shard process may have changed —
+  // don't hardcode 1536 (see eval-trajectory.test.ts for the full story).
+  const rows = await engine.executeRaw<{ dim: number }>(
+    `SELECT atttypmod AS dim FROM pg_attribute
+      WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND attnum > 0`,
+  );
+  if (Number(rows[0]?.dim) > 0) embeddingDim = Number(rows[0]?.dim);
 }, 30000);
 
 afterAll(async () => {
@@ -240,7 +249,7 @@ describe('computeAllSourceMetrics', () => {
     await engine.putPage('a', { type: 'note', title: 'a', compiled_truth: 'a' });
     await engine.putPage('b', { type: 'note', title: 'b', compiled_truth: 'b' });
     await engine.upsertChunks('a', [
-      { chunk_index: 0, chunk_text: 'one', chunk_source: 'compiled_truth', token_count: 1, embedding: new Float32Array(1536) },
+      { chunk_index: 0, chunk_text: 'one', chunk_source: 'compiled_truth', token_count: 1, embedding: new Float32Array(embeddingDim) },
       { chunk_index: 1, chunk_text: 'two', chunk_source: 'compiled_truth', token_count: 1, embedding: undefined },
     ]);
     await engine.upsertChunks('b', [
