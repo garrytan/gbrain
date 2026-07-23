@@ -185,6 +185,21 @@ export function shouldNudgeAfterSync(status: SyncResult['status']): boolean {
   return status === 'synced' || status === 'first_sync' || status === 'up_to_date';
 }
 
+/**
+ * Deleted pages belong in the public pagesAffected audit surface, but they must
+ * never be sent to post-sync extract/embed/facts workers. A mixed incremental
+ * sync used to do exactly that, producing one misleading "Page not found"
+ * embedding error per legitimate deletion. If a slug is recreated later in
+ * the same sync, callers remove it from deletedSlugs before invoking this
+ * helper.
+ */
+export function filterPostprocessSlugs(
+  pagesAffected: readonly string[],
+  deletedSlugs: ReadonlySet<string>,
+): string[] {
+  return [...new Set(pagesAffected.filter((slug) => !deletedSlugs.has(slug)))];
+}
+
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures' | 'partial';
   fromCommit: string | null;
@@ -2456,6 +2471,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   };
 
   const pagesAffected: string[] = [];
+  // Keep deletions on pagesAffected for the sync audit/result contract, while
+  // excluding them from post-sync extract/embed/facts work.
+  const deletedSlugs = new Set<string>();
   // issue #1939: file paths that imported cleanly this run. The failure-ledger
   // gate clears these so a previously-failing file's `attempts` streak resets
   // on success (consecutive-failure semantics for the auto-skip valve).
@@ -2616,6 +2634,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // slugs (paths in filtered.deleted but with no DB row) so
           // downstream extract/embed don't waste lookups.
           pagesAffected.push(...deleted);
+          for (const slug of deleted) deletedSlugs.add(slug);
           // v0.42.x (#1794): the whole batch is handled (deleted or already
           // gone); checkpoint every path so a resume skips it.
           for (const p of batch) await markCompleted(p);
@@ -2628,6 +2647,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             try {
               await engine.deletePage(slugs[j], deleteScopedOpts);
               pagesAffected.push(slugs[j]);
+              deletedSlugs.add(slugs[j]);
               await markCompleted(batch[j]);
             } catch (perSlugErr) {
               failedFiles.push({
@@ -2655,6 +2675,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         try {
           await engine.deletePage(slug, deleteOpts);
           pagesAffected.push(slug);
+          deletedSlugs.add(slug);
           await markCompleted(path);
         } catch (err) {
           failedFiles.push({
@@ -2755,6 +2776,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         }
       }
       pagesAffected.push(newSlug);
+      deletedSlugs.delete(newSlug);
       await markCompleted(to);
       progress.tick(1, newSlug);
     }
@@ -2955,6 +2977,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
+          deletedSlugs.delete(result.slug);
           // issue #1939: record the file path (not slug) so the gate clears any
           // prior failure-ledger row — success resets the auto-skip attempt streak.
           succeededPaths.push(path);
@@ -3271,6 +3294,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms`,
   });
 
+  const postprocessSlugs = filterPostprocessSlugs(pagesAffected, deletedSlugs);
+
   // Auto-extract links + timeline (cheap CPU, but skip-inline for LARGE syncs).
   // Thread opts.sourceId so the extract phase reconciles edges + timeline
   // entries against the right source — pre-fix (Data R1 HIGH 1) this phase
@@ -3287,20 +3312,20 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the stale sweep scans the whole source, so banked-across-runs pages are
   // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
-  if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+  if (!opts.noExtract && totalChanges > 100 && postprocessSlugs.length > 0) {
     slog(
       `  Large sync: deferring link/timeline extraction. ` +
       `Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' ` +
       `(or let the autopilot cycle's extract phase sweep it).`,
     );
   }
-  if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
+  if (!opts.noExtract && totalChanges <= 100 && postprocessSlugs.length > 0) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('./extract.ts');
       // #774: pages' source_path is git-root-relative, so extract resolves
       // files from gitContextRoot (== repoPath realpath when unscoped).
-      const linksCreated = await extractLinksForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
-      const timelineCreated = await extractTimelineForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
+      const linksCreated = await extractLinksForSlugs(engine, gitContextRoot, postprocessSlugs, extractOpts);
+      const timelineCreated = await extractTimelineForSlugs(engine, gitContextRoot, postprocessSlugs, extractOpts);
       if (linksCreated > 0 || timelineCreated > 0) {
         slog(`  Extracted: ${linksCreated} links, ${timelineCreated} timeline entries`);
       }
@@ -3312,7 +3337,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // Best-effort: a stamp miss just means extract --stale re-sweeps later.
       await stampExtracted(
         engine,
-        pagesAffected.map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
+        postprocessSlugs.map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
       );
     } catch { /* extraction is best-effort */ }
   }
@@ -3325,10 +3350,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // ('conversation'/'transcript'/'therapy'/'call' aren't real
   // PageTypes), (b) a divergent eligibility shape from put_page,
   // and (c) raw extract→insert without dedup/supersede.
-  if (!opts.noExtract && pagesAffected.length > 0 && pagesAffected.length <= 50) {
+  if (!opts.noExtract && postprocessSlugs.length > 0 && postprocessSlugs.length <= 50) {
     const { runFactsBackstop } = await import('../core/facts/backstop.ts');
     const factsSourceId = opts.sourceId ?? 'default';
-    for (const slug of pagesAffected) {
+    for (const slug of postprocessSlugs) {
       try {
         // v0.40 D21: source-scoped getPage. Pre-v0.40 this called
         // engine.getPage(slug) WITHOUT sourceId, then wrote facts under
@@ -3368,14 +3393,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // sync. Non-mismatch errors stay best-effort (rate limits, transient
   // network) — those shouldn't break sync.
   let embedded = 0;
-  if (!noEmbed && pagesAffected.length > 0 && pagesAffected.length <= 100) {
+  if (!noEmbed && postprocessSlugs.length > 0 && postprocessSlugs.length <= 100) {
     try {
       const { runEmbedCore } = await import('./embed.ts');
       const embedOpts = opts.sourceId
-        ? { slugs: pagesAffected, sourceId: opts.sourceId }
-        : { slugs: pagesAffected };
+        ? { slugs: postprocessSlugs, sourceId: opts.sourceId }
+        : { slugs: postprocessSlugs };
       await runEmbedCore(engine, embedOpts);
-      embedded = pagesAffected.length;
+      embedded = postprocessSlugs.length;
     } catch (e: unknown) {
       const { EmbeddingDimMismatchError } = await import('./embed.ts');
       if (e instanceof EmbeddingDimMismatchError) {

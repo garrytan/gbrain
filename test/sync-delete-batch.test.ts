@@ -30,6 +30,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { DELETE_BATCH_SIZE } from '../src/core/engine-constants.ts';
+import { filterPostprocessSlugs } from '../src/commands/sync.ts';
 
 let engine: PGLiteEngine;
 
@@ -213,6 +214,20 @@ describe('engine.resolveSlugsByPaths (single-batch primitive)', () => {
 });
 
 describe('D13 pagesAffected filtering regression', () => {
+  test('deleted slugs remain auditable but never reach post-sync workers', () => {
+    const affected = ['deleted/a', 'updated/b', 'deleted/a', 'added/c'];
+    const deleted = new Set(['deleted/a']);
+
+    expect(filterPostprocessSlugs(affected, deleted)).toEqual(['updated/b', 'added/c']);
+  });
+
+  test('a slug recreated later in the same sync is eligible for post-processing', () => {
+    const deleted = new Set(['recreated']);
+    deleted.delete('recreated');
+
+    expect(filterPostprocessSlugs(['recreated'], deleted)).toEqual(['recreated']);
+  });
+
   test('1000 deletable + 100 ghost paths → deletePages returns 1000', async () => {
     // Smaller scale to stay fast; 100 + 10 ghosts pins the same contract.
     for (let i = 0; i < 100; i++) {
