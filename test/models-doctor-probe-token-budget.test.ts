@@ -154,6 +154,36 @@ describe('models doctor — probe token budget (#3221)', () => {
     expect(capturedMaxOutputTokens).toBe(1024 + PROBE_MAX_OUTPUT_TOKENS);
   });
 
+  test('probe cap widens for a model-scoped budget reached through a recipe alias', async () => {
+    // chat() resolves recipe aliases to the canonical model id before the
+    // model-scoped provider_chat_options lookup. The budget helper must
+    // mirror that: probing via the stale alias claude-sonnet-4-6-20250929
+    // still sees the budget configured under the canonical id.
+    let capturedMaxOutputTokens: number | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      capturedMaxOutputTokens = args.maxOutputTokens;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        'anthropic:claude-sonnet-4-6': { thinking: { type: 'enabled', budgetTokens: 2048 } },
+      },
+      env: { ANTHROPIC_API_KEY: 'sk-fake', OPENAI_API_KEY: 'sk-fake' },
+    });
+
+    const r = await probeModel('anthropic:claude-sonnet-4-6-20250929', 'chat');
+
+    expect(r.status).toBe('ok');
+    expect(capturedMaxOutputTokens).toBe(2048 + PROBE_MAX_OUTPUT_TOKENS);
+  });
+
   test('human output renders ok-probe caveat messages, not only failure messages', () => {
     // runModels needs a live engine, so pin the render branch structurally
     // (same source-text convention as test/models-doctor-embed.test.ts): the

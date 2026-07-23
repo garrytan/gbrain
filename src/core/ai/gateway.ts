@@ -2906,10 +2906,14 @@ function deepMergeRecords(
 export function getConfiguredThinkingBudget(modelStr: string): number | undefined {
   try {
     if (!_config) return undefined;
-    const { providerId, modelId } = parseModelId(modelStr);
+    // Mirror chat()'s resolution (resolveChatProvider → resolveRecipe): map
+    // recipe aliases to the canonical model id BEFORE the model-scoped
+    // provider_chat_options lookup, so a request made under a stale alias
+    // still sees the budget configured under the canonical id.
+    const { parsed, recipe } = resolveRecipe(modelStr);
     const merged: Record<string, any> = {};
-    applyConfiguredChatProviderOptions(merged, _config, providerId, modelId);
-    const budget = merged[providerId]?.thinking?.budgetTokens;
+    applyConfiguredChatProviderOptions(merged, _config, recipe.id, parsed.modelId);
+    const budget = merged[recipe.id]?.thinking?.budgetTokens;
     return typeof budget === 'number' && Number.isFinite(budget) && budget > 0
       ? budget
       : undefined;
