@@ -433,20 +433,25 @@ export interface OperationContext {
    */
   sourceId: string;
   /**
-   * #2561 — federated read scope for UNQUALIFIED local CLI reads.
+   * #2561 / #3242 — federated read scope for UNQUALIFIED reads.
    *
-   * Set ONLY by the local CLI's context builder (src/cli.ts makeContext), and
-   * only when the source resolved via a non-explicit tier (local_path /
-   * brain_default / sole_non_default / seed_default — NOT --source, NOT
-   * GBRAIN_SOURCE, NOT a .gbrain-source dotfile). Contains the resolved
-   * source first, then every other `config.federated = true` source, so an
-   * unqualified `gbrain search "X"` spans federated sources as
-   * docs/guides/multi-source-brains.md promises.
+   * Set ONLY by trusted server-side context builders — never from caller
+   * params — and only when the caller carries no explicit source scope:
+   *   - local CLI (src/cli.ts makeContext) when the source resolved via a
+   *     non-explicit tier (local_path / brain_default / sole_non_default /
+   *     seed_default — NOT --source, NOT GBRAIN_SOURCE, NOT a dotfile);
+   *   - stdio MCP (src/mcp/server.ts) when GBRAIN_SOURCE is unset;
+   *   - HTTP MCP (src/mcp/http-transport.ts) for legacy bearer tokens with
+   *     NO operator-set `permissions.source_id` grant (the historical
+   *     'default' floor). Tokens WITH an explicit grant never widen.
    *
-   * Consumed exclusively by `federatedSearchScope` and ONLY when
-   * `ctx.remote === false` — a remote caller's scope stays governed by
-   * `ctx.auth.allowedSources` / scalar `ctx.sourceId` (source-isolation
-   * invariant, fail-closed).
+   * Contains the resolved source first, then every other
+   * `config.federated = true` source, so an unqualified read/search spans
+   * federated sources as docs/guides/multi-source-brains.md promises.
+   *
+   * Consumed exclusively by `federatedSearchScope`. Fail-closed remains:
+   * a grant (`ctx.auth.allowedSources`) or a per-call `source_id` always
+   * wins, and a context without this field never widens.
    */
   localFederatedSourceIds?: string[];
 }
@@ -565,25 +570,26 @@ export function resolveRequestedScope(
 }
 
 /**
- * #2561 — source scope for the search-shaped read ops (`search`, `query`).
+ * #2561 / #3242 — source scope for the page-visibility read ops (`search`,
+ * `query`, `get_page`, `list_pages`, `resolve_slugs`).
  *
  * Delegates to `resolveRequestedScope` (the single trust+grant resolver), then
- * widens an UNQUALIFIED trusted-local scalar scope to the CLI-computed
- * federated set (`ctx.localFederatedSourceIds`, resolved source first). This is
- * what makes `sources add --federated` mean something for local search: a
- * federated source participates in unqualified `gbrain search "X"` results.
+ * widens an UNQUALIFIED scalar scope to the transport-computed federated set
+ * (`ctx.localFederatedSourceIds`, resolved source first). This is what makes
+ * `sources add --federated` mean something: a federated source participates in
+ * unqualified reads (#3242 — pages ingested into a `federated: true` source
+ * were invisible to get_page/search/list_pages while resolve_slugs leaked them).
  *
  * The expansion NEVER applies when:
- *   - the caller is not strictly trusted-local (`ctx.remote !== false`) —
- *     remote scope stays grant-governed (fail-closed source isolation);
  *   - a per-call `source_id` was passed (explicit wins, including `__all__`);
- *   - the resolver already produced a federated array (OAuth grant);
- *   - the CLI resolved the source from an explicit signal (--source / env /
- *     dotfile) — makeContext leaves `localFederatedSourceIds` unset then.
+ *   - the resolver already produced a federated array (OAuth grant governs);
+ *   - the transport didn't populate `localFederatedSourceIds` (see that
+ *     field's doc: it is only set for callers with NO explicit source scope,
+ *     and never from caller-controlled params — so trust stays fail-closed).
  *
  * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
- * multi-element scope to an error (`resolveCodeIntelScope`), and non-search
- * reads (get_page, get_links, …) keep their long-standing scalar behavior.
+ * multi-element scope to an error (`resolveCodeIntelScope`), and the remaining
+ * scalar reads (get_links, get_chunks, …) keep their long-standing behavior.
  */
 export function federatedSearchScope(
   ctx: OperationContext,
@@ -591,7 +597,6 @@ export function federatedSearchScope(
 ): { sourceId?: string; sourceIds?: string[] } {
   const scope = resolveRequestedScope(ctx, sourceIdParam);
   if (
-    ctx.remote === false &&
     sourceIdParam === undefined &&
     scope.sourceId !== undefined &&
     scope.sourceIds === undefined &&
@@ -748,7 +753,9 @@ const get_page: Operation = {
     // with a federated `allowedSources` grant (and no single ctx.sourceId) got
     // an UNSCOPED exact lookup — a cross-source read of any page by slug. getPage
     // now honors sourceIds[] (both engines), so the same scope closes both paths.
-    const sourceOpts = sourceScopeOpts(ctx);
+    // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
+    // read sees pages in `federated: true` sources, matching search/query.
+    const sourceOpts = federatedSearchScope(ctx);
     const fuzzyScope = sourceOpts;
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
@@ -1503,7 +1510,9 @@ const list_pages: Operation = {
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
-    const scope = sourceScopeOpts(ctx);
+    // #3242: federatedSearchScope so unqualified listing spans federated
+    // sources (same visibility set as search / get_page). Grants still win.
+    const scope = federatedSearchScope(ctx);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
@@ -2737,7 +2746,11 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    // #3242: was fully UNSCOPED — the one read that leaked every source's
+    // slugs to any caller (the reporter's "resolve_slugs sees them but
+    // get_page doesn't" matrix). Route through the same visibility set as
+    // get_page/search: grant > federated set > scalar source.
+    return ctx.engine.resolveSlugs(p.partial as string, federatedSearchScope(ctx));
   },
   scope: 'read',
 };
