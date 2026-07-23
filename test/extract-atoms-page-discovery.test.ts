@@ -395,6 +395,52 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     expect(result.details?.atoms_extracted).toBe(2);
   });
 
+  test('deadline stops before starting another LLM call', async () => {
+    let calls = 0;
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: 'meeting/a', content: 'a', contentHash: 'a1234567890abcde' }],
+      _chat: async (opts) => {
+        calls++;
+        return stubChat('[]')(opts);
+      },
+      deadlineMs: Date.now() - 1,
+    });
+    expect(calls).toBe(0);
+    expect(result.details?.pages_processed).toBe(0);
+    expect(result.details?.stopped_deadline).toBe(true);
+  });
+
+  test('valid empty extraction writes an idempotency receipt; malformed output does not', async () => {
+    await seedPage({ slug: 'meeting/empty', type: 'meeting', content_hash: 'empty1234567890a' });
+    const empty = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _chat: stubChat('[]'),
+    });
+    expect(empty.status).toBe('ok');
+    expect(empty.details?.pages_processed).toBe(1);
+    const receiptRows = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM pages
+        WHERE type = 'extract_receipt'
+          AND frontmatter->>'receipt_kind' = 'atoms_empty'`,
+    );
+    expect(receiptRows[0].count).toBe(1);
+    const second = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _chat: stubChat('[]'),
+    });
+    expect(second.details?.pages_total).toBe(0);
+
+    await seedPage({ slug: 'meeting/malformed', type: 'meeting', content_hash: 'bad001234567890a' });
+    const malformed = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _chat: stubChat('not json'),
+    });
+    expect(malformed.status).toBe('warn');
+    expect((malformed.details?.failures as unknown[]).length).toBe(1);
+  });
+
   test('dry-run skips putPage for atoms', async () => {
     const chat = stubChat(`[{"title":"x","atom_type":"insight","body":"b"}]`);
     const result = await runPhaseExtractAtoms(engine, {
