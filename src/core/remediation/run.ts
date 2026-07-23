@@ -15,7 +15,7 @@ import type { BrainEngine } from '../engine.ts';
 import {
   computeRecommendations,
 } from '../brain-score-recommendations.ts';
-import type { RemediationStep } from '../remediation-step.ts';
+import { selectActiveRecs, type RemediationStep } from '../remediation-step.ts';
 import { loadRecommendationContext } from './context.ts';
 import { computeRemediationPlan } from './plan.ts';
 import type {
@@ -246,6 +246,23 @@ export async function runRemediation(
         continue;
       }
 
+      // Forward-progress guard (loop-termination fix). A step in abortedIds
+      // already reached a terminal NON-completed state earlier this run.
+      // Idempotency keys are content-stable (same job+params → same key) and
+      // queue.add already retried via max_attempts, so re-dispatching returns
+      // the SAME terminal row forever — an infinite loop when the step's metric
+      // never improves (the failure a cancelled job triggers under
+      // onboard --auto). selectActiveRecs below normally keeps aborted ids out
+      // of recs; this is the explicit, locally-checkable backstop. Skip without
+      // re-adding to abortedIds (already present → aborted_count unaffected).
+      if (abortedIds.has(step.id)) {
+        const result: StepResult = { step: stepCount, id: step.id, job_id: null, status: 'skipped_already_aborted' };
+        submitted.push(result);
+        hooks.onStepEnd?.(result);
+        recs.shift();
+        continue;
+      }
+
       hooks.onStepStart?.(stepCount, totalSteps, step);
       try {
         const isProtected = !!step.protected;
@@ -300,12 +317,17 @@ export async function runRemediation(
       }
 
       recs.shift();
-      // D7: scoped recheck — re-compute plan from fresh health snapshot.
-      // The next plan may drop completed steps and re-introduce failed
-      // steps with bumped retry suffix (D1).
+      // D7: scoped recheck — re-compute the plan from a fresh health snapshot.
+      // selectActiveRecs drops completed steps (the metric improved, so the
+      // recommendation no longer fires) AND excludes ids already in abortedIds,
+      // so a terminally-failed/cancelled step is attempted at most once per run
+      // instead of being re-introduced every recheck. The `:r<N>` retry-suffix
+      // replay referenced by older comments was never implemented and is
+      // unnecessary: queue.add already retries via max_attempts, and the next
+      // scheduled run starts fresh (empty abortedIds).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs = selectActiveRecs(computeRecommendations(freshHealth, ctx), abortedIds);
     }
   };
 
@@ -323,7 +345,7 @@ export async function runRemediation(
 
   // Clear checkpoint on a clean run (no budget abort). Failed steps in the
   // submitted set don't disqualify the cleanup — they re-surface on the
-  // next plan with bumped suffixes.
+  // next scheduled run, which starts with a fresh abortedIds set.
   if (!budgetAbort) {
     clearRemediationCheckpoint(planHash);
   }
