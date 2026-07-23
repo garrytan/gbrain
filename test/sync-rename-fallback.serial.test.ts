@@ -35,6 +35,12 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
 const repos: string[] = [];
+// Serial-file requirement: blocked runs write real rows to the sync-failure
+// ledger under $HOME/.gbrain — isolate HOME per test so the operator's actual
+// ledger is never touched (round-3 review; same pattern as
+// sync-failure-ledger.serial.test.ts).
+let tmpHome: string;
+const originalHome = process.env.HOME;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -47,10 +53,14 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-3056-home-'));
+  process.env.HOME = tmpHome;
   await resetPgliteState(engine);
 });
 
 afterEach(() => {
+  if (originalHome) process.env.HOME = originalHome; else delete process.env.HOME;
+  try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
   while (repos.length) {
     const d = repos.pop();
     if (d) rmSync(d, { recursive: true, force: true });
@@ -320,5 +330,42 @@ describe('#3056: failed updateSlug in the sync rename path', () => {
     expect(dana).not.toBeNull();
     expect(dana!.compiled_truth).toContain('Carol is a person.');
     expect(await countPages()).toBe(1);
+
+    // Round-3 review: the successful retry must also close the failure-ledger
+    // row recorded against the destination path — otherwise doctor keeps
+    // warning about a rename that has since converged.
+    const { loadSyncFailures } = await import('../src/core/sync-failure-ledger.ts');
+    const openRows = loadSyncFailures().filter(f => f.path === 'people/dana.md' && f.state === 'open');
+    expect(openRows).toHaveLength(0);
+  });
+
+  test('exotic filename rename (degenerate path-derived slug) converges without blocking', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // A top-level emoji filename derives an EMPTY path slug, so the row's
+    // slug comes from the pinned frontmatter `slug:` and every rename of the
+    // file takes the fallback path (updateSlug rejects the empty new slug).
+    // Round-3 review: this must converge (identity slug kept, source_path
+    // follows the file) instead of blocking the bookmark forever.
+    const md = ['---', 'type: person', 'title: Star Page', 'slug: star-page', '---', '', 'Star is a page.'].join('\n');
+    const repo = mkRepo({ '🌟.md': md });
+    const first = await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+    expect(first.result.status).toBe('first_sync');
+    const before = await engine.executeRaw<{ slug: string; source_path: string | null }>(
+      `SELECT slug, source_path FROM pages WHERE source_id = 'default'`,
+    );
+    expect(before).toHaveLength(1);
+
+    execSync('git mv "🌟.md" "⭐.md"', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename star emoji"', { cwd: repo, stdio: 'pipe' });
+
+    const { result } = await captureErr(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+    expect(result.status).toBe('synced');
+
+    const after = await engine.executeRaw<{ slug: string; source_path: string | null }>(
+      `SELECT slug, source_path FROM pages WHERE source_id = 'default'`,
+    );
+    expect(after).toHaveLength(1);          // no duplicate row
+    expect(after[0].slug).toBe(before[0].slug); // identity slug preserved
+    expect(after[0].source_path).toBe('⭐.md'); // path tracking follows the file
   });
 });
