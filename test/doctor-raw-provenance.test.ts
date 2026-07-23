@@ -85,6 +85,18 @@ describe('rawProvenanceCheck (#1978, warn-only v1)', () => {
     expect(result.status).toBe('ok');
   });
 
+  test('soft-deleted violators are not flagged', async () => {
+    await engine.putPage('wiki/derived/deleted-no-trace', {
+      type: 'note', title: 'Deleted violator', compiled_truth: 'body', timeline: '',
+      frontmatter: { dream_generated: true },
+    });
+    expect((await rawProvenanceCheck(engine as unknown as BrainEngine)).status).toBe('warn');
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = now() WHERE slug = 'wiki/derived/deleted-no-trace'`,
+    );
+    expect((await rawProvenanceCheck(engine as unknown as BrainEngine)).status).toBe('ok');
+  });
+
   test('query failure degrades to warn, never throws', async () => {
     const broken = { executeRaw: async () => { throw new Error('boom'); } } as unknown as BrainEngine;
     const result = await rawProvenanceCheck(broken);

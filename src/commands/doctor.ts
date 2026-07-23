@@ -549,7 +549,8 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
  */
 export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
   const where = `
-        (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
+        p.deleted_at IS NULL
+    AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
     AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
     AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
     AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
