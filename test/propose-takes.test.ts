@@ -169,6 +169,26 @@ describe('parseExtractorOutput', () => {
     const out = parseExtractorOutput(raw);
     expect(out[0]!.domain).toBe('macro');
   });
+
+  test('strips <think> reasoning tags before parsing (MiniMax-M3, DeepSeek-R1)', () => {
+    const raw = '<think>Analyzing the prose... I see several claims.</think>\n\n```json\n[{"claim_text":"X","kind":"take","holder":"brain","weight":0.5}]\n```';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('X');
+  });
+
+  test('strips multiple <think> blocks', () => {
+    const raw = '<think>First thought.</think>\n<tool_call>...</tool_call>\n<think>Second thought.</think>\n\n[{"claim_text":"Y","kind":"bet","holder":"brain","weight":0.7}]';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+  });
+
+  test('handles trailing noise after JSON (leftover fences)', () => {
+    const raw = '<think>done</think>\n```json\n[{"claim_text":"Z","kind":"take","holder":"brain","weight":0.6}]\n```\n';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Z');
+  });
 });
 
 // ─── contentHash ────────────────────────────────────────────────────
