@@ -32,6 +32,7 @@
  */
 
 import { readdirSync, lstatSync, statSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { pathToSlug } from './sync.ts';
@@ -58,6 +59,40 @@ export interface MisroutedResult {
 const DEFAULT_FILE_LIMIT = 10_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const SAMPLE_LIMIT = 5;
+
+/**
+ * Match full-sync's git-aware file universe: tracked files plus untracked
+ * files that are not ignored. Returning null means "not a git worktree" and
+ * lets the caller use the bounded filesystem walk.
+ */
+function listGitVisibleMarkdownFiles(
+  root: string,
+  limit: number,
+  deadlineMs: number,
+): { files: { relPath: string }[]; truncated: boolean } | null {
+  let stdout: string;
+  try {
+    stdout = execFileSync(
+      'git',
+      ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+      { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+  } catch {
+    return null;
+  }
+  const allFiles = stdout
+    .split('\0')
+    .filter(Boolean)
+    .filter((relPath) => (relPath.endsWith('.md') || relPath.endsWith('.mdx')))
+    .filter((relPath) => !relPath.split('/').some((segment) => segment.startsWith('.')))
+    .filter((relPath) => {
+      const name = relPath.split('/').at(-1) ?? '';
+      return !name.startsWith('_');
+    })
+    .map((relPath) => ({ relPath }));
+  const truncated = allFiles.length > limit || Date.now() >= deadlineMs;
+  return { files: allFiles.slice(0, limit), truncated };
+}
 
 /**
  * Walk a directory tree for `.md` + `.mdx` files. Skips dotfiles (`.git`),
@@ -200,7 +235,9 @@ export async function findMisroutedPages(
       walkTruncated = true;
       break;
     }
-    const { files, truncated } = walkMarkdownAndMdxFiles(src.local_path, limit, deadlineMs);
+    const { files, truncated } =
+      listGitVisibleMarkdownFiles(src.local_path, limit, deadlineMs) ??
+      walkMarkdownAndMdxFiles(src.local_path, limit, deadlineMs);
     if (truncated) walkTruncated = true;
     if (files.length === 0) continue;
 

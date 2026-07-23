@@ -20,6 +20,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { findMisroutedPages } from '../src/core/multi-source-drift.ts';
@@ -170,5 +171,20 @@ describe('findMisroutedPages — heuristic correctness', () => {
     const result = await findMisroutedPages(engine, [{ id: 'src-case7', local_path: root }]);
     expect(result.count).toBe(1);
     expect(result.sample[0].slug).toBe('topics/mdx-page');
+  });
+
+  test('case 8: gitignored files are excluded just like full sync', async () => {
+    const root = makeTmpRoot('case8');
+    execFileSync('git', ['init', '-q', root]);
+    seedFile(root, '.gitignore', 'ignored.md\n');
+    seedFile(root, 'ignored.md');
+    seedFile(root, 'visible.md');
+
+    await engine.putPage('ignored', { type: 'concept', title: 'Ignored', compiled_truth: '.' });
+    await engine.putPage('visible', { type: 'concept', title: 'Visible', compiled_truth: '.' });
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-case8', local_path: root }]);
+    expect(result.count).toBe(1);
+    expect(result.sample[0].slug).toBe('visible');
   });
 });
