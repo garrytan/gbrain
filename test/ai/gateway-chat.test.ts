@@ -53,9 +53,16 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('embedding-only providers (voyage, ollama) do NOT declare chat', () => {
+  test('embedding-only providers (voyage) do NOT declare chat', () => {
     expect(getRecipe('voyage')!.touchpoints.chat).toBeUndefined();
-    expect(getRecipe('ollama')!.touchpoints.chat).toBeUndefined();
+  });
+
+  test('ollama declares a zero-cost local chat touchpoint (#1854)', () => {
+    const chat = getRecipe('ollama')!.touchpoints.chat;
+    expect(chat).toBeDefined();
+    expect(chat!.models.length).toBeGreaterThan(0);
+    expect(chat!.cost_per_1m_input_usd).toBe(0);
+    expect(chat!.cost_per_1m_output_usd).toBe(0);
   });
 
   test('openai-compat chat recipes have base_url_default', () => {
@@ -112,8 +119,10 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('assertTouchpoint rejects chat on embedding-only providers with a fix hint', () => {
     expect(() => assertTouchpoint(getRecipe('voyage')!, 'chat', 'voyage-3'))
       .toThrow(AIConfigError);
-    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'nomic-embed-text'))
-      .toThrow(AIConfigError);
+    // ollama gained a chat touchpoint (#1854); openai-compat tier accepts
+    // arbitrary models, so it no longer rejects here.
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'llama3.3'))
+      .not.toThrow();
   });
 
   test('assertTouchpoint rejects unknown native model with the model list in the fix hint', () => {
