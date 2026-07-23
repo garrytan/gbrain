@@ -216,6 +216,8 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('dashboards/_index')).toBe(true);
     expect(shouldExclude('scripts/build')).toBe(true);
     expect(shouldExclude('output/foo')).toBe(true);
+    // #2264 — auto_chronicle event volume (life/events/…) is a machine leaf.
+    expect(shouldExclude('life/events/2026-08-01-abc123')).toBe(true);
   });
 
   test('first-segment exclusions fire', () => {
@@ -245,6 +247,12 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('companies/acme')).toBe(false);
     expect(shouldExclude('writing/post-1')).toBe(false);
     expect(shouldExclude('agents/arya/qa-reports/launch-review')).toBe(false);
+    // #2264 — knowledge classes must STAY in the denominator so real graph decay still trips.
+    expect(shouldExclude('concepts/information-architecture')).toBe(false);
+    expect(shouldExclude('notes/some-note')).toBe(false);
+    expect(shouldExclude('projects/proj-x')).toBe(false);
+    // #2264 — only life/events/ is excluded; human-authored life/diary/ stays counted.
+    expect(shouldExclude('life/diary/2026-08-01-xyz')).toBe(false);
   });
 });
 

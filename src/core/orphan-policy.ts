@@ -33,6 +33,10 @@ const DENY_PREFIXES = [
   '_templates/',
   'openclaw/config/',
   'extracts/',
+  // auto_chronicle event volume (life/events/<day>-<hash>) — machine leaf, no
+  // inbound links by design. Deny-prefix (not whole `life/` first-segment) so
+  // human-authored life/diary/ stays IN the orphan denominator. (#2264)
+  'life/events/',
 ];
 
 const FIRST_SEGMENT_EXCLUSIONS = new Set([
