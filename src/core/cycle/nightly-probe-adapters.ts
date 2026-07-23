@@ -16,6 +16,7 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 /** Arguments accepted by the longmemeval adapter. */
 export interface LongMemEvalProbeArgs {
@@ -53,6 +54,43 @@ export interface CrossModalBatchSummary {
  * autopilot.
  */
 export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promise<void> {
+  // Bun's single-file executable cannot unpack PGLite's WASM/extension
+  // assets from /$bunfs on some Linux hosts. Running the evaluator in-process
+  // then emits unhandled rejections that kill the entire autopilot daemon,
+  // even though the probe wrapper catches the primary error. Isolate that
+  // runtime in a source-mode child when compiled; a probe failure can then
+  // never take maintenance/retrieval offline.
+  if (import.meta.dir.includes('$bunfs')) {
+    const repoRoot = resolve(dirname(args.fixturePath), '..', '..');
+    const bunPath = (() => {
+      const configured = process.env.BUN_INSTALL;
+      if (configured) {
+        const p = join(configured, 'bin', 'bun');
+        if (existsSync(p)) return p;
+      }
+      const homePath = join(process.env.HOME ?? '', '.bun', 'bin', 'bun');
+      return existsSync(homePath) ? homePath : 'bun';
+    })();
+    const child = Bun.spawn([
+      bunPath,
+      join(repoRoot, 'src', 'cli.ts'),
+      'eval',
+      'longmemeval',
+      args.fixturePath,
+      '--output',
+      args.outputPath,
+    ], {
+      cwd: repoRoot,
+      stdout: 'inherit',
+      stderr: 'inherit',
+      env: process.env,
+    });
+    const exitCode = await child.exited;
+    if (exitCode !== 0) {
+      throw new Error(`nightly longmemeval child exited ${exitCode}`);
+    }
+    return;
+  }
   const { runEvalLongMemEval } = await import('../../commands/eval-longmemeval.ts');
   await runEvalLongMemEval([args.fixturePath, '--output', args.outputPath]);
 }
