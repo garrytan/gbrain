@@ -43,6 +43,9 @@ export const HANDLER_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = {
   // few writes. Generous 10-min budget (vs the tight null-default) covers a
   // slow gateway without the 30-min loop budget.
   chronicle_extract: TEN_MIN_MS,
+  // #3207 — facts absorb: same one-page-one-LLM-call shape as
+  // chronicle_extract; a slow gateway must not wall-clock-kill it.
+  'facts-absorb': TEN_MIN_MS,
   // Per-page contextual reindex jobs process chunks sequentially with one
   // rate-leased LLM synopsis call per chunk; large transcript pages need more
   // than the standard 30-min long-job budget.

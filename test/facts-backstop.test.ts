@@ -301,3 +301,36 @@ describe('runFactsBackstop — stub guard routing (v0.34.5)', () => {
     }
   });
 });
+
+describe('#3207 — durable facts-absorb submit uses the handler-timeout map', () => {
+  test('defaultTimeoutMsFor stamps facts-absorb with the 10-min budget (matches chronicle_extract)', async () => {
+    const { defaultTimeoutMsFor } = await import('../src/core/minions/handler-timeouts.ts');
+    expect(defaultTimeoutMsFor('facts-absorb')).toBe(10 * 60 * 1000);
+    expect(defaultTimeoutMsFor('facts-absorb')).toBe(defaultTimeoutMsFor('chronicle_extract'));
+  });
+
+  test('short-lived CLI durable submit inherits the map default (no hardcoded 180s override)', async () => {
+    const { markShortLivedCliProcess, __resetShortLivedCliForTests } =
+      await import('../src/core/facts/cli-process-mode.ts');
+    markShortLivedCliProcess();
+    try {
+      const page = meetingPage();
+      const r = await runFactsBackstop(page, makeCtx());
+      expect(r.mode).toBe('queue');
+      if (r.mode === 'queue') expect(r.enqueued).toBe(true);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT timeout_ms FROM minion_jobs WHERE name = 'facts-absorb' AND data->>'slug' = $1`,
+        [page.slug],
+      );
+      expect(rows.rows.length).toBe(1);
+      // Submit-time stamp comes from HANDLER_DEFAULT_TIMEOUT_MS, not the old
+      // hardcoded 180_000 that overrode any map-only fix (the map's contract:
+      // "An explicit opts.timeout_ms always wins").
+      expect(Number(rows.rows[0].timeout_ms)).toBe(10 * 60 * 1000);
+    } finally {
+      __resetShortLivedCliForTests();
+    }
+  });
+});

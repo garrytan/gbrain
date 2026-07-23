@@ -191,7 +191,9 @@ export async function runFactsBackstop(
             // identical writes (idempotent ON CONFLICT returns existing row).
             idempotency_key: `facts-absorb:${ctx.sourceId}:${parsedPage.slug}:${contentHash}`,
             max_attempts: 3,
-            timeout_ms: 180_000,
+            // No explicit timeout_ms: let MinionQueue.add stamp the
+            // handler-timeouts.ts default (#3207 — a hardcoded 180s here
+            // overrode the map and wall-clock-killed slow-gateway absorbs).
           },
         );
         return { mode: 'queue', enqueued: true, queueDepth: 0 };
