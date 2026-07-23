@@ -43,7 +43,9 @@ function makeTornDownEngine(poolResult: unknown): { engine: PostgresEngine; reco
 
 describe('PostgresEngine non-batch config accessors self-heal (PR #1891 takeover)', () => {
   it('getConfig reconnects + retries a null instance pool, then returns the value', async () => {
-    const { engine, reconnects } = makeTornDownEngine([{ value: 'live-value' }]);
+    // Rows carry `key` too: getConfig's default cached path batch-loads
+    // `SELECT key, value FROM config` (#1694) through the same connRetry.
+    const { engine, reconnects } = makeTornDownEngine([{ key: 'some.key', value: 'live-value' }]);
     expect(await engine.getConfig('some.key')).toBe('live-value');
     expect(reconnects()).toBe(1); // exactly one reconnect closed the gap
   });
