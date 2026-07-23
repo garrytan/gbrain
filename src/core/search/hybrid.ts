@@ -25,6 +25,7 @@ import {
 } from './return-policy.ts';
 import { applyAutocut, type AutocutDecision } from './autocut.ts';
 import { buildRelationalArm } from './relational-recall.ts';
+import { buildEntityMentionArm } from './entity-mention-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
@@ -1052,9 +1053,9 @@ export async function hybridSearch(
   // SIGNAL (Reviewer F2): a SQL error (e.g. a pre-search_vector brain)
   // degrades to no title candidates, but warns once per process so a
   // broken engine arm cannot ship dark.
-  const [keywordResults, titleResults]: [SearchResult[], SearchResult[]] =
+  const [keywordResults, titleResults, entityMentionResults]: [SearchResult[], SearchResult[], SearchResult[]] =
     earlyModality === 'image'
-      ? [[], []]
+      ? [[], [], []]
       : await Promise.all([
           engine.searchKeyword(query, searchOpts),
           engine.searchTitles(query, searchOpts).catch((err: unknown) => {
@@ -1064,6 +1065,11 @@ export async function hybridSearch(
                 `${err instanceof Error ? err.message : String(err)}`,
             );
             return [] as SearchResult[];
+          }),
+          buildEntityMentionArm(engine, query, {
+            sourceId: opts?.sourceId,
+            sourceIds: opts?.sourceIds,
+            limit: innerLimit,
           }),
         ]);
 
@@ -1147,7 +1153,7 @@ export async function hybridSearch(
     // too — an exact-title lookup on a keyless install is precisely where
     // chunk-grain keyword FTS alone fails (D1).
     let noEmbedResults = keywordResults;
-    if (relationalList.length > 0 || titleResults.length > 0) {
+    if (relationalList.length > 0 || titleResults.length > 0 || entityMentionResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
       const noEmbedLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk });
@@ -1386,6 +1392,9 @@ export async function hybridSearch(
       const fk = opts?.rrfK ?? RRF_K;
       const fallbackLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) fallbackLists.push({ list: titleResults, k: fk });
+      if (entityMentionResults.length > 0) {
+        fallbackLists.push({ list: entityMentionResults, k: effectiveRrfK(fk, 3.0) });
+      }
       if (relationalList.length > 0) fallbackLists.push({ list: relationalList, k: fk });
       fallbackResults = rrfFusionWeighted(fallbackLists, detail !== 'high');
     }
@@ -1459,6 +1468,16 @@ export async function hybridSearch(
   // check here. Empty for non-matching queries → pure no-op.
   if (titleResults.length > 0) {
     allLists.push({ list: titleResults, k: keywordK });
+  }
+
+  // Exact entity mentions are lexical evidence: pages linking to people/agy
+  // are direct candidates for a query naming Agy. Fuse at keyword weight so
+  // central-but-unmentioned entity pages cannot dominate purely on backlinks.
+  if (entityMentionResults.length > 0) {
+    // An inbound link to an exact named entity is stronger evidence than a
+    // generic semantic association. Give this arm enough weight to compete
+    // with a candidate appearing in both keyword and vector lists.
+    allLists.push({ list: entityMentionResults, k: effectiveRrfK(baseRrfK, 3.0) });
   }
 
   // v0.43 — relational recall arm (fourth RRF arm), built above so it also

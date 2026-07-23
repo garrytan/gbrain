@@ -756,7 +756,13 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // slugs written by a process without it, and vice versa. Same one-time
 // global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 12;
+//
+// bump 12→16: exact-entity mention recall adds inbound-link pages as an RRF
+// arm. Cached pre-arm results can rank globally central entity pages above the
+// actual meetings/documents about the named entity, so invalidate once. 16
+// supersedes short-lived development builds written before the federated
+// JSONB hydration and trusted-local unscoped fixes.
+export const KNOBS_HASH_VERSION = 16;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -1159,4 +1165,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-
