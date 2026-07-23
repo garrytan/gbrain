@@ -669,29 +669,40 @@ export async function loadConfigWithEngine(
       return undefined;
     }
 
+    const matching = keys.sort().filter((key) => key.startsWith(prefix) && key.length > prefix.length);
+    const values = await Promise.all(matching.map((key) => dbStr(key)));
     const out: Record<string, string> = {};
-    for (const key of keys.sort()) {
-      if (!key.startsWith(prefix)) continue;
-      const leaf = key.slice(prefix.length);
-      if (!leaf) continue;
-      const value = await dbStr(key);
-      if (value !== undefined) out[leaf] = value;
-    }
+    matching.forEach((key, index) => {
+      const value = values[index];
+      if (value !== undefined) out[key.slice(prefix.length)] = value;
+    });
     return Object.keys(out).length > 0 ? out : undefined;
   }
 
-  const dbMultimodal = await dbBool('embedding_multimodal');
-  const dbMultimodalModel = await dbStr('embedding_multimodal_model');
-  const dbOcr = await dbBool('embedding_image_ocr');
-  const dbOcrModel = await dbStr('embedding_image_ocr_model');
-  const dbProviderBaseUrls = await dbPrefixMap('provider_base_urls.');
+  // These keys are independent. Fetch each merge group concurrently so a
+  // remote Postgres brain pays one network wave rather than one round-trip per
+  // setting. The previous serial reads added 10–15 seconds to every query.
+  const [
+    dbMultimodal,
+    dbMultimodalModel,
+    dbOcr,
+    dbOcrModel,
+    dbProviderBaseUrls,
+    dbEmbeddingColumns,
+    dbSearchEmbeddingColumn,
+  ] = await Promise.all([
+    dbBool('embedding_multimodal'),
+    dbStr('embedding_multimodal_model'),
+    dbBool('embedding_image_ocr'),
+    dbStr('embedding_image_ocr_model'),
+    dbPrefixMap('provider_base_urls.'),
+    dbStr('embedding_columns'),
+    dbStr('search_embedding_column'),
+  ]);
   // v0.36 (D7) — embedding-column registry merge. Stored as JSON string in
   // the config table. Parse + shape-check here; full registry validation
   // (regex on keys, type/dim/provider field shapes) runs in the resolver at
   // first use so a malformed DB row doesn't kill engine connect.
-  const dbEmbeddingColumns = await dbStr('embedding_columns');
-  const dbSearchEmbeddingColumn = await dbStr('search_embedding_column');
-
   // DB applies only when env did NOT win. Env presence is detected by the
   // sync loadConfig() already setting the field. For each flag, prefer the
   // existing fileConfig value when defined; otherwise fall through to DB.
@@ -750,13 +761,23 @@ export async function loadConfigWithEngine(
     const n = Number(v);
     return Number.isNaN(n) ? undefined : n;
   }
-  const dbWarnBytes = await dbInt('content_sanity.bytes_warn');
-  const dbBlockBytes = await dbInt('content_sanity.bytes_block');
-  const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
-  const dbSanityDisabled = await dbBool('content_sanity.disabled');
-  const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
-  const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
-  const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
+  const [
+    dbWarnBytes,
+    dbBlockBytes,
+    dbJunkEnabled,
+    dbSanityDisabled,
+    dbJunkDisposition,
+    dbMaxMarkupRatioStr,
+    dbProseCheckEnabled,
+  ] = await Promise.all([
+    dbInt('content_sanity.bytes_warn'),
+    dbInt('content_sanity.bytes_block'),
+    dbBool('content_sanity.junk_patterns_enabled'),
+    dbBool('content_sanity.disabled'),
+    dbStr('content_sanity.junk_disposition'),
+    dbStr('content_sanity.max_markup_ratio'),
+    dbBool('content_sanity.prose_check_enabled'),
+  ]);
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -794,15 +815,27 @@ export async function loadConfigWithEngine(
   // `extract-atoms.ts` and any other consumer that reads the merged config
   // (vs calling `engine.getConfig()` directly) silently misses dream.*
   // config set via `gbrain config set`.
-  const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
-  const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
-  const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
-  const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
-  const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
-  const dbSubagentTimeoutMs = await dbNum('dream.synthesize.subagent_timeout_ms');
-  const dbSubagentWaitTimeoutMs = await dbNum('dream.synthesize.subagent_wait_timeout_ms');
-  const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
-  const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
+  const [
+    dbSessionCorpusDir,
+    dbMeetingTranscriptsDir,
+    dbVerdictModel,
+    dbMaxPromptTokens,
+    dbMaxChunksPerTranscript,
+    dbSubagentTimeoutMs,
+    dbSubagentWaitTimeoutMs,
+    dbLookbackDays,
+    dbMinEvidence,
+  ] = await Promise.all([
+    dbStr('dream.synthesize.session_corpus_dir'),
+    dbStr('dream.synthesize.meeting_transcripts_dir'),
+    dbStr('dream.synthesize.verdict_model'),
+    dbInt('dream.synthesize.max_prompt_tokens'),
+    dbInt('dream.synthesize.max_chunks_per_transcript'),
+    dbNum('dream.synthesize.subagent_timeout_ms'),
+    dbNum('dream.synthesize.subagent_wait_timeout_ms'),
+    dbInt('dream.patterns.lookback_days'),
+    dbInt('dream.patterns.min_evidence'),
+  ]);
 
   const existingDream = merged.dream ?? {};
   const existingSynth = existingDream.synthesize ?? {};

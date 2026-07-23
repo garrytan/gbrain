@@ -22,7 +22,7 @@ const EVIDENCE_STOPWORDS = new Set([
 ]);
 
 export function extractEntityAnchors(query: string): string[] {
-  const tokens = query.match(/[\p{L}\p{N}][\p{L}\p{N}._'-]*/gu) ?? [];
+  const tokens: string[] = query.match(/[\p{L}\p{N}][\p{L}\p{N}._'-]*/gu) ?? [];
   const out: string[] = [];
   for (const token of tokens) {
     const lower = token.toLocaleLowerCase();

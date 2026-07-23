@@ -82,4 +82,24 @@ describe('embedQueryBounded — query-embed deadline', () => {
     expect(out).toBeInstanceOf(Float32Array);
     expect(out.length).toBe(1024);
   });
+
+  test('disables SDK retries and does not retry a failed provider in one search', async () => {
+    let calls = 0;
+    let observedMaxRetries: number | undefined;
+    __setEmbedTransportForTests(async (opts: any) => {
+      calls++;
+      observedMaxRetries = opts.maxRetries;
+      const err = new Error('Your project has exceeded its monthly spending cap') as Error & { status: number };
+      err.status = 429;
+      throw err;
+    });
+    const dl = makeQueryEmbedDeadline(2000);
+
+    await expect(embedQueryBounded('q', undefined, dl)).rejects.toThrow('spending cap');
+    await expect(embedQueryBounded('q again', undefined, dl)).rejects.toThrow('unavailable');
+
+    expect(observedMaxRetries).toBe(0);
+    expect(calls).toBe(1);
+    expect(dl.failed).toBe(true);
+  });
 });

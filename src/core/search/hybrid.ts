@@ -12,6 +12,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
+import type { GBrainConfig } from '../config.ts';
+import type { ResolveSearchModeInput } from './mode.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
@@ -802,6 +804,10 @@ export interface HybridSearchOpts extends SearchOpts {
    * public contract.
    */
   _telemetryCacheStatus?: 'miss' | 'disabled';
+  /** INTERNAL — outer cached wrapper's already-loaded DB/file config. */
+  _mergedConfig?: GBrainConfig | null;
+  /** INTERNAL — outer cached wrapper's already-loaded search mode settings. */
+  _modeInput?: ResolveSearchModeInput;
 }
 
 /**
@@ -831,6 +837,8 @@ export interface QueryEmbedDeadline {
   signal: AbortSignal;
   /** Absolute wall-clock deadline (ms epoch) — shared so a second embed sees the elapsed budget. */
   deadlineAt: number;
+  /** A failed provider is not retried again inside the same search request. */
+  failed?: boolean;
 }
 
 export function makeQueryEmbedDeadline(ms = QUERY_EMBED_TIMEOUT_MS): QueryEmbedDeadline {
@@ -850,7 +858,17 @@ export async function embedQueryBounded(
   embedOpts: { embeddingModel?: string; dimensions?: number } | undefined,
   dl: QueryEmbedDeadline,
 ): Promise<Float32Array> {
-  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: dl.signal });
+  if (dl.failed) {
+    throw new Error('query embedding unavailable for this search request');
+  }
+  const p = embedQuery(text, {
+    ...(embedOpts ?? {}),
+    abortSignal: dl.signal,
+    // Search has a bounded fallback. SDK retries only amplify permanent
+    // quota/config failures and make an otherwise healthy graph/FTS query
+    // appear hung.
+    maxRetries: 0,
+  });
   p.catch(() => { /* swallow the loser's late rejection */ });
   // Floor the budget so a healthy embed isn't starved when the shared absolute
   // deadline was mostly consumed by prior work (codex). Still bounded overall.
@@ -864,6 +882,9 @@ export async function embedQueryBounded(
   });
   try {
     return await Promise.race([p, deadline]);
+  } catch (err) {
+    dl.failed = true;
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -884,7 +905,7 @@ export async function hybridSearch(
   // per-mode evals would not test production search if modes lived only in
   // the wrapper. See `[CDX-5+6]` in the plan.
   const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
-  const modeInput = await loadSearchModeConfig(engine);
+  const modeInput = opts?._modeInput ?? await loadSearchModeConfig(engine);
   const resolvedMode = resolveSearchMode({
     // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
     // only passes this for trusted/local callers; remote callers leave it
@@ -925,7 +946,9 @@ export async function hybridSearch(
   // Failing cfg load (pre-config brain, mid-migration, no engine.getConfig)
   // falls through to the file-plane sync loadConfig() — same shape, just
   // misses DB-plane overrides.
-  const mergedCfg = await loadConfigWithEngine(engine).catch(() => null);
+  const mergedCfg = opts?._mergedConfig !== undefined
+    ? opts._mergedConfig
+    : await loadConfigWithEngine(engine).catch(() => null);
   const cfgForColumn = mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? null;
   const resolvedCol = cfgForColumn
     ? resolveEmbeddingColumn(opts, cfgForColumn)
@@ -1157,6 +1180,9 @@ export async function hybridSearch(
       const fk = opts?.rrfK ?? RRF_K;
       const noEmbedLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk });
+      if (entityMentionResults.length > 0) {
+        noEmbedLists.push({ list: entityMentionResults, k: effectiveRrfK(fk, 3.0) });
+      }
       if (relationalList.length > 0) noEmbedLists.push({ list: relationalList, k: fk });
       noEmbedResults = rrfFusionWeighted(noEmbedLists, detailResolved !== 'high');
     }
@@ -1388,7 +1414,7 @@ export async function hybridSearch(
     // answers survive even when vector is unavailable. The title arm fuses
     // here too (same rationale as the no-embedding-provider path — D1).
     let fallbackResults = keywordResults;
-    if (relationalList.length > 0 || titleResults.length > 0) {
+    if (relationalList.length > 0 || titleResults.length > 0 || entityMentionResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
       const fallbackLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) fallbackLists.push({ list: titleResults, k: fk });
@@ -1917,6 +1943,11 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
+    // The wrapper has already loaded these live settings to decide cache
+    // scope/knobs. Reuse the exact same snapshot in the inner search instead
+    // of repeating dozens of remote config round-trips.
+    _mergedConfig: mergedCfgCached,
+    _modeInput: modeInputForCache,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,

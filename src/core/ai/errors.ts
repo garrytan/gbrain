@@ -50,6 +50,18 @@ export function normalizeAIError(err: unknown, context?: string): AIServiceError
   const msg = anyErr?.message ?? String(err);
   const ctxPrefix = context ? `[${context}] ` : '';
 
+  // Providers commonly report an exhausted account/project spend cap as
+  // HTTP 429. That is not a transient rate limit: retrying the same request
+  // cannot succeed until billing or the cap changes. Classify it before the
+  // generic 429 path so query search can fall back immediately.
+  if (/\b(?:monthly\s+)?spend(?:ing)?\s+cap\b|\bbilling\s+(?:quota|limit)\b/i.test(msg)) {
+    return new AIConfigError(
+      `${ctxPrefix}${msg}`,
+      'Increase the provider billing/spending cap or configure a different model.',
+      err,
+    );
+  }
+
   // 4xx (except 429) = config-level, non-retryable
   if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
     return new AIConfigError(

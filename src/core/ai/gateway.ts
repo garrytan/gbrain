@@ -1778,7 +1778,12 @@ export async function embedOne(text: string): Promise<Float32Array> {
  */
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
+  opts?: {
+    embeddingModel?: string;
+    dimensions?: number;
+    abortSignal?: AbortSignal;
+    maxRetries?: number;
+  },
 ): Promise<Float32Array> {
   const [v] = await embed([text], {
     inputType: 'query',
@@ -1788,6 +1793,10 @@ export async function embedQuery(
     // can be bounded BELOW the CLI force-exit; composes with the gateway embed
     // default via withDefaultTimeout (shorter wins).
     abortSignal: opts?.abortSignal,
+    // Query search already owns a wall-clock deadline and a deterministic
+    // keyword/graph fallback. Let that caller disable SDK retries so a
+    // permanent quota/config failure does not stall every search 3×.
+    maxRetries: opts?.maxRetries,
   });
   return v;
 }
