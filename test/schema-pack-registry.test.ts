@@ -13,6 +13,7 @@ import {
   EXTENDS_DEPTH_WARN,
   ExtendsChainTooDeepError,
   resolvePack,
+  PackDependencyCycleError,
   _resetPackCacheForTests,
 } from '../src/core/schema-pack/registry.ts';
 import type { SchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
@@ -76,6 +77,69 @@ describe('resolvePack — happy path', () => {
     const ra = await resolvePack(a, noop);
     const rb = await resolvePack(b, noop);
     expect(ra.identity).not.toBe(rb.identity);
+  });
+
+  test('merges extends chain parent-first with child overrides', async () => {
+    const parent = makeManifest('parent');
+    parent.page_types = [{
+      name: 'person', primitive: 'entity', path_prefixes: ['people/'],
+      aliases: [], extractable: true, expert_routing: true,
+    }];
+    parent.link_types = [{ name: 'knows', inverse: 'known_by' }];
+    parent.filing_rules = [{ kind: 'person', directory: 'people/', examples: [] }];
+    const child = makeManifest('child', 'parent');
+    child.page_types = [
+      {
+        name: 'person', primitive: 'entity', path_prefixes: ['humans/'],
+        aliases: [], extractable: true, expert_routing: true,
+      },
+      {
+        name: 'atom', primitive: 'concept', path_prefixes: ['atoms/'],
+        aliases: [], extractable: false, expert_routing: false,
+      },
+    ];
+    child.phases = ['extract_atoms'];
+
+    const resolved = await resolvePack(child, chainLoader({ parent }));
+    expect(resolved.manifest.page_types.map(x => x.name)).toEqual(['person', 'atom']);
+    expect(resolved.manifest.page_types.find(x => x.name === 'person')?.path_prefixes).toEqual(['humans/']);
+    expect(resolved.manifest.link_types.map(x => x.name)).toContain('knows');
+    expect(resolved.manifest.filing_rules.map(x => x.kind)).toContain('person');
+    expect(resolved.manifest.phases).toEqual(['extract_atoms']);
+  });
+
+  test('borrow_from imports only selected types and their filing rules, never phases', async () => {
+    const borrowed = makeManifest('borrowed');
+    borrowed.page_types = [
+      {
+        name: 'atom', primitive: 'concept', path_prefixes: ['atoms/'],
+        aliases: [], extractable: false, expert_routing: false,
+      },
+      {
+        name: 'private-type', primitive: 'annotation', path_prefixes: ['private/'],
+        aliases: [], extractable: false, expert_routing: false,
+      },
+    ];
+    borrowed.filing_rules = [
+      { kind: 'atom', directory: 'atoms/', examples: [] },
+      { kind: 'private-type', directory: 'private/', examples: [] },
+    ];
+    borrowed.phases = ['extract_atoms'];
+    const child = makeManifest('child');
+    child.borrow_from = [{ pack: 'borrowed', types: ['atom'] }];
+
+    const resolved = await resolvePack(child, chainLoader({ borrowed }));
+    expect(resolved.manifest.page_types.map(x => x.name)).toEqual(['atom']);
+    expect(resolved.manifest.filing_rules.map(x => x.kind)).toEqual(['atom']);
+    expect(resolved.manifest.phases).toEqual([]);
+  });
+
+  test('rejects cycles that cross borrow_from dependencies', async () => {
+    const a = makeManifest('a');
+    const b = makeManifest('b');
+    a.borrow_from = [{ pack: 'b', types: [] }];
+    b.borrow_from = [{ pack: 'a', types: [] }];
+    await expect(resolvePack(a, chainLoader({ a, b }))).rejects.toBeInstanceOf(PackDependencyCycleError);
   });
 });
 
