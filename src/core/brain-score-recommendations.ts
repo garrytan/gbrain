@@ -400,8 +400,12 @@ function pickMax(current: number, max: number, status: RemediationStatus | undef
 
 // ---------------------------------------------------------------------
 // Idempotency key construction (D9 — content-hash, no time-slot).
-// Same params produce the same key across runs. Failed-row replay
-// appends `:r<N>` (caller responsibility — handled by --remediate loop).
+// Same params produce the same key across runs (exactly-once dedup via the
+// queue's unique partial index). The --remediate loop attempts each step at
+// most once per run and excludes terminally-failed ids from later rechecks
+// (selectActiveRecs in remediation-step.ts); it does NOT mutate this key. The
+// `:r<N>` failed-row replay suffix was designed but never implemented and is
+// unnecessary given queue-level max_attempts.
 // ---------------------------------------------------------------------
 
 function idemKey(source: string, job: string, params: Record<string, unknown>): string {
