@@ -244,9 +244,10 @@ export function dimsProviderOptions(
       // configured for a smaller width (e.g. 1536) hard-fail at first embed.
       // Azure/OpenAI-compat embeddings are symmetric — inputType ignored.
       // v0.36.0.0 (D13): same range validation as native-openai path.
-      if (modelId.startsWith('text-embedding-3')) {
-        if (isOpenAITextEmbedding3Model(modelId) && !isValidOpenAITextEmbedding3Dim(modelId, dims)) {
-          const max = maxOpenAITextEmbedding3Dim(modelId)!;
+      const bareModelId = modelId.includes('/') ? modelId.split('/').pop()! : modelId;
+      if (bareModelId.startsWith('text-embedding-3')) {
+        if (isOpenAITextEmbedding3Model(bareModelId) && !isValidOpenAITextEmbedding3Dim(bareModelId, dims)) {
+          const max = maxOpenAITextEmbedding3Dim(bareModelId)!;
           throw new AIConfigError(
             `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
             `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
