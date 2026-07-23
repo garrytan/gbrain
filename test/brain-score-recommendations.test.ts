@@ -119,13 +119,12 @@ describe('computeRecommendations', () => {
     expect(recs.find((r) => r.id === 'embed.stale')).toBeUndefined();
   });
 
-  test('stale pages + dead links produce sync + backlinks + extract', () => {
+  test('extraction lag + dead links produce sync + backlinks + extract', () => {
     const health = makeHealth({
-      stale_pages: 25,
       dead_links: 8,
       brain_score: 70,
     });
-    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true, extractionLagPages: 25 });
     const ids = recs.map((r) => r.id);
     expect(ids).toContain('sync.repo');
     expect(ids).toContain('backlinks.fix');
@@ -133,18 +132,17 @@ describe('computeRecommendations', () => {
   });
 
   test('extract.all depends on sync.repo (D14: stable ids)', () => {
-    const health = makeHealth({ stale_pages: 10 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    const health = makeHealth();
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true, extractionLagPages: 10 });
     const extract = recs.find((r) => r.id === 'extract.all');
     expect(extract?.depends_on).toContain('sync.repo');
   });
 
-  test('embed.stale depends on sync.repo when sync also needed', () => {
+  test('embed.stale depends on sync.repo when extraction also needed', () => {
     const health = makeHealth({
-      stale_pages: 10,
       missing_embeddings: 100,
     });
-    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true, extractionLagPages: 10 });
     const embed = recs.find((r) => r.id === 'embed.stale');
     expect(embed?.depends_on).toContain('sync.repo');
   });
@@ -159,9 +157,9 @@ describe('computeRecommendations', () => {
   test('severity ordering: critical before high before medium', () => {
     const health = makeHealth({
       missing_embeddings: 100,  // critical
-      stale_pages: 80,          // high
     });
-    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    // extractionLagPages > 50 → sync.repo fires at 'high' severity.
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true, extractionLagPages: 80 });
     const critIdx = recs.findIndex((r) => r.severity === 'critical');
     const highIdx = recs.findIndex((r) => r.severity === 'high');
     expect(critIdx).toBeLessThan(highIdx);
@@ -170,11 +168,10 @@ describe('computeRecommendations', () => {
   // D6 #5 — THE critical regression test for the agent contract.
   test('D6 #5: determinism — same input twice produces identical output', () => {
     const health = makeHealth({
-      stale_pages: 10,
       missing_embeddings: 50,
       dead_links: 3,
     });
-    const ctx = { repoPath: '/brain', embeddingProviderConfigured: true, sourceId: 'default' };
+    const ctx = { repoPath: '/brain', embeddingProviderConfigured: true, sourceId: 'default', extractionLagPages: 10 };
     const run1 = computeRecommendations(health, ctx);
     const run2 = computeRecommendations(health, ctx);
     expect(JSON.stringify(run1)).toBe(JSON.stringify(run2));
