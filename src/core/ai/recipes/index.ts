@@ -19,6 +19,7 @@ import { together } from './together.ts';
 import { llamaServer } from './llama-server.ts';
 import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
+import { dashscopeRerank } from './dashscope-rerank.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
@@ -42,6 +43,7 @@ const ALL: Recipe[] = [
   llamaServerReranker,
   minimax,
   dashscope,
+  dashscopeRerank,
   zhipu,
   azureOpenAI,
   zeroentropyai,
