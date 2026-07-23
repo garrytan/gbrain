@@ -173,12 +173,14 @@ describe('issue #972 — DB-source (gbrain extract links --source db)', () => {
   });
 
   test('flag ON → path-qualified wikilink outside DIR_PATTERN resolves via DB path', async () => {
-    // `[[notes/struktura]]` — `notes` is not in DIR_PATTERN, so the ref
-    // reaches the generic pass with its dirname intact. Regression: the DB
-    // path queried the basename index with the raw literal (which is keyed
-    // by final segments only), so path-qualified wikilinks outside
-    // DIR_PATTERN silently produced zero edges while the FS path resolved
-    // the identical content.
+    // `[[notes/struktura]]` — `notes` is not in DIR_PATTERN. Regression:
+    // path-qualified wikilinks outside DIR_PATTERN silently produced zero
+    // edges via the DB path while the FS path resolved the identical
+    // content. Post-#1493 the written target IS a real slug, so the any-dir
+    // exact-path pass resolves it first (whitelisted-wikilink treatment:
+    // verb-inferred type, markdown provenance); the #2866 basename/suffix
+    // pass stays the fallback for deeper real slugs (unit-tested in
+    // test/link-extraction.test.ts).
     await engine.putPage('notes/struktura', {
       type: 'concept' as any, title: 'Struktura Notes',
       compiled_truth: '', timeline: '',
@@ -194,14 +196,15 @@ describe('issue #972 — DB-source (gbrain extract links --source db)', () => {
     const outLinks = await engine.getLinks('concepts/knowledge-graph');
     const strk = outLinks.find(l => l.to_slug === 'notes/struktura');
     expect(strk).toBeDefined();
-    expect(strk!.link_type).toBe('wikilink_basename');
-    expect(strk!.link_source).toBe('wikilink-resolved');
+    expect(strk!.link_source).toBe('markdown');
   });
 
   test('path-qualified wikilink never attaches to a basename-only sibling', async () => {
     // Both notes/struktura and wiki/struktura exist. The author wrote
     // `[[notes/struktura]]` — the written path must exclude wiki/struktura
-    // (a bare `[[struktura]]` would legitimately match both).
+    // (a bare `[[struktura]]` would legitimately match both). Post-#1493
+    // the exact-path pass resolves the existing slug directly; either way
+    // the sibling must never get an edge.
     await engine.putPage('notes/struktura', {
       type: 'concept' as any, title: 'Struktura Notes',
       compiled_truth: '', timeline: '',
@@ -219,10 +222,9 @@ describe('issue #972 — DB-source (gbrain extract links --source db)', () => {
     await runExtract(engine, ['links', '--source', 'db']);
 
     const outLinks = await engine.getLinks('concepts/x');
-    const basenameLinks = outLinks
-      .filter(l => l.link_type === 'wikilink_basename')
-      .map(l => l.to_slug);
-    expect(basenameLinks).toEqual(['notes/struktura']);
+    const targets = outLinks.map(l => l.to_slug);
+    expect(targets).toContain('notes/struktura');
+    expect(targets).not.toContain('wiki/struktura');
   });
 
   test('flag OFF → no basename edges via DB path (back-compat)', async () => {

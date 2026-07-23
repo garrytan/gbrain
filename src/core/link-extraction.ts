@@ -604,6 +604,42 @@ export async function extractPageLinks(
   // matching can, so unlike global_basename this needs no opt-in.
   const anyDirExactPath = opts.anyDirExactPath !== false;
 
+  // Issue #972 + #2866: global-basename resolution, shared by the generic
+  // `[[bare-name]]` pass and (as a fallback) the any-dir exact-path pass.
+  // The literal may be path-qualified (`[[notes/struktura]]`). The FS path
+  // (resolveSlugAll) strips the dirname before its basename lookup, so this
+  // path queries by the final segment, then uses the written path as a
+  // disambiguation filter (the analogue of the FS ancestor walk honoring the
+  // written path): a match must end with the literal, so `[[notes/struktura]]`
+  // can resolve to `vault/notes/struktura` but never to `wiki/struktura`.
+  // Returns true when it emitted (or self-loop-dropped) at least one match.
+  const resolveViaBasename = async (ref: EntityRef): Promise<boolean> => {
+    if (!opts.globalBasename || typeof resolver.resolveBasenameMatches !== 'function') {
+      return false;
+    }
+    const slashIdx = ref.slug.lastIndexOf('/');
+    const basename = slashIdx === -1 ? ref.slug : ref.slug.slice(slashIdx + 1);
+    let matches = await resolver.resolveBasenameMatches(basename);
+    if (slashIdx !== -1) {
+      matches = matches.filter(m => m === ref.slug || m.endsWith(`/${ref.slug}`));
+    }
+    if (matches.length === 0) return false;
+    const idx = content.indexOf(ref.slug);
+    const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
+    for (const matched of matches) {
+      // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
+      // resolves back to itself — drop the self-loop.
+      if (matched === slug) continue;
+      candidates.push({
+        targetSlug: matched,
+        linkType: WIKILINK_BASENAME_LINK_TYPE,
+        context,
+        linkSource: 'wikilink-resolved',
+      });
+    }
+    return true;
+  };
+
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
     // Issue #972: refs from the generic `[[bare-name]]` pass carry the
@@ -621,36 +657,7 @@ export async function extractPageLinks(
       // text inside `[[...]]` before any `|`), NOT the display alias
       // (ref.name = match[2]). `[[struktura|the project]]` must resolve
       // `struktura`, not "the project". The display text is for context only.
-      //
-      // The literal may be path-qualified (`[[notes/struktura]]`). The FS
-      // path (resolveSlugAll) strips the dirname before its basename lookup,
-      // but this path passed the raw literal to an index keyed by final
-      // segments only — so every slash-containing wikilink outside
-      // DIR_PATTERN silently resolved to nothing. Query by the final
-      // segment, then use the written path as a disambiguation filter
-      // (the analogue of the FS ancestor walk honoring the written path):
-      // a match must end with the literal, so `[[notes/struktura]]` can
-      // resolve to `vault/notes/struktura` but never to `wiki/struktura`.
-      const slashIdx = ref.slug.lastIndexOf('/');
-      const basename = slashIdx === -1 ? ref.slug : ref.slug.slice(slashIdx + 1);
-      let matches = await resolver.resolveBasenameMatches(basename);
-      if (slashIdx !== -1) {
-        matches = matches.filter(m => m === ref.slug || m.endsWith(`/${ref.slug}`));
-      }
-      if (matches.length === 0) continue;
-      const idx = content.indexOf(ref.slug);
-      const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
-      for (const matched of matches) {
-        // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
-        // resolves back to itself — drop the self-loop.
-        if (matched === slug) continue;
-        candidates.push({
-          targetSlug: matched,
-          linkType: WIKILINK_BASENAME_LINK_TYPE,
-          context,
-          linkSource: 'wikilink-resolved',
-        });
-      }
+      await resolveViaBasename(ref);
       continue;
     }
     // Issue #1493: path-shaped wikilink outside the DIR_PATTERN whitelist.
@@ -658,24 +665,40 @@ export async function extractPageLinks(
     // match, no fuzzing) and then treat it exactly like a whitelisted
     // wikilink (verb-inferred type, linkSource 'markdown', reconcilable).
     if (ref.exactPath) {
-      if (!anyDirExactPath) continue; // gated off → legacy silent drop
+      if (!anyDirExactPath) {
+        // Gated off → legacy behavior: the #2866 basename/suffix path when
+        // global_basename is on, silent drop otherwise.
+        await resolveViaBasename(ref);
+        continue;
+      }
       // Qualified refs ([[src:janus/foo]]) pin a target in a possibly
       // different source; the resolver's snapshot is scoped to THIS source,
       // so existence is left to the caller's cross-source endpoint check —
       // the same dead-link protection whitelisted qualified refs get.
-      if (ref.sourceId == null && typeof resolver.slugExists === 'function') {
-        if (!(await resolver.slugExists(ref.slug))) {
-          if (!wikilinkUnresolvedSeen.has(ref.slug)) {
-            wikilinkUnresolvedSeen.add(ref.slug);
-            wikilinkUnresolved.push({ field: 'wikilink', name: ref.slug });
+      if (ref.sourceId == null) {
+        if (typeof resolver.slugExists === 'function') {
+          if (!(await resolver.slugExists(ref.slug))) {
+            // Exact miss → the #2866 basename/suffix path is the fallback
+            // (verified-by-construction: matches come from real slugs).
+            // Only a full miss lands in the unresolved report.
+            if (await resolveViaBasename(ref)) continue;
+            if (!wikilinkUnresolvedSeen.has(ref.slug)) {
+              wikilinkUnresolvedSeen.add(ref.slug);
+              wikilinkUnresolved.push({ field: 'wikilink', name: ref.slug });
+            }
+            continue;
           }
+        } else if (await resolveViaBasename(ref)) {
+          // No verifier: prefer the #2866 resolution (its matches are real
+          // slugs) over an unverified exact emit.
           continue;
         }
       }
       // Falls through to the shared emission below. When the resolver
       // lacks slugExists (nullResolver in extract --stale, synthetic test
-      // resolvers), the candidate goes out unverified and the caller's
-      // existing dead-link filter drops misses.
+      // resolvers) and basename resolution didn't fire, the candidate goes
+      // out unverified and the caller's existing dead-link filter drops
+      // misses.
     }
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that

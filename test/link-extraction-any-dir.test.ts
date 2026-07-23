@@ -8,6 +8,7 @@ import {
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import { resolveCandidateSources } from '../src/commands/extract.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -401,12 +402,9 @@ describe('isAnyDirExactPathEnabled', () => {
 
   test('env var override wins over DB config', async () => {
     const engine = makeFakeEngine(new Map([['link_resolution.any_dir_exact_path', 'true']]));
-    process.env.GBRAIN_LINK_RESOLUTION_ANY_DIR_EXACT_PATH = 'off';
-    try {
+    await withEnv({ GBRAIN_LINK_RESOLUTION_ANY_DIR_EXACT_PATH: 'off' }, async () => {
       expect(await isAnyDirExactPathEnabled(engine)).toBe(false);
-    } finally {
-      delete process.env.GBRAIN_LINK_RESOLUTION_ANY_DIR_EXACT_PATH;
-    }
+    });
   });
 });
 
