@@ -17,6 +17,7 @@ import { runPhaseExtractAtoms, parseAtomsResponse } from '../../src/core/cycle/e
 import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-concepts.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 
 let engine: PGLiteEngine;
 
@@ -175,6 +176,180 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     expect(result.status).toBe('warn');
     expect(result.details?.atoms_extracted).toBe(1);
     expect((result.details?.failures as unknown[]).length).toBe(1);
+  });
+
+  // ── #2750: caller deadline bounds the phase ────────────────────────────
+
+  test('caller deadline aborts a hung chat before processing the next item', async () => {
+    let calls = 0;
+    const chat = async (opts: ChatOpts) => {
+      calls++;
+      return await new Promise<never>((_resolve, reject) => {
+        const signal = opts.abortSignal;
+        if (!signal) return reject(new Error('missing abort signal'));
+        if (signal.aborted) return reject(signal.reason);
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    const started = Date.now();
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [
+        { filePath: '/hung.txt', content: 'a', contentHash: 'hung-a' },
+        { filePath: '/never.txt', content: 'b', contentHash: 'hung-b' },
+      ],
+      _pages: [],
+      _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
+      abortSignal: AbortSignal.timeout(25),
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(calls).toBe(1);
+    expect(result.status).toBe('ok');
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.failures).toEqual([]);
+  });
+
+  test('billable chat usage is counted when the deadline fires as the response resolves', async () => {
+    const controller = new AbortController();
+    const chat = async (opts: ChatOpts): Promise<ChatResult> => {
+      controller.abort(new DOMException('deadline', 'TimeoutError'));
+      return stubChat(`[{"title":"late","atom_type":"insight","body":"b"}]`, {
+        input_tokens: 1_000,
+        output_tokens: 500,
+      })(opts);
+    };
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/late.txt', content: 'a', contentHash: 'late' }],
+      _pages: [],
+      _chat: chat,
+      abortSignal: controller.signal,
+    });
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(Number(result.details?.estimated_spend_usd)).toBeGreaterThan(0);
+    expect(result.details?.atoms_extracted).toBe(0);
+  });
+
+  test('deadline after partial progress still writes receipt and incomplete rollup', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    let notifySecondChat!: () => void;
+    const secondChatStarted = new Promise<void>((resolve) => { notifySecondChat = resolve; });
+    const chat = async (opts: ChatOpts): Promise<ChatResult> => {
+      calls++;
+      if (calls === 1) {
+        return stubChat(`[{"title":"committed","atom_type":"insight","body":"b"}]`)(opts);
+      }
+      notifySecondChat();
+      return await new Promise<never>((_resolve, reject) => {
+        const signal = opts.abortSignal;
+        if (!signal) return reject(new Error('missing abort signal'));
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+
+    const pending = runPhaseExtractAtoms(engine, {
+      _transcripts: [
+        { filePath: '/committed.txt', content: 'a', contentHash: 'committed-a' },
+        { filePath: '/hung.txt', content: 'b', contentHash: 'hung-b' },
+      ],
+      _pages: [],
+      _chat: chat,
+      abortSignal: controller.signal,
+    });
+    await secondChatStarted;
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    const result = await pending;
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE type = 'atom'`,
+    );
+    const receipts = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE type = 'extract_receipt'`,
+    );
+    const rollups = await engine.executeRaw<{
+      cost_usd: string | number;
+      round_completed_count: string | number;
+    }>(
+      `SELECT cost_usd, round_completed_count
+         FROM extract_rollup_7d
+        WHERE kind = 'atoms' AND source_id = 'default'`,
+    );
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(atoms[0].n).toBe(1);
+    expect(receipts[0].n).toBe(1);
+    expect(Number(rollups[0].cost_usd)).toBeGreaterThan(0);
+    expect(Number(rollups[0].round_completed_count)).toBe(0);
+  });
+
+  test('bookkeeping runs on a fresh grace signal, not the fired work deadline', async () => {
+    const controller = new AbortController();
+    let putCalls = 0;
+    let receiptSignal: AbortSignal | undefined;
+    let rollupSignal: AbortSignal | undefined;
+    const signalAwareEngine = {
+      executeRaw: async (sql: string, _params?: unknown[], opts?: { signal?: AbortSignal }) => {
+        if (sql.includes('INSERT INTO extract_rollup_7d')) rollupSignal = opts?.signal;
+        return [];
+      },
+      putPage: async (_slug: string, _page: unknown, opts?: { signal?: AbortSignal }) => {
+        putCalls++;
+        if (putCalls === 1) {
+          // Atom write in flight; the work deadline fires before bookkeeping.
+          controller.abort(new DOMException('work deadline', 'TimeoutError'));
+        } else {
+          receiptSignal = opts?.signal;
+        }
+        return {};
+      },
+    } as unknown as BrainEngine;
+
+    const result = await runPhaseExtractAtoms(signalAwareEngine, {
+      _transcripts: [{ filePath: '/one.txt', content: 'a', contentHash: 'one' }],
+      _pages: [],
+      _chat: stubChat(`[{"title":"one","atom_type":"insight","body":"b"}]`),
+      abortSignal: controller.signal,
+    });
+
+    expect(result.details?.atoms_extracted).toBe(1);
+    expect(putCalls).toBe(2); // atom write + receipt write
+    expect(receiptSignal).toBeDefined();
+    expect(receiptSignal).not.toBe(controller.signal);
+    expect(receiptSignal?.aborted).toBe(false);
+    expect(rollupSignal).toBe(receiptSignal);
+  });
+
+  test('caller deadline cancels a hung atom write and stops the phase', async () => {
+    const controller = new AbortController();
+    let notifyWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { notifyWriteStarted = resolve; });
+    let writeCalls = 0;
+    const signalAwareEngine = {
+      executeRaw: async () => [],
+      putPage: async (_slug: string, _page: unknown, opts?: { signal?: AbortSignal }) => {
+        writeCalls++;
+        notifyWriteStarted();
+        return await new Promise<never>((_resolve, reject) => {
+          const signal = opts?.signal;
+          if (!signal) return reject(new Error('missing abort signal'));
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    } as unknown as BrainEngine;
+
+    const pending = runPhaseExtractAtoms(signalAwareEngine, {
+      _transcripts: [{ filePath: '/hung-write.txt', content: 'a', contentHash: 'hung-write' }],
+      _pages: [],
+      _chat: stubChat(`[{"title":"hung write","atom_type":"insight","body":"b"}]`),
+      abortSignal: controller.signal,
+    });
+    await writeStarted;
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    const result = await pending;
+
+    expect(writeCalls).toBe(1);
+    expect(result.details?.deadline_aborted).toBe(true);
+    expect(result.details?.atoms_extracted).toBe(0);
   });
 
   // v0.41.2.1 regression case (D9 #14 wording): with _pages:[] and same

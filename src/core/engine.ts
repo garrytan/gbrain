@@ -696,8 +696,16 @@ export interface BrainEngine {
    * is included in the INSERT column list so ON CONFLICT (source_id, slug)
    * DO UPDATE actually targets the intended row instead of fabricating a
    * duplicate at (default, slug). Multi-source brains MUST pass sourceId.
+   *
+   * `opts.signal` (#2750): optional cancellation for deadline-bound writers.
+   * Postgres cancels the in-flight statement; PGLite pre-checks only (query
+   * cancellation is not possible in-process — cooperative abort between calls).
    */
-  putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page>;
+  putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; signal?: AbortSignal },
+  ): Promise<Page>;
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
    *

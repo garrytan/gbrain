@@ -1005,7 +1005,15 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: r.slug, id: Number(r.id) };
   }
 
-  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
+  async putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; signal?: AbortSignal },
+  ): Promise<Page> {
+    // #2750: PGLite is in-process WASM — no query cancellation. Pre-check so
+    // an already-fired deadline skips the write; abort is cooperative
+    // between calls (same posture as executeRaw's documented gap).
+    if (opts?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};

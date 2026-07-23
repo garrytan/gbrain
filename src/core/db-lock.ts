@@ -26,7 +26,8 @@ import type { BrainEngine } from './engine.ts';
 
 export interface DbLockHandle {
   id: string;
-  release: () => Promise<void>;
+  /** Optional signal bounds the release DELETE (deadline-bound callers). */
+  release: (signal?: AbortSignal) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -173,6 +174,7 @@ export async function tryAcquireDbLock(
   engine: BrainEngine,
   lockId: string,
   ttlMinutes: number = DEFAULT_TTL_MINUTES,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<DbLockHandle | null> {
   const pid = process.pid;
   const host = hostname();
@@ -205,20 +207,26 @@ export async function tryAcquireDbLock(
     // `gbrain sync --break-lock --max-age <s>` uses last_refreshed_at (not
     // acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const rows: Array<{ id: string }> = await sql`
-      INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
-      VALUES (${lockId}, ${pid}, ${host}, NOW(), NOW() + ${ttl}::interval, NOW())
-      ON CONFLICT (id) DO UPDATE
-        SET holder_pid = ${pid},
-            holder_host = ${host},
-            acquired_at = NOW(),
-            ttl_expires_at = NOW() + ${ttl}::interval,
-            last_refreshed_at = NOW()
-        WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
-          AND (gbrain_cycle_locks.last_refreshed_at IS NULL
-               OR gbrain_cycle_locks.last_refreshed_at < NOW() - ${stealGraceSeconds} * INTERVAL '1 second')
-      RETURNING id
-    `;
+    // #2750: routed through executeRaw so a deadline-bound caller's signal
+    // can cancel a hung acquire (pool exhaustion). Cancellation is
+    // transactional; in the rare ambiguous-commit case the row's TTL is the
+    // backstop (drain locks use a short 5-minute TTL).
+    const rows = await engine.executeRaw<{ id: string }>(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+       VALUES ($1, $2, $3, NOW(), NOW() + $4::interval, NOW())
+       ON CONFLICT (id) DO UPDATE
+         SET holder_pid = $2,
+             holder_host = $3,
+             acquired_at = NOW(),
+             ttl_expires_at = NOW() + $4::interval,
+             last_refreshed_at = NOW()
+         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
+           AND (gbrain_cycle_locks.last_refreshed_at IS NULL
+                OR gbrain_cycle_locks.last_refreshed_at < NOW() - $5 * INTERVAL '1 second')
+       RETURNING id`,
+      [lockId, pid, host, ttl, stealGraceSeconds],
+      { signal: opts.signal },
+    );
     if (rows.length === 0) return null;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
@@ -241,12 +249,17 @@ export async function tryAcquireDbLock(
           [ttl, lockId, pid],
         );
       },
-      release: async () => {
+      release: async (signal?: AbortSignal) => {
         deregister();
-        await sql`
-          DELETE FROM gbrain_cycle_locks
-          WHERE id = ${lockId} AND holder_pid = ${pid}
-        `;
+        // Direct session pool (same rationale as refresh, #1794) + optional
+        // signal so a deadline-bound caller's release can't hang forever on
+        // an exhausted pooler. TTL is the backstop if the DELETE is cancelled.
+        await engine.executeRawDirect(
+          `DELETE FROM gbrain_cycle_locks
+            WHERE id = $1 AND holder_pid = $2`,
+          [lockId, pid],
+          { signal },
+        );
       },
     };
   }
@@ -302,6 +315,11 @@ export async function tryAcquireDbLock(
 
   const first = await acquireOnce();
   if (first) return first;
+
+  // #2750: deadline-bound callers prefer an honest busy result over the
+  // best-effort same-host takeover below, whose inspect/delete/retry calls
+  // are not signal-bounded. The initial upsert already reclaims expired locks.
+  if (opts.signal) return null;
 
   // v0.42 (#1780 Gap 3): the lock is held and its TTL hasn't expired (the
   // upsert's ON CONFLICT ... WHERE ttl_expires_at < NOW() returned no row).
@@ -796,6 +814,10 @@ export interface WithRefreshingLockOpts {
   ttlMinutes?: number;
   /** Heartbeat-fail threshold in ms — abort if SELECT 1 takes longer. Default 30000. */
   heartbeatTimeoutMs?: number;
+  /** #2750: bound lock acquisition with the caller's deadline signal. */
+  signal?: AbortSignal;
+  /** Fresh cleanup budget for the release DELETE when `signal` is set. Default 5000. */
+  releaseTimeoutMs?: number;
 }
 
 /**
@@ -815,7 +837,7 @@ export async function withRefreshingLock<T>(
   // Refresh 6x per TTL window so a missed tick doesn't expire the lock.
   const refreshIntervalMs = Math.max(15000, (ttlMinutes * 60 * 1000) / 6);
 
-  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes, { signal: opts.signal });
   if (!handle) throw new LockUnavailableError(lockId);
 
   let healthOk = true;
@@ -854,7 +876,13 @@ export async function withRefreshingLock<T>(
     return await work();
   } finally {
     clearInterval(interval);
-    try { await handle.release(); } catch { /* idempotent */ }
+    // #2750: when the caller is deadline-bound, its work signal may already
+    // have fired — release on a FRESH short grace signal so cleanup neither
+    // inherits the spent deadline nor hangs unbounded. TTL is the backstop.
+    const releaseSignal = opts.signal
+      ? AbortSignal.timeout(opts.releaseTimeoutMs ?? 5_000)
+      : undefined;
+    try { await handle.release(releaseSignal); } catch { /* idempotent; TTL backstop */ }
     if (!healthOk) {
       // Surface that the heartbeat detected backend trouble — caller can
       // log to the connection-events audit if desired.

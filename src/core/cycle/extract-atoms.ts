@@ -58,6 +58,10 @@ import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
+// #2750: fresh wallclock budget for the receipt/rollup bookkeeping writes when
+// the caller's deadline already fired — committed atoms must not lose their
+// cost/receipt trail, but the writes can't be unbounded either.
+const BOOKKEEPING_GRACE_MS = 5_000;
 
 // v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
@@ -155,6 +159,13 @@ export interface ExtractAtomsOpts {
    * `heartbeat()` on the passed reporter.
    */
   progress?: ProgressReporter;
+  /**
+   * #2750: caller deadline/cancellation. Forwarded to every gateway call and
+   * DB query/write so the drain window bounds real lifetime, plus a
+   * cooperative between-item check (the PGLite path, where query abort only
+   * abandons the waiter).
+   */
+  abortSignal?: AbortSignal;
 }
 
 interface ExtractedAtom {
@@ -212,6 +223,7 @@ export async function discoverExtractablePages(
   engine: BrainEngine,
   sourceId: string,
   affectedSlugs?: string[],
+  abortSignal?: AbortSignal,
 ): Promise<DiscoveredPage[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const sql = `
@@ -251,13 +263,16 @@ export async function discoverExtractablePages(
       slug: string;
       compiled_truth: string;
       content_hash: string;
-    }>(sql, params);
+    }>(sql, params, { signal: abortSignal });
     return rows.map((r) => ({
       slug: r.slug,
       content: r.compiled_truth,
       contentHash: r.content_hash,
     }));
   } catch (err) {
+    // A deadline abort is not a fail-soft condition — propagate so the
+    // caller stops instead of proceeding with an empty page list.
+    if (abortSignal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
     return []; // fail-soft: transcript path still proceeds
@@ -282,6 +297,7 @@ export async function discoverExtractablePages(
 export async function countExtractAtomsBacklog(
   engine: BrainEngine,
   sourceId?: string,
+  abortSignal?: AbortSignal,
 ): Promise<number | null> {
   try {
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
@@ -321,9 +337,10 @@ export async function countExtractAtomsBacklog(
     const params = scoped
       ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]
       : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION];
-    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params);
+    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: abortSignal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
+    if (abortSignal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] backlog count failed: ${msg}`);
     return null;
@@ -350,6 +367,7 @@ export async function atomsExistingForHashes(
   engine: BrainEngine,
   sourceId: string,
   contentHash16s: string[],
+  abortSignal?: AbortSignal,
 ): Promise<Set<string>> {
   if (contentHash16s.length === 0) return new Set();
   try {
@@ -361,9 +379,11 @@ export async function atomsExistingForHashes(
           AND deleted_at IS NULL
           AND frontmatter->>'source_hash' = ANY($2::text[])`,
       [sourceId, contentHash16s],
+      { signal: abortSignal },
     );
     return new Set(rows.map(r => r.h));
   } catch (err) {
+    if (abortSignal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] batch idempotency check failed (assuming none extracted): ${msg}`);
     return new Set();
@@ -384,6 +404,7 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
+  if (opts.abortSignal?.aborted) throw opts.abortSignal.reason;
 
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
@@ -425,7 +446,7 @@ export async function runPhaseExtractAtoms(
   if (opts._pages !== undefined) {
     pages = opts._pages;
   } else {
-    pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs);
+    pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs, opts.abortSignal);
   }
 
   // 2. Apply transcript-side source-hash idempotency in ONE batch query
@@ -437,7 +458,7 @@ export async function runPhaseExtractAtoms(
   // Surface a heartbeat before the batch query so even an instant
   // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
   opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
-  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
+  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16, opts.abortSignal);
   for (const t of transcripts) {
     if (existingHashes.has(t.contentHash.slice(0, 16))) {
       duplicatesSkipped++;
@@ -501,6 +522,7 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
+  let deadlineAborted = false;
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -526,6 +548,12 @@ export async function runPhaseExtractAtoms(
   }
 
   for (const item of work) {
+    // #2750: cooperative between-item abort. Works on every engine — this is
+    // the primary bound on PGLite, where query abort only abandons the waiter.
+    if (opts.abortSignal?.aborted) {
+      deadlineAborted = true;
+      break;
+    }
     await maybeYield();
     if (estimatedSpendUsd >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
@@ -544,15 +572,21 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: 2000,
+        abortSignal: opts.abortSignal,
       });
+      // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output.
+      // A completed gateway call is billable even if the deadline fires
+      // immediately afterward, so record usage BEFORE the abort check.
+      estimatedSpendUsd +=
+        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
+      if (opts.abortSignal?.aborted) {
+        deadlineAborted = true;
+        break;
+      }
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
-
-      // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
-      estimatedSpendUsd +=
-        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
@@ -592,7 +626,7 @@ export async function runPhaseExtractAtoms(
               },
               timeline: '',
             },
-            { sourceId },
+            { sourceId, signal: opts.abortSignal },
           );
           totalAtomsExtracted++;
         }
@@ -605,6 +639,11 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      // A deadline abort is a partial result, not a per-item failure.
+      if (opts.abortSignal?.aborted) {
+        deadlineAborted = true;
+        break;
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
@@ -615,6 +654,12 @@ export async function runPhaseExtractAtoms(
   // v0.42 Wave B2: write extract receipt + rollup row when the phase
   // actually extracted atoms. Both are best-effort per F-OUT-19 —
   // audit-trail / search-visibility surfaces don't block the phase result.
+  //
+  // #2750: bookkeeping runs on a FRESH short grace signal, never the caller's
+  // work deadline — the deadline may have already fired (partial run) and
+  // committed atoms must not lose their receipt/cost trail; but the writes
+  // stay bounded so the overrun is capped at the grace window.
+  const bookkeepingSignal = opts.dryRun ? undefined : AbortSignal.timeout(BOOKKEEPING_GRACE_MS);
   if (!opts.dryRun && totalAtomsExtracted > 0) {
     const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
     try {
@@ -629,19 +674,24 @@ export async function runPhaseExtractAtoms(
         summary:
           `Extracted ${totalAtomsExtracted} atoms from ` +
           `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.`,
-      });
+      }, { signal: bookkeepingSignal });
     } catch (err) {
       console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);
     }
   }
   if (!opts.dryRun) {
-    await upsertExtractRollup(engine, {
-      kind: 'atoms',
-      source_id: sourceId,
-      cost_delta: estimatedSpendUsd,
-      round_completed_delta: failures.length === 0 ? 1 : 0,
-      halt_delta: failures.length > 0 ? 1 : 0,
-    });
+    try {
+      await upsertExtractRollup(engine, {
+        kind: 'atoms',
+        source_id: sourceId,
+        cost_delta: estimatedSpendUsd,
+        // A deadline-truncated run is not a completed round.
+        round_completed_delta: failures.length === 0 && !deadlineAborted ? 1 : 0,
+        halt_delta: failures.length > 0 ? 1 : 0,
+      }, { signal: bookkeepingSignal });
+    } catch (err) {
+      console.error(`[extract_atoms] rollup write failed: ${(err as Error).message}`);
+    }
   }
 
   return {
@@ -670,6 +720,7 @@ export async function runPhaseExtractAtoms(
       budget_usd: budgetCap,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
+      deadline_aborted: deadlineAborted,
     },
   };
 }

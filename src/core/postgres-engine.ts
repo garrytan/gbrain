@@ -74,6 +74,32 @@ function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+/**
+ * #2750: race a promise against an AbortSignal, detaching the listener once
+ * settled (long-lived drain signals are reused across many calls, so a bare
+ * Promise.race would leak one listener per call). The abandoned promise keeps
+ * running; used only for pool-acquisition waits where that is harmless.
+ */
+function waitForSignal<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      fn();
+    };
+    const onAbort = () => finish(() => reject(new DOMException('aborted', 'AbortError')));
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => finish(() => resolve(value)),
+      (err) => finish(() => reject(err)),
+    );
+  });
+}
+
 export function getPostgresSchema(
   dims: number = DEFAULT_EMBEDDING_DIMENSIONS,
   model: string = DEFAULT_EMBEDDING_MODEL,
@@ -1063,7 +1089,12 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
-  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
+  async putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; signal?: AbortSignal },
+  ): Promise<Page> {
+    if (opts?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     slug = validateSlug(slug);
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
@@ -1098,7 +1129,7 @@ export class PostgresEngine implements BrainEngine {
     const sourceUri = page.source_uri ?? null;
     const ingestedVia = page.ingested_via ?? null;
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date() : null;
-    const rows = await sql`
+    const pending = sql`
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at)
       VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, COALESCE(${chunkerVersion}::smallint, ${MARKDOWN_CHUNKER_VERSION}), ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt})
       ON CONFLICT (source_id, slug) DO UPDATE SET
@@ -1121,6 +1152,22 @@ export class PostgresEngine implements BrainEngine {
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
+    // #2750: cancel the in-flight statement when the caller's deadline fires,
+    // same .cancel() wiring as runUnsafe (postgres.js pending queries).
+    if (opts?.signal) {
+      const signal = opts.signal;
+      const onAbort = () => {
+        try { (pending as unknown as { cancel?: () => void }).cancel?.(); } catch { /* best-effort */ }
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        const rows = await pending;
+        return rowToPage(rows[0]);
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+      }
+    }
+    const rows = await pending;
     return rowToPage(rows[0]);
   }
 
@@ -5837,11 +5884,16 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
+    // #2750: an already-fired signal short-circuits BEFORE any pool routing,
+    // and the direct-pool acquisition itself is signal-bounded — under pooler
+    // exhaustion `ddl()` can stall indefinitely, which used to make even a
+    // "bounded" lock release hang past its caller's deadline.
+    if (opts?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     // Inside an open transaction, _sql is the reserved tx connection (set via
     // defineProperty in transaction()); never reroute off it.
     const inTransaction = this._sql !== null && this.connectionManager?.peekReadPool() !== this._sql;
     const conn = (!inTransaction && this.connectionManager?.isDualPoolActive())
-      ? await this.connectionManager.ddl()
+      ? await waitForSignal(this.connectionManager.ddl(), opts?.signal)
       : this.sql;
     return this.runUnsafe<T>(conn, sql, params, opts);
   }

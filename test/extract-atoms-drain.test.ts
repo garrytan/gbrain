@@ -43,24 +43,133 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     expect(batches).toBe(3);
   });
 
-  it('stops at the wallclock window with remaining > 0', async () => {
-    // SYNC stepping clock: now() #1 sets deadline (0+100=100); the while-check
-    // then sees 50, 50 (two batches), then 999999 → past deadline → stop.
-    const times = [0, 50, 50, 999_999];
-    let ti = 0;
-    const now = () => times[Math.min(ti++, times.length - 1)];
+  it('stops at the wallclock window; remaining is unknown (no post-window count)', async () => {
+    // Each batch consumes 60ms of the 100ms window: two batches fit, the
+    // third boundary check sees 120 ≥ 100 and stops. #2750: after the window
+    // elapses the final countRemaining is SKIPPED (it would overrun the
+    // window), so remaining reports null.
+    let now = 0;
     const result = await runExtractAtomsDrain(
       {
         withLock: passThroughLock,
         countRemaining: async () => 5, // never drains
-        runBatch: async () => ({ extracted: 1, skipped: 0 }),
-        now,
+        runBatch: async () => {
+          now += 60;
+          return { extracted: 1, skipped: 0 };
+        },
+        now: () => now,
       },
       { windowMs: 100 },
     );
     expect(result.stopped).toBe('window');
-    expect(result.remaining).toBe(5);
+    expect(result.remaining).toBeNull();
     expect(result.batches).toBe(2);
+  });
+
+  it('passes one drain-level deadline signal into count and batch', async () => {
+    const seen: AbortSignal[] = [];
+    const controller = new AbortController();
+    let now = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async (signal) => {
+          seen.push(signal);
+          return 5;
+        },
+        runBatch: async (signal) => {
+          seen.push(signal);
+          now = 100;
+          return { extracted: 1, skipped: 0 };
+        },
+        now: () => now,
+      },
+      { windowMs: 100, abortSignal: controller.signal },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.batches).toBe(1);
+    expect(seen.length).toBe(2);
+    expect(seen[0]).toBe(seen[1]);
+    // Combined (timeout + external) signal, not the raw external one.
+    expect(seen[0]).not.toBe(controller.signal);
+  });
+
+  it('aborts a hung backlog count at the window deadline and releases the lock', async () => {
+    let released = false;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: async (work) => {
+          try { return await work(); }
+          finally { released = true; }
+        },
+        // Hangs until the drain's real-time deadline signal fires (10ms).
+        countRemaining: (signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        runBatch: async () => ({ extracted: 0, skipped: 0 }),
+        now: () => 0, // injected clock never advances — the SIGNAL must save us
+      },
+      { windowMs: 10 },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.remaining).toBeNull();
+    expect(released).toBe(true);
+  });
+
+  it('rethrows external cancellation after releasing the lock', async () => {
+    const controller = new AbortController();
+    let released = false;
+    const pending = runExtractAtomsDrain(
+      {
+        withLock: async (work) => {
+          try { return await work(); }
+          finally { released = true; }
+        },
+        countRemaining: (signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        runBatch: async () => ({ extracted: 0, skipped: 0 }),
+        now: () => 0,
+      },
+      { windowMs: 1_000_000, abortSignal: controller.signal },
+    );
+    controller.abort(new DOMException('worker timeout', 'AbortError'));
+    await expect(pending).rejects.toThrow('worker timeout');
+    expect(released).toBe(true);
+  });
+
+  it('classifies a deadline-exhausted zero-progress batch as window, not no_progress', async () => {
+    let now = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => 5,
+        runBatch: async () => {
+          now = 100; // batch consumed the whole window and returned nothing
+          return { extracted: 0, skipped: 0 };
+        },
+        now: () => now,
+      },
+      { windowMs: 100 },
+    );
+    expect(result.stopped).toBe('window');
+    expect(result.batches).toBe(1);
+  });
+
+  it('bounds a hung lock acquisition with the drain deadline signal', async () => {
+    const started = Date.now();
+    await expect(runExtractAtomsDrain(
+      {
+        withLock: (_work, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        countRemaining: async () => 1,
+        runBatch: async () => ({ extracted: 0, skipped: 0 }),
+        now: Date.now,
+      },
+      { windowMs: 10 },
+    )).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('stops on a zero-progress batch (no hot loop)', async () => {
@@ -132,5 +241,18 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
     expect(src).toContain('runExtractAtomsDrainForSource');
     expect(src).toContain('cycleLockIdFor(opts.sourceId)');
     expect(src).toContain('withRefreshingLock(engine, lockId');
+  });
+
+  // #2750: the deadline signal must reach the phase, the backlog count, AND
+  // the lock wrapper — and the transcript path (brainDir) must stay wired
+  // exactly as the routine callers expect (PR #2752 takeover reverted its
+  // unsanctioned transcript-suppression scope change).
+  it('threads the drain deadline signal through phase, count, and lock', () => {
+    const jobsSrc = readFileSync(join(import.meta.dir, '../src/commands/jobs.ts'), 'utf8');
+    expect(src).toContain('abortSignal: signal');
+    expect(src).toContain('countExtractAtomsBacklog(engine, extractionSourceId, signal)');
+    expect(src).toContain('brainDir: opts.brainDir');
+    expect(src).not.toContain('_transcripts');
+    expect(jobsSrc).toContain('abortSignal: job.signal');
   });
 });
