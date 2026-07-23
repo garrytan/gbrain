@@ -375,6 +375,31 @@ describe('performSync dry-run never writes', () => {
     expect(messages.some(m => m.includes('git pull failed'))).toBe(false);
   });
 
+  test('first PGLite code sync imports code files without runtime failures', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    mkdirSync(join(repoPath, 'src'), { recursive: true });
+    writeFileSync(
+      join(repoPath, 'src/example.ts'),
+      'export function add(left: number, right: number) { return left + right; }\n',
+    );
+    execSync('git add -A && git commit -m "add code file"', { cwd: repoPath, stdio: 'pipe' });
+
+    const result = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      strategy: 'code',
+    });
+
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBe(1);
+    expect(result.failedFiles ?? 0).toBe(0);
+    const page = await engine.getPage('src-example-ts');
+    expect(page?.type).toBe('code');
+    expect(page?.frontmatter).toMatchObject({ file: 'src/example.ts', language: 'typescript' });
+  });
+
   test('incremental dry-run does NOT write to DB or advance the bookmark', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     // First do a real sync to seed the bookmark.
