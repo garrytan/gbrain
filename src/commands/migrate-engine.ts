@@ -10,7 +10,7 @@
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { EngineConfig } from '../core/types.ts';
+import type { EngineConfig, Page } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve } from 'path';
@@ -143,6 +143,137 @@ export async function copyMigrationSources(source: BrainEngine, target: BrainEng
   }
 }
 
+export interface PageCopyFailure {
+  source_id: string;
+  slug: string;
+  error: string;
+}
+
+/**
+ * Copy one page's full payload (page row, chunks, tags, timeline, raw data)
+ * from source to target. Throws on the first failure — callers own
+ * collect-vs-abort policy.
+ */
+export async function copyOnePage(
+  sourceEngine: BrainEngine,
+  targetEngine: BrainEngine,
+  page: Page,
+): Promise<void> {
+  // v0.32.8 F8: thread source_id end-to-end so multi-source pages migrate
+  // intact. Pre-fix: putPage / getTags / getTimeline / getRawData / getLinks
+  // all silently defaulted to source_id='default', so non-default-source
+  // tags / timeline / raw / links were either dropped or attached to the
+  // wrong row.
+  const sourceOpts = { sourceId: page.source_id };
+
+  // Copy page (preserve source_id)
+  await targetEngine.putPage(page.slug, {
+    type: page.type,
+    title: page.title,
+    compiled_truth: page.compiled_truth,
+    timeline: page.timeline,
+    frontmatter: page.frontmatter,
+    content_hash: page.content_hash,
+  }, sourceOpts);
+
+  // Copy chunks with embeddings.
+  const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug, sourceOpts);
+  if (chunks.length > 0) {
+    await targetEngine.upsertChunks(page.slug, chunks.map(c => ({
+      chunk_index: c.chunk_index,
+      chunk_text: c.chunk_text,
+      chunk_source: c.chunk_source,
+      embedding: c.embedding || undefined,
+      model: c.model,
+      token_count: c.token_count || undefined,
+    })), sourceOpts);
+  }
+
+  // Copy tags
+  const tags = await sourceEngine.getTags(page.slug, sourceOpts);
+  for (const tag of tags) {
+    await targetEngine.addTag(page.slug, tag, sourceOpts);
+  }
+
+  // Copy timeline
+  const timeline = await sourceEngine.getTimeline(page.slug, sourceOpts);
+  for (const entry of timeline) {
+    await targetEngine.addTimelineEntry(page.slug, {
+      date: entry.date,
+      source: entry.source,
+      summary: entry.summary,
+      detail: entry.detail,
+    }, sourceOpts);
+  }
+
+  // Copy raw data
+  const rawData = await sourceEngine.getRawData(page.slug, undefined, sourceOpts);
+  for (const rd of rawData) {
+    await targetEngine.putRawData(page.slug, rd.source, rd.data, sourceOpts);
+  }
+
+  // Versions are snapshots; we don't recreate them on the target
+  // (createVersion takes a snapshot of current state, which we just set).
+}
+
+/**
+ * Copy links for the given pages. Per-link failures are collected, not
+ * fatal (#3194) — one bad link must not abort the whole phase.
+ */
+export async function copyMigrationLinks(
+  sourceEngine: BrainEngine,
+  targetEngine: BrainEngine,
+  pages: Page[],
+  onTick?: () => void,
+): Promise<string[]> {
+  const failures: string[] = [];
+  for (const page of pages) {
+    const sourceOpts = { sourceId: page.source_id };
+    try {
+      const links = await sourceEngine.getLinks(page.slug, sourceOpts);
+      for (const link of links) {
+        try {
+          await targetEngine.addLink(
+            link.from_slug, link.to_slug,
+            link.context, link.link_type,
+            undefined, undefined, undefined,
+            { fromSourceId: page.source_id, toSourceId: page.source_id },
+          );
+        } catch (e) {
+          failures.push(`${page.source_id}/${link.from_slug} -> ${link.to_slug}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    } catch (e) {
+      failures.push(`${page.source_id}/${page.slug}: getLinks failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    onTick?.();
+  }
+  return failures;
+}
+
+/**
+ * Per-source live-page-count comparison between source and target (#3194).
+ * Soft-deleted pages are excluded on both sides — they are deliberately NOT
+ * migrated (listPages excludes them), so live counts are the contract.
+ * Returns mismatches only; empty array means the copy is complete.
+ */
+export async function comparePageCounts(
+  sourceEngine: BrainEngine,
+  targetEngine: BrainEngine,
+): Promise<Array<{ source_id: string; source: number; target: number }>> {
+  const q = `SELECT source_id, count(*)::int AS n FROM pages WHERE deleted_at IS NULL GROUP BY source_id`;
+  const toMap = (rows: Array<{ source_id: string; n: number | string }>) =>
+    new Map(rows.map(r => [r.source_id, Number(r.n)]));
+  const src = toMap(await sourceEngine.executeRaw<{ source_id: string; n: number }>(q));
+  const tgt = toMap(await targetEngine.executeRaw<{ source_id: string; n: number }>(q));
+  const mismatches: Array<{ source_id: string; source: number; target: number }> = [];
+  for (const [sourceId, n] of src) {
+    const t = tgt.get(sourceId) ?? 0;
+    if (t < n) mismatches.push({ source_id: sourceId, source: n, target: t });
+  }
+  return mismatches;
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
   const config = loadConfig();
@@ -226,7 +357,6 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   await copyMigrationSources(sourceEngine, targetEngine);
 
   // Get all source pages
-  const sourceStats = await sourceEngine.getStats();
   const allPages = await sourceEngine.listPages({ limit: 100000 });
   const pagesToMigrate = allPages.filter(p => !completedSet.has(makeManifestKey(p.source_id, p.slug)));
 
@@ -235,70 +365,26 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('migrate.copy_pages', pagesToMigrate.length);
 
+  // #3194: per-page try/catch — one bad page must not abort the run, but it
+  // must NEVER be silently dropped either. Failed pages are collected, kept
+  // OUT of the manifest (so a resume retries them), and reported at the end
+  // with a non-zero exit.
   let migrated = 0;
+  const failedPages: PageCopyFailure[] = [];
   for (const page of pagesToMigrate) {
-    // v0.32.8 F8: thread source_id end-to-end so multi-source pages migrate
-    // intact. Pre-fix: putPage / getTags / getTimeline / getRawData / getLinks
-    // all silently defaulted to source_id='default', so non-default-source
-    // tags / timeline / raw / links were either dropped or attached to the
-    // wrong row.
-    const sourceOpts = { sourceId: page.source_id };
-
-    // Copy page (preserve source_id)
-    await targetEngine.putPage(page.slug, {
-      type: page.type,
-      title: page.title,
-      compiled_truth: page.compiled_truth,
-      timeline: page.timeline,
-      frontmatter: page.frontmatter,
-      content_hash: page.content_hash,
-    }, sourceOpts);
-
-    // Copy chunks with embeddings.
-    const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug, sourceOpts);
-    if (chunks.length > 0) {
-      await targetEngine.upsertChunks(page.slug, chunks.map(c => ({
-        chunk_index: c.chunk_index,
-        chunk_text: c.chunk_text,
-        chunk_source: c.chunk_source,
-        embedding: c.embedding || undefined,
-        model: c.model,
-        token_count: c.token_count || undefined,
-      })), sourceOpts);
+    try {
+      await copyOnePage(sourceEngine, targetEngine, page);
+      // Track progress with composite key so multi-source resume is correct.
+      manifest!.completed_slugs.push(makeManifestKey(page.source_id, page.slug));
+      saveManifest(manifest!);
+      migrated++;
+    } catch (e) {
+      failedPages.push({
+        source_id: page.source_id,
+        slug: page.slug,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
-
-    // Copy tags
-    const tags = await sourceEngine.getTags(page.slug, sourceOpts);
-    for (const tag of tags) {
-      await targetEngine.addTag(page.slug, tag, sourceOpts);
-    }
-
-    // Copy timeline
-    const timeline = await sourceEngine.getTimeline(page.slug, sourceOpts);
-    for (const entry of timeline) {
-      await targetEngine.addTimelineEntry(page.slug, {
-        date: entry.date,
-        source: entry.source,
-        summary: entry.summary,
-        detail: entry.detail,
-      }, sourceOpts);
-    }
-
-    // Copy raw data
-    const rawData = await sourceEngine.getRawData(page.slug, undefined, sourceOpts);
-    for (const rd of rawData) {
-      await targetEngine.putRawData(page.slug, rd.source, rd.data, sourceOpts);
-    }
-
-    // Copy versions
-    const versions = await sourceEngine.getVersions(page.slug, sourceOpts);
-    // Versions are snapshots, we recreate them on the target
-    // (createVersion takes a snapshot of current state, which we just set)
-
-    // Track progress with composite key so multi-source resume is correct.
-    manifest!.completed_slugs.push(makeManifestKey(page.source_id, page.slug));
-    saveManifest(manifest!);
-    migrated++;
     progress.tick(1, page.slug);
   }
   progress.finish();
@@ -307,19 +393,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // v0.32.8 F8: thread source_id so cross-source links migrate correctly.
   console.log('Copying links...');
   progress.start('migrate.copy_links', allPages.length);
-  for (const page of allPages) {
-    const sourceOpts = { sourceId: page.source_id };
-    const links = await sourceEngine.getLinks(page.slug, sourceOpts);
-    for (const link of links) {
-      await targetEngine.addLink(
-        link.from_slug, link.to_slug,
-        link.context, link.link_type,
-        undefined, undefined, undefined,
-        { fromSourceId: page.source_id, toSourceId: page.source_id },
-      );
-    }
-    progress.tick(1);
-  }
+  const failedLinks = await copyMigrationLinks(sourceEngine, targetEngine, allPages, () => progress.tick(1));
   progress.finish();
 
   // Copy config (selective).
@@ -337,6 +411,39 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   for (const key of configKeys) {
     const val = await sourceEngine.getConfig(key);
     if (val) await targetEngine.setConfig(key, val);
+  }
+
+  // #3194: end-of-run verification — per-source live page counts must match
+  // before we call this migration a success. Catches silent drops (e.g. the
+  // 100k listPages cap) that per-page error handling can't see.
+  let countMismatches: Array<{ source_id: string; source: number; target: number }> = [];
+  try {
+    countMismatches = await comparePageCounts(sourceEngine, targetEngine);
+  } catch (e) {
+    console.warn(`  WARN page-count verification could not run: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  if (failedPages.length > 0 || failedLinks.length > 0 || countMismatches.length > 0) {
+    if (failedPages.length > 0) {
+      console.error(`\n${failedPages.length} page(s) FAILED to migrate:`);
+      for (const f of failedPages.slice(0, 20)) {
+        console.error(`  ${f.source_id}/${f.slug}: ${f.error}`);
+      }
+      if (failedPages.length > 20) console.error(`  ... and ${failedPages.length - 20} more`);
+    }
+    if (failedLinks.length > 0) {
+      console.error(`\n${failedLinks.length} link copy failure(s):`);
+      for (const f of failedLinks.slice(0, 20)) console.error(`  ${f}`);
+      if (failedLinks.length > 20) console.error(`  ... and ${failedLinks.length - 20} more`);
+    }
+    for (const m of countMismatches) {
+      console.error(`  WARN pages[${m.source_id}]: target has ${m.target}, source has ${m.source} live pages`);
+    }
+    console.error(`\nMigration INCOMPLETE: ${migrated} pages transferred, ${failedPages.length} failed.`);
+    console.error('Config NOT switched; resume manifest kept. Fix the errors above and re-run the same migrate command to retry.');
+    process.exitCode = 1;
+    await targetEngine.disconnect();
+    return;
   }
 
   // Update local config. v0.37 fix wave: preserve existing file-plane
@@ -360,14 +467,22 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   if (config.engine === 'pglite' && config.database_path) {
     console.log(`Original PGLite brain preserved at ${config.database_path} (backup).`);
   }
+  // Policy note (#3194): soft-deleted pages are deliberately NOT migrated.
+  try {
+    const sd = await sourceEngine.executeRaw<{ n: number | string }>(
+      `SELECT count(*)::int AS n FROM pages WHERE deleted_at IS NOT NULL`,
+    );
+    const n = Number(sd[0]?.n ?? 0);
+    if (n > 0) console.log(`Note: ${n} soft-deleted page(s) were excluded (they remain in the source brain).`);
+  } catch { /* legacy schema without deleted_at */ }
 
   // Post-migrate verification: confirm the target is healthy before we
-  // leave the user. Catches incomplete copies, schema drift, and missing
-  // embeddings immediately instead of on next CLI use. Non-fatal — prints
-  // warnings and keeps going so the user sees the full picture.
+  // leave the user. Catches schema drift and missing embeddings immediately
+  // instead of on next CLI use. Non-fatal — prints warnings and keeps going
+  // so the user sees the full picture.
   console.log('\nVerifying target...');
   try {
-    await verifyTarget(targetEngine, sourceStats.page_count);
+    await verifyTarget(targetEngine, allPages.length);
   } catch (e) {
     console.warn(`  Verification could not complete: ${e instanceof Error ? e.message : String(e)}`);
   }
