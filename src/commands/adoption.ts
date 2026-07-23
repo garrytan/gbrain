@@ -1,17 +1,17 @@
 /**
- * gbrain generated — review-first reporting over dream/synthesis-generated
+ * gbrain adoption — review-first reporting over dream/synthesis-generated
  * pages (#2570 v1).
  *
- * v1 is strictly read-only: `gbrain generated list` reports adoption state
+ * v1 is strictly read-only: `gbrain adoption list` reports adoption state
  * (inbound-link classification) for pages carrying the durable #2569
  * provenance marker. Zero writes; no lifecycle state mutation.
  *
  * Usage:
- *   gbrain generated list                        # summary + review candidates
- *   gbrain generated list --json                 # stable JSON contract
- *   gbrain generated list --since 30d            # window on dream_cycle_date
- *   gbrain generated list --source-id default    # scope to one source
- *   gbrain generated list --limit 20             # candidate cap (0 = no cap)
+ *   gbrain adoption list                        # summary + review candidates
+ *   gbrain adoption list --json                 # stable JSON contract
+ *   gbrain adoption list --since 30d            # window on dream_cycle_date
+ *   gbrain adoption list --source-id default    # scope to one source
+ *   gbrain adoption list --limit 20             # candidate cap (0 = no cap)
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -22,7 +22,7 @@ import {
   type GeneratedPagesReport,
 } from '../core/generated-report.ts';
 
-const HELP = `Usage: gbrain generated <subcommand> [options]
+const HELP = `Usage: gbrain adoption <subcommand> [options]
 
 Read-only report over dream/synthesis-generated pages (durable #2569
 provenance marker: dream_generated + dream_cycle_date). v1 performs
@@ -86,14 +86,14 @@ function formatReportText(report: GeneratedPagesReport): string {
   return lines.join('\n');
 }
 
-export async function runGenerated(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runAdoption(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     console.log(HELP);
     return;
   }
   const sub = args[0];
   if (sub !== 'list') {
-    console.error(`Unknown subcommand: gbrain generated ${sub}\n`);
+    console.error(`Unknown subcommand: gbrain adoption ${sub}\n`);
     console.log(HELP);
     // #2084 exit-verdict ownership: raw `process.exitCode` writes are zeroed
     // by the owned flush-exit — route through setCliExitVerdict.

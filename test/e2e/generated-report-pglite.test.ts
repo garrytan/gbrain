@@ -1,7 +1,7 @@
 /**
  * #2570 v1 e2e — buildGeneratedPagesReport against a real PGLite engine.
  *
- * Exercises the full query + assembly path the CLI (`gbrain generated list`)
+ * Exercises the full query + assembly path the CLI (`gbrain adoption list`)
  * and the MCP op (`list_generated_pages`) share: durable-marker enumeration,
  * the four buckets, mentions exclusion, soft-deleted origin/target handling,
  * extract_receipt exclusion, the `--since` window on dream_cycle_date,

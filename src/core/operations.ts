@@ -3420,9 +3420,13 @@ const list_generated_pages: Operation = {
       ...sourceScopeOpts(ctx),
     });
   },
-  // CLI surface is the CLI_ONLY `gbrain generated list` dispatcher (cli.ts),
-  // same split as find_orphans / `gbrain orphans`.
-  cliHints: { name: 'generated', hidden: true },
+  // CLI surface is the CLI_ONLY `gbrain adoption list` dispatcher (cli.ts),
+  // same split as find_orphans / `gbrain orphans`. The op name itself
+  // (`list_generated_pages`) stays as-is — still an accurate description of
+  // what it lists — only the user-facing CLI verb changed (maintainer
+  // naming feedback on PR #3239: "generated" collided conceptually with
+  // other "generated" things in the tool).
+  cliHints: { name: 'adoption', hidden: true },
 };
 
 // --- v0.36.1.0 (T7): calibration profile read op ---

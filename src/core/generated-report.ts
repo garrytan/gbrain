@@ -40,7 +40,7 @@
  *
  * The classifier is a pure function (DB rows in → bucket out) so it is
  * unit-testable without an engine; `buildGeneratedPagesReport` is the thin
- * query + assembly layer shared by the CLI (`gbrain generated list`) and the
+ * query + assembly layer shared by the CLI (`gbrain adoption list`) and the
  * MCP op (`list_generated_pages`).
  */
 
