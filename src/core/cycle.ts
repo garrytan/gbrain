@@ -917,51 +917,108 @@ async function runPhaseSync(
   dryRun: boolean,
   pull: boolean,
   willRunExtractPhase: boolean,
+  // #1503: explicit --source keeps the cycle single-source. Only the
+  // user-supplied opts.sourceId lands here (NOT the brainDir-derived
+  // cycleSourceId) — an unscoped autopilot cycle syncs every source.
+  explicitSourceId?: string,
 ): Promise<SyncPhaseResult> {
   try {
-    const { performSync } = await import('../commands/sync.ts');
-    // Resolve the per-source id so sync reads source-scoped last_commit
-    // instead of the global config key. The global key can drift out of
-    // git history (force push, GC) causing a full reimport of all files.
-    const sourceId = await resolveSourceForDir(engine, brainDir);
-    const result = await performSync(engine, {
-      repoPath: brainDir,
-      sourceId,
-      dryRun,
-      noPull: !pull,
-      noEmbed: true,                       // embed is a separate phase
-      noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
-                                           // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
-                                           // sync's inline extract still runs to preserve prior behavior.
-    });
-    const syncedCount = result.added + result.modified;
-    return {
-      phase: 'sync',
-      status: result.status === 'blocked_by_failures' ? 'warn' : 'ok',
-      duration_ms: 0,
-      summary: dryRun
-        ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
-        : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted`,
-      details: {
-        added: result.added,
-        modified: result.modified,
-        deleted: result.deleted,
-        renamed: result.renamed,
-        chunksCreated: result.chunksCreated,
-        failedFiles: result.failedFiles ?? 0,
-        syncStatus: result.status,
-        dryRun,
-      },
-      pagesAffected: result.pagesAffected,
-    };
-  } catch (e) {
-    // v0.42.x (#1794): a single-flight collision — another sync already holds
-    // the per-source lock — is NOT a phase failure. The other run is doing the
-    // work; surfacing 'fail' would paint a healthy cron contention red and (with
-    // the heartbeat-aware takeover) this is now the expected outcome when a long
-    // sync overruns into the next cron tick. Report it as a skip.
-    const { SyncLockBusyError } = await import('../commands/sync.ts');
-    if (e instanceof SyncLockBusyError) {
+    const { performSync, SyncLockBusyError } = await import('../commands/sync.ts');
+
+    // #1079: enumerate sync targets. An unscoped cycle syncs EVERY registered,
+    // non-archived, sync-enabled source with a local checkout — not just the
+    // single brainDir-matched source. brainDir itself still syncs when no
+    // registered source covers it (legacy pre-sources behavior, and the
+    // fallback when the sources table is empty/missing).
+    type SyncTarget = { sourceId: string | undefined; repoPath: string };
+    const targets: SyncTarget[] = [];
+    if (explicitSourceId !== undefined) {
+      let repoPath = brainDir;
+      try {
+        const rows = await engine.executeRaw<{ local_path: string | null }>(
+          `SELECT local_path FROM sources WHERE id = $1 LIMIT 1`,
+          [explicitSourceId],
+        );
+        if (rows[0]?.local_path) repoPath = rows[0].local_path;
+      } catch { /* sources table might not exist on very old brains */ }
+      targets.push({ sourceId: explicitSourceId, repoPath });
+    } else {
+      try {
+        const rows = await engine.executeRaw<{ id: string; local_path: string; config: Record<string, unknown> | null }>(
+          `SELECT id, local_path, config FROM sources
+           WHERE local_path IS NOT NULL AND local_path != '' AND NOT archived`,
+        );
+        for (const r of rows) {
+          const cfg = (r.config || {}) as { syncEnabled?: boolean };
+          if (cfg.syncEnabled === false) continue;
+          targets.push({ sourceId: r.id, repoPath: r.local_path });
+        }
+      } catch { /* sources table might not exist on very old brains — legacy fallback below */ }
+      if (!targets.some((t) => t.repoPath === brainDir)) {
+        // Resolve the per-source id so sync reads source-scoped last_commit
+        // instead of the global config key. The global key can drift out of
+        // git history (force push, GC) causing a full reimport of all files.
+        targets.push({ sourceId: await resolveSourceForDir(engine, brainDir), repoPath: brainDir });
+      }
+    }
+
+    let added = 0, modified = 0, deleted = 0, renamed = 0, chunksCreated = 0, failedFiles = 0;
+    const pagesAffected: string[] = [];
+    const perSource: string[] = [];
+    let synced = 0, lockBusy = 0, errored = 0;
+    let anyBlocked = false;
+    let lastError: unknown;
+    let lastStatus: string | undefined;
+
+    for (const t of targets) {
+      const label = t.sourceId ?? 'default';
+      try {
+        const result = await performSync(engine, {
+          repoPath: t.repoPath,
+          sourceId: t.sourceId,
+          dryRun,
+          noPull: !pull,
+          noEmbed: true,                       // embed is a separate phase (runEmbedCore --stale is brain-wide,
+                                               // so it covers every target here)
+          // Dedupe inline extract ONLY for the target the cycle's extract
+          // phase will actually cover: extract walks brainDir under
+          // cycleSourceId (runPhaseExtract), so slugs synced from OTHER
+          // checkouts are invisible to it — disabling their inline extract
+          // would silently drop link/timeline extraction for every
+          // non-brainDir source. If extract isn't scheduled at all (e.g.
+          // `gbrain dream --phase sync`), inline extract runs everywhere
+          // to preserve prior behavior.
+          noExtract: willRunExtractPhase && t.repoPath === brainDir,
+        });
+        synced++;
+        added += result.added;
+        modified += result.modified;
+        deleted += result.deleted;
+        renamed += result.renamed;
+        chunksCreated += result.chunksCreated;
+        failedFiles += result.failedFiles ?? 0;
+        pagesAffected.push(...(result.pagesAffected ?? []));
+        if (result.status === 'blocked_by_failures') anyBlocked = true;
+        lastStatus = result.status;
+        perSource.push(`${label}: ${result.status} (+${result.added} ~${result.modified} -${result.deleted})`);
+      } catch (e) {
+        // v0.42.x (#1794): a single-flight collision — another sync already holds
+        // the per-source lock — is NOT a phase failure. The other run is doing the
+        // work; surfacing 'fail' would paint a healthy cron contention red and (with
+        // the heartbeat-aware takeover) this is now the expected outcome when a long
+        // sync overruns into the next cron tick. Report it as a skip.
+        if (SyncLockBusyError && e instanceof SyncLockBusyError) {
+          lockBusy++;
+          perSource.push(`${label}: lock_busy`);
+          continue;
+        }
+        errored++;
+        lastError = e;
+        perSource.push(`${label}: error (${e instanceof Error ? e.message : String(e)})`);
+      }
+    }
+
+    if (synced === 0 && errored === 0 && lockBusy > 0) {
       return {
         phase: 'sync',
         status: 'skipped',
@@ -970,6 +1027,44 @@ async function runPhaseSync(
         details: { syncStatus: 'lock_busy' },
       };
     }
+    if (synced === 0 && errored > 0) {
+      return {
+        phase: 'sync',
+        status: 'fail',
+        duration_ms: 0,
+        summary: 'sync phase failed',
+        details: targets.length > 1 ? { sources: perSource } : {},
+        error: makeErrorFromException(lastError),
+      };
+    }
+
+    const syncedCount = added + modified;
+    const across = targets.length > 1 ? ` across ${targets.length} source(s)` : '';
+    return {
+      phase: 'sync',
+      status: anyBlocked || errored > 0 ? 'warn' : 'ok',
+      duration_ms: 0,
+      summary: dryRun
+        ? `${syncedCount} page(s) would sync, ${deleted} would delete${across}`
+        : `+${added} added, ~${modified} modified, -${deleted} deleted${across}`,
+      details: {
+        added,
+        modified,
+        deleted,
+        renamed,
+        chunksCreated,
+        failedFiles,
+        // Single-target keeps the raw performSync status (pre-#1079 shape);
+        // multi-target aggregates.
+        syncStatus: targets.length === 1
+          ? lastStatus
+          : errored > 0 ? 'partial_failure' : anyBlocked ? 'blocked_by_failures' : 'completed',
+        dryRun,
+        ...(targets.length > 1 ? { sources: perSource } : {}),
+      },
+      pagesAffected,
+    };
+  } catch (e) {
     return {
       phase: 'sync',
       status: 'fail',
@@ -1679,7 +1774,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.sync');
         syncAttempted = true; // sync ran its work; undefined pagesAffected now means failure
-        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')));
+        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract'), opts.sourceId));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;

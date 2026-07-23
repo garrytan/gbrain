@@ -1410,3 +1410,49 @@ describe('parseTimelineEntries — Format 3: inline [Source: ..., YYYY-MM-DD] ci
     expect(parseTimelineEntries('[Source: import batch, 2025-07-01]')).toHaveLength(0);
   });
 });
+
+// ─── #1101: root-level file references ([Name](file.md)) ──────────────────
+
+describe('extractEntityRefs — root-level file refs (#1101)', () => {
+  test('matches [Name](action-tracker.md) with .md stripped from the slug', () => {
+    const refs = extractEntityRefs('See the [Action Tracker](action-tracker.md) for status.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].name).toBe('Action Tracker');
+    expect(refs[0].slug).toBe('action-tracker'); // NOT 'action-tracker.md'
+    expect(refs[0].dir).toBe(''); // no entity dir — must not misreport the filename as a dir
+  });
+
+  test('matches ./-prefixed root-level refs', () => {
+    const refs = extractEntityRefs('See [Tracker](./action-tracker.md).');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('action-tracker');
+  });
+
+  test('does NOT match section anchors', () => {
+    expect(extractEntityRefs('Jump to [the section](#section).')).toEqual([]);
+    expect(extractEntityRefs('Jump to [it](action-tracker.md#section).')).toEqual([]);
+  });
+
+  test('does NOT match non-markdown assets', () => {
+    expect(extractEntityRefs('![alt](chart.png)')).toEqual([]);
+    expect(extractEntityRefs('[alt](chart.png)')).toEqual([]);
+  });
+
+  test('does NOT match external URLs or bare non-md tokens', () => {
+    expect(extractEntityRefs('[docs](https://example.com/foo.md)')).toEqual([]);
+    expect(extractEntityRefs('[x](mailto:someone@example.md)')).toEqual([]);
+    expect(extractEntityRefs('[x](tech)')).toEqual([]);
+  });
+
+  test('does NOT match non-whitelisted subdirectory paths', () => {
+    expect(extractEntityRefs('[random](notes/random.md)')).toEqual([]);
+  });
+
+  test('dir-prefixed refs are unchanged alongside root-level refs', () => {
+    const refs = extractEntityRefs(
+      '[Alice](../people/alice.md) tracked in [Tracker](action-tracker.md).',
+    );
+    expect(refs.map(r => r.slug)).toEqual(['people/alice', 'action-tracker']);
+    expect(refs.map(r => r.dir)).toEqual(['people', '']);
+  });
+});
