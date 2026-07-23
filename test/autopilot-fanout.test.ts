@@ -14,6 +14,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   readLastFullCycleAt,
   isSourceStale,
+  countStaleSources,
   selectSourcesForDispatch,
   resolveFanoutMax,
   dispatchPerSource,
@@ -71,6 +72,23 @@ describe('isSourceStale', () => {
     const past = new Date(NOW - 6 * 60_000).toISOString();
     expect(isSourceStale(src('a', past), NOW, 5)).toBe(true);
     expect(isSourceStale(src('a', past), NOW, 60)).toBe(false);
+  });
+});
+
+describe('countStaleSources (#2060 dispatch-decision input)', () => {
+  const NOW = Date.parse('2026-05-22T12:00:00.000Z');
+  test('counts never-cycled + past-floor sources, ignores fresh', () => {
+    const sources = [
+      src('never-cycled'), // stale (null)
+      src('old', new Date(NOW - 2 * 60 * 60_000).toISOString()), // stale (2h)
+      src('fresh', new Date(NOW - 30 * 60_000).toISOString()), // fresh (30min)
+    ];
+    expect(countStaleSources(sources, NOW)).toBe(2);
+  });
+  test('returns 0 for all-fresh and for empty list', () => {
+    const fresh = src('a', new Date(NOW - 10 * 60_000).toISOString());
+    expect(countStaleSources([fresh], NOW)).toBe(0);
+    expect(countStaleSources([], NOW)).toBe(0);
   });
 });
 

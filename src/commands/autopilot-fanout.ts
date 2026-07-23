@@ -187,6 +187,18 @@ export function isSourceStale(src: SourceRow, now = Date.now(), floorMin = FULL_
 }
 
 /**
+ * #2060: count sources past the per-source cycle freshness floor. Consumed
+ * by autopilot's dispatch decision — a stale source forces the fanout path
+ * even when the doctor plan is small (score 70–94, plan ≤ 3, est < 300s),
+ * so targeted mode can't leave cycle_freshness stale indefinitely.
+ * dispatchPerSource's own throttles (skipped_fresh / fanoutMax / failure
+ * cooldown) bound the resulting work.
+ */
+export function countStaleSources(sources: SourceRow[], now = Date.now(), floorMin = FULL_CYCLE_FLOOR_MIN): number {
+  return sources.filter((s) => isSourceStale(s, now, floorMin)).length;
+}
+
+/**
  * Most recent SUCCESSFUL cycle for a source. Prefers `last_source_cycle_at`
  * (per-source phases, written by the split cycle) and falls back to the legacy
  * `last_full_cycle_at`, so this works before AND after the cycle split.
