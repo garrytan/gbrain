@@ -88,6 +88,36 @@ This is the compiled truth.
     expect((engine as any)._calls.length).toBe(0);
   });
 
+  test('uses preloaded effective config without per-file DB config reads', async () => {
+    const filePath = join(TMP, 'preloaded-config.md');
+    writeFileSync(filePath, `---
+type: concept
+title: Preloaded Config
+---
+
+Bulk sync should not reload DB configuration for every file.
+`);
+
+    const engine = mockEngine({
+      getConfig: () => {
+        throw new Error('per-file DB config read must not run');
+      },
+      listConfigKeys: () => {
+        throw new Error('per-file DB config prefix scan must not run');
+      },
+    });
+    const result = await importFile(engine, filePath, 'concepts/preloaded-config.md', {
+      noEmbed: true,
+      effectiveConfig: { engine: 'postgres' },
+    });
+
+    expect(result.status).toBe('imported');
+    const configCalls = (engine as any)._calls.filter(
+      (c: any) => c.method === 'getConfig' || c.method === 'listConfigKeys',
+    );
+    expect(configCalls).toEqual([]);
+  });
+
   test('rejects frontmatter slug that does not match the file path', async () => {
     // In a shared brain where contributors can land PRs, this prevents a
     // poisoned notes/random.md from declaring `slug: people/elon` in its
