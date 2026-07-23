@@ -129,6 +129,10 @@ Set `MINIMAX_API_KEY`. Optional `MINIMAX_GROUP_ID` for org-scoped accounts. Mode
 
 MiniMax's API takes a `type: 'db' | 'query'` field for asymmetric retrieval. v0.32 routes everything as `type='db'` (symmetric retrieval — same vector space for indexing and queries). Asymmetric query support is a v0.32.x follow-up.
 
+The same provider registry also exposes `MiniMax-M3` and `MiniMax-M2.7` for
+chat. See [MiniMax chat models](../ai-providers/minimax.md) for both compatible
+endpoint families and the global and China base URLs.
+
 ### DashScope (Alibaba)
 
 Set `DASHSCOPE_API_KEY`. International endpoint at `dashscope-intl.aliyuncs.com` by default; override `provider_base_urls.dashscope` for the China endpoint. Models: `text-embedding-v3` (current; Matryoshka 64-1024 dims), `text-embedding-v2`.

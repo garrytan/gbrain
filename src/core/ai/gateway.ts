@@ -408,6 +408,55 @@ export function applyOpenAICompatConfig(
 }
 
 /**
+ * Resolve a public Anthropic-compatible base URL for the SDK. The configured
+ * URL stays at the documented `/anthropic` boundary; the SDK version used by
+ * gbrain appends only `/messages`, so the adapter derives `/v1` internally.
+ *
+ * @internal exported for tests.
+ */
+export function applyAnthropicCompatConfig(
+  recipe: Recipe,
+  cfg: AIGatewayConfig,
+): { baseURL: string } {
+  const raw = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  if (!raw) {
+    throw new AIConfigError(
+      `${recipe.name} requires a base URL.`,
+      recipe.setup_hint,
+    );
+  }
+  const publicBaseURL = raw.trim().replace(/\/+$/, '');
+  if (!publicBaseURL.endsWith('/anthropic')) {
+    throw new AIConfigError(
+      `${recipe.name} base URL must end with /anthropic.`,
+      recipe.setup_hint,
+    );
+  }
+  return { baseURL: `${publicBaseURL}/v1` };
+}
+
+/** @internal exported for tests. */
+export function applyAnthropicCompatAuth(
+  recipe: Recipe,
+  cfg: AIGatewayConfig,
+  touchpoint: 'expansion' | 'chat',
+): { authToken: string } {
+  const resolved = recipe.resolveAuth
+    ? recipe.resolveAuth(cfg.env)
+    : defaultResolveAuth(recipe, cfg.env, touchpoint);
+  if (
+    resolved.headerName !== 'Authorization' ||
+    !resolved.token.startsWith('Bearer ')
+  ) {
+    throw new AIConfigError(
+      `${recipe.name} requires Authorization: Bearer authentication.`,
+      recipe.setup_hint,
+    );
+  }
+  return { authToken: resolved.token.slice('Bearer '.length) };
+}
+
+/**
  * #1250: native providers (anthropic/openai) are instantiated as
  * `create<Provider>({ apiKey })` with NO explicit baseURL, so the AI SDK reads
  * `<PROVIDER>_BASE_URL` verbatim. When a host injects a BARE base URL (Claude
@@ -1337,6 +1386,11 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     case 'native-anthropic':
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
+      );
+    case 'anthropic-compatible':
+      throw new AIConfigError(
+        `${recipe.name} does not offer an embedding model.`,
+        recipe.setup_hint,
       );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2280,6 +2334,15 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
+    case 'anthropic-compatible': {
+      const auth = applyAnthropicCompatAuth(recipe, cfg, 'expansion');
+      const compat = applyAnthropicCompatConfig(recipe, cfg);
+      return createAnthropic({
+        name: `${recipe.id}.messages`,
+        baseURL: compat.baseURL,
+        ...auth,
+      }).languageModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2767,6 +2830,15 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
+    }
+    case 'anthropic-compatible': {
+      const auth = applyAnthropicCompatAuth(recipe, cfg, 'chat');
+      const compat = applyAnthropicCompatConfig(recipe, cfg);
+      return createAnthropic({
+        name: `${recipe.id}.messages`,
+        baseURL: compat.baseURL,
+        ...auth,
+      }).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).

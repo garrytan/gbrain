@@ -1,4 +1,9 @@
 import type { Recipe } from '../types.ts';
+import {
+  MINIMAX_CHAT_MODELS,
+  MINIMAX_CHAT_PRICING,
+  MINIMAX_ENDPOINTS,
+} from './minimax-shared.ts';
 
 /**
  * MiniMax (海螺AI). OpenAI-compatible /embeddings endpoint at
@@ -20,7 +25,7 @@ export const minimax: Recipe = {
   name: 'MiniMax (海螺AI)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
-  base_url_default: 'https://api.minimaxi.com/v1',
+  base_url_default: MINIMAX_ENDPOINTS.cn_zh.openai_base_url,
   auth_env: {
     required: ['MINIMAX_API_KEY'],
     optional: ['MINIMAX_GROUP_ID'],
@@ -37,6 +42,18 @@ export const minimax: Recipe = {
       // hitting whatever undocumented server-side limit exists. Recursive
       // halving in the gateway catches token-limit errors at runtime.
       max_batch_tokens: 4096,
+    },
+    chat: {
+      models: [...MINIMAX_CHAT_MODELS],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      // The registered models have different context limits, so a single
+      // recipe-wide maximum would be unsafe for one model or restrictive for
+      // the other. The upstream API remains the per-model source of truth.
+      cost_per_1m_input_usd: MINIMAX_CHAT_PRICING.input,
+      cost_per_1m_output_usd: MINIMAX_CHAT_PRICING.output,
+      price_last_verified: MINIMAX_CHAT_PRICING.verified_at,
     },
   },
   setup_hint:

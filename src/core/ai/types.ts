@@ -22,6 +22,7 @@ export type Implementation =
   | 'native-openai'
   | 'native-google'
   | 'native-anthropic'
+  | 'anthropic-compatible'
   | 'openai-compatible';
 
 export interface EmbeddingTouchpoint {
@@ -249,7 +250,7 @@ export interface Recipe {
   tier: 'native' | 'openai-compat';
   /** Maps to the gateway's implementation switch. */
   implementation: Implementation;
-  /** For openai-compatible tier: default base URL. May be overridden by env or wizard. */
+  /** Default compatible API base URL. May be overridden through provider_base_urls. */
   base_url_default?: string;
   /** Env var name(s) for auth; first is required, rest are optional. */
   auth_env?: {
