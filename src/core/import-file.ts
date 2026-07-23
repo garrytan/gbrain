@@ -301,6 +301,17 @@ export async function importFromContent(
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
   const sourceId = opts.sourceId;
+  // #2822: reject empty/whitespace-only content before any work happens. An
+  // empty page writes 0 chunks — invisible to search AND to `embed --stale`
+  // (nothing to embed), so the mistake never surfaces. Empty content is
+  // always a caller bug (empty piped stdin, bad shell substitution). Thrown
+  // (not returned) so every wrapper site surfaces the message, matching the
+  // ContentSanityBlockError flow.
+  if (content.trim().length === 0) {
+    throw new Error(
+      `Content for "${slug}" is empty; refusing to write an empty page (0 chunks would be invisible to search and embed --stale).`,
+    );
+  }
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -314,7 +325,17 @@ export async function importFromContent(
     };
   }
 
-  const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+  const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack, validate: true });
+
+  // #2743: reject stacked frontmatter (the double-put corruption class —
+  // already-serialized markdown re-wrapped in fresh frontmatter). gray-matter
+  // parses only the first block; the second would land verbatim in the body
+  // and poison every subsequent round-trip. Only MULTI_FRONTMATTER rejects
+  // here — the other validation codes keep their lint-only semantics.
+  const multiFm = parsed.errors?.find(e => e.code === 'MULTI_FRONTMATTER');
+  if (multiFm) {
+    throw new Error(`MULTI_FRONTMATTER: ${multiFm.message} (slug "${slug}", line ${multiFm.line})`);
+  }
 
   // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
   // input. parseMarkdown preserves every frontmatter key except type/title/

@@ -256,6 +256,56 @@ body`;
     });
   });
 
+  describe('MULTI_FRONTMATTER (#2743)', () => {
+    test('stacked frontmatter immediately after the close fence', () => {
+      const md = `${fence}\ntitle: outer\n${fence}\n${fence}\ntitle: inner\ntype: concept\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).toContain('MULTI_FRONTMATTER');
+    });
+
+    test('stacked frontmatter with a blank line between blocks (serializeMarkdown shape)', () => {
+      const md = `${fence}\ntitle: outer\n${fence}\n\n${fence}\ntitle: inner\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).toContain('MULTI_FRONTMATTER');
+    });
+
+    test('horizontal rules in the body are NOT flagged', () => {
+      const md = `${fence}\ntitle: ok\n${fence}\n\nsome prose\n\n${fence}\n\nmore prose\n\n${fence}\n\nend`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('MULTI_FRONTMATTER');
+    });
+
+    test('hrule pair at body start without YAML-shaped lines is NOT flagged', () => {
+      const md = `${fence}\ntitle: ok\n${fence}\n\n${fence}\n\nplain prose between rules\n\n${fence}\n\nend`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('MULTI_FRONTMATTER');
+    });
+
+    test('timeline sentinel form is NOT flagged', () => {
+      const md = `${fence}\ntitle: ok\n${fence}\n\nbody text\n\n${fence}\n\n## Timeline\n- 2024-01-01: thing`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('MULTI_FRONTMATTER');
+    });
+
+    test('body hrule + colon-prefixed prose (`Note: …`) mixed with plain lines is NOT flagged', () => {
+      const md = `${fence}\ntitle: ok\ntype: concept\n${fence}\n\n${fence}\n\nNote: remember to follow up\n\nlots of plain prose here\n\n${fence}\n\nmore prose`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('MULTI_FRONTMATTER');
+    });
+
+    test('fence pairing stops at the first non-frontmatter line (no far-fence pairing across prose)', () => {
+      const md = `${fence}\ntitle: ok\n${fence}\n\n${fence}\n\n${'plain prose line\n'.repeat(40)}TODO: fix the widget\n${'more prose\n'.repeat(40)}${fence}\nend`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('MULTI_FRONTMATTER');
+    });
+
+    test('stacked block with list-valued keys is still flagged', () => {
+      const md = `${fence}\ntitle: outer\n${fence}\n\n${fence}\ntitle: inner\ntags:\n  - a\n  - b\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).toContain('MULTI_FRONTMATTER');
+    });
+  });
+
   test('error.line is set for line-bearing errors', () => {
     const md = `${fence}\ntype: concept\n${fence}\n# Heading inline\n\nbody\x00drop`;
     const parsed = parseMarkdown(md, undefined, { validate: true });

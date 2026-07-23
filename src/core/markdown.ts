@@ -11,7 +11,8 @@ export type ParseValidationCode =
   | 'NULL_BYTES'
   | 'NESTED_QUOTES'
   | 'NON_STRING_FIELD'
-  | 'EMPTY_FRONTMATTER';
+  | 'EMPTY_FRONTMATTER'
+  | 'MULTI_FRONTMATTER';
 
 export interface ParseValidationError {
   code: ParseValidationCode;
@@ -337,6 +338,50 @@ function collectValidationErrors(
       errors.push({
         code: 'NON_STRING_FIELD',
         message: `Frontmatter "${field}" should be a string but is ${typeof v} (${JSON.stringify(v)}); quote the value (e.g. ${field}: "${String(v)}").`,
+      });
+    }
+  }
+
+  // 9. MULTI_FRONTMATTER (#2743) — a second ---…--- block right after the
+  //    closing fence is stacked frontmatter (the double-put corruption class:
+  //    already-serialized markdown re-wrapped in fresh frontmatter).
+  //    gray-matter parses only the first block and silently leaves the second
+  //    in the body. Heuristic: first non-empty line after the close is `---`,
+  //    a later `---` closes it, EVERY line between is frontmatter-shaped
+  //    (YAML `key:`, `- ` list item, `#` comment, indented continuation, or
+  //    blank — the issue's "stop at the first non-frontmatter character"
+  //    spec), and at least one is a `key:` line. A lone `---` stays a
+  //    markdown horizontal rule, and an hrule followed by prose — even
+  //    colon-prefixed prose like `Note: …` mixed with plain lines — is body
+  //    content, not a stacked block.
+  let afterClose = closeLine + 1;
+  while (afterClose < lines.length && lines[afterClose].trim().length === 0) afterClose++;
+  if (afterClose < lines.length && lines[afterClose].trim() === '---') {
+    let secondClose = -1;
+    for (let i = afterClose + 1; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed === '---') {
+        secondClose = i;
+        break;
+      }
+      const yamlShaped =
+        trimmed.length === 0 ||
+        /^[A-Za-z_][\w-]*\s*:/.test(trimmed) ||
+        trimmed.startsWith('- ') ||
+        trimmed === '-' ||
+        trimmed.startsWith('#') ||
+        /^\s/.test(lines[i]);
+      if (!yamlShaped) break; // first non-frontmatter line → body prose, not a stacked block
+    }
+    if (
+      secondClose > afterClose + 1 &&
+      lines.slice(afterClose + 1, secondClose).some(l => /^\s*[A-Za-z_][\w-]*\s*:/.test(l))
+    ) {
+      errors.push({
+        code: 'MULTI_FRONTMATTER',
+        message:
+          'Stacked frontmatter: a second ---…--- block follows the frontmatter (double-put corruption); merge into a single frontmatter block',
+        line: afterClose + 1,
       });
     }
   }
