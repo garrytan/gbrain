@@ -221,8 +221,13 @@ This is the big initial sync. It may take 10-30 minutes depending on how many
 years of calendar data you have.
 
 ```bash
-node calendar-sync.mjs --start 2020-01-01 --end $(date +%Y-%m-%d)
+node calendar-sync.mjs --start 2020-01-01 --end $(date -v+7d +%Y-%m-%d)
 ```
+
+The end date is a week AHEAD of today, not today. The headline promise —
+"knows who you're meeting tomorrow" — depends on upcoming events being in the
+brain; a sync that stops at today never ingests tomorrow's meetings. (On
+Linux, use `$(date -d '+7 days' +%Y-%m-%d)`.)
 
 Tell the user: "Syncing calendar history from [start year]. This creates one
 markdown file per day. For 4 years of data, expect ~1,400 daily files."
@@ -261,10 +266,12 @@ This is YOUR job (the agent). For each person who appears in calendar events:
 
 ### Step 7: Set Up Weekly Sync
 
-The calendar should sync weekly to stay current:
+The calendar should sync weekly to stay current. The window runs from a week
+back (catches edits to recent events) to a week AHEAD (keeps the lookahead
+window stocked so tomorrow's meeting prep has something to read):
 ```bash
 # Cron: every Sunday at 10 AM
-0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date +%Y-%m-%d)
+0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date -v+7d +%Y-%m-%d)
 ```
 
 After sync, import new data:

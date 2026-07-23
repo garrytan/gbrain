@@ -571,6 +571,11 @@ Subcommands:
                                           Aggregate calibration scorecard (v0.30.0)
   takes calibration [<holder>] [--bucket-size 0.1] [--json]
                                           Calibration curve binned by stated weight (v0.30.0)
+  takes propose [--status pending] [--page <slug>] [--limit N] [--json]
+                                          List queued take proposals from the propose_takes phase (#1467)
+  takes propose --accept <id> [--dir <path>]
+                                          Promote a proposal into the page's canonical takes fence
+  takes propose --reject <id>             Reject a proposal (kept as audit history)
 
 Common flags:
   --dir <path>    Override the brain directory (default: sync.repo_path config)
@@ -592,6 +597,7 @@ Common flags:
     case 'calibration': return cmdCalibration(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);
     case 'extract':     return cmdExtract(engine, rest);
+    case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
@@ -707,4 +713,73 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
     process.stderr.write(`Editor exited with status ${result.status ?? 'unknown'}\n`);
   }
   void execFileSync;
+}
+
+/**
+ * #1467 — `gbrain takes propose`: review queue for the propose_takes cycle
+ * phase. No verdict flag → list (pending by default). `--accept <id>`
+ * promotes the claim into the page's canonical takes fence (markdown + DB,
+ * same contract as `takes add`); `--reject <id>` records the verdict and
+ * keeps the row as audit history.
+ */
+async function cmdPropose(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
+  const { listTakeProposals, resolveTakeProposal } = await import('../core/takes-proposals.ts');
+  const json = flagPresent(args, '--json');
+  const acceptId = flagValue(args, '--accept');
+  const rejectId = flagValue(args, '--reject');
+
+  if (acceptId !== undefined || rejectId !== undefined) {
+    if (acceptId !== undefined && rejectId !== undefined) {
+      console.error('Pass either --accept <id> or --reject <id>, not both.');
+      process.exit(1);
+    }
+    const raw = (acceptId ?? rejectId)!;
+    const id = parseInt(raw, 10);
+    if (!Number.isFinite(id)) {
+      console.error(`Expected a numeric proposal id, got "${raw}".`);
+      process.exit(1);
+    }
+    const verdict = acceptId !== undefined ? 'accept' as const : 'reject' as const;
+    const dirArg = flagValue(args, '--dir');
+    const brainDir = verdict === 'accept'
+      ? await resolveBrainDir(engine, dirArg ?? null)
+      : undefined;
+    try {
+      const result = await resolveTakeProposal(engine, { id, verdict, brainDir, sourceId, actedBy: 'cli' });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(
+        result.status === 'accepted'
+          ? `Accepted proposal #${result.id} → ${result.page_slug} take #${result.promoted_row_num}.`
+          : `Rejected proposal #${result.id} (${result.page_slug}).`,
+      );
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const status = flagValue(args, '--status') ?? 'pending';
+  const rows = await listTakeProposals(engine, {
+    sourceId,
+    status,
+    pageSlug: flagValue(args, '--page'),
+    limit: flagValue(args, '--limit') ? parseInt(flagValue(args, '--limit')!, 10) : undefined,
+  });
+  if (json) {
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+  if (rows.length === 0) {
+    console.log(`No ${status} take proposals. The propose_takes cycle phase fills this queue (\`gbrain cycle --phases propose_takes\`).`);
+    return;
+  }
+  for (const r of rows) {
+    const w = typeof r.weight === 'number' ? r.weight.toFixed(2) : String(r.weight);
+    console.log(`#${r.id}  ${r.page_slug}  [${r.kind} / ${r.holder} / w=${w}]  ${r.claim_text}`);
+  }
+  console.log(`\n${rows.length} ${status} proposal(s). \`gbrain takes propose --accept <id>\` promotes to the takes fence; \`--reject <id>\` dismisses.`);
 }
