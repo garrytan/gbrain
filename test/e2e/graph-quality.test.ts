@@ -260,6 +260,103 @@ title: Frank
     }
   });
 
+  test('auto-timeline runs for remote callers while auto-link stays gated', async () => {
+    // Regression for the remote gate: auto-link is skipped for remote/untrusted
+    // callers (its cross-page bare-slug matching can forge edges), but timeline
+    // entries are keyed to the page's own slug, so they are safe on remote and
+    // must still be extracted. See put_page in src/core/operations.ts.
+    const putOp = operationsByName['put_page'];
+    const result = await putOp.handler(
+      { ...makeContext(), remote: true },
+      {
+        slug: 'people/grace',
+        content: `---
+type: person
+title: Grace
+---
+
+Grace works at people/acme.
+
+## Timeline
+
+- **2026-03-15** | Joined Acme
+- **2026-04-02** | Led Series A
+`,
+      },
+    );
+
+    // Timeline now runs for remote callers.
+    expect((result as any).auto_timeline).toBeDefined();
+    expect((result as any).auto_timeline.created).toBe(2);
+    const entries = await engine.getTimeline('people/grace');
+    expect(entries.length).toBe(2);
+
+    // Auto-link stays gated for remote callers (cross-page injection defense).
+    expect((result as any).auto_links).toEqual({ skipped: 'remote' });
+  });
+
+  test('auto-timeline reports skipped for a remote write that never parses', async () => {
+    // Oversized content early-returns from importFromContent with no parsedPage,
+    // so neither extraction runs. The response must still report
+    // auto_timeline: { skipped: 'remote' } (paired with auto_links), not drop the
+    // key. Regression guard for the remote-gate decoupling (parsedPage-falsy case).
+    const putOp = operationsByName['put_page'];
+    const huge = 'x'.repeat(5_000_001); // > MAX_FILE_SIZE (5MB)
+    const result = await putOp.handler(
+      { ...makeContext(), remote: true },
+      { slug: 'people/heidi', content: huge },
+    );
+    expect((result as any).auto_links).toEqual({ skipped: 'remote' });
+    expect((result as any).auto_timeline).toEqual({ skipped: 'remote' });
+  });
+
+  test('auto-timeline scopes remote entries to the caller source (no cross-source forgery)', async () => {
+    // Regression for the CRITICAL found in security review: without threading
+    // ctx.sourceId into the batch, a remote write under a non-default source
+    // defaults to source_id='default' and forges a timeline row onto the
+    // same-slug page in the default source. This test writes a house page in
+    // 'default', then a remote write of the SAME slug under 'tenantB', and
+    // asserts tenantB's entry lands on tenantB — never on the default page.
+    const putOp = operationsByName['put_page'];
+    const slug = 'people/shared';
+
+    await putOp.handler(
+      { ...makeContext(), remote: false, sourceId: 'default' },
+      { slug, content: `---
+type: person
+title: Shared (house)
+---
+
+## Timeline
+
+- **2026-01-01** | House event
+` },
+    );
+
+    const result = await putOp.handler(
+      { ...makeContext(), remote: true, sourceId: 'tenantB' },
+      { slug, content: `---
+type: person
+title: Shared (tenantB)
+---
+
+## Timeline
+
+- **2026-06-06** | Tenant B event
+` },
+    );
+    expect((result as any).auto_timeline.created).toBe(1);
+
+    const bDates = (await engine.getTimeline(slug, { sourceId: 'tenantB' }))
+      .map((e) => String(e.date).slice(0, 10));
+    expect(bDates).toContain('2026-06-06');
+
+    const defDates = (await engine.getTimeline(slug, { sourceId: 'default' }))
+      .map((e) => String(e.date).slice(0, 10));
+    expect(defDates).toContain('2026-01-01');      // house entry survives
+    expect(defDates).not.toContain('2026-06-06');  // no cross-source forgery
+  });
+
   test('auto-link respects auto_link=false config', async () => {
     await engine.setConfig('auto_link', 'false');
     try {
