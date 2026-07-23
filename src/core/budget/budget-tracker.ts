@@ -156,6 +156,20 @@ const FREE_LOCAL_EMBED_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Provider id prefixes whose chat models run on local inference (electricity,
+ * not API tokens) and so price at $0. Without this, a `--max-cost`-bounded
+ * brainstorm/lsd configured for a local chat provider TX2 hard-fails because
+ * lookupPricing has no entry for them. Matched against the provider half
+ * of the `provider:model` string.
+ *
+ * Sibling to FREE_LOCAL_EMBED_PROVIDERS and FREE_LOCAL_RERANK_PROVIDERS.
+ */
+const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
+  'ollama',
+  'llama-server',
+]);
+
+/**
  * Look up `modelId` in the chat or embedding pricing maps. Returns a
  * per-1M-token price tuple, or null when unknown.
  *
@@ -199,6 +213,9 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // under `--max-cost`. Only the rerank kind — chat/embed already have
   // their own provider-specific pricing surfaces.
   if (kind === 'rerank' && providerId && FREE_LOCAL_RERANK_PROVIDERS.has(providerId)) {
+    return { input: 0, output: 0 };
+  }
+  if (kind === 'chat' && providerId && FREE_LOCAL_CHAT_PROVIDERS.has(providerId)) {
     return { input: 0, output: 0 };
   }
   return null;

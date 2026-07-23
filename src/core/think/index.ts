@@ -460,6 +460,9 @@ export async function runThink(
       // problems when the real cause was a model id the recipe didn't know
       // (e.g. a tier-configured model newer than the recipe list). The re-probe
       // is pure and cheap (no IO): same predicate tryBuildGatewayClient used.
+      // NO_ANTHROPIC_API_KEY only fires for the anthropic provider (probe reason
+      // 'unavailable' is anthropic-no-key by construction) — non-Anthropic
+      // providers (Ollama, OpenRouter) never see the false warning (#1854).
       const probe = probeChatModel(normalizeModelId(modelUsed));
       const modelProblem = !probe.ok && probe.reason !== 'unavailable';
       warnings.push(
@@ -815,7 +818,7 @@ function buildGracefulMessage(modelStr: string): {
     type: 'message',
     role: 'assistant',
     model: modelStr,
-    content: [{ type: 'text', text: '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)' }],
+    content: [{ type: 'text', text: '(no LLM available — set chat_model, expansion_model, or anthropic_api_key via gbrain config)' }],
     usage: { input_tokens: 0, output_tokens: 0 },
     stop_reason: 'end_turn',
   };
