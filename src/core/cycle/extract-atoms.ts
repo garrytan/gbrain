@@ -594,7 +594,9 @@ export async function runPhaseExtractAtoms(
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
         if (!isValidEmptyAtomsResponse(result.text)) {
-          throw new Error('model returned invalid atom JSON (expected an array of valid atoms)');
+          throw new Error(
+            `model returned invalid atom JSON (${atomResponseDiagnostic(result.text)}; stop=${result.stopReason})`,
+          );
         }
         if (!opts.dryRun) {
           const sourceRefHash = createHash('sha256')
@@ -812,6 +814,28 @@ function isValidEmptyAtomsResponse(raw: string): boolean {
     return Array.isArray(parsed) && parsed.length === 0;
   } catch {
     return false;
+  }
+}
+
+function atomResponseDiagnostic(raw: string): string {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+  const arrayStart = cleaned.indexOf('[');
+  const arrayEnd = cleaned.lastIndexOf(']');
+  if (arrayStart === -1) return `chars=${raw.length}, no_array`;
+  if (arrayEnd < arrayStart) return `chars=${raw.length}, unterminated_array`;
+  try {
+    const parsed = JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1));
+    if (!Array.isArray(parsed)) return `chars=${raw.length}, parsed_non_array`;
+    const first = parsed[0];
+    const keys =
+      first && typeof first === 'object' && !Array.isArray(first)
+        ? Object.keys(first as Record<string, unknown>).sort().join(',')
+        : typeof first;
+    return `chars=${raw.length}, items=${parsed.length}, first_keys=${keys || 'none'}`;
+  } catch {
+    return `chars=${raw.length}, malformed_array`;
   }
 }
 
