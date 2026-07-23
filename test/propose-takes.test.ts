@@ -14,7 +14,7 @@
  *  - parseExtractorOutput unit tests for the raw JSON parser
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterAll } from 'bun:test';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
@@ -26,6 +26,11 @@ import {
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+
+// R5 shard hygiene: leave no configured gateway past the file boundary.
+afterAll(() => {
+  resetGateway();
+});
 import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';

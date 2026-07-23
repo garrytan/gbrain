@@ -25,8 +25,11 @@ import {
   resetGateway,
   __setChatTransportForTests,
   getChatModel,
+  unavailableReason,
+  warnUnavailableOnce,
 } from '../src/core/ai/gateway.ts';
 import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
+import { runFactsBackstop } from '../src/core/facts/backstop.ts';
 
 beforeEach(() => {
   resetGateway();
@@ -145,5 +148,91 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
       source: 'test:smoking-gun',
     });
     expect(chatCalled).toBe(true);  // ← THE bug-class assertion
+  });
+});
+
+// #3062 — an unauthenticated chat gateway must be DIAGNOSABLE, not a
+// silent success-shaped no-op. Three surfaces pinned here:
+//   1. unavailableReason() names the missing auth_env key + model.
+//   2. warnUnavailableOnce() writes exactly one stderr warning per process.
+//   3. runFactsBackstop() records skipped: 'chat_unavailable' (and queue
+//      mode declines to enqueue a job that is guaranteed to no-op).
+describe('#3062 — chat-unavailable is diagnosable, not silent', () => {
+  test('unavailableReason names the missing auth env key and the model', () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: {},
+    });
+    expect(isAvailable('chat')).toBe(false);
+    const reason = unavailableReason('chat');
+    expect(reason).toContain('ANTHROPIC_API_KEY');
+    expect(reason).toContain('anthropic:claude-sonnet-4-6');
+  });
+
+  test('unavailableReason is null when the touchpoint is available', () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
+    });
+    expect(unavailableReason('chat')).toBeNull();
+  });
+
+  test('warnUnavailableOnce warns exactly once per process per touchpoint', () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: {},
+    });
+    const seen: string[] = [];
+    const orig = console.warn;
+    // eslint-disable-next-line no-console
+    console.warn = (msg: unknown) => { seen.push(String(msg)); };
+    try {
+      warnUnavailableOnce('chat', 'facts extraction skipped');
+      warnUnavailableOnce('chat', 'facts extraction skipped');
+    } finally {
+      // eslint-disable-next-line no-console
+      console.warn = orig;
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('ANTHROPIC_API_KEY');
+  });
+
+  test('runFactsBackstop records skipped: chat_unavailable instead of a success-shaped empty result', async () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: {},
+    });
+    // The gate fires before any engine use beyond the kill-switch config
+    // read, so a getConfig stub suffices — no PGLite needed.
+    const stubEngine = { getConfig: async () => null } as unknown as import('../src/core/engine.ts').BrainEngine;
+    const page = {
+      slug: 'note/eligible',
+      type: 'note' as const,
+      compiled_truth: 'this is some real content with meaningful claims. '.repeat(10),
+      frontmatter: {},
+    };
+    const inline = await runFactsBackstop(page, {
+      engine: stubEngine,
+      sourceId: 'default',
+      sessionId: null,
+      source: 'mcp:put_page',
+      mode: 'inline',
+    });
+    expect(inline).toEqual({
+      mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],
+      skipped: 'chat_unavailable',
+    });
+
+    const queued = await runFactsBackstop(page, {
+      engine: stubEngine,
+      sourceId: 'default',
+      sessionId: null,
+      source: 'sync:import',
+      mode: 'queue',
+    });
+    expect(queued).toEqual({
+      mode: 'queue', enqueued: false, queueDepth: 0,
+      skipped: 'chat_unavailable',
+    });
   });
 });

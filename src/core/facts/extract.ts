@@ -21,7 +21,7 @@
  * gateway-down errors are absorbed into NULL-embedding rows.
  */
 
-import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { chat, embedOne, isAvailable, warnUnavailableOnce } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
@@ -175,7 +175,10 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
 
   if (!isAvailable('chat')) {
     // No chat gateway → no extraction. Caller still inserts facts via direct
-    // `gbrain take add` paths.
+    // `gbrain take add` paths. #3062: warn once per process — silently
+    // returning [] here made an unauthenticated brain byte-identical to a
+    // genuine empty extraction across every health surface.
+    warnUnavailableOnce('chat', 'facts extraction skipped');
     return [];
   }
 

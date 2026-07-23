@@ -16,7 +16,7 @@
  *     nothing), and config `provider_chat_options` overrides the derived key
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   chat,
   configureGateway,
@@ -24,6 +24,12 @@ import {
   resetGateway,
   __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+
+// R5 shard hygiene: leave no configured gateway past the file boundary.
+afterAll(() => {
+  resetGateway();
+  __setGenerateTextTransportForTests(null);
+});
 
 describe('openAIPromptCacheKey — derivation', () => {
   test('same system + same tools → identical stable key (sticky routing)', () => {

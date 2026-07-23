@@ -29,13 +29,19 @@
  * the bug made you believe was sufficient.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   chat,
   configureGateway,
   resetGateway,
   __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+
+// R5 shard hygiene: leave no configured gateway past the file boundary.
+afterAll(() => {
+  resetGateway();
+  __setGenerateTextTransportForTests(null);
+});
 
 describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
   beforeEach(() => {

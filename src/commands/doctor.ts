@@ -7090,11 +7090,16 @@ export async function buildChecks(
     );
     if (factsExists[0]?.exists) {
       const health = await engine.getFactsHealth('default');
-      const status: 'ok' | 'warn' = health.total_active >= 0 ? 'ok' : 'warn';
       const top = health.top_entities
         .slice(0, 3)
         .map(t => `${t.entity_slug}:${t.count}`)
         .join(', ') || '—';
+      // #3062: "0 active facts" used to read [OK] even when the chat
+      // gateway had never been reachable — indistinguishable from a brain
+      // with genuinely nothing to extract. Distinguish the two.
+      const { unavailableReason } = await import('../core/ai/gateway.ts');
+      const chatDown = health.total_active === 0 ? unavailableReason('chat') : null;
+      const status: 'ok' | 'warn' = chatDown ? 'warn' : health.total_active >= 0 ? 'ok' : 'warn';
       checks.push({
         name: 'facts_health',
         status,
@@ -7102,7 +7107,8 @@ export async function buildChecks(
           `facts_health(default): ${health.total_active} active, ` +
           `${health.total_today} today, ${health.total_week} this week, ` +
           `${health.total_consolidated} consolidated, ` +
-          `top entities ${top}`,
+          `top entities ${top}` +
+          (chatDown ? ` — extraction has no chat gateway: ${chatDown}` : ''),
       });
     } else {
       checks.push({

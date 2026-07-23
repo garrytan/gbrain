@@ -16,7 +16,7 @@
  * `generateText` import via Bun's module-replace pattern.
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -29,6 +29,12 @@ import {
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
+
+// R5 shard hygiene: leave no configured gateway past the file boundary.
+afterAll(() => {
+  resetGateway();
+  __setGenerateTextTransportForTests(null);
+});
 
 describe('chat touchpoint — recipe registry', () => {
   test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {

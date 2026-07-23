@@ -78,7 +78,7 @@ export type FactsBackstopResult =
       mode: 'queue';
       enqueued: boolean;
       queueDepth: number;
-      skipped?: 'extraction_disabled' | 'queue_overflow' | 'queue_shutdown' | `eligibility_failed:${string}`;
+      skipped?: 'extraction_disabled' | 'chat_unavailable' | 'queue_overflow' | 'queue_shutdown' | `eligibility_failed:${string}`;
     }
   | {
       mode: 'inline';
@@ -86,7 +86,7 @@ export type FactsBackstopResult =
       duplicate: number;
       superseded: number;
       fact_ids: number[];
-      skipped?: 'extraction_disabled' | `eligibility_failed:${string}`;
+      skipped?: 'extraction_disabled' | 'chat_unavailable' | `eligibility_failed:${string}`;
     };
 
 interface ParsedPageInput {
@@ -153,6 +153,18 @@ export async function runFactsBackstop(
     return mode === 'queue'
       ? { mode: 'queue', enqueued: false, queueDepth: 0, skipped }
       : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped };
+  }
+
+  // #3062: no chat gateway → extraction is guaranteed to yield nothing. The
+  // result was previously byte-identical to a genuine empty extraction
+  // (inserted: 0, no `skipped`), and queue mode enqueued jobs doomed to
+  // no-op. Record WHY, warn once per process, and skip the queue entirely.
+  const { isAvailable, warnUnavailableOnce } = await import('../ai/gateway.ts');
+  if (!isAvailable('chat')) {
+    warnUnavailableOnce('chat', 'facts extraction skipped');
+    return mode === 'queue'
+      ? { mode: 'queue', enqueued: false, queueDepth: 0, skipped: 'chat_unavailable' }
+      : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'chat_unavailable' };
   }
 
   // --- Mode dispatch ---
