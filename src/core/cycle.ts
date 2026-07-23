@@ -2090,7 +2090,24 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+          // Routine cycles only inspect pages changed by sync/synthesize.
+          // A successful no-op sync therefore passes [] and does no model
+          // work. A one-shot propose_takes invocation remains the explicit
+          // full/backlog path.
+          const affectedSlugs =
+            opts.onceForPhase === 'propose_takes'
+              ? undefined
+              : (syncPagesAffected || synthesizeWrittenSlugs)
+                ? Array.from(new Set([
+                    ...(syncPagesAffected ?? []),
+                    ...(synthesizeWrittenSlugs ?? []),
+                  ]))
+                : [];
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, {
+            repoPath: brainDir ?? undefined,
+            affectedSlugs,
+            signal: opts.signal,
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

@@ -55,6 +55,8 @@ export interface BasePhaseOpts {
   budgetUsd?: number;
   /** Optional injected BudgetMeter (tests). When set, replaces the default constructed one. */
   meter?: BudgetMeter;
+  /** Abort signal from the enclosing cycle/minion job. */
+  signal?: AbortSignal;
 }
 
 export abstract class BaseCyclePhase {

@@ -709,6 +709,25 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               const ageMs = now - lastSyncMs;
               if (ageMs < intervalMs) continue; // fresh enough
               try {
+                // Do not queue a redundant freshness sync while this source
+                // already has either a cycle (which includes sync) or a
+                // standalone sync in flight. Slot-based idempotency alone
+                // permits one duplicate every tick when a long cycle spans
+                // slots. maxWaiting is intentionally not used: it coalesces
+                // by name+queue, not source, and can starve another source.
+                const inFlight = await engine.executeRaw<{ one: number }>(
+                  `SELECT 1 AS one
+                     FROM minion_jobs
+                    WHERE status IN ('waiting', 'active')
+                      AND (
+                        (name = 'autopilot-cycle' AND data->>'source_id' = $1)
+                        OR
+                        (name = 'sync' AND data->>'sourceId' = $1)
+                      )
+                    LIMIT 1`,
+                  [src.id],
+                );
+                if (inFlight.length > 0) continue;
                 const job = await queue.add(
                   'sync',
                   {
@@ -722,7 +741,6 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     idempotency_key: `autopilot-sync:${src.id}:${slot}`,
                     max_attempts: 2,
                     timeout_ms: timeoutMs,
-                    maxWaiting: 1,
                   },
                 );
                 if (jsonMode) {

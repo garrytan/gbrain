@@ -50,7 +50,7 @@ describe('BudgetMeter', () => {
     expect(r.allowed).toBe(true);
   });
 
-  test('non-Anthropic model bypasses gate with warn-once + ledger entry', () => {
+  test('unknown model bypasses gate with warn-once + ledger entry', () => {
     const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
     const r1 = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem1' });
     const r2 = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem2' });
@@ -58,6 +58,19 @@ describe('BudgetMeter', () => {
     expect(r1.unpriced).toBe(true);
     expect(r2.allowed).toBe(true);
     expect(meter.unpricedSubmits).toBe(2);
+  });
+
+  test('canonical Google pricing enforces the cycle budget', () => {
+    const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'propose_takes', auditPath });
+    const r = meter.check({
+      modelId: 'google:gemini-2.5-flash',
+      estimatedInputTokens: 1500,
+      maxOutputTokens: 500,
+      label: 'takes',
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.unpriced).toBeUndefined();
+    expect(r.estimatedCostUsd).toBeCloseTo(0.0017, 6);
   });
 
   test('ledger captures every submit (allowed + denied + unpriced)', () => {

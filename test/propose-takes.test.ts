@@ -350,6 +350,61 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
   });
 
+  test('explicit empty affectedSlugs is a routine no-op, not a full scan', async () => {
+    const pages = [buildPage({ slug: 'wiki/backlog', body: 'must not be scanned' })];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      affectedSlugs: [],
+    });
+    expect(extractorCalls).toBe(0);
+    expect(result.details.pages_scanned).toBe(0);
+  });
+
+  test('affectedSlugs scopes routine work to changed pages', async () => {
+    const selected = buildPage({ slug: 'wiki/changed', body: 'changed prose' });
+    const other = buildPage({ slug: 'wiki/backlog', body: 'old prose' });
+    const { engine } = buildMockEngine({ pages: [selected, other] });
+    (engine.getPage as unknown as (slug: string) => Promise<Page | null>) =
+      async (slug: string) => slug === selected.slug ? selected : null;
+    let seen = '';
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen = pagePath;
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      affectedSlugs: [selected.slug],
+    });
+    expect(seen).toBe(selected.slug);
+    expect(result.details.pages_scanned).toBe(1);
+  });
+
+  test('aborted signal stops before model work', async () => {
+    const page = buildPage({ slug: 'wiki/changed', body: 'changed prose' });
+    const { engine } = buildMockEngine({ pages: [page] });
+    (engine.getPage as unknown as (slug: string) => Promise<Page | null>) = async () => page;
+    const controller = new AbortController();
+    controller.abort(new Error('job cancelled'));
+    let extractorCalls = 0;
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      affectedSlugs: [page.slug],
+      signal: controller.signal,
+      extractor: async () => {
+        extractorCalls++;
+        return [];
+      },
+    });
+    expect(extractorCalls).toBe(0);
+    expect(result.status).toBe('fail');
+    expect(result.summary).toContain('job cancelled');
+  });
+
   test('skipPagesWithFence:true bypasses pages that already have a complete fence', async () => {
     const pages = [
       buildPage({

@@ -11,13 +11,12 @@
  * takes-quality-eval/pricing.ts duplicated the numbers and drifted: Opus 4.7
  * read $15/$75 in one and $5/$25 in the other.)
  *
- * Codex P1 #10 fold: non-Anthropic models (gemini, gpt, anything not in this
- * map) bypass the budget gate with a `BUDGET_METER_NO_PRICING` warn once per
- * process. The cycle still runs unbounded for those models.
+ * The legacy export remains Anthropic-only, while estimateMaxCostUsd now
+ * resolves through the canonical multi-provider table so Gemini/OpenAI cycle
+ * work is cost-gated too.
  */
 
-import { CANONICAL_PRICING, type ModelPricing } from './model-pricing.ts';
-import { splitProviderModelId } from './model-id.ts';
+import { CANONICAL_PRICING, canonicalLookup, type ModelPricing } from './model-pricing.ts';
 
 export type { ModelPricing };
 
@@ -39,8 +38,8 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = Object.fromEntrie
  * The maxOutputTokens upper-bounds the output cost — actual completions
  * usually return less.
  *
- * Returns null when the model isn't in the pricing map. Callers warn-once
- * and treat as zero-cost (the cycle runs unbounded for that submit).
+ * Returns null when the model isn't in the canonical pricing map. Callers
+ * warn-once and treat as zero-cost (the cycle runs unbounded for that submit).
  *
  * Accepts bare (`claude-opus-4-7`), colon-prefixed (`anthropic:claude-opus-4-7`),
  * and slash-prefixed (`anthropic/claude-opus-4-7`) ids. Routes through
@@ -54,11 +53,7 @@ export function estimateMaxCostUsd(
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  let p: ModelPricing | undefined = ANTHROPIC_PRICING[modelId];
-  if (!p) {
-    const { model: tail } = splitProviderModelId(modelId);
-    if (tail) p = ANTHROPIC_PRICING[tail];
-  }
+  const p = canonicalLookup(modelId);
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +
