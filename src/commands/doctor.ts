@@ -7917,12 +7917,22 @@ export async function runRemediate(
           `  gbrain doctor --remediate --resume ${planHash}\n`,
         );
       },
+      onNoWorker: () => {
+        console.error(
+          `[remediate] no jobs worker running — submitted steps would time out unwatched (#2116).\n` +
+          `Start one first:\n` +
+          `  gbrain jobs work                      # foreground worker\n` +
+          `  gbrain jobs supervisor start          # managed daemon\n` +
+          `(worker on another host? set GBRAIN_REMEDIATION_ASSUME_WORKER=1)`,
+        );
+      },
     },
   );
 
   // CLI surfaces — target unreachable / resume missed already emitted via hooks.
   // Library returns synthetic result with target_unreachable populated; exit 2.
   if (result.target_unreachable) process.exit(2);
+  if (result.no_worker) process.exit(1);
 
   if (dryRun && result.submitted.length > 0) {
     console.log(`[remediate --dry-run] Would submit ${result.submitted.length} jobs:`);

@@ -40,6 +40,7 @@ import postgres from 'postgres';
 import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, endPoolBounded } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
+import { loadConfig } from './config.ts';
 
 export type Sql = ReturnType<typeof postgres>;
 
@@ -177,6 +178,28 @@ export function readKillSwitchEnv(): boolean {
 }
 
 /**
+ * Resolve kill-switch state: env ABOVE config (pace-mode precedence, #2731).
+ *
+ * `GBRAIN_DISABLE_DIRECT_POOL` stays the incident-time escape hatch — when the
+ * env var is SET (to anything), it decides in both directions ('1'/'true' → on,
+ * anything else → off, so `=0` can override a config-plane `true`). When unset,
+ * fall back to the file-plane `pool.disable_direct` config key so daemons /
+ * launchd / cron jobs that don't inherit the operator's shell env honor the
+ * switch too. File plane (not DB plane) because this runs before any connect.
+ */
+export function resolveKillSwitch(): boolean {
+  const env = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+  if (env !== undefined && env !== '') {
+    return env === '1' || env === 'true';
+  }
+  try {
+    return loadConfig()?.pool?.disable_direct === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolve direct pool size: explicit > env > default.
  */
 export function resolveDirectPoolSize(explicit?: number): number {
@@ -211,7 +234,7 @@ export class ConnectionManager {
       this._readPool = opts.parent.peekReadPool();
       this._readPoolOwnedExternally = true; // never end the parent's pool
     } else {
-      this._killSwitch = readKillSwitchEnv();
+      this._killSwitch = resolveKillSwitch();
       this._isSupabase = isSupabasePoolerUrl(opts.url);
       // Direct URL: explicit override > env > derive > null
       const envOverride = process.env.GBRAIN_DIRECT_DATABASE_URL;

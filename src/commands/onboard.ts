@@ -184,10 +184,20 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
           `Checkpoint saved. Resume with:\n  gbrain doctor --remediate --resume ${planHash}\n`,
         );
       },
+      onNoWorker: () => {
+        process.stderr.write(
+          `[onboard] no jobs worker running — submitted steps would time out unwatched (#2116).\n` +
+          `Start one first:\n` +
+          `  gbrain jobs work                      # foreground worker\n` +
+          `  gbrain jobs supervisor start          # managed daemon\n` +
+          `(worker on another host? set GBRAIN_REMEDIATION_ASSUME_WORKER=1)\n`,
+        );
+      },
     },
   );
 
   if (result.target_unreachable) process.exit(2);
+  if (result.no_worker) process.exit(1);
 
   if (jsonOutput) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');

@@ -1,8 +1,12 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   isSupabasePoolerUrl,
   deriveDirectUrl,
   readKillSwitchEnv,
+  resolveKillSwitch,
   resolveDirectPoolSize,
   ConnectionManager,
   DEFAULT_DIRECT_POOL_SIZE,
@@ -106,6 +110,62 @@ describe('readKillSwitchEnv', () => {
     expect(readKillSwitchEnv()).toBe(false);
     process.env.GBRAIN_DISABLE_DIRECT_POOL = 'false';
     expect(readKillSwitchEnv()).toBe(false);
+  });
+});
+
+// #2731: env-above-config kill-switch. Daemons/launchd/cron that don't inherit
+// the shell env need a config.json plane (`pool.disable_direct`); the env var
+// stays the incident-time escape hatch and wins IN BOTH DIRECTIONS when set.
+describe('resolveKillSwitch (#2731, config plane)', () => {
+  let tmp: string;
+  let envKill: string | undefined;
+  let envHome: string | undefined;
+
+  const writeConfig = (cfg: Record<string, unknown>) => {
+    mkdirSync(join(tmp, '.gbrain'), { recursive: true });
+    writeFileSync(join(tmp, '.gbrain', 'config.json'), JSON.stringify(cfg));
+  };
+
+  beforeEach(() => {
+    envKill = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    envHome = process.env.GBRAIN_HOME;
+    tmp = mkdtempSync(join(tmpdir(), 'gbrain-killswitch-'));
+    process.env.GBRAIN_HOME = tmp;
+    delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+  });
+
+  afterEach(() => {
+    if (envKill === undefined) delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    else process.env.GBRAIN_DISABLE_DIRECT_POOL = envKill;
+    if (envHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = envHome;
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
+  test('config pool.disable_direct=true engages the kill-switch with env unset', () => {
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://u:p@h:6543/db', pool: { disable_direct: true } });
+    expect(resolveKillSwitch()).toBe(true);
+  });
+
+  test('no config, no env → false', () => {
+    expect(resolveKillSwitch()).toBe(false);
+  });
+
+  test('config without pool key → false', () => {
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://u:p@h:6543/db' });
+    expect(resolveKillSwitch()).toBe(false);
+  });
+
+  test('env=1 wins over config false', () => {
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://u:p@h:6543/db', pool: { disable_direct: false } });
+    process.env.GBRAIN_DISABLE_DIRECT_POOL = '1';
+    expect(resolveKillSwitch()).toBe(true);
+  });
+
+  test('env=0 wins over config true (escape hatch works in both directions)', () => {
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://u:p@h:6543/db', pool: { disable_direct: true } });
+    process.env.GBRAIN_DISABLE_DIRECT_POOL = '0';
+    expect(resolveKillSwitch()).toBe(false);
   });
 });
 

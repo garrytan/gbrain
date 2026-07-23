@@ -130,6 +130,21 @@ export interface GBrainConfig {
   };
 
   /**
+   * #2731 — connection-pool routing knobs (file plane; read before any DB
+   * connect, so it must live here, not the DB plane).
+   */
+  pool?: {
+    /**
+     * Disable the direct (session-mode) pool and route everything through the
+     * single read pool. Config-plane twin of the GBRAIN_DISABLE_DIRECT_POOL
+     * env var so daemons/launchd/cron that don't inherit the shell env honor
+     * the switch. Env wins when set (see resolveKillSwitch in
+     * connection-manager.ts).
+     */
+    disable_direct?: boolean;
+  };
+
+  /**
    * v0.42 — self-upgrade settings (file plane; read on the hot path before any
    * DB connect, so it must live here, not the DB plane). `mode` is the only
    * knob most users touch: `notify` (default — emit a marker + 4-option prompt),
