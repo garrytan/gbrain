@@ -21,6 +21,17 @@
   this is unrelated to the branch that surfaced it (`fix/http-lock-cleanup-shutdown` only
   touches `serve-http.ts`).
 
+  **Related occurrence, same root-cause class:** `test/facts-classify.test.ts`'s
+  `classifyAgainstCandidates` tests failed twice under a full parallel-shard run
+  (`below cheap threshold but at-or-above fallback threshold`, `no embedding on new fact`)
+  but pass clean standalone (9/9, 0 fail, confirmed same night). `classifyAgainstCandidates`
+  reads `src/core/ai/gateway.ts`'s module-level `_config` singleton via `isAvailable('chat')`
+  — any other test file that calls `configureGateway()` and shares a shard/worker process
+  can race this the same way `brain-repo-durability`'s shared `let` fixtures do. Both are
+  symptoms of the same underlying gap: module-level/shared mutable state isn't safe under
+  bun's concurrent-shard test scheduling. Worth a repo-wide sweep for this pattern rather
+  than fixing each occurrence as it's independently discovered.
+
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
 - [ ] **P1 — take-writes source scoping fails open when source resolution errors (#2684 residual).**
