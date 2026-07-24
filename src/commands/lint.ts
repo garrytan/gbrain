@@ -296,9 +296,10 @@ export function fixContent(content: string): string {
     fixed = fixed.replace(pattern, '');
   }
 
-  // Fix wrapping code fences
-  fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
-  fixed = fixed.replace(/\n```\s*$/, '');
+  // Fix a whole-document markdown wrapper only when both fences are present.
+  // A closing fence at EOF may belong to a legitimate final code example.
+  const wrapper = fixed.match(/^```(?:markdown|md)[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```[^\S\r\n]*$/);
+  if (wrapper) fixed = wrapper[1];
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');
