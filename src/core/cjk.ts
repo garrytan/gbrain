@@ -20,6 +20,14 @@ export const CJK_SLUG_CHARS = '一-鿿぀-ゟ゠-ヿ가-힯';
 
 export const CJK_RANGES_REGEX = new RegExp(`[${CJK_SLUG_CHARS}]`);
 
+/**
+ * Page-slug segment grammar (no anchors): alnum-or-CJK lead char, then
+ * alnum/CJK/hyphen continuation. Single source for validatePageSlug
+ * (operations.ts), SlugRegistry's SLUG_RE, and the dream-cycle
+ * SUMMARY_SLUG_RE so every slug validator shares one grammar (#738).
+ */
+export const PAGE_SLUG_SEG = `[a-z0-9${CJK_SLUG_CHARS}][a-z0-9${CJK_SLUG_CHARS}\\-]*`;
+
 export const CJK_SENTENCE_DELIMITERS = ['。', '！', '？']; // 。！？
 export const CJK_CLAUSE_DELIMITERS = ['；', '：', '，', '、']; // ；：，、
 

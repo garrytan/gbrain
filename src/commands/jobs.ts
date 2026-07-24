@@ -1664,7 +1664,13 @@ export async function registerBuiltinHandlers(
 
   worker.register('backlinks', async (job) => {
     const { runBacklinksCore } = await import('./backlinks.ts');
-    const action: 'check' | 'fix' = job.data.action === 'check' ? 'check' : 'fix';
+    // Default to 'check', not 'fix': backlinks jobs submitted with an empty
+    // payload (e.g. the sync→embed→backlinks chains enqueued after ingestion)
+    // must never rewrite tracked brain pages with generated "Referenced in"
+    // timeline bullets. Mirrors the documented intent in src/core/cycle.ts
+    // (runPhaseBacklinks). The filesystem fixer stays available explicitly
+    // via '{"action":"fix"}' or `gbrain check-backlinks fix`.
+    const action: 'check' | 'fix' = job.data.action === 'fix' ? 'fix' : 'check';
     const dir = typeof job.data.dir === 'string'
       ? job.data.dir
       : (await engine.getConfig('sync.repo_path')) ?? '.';
@@ -1879,6 +1885,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal,
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       phases,
+      forceGlobalOrphans: true,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
 
@@ -2055,11 +2062,26 @@ export async function registerBuiltinHandlers(
         ? job.data.repoPath
         : ((await engine.getConfig('sync.repo_path')) ?? undefined);
     try {
-      return await runExtractAtomsDrainForSource(engine, {
+      const result = await runExtractAtomsDrainForSource(engine, {
         sourceId,
         windowSeconds,
         brainDir: repoPath,
       });
+      // issue #3218: every item the drain attempted failed (0 succeeded, >=1
+      // provider error) — completing this job normally would mark the
+      // durable job done while the backlog sits untouched, and no retry
+      // policy would ever fire on it again. Throw so the worker's ordinary
+      // failJob path (attempt+backoff, or dead-letter once exhausted) takes
+      // over instead — matching the existing behavior for every other
+      // handler failure. Partial success (>=1 item extracted) keeps
+      // completing normally, unchanged.
+      if (result.status === 'provider_failure') {
+        throw new Error(
+          `extract-atoms-drain: all provider calls failed this batch ` +
+          `(batches=${result.batches}, remaining=${result.remaining ?? '?'}) — retrying`,
+        );
+      }
+      return result;
     } catch (e) {
       if (e instanceof LockUnavailableError) {
         return { phase: 'extract_atoms', status: 'skipped', deferred: true, reason: 'cycle_already_running' };

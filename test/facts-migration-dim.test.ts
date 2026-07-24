@@ -11,6 +11,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -93,4 +94,60 @@ describe('migration v45 facts column shape', () => {
     );
     expect(after[0].udt_name).toBe(before[0].udt_name);
   });
+
+});
+
+describe('migration v45/v55 large-dim HNSW policy', () => {
+  let largeDimEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    configureGateway({
+      embedding_model: 'litellm:custom-4096d',
+      embedding_dimensions: 4096,
+      env: { ...process.env },
+    });
+
+    largeDimEngine = new PGLiteEngine();
+    await largeDimEngine.connect({});
+    await largeDimEngine.initSchema();
+  });
+
+  afterAll(async () => {
+    await largeDimEngine.disconnect();
+    resetGateway();
+  });
+
+  test('4096d init skips unsupported HNSW indexes but keeps vector columns', async () => {
+    const formatRows = await largeDimEngine.executeRaw<{ format_type: string }>(
+      `SELECT format_type(atttypid, atttypmod) AS format_type
+       FROM pg_attribute
+       WHERE attrelid = 'facts'::regclass AND attname = 'embedding'`,
+    );
+    expect(formatRows[0]?.format_type).toMatch(/(halfvec|vector)\(4096\)/);
+
+    const indexRows = await largeDimEngine.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM pg_indexes
+         WHERE tablename = 'facts'
+           AND indexname = 'idx_facts_embedding_hnsw'
+       ) AS exists`,
+    );
+    expect(indexRows[0]?.exists).toBe(false);
+
+    const queryCacheFormatRows = await largeDimEngine.executeRaw<{ format_type: string }>(
+      `SELECT format_type(atttypid, atttypmod) AS format_type
+       FROM pg_attribute
+       WHERE attrelid = 'query_cache'::regclass AND attname = 'embedding'`,
+    );
+    expect(queryCacheFormatRows[0]?.format_type).toMatch(/(halfvec|vector)\(4096\)/);
+
+    const queryCacheIndexRows = await largeDimEngine.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM pg_indexes
+         WHERE tablename = 'query_cache'
+           AND indexname = 'idx_query_cache_embedding_hnsw'
+       ) AS exists`,
+    );
+    expect(queryCacheIndexRows[0]?.exists).toBe(false);
+  }, 60000);
 });

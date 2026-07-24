@@ -516,6 +516,60 @@ async function registerClient(name: string, args: string[]) {
 }
 
 /**
+ * v0.42.x (#1914): rescope an existing OAuth client's write source and/or
+ * federated read scope. This is the operator surface the DCR registration
+ * comment promised ("rescope via the CLI later") — DCR clients land with
+ * source_id='default' / federated_read=['default'] and must not self-widen,
+ * so widening happens here (trusted local CLI) or via the requireAdmin
+ * /admin/api/rescope-client endpoint.
+ */
+async function rescopeClient(clientId: string, args: string[]) {
+  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...]';
+  if (!clientId) {
+    console.error(usage);
+    process.exit(1);
+  }
+  let sourceId: string | undefined;
+  let federatedRead: string[] | undefined;
+  for (let i = 0; i < args.length; i += 2) {
+    const flag = args[i];
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`Error: ${flag} requires a value`);
+      console.error(usage);
+      process.exit(1);
+    }
+    if (flag === '--source') sourceId = value;
+    else if (flag === '--federated-read') {
+      federatedRead = value.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+      console.error(`Error: Unknown flag: ${flag}`);
+      console.error(usage);
+      process.exit(1);
+    }
+  }
+  if (sourceId === undefined && federatedRead === undefined) {
+    console.error('Error: pass --source and/or --federated-read');
+    console.error(usage);
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (sql) => {
+      const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+      const provider = new GBrainOAuthProvider({ sql });
+      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead });
+      console.log(`OAuth client rescoped: "${result.clientName}" (${result.clientId})\n`);
+      console.log(`  Write source:        ${result.sourceId}`);
+      console.log(`  Federated reads:     ${result.federatedRead.join(', ') || '<none>'}`);
+      console.log('\nTakes effect on the client\'s next request (existing tokens included).');
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+}
+
+/**
  * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
  * still works.
@@ -556,6 +610,7 @@ export async function runAuth(args: string[]): Promise<void> {
       return;
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
+    case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
@@ -593,6 +648,11 @@ Usage:
      --bound-slug-prefixes <prefix1,prefix2>               Bind submit_agent writes to slug prefixes
      --bound-max-concurrent <n>                            Bound submit_agent concurrency (default: 1)
      --budget-usd-per-day <usd>                            Bound submit_agent daily spend cap
+  gbrain auth rescope-client <client_id> [options]        Change an existing client's source scope (e.g. a DCR
+                                                          client stuck on the 'default' source). Only the flags
+                                                          you pass change; the other axis is left as-is.
+     --source <id>                                        New write source
+     --federated-read <id1,id2,...>                       New read-scope source list
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

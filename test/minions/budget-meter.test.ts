@@ -103,6 +103,36 @@ describe('minions/budget-meter (v0.38 Slice 2 — D3 reserve-then-settle)', () =
         }),
       ).rejects.toThrow(BudgetExceededError);
     });
+
+    it('admits only cap-fitting reservations under concurrent pressure', async () => {
+      const attempts = await Promise.allSettled(
+        Array.from({ length: 10 }, () => reserve(engine, {
+          clientId: 'alice', estimatedCents: 20, capCents: 100,
+          model: 'm', provider: 'p',
+        })),
+      );
+      const fulfilled = attempts.filter(r => r.status === 'fulfilled');
+      const rejected = attempts.filter(r => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(5);
+      expect(rejected).toHaveLength(5);
+      for (const result of rejected) {
+        expect((result as PromiseRejectedResult).reason).toBeInstanceOf(BudgetExceededError);
+      }
+
+      const rows = await engine.executeRaw<Record<string, unknown>>(
+        `SELECT COALESCE(SUM(estimated_cents), 0)::text AS total
+           FROM mcp_spend_reservations
+          WHERE client_id = 'alice' AND status = 'pending'`,
+      );
+      expect(Number(rows[0]?.total)).toBe(100);
+    });
+
+    it('rejects invalid numeric input before opening a transaction', async () => {
+      await expect(reserve(engine, {
+        clientId: 'alice', estimatedCents: Number.NaN, capCents: 100,
+        model: 'm', provider: 'p',
+      })).rejects.toThrow(TypeError);
+    });
   });
 
   describe('settle()', () => {
@@ -145,6 +175,84 @@ describe('minions/budget-meter (v0.38 Slice 2 — D3 reserve-then-settle)', () =
         ['alice'],
       );
       expect(Number(logCount[0]?.n)).toBe(1);
+    });
+
+    it('rolls reservation state back when the spend-log insert fails', async () => {
+      const r = await reserve(engine, {
+        clientId: 'alice', estimatedCents: 100, capCents: 500,
+        model: 'm', provider: 'p',
+      });
+
+      const failingEngine = Object.create(engine) as PGLiteEngine;
+      Object.defineProperty(failingEngine, 'transaction', {
+        value: <T>(fn: (tx: PGLiteEngine) => Promise<T>) => engine.transaction(async tx => {
+          const failingTx = Object.create(tx) as PGLiteEngine;
+          Object.defineProperty(failingTx, 'executeRaw', {
+            value: async (query: string, params?: unknown[]) => {
+              if (/INSERT\s+INTO\s+mcp_spend_log/i.test(query)) {
+                throw new Error('injected spend-log write failure');
+              }
+              return tx.executeRaw(query, params);
+            },
+          });
+          return fn(failingTx);
+        }),
+      });
+
+      await expect(settle(failingEngine, r.reservationId, 75))
+        .rejects.toThrow('injected spend-log write failure');
+      const rows = await engine.executeRaw<Record<string, unknown>>(
+        `SELECT status, actual_cents FROM mcp_spend_reservations WHERE reservation_id = $1`,
+        [r.reservationId],
+      );
+      expect(rows[0]?.status).toBe('pending');
+      expect(rows[0]?.actual_cents).toBeNull();
+    });
+
+    it('preserves OAuth token attribution in the committed spend row', async () => {
+      const r = await reserve(engine, {
+        clientId: 'alice', estimatedCents: 100, capCents: 500,
+        model: 'm', provider: 'p',
+      });
+      await settle(engine, r.reservationId, 50, 'search_by_image', 'client-token');
+      const rows = await engine.executeRaw<Record<string, unknown>>(
+        `SELECT token_name FROM mcp_spend_log WHERE client_id = 'alice'`,
+      );
+      expect(rows[0]?.token_name).toBe('client-token');
+    });
+
+    it('records a paid result that arrives after the reservation expired', async () => {
+      const r = await reserve(engine, {
+        clientId: 'alice', estimatedCents: 100, capCents: 500,
+        model: 'm', provider: 'p',
+      });
+      await engine.executeRaw(
+        `UPDATE mcp_spend_reservations
+            SET status = 'expired', actual_cents = 0
+          WHERE reservation_id = $1`,
+        [r.reservationId],
+      );
+
+      await settle(engine, r.reservationId, 75);
+      const rows = await engine.executeRaw<Record<string, unknown>>(
+        `SELECT status, actual_cents::text AS actual
+           FROM mcp_spend_reservations
+          WHERE reservation_id = $1`,
+        [r.reservationId],
+      );
+      expect(rows[0]?.status).toBe('settled');
+      expect(Number(rows[0]?.actual)).toBe(75);
+      const logs = await engine.executeRaw<Record<string, unknown>>(
+        `SELECT COALESCE(SUM(spend_cents), 0)::text AS total
+           FROM mcp_spend_log
+          WHERE client_id = 'alice'`,
+      );
+      expect(Number(logs[0]?.total)).toBe(75);
+    });
+
+    it('fails closed for an unknown reservation id', async () => {
+      await expect(settle(engine, '00000000-0000-0000-0000-000000000099', 1))
+        .rejects.toThrow('spend reservation not found');
     });
   });
 
@@ -193,6 +301,14 @@ describe('minions/budget-meter (v0.38 Slice 2 — D3 reserve-then-settle)', () =
     });
     it('returns null for unknown client', async () => {
       expect(await getClientDailyCapCents(engine, 'nobody')).toBe(null);
+    });
+    it('fails closed when the accounting read fails', async () => {
+      const unavailable = Object.create(engine) as PGLiteEngine;
+      Object.defineProperty(unavailable, 'executeRaw', {
+        value: async () => { throw new Error('accounting unavailable'); },
+      });
+      await expect(getClientDailyCapCents(unavailable, 'alice'))
+        .rejects.toThrow('accounting unavailable');
     });
   });
 

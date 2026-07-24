@@ -32,7 +32,7 @@ interface CapturedSql {
   params: unknown[];
 }
 
-function buildMockEngine(opts: { scorecard: TakesScorecard }): {
+function buildMockEngine(opts: { scorecard: TakesScorecard; userHolder?: string | null }): {
   engine: BrainEngine;
   captured: CapturedSql[];
 } {
@@ -41,6 +41,10 @@ function buildMockEngine(opts: { scorecard: TakesScorecard }): {
     kind: 'pglite',
     async getScorecard() {
       return opts.scorecard;
+    },
+    async getConfig(key: string): Promise<string | null> {
+      if (key === 'emotional_weight.user_holder') return opts.userHolder ?? null;
+      return null;
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
@@ -234,7 +238,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     // grade_completion, domain_scorecards_json, patterns[], voice_passed, voice_attempts,
     // bias_tags[], model_id
     expect(insert!.params[0]).toBe('default'); // source_id
-    expect(insert!.params[1]).toBe('garry'); // holder
+    expect(insert!.params[1]).toBe('self'); // holder (resolved via resolveOwnerHolder, no override)
     expect(insert!.params[2]).toBe(12); // total_resolved
     expect(insert!.params[9]).toBe(true); // voice_gate_passed
     expect(insert!.params[10]).toBe(1); // voice_gate_attempts
@@ -329,5 +333,25 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     });
     const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
     expect(insert!.params[0]).toBe('tenant-b');
+  });
+
+  test('cold-brain summary uses resolved owner holder self when user_holder unset', async () => {
+    const { engine } = buildMockEngine({
+      scorecard: { total_bets: 0, resolved: 0, correct: 0, incorrect: 0, partial: 0,
+        accuracy: null, brier: null, partial_rate: null, unresolvable_count: 0, unresolvable_rate: null },
+    });
+    const result = await runPhaseCalibrationProfile(buildCtx(engine), {});
+    expect(result.summary).toContain('holder=self');
+    expect(result.summary).not.toContain('holder=garry');
+  });
+
+  test('configured user_holder overrides the default in the cold-brain summary', async () => {
+    const { engine } = buildMockEngine({
+      scorecard: { total_bets: 0, resolved: 0, correct: 0, incorrect: 0, partial: 0,
+        accuracy: null, brier: null, partial_rate: null, unresolvable_count: 0, unresolvable_rate: null },
+      userHolder: 'people/charlie-example',
+    });
+    const result = await runPhaseCalibrationProfile(buildCtx(engine), {});
+    expect(result.summary).toContain('holder=people/charlie-example');
   });
 });

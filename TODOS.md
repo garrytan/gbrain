@@ -2,14 +2,6 @@
 
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
-- [ ] **P1 — take-writes source scoping fails open when source resolution errors (#2684 residual).**
-  `resolveTakesSourceId` (src/commands/takes.ts) swallows resolution errors and returns
-  `undefined`, which falls back to the unscoped slug-only page lookup — so an invalid
-  `GBRAIN_SOURCE` (or a broken dotfile chain) silently restores the pre-#2698 cross-source
-  write behavior on multi-source brains. Decide fail-closed semantics: error out when a
-  source was explicitly requested but doesn't resolve; keep the unscoped fallback only for
-  brains with no source configuration at all. Add a regression test for the invalid-source
-  path. Found by cross-model adversarial review during the v0.42.60.0 release ship.
 - [ ] **P2 — cherry-pick #2112's uncovered doctor.ts hunk.** Fix-wave A (#2820) superseded
   most of #2112 but not its `checkSubagentCapability` fix (check explicit `models.subagent`
   before `models.tier.subagent`). Refile or cherry-pick; the rest of that PR is covered.
@@ -2287,10 +2279,25 @@ at plan time and got carved out:
   via `buildPerSourceBindings`. Document workaround: register
   source-scoped OAuth clients.
 
-- [ ] **v0.41+: T20 — extends-chain merging in registry.ts.**
-  `registry.ts:167` documents the gap. Implementing full child-wins
-  merge cascades through every consumer of `manifest.page_types`. ~1
-  day CC.
+- [x] **v0.41+: T20 — extends-chain merging in registry.ts.** DONE (#1749).
+  `resolvePack` now merges parent → child (child-wins) for the six
+  ingest/query-shaping fields (`page_types`, `link_types`,
+  `frontmatter_links`, `enrichable_types`, `filing_rules`, `takes_kinds`)
+  plus `borrow_from` materialization, in `src/core/schema-pack/merge.ts`.
+  The cascade was transparent (consumers already read `resolved.manifest`),
+  not per-consumer. `phases`/`calibration_domains` deliberately excluded —
+  see the P3 follow-up below.
+
+- [ ] **P3: explicit opt-in to inherit `phases` / `calibration_domains`.**
+  T20 excludes these two from the child-wins merge because they gate real
+  cycle execution (`cycle.ts` `packDeclaresPhase`) and the manifest
+  contract says each pack declares its own participation explicitly —
+  auto-inheriting would silently make a child run cycle phases it never
+  requested. Multi-level lens packs (`gbrain-everything`) therefore still
+  re-declare them by hand. If that redeclaration becomes painful, add an
+  explicit manifest flag (e.g. `inherit_phases: true`) so a pack author
+  opts in consciously. Depends on: T20 (landed). Start in
+  `src/core/schema-pack/merge.ts` (`mergeInheritedManifest`).
 
 - [ ] **v0.41+: T21 — comment-preserving YAML emitter.**
   v0.40.7.0 emitter does NOT preserve comments. Authors who care

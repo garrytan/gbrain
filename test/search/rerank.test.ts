@@ -12,9 +12,14 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { applyReranker, type RerankerOpts } from '../../src/core/search/rerank.ts';
 import { RerankError, type RerankResult } from '../../src/core/ai/gateway.ts';
+import { readRecentRerankFailures } from '../../src/core/rerank-audit.ts';
 import type { SearchResult } from '../../src/core/types.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 function makeResult(slug: string, score: number, chunk: string): SearchResult {
   return {
@@ -158,6 +163,36 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
     // Must not throw; must return input unchanged.
     const out = await applyReranker('q', results, opts);
     expect(out).toEqual(results);
+  });
+
+  test('missing gateway reranker API key fail-opens and audits auth', async () => {
+    const { configureGateway } = await import('../../src/core/ai/gateway.ts');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-search-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        configureGateway({
+          reranker_model: 'zeroentropyai:zerank-2',
+          env: {},
+        });
+
+        const results = [makeResult('a', 1.0, 'doc a')];
+        const out = await applyReranker('q', results, {
+          enabled: true,
+          topNIn: 1,
+          topNOut: null,
+          model: 'zeroentropyai:zerank-2',
+        });
+
+        expect(out).toEqual(results);
+        const failures = readRecentRerankFailures(1);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]!.reason).toBe('auth');
+        expect(failures[0]!.error_summary).toContain('ZEROENTROPY_API_KEY');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      configureGateway({ env: { ZEROENTROPY_API_KEY: 'test-key' } });
+    }
   });
 
   test('fail-open on non-RerankError throw too', async () => {

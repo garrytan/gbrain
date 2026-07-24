@@ -22,7 +22,8 @@ export type Implementation =
   | 'native-openai'
   | 'native-google'
   | 'native-anthropic'
-  | 'openai-compatible';
+  | 'openai-compatible'
+  | 'claude-cli';
 
 export interface EmbeddingTouchpoint {
   models: string[];
@@ -54,6 +55,16 @@ export interface EmbeddingTouchpoint {
    * `max_batch_tokens` is also set.
    */
   safety_factor?: number;
+  /**
+   * Maximum number of inputs per embedding request. Some endpoints enforce a
+   * hard COUNT cap independent of token budget — notably llama.cpp's
+   * `llama-server`, which rejects requests with more inputs than its launch
+   * batch size (e.g. `batch size 100 > maximum allowed batch size 32`). The
+   * token-budget pre-split cannot bound item count (many tiny chunks fit under
+   * any token budget), so this is enforced as a separate hard re-split after
+   * the token split. When unset, no count cap is applied.
+   */
+  max_batch_items?: number;
   /**
    * v0.27.1: when true, at least one model in this recipe accepts image
    * inputs via a multimodal embedding endpoint (e.g. Voyage's
@@ -222,8 +233,13 @@ export interface ChatTouchpoint {
    * Strictly stronger than supports_tools.
    */
   supports_subagent_loop: boolean;
-  /** Anthropic-style ephemeral prompt cache markers honored. */
-  supports_prompt_cache?: boolean;
+  /**
+   * Prompt caching honored for this chat touchpoint. Static booleans cover
+   * native providers; openai-compatible aggregators may decide per model id
+   * (e.g. OpenRouter caches OpenAI and Anthropic routes but not every routed
+   * model family).
+   */
+  supports_prompt_cache?: boolean | ((modelId: string) => boolean);
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;

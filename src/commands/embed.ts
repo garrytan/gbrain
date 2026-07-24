@@ -107,6 +107,14 @@ export interface EmbedOpts {
    * runs lock every source in sorted order. dryRun skips it.
    */
   singleFlight?: boolean;
+  /**
+   * #394: suppress human stdout summaries (the `[dry-run] Would embed ...` /
+   * `Embedded N chunks ...` slog lines). Set by structured-output callers —
+   * the cycle's embed phase (dream --json must keep stdout JSON-clean per
+   * docs/progress-events.md) reports counts via its own PhaseResult instead.
+   * Errors/warnings still go to stderr regardless.
+   */
+  quiet?: boolean;
 }
 
 /**
@@ -253,7 +261,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     for (const s of opts.slugs) {
       if (isAborted(opts.signal)) break; // #1737: stop the per-slug loop on abort
       try {
-        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet);
       } catch (e: unknown) {
         serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -347,6 +355,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
         catchUp: opts.catchUp,
         pacer,
         paceMaxConcurrency,
+        quiet: opts.quiet,
       }, opts.signal);
     } finally {
       // E1: surface pacing telemetry (human + structured) when pacing was on.
@@ -376,7 +385,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -521,6 +530,7 @@ async function embedPage(
   result: EmbedResult,
   sourceId?: string,
   signal?: AbortSignal,
+  quiet?: boolean,
 ) {
   const opts = sourceId ? { sourceId } : undefined;
   const page = await engine.getPage(slug, opts);
@@ -565,7 +575,7 @@ async function embedPage(
   result.skipped += chunks.length - toEmbed.length;
 
   if (toEmbed.length === 0) {
-    slog(`${slug}: all ${chunks.length} chunks already embedded`);
+    if (!quiet) slog(`${slug}: all ${chunks.length} chunks already embedded`);
     result.pages_processed++;
     return;
   }
@@ -602,7 +612,7 @@ async function embedPage(
   }
   result.embedded += toEmbed.length;
   result.pages_processed++;
-  slog(`${slug}: embedded ${toEmbed.length} chunks`);
+  if (!quiet) slog(`${slug}: embedded ${toEmbed.length} chunks`);
 }
 
 /**
@@ -645,6 +655,8 @@ async function embedAll(
     pacer?: DbPacer;
     /** Resolved concurrency cap (E-1: the worker count, no separate permit). */
     paceMaxConcurrency?: number;
+    /** #394: suppress human stdout summaries (structured-output callers). */
+    quiet?: boolean;
   },
   signal?: AbortSignal,
 ) {
@@ -790,10 +802,12 @@ async function embedAll(
   });
 
   // Stdout summary preserved for scripts/tests that grep for counts.
-  if (dryRun) {
-    slog(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
-  } else {
-    slog(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
+  if (!staleOpts?.quiet) {
+    if (dryRun) {
+      slog(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
+    } else {
+      slog(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
+    }
   }
 }
 
@@ -829,6 +843,8 @@ async function embedAllStale(
     pacer?: DbPacer;
     /** Resolved concurrency cap (E-1: the worker count, no separate permit). */
     paceMaxConcurrency?: number;
+    /** #394: suppress human stdout summaries (structured-output callers). */
+    quiet?: boolean;
   },
   signature?: string,
   externalSignal?: AbortSignal,
@@ -846,7 +862,7 @@ async function embedAllStale(
       signature,
       ...(sourceId && { sourceId }),
     });
-    if (invalidated > 0) {
+    if (invalidated > 0 && !staleOpts?.quiet) {
       slog(`[embed] invalidated ${invalidated} chunk(s) embedded under a prior model signature`);
     }
   }
@@ -857,10 +873,12 @@ async function embedAllStale(
     dryRun && signature ? { ...sourceOpt, signature } : sourceOpt,
   );
   if (staleCount === 0) {
-    if (dryRun) {
-      slog('[dry-run] Would embed 0 chunks (0 stale found)');
-    } else {
-      slog('Embedded 0 chunks (0 stale found)');
+    if (!staleOpts?.quiet) {
+      if (dryRun) {
+        slog('[dry-run] Would embed 0 chunks (0 stale found)');
+      } else {
+        slog('Embedded 0 chunks (0 stale found)');
+      }
     }
     return;
   }
@@ -869,7 +887,7 @@ async function embedAllStale(
     result.would_embed += staleCount;
     result.total_chunks += staleCount;
     if (onProgress) onProgress(1, 1, 0);
-    slog(`[dry-run] Would embed ${staleCount} stale chunks`);
+    if (!staleOpts?.quiet) slog(`[dry-run] Would embed ${staleCount} stale chunks`);
     return;
   }
 
@@ -1112,7 +1130,7 @@ async function embedAllStale(
     if (budgetTimer) clearTimeout(budgetTimer);
   }
 
-  slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
+  if (!staleOpts?.quiet) slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
 
   // #1946 (OV2a): a catch-up pass that completed without being aborted but left
   // chunks unembedded means those chunks are stuck (a non-transient embed

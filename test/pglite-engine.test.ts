@@ -6,6 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
 
@@ -86,6 +87,30 @@ describe('PGLiteEngine: Pages', () => {
     const all = await engine.listPages();
     const matches = all.filter(p => p.slug === 'test/upsert');
     expect(matches.length).toBe(1);
+  });
+
+  test('putPage restores a soft-deleted page', async () => {
+    const slug = 'notes/restore-on-put';
+    await engine.putPage(slug, testPage);
+    await engine.upsertChunks(slug, [{
+      chunk_index: 0,
+      chunk_text: 'restored visibility marker',
+      chunk_source: 'compiled_truth',
+      token_count: 3,
+    }]);
+    await engine.softDeletePage(slug, { sourceId: 'default' });
+    expect(await engine.getPage(slug)).toBeNull();
+    expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).not.toContain(slug);
+
+    const restored = await engine.putPage(slug, {
+      ...testPage,
+      title: 'Restored Title',
+      compiled_truth: 'restored visibility marker',
+    });
+
+    expect(restored.title).toBe('Restored Title');
+    expect((await engine.getPage(slug))?.title).toBe('Restored Title');
+    expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).toContain(slug);
   });
 
   test('getPage returns null for missing slug', async () => {
@@ -181,6 +206,24 @@ describe('PGLiteEngine: Pages', () => {
     const page = await engine.putPage('Test/UPPER', testPage);
     expect(page.slug).toBe('test/upper');
   });
+
+  test('importFromContent normalizes mixed-case slugs before all tx writes (#430)', async () => {
+    const result = await importFromContent(
+      engine,
+      'TestNamespace/Page-Name',
+      '---\ntype: note\ntitle: Mixed Case\n---\n\nbody text',
+      { noEmbed: true },
+    );
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('testnamespace/page-name');
+
+    const page = await engine.getPage('testnamespace/page-name');
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe('Mixed Case');
+
+    const chunks = await engine.getChunks('testnamespace/page-name');
+    expect(chunks.length).toBeGreaterThan(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -203,12 +246,68 @@ describe('PGLiteEngine: Search', () => {
     await engine.upsertChunks('concepts/rag', [
       { chunk_index: 0, chunk_text: 'RAG combines retrieval with generation', chunk_source: 'compiled_truth' },
     ]);
+    await engine.putPage('mail/example', {
+      type: 'note', title: 'Launch message',
+      compiled_truth: 'Launch evidence for citation metadata.',
+      frontmatter: {
+        message_id: '<launch@example.com>',
+        thread_id: 'thread-123',
+        subject: 'Example launch subject',
+      },
+    });
+    await engine.upsertChunks('mail/example', [
+      { chunk_index: 0, chunk_text: 'Launch evidence for citation metadata', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('notes/generated-title', {
+      type: 'note', title: 'Generated page title must stay a title',
+      compiled_truth: 'Non-email evidence for subject gating.',
+      frontmatter: {
+        subject: 'Frontmatter subject without an email identity',
+        thread_id: 'standalone-thread-id',
+      },
+    });
+    await engine.upsertChunks('notes/generated-title', [
+      { chunk_index: 0, chunk_text: 'Non-email evidence for subject gating', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('mail/whitespace-message-id', {
+      type: 'note', title: 'Whitespace message id',
+      compiled_truth: 'Whitespace-only email identity evidence.',
+      frontmatter: {
+        message_id: ' \t\n ',
+        thread_id: 'thread-whitespace',
+        subject: 'Subject must remain gated',
+      },
+    });
+    await engine.upsertChunks('mail/whitespace-message-id', [
+      { chunk_index: 0, chunk_text: 'Whitespace-only email identity evidence', chunk_source: 'compiled_truth' },
+    ]);
   });
 
   test('searchKeyword returns results for matching term', async () => {
     const results = await engine.searchKeyword('NovaMind');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].slug).toBe('companies/novamind');
+  });
+
+  test('searchKeyword projects email citation identifiers from frontmatter', async () => {
+    const results = await engine.searchKeyword('Launch evidence');
+    expect(results[0].message_id).toBe('<launch@example.com>');
+    expect(results[0].thread_id).toBe('thread-123');
+    expect(results[0].source_subject).toBe('Example launch subject');
+  });
+
+  test('searchKeyword never promotes a non-email title or subject to source_subject', async () => {
+    const results = await engine.searchKeyword('Non-email evidence');
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBe('standalone-thread-id');
+    expect(results[0].source_subject).toBeUndefined();
+  });
+
+  test('searchKeyword treats whitespace-only message_id as absent', async () => {
+    const results = await engine.searchKeyword('Whitespace-only email identity');
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBe('thread-whitespace');
+    expect(results[0].source_subject).toBeUndefined();
   });
 
   test('searchKeyword returns empty for non-matching term', async () => {
@@ -231,6 +330,42 @@ describe('PGLiteEngine: Search', () => {
     const fakeEmbedding = new Float32Array(CHUNK_EMBED_DIM);
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
+  });
+
+  test('searchVector carries email citation metadata through the outer CTE', async () => {
+    const embedding = new Float32Array(CHUNK_EMBED_DIM);
+    embedding[0] = 1;
+    await engine.upsertChunks('mail/example', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Launch evidence for citation metadata',
+        chunk_source: 'compiled_truth',
+        embedding,
+      },
+    ]);
+
+    const results = await engine.searchVector(embedding);
+    expect(results[0].message_id).toBe('<launch@example.com>');
+    expect(results[0].thread_id).toBe('thread-123');
+    expect(results[0].source_subject).toBe('Example launch subject');
+  });
+
+  test('searchVector treats whitespace-only message_id as absent', async () => {
+    const embedding = new Float32Array(CHUNK_EMBED_DIM);
+    embedding[1] = 1;
+    await engine.upsertChunks('mail/whitespace-message-id', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Whitespace-only email identity evidence',
+        chunk_source: 'compiled_truth',
+        embedding,
+      },
+    ]);
+
+    const results = await engine.searchVector(embedding);
+    expect(results[0].message_id).toBeUndefined();
+    expect(results[0].thread_id).toBe('thread-whitespace');
+    expect(results[0].source_subject).toBeUndefined();
   });
 });
 
@@ -275,6 +410,19 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
     await engine.upsertChunks('originals/english-essay', [
       { chunk_index: 0, chunk_text: 'NovaMind builds AI agents for enterprise', chunk_source: 'compiled_truth' },
     ]);
+
+    await engine.putPage('mail/cjk-example', {
+      type: 'note', title: 'Generated CJK page title',
+      compiled_truth: '郵件引用識別',
+      frontmatter: {
+        message_id: '<cjk@example.com>',
+        thread_id: 'thread-cjk',
+        subject: 'Example CJK email subject',
+      },
+    });
+    await engine.upsertChunks('mail/cjk-example', [
+      { chunk_index: 0, chunk_text: '郵件引用識別', chunk_source: 'compiled_truth' },
+    ]);
   });
 
   test('CJK query routes to LIKE branch and finds Chinese substring', async () => {
@@ -293,6 +441,17 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
     const results = await engine.searchKeyword('한글');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].slug).toBe('originals/korean-essay');
+  });
+
+  test('CJK keyword page and chunk paths project email citation metadata', async () => {
+    for (const result of [
+      (await engine.searchKeyword('郵件引用'))[0],
+      (await engine.searchKeywordChunks('郵件引用'))[0],
+    ]) {
+      expect(result.message_id).toBe('<cjk@example.com>');
+      expect(result.thread_id).toBe('thread-cjk');
+      expect(result.source_subject).toBe('Example CJK email subject');
+    }
   });
 
   test('bigram ranking: 3-hit page outranks 1-hit page', async () => {
@@ -362,6 +521,17 @@ describe('PGLiteEngine: Chunks', () => {
     expect(chunks.length).toBe(2);
     expect(chunks[0].chunk_text).toBe('Chunk zero');
     expect(chunks[1].chunk_text).toBe('Chunk one');
+  });
+
+  test('upsertChunks normalizes mixed-case slugs like putPage (#430)', async () => {
+    await engine.putPage('Test/ChunkCase', testPage);
+    await engine.upsertChunks('Test/ChunkCase', [
+      { chunk_index: 0, chunk_text: 'Mixed-case chunk', chunk_source: 'compiled_truth' },
+    ]);
+
+    const chunks = await engine.getChunks('test/chunkcase');
+    expect(chunks.length).toBe(1);
+    expect(chunks[0].chunk_text).toBe('Mixed-case chunk');
   });
 
   test('upsertChunks removes orphan chunks', async () => {
@@ -1264,6 +1434,7 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
     await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
     await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+    await engine.putPage('entities/project-x', { ...testPage, type: 'entity', title: 'Project X' });
   });
 
   test('link_coverage = 0 when no links exist', async () => {
@@ -1272,17 +1443,17 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
   });
 
   test('link_coverage = % of entity pages with >= 1 inbound link', async () => {
-    // Acme gets 1 inbound link (from Alice), Alice/Bob get 0 inbound.
-    // 1 of 3 entity pages has inbound links -> 33%.
+    // Acme gets 1 inbound link (from Alice); Alice/Bob/Project X get 0 inbound.
+    // 1 of 4 entity pages has inbound links -> 25%.
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h = await engine.getHealth();
-    expect(h.link_coverage).toBeCloseTo(1 / 3, 2);
+    expect(h.link_coverage).toBeCloseTo(1 / 4, 2);
   });
 
   test('timeline_coverage = % with >= 1 timeline entry', async () => {
     await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
     const h = await engine.getHealth();
-    expect(h.timeline_coverage).toBeCloseTo(1 / 3, 2);
+    expect(h.timeline_coverage).toBeCloseTo(1 / 4, 2);
   });
 
   test('most_connected lists top entities by link count', async () => {
@@ -1295,7 +1466,9 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
   });
 
   test('orphan_pages: pages with neither inbound nor outbound links', async () => {
-    // All 3 pages start with no links. Expect 3 orphans.
+    // All 4 pages start with no links, but entities/project-x is excluded
+    // from orphan reporting by the shared orphan policy ('entities' is a
+    // first-segment exclusion in orphan-policy.ts). Expect 3 orphans.
     const h = await engine.getHealth();
     expect(h.orphan_pages).toBe(3);
 

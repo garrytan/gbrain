@@ -47,6 +47,10 @@ import type {
   TouchpointKind,
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
+import {
+  OPENROUTER_CACHE_HEADER,
+  openrouterRequiresExplicitPromptCache,
+} from './recipes/openrouter.ts';
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -260,6 +264,18 @@ export class ZeroEntropyResponseTooLargeError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ZeroEntropyResponseTooLargeError';
+  }
+}
+
+/** Perplexity twin of the Voyage/ZE OOM caps (#1046). Int8 components are
+ * 1 byte each, so a real response (512 texts × 2560 dims) is ~1.3 MB —
+ * anything near this cap is unambiguously not legitimate. */
+const MAX_PERPLEXITY_RESPONSE_BYTES = 256 * 1024 * 1024;
+
+export class PerplexityResponseTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PerplexityResponseTooLargeError';
   }
 }
 
@@ -599,6 +615,8 @@ function warnRecipesMissingBatchTokens(): void {
     // LiteLLM proxy, llama-server) — they ship without a static cap because
     // the cap depends on a user-launched server. Warning is noise for them.
     if (embedding.no_batch_cap === true) continue;
+    // A declared item-count cap is a real batch cap — no warning needed.
+    if (embedding.max_batch_items !== undefined) continue;
     if (_warnedRecipes.has(recipe.id)) continue;
     _warnedRecipes.add(recipe.id);
     // eslint-disable-next-line no-console
@@ -1292,6 +1310,103 @@ const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: Req
   return fetch(typeof input === 'string' ? input : input.toString(), baseInit);
 }) as unknown as typeof fetch;
 
+/**
+ * Perplexity compatibility shim (#1046). Perplexity's `/v1/embeddings`
+ * endpoint is OpenAI-shaped but diverges on two points that break the AI
+ * SDK's openai-compatible adapter:
+ *   - `encoding_format` only accepts 'base64_int8' (default) or
+ *     'base64_binary'; the SDK sends 'float', which Perplexity rejects.
+ *     Force 'base64_int8' on the wire.
+ *   - The response `embedding` is a base64 string encoding SIGNED INT8
+ *     components (natively quantized output). The SDK schema expects
+ *     `number[]` — decode Int8Array → number[] here. Cosine similarity is
+ *     scale-invariant, so the raw int8 components rank correctly.
+ * `dimensions` is Perplexity's native field name — no translation needed
+ * (dims.ts emits it directly). Layer 1/Layer 2 OOM caps mirror the Voyage
+ * pattern.
+ *
+ * Exported for tests (behavioral coverage of the int8 decode); not part of
+ * the public gateway API.
+ */
+export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  // OUTBOUND: force the encoding Perplexity actually accepts.
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object' && parsed.encoding_format !== 'base64_int8') {
+        parsed.encoding_format = 'base64_int8';
+        // Drop Content-Length so fetch recomputes from the new body.
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+
+  const resp = await fetch(input as any, init);
+  if (!resp.ok) return resp;
+  const ct = resp.headers.get('content-type') ?? '';
+  if (!ct.toLowerCase().includes('application/json')) return resp;
+
+  // Layer 1: Content-Length pre-check BEFORE the body is parsed.
+  const contentLengthHeader = resp.headers.get('content-length');
+  if (contentLengthHeader) {
+    const len = parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(len) && len > MAX_PERPLEXITY_RESPONSE_BYTES) {
+      throw new PerplexityResponseTooLargeError(
+        `Perplexity response Content-Length=${len} exceeds ${MAX_PERPLEXITY_RESPONSE_BYTES} bytes — ` +
+        `likely compromised endpoint or misconfiguration`,
+      );
+    }
+  }
+
+  // INBOUND: decode base64 int8 embeddings to number[] so the SDK's Zod
+  // schema validates.
+  try {
+    const json: any = await resp.clone().json();
+    if (!json || typeof json !== 'object') return resp;
+    let modified = false;
+    if (Array.isArray(json.data)) {
+      for (const item of json.data) {
+        if (item && typeof item.embedding === 'string') {
+          // Layer 2: per-embedding cap for chunked responses that skipped
+          // Layer 1. base64 → bytes is the canonical 0.75 ratio.
+          const estDecoded = Math.ceil(item.embedding.length * 0.75);
+          if (estDecoded > MAX_PERPLEXITY_RESPONSE_BYTES) {
+            throw new PerplexityResponseTooLargeError(
+              `Perplexity embedding base64 exceeds ${MAX_PERPLEXITY_RESPONSE_BYTES} bytes ` +
+              `(estimated ${estDecoded} bytes from ${item.embedding.length} base64 chars)`,
+            );
+          }
+          // base64_int8: one signed int8 per component.
+          const bytes = Buffer.from(item.embedding, 'base64');
+          item.embedding = Array.from(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+          modified = true;
+        }
+      }
+    }
+    if (json.usage && typeof json.usage === 'object' && json.usage.prompt_tokens === undefined) {
+      json.usage.prompt_tokens = typeof json.usage.total_tokens === 'number'
+        ? json.usage.total_tokens
+        : 0;
+      modified = true;
+    }
+    if (!modified) return resp;
+    return new Response(JSON.stringify(json), {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: resp.headers,
+    });
+  } catch (err) {
+    // OOM-cap throws MUST propagate; anything else falls back to the
+    // original response (same contract as voyageCompatFetch).
+    if (err instanceof PerplexityResponseTooLargeError) throw err;
+    return resp;
+  }
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1336,6 +1451,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'claude-cli':
+      throw new AIConfigError(
+        `claude-cli has no embedding model. Use openai or google for embeddings.`,
+      );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -1360,6 +1479,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? zeroEntropyCompatFetch
           : recipe.id === 'nvidia'
           ? nvidiaCompatFetch
+          : recipe.id === 'perplexity'
+          ? perplexityCompatFetch
           : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
@@ -1517,9 +1638,16 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
   // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
+  const tokenBatches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
+
+  // Hard COUNT cap (e.g. llama-server's "maximum allowed batch size 32").
+  // Token budget can't bound item count, so re-split any oversized batch.
+  const maxBatchItems = embedding?.max_batch_items;
+  const batches = maxBatchItems
+    ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems))
+    : tokenBatches;
 
   const allEmbeddings: Float32Array[] = [];
   let _embedThrew = false;
@@ -1593,6 +1721,23 @@ export function splitByTokenBudget(
   }
   if (current.length > 0) batches.push(current);
 
+  return batches;
+}
+
+/**
+ * Split a batch into sub-batches of at most `maxItems` inputs. Enforces a
+ * hard COUNT cap that the token-budget split can't (many tiny inputs fit
+ * under any token budget). Used for endpoints like llama.cpp's llama-server
+ * that reject requests exceeding their launch batch size.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function capBatchItems(texts: string[], maxItems: number): string[][] {
+  if (maxItems <= 0 || texts.length <= maxItems) return [texts];
+  const batches: string[][] = [];
+  for (let i = 0; i < texts.length; i += maxItems) {
+    batches.push(texts.slice(i, i + maxItems));
+  }
   return batches;
 }
 
@@ -2254,6 +2399,15 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
+    case 'claude-cli': {
+      // The CLI handles its own auth (OAuth session); spawn the subprocess
+      // directly via the same LanguageModelV2 implementation chat uses. There
+      // is no separate expansion path because claude-cli does not declare a
+      // separate expansion touchpoint — but routing here keeps the switch
+      // exhaustive and lets a future expansion touchpoint use the same code.
+      const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
+      return new ClaudeCliLanguageModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2709,6 +2863,17 @@ export function probeChatModel(modelStr: string): ChatModelProbe {
   return { ok: true };
 }
 
+/**
+ * Per-model prompt-cache capability: `supports_prompt_cache` may be a static
+ * boolean (native providers) or a per-model-id predicate (OpenRouter's
+ * family-scoped caching).
+ */
+function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
+  const support = recipe.touchpoints.chat?.supports_prompt_cache;
+  if (typeof support === 'function') return support(modelId);
+  return support === true;
+}
+
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -2741,6 +2906,15 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       const baseURL = resolveNativeBaseUrl('anthropic', cfg);
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
+    }
+    case 'claude-cli': {
+      // The CLI handles its own auth (OAuth session managed by `claude`
+      // login). Subprocess-based LanguageModelV2 dispatches via the recipe
+      // path so per-call routing works: `claude-cli:claude-sonnet-4-6` lands
+      // here, while sibling `litellm:gpt-5.4` continues through the
+      // openai-compatible path below. No env-var switch, no global flag.
+      const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
+      return new ClaudeCliLanguageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -3030,8 +3204,18 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
   const cfg = requireConfig();
 
-  const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
+  const supportsCache = chatSupportsPromptCache(recipe, modelId);
   const useCache = !!opts.cacheSystem && supportsCache;
+
+  // OpenRouter Claude routes need an explicit `cache_control` on the system
+  // content block, but the openai-compatible adapter drops anthropic-namespace
+  // providerOptions before building the wire body. Signal intent via a private
+  // header; the recipe's compat fetch shim rewrites the body and strips the
+  // header before the request leaves the process. OpenAI routes through
+  // OpenRouter cache automatically — no marker needed.
+  const requestHeaders = useCache && recipe.id === 'openrouter' && openrouterRequiresExplicitPromptCache(modelId)
+    ? { [OPENROUTER_CACHE_HEADER]: '1' }
+    : undefined;
 
   const tools = toAISDKTools(opts.tools);
 
@@ -3144,6 +3328,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
+      ...(requestHeaders ? { headers: requestHeaders } : {}),
     });
 
     // Normalize blocks. Vercel SDK gives us `result.content` (an array of typed
@@ -3192,7 +3377,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       usage: {
         input_tokens: inTok,
         output_tokens: outTok,
-        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? 0),
+        // `usage.cachedInputTokens` is the AI SDK's provider-neutral cache-read
+        // count — it's how OpenAI-compatible routes (OpenRouter's
+        // prompt_tokens_details.cached_tokens) surface cache hits.
+        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? usage.cachedInputTokens ?? 0),
         cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
       },
       model: `${recipe.id}:${modelId}`,
@@ -3656,7 +3844,15 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
   // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
   const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
-  const auth = applyResolveAuth(recipe, cfg, 'reranker');
+  let auth: { apiKey?: string; headers?: Record<string, string> };
+  try {
+    auth = applyResolveAuth(recipe, cfg, 'reranker');
+  } catch (err) {
+    if (err instanceof AIConfigError) {
+      throw new RerankError(err.message, 'auth');
+    }
+    throw err;
+  }
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
   // path) or { headers } for custom-header providers (Azure). v0.37.6.0:
   // recipes can ALSO declare default_headers (attribution etc.) which flow

@@ -292,6 +292,33 @@ describe('runDream — output format', () => {
     expect(parsed).toHaveProperty('totals');
   });
 
+  // #394 / takeover of #854: the embed phase's `[dry-run] Would embed ...`
+  // summary must not leak onto stdout ahead of the JSON CycleReport.
+  test('--dry-run --json emits only JSON even when embed has stale chunks', async () => {
+    await engine.putPage('concepts/testing', {
+      type: 'concept',
+      title: 'Testing',
+      compiled_truth: 'Testing keeps JSON contracts honest.',
+      timeline: '',
+    });
+    await engine.upsertChunks('concepts/testing', [
+      { chunk_index: 0, chunk_text: 'Testing keeps JSON contracts honest.', chunk_source: 'compiled_truth' },
+    ]);
+
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
+    await runDream(engine, ['--dir', repo, '--phase', 'embed', '--dry-run', '--json']);
+    logSpy.mockRestore();
+
+    const output = lines.join('\n');
+    expect(output.trimStart().startsWith('{')).toBe(true);
+    const parsed = JSON.parse(output);
+    expect(parsed.schema_version).toBe('1');
+    expect(parsed.phases[0].phase).toBe('embed');
+    // The stale chunk was still counted in the structured report.
+    expect(parsed.phases[0].details.would_embed).toBe(1);
+  });
+
   test('human output for clean status mentions "Brain is healthy"', async () => {
     const lines: string[] = [];
     const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
@@ -562,12 +589,22 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
 
   // ─── Back-compat: bare `gbrain dream` does NOT write per-source stamp ─
 
-  test('gbrain dream (no --source) leaves all sources untouched (back-compat regression)', async () => {
-    await seedSource('alpha');
-    await seedSource('beta');
+  test('gbrain dream (no --source) stamps only the source whose local_path matches --dir (#1869)', async () => {
+    // Pre-#1869 this asserted NO source was ever stamped without an explicit
+    // --source — which is exactly the bug: a path-scoped `gbrain dream --dir`
+    // run never landed a freshness stamp and doctor's cycle_freshness stayed
+    // stale forever. New truth: the source whose local_path matches the
+    // resolved brain dir is derived and stamped; unrelated sources stay
+    // untouched (cross-source isolation).
+    await seedSource('alpha'); // local_path = repo → derived + stamped
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
+      ['beta', 'beta', '/somewhere/else'],
+    );
     const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
     expect(report).toBeTruthy();
-    expect(await readLastFullCycleAt('alpha')).toBeNull();
+    expect(await readLastFullCycleAt('alpha')).not.toBeNull();
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 60_000);
 

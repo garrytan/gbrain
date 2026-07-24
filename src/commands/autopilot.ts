@@ -38,6 +38,8 @@ import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
+import { registerCleanup } from '../core/process-cleanup.ts';
+import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -433,6 +435,37 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   let stopping = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
 
+  // #1872: graceful engine shutdown. On PGLite the cycle steps run INLINE in
+  // this process, so a hard `process.exit` mid-write (systemctl stop →
+  // SIGTERM) kills WASM Postgres with the WAL dirty and can corrupt the
+  // brain. Two exit paths must both close the engine:
+  //   - autopilot's own shutdown() below (owns SIGINT + internal stops like
+  //     max_crashes / cycle-failure-cap), and
+  //   - process-cleanup's SIGTERM handler (installed at cli.ts module load;
+  //     it runs the cleanup registry with a 3s deadline and then exits) —
+  //     which is why closeEngine is ALSO registered there.
+  // closeEngine aborts the in-flight inline cycle (runCycle checks the
+  // signal between phases and threads it into phase sub-work), gives it a
+  // short bounded window to wind down, then disconnects. PGLite's
+  // disconnect() drains the pending query and checkpoints before closing;
+  // a second call is a no-op (disconnect snapshots + nulls the handle), so
+  // both paths firing is safe.
+  const shutdownAbort = new AbortController();
+  let inflightInlineCycle: Promise<unknown> | null = null;
+  const closeEngine = async () => {
+    shutdownAbort.abort(new Error('autopilot shutdown'));
+    if (inflightInlineCycle) {
+      // ponytail: 2s cap keeps us inside process-cleanup's 3s deadline; a
+      // between-phase abort resolves instantly, a mid-phase one may not.
+      await Promise.race([
+        inflightInlineCycle.catch(() => { /* cycle errors already logged by the loop */ }),
+        new Promise((r) => setTimeout(r, 2_000)),
+      ]);
+    }
+    try { await engine.disconnect(); } catch { /* best-effort */ }
+  };
+  const deregisterEngineClose = registerCleanup('autopilot-engine-close', closeEngine);
+
   if (spawnManagedWorker) {
     const cliPath = resolveGbrainCliPath();
     // Cgroup-aware auto-sized RSS watchdog cap (issue #1678). The old flat
@@ -520,6 +553,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         childSupervisor.killChild('SIGKILL');
       }
     }
+    // #1872: abort the in-flight inline cycle and close the engine BEFORE
+    // process.exit — a hard exit mid-write corrupts PGLite's WASM Postgres.
+    await closeEngine();
+    deregisterEngineClose();
     try { unlinkSync(lockPath); } catch { /* already gone */ }
     process.exit(0);
   };
@@ -527,6 +564,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   process.on('SIGINT',  () => { void shutdown('SIGINT'); });
 
   let consecutiveErrors = 0;
+  // Parser-probe fixture warning is once-per-process, not once-per-cycle
+  // (compiled-binary installs have no source tree; don't spam the log).
+  let parserProbeFixtureWarned = false;
   // v0.37.7.0 #1162 — counter for consecutive reconnect failures.
   // Reset on every successful health probe or reconnect. Threshold
   // controlled by GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS env (default 30).
@@ -689,7 +729,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
-        const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
+        const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);
 
         // ── v0.40 D17: per-source freshness check ────────────────────
         // Runs first; independent of score gate. Submits a 'sync' job per
@@ -825,7 +865,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                         {
                           queue: 'default',
                           idempotency_key: idemKey,
-                          max_attempts: 1,
+                          // issue #3218: the handler now throws on an
+                          // all-provider-failed batch, so give the queue's
+                          // backoff a chance (was 1 — dead-lettered instantly).
+                          max_attempts: 3,
                           timeout_ms: timeoutMs,
                         },
                         { allowProtectedSubmit: true },
@@ -865,9 +908,19 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         } catch {
           embeddingModel = (await engine.getConfig('embedding_model')) ?? undefined;
         }
-        const embedKeyCfg: Record<string, string | null> = {};
+        // #2662 (codex round-3): HOSTED_EMBED_KEY_CONFIG entries are keys
+        // buildGatewayConfig folds from the FILE plane only — `gbrain config
+        // set <key> X` writes the DB plane, which never reaches the gateway
+        // for these fields. Reading via engine.getConfig() here (DB plane)
+        // would report a provider "configured" from a DB-only key that the
+        // gateway can never actually use, dispatching a doomed embed job.
+        // Read the same file-plane source context.ts (doctor) reads instead,
+        // so autopilot and doctor agree with what the gateway can see.
+        const { loadConfigFileOnly } = await import('../core/config.ts');
+        const fileCfg = loadConfigFileOnly() as Record<string, unknown> | null;
+        const embedKeyCfg: Record<string, unknown> = {};
         for (const field of Object.values(HOSTED_EMBED_KEY_CONFIG)) {
-          embedKeyCfg[field] = await engine.getConfig(field);
+          embedKeyCfg[field] = fileCfg?.[field];
         }
         const ctx = {
           repoPath,
@@ -931,7 +984,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const result = await dispatchPerSource(engine, queue, {
             repoPath,
             slot,
-            timeoutMs,
+            // Full cycles can outlive short daemon intervals. Keep lighter dispatches
+            // interval-derived while giving per-source consolidation enough time.
+            timeoutMs: resolveAutopilotDispatchTimeoutMs(baseInterval, true),
             fanoutMax,
             jsonMode,
           });
@@ -1008,16 +1063,21 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // path's phase set). Now both converge on the same primitive.
       try {
         const { runCycle } = await import('../core/cycle.ts');
-        const report = await runCycle(engine, {
+        // #1872: track the promise so closeEngine can drain it on shutdown,
+        // and pass the abort signal so the cycle winds down between phases.
+        const cyclePromise = runCycle(engine, {
           brainDir: repoPath,
           // Autopilot daemon path: pulls by default (matches
           // pre-v0.17 autopilot behavior). CLI dream defaults false
           // for cron safety; that choice is scoped to dream only.
           pull: true,
+          signal: shutdownAbort.signal,
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
           },
         });
+        inflightInlineCycle = cyclePromise;
+        const report = await cyclePromise.finally(() => { inflightInlineCycle = null; });
         // Only 'failed' (every attempted phase failed) trips the autopilot
         // circuit breaker. 'partial' means at least one phase warned or
         // failed while others ran — that's a soft signal, not a fatal
@@ -1073,17 +1133,36 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // loop. Probe runs even when cycleOk=false (probe may surface signal
     // explaining why the cycle is failing).
     try {
-      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      const { resolveProbeEnabled, resolveProbeMaxUsd, runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
+      // Dual-plane read: `gbrain config set` (what the doctor enable hint
+      // prints) writes the DB plane; ~/.gbrain/config.json is the fallback.
+      let dbEnabled: string | null = null;
+      let dbMaxUsd: string | null = null;
+      try {
+        dbEnabled = await engine.getConfig('autopilot.nightly_quality_probe.enabled');
+        dbMaxUsd = await engine.getConfig('autopilot.nightly_quality_probe.max_usd');
+      } catch { /* DB unavailable → file plane only */ }
+      const probeEnabled = resolveProbeEnabled(dbEnabled, cfg?.autopilot?.nightly_quality_probe?.enabled);
       if (probeEnabled) {
-        const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
         const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
         const { isAvailable } = await import('../core/ai/gateway.ts');
-        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        const { existsSync } = await import('node:fs');
+        const { fileURLToPath } = await import('node:url');
+        const { join } = await import('node:path');
+        const maxUsd = resolveProbeMaxUsd(dbMaxUsd, cfg?.autopilot?.nightly_quality_probe?.max_usd);
+        // The committed fixture (test/fixtures/longmemeval-nightly.jsonl)
+        // lives in the gbrain PACKAGE, not the brain repo — repoPath is
+        // sync.repo_path (the user's brain), where the fixture never
+        // exists, so the probe error'd on every real install. Resolve the
+        // package root from the module location; keep repoPath as the
+        // fallback for setups that vendor the fixture into the brain repo.
+        const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
+        const fixtureAtPkgRoot = existsSync(join(pkgRoot, 'test', 'fixtures', 'longmemeval-nightly.jsonl'));
         await runNightlyQualityProbe({
           isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
           hasEmbeddingProvider: () => isAvailable('embedding'),
           resolveMaxUsd: () => maxUsd,
-          resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
+          resolveRepoRoot: () => (fixtureAtPkgRoot ? pkgRoot : repoPath ?? gbrainHomePath('.')),
           runLongMemEval: runLongMemEvalForProbe,
           runCrossModalBatch: runCrossModalBatchForProbe,
           now: () => new Date(),
@@ -1093,6 +1172,62 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       logError('autopilot.nightly_probe', e);
       // Intentional: do NOT bump consecutiveErrors. Probe failure is
       // informational; autopilot loop continues.
+    }
+
+    // 4.6 — Nightly conversation-parser probe (v0.41.16.0 phase module;
+    // the scheduler wire-up was deferred at ship and is added here). Same
+    // posture as 4.5: the phase owns its gates (enabled/mode-gate, LLM
+    // key), the wiring owns invocation + the audit row, and a probe
+    // failure NEVER crashes the autopilot loop. Per D10 the probe is
+    // default-ON for search.mode=tokenmax, opt-in otherwise.
+    try {
+      const { runConversationParserNightlyProbe } = await import('../core/conversation-parser/nightly-probe.ts');
+      const { logParserProbeEvent, parserProbeRanWithin } = await import('../core/audit-parser-probe.ts');
+      const { isAvailable } = await import('../core/ai/gateway.ts');
+      const { existsSync } = await import('node:fs');
+      const { fileURLToPath } = await import('node:url');
+      const { join } = await import('node:path');
+      // Flag reads dual-plane: the DB row (`gbrain config set …`) wins,
+      // ~/.gbrain/config.json is the fallback. search.mode lives on the
+      // DB plane only (mode.ts owns it).
+      let parserDbEnabled: string | null = null;
+      let dbSearchMode: string | null = null;
+      try {
+        parserDbEnabled = await engine.getConfig('autopilot.conversation_parser_probe.enabled');
+        dbSearchMode = await engine.getConfig('search.mode');
+      } catch { /* DB unavailable → file plane only */ }
+      const parserEnabled = parserDbEnabled != null
+        ? parserDbEnabled === 'true'
+        : cfg?.autopilot?.conversation_parser_probe?.enabled === true;
+      const searchMode = dbSearchMode ?? '';
+      // Fixtures are committed in the gbrain package (test/fixtures/…),
+      // NOT the brain repo — resolve from the module location. Compiled
+      // binaries carry no source tree: skip quietly instead of writing
+      // failure rows that would flip doctor to WARN on every binary install.
+      const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
+      const fixturePath = join(pkgRoot, 'test', 'fixtures', 'conversation-formats', 'all.jsonl');
+      const adversarialPath = join(pkgRoot, 'test', 'fixtures', 'conversation-formats', 'adversarial.jsonl');
+      const shouldInvoke = parserEnabled || searchMode === 'tokenmax';
+      if (shouldInvoke && existsSync(fixturePath) && existsSync(adversarialPath)) {
+        const result = await runConversationParserNightlyProbe({
+          isEnabled: () => parserEnabled,
+          searchMode: () => searchMode,
+          hasLlmKey: () => isAvailable('chat'),
+          resolveFixturePath: () => fixturePath,
+          resolveAdversarialPath: () => adversarialPath,
+          now: () => new Date(),
+          shouldSkipForRateLimit: () => parserProbeRanWithin(24 * 60 * 60 * 1000),
+        });
+        // rate_limited is a non-run: the loop ticks every few minutes, so
+        // logging every skip would flood the audit file with no-signal rows.
+        if (result.outcome !== 'rate_limited') logParserProbeEvent(result);
+      } else if (shouldInvoke && !parserProbeFixtureWarned) {
+        parserProbeFixtureWarned = true;
+        console.error(`[parser-probe] fixtures not found under ${pkgRoot}; skipping (probe needs a source-checkout install)`);
+      }
+    } catch (e) {
+      logError('autopilot.parser_probe', e);
+      // Informational, like 4.5: do NOT bump consecutiveErrors.
     }
 
     // Wait for next cycle
@@ -1186,6 +1321,15 @@ function writeWrapperScript(repoPath: string): string {
 # OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
+# Belt-and-suspenders PATH fix. ~/.bashrc ships with a non-interactive guard
+# (\`case $- in *i*) ;; *) return;; esac\`) that exits early when launched from
+# cron/systemd/launchd — so its PATH exports never reach this subprocess.
+# Without bun on PATH, the exec'd gbrain (a \`#!/usr/bin/env bun\` script) fails
+# silently with "env: bun: No such file or directory" and leaves a stale
+# lockfile that blocks every subsequent tick. Prepending ~/.bun/bin here
+# keeps the wrapper self-contained regardless of which init file the OS
+# loaded.
+export PATH="$HOME/.bun/bin:$PATH"
 exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });

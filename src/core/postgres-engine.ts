@@ -1028,6 +1028,7 @@ export class PostgresEngine implements BrainEngine {
       const deletedCondition = includeDeleted ? tx`` : tx`AND deleted_at IS NULL`;
       const rows = await tx`
         SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
+               effective_date, effective_date_source,
                source_kind, source_uri, ingested_via, ingested_at
         FROM pages
         WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
@@ -1110,6 +1111,7 @@ export class PostgresEngine implements BrainEngine {
         frontmatter = EXCLUDED.frontmatter,
         content_hash = EXCLUDED.content_hash,
         updated_at = now(),
+        deleted_at = NULL,
         effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
         effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename),
@@ -1769,6 +1771,10 @@ export class PostgresEngine implements BrainEngine {
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           p.effective_date, p.effective_date_source,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score
         FROM content_chunks cc
@@ -1796,6 +1802,7 @@ export class PostgresEngine implements BrainEngine {
       ${buildBestPerPagePoolCte('ranked_chunks')}
       SELECT slug, page_id, title, type, source_id,
         effective_date, effective_date_source,
+        message_id, thread_id, source_subject,
         chunk_id, chunk_index, chunk_text, chunk_source, score,
         false AS stale
       FROM best_per_page
@@ -2067,6 +2074,10 @@ export class PostgresEngine implements BrainEngine {
       SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
         p.effective_date, p.effective_date_source,
+        CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+          THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+        CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+          THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
         false AS stale
@@ -2219,6 +2230,10 @@ export class PostgresEngine implements BrainEngine {
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           p.effective_date, p.effective_date_source,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           1 - (cc.${col} <=> ${castSql}) AS raw_score
         FROM content_chunks cc
@@ -2253,6 +2268,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT
         slug, page_id, title, type, source_id,
         effective_date, effective_date_source,
+        message_id, thread_id, source_subject,
         chunk_id, chunk_index, chunk_text, chunk_source,
         score,
         false AS stale
@@ -2387,6 +2403,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
+    // Normalize the same way putPage does — pages.slug is stored lowercased,
+    // so a raw mixed-case slug here would miss the row it just wrote (#430).
+    slug = validateSlug(slug);
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
 
@@ -2420,6 +2439,23 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    // Provenance fallback for chunks that don't carry an explicit `model`:
+    // resolve the model the gateway ACTUALLY uses at runtime, not the
+    // compile-time DEFAULT_EMBEDDING_MODEL constant. Callers like `embed`
+    // build ChunkInputs without a `model` field (src/commands/embed.ts), so
+    // the old `chunk.model || DEFAULT_EMBEDDING_MODEL` fallback stamped the
+    // hardcoded default (e.g. zeroentropyai:zembed-1) onto rows whose vectors
+    // were produced by a different, config-resolved model — corrupting the
+    // provenance that signature-drift staleness + dim-migration logic trust.
+    // Mirrors the resolve-then-fallback pattern used for schema sizing above.
+    let resolvedModel: string = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const gw = await import('./ai/gateway.ts');
+      resolvedModel = gw.getEmbeddingModel() || resolvedModel;
+    } catch {
+      // Gateway unconfigured (unit tests / pre-connect): keep the default.
+    }
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -2449,7 +2485,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null,
+        chunk.model || resolvedModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
@@ -3082,6 +3118,7 @@ export class PostgresEngine implements BrainEngine {
     name: string,
     dirPrefix?: string,
     minSimilarity: number = 0.55,
+    sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
     const sql = this.sql;
     // Use the `similarity()` function directly with an explicit threshold
@@ -3094,15 +3131,33 @@ export class PostgresEngine implements BrainEngine {
     // Tie-breaker: sort by slug after similarity so re-runs return the
     // same winner when multiple pages score equally (prevents churn
     // in put_page auto-link reconciliation).
+    //
+    // `sourceId` + `deleted_at IS NULL` mirror the filters `tryFuzzyMatch`
+    // in `src/core/entities/resolve.ts` got via #1436 (v0.41.13.0). Without
+    // them, fuzzy resolution could suggest cross-source slugs that the
+    // caller then silently drops at the FK filter in
+    // `operations.ts:reconcileLinks` (the `allSlugs` filter) — making it
+    // look like the match failed when in fact it picked the wrong page.
     const prefixPattern = dirPrefix ? `${dirPrefix}/%` : '%';
-    const rows = await sql`
-      SELECT slug, similarity(title, ${name}) AS sim
-      FROM pages
-      WHERE similarity(title, ${name}) >= ${minSimilarity}
-        AND slug LIKE ${prefixPattern}
-      ORDER BY sim DESC, slug ASC
-      LIMIT 1
-    `;
+    const rows = sourceId
+      ? await sql`
+          SELECT slug, similarity(title, ${name}) AS sim
+          FROM pages
+          WHERE similarity(title, ${name}) >= ${minSimilarity}
+            AND slug LIKE ${prefixPattern}
+            AND source_id = ${sourceId}
+            AND deleted_at IS NULL
+          ORDER BY sim DESC, slug ASC
+          LIMIT 1
+        `
+      : await sql`
+          SELECT slug, similarity(title, ${name}) AS sim
+          FROM pages
+          WHERE similarity(title, ${name}) >= ${minSimilarity}
+            AND slug LIKE ${prefixPattern}
+          ORDER BY sim DESC, slug ASC
+          LIMIT 1
+        `;
     if (rows.length === 0) return null;
     const row = rows[0] as { slug: string; sim: number };
     return { slug: row.slug, similarity: row.sim };
@@ -4925,11 +4980,11 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
-             similarity(t.claim, ${query})::real AS score
+             word_similarity(${query}, t.claim)::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
-        AND t.claim % ${query}
+        AND ${query} <% t.claim
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
@@ -5327,7 +5382,7 @@ export class PostgresEngine implements BrainEngine {
     // dashboard health.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -5340,7 +5395,6 @@ export class PostgresEngine implements BrainEngine {
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -5353,31 +5407,46 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('entity', 'person', 'company')
       ORDER BY link_count DESC
       LIMIT 5
     `;
 
-    const islandedRows = await sql<{ slug: string }[]>`
-      SELECT p.slug
+    // Per-page flags for the linkable scope: orphan_pages and the
+    // no-orphans / timeline-coverage DENOMINATORS are all computed over
+    // pages the shared orphan-reporting policy considers linkable (the same
+    // scope `gbrain orphans` and doctor's orphan_ratio use), so one doctor
+    // report cannot carry two contradictory orphan/coverage numbers.
+    // Archive (raw/), generated, and daily-log pages are not expected to
+    // participate in the curated graph. Filtered in TS because the policy
+    // includes per-brain config overrides. PGLite path has the same logic.
+    const pageScopeRows = await sql<{ slug: string; islanded: boolean; has_timeline: boolean }[]>`
+      SELECT p.slug,
+             (NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+              AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)) as islanded,
+             EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = p.id) as has_timeline
       FROM pages p
-      WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
-        AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
     `;
 
     const pageCount = Number(h.page_count);
     const embedCoverage = Number(h.embed_coverage);
     const stalePages = await this.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS });
     const orphanOverrides = await loadOrphanPolicyOverrides(this);
-    const orphanPages = islandedRows.filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides)).length;
+    const linkablePages = pageScopeRows.filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides));
+    const linkablePageCount = linkablePages.length;
+    const orphanPages = linkablePages.filter(row => row.islanded).length;
+    const linkableTimelinePages = linkablePages.filter(row => row.has_timeline).length;
     const deadLinks = Number(h.dead_links);
     const linkCount = Number(h.link_count);
-    const pagesWithTimeline = Number(h.pages_with_timeline);
 
     // brain_score: 0-100 weighted average
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageWhole = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
-    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    // linkablePageCount === 0 gets full marks for the orphan / timeline
+    // components (same vacuous-truth rule as the empty-brain fix below):
+    // an all-archive brain has no curated graph to penalize.
+    const timelineCoverageWhole =
+      linkablePageCount > 0 ? Math.min(linkableTimelinePages / linkablePageCount, 1) : 1;
+    const noOrphans = linkablePageCount > 0 ? 1 - (orphanPages / linkablePageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Per-component points. Sum equals brainScore by construction.
     //
@@ -5396,6 +5465,7 @@ export class PostgresEngine implements BrainEngine {
 
     return {
       page_count: pageCount,
+      linkable_page_count: linkablePageCount,
       embed_coverage: embedCoverage,
       stale_pages: stalePages,
       orphan_pages: orphanPages,
@@ -5428,11 +5498,16 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async getIngestLog(opts?: { limit?: number }): Promise<IngestLogEntry[]> {
+  async getIngestLog(opts?: { limit?: number; sourceIds?: string[] }): Promise<IngestLogEntry[]> {
     const sql = this.sql;
     const limit = opts?.limit || 50;
+    // Source-scope for remote / federated callers; unscoped only for trusted
+    // local callers (same posture as searchKeyword's sourceIds filter).
+    const scope = opts?.sourceIds && opts.sourceIds.length > 0
+      ? sql`WHERE source_id = ANY(${opts.sourceIds}::text[])`
+      : sql``;
     const rows = await sql`
-      SELECT * FROM ingest_log ORDER BY created_at DESC LIMIT ${limit}
+      SELECT * FROM ingest_log ${scope} ORDER BY created_at DESC LIMIT ${limit}
     `;
     // Belt-and-suspenders source_id fallback for any pre-v50 row.
     return (rows as unknown as IngestLogEntry[]).map(r => ({
@@ -6153,6 +6228,13 @@ export class PostgresEngine implements BrainEngine {
     const prefixCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    // TIM-37: exclude briefing pages from their own Brain Pulse. The cron
+    // briefing writes to 90_Briefings/, gets re-ingested, and would otherwise
+    // top tomorrow's salience as pure self-reference. Suppress unless the
+    // caller explicitly asked for the briefings/ prefix.
+    const excludeBriefings = !(slugPrefix && slugPrefix.startsWith('briefings'))
+      ? sql`AND p.slug NOT LIKE 'briefings/%'`
+      : sql``;
     // v0.29.1: third score term via buildRecencyComponentSql. Default
     // 'flat' = v0.29.0 behavior (1 / (1 + days_old)). 'on' opts into the
     // per-prefix decay map (concepts/ evergreen, daily/ aggressive, etc.).
@@ -6186,6 +6268,7 @@ export class PostgresEngine implements BrainEngine {
         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
        WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
          ${prefixCondition}
+         ${excludeBriefings}
        GROUP BY p.id
        ORDER BY score DESC
        LIMIT ${limit}
@@ -6228,6 +6311,12 @@ export class PostgresEngine implements BrainEngine {
           )`
       : sql``;
 
+    // Exclude dream/synthesize-generated pages (reflections, originals, cycle
+    // logs carrying frontmatter dream_generated:true). enrich develops ENTITY
+    // stubs; running it on a generated essay/log creates circular self-citation
+    // and drops the H1. IS DISTINCT FROM 'true' keeps NULL/'false' rows.
+    const dreamCondition = sql`AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true'`;
+
     // Whitelisted ORDER BY (no injection — enum maps to a literal fragment).
     const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
     const orderBy = sql.unsafe(ENRICH_ORDER_SQL[orderKey]);
@@ -6251,6 +6340,7 @@ export class PostgresEngine implements BrainEngine {
         AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < ${threshold}
         ${sourceCondition}
         ${recencyCondition}
+        ${dreamCondition}
       ORDER BY ${orderBy}
       LIMIT ${limit}
     `;

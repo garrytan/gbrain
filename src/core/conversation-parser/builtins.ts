@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Built-in conversation parser pattern registry.
  *
- * Fifteen hand-vetted patterns covering the chat-export formats this
+ * Seventeen hand-vetted patterns covering the chat-export formats this
  * codebase is most likely to encounter. Each pattern's regex was
  * derived from a public format reference (source_doc field) so future
  * maintainers can verify against the wild shape.
@@ -50,7 +50,7 @@ export function cleanSpeaker(raw: string, override?: RegExp): string {
   return stripped || raw.trim();
 }
 
-/** The 15 hand-vetted built-in patterns. */
+/** The 17 hand-vetted built-in patterns. */
 export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   // -------------------------------------------------------------------
   // INLINE-DATE patterns (date in every line; less ambiguous; tried first).
@@ -211,6 +211,67 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     ],
     source_doc:
       'Time-only 12h AM/PM iMessage export shape: `**Speaker** (H:MM AM): text`',
+  },
+
+  {
+    // Some Slack-to-Markdown normalizers render one message anchor as:
+    //
+    //   **Speaker Name** 09:15 — message text
+    //
+    // The date lives in page frontmatter while each line supplies a 24-hour
+    // wall-clock time. The separator varies by renderer: Unicode em dash,
+    // Unicode en dash, and ASCII hyphen all appear in otherwise identical
+    // exports. Treating all three as the same deterministic grammar avoids
+    // sending long, regular transcripts through the bounded LLM fallback.
+    //
+    // CONTINUATION SEMANTICS: normalized messages can contain Markdown lists,
+    // quoted blocks, or generated summaries below the anchor line. multi_line
+    // is therefore true; applyPattern appends every non-anchor line to the
+    // preceding message until the next matching anchor.
+    //
+    // DATE/TIME SEMANTICS: date_source='frontmatter' combines the resolved page
+    // date with the captured hour and minute. timezone_policy intentionally
+    // matches the other time-only Markdown formats: the captured clock value
+    // is emitted with `Z`; timezone metadata controls the warning but does not
+    // currently convert the wall-clock value.
+    //
+    // NON-SHADOW GUARANTEE: this grammar requires the closing bold marker,
+    // whitespace, a valid 24-hour time, and a dash. It cannot match the
+    // parenthesized bold formats (`**Name** (09:15): text`), the no-time bold
+    // format (`**Name:** text`), or the inline-date iMessage format. Parser
+    // declaration order is only a score tie-breaker, so these distinctions
+    // must remain structural in the regex.
+    id: 'bold-time-dash',
+    origin: 'builtin',
+    regex:
+      /^\*\*(.+?)\*\*\s+([01]?\d|2[0-3]):([0-5]\d)\s+[-\u2013\u2014]\s*(.*)$/,
+    captures: {
+      speaker_group: 1,
+      hour_group: 2,
+      minute_group: 3,
+      text_group: 4,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: true,
+    score_continuations_as_body: true,
+    quick_reject: /^\*\*/,
+    test_positive: [
+      '**Alice Example** 09:15 — hello world',
+      '**Summary Bot** 23:04 – nightly summary follows',
+      '**Bob Example** 7:05 - ASCII dash export',
+    ],
+    test_negative: [
+      '**Alice Example** (09:15): parenthesized meeting shape',
+      '**Alice Example** (9:15 AM): parenthesized 12-hour shape',
+      '**Alice Example:** no-time transcript shape',
+      '**Alice Example** (2024-03-15 9:00 AM): inline-date shape',
+      '**Alice Example** 24:00 — invalid 24-hour time',
+      '**Alice Example** 09:60 — invalid minute',
+    ],
+    source_doc:
+      'Normalized Slack Markdown: `**Speaker** HH:MM — text`, with the date in page frontmatter',
   },
 
   {
@@ -647,17 +708,28 @@ export function validatePatternEntry(entry: PatternEntry): void {
   if (entry.test_positive.length > 0) {
     const m = entry.regex.exec(entry.test_positive[0]);
     if (m === null) return; // already thrown above
-    const requiredGroups = [
-      entry.captures.speaker_group,
-      entry.captures.date_group,
-      entry.captures.hour_group,
-      entry.captures.minute_group,
-      entry.captures.ampm_group,
-    ].filter((g): g is number => typeof g === 'number');
-    for (const g of requiredGroups) {
-      if (g >= m.length) {
+    const captureGroups: Array<[
+      name: string,
+      group: number | undefined,
+      minimum: number,
+    ]> = [
+      ['speaker_group', entry.captures.speaker_group, 1],
+      ['text_group', entry.captures.text_group, 0],
+      ['date_group', entry.captures.date_group, 1],
+      ['hour_group', entry.captures.hour_group, 1],
+      ['minute_group', entry.captures.minute_group, 1],
+      ['ampm_group', entry.captures.ampm_group, 1],
+    ];
+    for (const [name, group, minimum] of captureGroups) {
+      if (group === undefined) continue;
+      if (!Number.isInteger(group) || group < minimum) {
         throw new Error(
-          `[conversation-parser] PatternEntry '${entry.id}' captures group ${g} but regex only emits ${m.length - 1} groups`,
+          `[conversation-parser] PatternEntry '${entry.id}' ${name} must be an integer >= ${minimum}; got ${group}`,
+        );
+      }
+      if (group > 0 && group >= m.length) {
+        throw new Error(
+          `[conversation-parser] PatternEntry '${entry.id}' captures group ${group} but regex only emits ${m.length - 1} groups`,
         );
       }
     }

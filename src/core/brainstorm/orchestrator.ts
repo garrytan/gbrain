@@ -68,6 +68,7 @@ import {
   type BrainstormCheckpoint,
   type CheckpointCross,
 } from './checkpoint.ts';
+import { resolveOwnerHolder } from '../owner-holder.ts';
 
 export { BudgetExhausted };
 
@@ -139,7 +140,7 @@ export interface BrainstormOptions {
   modelOverride?: string;
   /** Skip the cost-preview TTY grace window. Required for non-interactive callers. */
   skipCostPreview?: boolean;
-  /** When set, force the user holder for calibration profile lookup. Falls back to config (`emotional_weight.user_holder`) then `'garry'`. */
+  /** When set, force the user holder for calibration profile lookup. Falls back to config (`emotional_weight.user_holder`) then `'self'`. */
   holderOverride?: string;
   /** Source scope. */
   sourceId?: string;
@@ -485,9 +486,44 @@ const DEFAULT_PARALLELISM = 4;
  * src/core/errors.ts (the v0.19.0 envelope every new agent-facing
  * surface uses) rather than introducing a new BrainstormError class.
  */
+/** File-config slice the orchestrator reads (see loadConfig in core/config.ts). */
+export interface BrainstormRunConfig {
+  embedding_model?: string;
+  chat_model?: string;
+  emotional_weight?: { user_holder?: string };
+}
+
+/**
+ * Model used for the cost preview + hard cost ceiling. Mirrors what the
+ * gateway will actually run: explicit --model override, else the configured
+ * chat_model (gateway default), else the hardcoded gateway fallback. Before
+ * this resolved through config, a non-Sonnet chat_model got its preview
+ * priced against the wrong model. (Takeover of PR #1855 by @starm2010.)
+ */
+export function resolveBrainstormChatModel(
+  config: { chat_model?: string },
+  modelOverride?: string,
+): string {
+  return modelOverride ?? config.chat_model ?? 'anthropic:claude-sonnet-4-6';
+}
+
+/**
+ * Judge-phase model precedence: --judge-model flag, else the
+ * `models.brainstorm.judge` config key, else undefined (falls back to
+ * `modelOverride` then the gateway default at the runJudge callsite).
+ */
+export async function resolveBrainstormJudgeModel(
+  engine: BrainEngine,
+  judgeModelFlag?: string,
+): Promise<string | undefined> {
+  if (judgeModelFlag) return judgeModelFlag;
+  const configured = await engine.getConfig('models.brainstorm.judge');
+  return configured ?? undefined;
+}
+
 export async function runBrainstorm(
   engine: BrainEngine,
-  config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
+  config: BrainstormRunConfig,
   opts: BrainstormOptions
 ): Promise<BrainstormResult> {
   // v0.39.3.0 (Phase 5, CV11+T4): outer try/catch around the orchestrator
@@ -509,7 +545,7 @@ export async function runBrainstorm(
 
 async function runBrainstormImpl(
   engine: BrainEngine,
-  config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
+  config: BrainstormRunConfig,
   opts: BrainstormOptions,
 ): Promise<BrainstormResult> {
   // v0.39.0.0 T10: install a gateway-layer BudgetTracker scope around the
@@ -529,7 +565,7 @@ async function runBrainstormImpl(
 
 async function _runBrainstormInner(
   engine: BrainEngine,
-  config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
+  config: BrainstormRunConfig,
   opts: BrainstormOptions,
 ): Promise<BrainstormResult> {
   const profile = opts.profile ?? BRAINSTORM_PROFILE;
@@ -538,7 +574,7 @@ async function _runBrainstormInner(
   const embedFn = opts.embedQueryFn ?? embedQuery;
 
   // ---- Phase 0: cost preview + TTY grace ----
-  const modelStr = opts.modelOverride ?? 'anthropic:claude-sonnet-4-6';
+  const modelStr = resolveBrainstormChatModel(config, opts.modelOverride);
   const { aborted, estimate } = await previewCostAndWait({
     profile,
     model: modelStr,
@@ -623,7 +659,7 @@ async function _runBrainstormInner(
   }
 
   // ---- Phase 3: calibration context (cold-start fallback) ----
-  const holder = opts.holderOverride ?? config.emotional_weight?.user_holder ?? 'garry';
+  const holder = resolveOwnerHolder({ override: opts.holderOverride, configValue: config.emotional_weight?.user_holder });
   const calibContext = await loadCalibrationContext(engine, {
     holder,
     sourceId: opts.sourceId,
@@ -847,7 +883,7 @@ async function _runBrainstormInner(
       far_slug: i.far_slug,
     }));
     const judgeResult = await runJudge(profile.judge_config, judgeInput, {
-      modelOverride: opts.judgeModel ?? opts.modelOverride,
+      modelOverride: (await resolveBrainstormJudgeModel(engine, opts.judgeModel)) ?? opts.modelOverride,
       chatFn: opts.chatFn,
       activeBiasTags: activeBiasTags ?? undefined,
       abortSignal: opts.abortSignal,

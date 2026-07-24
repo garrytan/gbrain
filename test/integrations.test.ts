@@ -263,6 +263,35 @@ describe('twilio-voice-brain recipe', () => {
   });
 });
 
+describe('x-to-brain recipe', () => {
+  test('health check works with an app-only bearer token (#2343)', () => {
+    const { readFileSync } = require('fs');
+    const content = readFileSync(
+      new URL('../recipes/x-to-brain.md', import.meta.url),
+      'utf-8'
+    );
+    const recipe = parseRecipe(content, 'x-to-brain.md');
+    expect(recipe).not.toBeNull();
+    const httpChecks = recipe!.frontmatter.health_checks
+      .filter((c: any) => typeof c === 'object' && c.type === 'http');
+    expect(httpChecks.length).toBeGreaterThan(0);
+    const secretNames = new Set(recipe!.frontmatter.secrets.map((s: any) => s.name));
+    for (const check of httpChecks as any[]) {
+      // /users/me requires user-context OAuth; the recipe only collects an
+      // app-only bearer token, so probing it always fails.
+      expect(check.url).not.toContain('/users/me');
+      // Every $VAR the check expands must be declared in secrets, or the
+      // installer never prompts for it and the check fails for everyone.
+      const vars = [check.url, check.auth_token, check.auth_user, check.auth_pass]
+        .filter((v: unknown): v is string => typeof v === 'string')
+        .flatMap((v: string) => v.match(/\$[A-Z_][A-Z0-9_]*/g) ?? [])
+        .map((v: string) => v.slice(1));
+      expect(vars.length).toBeGreaterThan(0);
+      for (const name of vars) expect(secretNames.has(name)).toBe(true);
+    }
+  });
+});
+
 // --- All recipes parse without error ---
 
 describe('all recipes', () => {

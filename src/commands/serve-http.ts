@@ -45,6 +45,7 @@ import {
   type IngestionContentType,
   type IngestionEvent,
 } from '../core/ingestion/types.ts';
+import { resolveOwnerHolder } from '../core/owner-holder.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -110,6 +111,24 @@ export function shouldSuppressBootstrapPrint(opts: {
   if (opts.fromEnv) return true;
   if (opts.forcePrint) return false;
   return !opts.isTty;
+}
+
+export type OAuthTokenRateLimitConfig = {
+  windowMs: number;
+  max: number;
+};
+
+function parsePositiveIntEnv(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env): OAuthTokenRateLimitConfig {
+  return {
+    windowMs: parsePositiveIntEnv(env.GBRAIN_OAUTH_TOKEN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+    max: parsePositiveIntEnv(env.GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX, 50),
+  };
 }
 
 export type ProbeHealthResult =
@@ -430,6 +449,34 @@ export function skillPublishStatus(publishSkills: boolean): { bannerValue: strin
   };
 }
 
+/**
+ * #1196: startup embedding-width guard for stateless host deployments.
+ *
+ * `embedding_model` / `embedding_dimensions` are file/env-plane only, so a
+ * container booted WITHOUT a config.json (stateless host) resolves the
+ * compiled-in default embedding width. Against an existing brain whose
+ * `content_chunks.embedding` is a different `vector(N)`, every write then
+ * fails with an opaque dim mismatch. Run doctor's existing
+ * embedding_width_consistency check at serve startup and return a loud
+ * banner (with the paste-ready recipe) when it isn't ok. Fail-open: a check
+ * error never blocks serving read traffic.
+ */
+export async function embeddingWidthStartupWarning(engine: BrainEngine): Promise<string | null> {
+  try {
+    const { checkEmbeddingWidthConsistency } = await import('./doctor.ts');
+    const check = await checkEmbeddingWidthConsistency(engine);
+    if (check.status === 'ok') return null;
+    return (
+      `[serve-http] WARNING: embedding width check failed — writes that embed will fail until fixed.\n` +
+      `${check.message}\n` +
+      `Stateless hosts: embedding_model/embedding_dimensions resolve from env/config.json only — ` +
+      `set GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS (or mount config.json) to match the brain's schema.`
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
@@ -452,6 +499,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     console.error(
       '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.1; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
     );
+  }
+
+  // #1196: fail-loud at startup when the resolved embedding width diverges
+  // from the brain's actual vector(N) column (stateless containers falling
+  // through to the compiled-in default). Non-fatal: reads still work.
+  {
+    const widthWarn = await embeddingWidthStartupWarning(engine);
+    if (widthWarn) console.error(widthWarn);
   }
 
   // Skill-publishing status for the banner + nudge. Mirrors readMcpPublishSkills
@@ -632,12 +687,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Custom client_credentials handler (before mcpAuthRouter)
   // SDK's token handler only supports authorization_code and refresh_token
   // ---------------------------------------------------------------------------
+  const oauthTokenRateLimit = resolveOAuthTokenRateLimit();
   const ccRateLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 50,
+    windowMs: oauthTokenRateLimit.windowMs,
+    max: oauthTokenRateLimit.max,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again in 15 minutes.' },
+    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
   });
 
   // Magic-link rate limiter: 10 requests/min/IP. The bootstrap token is
@@ -842,6 +898,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // (RFC 8414 §3.3). Honor --public-url for production deployments behind
   // reverse proxies / tunnels; default to localhost for dev.
   const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
+
+  // MCP authorization spec (2025-06-18 draft §5.1) and RFC 9728 require the
+  // protected resource server to return its discovery metadata URL in the
+  // WWW-Authenticate header on 401 responses:
+  //
+  //   WWW-Authenticate: Bearer resource_metadata="<URL>"
+  //
+  // Clients (claude.ai, Cursor, every other MCP-aware OAuth client) use that
+  // URL to find the authorization-server discovery doc + token endpoint
+  // without the user having to paste those URLs manually. Pre-fix the header
+  // shipped `Bearer error="invalid_token", ...` with no resource_metadata
+  // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
+  // 401 — they would silently fail to connect with a generic "couldn't
+  // reach the MCP server" error.
+  const resourceMetadataUrl = `${issuerUrl.toString().replace(/\/$/, '')}/.well-known/oauth-protected-resource`;
 
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
@@ -1190,7 +1261,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/calibration/pattern/:id', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { getLatestProfile } = await import('./calibration.ts');
-      const holder = (req.query.holder as string) || 'garry';
+      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
       const profile = await getLatestProfile(engine, { holder });
       if (!profile) {
         res.status(404).json({ error: 'no_profile' });
@@ -1240,7 +1311,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/calibration/profile', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { getLatestProfile } = await import('./calibration.ts');
-      const holder = (req.query.holder as string) || 'garry';
+      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
       const profile = await getLatestProfile(engine, { holder });
       res.json(profile);
     } catch (err) {
@@ -1257,7 +1328,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         renderAbandonedThreadsCard,
         renderPatternStatementsCard,
       } = await import('../core/calibration/svg-renderer.ts');
-      const holder = (req.query.holder as string) || 'garry';
+      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
       const type = req.params.type;
       const profile = await getLatestProfile(engine, { holder });
 
@@ -1496,6 +1567,38 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // v0.42.x (#1914): rescope an OAuth client's write source / federated read
+  // scope. Admin-gated on purpose — DCR clients must never self-widen their
+  // scope (fail-closed trust); only the operator rescopes, here or via
+  // `gbrain auth rescope-client`. Source ids are validated by the canonical
+  // validator inside rescopeClient.
+  app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId, sourceId, federatedRead } = req.body ?? {};
+      if (!clientId || typeof clientId !== 'string') {
+        res.status(400).json({ error: 'clientId required' });
+        return;
+      }
+      if (federatedRead !== undefined &&
+          !(Array.isArray(federatedRead) && federatedRead.every((s: unknown) => typeof s === 'string'))) {
+        res.status(400).json({ error: 'federatedRead must be an array of source id strings' });
+        return;
+      }
+      if (sourceId !== undefined && typeof sourceId !== 'string') {
+        res.status(400).json({ error: 'sourceId must be a string' });
+        return;
+      }
+      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead });
+      res.json(result);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Rescope failed';
+      const status = /No OAuth client found/.test(message) ? 404
+        : /Invalid source_id|requires --source|cannot be empty|does not exist/.test(message) ? 400
+        : 500;
+      res.status(status).json({ error: message });
+    }
+  });
+
   // Revoke OAuth client
   app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
@@ -1601,7 +1704,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
@@ -1944,7 +2047,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post(
     '/ingest',
     ingestRateLimiter,
-    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'] }),
+    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'], resourceMetadataUrl }),
     express.raw({ type: '*/*', limit: ingestMaxBytes }),
     async (req: Request, res: Response) => {
       const startTime = Date.now();
@@ -2146,8 +2249,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   //     Other event types (ping, pull_request, etc.) return 202 'ignored'
   //     so GitHub doesn't retry.
   // D15.5: HMAC compare uses the shared safeHexEqual helper.
-  // D18: submits 'sync' job with auto_embed_backfill=true and priority -10
-  //     (above autopilot's 0).
+  // D18: submits 'sync' job with extraction + auto_embed_backfill enabled and
+  //     priority -10 (above autopilot's 0). This opts normal incremental pushes
+  //     into sync's inline extraction while pagesAffected still identifies the
+  //     changed pages. The sync core can still defer large (>100) changes.
   // ---------------------------------------------------------------------------
   const githubWebhookLimiter = rateLimit({
     windowMs: 60_000,
@@ -2267,6 +2372,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           'sync',
           {
             sourceId: source.id,
+            noExtract: false,
             auto_embed_backfill: true,
             embed_reason: 'webhook',
           },

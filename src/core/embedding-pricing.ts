@@ -37,9 +37,16 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:voyage-4-large':         { pricePerMTok: 0.18 },
   // ZeroEntropy (https://zeroentropy.dev/pricing — zembed-1)
   'zeroentropyai:zembed-1':        { pricePerMTok: 0.05 },
+  // ZeroEntropy reranker (docs/ai-providers/zeroentropy.md — $0.025/1M tokens).
+  // Reused here (not a separate rerank table) because budget-tracker.ts's
+  // rerank-kind lookup falls back to this same table for paid providers.
+  'zeroentropyai:zerank-2':        { pricePerMTok: 0.025 },
   // Mistral (https://mistral.ai/pricing/api/, verified 2026-07-19)
   'mistral:mistral-embed':         { pricePerMTok: 0.10 },
   'mistral:mistral-embed-2312':    { pricePerMTok: 0.10 },
+  // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-21)
+  'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
+  'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },
 };
 
 export type PriceLookupResult =
