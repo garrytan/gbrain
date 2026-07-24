@@ -37,6 +37,8 @@ import {
   TERMINAL_AUDIT_SOURCE,
   PER_SEGMENT_SOURCE_PREFIX,
   ALLOWED_TYPES,
+  fanOutBackgroundBySource,
+  buildJobParams,
 } from '../src/commands/extract-conversation-facts.ts';
 
 // ---------------------------------------------------------------------------
@@ -552,5 +554,83 @@ describe('runExtractConversationFactsCore', () => {
 describe('body cap constant (Eng A2)', () => {
   test('MAX_PAGE_BODY_BYTES is 25MB', () => {
     expect(MAX_PAGE_BODY_BYTES).toBe(25 * 1024 * 1024);
+  });
+});
+
+// issue #3227 — `--background` with no --source-id used to submit a single
+// job with sourceId undefined, which the Minion handler rejects fail-closed
+// ("requires data.sourceId"): the exact invocation doctor prescribes
+// (`gbrain extract-conversation-facts --background --max-cost-usd 5`)
+// always produced an instantly-dead job. The CLI now fans out one job per
+// source. Hermetic: stub engine + injectable submit.
+describe('fanOutBackgroundBySource (issue #3227)', () => {
+  const stubEngine = (sourceIds: string[]) =>
+    ({
+      kind: 'postgres',
+      executeRaw: async (sql: string) =>
+        sql.includes('FROM sources')
+          ? sourceIds.map((id) => ({
+              id,
+              name: id,
+              local_path: null,
+              last_sync_at: null,
+              config: {},
+            }))
+          : [{ n: 0 }],
+    }) as unknown as import('../src/core/engine.ts').BrainEngine;
+
+  test('fans out one submission per source, each pinned with --source-id', async () => {
+    const submitted: string[][] = [];
+    const handled = await fanOutBackgroundBySource(
+      stubEngine(['default', 'media']),
+      ['--background', '--max-cost-usd', '5'],
+      async (a) => { submitted.push(a); return true; },
+    );
+    expect(handled).toBe(true);
+    expect(submitted.length).toBe(2);
+    for (const a of submitted) expect(a).toContain('--background');
+    expect(submitted[0].slice(-2)).toEqual(['--source-id', 'default']);
+    expect(submitted[1].slice(-2)).toEqual(['--source-id', 'media']);
+  });
+
+  test('every fanned-out submission carries a defined sourceId in the job params', async () => {
+    // The load-bearing contract: the handler throws on missing data.sourceId.
+    const ids: unknown[] = [];
+    await fanOutBackgroundBySource(
+      stubEngine(['default', 'media']),
+      ['--background', '--max-cost-usd', '5'],
+      async (a) => {
+        ids.push(buildJobParams(a.filter((x) => x !== '--background')).sourceId);
+        return true;
+      },
+    );
+    expect(ids).toEqual(['default', 'media']);
+  });
+
+  test('explicit --source-id falls through to the plain single-job path', async () => {
+    const submitted: string[][] = [];
+    const handled = await fanOutBackgroundBySource(
+      stubEngine(['default', 'media']),
+      ['--background', '--source-id', 'media'],
+      async (a) => { submitted.push(a); return true; },
+    );
+    expect(handled).toBe(false);
+    expect(submitted.length).toBe(0);
+  });
+
+  test('no --background falls through', async () => {
+    const handled = await fanOutBackgroundBySource(
+      stubEngine(['default']),
+      ['--max-cost-usd', '5'],
+      async () => true,
+    );
+    expect(handled).toBe(false);
+  });
+
+  test('pglite falls through (maybeBackground degrades to inline multi-source foreground)', async () => {
+    const eng = stubEngine(['default']);
+    (eng as { kind: string }).kind = 'pglite';
+    const handled = await fanOutBackgroundBySource(eng, ['--background'], async () => true);
+    expect(handled).toBe(false);
   });
 });
