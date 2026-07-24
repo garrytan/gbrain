@@ -152,6 +152,19 @@ export interface ContradictionFinding extends ContradictionPair {
   confidence: number;
   resolution_kind: ResolutionKind;
   resolution_command: string;
+  /**
+   * Dismissal-ledger handle: first 12 hex of sha256 over the sorted
+   * content-hash pair of both member texts (order-independent; see
+   * dismissals.ts). Surfaced in `review`/`doctor` output as the argument
+   * for `gbrain eval suspected-contradictions dismiss <pair_id>`. Distinct
+   * from JudgeErrorRow.pair_id, which is a per-run slug#chunk_id key and
+   * not content-stable. Optional because report_json rows written before
+   * the ledger existed lack it — that costs nothing: ledger matching never
+   * reads this field, it recomputes the full pair_key from kind + member
+   * texts (dismissals.ts), so pre-ledger findings project (and are
+   * dismissable) too. This is a display/CLI convenience only.
+   */
+  pair_id?: string;
 }
 
 export interface PerQueryResult {
@@ -165,6 +178,17 @@ export interface PerQueryResult {
    * filter on `f.verdict === 'contradiction'`.
    */
   contradictions: ContradictionFinding[];
+  /**
+   * Findings suppressed by the manual-review dismissal ledger (see
+   * dismissals.ts). Kept in the report rather than dropped so
+   * `review --include-dismissed` can show them and the suppression stays
+   * auditable. Excluded from `contradictions`, from every headline count,
+   * and from the Wilson-CI NUMERATOR — the query itself stays in the
+   * denominator: a human-verified false positive means the query genuinely
+   * has no contradiction, which is exactly a clean evaluated sample.
+   * Optional for wire-compatibility with pre-ledger report rows.
+   */
+  dismissed?: ContradictionFinding[];
   /** Pairs the date pre-filter rejected before any judge call. Diagnostic only. */
   pairs_skipped_by_date: number;
   /** Pairs the cache satisfied without a judge call. */
@@ -265,6 +289,11 @@ export interface ProbeReport {
   source_tier_breakdown: SourceTierBreakdown;
   per_query: PerQueryResult[];
   hot_pages: HotPage[];
+  /**
+   * Total findings suppressed by the dismissal ledger across all queries.
+   * Optional for wire-compatibility with pre-ledger report rows.
+   */
+  dismissed_count?: number;
 }
 
 /** Shape persisted to `eval_contradictions_runs` table. Mirrors the columns. */

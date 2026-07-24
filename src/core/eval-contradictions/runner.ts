@@ -39,6 +39,7 @@ import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.t
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
 import { pairToFinding } from './auto-supersession.ts';
+import { loadActivePairKeySetBestEffort, projectContradictionFindings } from './dismissals.ts';
 import {
   PROMPT_VERSION,
   SCHEMA_VERSION,
@@ -278,6 +279,16 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   const tracker = new CostTracker({ capUsd: budgetUsd });
   const cache = new JudgeCache({ engine: opts.engine, modelId: judgeModel, disabled: !!opts.noCache });
 
+  // v126: manual-review dismissal ledger, loaded once per run. Findings
+  // whose content-derived pair_key is active in the ledger are partitioned
+  // into per-query `dismissed` (kept in full for audit /
+  // `review --include-dismissed`) and excluded from `contradictions`,
+  // headline counts, and the Wilson-CI numerator (the query stays in the
+  // denominator as a clean evaluated sample). Fail-open (empty set) so a
+  // ledger read error can never take down a paid probe run.
+  const dismissedKeys = await loadActivePairKeySetBestEffort(opts.engine);
+  let dismissedTotal = 0;
+
   // Pre-flight: pair count = queries × min(topK*(topK-1)/2 + topK, 50).
   // Conservative upper bound; the actual count depends on takes per page.
   const conservativePairsPerQuery = (topK * (topK - 1)) / 2 + topK * 2;
@@ -315,6 +326,7 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
         query,
         result_count: 0,
         contradictions: [],
+        dismissed: [],
         pairs_skipped_by_date: 0,
         pairs_cache_hit: 0,
         pairs_judged: 0,
@@ -412,21 +424,32 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
       }
     }
 
+    // v126: partition ledger-dismissed findings out BEFORE any counting so
+    // a human-reviewed false positive stops driving the headline metrics
+    // and the Wilson-CI numerator. The query itself deliberately stays in
+    // the CI denominator: the human verdict makes it a genuinely clean
+    // sample, not a non-sample. verdict_breakdown intentionally still
+    // tallies dismissed pairs above — it describes judge behavior, not
+    // surfaced state.
+    const { surfaced, dismissed } = projectContradictionFindings(findings, dismissedKeys);
+    dismissedTotal += dismissed.length;
+
     // v0.34 / Lane A2: distinguish strict-contradiction from any-finding.
     // The strict count drives the Wilson-CI denominator (the historic
     // headline metric). The broad count surfaces the wave's new value:
     // "of N queries, M had at least one temporal signal."
-    if (findings.length > 0) queriesWithAnyFinding++;
-    if (findings.some((f) => f.verdict === 'contradiction')) queriesWithContradiction++;
+    if (surfaced.length > 0) queriesWithAnyFinding++;
+    if (surfaced.some((f) => f.verdict === 'contradiction')) queriesWithContradiction++;
     perQuery.push({
       query,
       result_count: results.length,
-      contradictions: findings,
+      contradictions: surfaced,
+      dismissed,
       pairs_skipped_by_date: skippedByDate,
       pairs_cache_hit: cacheHits,
       pairs_judged: judged,
     });
-    allFindings.push(...findings);
+    allFindings.push(...surfaced);
   }
 
   // Aggregate.
@@ -463,6 +486,7 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
     source_tier_breakdown: breakdown,
     per_query: perQuery,
     hot_pages: hotPages,
+    dismissed_count: dismissedTotal,
   };
 
   return {

@@ -22,6 +22,13 @@ import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
+import {
+  computeFindingPairKey,
+  flattenRunFindings,
+  loadActivePairKeySetBestEffort,
+  pairIdFromKey,
+  projectContradictionFindings,
+} from '../core/eval-contradictions/dismissals.ts';
 import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
@@ -7074,40 +7081,76 @@ export async function buildChecks(
       const report = latest.report_json as Record<string, unknown> | null;
       const perQuery = (report?.per_query as Array<{
         contradictions: Array<{
+          kind?: string;
           severity: 'low' | 'medium' | 'high';
           axis: string;
-          a: { slug: string };
-          b: { slug: string };
+          a: { slug: string; text?: string };
+          b: { slug: string; text?: string };
           resolution_command: string;
+          pair_id?: string;
+        }>;
+        dismissed?: Array<{
+          kind?: string;
+          severity: 'low' | 'medium' | 'high';
+          axis: string;
+          a: { slug: string; text?: string };
+          b: { slug: string; text?: string };
+          resolution_command: string;
+          pair_id?: string;
         }>;
       }> | undefined) ?? [];
+      // v126: dismissal ledger — a manual review's outcome must apply
+      // immediately, without paying for a fresh probe run, so the shared
+      // projection runs here at read time over the UNION of surfaced +
+      // runner-parked dismissed findings (dismiss hides at once; undismiss
+      // restores at once). pair_keys are recomputed from finding content
+      // (kind + member texts), so report rows written before findings
+      // carried pair_id project too; findings whose texts are absent cannot
+      // be matched and stay surfaced. Fail-open: a ledger read error never
+      // takes down the doctor check.
+      const activeKeys = await loadActivePairKeySetBestEffort(engine);
+      const allFindings = flattenRunFindings(perQuery);
+      const { surfaced, dismissed } = projectContradictionFindings(allFindings, activeKeys);
+      const dismissedN = dismissed.length;
       let high = 0, medium = 0, low = 0;
-      const highFindings: Array<{ a: string; b: string; axis: string; cmd: string }> = [];
-      for (const q of perQuery) {
-        for (const c of q.contradictions) {
-          if (c.severity === 'high') {
-            high++;
-            highFindings.push({ a: c.a.slug, b: c.b.slug, axis: c.axis, cmd: c.resolution_command });
-          } else if (c.severity === 'medium') medium++;
-          else low++;
-        }
+      const highFindings: Array<{ a: string; b: string; axis: string; cmd: string; pairId: string | null }> = [];
+      for (const c of surfaced) {
+        if (c.severity === 'high') {
+          high++;
+          const key = computeFindingPairKey(c);
+          highFindings.push({
+            a: c.a.slug, b: c.b.slug, axis: c.axis, cmd: c.resolution_command,
+            pairId: c.pair_id ?? (key ? pairIdFromKey(key) : null),
+          });
+        } else if (c.severity === 'medium') medium++;
+        else low++;
       }
+      // Severity counts above are recomputed against the CURRENT ledger;
+      // the persisted Wilson CI is not (and cannot be, without re-running
+      // per-query strict counts) — label it probe-time unconditionally so
+      // the two populations are never silently mixed, in either direction
+      // (dismissals added since the run, or undismissals restoring pairs
+      // the run had excluded).
+      const dismissedNote = dismissedN > 0 ? ` (${dismissedN} dismissed by manual review)` : '';
       const total = high + medium + low;
       if (total === 0) {
         checks.push({
           name: 'contradictions',
           status: 'ok',
-          message: `Latest probe run (${latest.ran_at.slice(0, 10)}) found no suspected contradictions across ${latest.queries_evaluated} queries.`,
+          message: `Latest probe run (${latest.ran_at.slice(0, 10)}) found no suspected contradictions across ${latest.queries_evaluated} queries${dismissedNote}.`,
         });
       } else {
         const ciLow = (latest.wilson_ci_lower * 100).toFixed(0);
         const ciHigh = (latest.wilson_ci_upper * 100).toFixed(0);
         const lines = [
-          `${total} suspected contradictions (high=${high} medium=${medium} low=${low}) detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}%.`,
+          `${total} suspected contradictions (high=${high} medium=${medium} low=${low})${dismissedNote} detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}% (probe-time).`,
         ];
         for (const f of highFindings.slice(0, 3)) {
           lines.push(`  HIGH: ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);
           lines.push(`    → ${f.cmd}`);
+          if (f.pairId) {
+            lines.push(`    → false positive? gbrain eval suspected-contradictions dismiss ${f.pairId} --reason "..."`);
+          }
         }
         if (highFindings.length > 3) {
           lines.push(`  …and ${highFindings.length - 3} more — see \`gbrain eval suspected-contradictions review\``);

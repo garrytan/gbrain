@@ -3733,8 +3733,18 @@ const find_contradictions: Operation = {
         resolution_command: string;
       }>;
     }> | undefined) ?? [];
-    const findings = perQuery.flatMap((q) => q.contradictions);
-    const filtered = findings.filter((f) => {
+    // v124: shared dismissal projection over the UNION of surfaced +
+    // runner-parked dismissed findings — a manual review's outcome must
+    // suppress the pair on the MCP surface too (and undismiss must restore
+    // it), or agents keep re-raising human-rejected findings. pair_keys
+    // recompute from finding content; fail-open (empty set) on ledger read
+    // errors.
+    const { flattenRunFindings, loadActivePairKeySetBestEffort, projectContradictionFindings } =
+      await import('./eval-contradictions/dismissals.ts');
+    const allFindings = flattenRunFindings(perQuery);
+    const activeKeys = await loadActivePairKeySetBestEffort(ctx.engine);
+    const { surfaced, dismissed } = projectContradictionFindings(allFindings, activeKeys);
+    const filtered = surfaced.filter((f) => {
       if (sevFilter && f.severity !== sevFilter) return false;
       if (slugFilter) {
         const sA = f.a.slug.toLowerCase();
@@ -3747,7 +3757,8 @@ const find_contradictions: Operation = {
       run_id: latest.run_id,
       ran_at: latest.ran_at,
       contradictions: filtered.slice(0, limit),
-      total_in_run: findings.length,
+      total_in_run: allFindings.length,
+      dismissed_in_run: dismissed.length,
     };
   },
   cliHints: { name: 'find-contradictions' },

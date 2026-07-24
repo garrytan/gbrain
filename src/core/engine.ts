@@ -1714,6 +1714,50 @@ export interface BrainEngine {
    */
   sweepContradictionCache(): Promise<number>;
 
+  /**
+   * List ACTIVE rows (undismissed_at IS NULL) of the manual-review
+   * dismissal ledger (eval_contradictions_dismissals). Small table — one
+   * row per human decision — so no pagination. Consumed once per probe
+   * run / doctor / review / MCP / synthesize read to build the suppression
+   * set. See eval-contradictions/dismissals.ts for the identity design.
+   */
+  listContradictionDismissals(): Promise<Array<{
+    pair_key: string;
+    kind: string;
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    reason: string;
+    dismissed_by: string | null;
+    dismissed_at: string;
+  }>>;
+
+  /**
+   * Upsert a dismissal. ON CONFLICT on pair_key updates reason/dismissed_by,
+   * refreshes dismissed_at, and clears undismissed_at — re-dismissing a
+   * previously revoked pair reactivates it. No TTL: rows stop matching
+   * (and thus expire) exactly when either chunk's text changes.
+   */
+  putContradictionDismissal(opts: {
+    pair_key: string;
+    kind: string;
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    reason: string;
+    dismissed_by?: string | null;
+  }): Promise<void>;
+
+  /**
+   * Revoke a dismissal by pair_key hex prefix (soft-state: stamps
+   * undismissed_at rather than deleting, preserving the audit trail).
+   * Prefix resolution rejects ambiguity: 'revoked' on exactly one active
+   * match, 'not_found' on zero, 'ambiguous' (with the matching keys) on
+   * more than one.
+   */
+  revokeContradictionDismissal(pairKeyPrefix: string): Promise<{
+    status: 'revoked' | 'not_found' | 'ambiguous';
+    matches: string[];
+  }>;
+
   // ============================================================
   // v0.31 Hot memory — facts table operations
   // ============================================================
