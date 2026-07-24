@@ -3366,14 +3366,66 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const providerMetadata = (result as any).providerMetadata as Record<string, any> | undefined;
     const anthropicCache = providerMetadata?.anthropic ?? {};
 
-    const inTok = Number(usage.inputTokens ?? usage.promptTokens ?? 0);
-    const outTok = Number(usage.outputTokens ?? usage.completionTokens ?? 0);
+    const rawInTok = usage.inputTokens ?? usage.promptTokens;
+    const rawOutTok = usage.outputTokens ?? usage.completionTokens;
+    const inTok = Number(rawInTok ?? 0);
+    const outTok = Number(rawOutTok ?? 0);
+
+    const stopReason = mapStopReason((result as any).finishReason, providerMetadata);
+    const text = blocks
+      .filter(b => b.type === 'text')
+      .map(b => (b as { type: 'text'; text: string }).text)
+      .join('');
+
+    // A completion with no usable content must not report success (#3217).
+    // The check is on the CONTENT (text / tool-call blocks), never on reported
+    // usage — providers commonly normalize omitted usage to zero, so a
+    // usage-based gate would wave empty responses through as "free" successes
+    // that silently propagate no result to every chat() caller. Refusal and
+    // content-filter stops stay non-throwing: they are meaningful terminal
+    // signals callers branch on (toolLoop surfaces each as its own stop
+    // reason). A length stop with no content is classified distinctly — the
+    // output budget was exhausted before any text was emitted (thinking
+    // models spend it on internal reasoning first), which is deterministic
+    // for the same call, so it gets a config error with an actionable fix
+    // instead of a futile retry.
+    if (
+      text.trim().length === 0 &&
+      !blocks.some(b => b.type === 'tool-call') &&
+      stopReason !== 'refusal' &&
+      stopReason !== 'content_filter'
+    ) {
+      const label = `chat(${recipe.id}:${modelId})`;
+      const emptyErr =
+        stopReason === 'length'
+          ? new AIConfigError(
+              `${label}: output budget exhausted before any content was emitted (maxOutputTokens=${maxOutputTokens})`,
+              'Raise maxTokens for this call (or the configured max output tokens). Thinking models spend output budget on internal reasoning before emitting text.',
+            )
+          : new AITransientError(
+              `${label}: provider returned an empty completion (stopReason=${stopReason}, output_tokens=${outTok}) — no text and no tool calls`,
+            );
+      // Carry the real usage on the error so the catch-path budget record
+      // charges actual tokens instead of the pessimistic ceiling — but only
+      // the fields the provider actually reported. When usage was omitted
+      // entirely, attach nothing so _extractUsageFromError keeps its
+      // pessimistic fallback (attaching a synthesized {0,0} would record the
+      // spend as free).
+      const reportedUsage: Record<string, number> = {};
+      if (typeof rawInTok === 'number' && Number.isFinite(rawInTok)) reportedUsage.input_tokens = rawInTok;
+      if (typeof rawOutTok === 'number' && Number.isFinite(rawOutTok)) reportedUsage.output_tokens = rawOutTok;
+      if (Object.keys(reportedUsage).length > 0) {
+        (emptyErr as { usage?: unknown }).usage = reportedUsage;
+      }
+      throw emptyErr;
+    }
+
     _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
 
     return {
-      text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
+      text,
       blocks,
-      stopReason: mapStopReason((result as any).finishReason, providerMetadata),
+      stopReason,
       usage: {
         input_tokens: inTok,
         output_tokens: outTok,
