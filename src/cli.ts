@@ -55,7 +55,7 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'adoption']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -79,6 +79,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   'capture',
   // v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   'self-upgrade',
+  // #2570: `gbrain adoption` ships its own subcommand/bucket help
+  // (src/commands/adoption.ts HELP constant).
+  'adoption',
   // maintain (#3015) prints its own usage block (modes + not-auto-applied list).
   'maintain',
   // v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
@@ -1057,6 +1060,9 @@ export function formatResult(opName: string, result: unknown): string {
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
+  // #2570: adoption (generated-pages) report runs raw SQL against the host's
+  // engine; thin clients use the `list_generated_pages` MCP op instead.
+  'adoption',
   // v0.43 (#2095): watch streams against a LOCAL engine; thin clients get
   // the volunteer_context MCP op instead.
   'watch',
@@ -1108,6 +1114,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   serve: 'serve starts a server. Run on the host, not the thin client.',
   dream: 'dream runs the autopilot cycle on the host. `gbrain remote ping` queues one. (Native `gbrain dream` thin-client routing planned for v0.31.2.)',
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
+  adoption: "adoption needs the host's brain. Run on the host or use the `list_generated_pages` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
@@ -1591,6 +1598,20 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // #2570: same pattern for `gbrain adoption` help. `adoption` is in
+  // CLI_ONLY_SELF_HELP so the generic stub stays out of the way; this
+  // pre-engine-bind branch exposes the HELP constant (and the bare
+  // `gbrain adoption` usage screen) without a configured brain.
+  // runAdoption's help path returns before touching the engine.
+  if (
+    command === 'adoption' &&
+    (args.length === 0 || args.includes('--help') || args.includes('-h'))
+  ) {
+    const { runAdoption } = await import('./commands/adoption.ts');
+    await runAdoption(null as never, args);
+    return;
+  }
+
   // v0.41.39 (#1700): same pattern for `enrich --help`. enrich is in
   // CLI_ONLY_SELF_HELP so the generic stub stays out of the way; this
   // pre-engine-bind branch exposes the HELP constant without a configured
@@ -1833,6 +1854,12 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
+        break;
+      }
+      case 'adoption': {
+        // #2570 v1: read-only adoption report over dream-generated pages.
+        const { runAdoption } = await import('./commands/adoption.ts');
+        await runAdoption(engine, args);
         break;
       }
       case 'maintain': {
@@ -2418,6 +2445,8 @@ TOOLS
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
   orphans [--json] [--count]         Find pages with no inbound wikilinks
+  adoption list [--json]             Adoption report over dream-generated pages (#2570, read-only)
+        [--since 30d] [--source-id S] [--limit N]
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
   transcripts recent [--days N]      v0.29: recent raw .txt transcripts (local-only)

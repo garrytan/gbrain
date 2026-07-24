@@ -3399,6 +3399,49 @@ const find_orphans: Operation = {
   cliHints: { name: 'orphans', hidden: true },
 };
 
+// --- #2570 v1: read-only generated-pages adoption report ---
+
+const list_generated_pages: Operation = {
+  name: 'list_generated_pages',
+  description:
+    'Read-only adoption report over dream/synthesis-generated pages (#2570 v1). Enumerates pages ' +
+    "carrying the durable #2569 provenance marker (dream_generated: true + valid dream_cycle_date, " +
+    'excluding extract_receipt marker reuse) and classifies inbound links into buckets with fixed ' +
+    'precedence external > generated_cluster > summary_only > none (per distinct origin page, joined ' +
+    "by page_id). Auto-extracted link_source='mentions' edges never count toward adoption; raw and " +
+    'classification-eligible counts are both reported. Zero writes; idempotent. Source-scoped via ' +
+    'sourceScopeOpts (federated grants see the union of allowed sources). Includes a coverage warning ' +
+    'for summary-linked pages missing the best-effort #2569 stamp.',
+  params: {
+    since: {
+      type: 'string',
+      description:
+        'Inclusive window on dream_cycle_date (NOT updated_at): "YYYY-MM-DD", "30d", or "4w". Omit for all cycles.',
+    },
+    limit: {
+      type: 'number',
+      description: 'Cap on the review-candidates list (default 10; 0 = uncapped). Bucket counts are always complete.',
+    },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { buildGeneratedPagesReport } = await import('./generated-report.ts');
+    const limitRaw = p.limit as number | undefined;
+    return buildGeneratedPagesReport(ctx.engine, {
+      since: (p.since as string) || undefined,
+      limit: limitRaw === undefined ? undefined : limitRaw,
+      ...sourceScopeOpts(ctx),
+    });
+  },
+  // CLI surface is the CLI_ONLY `gbrain adoption list` dispatcher (cli.ts),
+  // same split as find_orphans / `gbrain orphans`. The op name itself
+  // (`list_generated_pages`) stays as-is — still an accurate description of
+  // what it lists — only the user-facing CLI verb changed (maintainer
+  // naming feedback on PR #3239: "generated" collided conceptually with
+  // other "generated" things in the tool).
+  cliHints: { name: 'adoption', hidden: true },
+};
+
 // --- v0.36.1.0 (T7): calibration profile read op ---
 
 const get_calibration_profile: Operation = {
@@ -5573,7 +5616,7 @@ export const operations: Operation[] = [
   // v0.38 Slice 3: remote-callable agent dispatch with OAuth-bound trust boundary
   submit_agent,
   // Orphans
-  find_orphans,
+  find_orphans, list_generated_pages,
   // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
   get_calibration_profile,
   // v0.28: Takes + think
