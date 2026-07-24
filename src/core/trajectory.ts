@@ -34,7 +34,7 @@ export interface TrajectoryRegression {
   from_date: string;   // YYYY-MM-DD
   to_value: number;
   to_date: string;
-  delta_pct: number;   // negative for a drop; range typically [-1, 0)
+  delta_pct: number;   // negative for a numeric drop; may be < -1 across zero
 }
 
 export interface TrajectoryStats {
@@ -82,8 +82,10 @@ function cosineSim(a: Float32Array, b: Float32Array): number {
  *
  * Iterates per-metric (so trajectories that interleave mrr + arr + team_size
  * don't trip false regressions across metric boundaries). Within each metric,
- * walks consecutive value pairs; a pair fires when
- * `(newer - older) / older <= -threshold`.
+ * walks consecutive value pairs; a pair fires when the newer value is lower
+ * than the older value by at least the threshold. The relative delta uses
+ * `abs(older)` as the denominator so negative-valued metrics (net income,
+ * cash flow, etc.) do not invert improvement and regression.
  *
  * Pre-condition: caller passed points sorted by (valid_from ASC, fact_id ASC).
  * The engine's `findTrajectory` enforces this. No re-sort here.
@@ -111,7 +113,7 @@ export function detectRegressions(
       // Guard against division-by-zero: a metric starting at exactly 0
       // can't compute a relative delta. Skip.
       if (oldVal === 0) continue;
-      const delta = (newVal - oldVal) / oldVal;
+      const delta = (newVal - oldVal) / Math.abs(oldVal);
       if (delta <= -threshold) {
         out.push({
           metric,
