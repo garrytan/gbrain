@@ -68,7 +68,10 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT — return nothing
+      // INSERT ... RETURNING id — one row per successful insert (#2138).
+      if (sql.includes('INSERT INTO take_proposals')) {
+        return [{ id: captured.length } as unknown as T];
+      }
       return [];
     },
   } as unknown as BrainEngine;
@@ -168,6 +171,26 @@ describe('parseExtractorOutput', () => {
     const raw = '[{"claim_text":"X","kind":"take","holder":"brain","weight":0.5,"domain":"macro"}]';
     const out = parseExtractorOutput(raw);
     expect(out[0]!.domain).toBe('macro');
+  });
+
+  test('strips <think> reasoning tags before parsing (MiniMax-M3, DeepSeek-R1)', () => {
+    const raw = '<think>Analyzing the prose... I see several claims.</think>\n\n```json\n[{"claim_text":"X","kind":"take","holder":"brain","weight":0.5}]\n```';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('X');
+  });
+
+  test('strips multiple <think> blocks', () => {
+    const raw = '<think>First thought.</think>\n<tool_call>...</tool_call>\n<think>Second thought.</think>\n\n[{"claim_text":"Y","kind":"bet","holder":"brain","weight":0.7}]';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+  });
+
+  test('handles trailing noise after JSON (leftover fences)', () => {
+    const raw = '<think>done</think>\n```json\n[{"claim_text":"Z","kind":"take","holder":"brain","weight":0.6}]\n```\n';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Z');
   });
 });
 
@@ -274,6 +297,22 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+  });
+
+  test('#2138: multi-claim page inserts every claim with a per-claim conflict target', async () => {
+    const pages = [buildPage({ slug: 'wiki/essays/thesis', body: 'Two strong claims live here.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'Claim one', kind: 'take', holder: 'brain', weight: 0.6 },
+      { claim_text: 'Claim two', kind: 'bet', holder: 'brain', weight: 0.8 },
+    ];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect((result.details as Record<string, unknown>).proposals_inserted).toBe(2);
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(2);
+    for (const insert of inserts) expect(insert.sql).toContain('md5(claim_text)');
+    expect(inserts.map(i => i.params[5])).toEqual(['Claim one', 'Claim two']);
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {

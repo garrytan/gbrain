@@ -18,12 +18,22 @@
 import { loadConfig } from '../config.ts';
 
 export function hasAnthropicKey(): boolean {
-  if (process.env.ANTHROPIC_API_KEY) return true;
+  return resolveAnthropicKey() !== undefined;
+}
+
+/**
+ * Resolve the actual key value: env first, then the gbrain config file.
+ * Callers constructing an Anthropic client directly (e.g. the legacy
+ * subagent path) must pass this as `apiKey` — a bare `new Anthropic()`
+ * only sees env, so launchd/MCP workers with config-stored keys fail.
+ */
+export function resolveAnthropicKey(): string | undefined {
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   try {
     const cfg = loadConfig();
-    if (cfg?.anthropic_api_key) return true;
+    if (cfg?.anthropic_api_key) return cfg.anthropic_api_key;
   } catch {
     // loadConfig may throw on first-run installs; treat as no key available.
   }
-  return false;
+  return undefined;
 }

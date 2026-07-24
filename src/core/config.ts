@@ -146,6 +146,18 @@ export interface GBrainConfig {
       /** Daily spend cap (USD); bounds drains/day = floor(cap / ~$0.30). Default 2.0. */
       max_usd_per_day?: number;
     };
+    /**
+     * v0.42 — keep frontmatter links fresh on the incremental cycle. The cycle's
+     * extract phase re-extracts only the slugs a sync changed, but `extractForSlugs`
+     * extracts BODY links only — frontmatter (`sources:`/`related:` etc.) link edges
+     * silently drift stale when a page's YAML is edited externally and synced in.
+     * Set true to also extract frontmatter links per changed page each cycle, keeping
+     * externally-edited YAML edges fresh without a full rescan. Default false
+     * (preserves current behavior). Read via the file/env/DB plane in the cycle's
+     * extract dispatch. Disable/enable with
+     * `gbrain config set autopilot.incremental_extract_include_frontmatter <bool>`.
+     */
+    incremental_extract_include_frontmatter?: boolean;
   };
   eval?: {
     /** false disables capture entirely. Defaults to true. */

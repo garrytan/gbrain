@@ -299,6 +299,8 @@ export async function defaultExtractor(
 export function parseExtractorOutput(raw: string): ProposedTake[] {
   if (!raw || raw.trim().length === 0) return [];
   let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   // Strip markdown code fence wrapper.
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) text = (fenced[1] ?? '').trim();
@@ -311,7 +313,21 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    return [];
+    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
+    // markdown fences after <think> stripping). Try array-closing first.
+    const sliced = text.slice(start);
+    const lastArr = sliced.lastIndexOf(']');
+    const lastObj = sliced.lastIndexOf('}');
+    const end = Math.max(lastArr, lastObj);
+    if (end > 0) {
+      try {
+        parsed = JSON.parse(sliced.slice(0, end + 1));
+      } catch {
+        return [];
+      }
+    } else {
+      return [];
+    }
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const out: ProposedTake[] = [];
@@ -484,16 +500,18 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Write proposals to take_proposals. Each row is a separate INSERT
-      // because the composite idempotency key is on the per-page tuple — a
-      // bulk UPSERT would collapse a same-page-multi-claim run into one row.
+      // Write proposals to take_proposals. #2138: the idempotency key is
+      // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
+      // the per-page tuple (migration v125), so a multi-claim page keeps every
+      // claim. RETURNING id prevents a repeated claim from inflating the count.
       for (const p of proposals) {
-        await engine.executeRaw(
+        const inserted = await engine.executeRaw<{ id: number }>(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
+           RETURNING id`,
           [
             sourceId,
             page.slug,
@@ -509,7 +527,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             modelId,
           ],
         );
-        result.proposals_inserted += 1;
+        result.proposals_inserted += inserted.length;
       }
     }
 
