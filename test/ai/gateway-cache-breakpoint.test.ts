@@ -198,6 +198,37 @@ describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
     expect((captured.system as any)?.providerOptions?.anthropic?.cacheControl).toEqual(expected);
     expect(captured.tools?.search?.providerOptions?.anthropic?.cacheControl).toEqual(expected);
   });
+
+  test('OTLP telemetry adds only AI SDK telemetry settings and preserves every Anthropic cache breakpoint', async () => {
+    process.env.GBRAIN_OTEL_ENABLED = 'true';
+    process.env.GBRAIN_OTEL_PROVIDERS = 'anthropic';
+    try {
+      const args = await captureTransportArgs({
+        system: 'SYS',
+        cacheSystem: true,
+        tools: [{ name: 'search', description: 'search', inputSchema: { type: 'object', properties: {} } }],
+      });
+
+      expect(args.experimental_telemetry).toEqual({
+        isEnabled: true,
+        functionId: 'gbrain.ai.chat',
+        recordInputs: false,
+        recordOutputs: false,
+        metadata: {
+          'gbrain.provider': 'anthropic',
+          'gbrain.model': 'claude-sonnet-4-6',
+          'gbrain.prompt_cache.enabled': true,
+          'gbrain.tools.count': 1,
+        },
+      });
+      expect(args.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' });
+      expect(args.system?.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' });
+      expect(args.tools?.search?.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' });
+    } finally {
+      delete process.env.GBRAIN_OTEL_ENABLED;
+      delete process.env.GBRAIN_OTEL_PROVIDERS;
+    }
+  });
 });
 
 describe('OpenRouter prompt caching (takeover of PR #1988)', () => {

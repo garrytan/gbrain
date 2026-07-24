@@ -59,6 +59,7 @@ import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
 import { buildGatewayConfig } from './build-gateway-config.ts';
+import { aiTelemetrySettings, initializeAiTelemetry } from './telemetry.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -2445,8 +2446,14 @@ export async function expand(query: string): Promise<string[]> {
 
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+    await initializeAiTelemetry();
     const result = await generateObject({
       model,
+      experimental_telemetry: aiTelemetrySettings({
+        functionId: 'gbrain.ai.expand',
+        provider: recipe.id,
+        model: modelId,
+      }),
       schema: ExpansionSchema,
       // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
       // class as chat. Default the chat timeout.
@@ -2497,10 +2504,16 @@ export async function expand(query: string): Promise<string[]> {
  */
 export async function generateOcrText(imageBytes: Buffer, mime: string): Promise<string> {
   if (!isAvailable('expansion')) return '';
-  const { model } = await resolveExpansionProvider(getExpansionModel());
+  const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+  await initializeAiTelemetry();
   const base64 = imageBytes.toString('base64');
   const result = await generateText({
     model,
+    experimental_telemetry: aiTelemetrySettings({
+      functionId: 'gbrain.ai.ocr',
+      provider: recipe.id,
+      model: modelId,
+    }),
     // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
     abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     messages: [
@@ -3318,8 +3331,18 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     : opts.system;
 
   try {
+    await initializeAiTelemetry();
     const result = await _generateTextTransport({
       model,
+      experimental_telemetry: aiTelemetrySettings({
+        functionId: 'gbrain.ai.chat',
+        provider: recipe.id,
+        model: modelId,
+        metadata: {
+          'gbrain.prompt_cache.enabled': useCache,
+          'gbrain.tools.count': opts.tools?.length ?? 0,
+        },
+      }),
       system: systemParam,
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
