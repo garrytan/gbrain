@@ -25,6 +25,17 @@ export interface RecentTranscriptOpts {
   summary?: boolean;
   /** Max transcripts (default 50). */
   limit?: number;
+  /**
+   * Called once per configured corpus dir that cannot be read (missing, or a
+   * permission error).
+   *
+   * Without it, a configured-but-missing dir is indistinguishable from an
+   * empty one and from no config at all: all three produce []. Opt-in and
+   * default-silent so the `get_recent_transcripts` MCP op is unchanged —
+   * a remote caller can't act on a filesystem warning, and the CLI is the
+   * only caller with somewhere sensible to put it (stderr).
+   */
+  onWarn?: (msg: string) => void;
 }
 
 export interface RecentTranscript {
@@ -53,6 +64,7 @@ const SUMMARY_HEAD_CHARS = 250;
  * summaries sorted newest first.
  *
  * Returns [] (not error) when no corpus dir is configured or the dir is empty.
+ * An unreadable dir also returns [] but reports via `opts.onWarn` when given.
  */
 export async function listRecentTranscripts(
   engine: BrainEngine,
@@ -76,10 +88,13 @@ export async function listRecentTranscripts(
     let entries: string[];
     try {
       entries = readdirSync(dir);
-    } catch {
-      // Missing dir or permission error → skip silently. The op deliberately
-      // doesn't surface filesystem-level diagnostics; users running into this
-      // path should `gbrain doctor` to debug.
+    } catch (err) {
+      // Missing dir or permission error. Still skipped rather than thrown — a
+      // half-readable corpus should degrade, not fail the whole op — but no
+      // longer silent: callers that pass onWarn (the CLI) surface it, and
+      // `gbrain doctor` now has a transcript_corpus_health check. MCP callers
+      // omit onWarn and keep the original behaviour.
+      opts.onWarn?.(`corpus dir not readable: ${dir} (${(err as NodeJS.ErrnoException).code ?? 'unknown error'})`);
       continue;
     }
     for (const name of entries) {
