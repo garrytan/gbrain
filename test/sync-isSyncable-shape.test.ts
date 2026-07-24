@@ -27,6 +27,8 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
     { path: 'docs/README.md', expected: 'metafile', note: 'nested README' },
     { path: 'RESOLVER.md', expected: 'metafile', note: 'top-level master routing config (closes #345)' },
     { path: 'brain/RESOLVER.md', expected: 'metafile', note: 'RESOLVER.md anywhere is metafile (closes #345)' },
+    { path: 'CLAUDE.md', expected: 'metafile', note: 'agent guide, authoring file not a brain page' },
+    { path: 'brain/AGENTS.md', expected: 'metafile', note: 'AGENTS.md anywhere is metafile, authoring file not a brain page' },
     { path: 'people/alice.txt', expected: 'strategy', note: '.txt rejected by markdown strategy' },
     { path: 'ops/scratch/note.md', expected: null, note: 'ops/ is ordinary content, not pruned (#2404)' },
     { path: 'vendor/pkg/note.md', expected: 'pruned-dir', note: 'vendor/ is pruned' },
@@ -54,7 +56,7 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
   });
 
   test('SYNC_SKIP_FILES export contains the canonical structural metafiles', () => {
-    expect([...SYNC_SKIP_FILES]).toEqual(['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md']);
+    expect([...SYNC_SKIP_FILES]).toEqual(['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md', 'CLAUDE.md', 'AGENTS.md']);
   });
 
   test('isSyncable(p) === (unsyncableReason(p) === null) — duality holds for all canonical cases', () => {
