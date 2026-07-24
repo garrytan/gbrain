@@ -26,6 +26,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
   buildChecks,
   computeDoctorReport,
+  _setServePsRunnerForTests,
   type Check,
 } from '../src/commands/doctor.ts';
 
@@ -35,9 +36,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // serve_process_accumulation shells out to ps in production; stub it so
+  // orchestrator tests stay hermetic (real serves on the host must not
+  // change check counts or statuses here).
+  _setServePsRunnerForTests(async () => '');
 });
 
 afterAll(async () => {
+  _setServePsRunnerForTests(null);
   await engine.disconnect();
 });
 
@@ -186,6 +192,17 @@ describe('buildChecks — orchestrator against PGLite', () => {
     const conn = fsOnlyChecks.find(c => c.name === 'connection')!;
     expect(conn.status).toBe('warn');
     expect(conn.message.toLowerCase()).toContain('fast');
+  });
+
+  test('serve_process_accumulation runs exactly once in full, --fast, and DB-down paths', async () => {
+    // ps-scan check is engine-free, so it must survive the DB-phase early
+    // return; exactly-once guards the fs-phase and remote call sites from
+    // ever double-firing on one run.
+    const count = (checks: Check[]) =>
+      checks.filter(c => c.name === 'serve_process_accumulation').length;
+    expect(count(await buildChecks(engine, []))).toBe(1);
+    expect(count(await buildChecks(engine, ['--fast']))).toBe(1);
+    expect(count(await buildChecks(null, [], 'env:DATABASE_URL'))).toBe(1);
   });
 
   test('--json arg does NOT alter the returned check list', async () => {
