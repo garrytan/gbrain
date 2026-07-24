@@ -86,7 +86,7 @@ interface DreamArgs {
    * `--phase <name>`; bare `--once` is a usage error (there'd be no single
    * phase to target). Applies only to phases with a config `.enabled` gate
    * (patterns, synthesize, conversation_facts_backfill, enrich_thin,
-   * skillopt) — a no-op for phases that always run when named directly.
+   * skillopt, drift) — a no-op for phases that always run when named directly.
    */
   once: boolean;
 }
@@ -367,7 +367,7 @@ Options:
                       unlike toggling the flag on/off around the run, a
                       crash mid-invocation can't leave it stuck. Applies to
                       patterns, synthesize, conversation_facts_backfill,
-                      enrich_thin, skillopt; no-op on phases with no such
+                      enrich_thin, skillopt, drift; no-op on phases with no such
                       gate. Requires an EXPLICIT --phase <name> — a phase
                       implied by --input or --drain does not count (bare
                       --once, or --once with --input/--drain and no

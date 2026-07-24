@@ -345,6 +345,34 @@ describe('YAML mini-parser', () => {
     expect(result.types[1].weight).toBe(2);
   });
 
+  test('parses block scalar without swallowing following keys', () => {
+    const yaml = `name: blocky
+description: |
+  First line.
+  Second line.
+page_types:
+  - name: meeting
+    primitive: temporal
+    path_prefixes:
+      - meetings/
+    aliases: []
+    extractable: true
+    expert_routing: false`;
+    const result = parseYamlMini(yaml) as { description: string; page_types: Array<Record<string, unknown>> };
+    expect(result.description).toBe('First line.\nSecond line.');
+    expect(result.page_types).toHaveLength(1);
+    expect(result.page_types[0].name).toBe('meeting');
+  });
+
+  test('block scalar keeps # as literal content, not a comment', () => {
+    const yaml = `description: |
+  See issue #2029 for context.
+name: hashy`;
+    const result = parseYamlMini(yaml) as Record<string, unknown>;
+    expect(result.description).toBe('See issue #2029 for context.');
+    expect(result.name).toBe('hashy');
+  });
+
   test('strips comments', () => {
     const result = parseYamlMini('# top comment\nname: value # inline comment') as Record<string, unknown>;
     expect(result.name).toBe('value');
@@ -373,6 +401,27 @@ extends: null`;
     });
     const pack = loadPackFromString(json, 'fixture.json');
     expect(pack.name).toBe('json-pack');
+  });
+
+  test('loads block-scalar pack descriptions without losing page types', () => {
+    const pack = loadPackFromString(`api_version: gbrain-schema-pack-v1
+name: recommended-fixture
+version: 1.0.0
+extends: gbrain-base
+description: |
+  Operational starter pack.
+page_types:
+  - name: meeting
+    primitive: temporal
+    path_prefixes:
+      - meetings/
+    aliases: []
+    extractable: true
+    expert_routing: false
+link_types: []`, 'fixture.yaml');
+    expect(pack.name).toBe('recommended-fixture');
+    expect(pack.extends).toBe('gbrain-base');
+    expect(pack.page_types.map((t) => t.name)).toContain('meeting');
   });
 });
 

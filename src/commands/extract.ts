@@ -433,7 +433,10 @@ export async function extractLinksFromFile(
       async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
         if (!name) return null;
         const trimmed = name.trim();
-        if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
+        // Same broadened slug-shape as makeResolver step 1: accepts
+        // digit-leading folders (`90-people/nicolai`) and nested paths.
+        // Exact Set membership guards it — no false positives.
+        if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
           return trimmed;
         }
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
@@ -582,6 +585,17 @@ export interface ExtractOpts {
    * before (single-'default'-source brains unaffected).
    */
   sourceId?: string;
+  /**
+   * v0.42 — also extract frontmatter links on the incremental (slugs) path.
+   * `extractForSlugs` extracts BODY links only by default; set this true to also
+   * parse each changed page's frontmatter so `sources:`/`related:` edges stay fresh
+   * when YAML is edited externally and synced in. Applied PER changed page, so the
+   * incremental walk stays bounded (no switch to a full DB scan). Only honored on
+   * the incremental path (`slugs` defined); the full-walk path already covers
+   * frontmatter via its own dispatch. Gated upstream by the config key
+   * `autopilot.incremental_extract_include_frontmatter` (default off).
+   */
+  includeFrontmatter?: boolean;
 }
 
 /**
@@ -620,7 +634,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
       // Nothing changed — skip entirely.
       return result;
     }
-    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers, opts.signal, opts.sourceId);
+    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers, opts.signal, opts.sourceId, opts.includeFrontmatter);
     result.links_created = r.links_created;
     result.timeline_entries_created = r.timeline_created;
     result.pages_processed = r.pages;
@@ -1011,6 +1025,11 @@ async function extractForSlugs(
   signal?: AbortSignal,
   // #1747/#1503: stamp resolved brain source id on batch rows (see ExtractOpts.sourceId).
   sourceId?: string,
+  // v0.42: when true, also extract frontmatter links per changed page so
+  // externally-edited YAML (`sources:`/`related:`) stays fresh on the cycle.
+  // Default false preserves the body-only incremental behavior. Gated upstream
+  // by `autopilot.incremental_extract_include_frontmatter`.
+  includeFrontmatter: boolean = false,
 ): Promise<{ links_created: number; timeline_created: number; pages: number }> {
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
@@ -1089,7 +1108,7 @@ async function extractForSlugs(
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
-          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename });
+          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter });
           for (const link of links) {
             if (dryRun) {
               if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);

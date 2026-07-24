@@ -167,6 +167,41 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
   });
 });
 
+describe('force-retry escape hatch', () => {
+  test("complete then retry-latest → pending and buildPlan lists the version as pending", () => {
+    const idx = indexCompleted([
+      { version: '0.11.0', status: 'complete' },
+      { version: '0.11.0', status: 'retry' },
+    ]);
+
+    expect(statusForVersion('0.11.0', idx)).toBe('pending');
+    const plan = buildPlan(idx, '0.11.1', '0.11.0');
+    expect(plan.pending.map(m => m.version)).toEqual(['0.11.0']);
+    expect(plan.applied).toEqual([]);
+    expect(plan.partial).toEqual([]);
+    expect(plan.wedged).toEqual([]);
+  });
+
+  test('complete then stray partial without retry → still complete', () => {
+    const idx = indexCompleted([
+      { version: '0.11.0', status: 'complete' },
+      { version: '0.11.0', status: 'partial' },
+    ]);
+
+    expect(statusForVersion('0.11.0', idx)).toBe('complete');
+  });
+
+  test('retry followed by a newer complete → complete', () => {
+    const idx = indexCompleted([
+      { version: '0.11.0', status: 'complete' },
+      { version: '0.11.0', status: 'retry' },
+      { version: '0.11.0', status: 'complete' },
+    ]);
+
+    expect(statusForVersion('0.11.0', idx)).toBe('complete');
+  });
+});
+
 // v0.36.1.x (cherry-pick #1062): list, dry-run, and "all migrations up to
 // date" paths must exit 0 so shell scripts gating on the exit code work.
 // Pre-fix, these `return` statements left the CLI dispatcher's implicit

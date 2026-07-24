@@ -1423,6 +1423,7 @@ See also:
     {
       sourceId: sourceIdArg,
       repoPath: source.local_path,
+      noExtract: false,
       auto_embed_backfill: true,
       embed_reason: 'sync_trigger',
     },
@@ -3384,6 +3385,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Log ingest
   await engine.logIngest({
+    // #3242 (attribution sub-bug): credit the sync to the source it wrote
+    // to, not the shared 'default' bucket.
+    ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     source_type: 'git_sync',
     source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
     pages_updated: pagesAffected,

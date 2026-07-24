@@ -2312,6 +2312,18 @@ export class PGLiteEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    // Provenance fallback for chunks without an explicit `model`: resolve the
+    // gateway's runtime model, not the compile-time DEFAULT_EMBEDDING_MODEL.
+    // See postgres-engine.ts _upsertChunksOnce for the full rationale — pglite
+    // mirrors it for parity.
+    let resolvedModel: string = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const gw = await import('./ai/gateway.ts');
+      resolvedModel = gw.getEmbeddingModel() || resolvedModel;
+    } catch {
+      // Gateway unconfigured (unit tests / pre-connect): keep the default.
+    }
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -2344,7 +2356,7 @@ export class PGLiteEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null,
+        chunk.model || resolvedModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
@@ -4835,11 +4847,11 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(
       `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
               t.claim, t.kind, t.holder, t.weight,
-              similarity(t.claim, $1)::real AS score
+              word_similarity($1, t.claim)::real AS score
        FROM takes t
        JOIN pages p ON p.id = t.page_id
        WHERE t.active
-         AND t.claim % $1
+         AND $1 <% t.claim
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
          AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
          AND ($5::text IS NULL OR p.source_id = $5::text)
@@ -5261,7 +5273,7 @@ export class PGLiteEngine implements BrainEngine {
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -5289,7 +5301,7 @@ export class PGLiteEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('entity', 'person', 'company')
       ORDER BY link_count DESC
       LIMIT 5
     `);
@@ -6006,6 +6018,9 @@ export class PGLiteEngine implements BrainEngine {
         `NOT (p.frontmatter ->> 'enriched_at' IS NOT NULL AND p.frontmatter ->> 'enriched_at' > $${params.length})`,
       );
     }
+
+    // Exclude dream/synthesize-generated pages (parity with postgres-engine).
+    where.push(`(p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true'`);
 
     const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
     const orderBy = ENRICH_ORDER_SQL[orderKey];

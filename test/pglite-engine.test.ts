@@ -1434,6 +1434,7 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
     await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
     await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+    await engine.putPage('entities/project-x', { ...testPage, type: 'entity', title: 'Project X' });
   });
 
   test('link_coverage = 0 when no links exist', async () => {
@@ -1442,17 +1443,17 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
   });
 
   test('link_coverage = % of entity pages with >= 1 inbound link', async () => {
-    // Acme gets 1 inbound link (from Alice), Alice/Bob get 0 inbound.
-    // 1 of 3 entity pages has inbound links -> 33%.
+    // Acme gets 1 inbound link (from Alice); Alice/Bob/Project X get 0 inbound.
+    // 1 of 4 entity pages has inbound links -> 25%.
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h = await engine.getHealth();
-    expect(h.link_coverage).toBeCloseTo(1 / 3, 2);
+    expect(h.link_coverage).toBeCloseTo(1 / 4, 2);
   });
 
   test('timeline_coverage = % with >= 1 timeline entry', async () => {
     await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
     const h = await engine.getHealth();
-    expect(h.timeline_coverage).toBeCloseTo(1 / 3, 2);
+    expect(h.timeline_coverage).toBeCloseTo(1 / 4, 2);
   });
 
   test('most_connected lists top entities by link count', async () => {
@@ -1465,7 +1466,9 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
   });
 
   test('orphan_pages: pages with neither inbound nor outbound links', async () => {
-    // All 3 pages start with no links. Expect 3 orphans.
+    // All 4 pages start with no links, but entities/project-x is excluded
+    // from orphan reporting by the shared orphan policy ('entities' is a
+    // first-segment exclusion in orphan-policy.ts). Expect 3 orphans.
     const h = await engine.getHealth();
     expect(h.orphan_pages).toBe(3);
 
