@@ -5,8 +5,12 @@
 // JOIN (F12); manual_only RemediationStep flag round-trips through render.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 import {
   checkPackUpgradeAvailable,
   checkTypeProliferation,
@@ -64,6 +68,25 @@ describe('checkPackUpgradeAvailable', () => {
     expect(result.remediations[0].job).toBe('unify-types');
     expect(result.remediations[0].protected).toBe(true);
     expect(result.remediations[0].params.target_pack).toBe('gbrain-base-v2');
+  });
+
+  it('honors file-plane schema_pack when DB config is unset', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-pack-upgrade-'));
+    const configDir = join(home, '.gbrain');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({ schema_pack: 'gbrain-base-v2' }, null, 2),
+    );
+
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      _resetPackCacheForTests();
+      const result = await checkPackUpgradeAvailable(engine);
+      expect(result.check.name).toBe('pack_upgrade_available');
+      expect(result.check.status).toBe('ok');
+      expect(result.check.message).toContain('gbrain-base-v2');
+      expect(result.remediations).toEqual([]);
+    });
   });
 
   it('manual_only routing via render.ts allowlist (D17)', async () => {
