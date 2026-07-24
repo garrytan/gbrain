@@ -57,3 +57,22 @@ export async function loadActivePackBestEffort(
     return null;
   }
 }
+
+/**
+ * Does the active pack declare at least one `link_types[].inference.regex`
+ * rule? This is the EXACT capability `extractNerLinks` requires — without it,
+ * NER extraction is a structural no-op (returns `pack_unavailable`, 0 links).
+ *
+ * Shared so the onboard recommender (`checks.ts`, which suggests `extract-ner`)
+ * and the handler (`extract-ner.ts`) gate on ONE definition. Recommending a
+ * fix the handler will silently skip is the phantom-recommendation bug this
+ * closes; co-locating the predicate with the loader keeps the two from drifting
+ * (same anti-drift rationale as `loadActivePackBestEffort` above).
+ */
+export function packSupportsNerInference(pack: ResolvedPack | null | undefined): boolean {
+  const linkTypes = pack?.manifest?.link_types;
+  if (!linkTypes || linkTypes.length === 0) return false;
+  return linkTypes.some(
+    (lt) => lt.inference && typeof lt.inference === 'object' && 'regex' in lt.inference,
+  );
+}
