@@ -14,11 +14,25 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runEvalTrajectory } from '../src/commands/eval-trajectory.ts';
 
 let engine: PGLiteEngine;
+let embeddingDim = 1536;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // initSchema sizes vector columns from the module-global AI gateway's
+  // current dims. A neighboring test file in the same shard process that
+  // configured the gateway (resetGateway() lands on the 1280d default)
+  // changes the width THIS file's schema gets, and shard composition —
+  // which reshuffles whenever any PR adds or removes a test file — decides
+  // the neighbors. A hardcoded 1536 vector then fails unrelated PRs with
+  // "expected 1280 dimensions, not 1536". Ask the live column instead
+  // (same idiom as embedding-signature-stale.test.ts).
+  const rows = await engine.executeRaw<{ dim: number }>(
+    `SELECT atttypmod AS dim FROM pg_attribute
+      WHERE attrelid = 'facts'::regclass AND attname = 'embedding' AND attnum > 0`,
+  );
+  if (Number(rows[0]?.dim) > 0) embeddingDim = Number(rows[0]?.dim);
 });
 
 afterAll(async () => {
@@ -30,8 +44,8 @@ beforeEach(async () => {
 });
 
 function unitVec(idx = 0): string {
-  const a = new Float32Array(1536);
-  a[idx % 1536] = 1.0;
+  const a = new Float32Array(embeddingDim);
+  a[idx % embeddingDim] = 1.0;
   return '[' + Array.from(a).join(',') + ']';
 }
 
