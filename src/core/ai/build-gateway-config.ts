@@ -44,6 +44,12 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // multimodal/image embeds despite config.json looking complete. process.env
   // still wins via the later spread.
   if (c.voyage_api_key) envFromConfig.VOYAGE_API_KEY = c.voyage_api_key;
+  // Bearer for an auth-gated llama-server embed proxy (e.g. a reverse proxy
+  // fronting the embed endpoint). The recipe declares LLAMA_SERVER_API_KEY as an
+  // optional auth env; without this fold the only channel was a raw env var, so a
+  // config-plane URL pointed at an auth-gated endpoint 401s. Mirrors the
+  // openai/anthropic/zeroentropy folds above.
+  if (c.llama_server_api_key) envFromConfig.LLAMA_SERVER_API_KEY = c.llama_server_api_key;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
