@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
 import { join, dirname, isAbsolute, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 import { parseMarkdown } from '../markdown.ts';
 
@@ -38,19 +39,45 @@ export class BundleError extends Error {
 /**
  * Walk up from `start` (default cwd) looking for an `openclaw.plugin.json`
  * sibling to `src/cli.ts`. That pair identifies a gbrain repo root.
+ *
+ * When no explicit `start` is given and the cwd walk fails (e.g. gbrain was
+ * installed globally via `bun install -g` and the user is in an unrelated
+ * directory, #1917), fall back to walking up from this module's own location
+ * and from the running entrypoint (`process.argv[1]`). Both resolve the
+ * bun-global layout (~/.bun/install/global/node_modules/gbrain/) and the
+ * in-repo compiled binary (bin/gbrain).
  */
-export function findGbrainRoot(start: string = process.cwd()): string | null {
-  let dir = resolve(start);
-  for (let i = 0; i < 10; i++) {
-    if (
-      existsSync(join(dir, 'openclaw.plugin.json')) &&
-      existsSync(join(dir, 'src', 'cli.ts'))
-    ) {
-      return dir;
+export function findGbrainRoot(start?: string): string | null {
+  const walkUp = (from: string): string | null => {
+    let dir = resolve(from);
+    for (let i = 0; i < 10; i++) {
+      if (
+        existsSync(join(dir, 'openclaw.plugin.json')) &&
+        existsSync(join(dir, 'src', 'cli.ts'))
+      ) {
+        return dir;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
+    return null;
+  };
+
+  const found = walkUp(start ?? process.cwd());
+  if (found !== null || start !== undefined) return found;
+
+  const fallbacks: string[] = [];
+  try {
+    // Not a file:// URL inside a compiled binary; skip on error.
+    fallbacks.push(dirname(fileURLToPath(import.meta.url)));
+  } catch {
+    /* ignore */
+  }
+  if (process.argv[1]) fallbacks.push(dirname(resolve(process.argv[1])));
+  for (const candidate of fallbacks) {
+    const root = walkUp(candidate);
+    if (root !== null) return root;
   }
   return null;
 }
