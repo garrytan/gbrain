@@ -25,12 +25,12 @@ export const openai: Recipe = {
       max_batch_tokens: 100_000,
     },
     expansion: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-5.2', 'gpt-4o-mini', 'meta/llama-3.1-8b-instruct'],
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
     },
     chat: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-5.2', 'gpt-4o-mini', 'meta/llama-3.1-8b-instruct'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,

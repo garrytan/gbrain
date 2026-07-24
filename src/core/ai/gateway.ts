@@ -2445,23 +2445,52 @@ export async function expand(query: string): Promise<string[]> {
 
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
-    const result = await generateObject({
-      model,
-      schema: ExpansionSchema,
-      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
-      // class as chat. Default the chat timeout.
-      abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
-      prompt: [
-        'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
-        'Return ONLY the JSON object. Do NOT include the original query in the result.',
-        'Each rewrite should emphasize different aspects, synonyms, or framings.',
-        '',
-        `Query: ${query}`,
-      ].join('\n'),
+    // FIX (local patch, 2026-07-17): gbrain routes `openai:`-prefixed models
+    // through Vercel AI SDK's `createOpenAI`, but third-party OpenAI-COMPATIBLE
+    // endpoints (notably NVIDIA integrate.api.nvidia.com) reject `createOpenAI`'s
+    // chat-completion request shape with HTTP 404 ("Not Found"), silently
+    // disabling expansion. `createOpenAICompatible` works, but the cleanest
+    // cross-provider fix is to call the endpoint's chat/completions directly
+    // with `response_format: {type:"json_object"}` (universally supported) and
+    // parse the JSON ourselves. This bypasses the AI SDK provider layer entirely.
+    const cfg = requireConfig();
+    const baseURL = (process.env.OPENAI_BASE_URL ?? process.env.NVIDIA_BASE_URL ?? cfg.env.OPENAI_BASE_URL ?? cfg.env.NVIDIA_BASE_URL ?? cfg.base_urls?.[recipe.id] ?? recipe.base_url_default ?? '').replace(/\/$/, '');
+    const apiKey = process.env.OPENAI_API_KEY ?? process.env.NVIDIA_API_KEY ?? cfg.env.OPENAI_API_KEY ?? cfg.env.NVIDIA_API_KEY ?? '';
+    const endpoint = baseURL ? `${baseURL}/chat/completions` : 'https://api.openai.com/v1/chat/completions';
+    const sysPrompt =
+      'You are a search query expansion engine. Rewrite the user query into 3-4 different, ' +
+      'related search queries that would help find relevant documents. Emphasize different ' +
+      'aspects, synonyms, or framings. Return ONLY a JSON object with a "queries" key: ' +
+      '{"queries":["...","...","..."]}. Do NOT include the original query in the result.';
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: `Query: ${query}` },
+        ],
+        max_tokens: 400,
+        response_format: { type: 'json_object' },
+      }),
+      signal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     });
+    if (!resp.ok) {
+      console.warn(`[ai.gateway] expansion disabled: endpoint ${endpoint} returned HTTP ${resp.status}`);
+      return [query];
+    }
+    const data = await resp.json();
+    const text: string = data?.choices?.[0]?.message?.content ?? '';
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { parsed = null; }
+    const rawQueries = parsed && typeof parsed === 'object' && Array.isArray((parsed as any).queries)
+      ? (parsed as any).queries
+      : [];
+    const expansions: string[] = rawQueries
+      .filter((q: unknown): q is string => typeof q === 'string')
+      .slice(0, 5);
 
-    const expansions = result.object?.queries ?? [];
-    // Deduplicate + include the original query
     const seen = new Set<string>();
     const all = [query, ...expansions].filter(q => {
       const k = q.toLowerCase().trim();
@@ -2894,6 +2923,19 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI chat requires OPENAI_API_KEY.`, recipe.setup_hint);
       const baseURL = resolveNativeBaseUrl('openai', cfg);
+      // FIX (local patch, 2026-07-17): when a custom base URL is configured
+      // (third-party OpenAI-COMPATIBLE endpoint such as NVIDIA
+      // integrate.api.nvidia.com), `createOpenAI` emits a chat-completion
+      // request shape those endpoints reject with HTTP 404 ("Not Found").
+      // Route through `createOpenAICompatible` instead, which is universally
+      // compatible. Plain api.openai.com (no baseURL) keeps using createOpenAI.
+      if (baseURL) {
+        return createOpenAICompatible({
+          name: recipe.id,
+          baseURL,
+          apiKey,
+        }).languageModel(modelId);
+      }
       return createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
