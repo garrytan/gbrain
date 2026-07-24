@@ -549,8 +549,8 @@ describe('runExtractConversationFactsCore', () => {
         sleepMs: 0,
       });
       expect(second.pages_processed).toBe(0);
-      expect(second.pages_skipped).toBe(1);
-      // The content-hash cache serves the deterministic replay for free.
+      // The durable completion outcome skips the replay before any parse.
+      expect(second.pages_skipped_completed).toBe(1);
       expect(fallbackCalls).toBe(1);
     });
   });
@@ -575,7 +575,8 @@ describe('runExtractConversationFactsCore', () => {
         sleepMs: 0,
       });
       expect(second.pages_processed).toBe(0);
-      expect(second.pages_skipped).toBe(1);
+      // The durable completion outcome skips the replay before any parse.
+      expect(second.pages_skipped_completed).toBe(1);
       expect(fallbackCalls).toBe(3);
     });
   });
