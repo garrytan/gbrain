@@ -27,6 +27,7 @@ beforeAll(async () => {
   // dimensions, not 1536"). Same fix + rationale as
   // doctor-hidden-by-search-policy.test.ts (#2801),
   // engine-find-trajectory.test.ts and cosine-rescore-column.test.ts.
+  resetGateway();
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: 1536,
