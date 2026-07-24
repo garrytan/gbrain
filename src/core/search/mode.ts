@@ -756,7 +756,16 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // slugs written by a process without it, and vice versa. Same one-time
 // global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 12;
+//
+// bump 12→13: the resolved source-boost map (DEFAULT_SOURCE_BOOSTS merged
+// with GBRAIN_SOURCE_BOOST) folds into the key via ctx.sourceBoostMap. Same
+// bug class as #2825's hard-excludes: boosts only applied at DB-query build
+// time (cache miss), so after a ranking-policy change (env tune or upgrade
+// that ships new defaults) lookups kept being served rows ranked under the
+// OLD policy for up to cache.ttl_seconds — making boost tuning appear
+// nondeterministic. Same one-time global cold-miss pattern; refills within
+// cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 13;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -795,6 +804,17 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /**
+   * v=13: the RESOLVED effective source-boost map — the same value
+   * resolveBoostMap() produces at query-build time (DEFAULT_SOURCE_BOOSTS
+   * merged with GBRAIN_SOURCE_BOOST). Ranking priors change result ORDER,
+   * not membership, so they are invisible to the hard-exclude fold above —
+   * yet a cache row ranked under an old boost policy is exactly as stale as
+   * one filtered under an old exclude policy. Canonicalized (entries sorted
+   * by prefix) so object-key insertion order is irrelevant. Undefined falls
+   * back to the literal 'default' for legacy callers.
+   */
+  sourceBoostMap?: Record<string, number>;
 }
 
 export function knobsHash(
@@ -888,6 +908,18 @@ export function knobsHash(
     // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
     // identically; undefined falls back to 'none' for legacy callers.
     `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
+    // v=13 addition (append-only): resolved source-boost map. Boost changes
+    // reorder results, so a row ranked under one policy must not be served
+    // to a lookup under another. Entries sorted by prefix so map insertion
+    // order is irrelevant; undefined falls back to 'default'.
+    `sb=${
+      ctx?.sourceBoostMap
+        ? Object.entries(ctx.sourceBoostMap)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([prefix, factor]) => `${prefix}:${factor}`)
+            .join(',')
+        : 'default'
+    }`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
