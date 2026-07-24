@@ -76,7 +76,7 @@ FLAGS:
                            dimensions (goal, depth, sourcing, specificity, useful).
   --cycles N               1-3. Default: 3 in TTY, 1 in non-TTY (T11). Each
                            cycle is 3 model calls; verdict aggregates over them.
-  --slot-a-model <id>      Override default 'openai:gpt-4o'.
+  --slot-a-model <id>      Override default 'openai:gpt-5.2'.
   --slot-b-model <id>      Override default 'anthropic:claude-opus-4-7'.
   --slot-c-model <id>      Override default 'google:gemini-1.5-pro'.
   --receipt-dir <path>     Default: gbrainPath('eval-receipts').
@@ -468,6 +468,14 @@ interface BatchRow {
   question_id: string;
   question: string;
   hypothesis: string;
+  /**
+   * Gold answer from the benchmark dataset, when the upstream eval emits
+   * it (eval-longmemeval does). Folded into the judge task so CORRECTNESS
+   * is verifiable — without it a judge panel that sees only
+   * {question, hypothesis} cannot validate a terse factual answer against
+   * a haystack it never saw.
+   */
+  answer?: string;
 }
 
 /**
@@ -581,6 +589,7 @@ function readBatchRows(path: string): BatchReadResult {
       question_id: typeof obj.question_id === 'string' ? obj.question_id : `line-${lineNo}`,
       question: obj.question,
       hypothesis: obj.hypothesis,
+      ...(typeof obj.answer === 'string' && obj.answer.length > 0 ? { answer: obj.answer } : {}),
     });
   }
   if (summarySkipped > 0) {
@@ -697,7 +706,11 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
       fn: async (row, idx) => {
         process.stderr.write(`[eval cross-modal batch] ${idx + 1}/${rows.length} ${row.question_id} starting...\n`);
         return await runEvalFn({
-          task: row.question,
+          // With a gold answer the judges can actually verify correctness;
+          // without one they see only {question, hypothesis} and cannot.
+          task: row.answer
+            ? `${row.question}\n\nExpected answer (gold label from the benchmark dataset): ${row.answer}`
+            : row.question,
           output: row.hypothesis,
           slug: row.question_id,
           dimensions,

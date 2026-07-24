@@ -8,8 +8,18 @@ import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
 // Minimal mock engine that tracks calls and supports transaction()
+//
+// Post-write read-back guard: the mock now simulates a real DB by storing pages written
+// via putPage so getPage can read them back. The post-write read-back guard
+// in importFromContent calls getPage after the transaction commits — a mock
+// that always returns null (the pre-fix default) triggers the guard's
+// "page not found after write" path. This is the correct loud-failure
+// behavior for a real desync, but for the existing unit tests we need the
+// mock to behave like a working DB where writes are readable.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
+  // In-memory page store: slug → page row (simulates a real DB index).
+  const pageStore = new Map<string, { slug: string; content_hash: string; title: string; type: string; frontmatter: Record<string, unknown> }>();
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
     if (overrides[method]) return overrides[method](...args);
@@ -20,7 +30,49 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (prop === 'getTags') return overrides.getTags || (() => Promise.resolve([]));
-      if (prop === 'getPage') return overrides.getPage || (() => Promise.resolve(null));
+      if (prop === 'getPage') {
+        return async (slug: string, opts?: { sourceId?: string }) => {
+          // If the test provides a custom getPage, call it first (for the
+          // "existing" check at the top of importFromContent). If it returns
+          // a value, use that. If it returns null, fall back to the in-memory
+          // store (for the read-back guard after the write).
+          //
+          // Read-back guard: when the override returns a non-null value,
+          // we still need the read-back to see the page as written by putPage.
+          // The override simulates the "existing page" state; the store has
+          // the post-write state. If the override and the store disagree on
+          // content_hash, the store wins (the write already committed).
+          if (overrides.getPage) {
+            const overrideResult = await overrides.getPage(slug, opts);
+            if (overrideResult) {
+              // If the page was written (store has it), the store's hash
+              // is the post-write hash. Merge: return the override's shape
+              // but with the store's content_hash (the committed value).
+              const stored = pageStore.get(slug);
+              if (stored) {
+                return { ...overrideResult, content_hash: stored.content_hash };
+              }
+              return overrideResult;
+            }
+          }
+          return pageStore.get(slug) ?? null;
+        };
+      }
+      if (prop === 'putPage') {
+        return async (slug: string, page: { content_hash?: string; title?: string; type?: string; frontmatter?: Record<string, unknown> }, _opts?: { sourceId?: string }) => {
+          calls.push({ method: 'putPage', args: [slug, page, _opts] });
+          if (overrides.putPage) overrides.putPage(slug, page, _opts);
+          // Always store the page so getPage can read it back (simulates DB index).
+          pageStore.set(slug, {
+            slug,
+            content_hash: page.content_hash ?? '',
+            title: page.title ?? '',
+            type: page.type ?? '',
+            frontmatter: page.frontmatter ?? {},
+          });
+          return Promise.resolve(undefined);
+        };
+      }
       // transaction: just call the fn with the same engine (no real DB transaction in tests)
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return track(prop);
@@ -706,5 +758,91 @@ body unchanged
     const r2 = await importFromContent(engine2, 'inbox/y', content2, { noEmbed: true });
     shortCircuited = r2.status === 'skipped';
     expect(shortCircuited).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #1035 — type round-trip preservation
+//
+// put_page → importFromContent → parseMarkdown infers type from the file
+// path when frontmatter omits `type:`, and bare slugs infer 'concept'.
+// Pre-fix, a round-trip put (get_page → edit body → put_page WITHOUT a
+// type: line) silently regressed a curated type to 'concept'. Absence of
+// an explicit frontmatter type on an EXISTING page must preserve the
+// stored type; an explicit type stays an override; new pages still infer.
+// ────────────────────────────────────────────────────────────────
+
+describe('importFromContent type round-trip (#1035)', () => {
+  test('re-put without type: preserves the existing page type', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve({
+        slug: 'founder-notes-example',
+        type: 'person',
+        content_hash: 'different-hash',
+        updated_at: new Date(),
+        created_at: new Date(),
+      } as any),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'founder-notes-example', [
+      '---',
+      'title: Notes',
+      '---',
+      '',
+      'Edited body, no type in frontmatter.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('person'); // pre-fix: 'concept' (bare-slug inference default)
+  });
+
+  test('explicit frontmatter type: still overrides the existing type', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve({
+        slug: 'founder-notes-example',
+        type: 'person',
+        content_hash: 'different-hash',
+        updated_at: new Date(),
+        created_at: new Date(),
+      } as any),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'founder-notes-example', [
+      '---',
+      'type: note',
+      'title: Notes',
+      '---',
+      '',
+      'Explicit type wins.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('note');
+  });
+
+  test('new page without type: still infers from path', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'people/alice-example', [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'A new person page.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('person'); // /people/ path-prefix inference intact
   });
 });

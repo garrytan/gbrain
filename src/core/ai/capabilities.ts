@@ -22,6 +22,7 @@
  */
 
 import { resolveRecipe } from './model-resolver.ts';
+import { listRecipes } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
 export interface ProviderCapabilities {
@@ -77,7 +78,10 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
   if (!chat) {
     throw new AIConfigError(
       `Provider "${recipe.id}" does not offer a chat touchpoint.`,
-      `Known providers with chat: openai, anthropic, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai, dashscope, minimax, zhipu, ollama, llama-server. Pick one for models.tier.subagent.`,
+      // Computed from the registry so the hint can't drift into listing
+      // chat-less providers (the pre-fix list falsely included embedding-only
+      // recipes, sending users in circles — #1157).
+      `Known providers with chat: ${listRecipes().filter(r => r.touchpoints.chat).map(r => r.id).join(', ')}. Pick one for models.tier.subagent.`,
     );
   }
 
@@ -88,9 +92,13 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
   // boundary; this function returns capabilities for whatever the user asked
   // for, on the assumption it'll be validated elsewhere.
 
+  const promptCache = chat.supports_prompt_cache;
+
   return {
     supportsToolCalling: chat.supports_tools === true,
-    supportsPromptCaching: chat.supports_prompt_cache === true,
+    supportsPromptCaching: typeof promptCache === 'function'
+      ? promptCache(parsed.modelId)
+      : promptCache === true,
     // No recipe exposes parallel-tools-specifically yet; gate on supports_tools.
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
@@ -101,11 +109,6 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     supportsThinking: false,
     maxContext: chat.max_context_tokens ?? 128_000,
   };
-
-  // The `parsed` binding is intentionally unused — `resolveRecipe` is called
-  // here for its validation side-effects (throws on unknown provider). Keeping
-  // the destructure makes future per-model capability overrides cheap.
-  void parsed;
 }
 
 /**

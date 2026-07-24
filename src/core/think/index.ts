@@ -23,6 +23,7 @@ import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.t
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
+import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
 import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
@@ -76,8 +77,8 @@ export interface RunThinkOpts {
    */
   withCalibration?: boolean;
   /**
-   * Holder to retrieve the calibration profile for. Default 'garry'. Only
-   * consulted when withCalibration=true.
+   * Holder to retrieve the calibration profile for. Resolves via resolveOwnerHolder
+   * (config emotional_weight.user_holder, else 'self'). Only consulted when withCalibration=true.
    */
   calibrationHolder?: string;
   /**
@@ -288,7 +289,7 @@ export async function runThink(
   });
 
   // Render evidence blocks for the prompt
-  const pagesBlock = renderPagesBlock(gather.pages);
+  const pagesBlock = renderPagesBlock(gather.pages, 600, opts.question);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
@@ -308,7 +309,10 @@ export async function runThink(
     try {
       const { getLatestProfile } = await import('../../commands/calibration.ts');
       const profile = await getLatestProfile(engine, {
-        holder: opts.calibrationHolder ?? 'garry',
+        holder: resolveOwnerHolder({
+          override: opts.calibrationHolder,
+          configValue: await engine.getConfig('emotional_weight.user_holder'),
+        }),
       });
       if (profile) {
         calibrationBlockOpts = {
@@ -554,6 +558,40 @@ export async function runThink(
 }
 
 /**
+ * Strip a "## Gaps" section from an answer body.
+ *
+ * `think` returns gaps in the structured `gaps` array, which the CLI and the
+ * persisted synthesis page render exactly once. The system prompt also used to
+ * ask for a "Gaps" section inside the answer prose, so a model that still emits
+ * one would make the output show "## Gaps" twice — once from the prose, once
+ * from the structured array. This removes the prose section so the structured
+ * array stays the single source of truth.
+ *
+ * Matches a heading line `## Gaps` (level 2-6, case-insensitive) and removes it
+ * through the next heading of the same-or-higher level, or end of string.
+ * Returns the input unchanged when there is no such section.
+ */
+export function stripGapsSection(answer: string): string {
+  if (!answer) return answer;
+  const lines = answer.split('\n');
+  let start = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(#{2,6})\s+gaps\s*$/i.exec(lines[i]);
+    if (m) { start = i; level = m[1].length; break; }
+  }
+  if (start === -1) return answer;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const h = /^(#{1,6})\s+\S/.exec(lines[i]);
+    if (h && h[1].length <= level) { end = i; break; }
+  }
+  const kept = [...lines.slice(0, start), ...lines.slice(end)].join('\n');
+  // Drop trailing blank lines left by removing a trailing section.
+  return kept.replace(/\s+$/, '');
+}
+
+/**
  * Persist a synthesis page + its evidence. Returns the saved slug.
  * Synthesis pages are written under `synthesis/<slugified-question>-<date>.md`.
  */
@@ -582,7 +620,7 @@ export async function persistSynthesis(
   const body = [
     `# ${result.question}`,
     '',
-    result.answer,
+    stripGapsSection(result.answer),
     '',
     result.gaps.length > 0 ? '## Gaps\n\n' + result.gaps.map(g => `- ${g}`).join('\n') : '',
   ].filter(Boolean).join('\n');

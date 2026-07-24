@@ -24,6 +24,7 @@ import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
+import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict } from './core/cli-force-exit.ts';
@@ -383,6 +384,15 @@ async function main() {
   if (isThinClient(cfgPre)) {
     if (op.localOnly) {
       refuseThinClient(command, cfgPre!.remote_mcp!.mcp_url);
+    }
+    // #2098: the local path resolves --source / GBRAIN_SOURCE / .gbrain-source
+    // inside makeContext (ctx.sourceId), which this route never reaches — so
+    // scope must be mapped onto the op's source_id wire param before the call.
+    try {
+      applyThinClientSourceScope(op, params);
+    } catch (e: unknown) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
     }
     await runThinClientRouted(op, params, cfgPre!, cliOpts);
     return;
@@ -804,18 +814,80 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   return params;
 }
 
+/**
+ * #2098: thin-client source scoping. Locally, --source / GBRAIN_SOURCE /
+ * .gbrain-source resolve to ctx.sourceId in makeContext; the thin-client
+ * route short-circuits before that, so `gbrain query --source X` against a
+ * remote brain silently searched unscoped. This runs the engine-free tiers
+ * (flag → env → dotfile; the DB-backed tiers can't run without an engine —
+ * the server's grant scoping covers the rest) and maps the result onto the
+ * op's `source_id` wire param.
+ *
+ * Ops that declare their OWN `source` param (facts add, etc.) are left
+ * untouched — their --source is an op param, not scope. An explicit --source
+ * on an op with no source_id wire param throws (loud beats silent drop);
+ * ambient env/dotfile scope with nowhere to send it is ignored, matching the
+ * pre-fix behavior for non-scopeable ops. Exported for tests.
+ */
+// Ops whose `source_id` wire param is NOT read-scope semantics: get_skill's
+// source_id flips the lookup from host catalog to brain-resident-pack
+// (getResidentSkillDetail). Ambient env/dotfile scope must never leak into
+// these; an explicit --source-id still passes through untouched above.
+const NON_SCOPE_SOURCE_ID_OPS = new Set(['get_skill']);
+
+export function applyThinClientSourceScope(
+  op: Operation,
+  params: Record<string, unknown>,
+  cwd?: string,
+): void {
+  if ('source' in op.params) return; // the op owns --source; not a scope flag
+  const explicit = typeof params.source === 'string' && params.source.length > 0
+    ? (params.source as string)
+    : null;
+  delete params.source; // never a wire param on these ops — don't leak it
+  // Explicit per-call scope already on the wire wins over ambient tiers.
+  if (params.source_id !== undefined || params.all_sources === true) {
+    if (explicit) {
+      throw new Error('Pass either --source or --source-id/--all-sources, not both.');
+    }
+    return;
+  }
+  const resolved = resolveSourceIdEngineFree(explicit, cwd);
+  if (!resolved) return;
+  if (!('source_id' in op.params) || NON_SCOPE_SOURCE_ID_OPS.has(op.name)) {
+    if (explicit) {
+      const hint = NON_SCOPE_SOURCE_ID_OPS.has(op.name)
+        ? `(its source_id parameter is not a scope filter; pass --source-id explicitly if you mean it)`
+        : `(the remote op has no source_id parameter; the server scopes it to your grant)`;
+      throw new Error(
+        `gbrain ${op.cliHints?.name || op.name} does not accept --source on a thin-client install ${hint}.`,
+      );
+    }
+    return; // ambient env/dotfile scope with nowhere to send it
+  }
+  params.source_id = resolved;
+}
+
 async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
   // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
   // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
   // never set up sources still returns 'default' silently.
   let sourceId: string | undefined;
+  // #2561: when the source resolved via a NON-explicit tier (path-match /
+  // brain default / sole-non-default / seed default), unqualified search-shaped
+  // reads span every `config.federated = true` source. Computed here (the
+  // trusted local boundary) and consumed by federatedSearchScope in
+  // operations.ts, which additionally gates on ctx.remote === false.
+  let localFederated: string[] | undefined;
   try {
-    const { resolveSourceId } = await import('./core/source-resolver.ts');
+    const { resolveSourceWithTier, localFederatedSourceIds } = await import('./core/source-resolver.ts');
     // params.source is set when a CLI flag was parsed for the op (rare; most
     // CLI ops don't take --source). Falls through to env/dotfile/path-match.
     const explicit = (params.source as string | undefined) ?? null;
-    sourceId = await resolveSourceId(engine, explicit);
+    const resolved = await resolveSourceWithTier(engine, explicit);
+    sourceId = resolved.source_id;
+    localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
   } catch {
     // Source resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
@@ -836,6 +908,7 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // table). Matches dispatch.ts's auto-fill so the contract holds across
     // every transport.
     sourceId: sourceId ?? 'default',
+    ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
   };
 }
 
@@ -937,7 +1010,10 @@ export function formatResult(opName: string, result: unknown): string {
         lines.push(`Link coverage (entities): ${(h.link_coverage * 100).toFixed(1)}%`);
       }
       if (h.timeline_coverage !== undefined) {
-        lines.push(`Timeline coverage (entities): ${(h.timeline_coverage * 100).toFixed(1)}%`);
+        lines.push(`Timeline coverage (entity pages): ${(h.timeline_coverage * 100).toFixed(1)}%`);
+      }
+      if (h.timeline_coverage_score !== undefined) {
+        lines.push(`Timeline density (all pages): ${h.timeline_coverage_score}/15 (whole-brain brain-score component)`);
       }
       if (Array.isArray(h.most_connected) && h.most_connected.length > 0) {
         lines.push('Most connected entities:');

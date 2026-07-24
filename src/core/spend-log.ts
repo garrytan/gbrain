@@ -1,9 +1,10 @@
 /**
  * v0.36 Phase 2 (D23-#6) — per-OAuth-client paid-API spend tracking.
  *
- * Backs the daily-budget gate for `search_by_image`. Each successful Voyage
- * multimodal call records an entry; before any new call, `checkBudget`
- * sums today's spend and rejects when it exceeds the configured cap.
+ * Legacy spend-log readers/writers retained for existing accounting callers.
+ * Paid `search_by_image` requests use the atomic reserve/settle primitive in
+ * `minions/budget-meter.ts`; a read-then-call check cannot enforce a cap under
+ * concurrency.
  *
  * Config: `search.image_query.daily_budget_usd_per_client` (default $5).
  *
@@ -59,6 +60,9 @@ export async function getTodaySpendCents(
 
 /**
  * Pre-flight budget gate.
+ *
+ * @deprecated Non-atomic under concurrent paid calls. New OAuth/MCP spend
+ * callers must use `reserve()` / `settle()` from `gbrain/budget/mcp`.
  *
  * Throws `BudgetExceededError` when the client has already spent at or above
  * the configured daily cap. Returns silently when there's room.

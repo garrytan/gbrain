@@ -109,7 +109,13 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number }) {
+  function writeHolder(fields: {
+    pid: number;
+    acquiredAgoMs: number;
+    refreshedAgoMs: number;
+    command?: string;
+    subcommand?: string;
+  }) {
     const lockDir = join(TEST_DIR, '.gbrain-lock');
     mkdirSync(lockDir, { recursive: true });
     const now = Date.now();
@@ -117,9 +123,69 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
       pid: fields.pid,
       acquired_at: now - fields.acquiredAgoMs,
       refreshed_at: now - fields.refreshedAgoMs,
-      command: 'test holder',
+      command: fields.command ?? 'test holder',
+      ...(fields.subcommand === undefined ? {} : { subcommand: fields.subcommand }),
     }));
   }
+
+  test('a live gbrain serve owner with global flags fails fast with a clear explanation', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path with spaces/gbrain/src/cli.ts --quiet serve',
+      subcommand: 'serve',
+    });
+
+    const startedAt = Date.now();
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 5_000 })).rejects.toThrow(
+      /already open through `gbrain serve`.*Stop `gbrain serve`, then retry this CLI command.*use its MCP tools instead.*will not remove/s,
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('legacy serve lock metadata is still recognized', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path/to/gbrain/src/cli.ts serve',
+    });
+
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 5_000 })).rejects.toThrow(
+      /already open through `gbrain serve`/,
+    );
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('a search for the word serve is not mistaken for the MCP server', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/compiled/gbrain search serve',
+      subcommand: 'search',
+    });
+
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 100 })).rejects.toThrow(/Timed out/);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('a dead gbrain serve owner is still cleaned up automatically', async () => {
+    writeHolder({
+      pid: 999999999,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path/to/gbrain/src/cli.ts serve',
+      subcommand: 'serve',
+    });
+
+    const lock = await acquireLock(TEST_DIR, { timeoutMs: 2_000 });
+    expect(lock.acquired).toBe(true);
+    await releaseLock(lock);
+  });
 
   test('[REGRESSION] a LIVE holder with a fresh heartbeat is NOT stolen even when the lock is old', async () => {
     // The WAL-corruption bug: a >5min embed used to get its lock force-removed.
@@ -143,6 +209,26 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
 
     await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
     // The live holder's lock is still present — never force-removed.
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('explains live gbrain serve contention is not a sync advisory lock', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: 'bun /Users/master/.bun/bin/gbrain serve',
+    });
+
+    let message = '';
+    try {
+      await acquireLock(TEST_DIR, { timeoutMs: 100 });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('serve↔sync contention');
+    expect(message).toContain('not the `gbrain-sync:*` advisory lock');
+    expect(message).toContain('`gbrain sync --break-lock` will not clear a live PGLite holder');
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 

@@ -2,6 +2,11 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { withEnv } from './helpers/with-env.ts';
+import { logRerankFailure } from '../src/core/rerank-audit.ts';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -45,6 +50,34 @@ describe('doctor command', () => {
     };
     expect(check.issues).toHaveLength(1);
     expect(check.issues![0].action).toContain('trigger');
+  });
+
+  test('reranker_health warns on repeated unknown rerank failures', async () => {
+    const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-doctor-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        for (let i = 0; i < 3; i++) {
+          logRerankFailure({
+            model: 'zeroentropyai:zerank-2',
+            reason: 'unknown',
+            query_hash: `unknown${i}`,
+            doc_count: 30,
+            error_summary: 'ZeroEntropy reranker requires ZEROENTROPY_API_KEY.',
+          });
+        }
+        const check = await checkRerankerHealth({
+          async getConfig(key: string): Promise<string | null> {
+            return key === 'search.reranker.enabled' ? 'true' : null;
+          },
+        } as any);
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('unknown');
+        expect(check.message).toContain('ZEROENTROPY_API_KEY');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
