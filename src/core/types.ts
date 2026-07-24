@@ -1670,7 +1670,7 @@ export interface HybridSearchMeta {
 export interface EngineConfig {
   database_url?: string;
   database_path?: string;
-  engine?: 'postgres' | 'pglite';
+  engine?: 'postgres' | 'pglite' | 'graphbrain';
 }
 
 // Errors
