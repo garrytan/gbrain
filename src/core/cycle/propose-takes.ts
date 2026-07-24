@@ -40,6 +40,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { curationLanguageDirective } from '../ai/curation-language.ts'; // #3357
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -272,9 +273,14 @@ const EXTRACTOR_CALL_TIMEOUT_MS = 90_000;
 export async function defaultExtractor(
   input: Parameters<ProposeTakesExtractor>[0],
 ): Promise<ProposedTake[]> {
+  // #3357: honor the output-language policy (default "source" = match the page's language).
+  const langDirective = await curationLanguageDirective(
+    (input as { engine?: BrainEngine }).engine ?? null,
+    input.pageBody,
+  );
   const prompt = EXTRACT_TAKES_PROMPT
     .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
-    .replace('{PAGE_BODY}', input.pageBody);
+    .replace('{PAGE_BODY}', input.pageBody) + langDirective;
 
   // Bound each call so one stalled provider socket can't pin the phase for the
   // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The

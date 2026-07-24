@@ -24,6 +24,7 @@ import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { chat as gatewayChat, isAvailable } from '../ai/gateway.ts';
+import { curationLanguageDirective } from '../ai/curation-language.ts'; // #3357
 // #2163: concept pages route through importFromContent (the same
 // parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
 // so they land in the retrieval surface (content_chunks + embeddings) where
@@ -183,8 +184,13 @@ export async function runPhaseSynthesizeConcepts(
         narrative = deterministicNarrative(group);
       } else {
         try {
+          // #3357: match the concept's source language (default "source").
+          const langDirective = await curationLanguageDirective(
+            engine,
+            `${group.atomTitles.join('\n')}\n${group.atomBodies.join('\n')}`.slice(0, 2000),
+          );
           const result = await chat({
-            system: SYNTH_PROMPT,
+            system: SYNTH_PROMPT + langDirective,
             messages: [
               {
                 role: 'user',

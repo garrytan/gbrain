@@ -990,6 +990,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.output_root',
   'dream.synthesize.subagent_timeout_ms',
   'dream.synthesize.subagent_wait_timeout_ms',
+  // #3357: output-language policy for curation phases — "source" (default) | "<lang>" | "off".
+  'dream.curation.output_language',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the
