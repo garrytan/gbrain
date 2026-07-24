@@ -212,6 +212,16 @@ export interface ImportResult {
   flagged?: boolean;
   /** Which flag tier fired, when `flagged`. */
   flag_reason?: 'markup_heavy' | 'oversized';
+  /**
+   * Issue #2682: true when `importImageFile`'s OCR pass failed (API error or
+   * missing key) and the chunk fell back to a filename/short stub. The import
+   * still succeeds (status stays 'imported', fail-open by design — see
+   * `maybeOcr`), but callers need this to surface the failure instead of
+   * silently reporting `errors=0`.
+   */
+  ocrFailed?: boolean;
+  /** Human-readable OCR failure reason, present when `ocrFailed` is true. */
+  ocrError?: string;
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
@@ -1579,11 +1589,27 @@ async function readExifSafe(buf: Buffer): Promise<Record<string, unknown>> {
 }
 
 /**
+ * Result of a `maybeOcr` call. `failed` distinguishes "OCR intentionally
+ * skipped" (opt-out) from "OCR was attempted and did not produce text" —
+ * issue #2682: the latter needs to be visible to the caller instead of
+ * silently falling back to a filename stub with no signal anywhere.
+ */
+interface OcrOutcome {
+  text: string;
+  failed: boolean;
+  reason?: 'no_key' | 'api_error';
+  message?: string;
+}
+
+/**
  * Cherry-1 OCR: optional gpt-4o-mini pass extracting visible text from an
- * image. Returns '' when:
- * - the embedding_image_ocr config flag is off (default)
- * - the configured expansion model is unavailable (no API key)
- * - the OCR call itself fails (logged once per session)
+ * image. `text` is '' when:
+ * - the embedding_image_ocr config flag is off (default) — `failed: false`,
+ *   this is opt-out, not a failure.
+ * - the configured expansion model is unavailable (no API key) — `failed:
+ *   true, reason: 'no_key'`.
+ * - the OCR call itself fails (logged once per session) — `failed: true,
+ *   reason: 'api_error'`.
  *
  * Eng-1B: per-call result is reflected in counters the doctor `ocr_health`
  * check reads. Counter writes are best-effort; never fail the import.
@@ -1596,9 +1622,9 @@ async function maybeOcr(
   engine: BrainEngine,
   imgBuf: Buffer,
   mime: string,
-): Promise<string> {
+): Promise<OcrOutcome> {
   const opt = process.env.GBRAIN_EMBEDDING_IMAGE_OCR;
-  if (opt !== 'true') return '';
+  if (opt !== 'true') return { text: '', failed: false };
 
   // Counter helpers — quiet failure if config table is unavailable.
   async function bump(key: string) {
@@ -1617,18 +1643,24 @@ async function maybeOcr(
         _ocrWarnedThisSession = true;
       }
       await bump('ocr_failed_no_key');
-      return '';
+      return {
+        text: '',
+        failed: true,
+        reason: 'no_key',
+        message: 'expansion model unavailable (no API key configured for OCR)',
+      };
     }
     const text = await generateOcrText(imgBuf, mime);
     await bump('ocr_succeeded');
-    return text;
+    return { text, failed: false };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     if (!_ocrWarnedThisSession) {
-      console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${message}`);
       _ocrWarnedThisSession = true;
     }
     await bump('ocr_failed_other');
-    return '';
+    return { text: '', failed: true, reason: 'api_error', message };
   }
 }
 
@@ -1711,9 +1743,10 @@ export async function importImageFile(
 
   // OCR opt-in (cherry-1). Runs through the per-process limiter so 100
   // images first-import doesn't serialize into 200s of OCR latency.
-  const ocrText: string = opts.noEmbed
-    ? ''
+  const ocrOutcome: OcrOutcome = opts.noEmbed
+    ? { text: '', failed: false }
     : await _ocrLimiter(() => maybeOcr(engine, decoded.buf, decoded.mime));
+  const ocrText = ocrOutcome.text;
 
   // Multimodal embed.
   let embedding: Float32Array | null = null;
@@ -1798,7 +1831,17 @@ export async function importImageFile(
     },
   });
 
-  return { slug: imageSlug, status: 'imported', chunks: 1 };
+  return {
+    slug: imageSlug,
+    status: 'imported',
+    chunks: 1,
+    ...(ocrOutcome.failed
+      ? {
+          ocrFailed: true,
+          ocrError: `OCR failed (${ocrOutcome.reason}): ${ocrOutcome.message ?? 'unknown error'}`,
+        }
+      : {}),
+  };
 }
 
 /** Used by sync.isSyncable + import.ts walker. */
