@@ -59,6 +59,13 @@ export function estimateMaxCostUsd(
     const { model: tail } = splitProviderModelId(modelId);
     if (tail) p = ANTHROPIC_PRICING[tail];
   }
+  // v0.42: non-Anthropic providers (opencode-go, deepseek, google, etc.)
+  // live in CANONICAL_PRICING with provider-prefixed keys. Check canonical
+  // so the budget gate covers all priced providers, not just Anthropic.
+  if (!p) {
+    const { provider, model } = splitProviderModelId(modelId);
+    if (provider && model) p = CANONICAL_PRICING[`${provider}:${model}`];
+  }
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +

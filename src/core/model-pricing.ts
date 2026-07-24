@@ -88,6 +88,17 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },
   'deepseek:deepseek-chat':               { input:  0.14, output:  0.28 },
+
+  // ── OpenCode Go (subscription proxy — per-token rates match upstream) ───
+  'opencode-go:deepseek-v4-flash':         { input:  0.14, output:  0.28 },
+  'opencode-go:deepseek-v4-pro':           { input:  0.27, output:  1.10 },
+  'opencode-go:mimo-v2.5':                { input:  0.14, output:  0.28 },
+  'opencode-go:mimo-v2.5-pro':            { input:  0.27, output:  1.10 },
+  'opencode-go:qwen3.5-plus':             { input:  0.20, output:  0.60 },
+  'opencode-go:qwen3.6-plus':             { input:  0.20, output:  0.60 },
+  'opencode-go:qwen3.7-plus':             { input:  0.20, output:  0.60 },
+  'opencode-go:qwen3.7-max':              { input:  0.40, output:  1.20 },
+  'opencode-go:grok-4.5':                 { input:  0.50, output:  2.50 },
 };
 
 /**
