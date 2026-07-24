@@ -84,7 +84,9 @@ export function loadPackFromString(content: string, hint: string): SchemaPackMan
  *
  * Rejected by design: anchors (&), aliases (*), tags (!), flow style
  * ({...}, [...] except as JSON), block scalars (|, >), multi-document (---).
- * Pack authors who need these features should ship JSON.
+ * Pack authors who need these features should ship JSON. Block scalars in
+ * particular now throw a clear error (see parseScalar) rather than silently
+ * mis-parsing and truncating the rest of the manifest.
  *
  * This is intentionally narrow. The skill-pack and storage-config parsers
  * use similar hand-rolled patterns; this one is shape-customized for pack
@@ -133,6 +135,20 @@ export function parseYamlMini(content: string): unknown {
     // Number
     if (/^-?\d+$/.test(trimmed)) return parseInt(trimmed, 10);
     if (/^-?\d+\.\d+$/.test(trimmed)) return parseFloat(trimmed);
+    // Block scalars (`|`, `>`, with optional chomping/indent indicators such
+    // as `|-`, `>+`, `|2`) are unsupported by design — see the header. A bare
+    // indicator reaching here is a `key: |` line whose indented body would
+    // otherwise silently truncate the rest of the mapping: parseScalar would
+    // return the literal "|"/">", and the over-indented body would trip the
+    // `indent > baseIndent` break in parseMapping, dropping every following
+    // top-level key with no diagnostic. Fail loud instead of corrupting.
+    if (/^[|>][0-9+-]*$/.test(trimmed)) {
+      throw new Error(
+        `parseYamlMini: block scalars are not supported (found "${trimmed}"). ` +
+          `Use an inline or quoted string (e.g. description: "..."), or ship the manifest as JSON. ` +
+          `Left unhandled, a block scalar silently drops every key after it in the manifest.`,
+      );
+    }
     // Bare string
     return trimmed;
   }
