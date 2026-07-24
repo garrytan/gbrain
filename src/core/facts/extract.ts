@@ -23,6 +23,7 @@
 
 import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
+import { curationLanguageDirective } from '../ai/curation-language.ts'; // #3357
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
 import { normalizeModelId } from '../model-id.ts';
@@ -240,11 +241,14 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
       : ''
   }`;
+  // #3357: append the configured output-language directive (default "source" =
+  // match the turn's dominant language) so non-English captures don't drift to English.
+  const outLangDirective = await curationLanguageDirective(input.engine, cleaned);
   let result: ChatResult;
   try {
     result = await chat({
       model,
-      system: EXTRACTOR_SYSTEM,
+      system: EXTRACTOR_SYSTEM + outLangDirective,
       messages: [{ role: 'user', content: userContent }],
       maxTokens,
       abortSignal: input.abortSignal,
@@ -260,7 +264,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       );
       result = await chat({
         model,
-        system: EXTRACTOR_SYSTEM,
+        system: EXTRACTOR_SYSTEM + outLangDirective,
         messages: [{ role: 'user', content: userContent }],
         maxTokens: maxTokens * 2,
         abortSignal: input.abortSignal,
