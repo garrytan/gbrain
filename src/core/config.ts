@@ -979,6 +979,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.extraction_model',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // Conversation parser LLM fallback. Deliberately register the exact key,
+  // not a conversation_parser.* prefix: fallback is the only live opt-in
+  // consumer, while the polish scaffold remains unwired.
+  'conversation_parser.llm_fallback_enabled',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',
