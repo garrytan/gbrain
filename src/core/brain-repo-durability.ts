@@ -156,7 +156,8 @@ function renderPostCommitHook(): string {
 ${HOOK_BANNER}
 # LOCAL + untracked — NEVER commit this file. Best-effort background auto-push so
 # agent writes don't sit local-only. The real guarantee is ${HELPER_REL}.
-# Bypass: git commit --no-verify.
+# Bypass: git -c core.hooksPath=/dev/null commit … (--no-verify only skips
+# pre-commit/commit-msg hooks; post-commit hooks still run under it).
 set -euo pipefail
 
 _branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
@@ -729,7 +730,10 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
       stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
     }).toString().trim();
     if (!staged) return { status: 'ok', detail: 'scaffolding already committed' };
-    execFileSync('git', ['-C', repoPath, 'commit', '-m', 'chore(gbrain): install brain durability scaffolding'], {
+    // #2545: commit with hooks disabled so the just-installed post-commit hook
+    // doesn't background-push (pull --rebase → index.lock) while we push below.
+    // NOTE: --no-verify would NOT do this — it skips pre-commit/commit-msg only.
+    execFileSync('git', ['-C', repoPath, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'chore(gbrain): install brain durability scaffolding'], {
       stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
     });
     execFileSync('git', ['-C', repoPath, ...['-c', 'http.followRedirects=false'], 'push', 'origin', `HEAD:${branch}`], {
