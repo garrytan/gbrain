@@ -5,7 +5,7 @@
  * cost-estimate prompt so users with large brains see a dollar figure
  * before the chunker-version sweep re-embeds.
  *
- * Prices in USD per 1M tokens. Numbers as of 2026-05-11. Verify alongside
+ * Prices in USD per 1M tokens. Numbers as of 2026-07-24. Verify alongside
  * the Anthropic-pricing refresh cycle; drift here produces estimates
  * that mislead operators.
  *
@@ -31,6 +31,9 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'openai:text-embedding-3-small': { pricePerMTok: 0.02 },
   // Legacy OpenAI ada (still common in older brains)
   'openai:text-embedding-ada-002': { pricePerMTok: 0.10 },
+  // Google Gemini API standard paid tier
+  // (https://ai.google.dev/gemini-api/docs/pricing, verified 2026-07-24)
+  'google:gemini-embedding-001':    { pricePerMTok: 0.15 },
   // Voyage (https://www.voyageai.com/pricing)
   'voyage:voyage-3-large':         { pricePerMTok: 0.18 },
   'voyage:voyage-3':               { pricePerMTok: 0.06 },

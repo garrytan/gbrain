@@ -288,6 +288,21 @@ describe('BudgetTracker.reserve', () => {
     expect(caught).toBeInstanceOf(BudgetExhausted);
     expect((caught as BudgetExhausted).reason).toBe('cost');
   });
+
+  test('Google Gemini embed is priced under --max-cost', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'google:gemini-embedding-001',
+        estimatedInputTokens: 1000,
+        maxOutputTokens: 0,
+        kind: 'embed',
+      }),
+    ).not.toThrow();
+    const audit = readAudit();
+    expect(audit[0].event).toBe('reserve');
+    expect(audit[0].projected_cost_usd).toBeCloseTo(0.00015, 8);
+  });
 });
 
 describe('BudgetTracker.record', () => {
