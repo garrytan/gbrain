@@ -39,6 +39,7 @@ import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
+import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -728,7 +729,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
-        const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
+        const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);
 
         // ── v0.40 D17: per-source freshness check ────────────────────
         // Runs first; independent of score gate. Submits a 'sync' job per
@@ -983,7 +984,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const result = await dispatchPerSource(engine, queue, {
             repoPath,
             slot,
-            timeoutMs,
+            // A full consolidation cycle can outlive the polling cadence.
+            // Lighter targeted dispatches retain the interval-derived bound.
+            timeoutMs: resolveAutopilotDispatchTimeoutMs(baseInterval, true),
             fanoutMax,
             jsonMode,
           });
