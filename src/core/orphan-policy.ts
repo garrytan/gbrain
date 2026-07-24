@@ -13,20 +13,30 @@
  *   gbrain config set orphans.exclude_slugs "some-one-off-page"
  */
 
-const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
+// '/readme' — a README is a folder descriptor, not a knowledge node;
+// nothing is expected to wikilink to it.
+const AUTO_SUFFIX_PATTERNS = ['/_index', '/log', '/readme'];
 
-const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
+// 'readme' / 'index' — root-level folder descriptors, same rationale as the
+// '/readme' suffix. 'schema' — written by the schema pack on init; 'log' —
+// the root brain log.
+const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude', 'readme', 'index', 'schema', 'log']);
 
 const RAW_SEGMENT = '/raw/';
 
 const DENY_PREFIXES = [
   'output/',
+  'outputs/',
   'dashboards/',
   'scripts/',
   'templates/',
   '_templates/',
   'openclaw/config/',
   'extracts/',
+  // auto_chronicle event volume (life/events/<day>-<hash>) — machine leaf, no
+  // inbound links by design. Deny-prefix (not whole `life/` first-segment) so
+  // human-authored life/diary/ stays IN the orphan denominator. (#2264)
+  'life/events/',
 ];
 
 const FIRST_SEGMENT_EXCLUSIONS = new Set([
@@ -39,6 +49,10 @@ const FIRST_SEGMENT_EXCLUSIONS = new Set([
   'skills',
   'dreaming',
   'daily',
+  // 'inbox' — GTD-style intake tray: dated collector records in transit
+  // (email digests, alerts) awaiting triage; nothing links INTO an inbox
+  // item, same rationale as 'daily'.
+  'inbox',
 ]);
 
 const ROOT_DATE_SLUG = /^\d{4}-\d{2}-\d{2}(?:-.+)?$/;

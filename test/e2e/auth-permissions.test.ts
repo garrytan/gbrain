@@ -80,8 +80,7 @@ d('access_tokens.permissions.takes_holders end-to-end', () => {
 
     // Now dispatch with that allow-list, verify SQL filter applies
     const result = await dispatchToolCall(engine, 'takes_list', { page_slug: 'people/alice-example' }, {
-      remote: true,
-      takesHoldersAllowList: allowList,
+      remote: true, sourceId: 'default',      takesHoldersAllowList: allowList,
     });
     expect(result.isError).toBeFalsy();
     const takes = JSON.parse(result.content[0].text) as Array<{ holder: string }>;
@@ -100,8 +99,7 @@ d('access_tokens.permissions.takes_holders end-to-end', () => {
       [`tok-w-${Date.now()}`, hash, { takes_holders: ['world'] }],
     );
     const result = await dispatchToolCall(engine, 'takes_search', { query: 'founder' }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const hits = JSON.parse(result.content[0].text) as Array<{ holder: string }>;
     expect(hits.every(h => h.holder === 'world')).toBe(true);

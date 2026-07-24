@@ -46,6 +46,14 @@ export {
 } from './closure.ts';
 
 export {
+  type BorrowedTypes,
+  mergeByKey,
+  mergeUnion,
+  mergePageTypes,
+  mergeInheritedManifest,
+} from './merge.ts';
+
+export {
   type SourceClosureBinding,
   buildPerSourceBindings,
   buildSourceClosureCte,

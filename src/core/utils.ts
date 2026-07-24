@@ -381,6 +381,19 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
       result.effective_date_source = raw;
     }
   }
+  if (typeof row.message_id === 'string' && row.message_id.trim().length > 0) {
+    result.message_id = row.message_id;
+  }
+  if (typeof row.thread_id === 'string' && row.thread_id.length > 0) {
+    result.thread_id = row.thread_id;
+  }
+  if (
+    result.message_id &&
+    typeof row.source_subject === 'string' &&
+    row.source_subject.length > 0
+  ) {
+    result.source_subject = row.source_subject;
+  }
   return result;
 }
 

@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test'
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { computeWedgedQueueCheck } from '../src/commands/doctor.ts';
+import { computeQueueHealthCheck, computeWedgedQueueCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 let base: PGLiteEngine;
@@ -44,14 +44,42 @@ async function seed(
   queue: string,
   name: string,
   status: string,
-  extra: { lockUntilSql?: string; updatedAtSql?: string } = {},
+  extra: { lockUntilSql?: string; updatedAtSql?: string; createdAtSql?: string } = {},
 ): Promise<void> {
   await base.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, lock_until, updated_at)
-     VALUES ($1, $2, $3, ${extra.lockUntilSql ?? 'NULL'}, ${extra.updatedAtSql ?? 'now()'})`,
+    `INSERT INTO minion_jobs (name, queue, status, lock_until, updated_at, created_at)
+     VALUES ($1, $2, $3, ${extra.lockUntilSql ?? 'NULL'}, ${extra.updatedAtSql ?? 'now()'}, ${extra.createdAtSql ?? 'now()'})`,
     [name, queue, status],
   );
 }
+
+describe('issue #2557 — queue_health catches deferred embed with no worker', () => {
+  it('warns when old embed-backfill jobs have no live worker for their queue', async () => {
+    await seed('default', 'embed-backfill', 'waiting', {
+      createdAtSql: "now() - interval '3 hours'",
+    });
+    const check = await computeQueueHealthCheck(pgLike, {
+      readWorkers: () => [],
+      oldWaitingHours: 1,
+    });
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('embed-backfill');
+    expect(check.message).toContain('no live worker');
+    expect(check.message).toContain('gbrain jobs work --queue default');
+  });
+
+  it('does not warn for old embed-backfill jobs when a worker is live on that queue', async () => {
+    await seed('default', 'embed-backfill', 'waiting', {
+      createdAtSql: "now() - interval '3 hours'",
+    });
+    const check = await computeQueueHealthCheck(pgLike, {
+      readWorkers: () => [{ queue: 'default' }],
+      oldWaitingHours: 1,
+    });
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('no old embed-backfill jobs without a worker');
+  });
+});
 
 describe('issue #1801 fix #3 — computeWedgedQueueCheck', () => {
   it('flags a wedged queue (waiting, 0 active_healthy, stale completion) as fail', async () => {

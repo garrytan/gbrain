@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { groupReadyByProvider, findEnvKeyTypos } from '../src/commands/init.ts';
+import { groupReadyByProvider, findEnvKeyTypos, seedAIOptionsFromConfig } from '../src/commands/init.ts';
 
 describe('groupReadyByProvider — embedding touchpoint', () => {
   test('OPENAI_API_KEY alone → openai is ready', async () => {
@@ -147,5 +147,49 @@ describe('findEnvKeyTypos', () => {
     const got = await findEnvKeyTypos({ COMPLETELY_UNRELATED_KEY: 'foo' });
     // Should not match any canonical via Levenshtein ≤ 3.
     expect(got.find(t => t.userSet === 'COMPLETELY_UNRELATED_KEY')).toBeUndefined();
+  });
+});
+
+describe('seedAIOptionsFromConfig — #1058 cold-install env fallback', () => {
+  test('null config (no config.json, no DATABASE_URL) falls back to GBRAIN_* env vars', () => {
+    const got = seedAIOptionsFromConfig(null, {
+      GBRAIN_EMBEDDING_MODEL: 'voyage:voyage-3-large',
+      GBRAIN_EMBEDDING_DIMENSIONS: '1024',
+      GBRAIN_EXPANSION_MODEL: 'openai:gpt-5-mini',
+      GBRAIN_CHAT_MODEL: 'anthropic:claude-sonnet-4-6',
+    });
+    expect(got.embedding_model).toBe('voyage:voyage-3-large');
+    expect(got.embedding_dimensions).toBe(1024);
+    expect(got.expansion_model).toBe('openai:gpt-5-mini');
+    expect(got.chat_model).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('null config + no env vars → empty seed (Tier-3 detection takes over)', () => {
+    const got = seedAIOptionsFromConfig(null, {});
+    expect(got).toEqual({});
+  });
+
+  test('persisted config wins (loadConfig already merged env when non-null)', () => {
+    const got = seedAIOptionsFromConfig(
+      { engine: 'pglite', embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536 } as any,
+      { GBRAIN_EMBEDDING_MODEL: 'voyage:voyage-3-large' },
+    );
+    expect(got.embedding_model).toBe('openai:text-embedding-3-small');
+    expect(got.embedding_dimensions).toBe(1536);
+  });
+
+  test('embedding_disabled sentinel honored on re-init', () => {
+    const got = seedAIOptionsFromConfig({ engine: 'pglite', embedding_disabled: true } as any, {});
+    expect(got.noEmbedding).toBe(true);
+    expect(got.embedding_model).toBeUndefined();
+  });
+
+  test('non-numeric GBRAIN_EMBEDDING_DIMENSIONS ignored, model still seeds', () => {
+    const got = seedAIOptionsFromConfig(null, {
+      GBRAIN_EMBEDDING_MODEL: 'voyage:voyage-3-large',
+      GBRAIN_EMBEDDING_DIMENSIONS: 'not-a-number',
+    });
+    expect(got.embedding_model).toBe('voyage:voyage-3-large');
+    expect(got.embedding_dimensions).toBeUndefined();
   });
 });

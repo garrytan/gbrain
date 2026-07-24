@@ -76,6 +76,15 @@ export const deepseek: Recipe = {
     setup_url: 'https://platform.deepseek.com/api_keys',
   },
   touchpoints: {
+    // Query expansion reuses the same OpenAI-compatible chat endpoint (the
+    // gateway's expansion path is a plain languageModel call). Without this
+    // declaration an explicit `expansion_model: deepseek:...` silently
+    // yields no expansion (#1135).
+    expansion: {
+      models: ['deepseek-chat'],
+      cost_per_1m_tokens_usd: 0.14,
+      price_last_verified: '2026-04-20',
+    },
     chat: {
       models: ['deepseek-chat', 'deepseek-reasoner'],
       supports_tools: true,

@@ -11,6 +11,12 @@
 
 import { describe, expect, test } from 'bun:test';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
+import {
+  OPENROUTER_CACHE_HEADER,
+  openrouterCompatFetch,
+  openrouterRequiresExplicitPromptCache,
+  openrouterSupportsPromptCache,
+} from '../../src/core/ai/recipes/openrouter.ts';
 import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
 import { assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
@@ -134,5 +140,79 @@ describe('recipe: openrouter', () => {
     expect(r.setup_hint).toContain('OPENROUTER_BASE_URL');
     expect(r.setup_hint).toContain('OPENROUTER_REFERER');
     expect(r.setup_hint).toContain('OPENROUTER_TITLE');
+  });
+
+  // 12-15 — prompt caching (takeover of PR #1988).
+
+  test('12. prompt cache capability is family-scoped, not a blanket claim', () => {
+    const r = getRecipe('openrouter')!;
+    expect(r.touchpoints.chat!.supports_prompt_cache).toBe(openrouterSupportsPromptCache);
+
+    expect(openrouterSupportsPromptCache('openai/gpt-5.2')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/gpt-5.2-chat')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/o4-mini')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/text-embedding-3-small')).toBe(false);
+    expect(openrouterSupportsPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(openrouterSupportsPromptCache('anthropic/claude-opus-4.7')).toBe(true);
+    expect(openrouterSupportsPromptCache('deepseek/deepseek-chat')).toBe(false);
+    expect(openrouterSupportsPromptCache('google/gemini-3-flash-preview')).toBe(false);
+  });
+
+  test('13. only Anthropic Claude routes require the explicit cache_control rewrite', () => {
+    expect(openrouterRequiresExplicitPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(openrouterRequiresExplicitPromptCache('openai/gpt-5.2')).toBe(false);
+    expect(openrouterRequiresExplicitPromptCache('deepseek/deepseek-chat')).toBe(false);
+  });
+
+  test('14. recipe installs the cache compat fetch shim', () => {
+    const r = getRecipe('openrouter')!;
+    expect(r.compat?.fetch).toBe(openrouterCompatFetch);
+  });
+
+  test('15. fetch shim rewrites system content-block cache_control for Claude routes and always strips the marker header', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ input, init });
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    try {
+      const post = (model: string, withMarker: boolean) =>
+        openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: withMarker ? { [OPENROUTER_CACHE_HEADER]: '1' } : {},
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: 'stable system prompt' },
+              { role: 'user', content: 'hello' },
+            ],
+          }),
+        });
+
+      // Marker + Claude route → system content becomes a cache_control block.
+      await post('anthropic/claude-sonnet-4.6', true);
+      const rewritten = JSON.parse(calls[0].init!.body as string);
+      expect(rewritten.messages[0].content).toEqual([
+        { type: 'text', text: 'stable system prompt', cache_control: { type: 'ephemeral' } },
+      ]);
+      expect(rewritten.messages[1]).toEqual({ role: 'user', content: 'hello' });
+      // Marker never leaves the process.
+      expect(new Headers(calls[0].init!.headers as any).has(OPENROUTER_CACHE_HEADER)).toBe(false);
+
+      // Marker + non-Claude route → body untouched, marker still stripped.
+      await post('openai/gpt-5.2', true);
+      const untouched = JSON.parse(calls[1].init!.body as string);
+      expect(untouched.messages[0]).toEqual({ role: 'system', content: 'stable system prompt' });
+      expect(new Headers(calls[1].init!.headers as any).has(OPENROUTER_CACHE_HEADER)).toBe(false);
+
+      // No marker → body untouched even on a Claude route.
+      await post('anthropic/claude-sonnet-4.6', false);
+      const noMarker = JSON.parse(calls[2].init!.body as string);
+      expect(noMarker.messages[0]).toEqual({ role: 'system', content: 'stable system prompt' });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

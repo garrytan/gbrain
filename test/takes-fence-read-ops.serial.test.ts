@@ -86,8 +86,7 @@ describe('C4: get_page takes-fence redaction (#728)', () => {
 
   test('MCP caller with narrow allow-list (["world"]) sees fence STRIPPED', async () => {
     const result = await dispatchToolCall(engine, 'get_page', { slug: PAGE_SLUG }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const page = parseResult(result) as { compiled_truth: string };
     expect(page.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);
@@ -105,8 +104,7 @@ describe('C4: get_page takes-fence redaction (#728)', () => {
     // takes_search are the typed surfaces for take inspection. get_page is
     // not an authorized take-reading channel.
     const result = await dispatchToolCall(engine, 'get_page', { slug: PAGE_SLUG }, {
-      remote: true,
-      takesHoldersAllowList: ['world', 'garry', 'brain'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry', 'brain'],
     });
     const page = parseResult(result) as { compiled_truth: string };
     expect(page.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);
@@ -129,8 +127,7 @@ describe('C4: get_versions takes-fence redaction (#728)', () => {
     );
 
     const result = await dispatchToolCall(engine, 'get_versions', { slug: PAGE_SLUG }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const versions = parseResult(result) as Array<{ compiled_truth: string }>;
     expect(versions.length).toBeGreaterThan(0);

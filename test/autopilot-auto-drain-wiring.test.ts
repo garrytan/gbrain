@@ -43,6 +43,19 @@ describe('autopilot auto-drain wiring', () => {
     expect(SRC).toMatch(/engine\.kind === 'postgres'[\s\S]{0,400}auto_drain/);
   });
 
+  // issue #3218 (codex P1): with the handler now throwing on an
+  // all-provider-failed batch, max_attempts:1 made the queue's retry policy
+  // "dead-letter on the first failure, no backoff attempt" — regression-guard
+  // against silently reverting to 1.
+  test('issue #3218: submits with max_attempts 3 (not 1) so a retry can backoff before dead-lettering', () => {
+    // lastIndexOf: the queue.add(...) call site itself (the earlier occurrence
+    // is the unrelated created_at count query above it in the same function).
+    const callSite = SRC.lastIndexOf("'extract-atoms-drain'");
+    const drainBlock = SRC.slice(callSite, callSite + 900);
+    expect(drainBlock).toContain('max_attempts: 3');
+    expect(drainBlock).not.toContain('max_attempts: 1');
+  });
+
   test('CODEX impl #4: no maxWaiting (it coalesces by name+queue, not source)', () => {
     // maxWaiting would return source A's waiting job for source B's submit,
     // never queuing B and over-counting the cap. The per-source idempotency key

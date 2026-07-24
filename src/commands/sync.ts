@@ -213,7 +213,7 @@ export interface SyncResult {
    * cron operators can disambiguate timeout vs pull-timeout in monitoring.
    */
   filesImported?: number;
-  reason?: 'timeout' | 'pull_timeout' | 'stall_timeout' | 'checkpoint_unavailable';
+  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable';
   /**
    * v0.42.x (#1794): cumulative file paths durably banked to the checkpoint
    * across THIS run + prior resumed runs. Surfaced on every partial/blocked
@@ -910,6 +910,25 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
 }
 
 /**
+ * Resolve sync's effective no-embed mode from CLI args + config.
+ *
+ * The deferred-setup sentinel (`embedding_disabled: true`, written by
+ * `gbrain init --no-embedding`) is an implicit `--no-embed`: without this,
+ * the embed credential preflight demands provider credentials the user
+ * deliberately deferred at init, and every `gbrain sync` on a keyless
+ * brain exits 1. See embed-preflight.ts's skip protocol — the sentinel is
+ * meant to be honored before the credential check ever runs.
+ *
+ * Exported for `test/sync-no-embed-sentinel.test.ts`.
+ */
+export function resolveNoEmbed(
+  args: string[],
+  cfg: { embedding_disabled?: boolean } | null,
+): boolean {
+  return args.includes('--no-embed') || cfg?.embedding_disabled === true;
+}
+
+/**
  * Shell out to git with a generous maxBuffer.
  *
  * Node's default maxBuffer is 1 MiB.  `git diff --name-status -M` on a
@@ -918,12 +937,28 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
  *
  * 100 MiB is generous but still bounded — a 100K-file diff with long
  * paths tops out around 10–20 MiB in practice.
+ *
+ * `silenceStderr`: Node's `execFileSync` writes the child's stderr straight
+ * through to the parent's real stderr by default (in addition to attaching
+ * it to the thrown error's `.stderr`) *unless* an explicit `stdio` array is
+ * given. Callers that treat a failure as an expected, self-handled outcome
+ * (rather than a crash to surface) pass `silenceStderr: true` so git's raw
+ * `fatal: ...` line never reaches the process's own stderr — only the
+ * caller's own (usually friendlier) handling of the caught error does.
+ * Default `false` preserves today's passthrough for every other call site.
  */
-function git(repoPath: string, args: string[], configs: string[] = [], timeoutMs = 30000): string {
+function git(
+  repoPath: string,
+  args: string[],
+  configs: string[] = [],
+  timeoutMs = 30000,
+  { silenceStderr = false }: { silenceStderr?: boolean } = {},
+): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
     timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
+    ...(silenceStderr ? { stdio: ['ignore', 'pipe', 'pipe'] as const } : {}),
   }).trim();
 }
 
@@ -932,10 +967,19 @@ function git(repoPath: string, args: string[], configs: string[] = [], timeoutMs
  * `git -C <path> rev-parse --show-toplevel`. Handles worktrees and submodules
  * natively (git itself resolves them). Throws a user-friendly error when no
  * git repo is found.
+ *
+ * The probe's failure is expected and routine (a non-git-yet brain dir, a
+ * scratch dir, a caller checking "is this a repo?") — `sync.ts` self-heals
+ * it (git-init) or surfaces the message below, never the raw git stderr.
+ * `silenceStderr: true` keeps git's own `fatal: not a git repository ...`
+ * off the process's real stderr so operator log-scanning for `fatal:` as a
+ * crash signature doesn't false-alarm on every routine probe miss (#2964
+ * auto-recovery made the *outcome* self-healing; this keeps the *log* quiet
+ * about the expected miss that triggered it).
  */
 export function discoverGitRoot(inputPath: string): string {
   try {
-    return git(inputPath, ['rev-parse', '--show-toplevel']);
+    return git(inputPath, ['rev-parse', '--show-toplevel'], [], 30000, { silenceStderr: true });
   } catch {
     throw new Error(
       `Not inside a git repository: ${inputPath}. GBrain sync requires a git-initialized repo (or a subdirectory of one).`,
@@ -1379,6 +1423,7 @@ See also:
     {
       sourceId: sourceIdArg,
       repoPath: source.local_path,
+      noExtract: false,
       auto_embed_backfill: true,
       embed_reason: 'sync_trigger',
     },
@@ -1717,7 +1762,7 @@ function buildPartialResult(opts: {
   modified: number;
   deleted: number;
   renamed: number;
-  reason: 'timeout' | 'pull_timeout' | 'stall_timeout' | 'checkpoint_unavailable';
+  reason: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable';
   bankedFiles?: number;
 }): SyncResult {
   return {
@@ -1948,6 +1993,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     });
   }
 
+  // #3068: remember a warn-and-continue pull failure. The fall-through-to-
+  // working-tree design stays (local commits still import when the remote is
+  // unreachable), but a ZERO-import sync after a failed pull must not report
+  // `up_to_date` / bump the freshness heartbeat — that is what made a
+  // permanently-failing pull (e.g. a local-path origin rejected by
+  // protocol.file.allow=never, #1315) invisible forever: every nightly run
+  // exited 0 with "Already up to date" and doctor's sync_freshness never
+  // fired because last_sync_at kept advancing.
+  let pullFailed = false;
   if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     serr(`[gbrain phase] sync.git_pull start`);
@@ -1990,6 +2044,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           reason: 'pull_timeout',
         });
       }
+      pullFailed = true;
       if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
         serr(`Warning: git pull failed (remote diverged). Syncing from local state.`);
       } else {
@@ -2164,6 +2219,29 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // #3068: the pull failed and nothing local advanced — this run imported
+    // NOTHING and the remote may hold commits we could not fetch. Reporting
+    // `up_to_date` here (and bumping the heartbeat below) is exactly the
+    // silent-wedge from the issue: every scheduled sync exits 0 forever while
+    // the source is stale. Return `partial` instead (not a clean status, and
+    // last_sync_at stays frozen so doctor/sources-status staleness fires).
+    // The anchor is untouched; the next sync retries the pull from the same
+    // bookmark.
+    if (pullFailed) {
+      serr(
+        `[sync] git pull failed and no local changes imported — reporting partial ` +
+        `(not up_to_date); sync anchor unchanged at ${lastCommit.slice(0, 8)}.`,
+      );
+      return buildPartialResult({
+        fromCommit: lastCommit,
+        toCommit: lastCommit,
+        filesImported: 0,
+        pagesAffected: [],
+        chunksCreated: 0,
+        added: 0, modified: 0, deleted: 0, renamed: 0,
+        reason: 'pull_failed',
+      });
+    }
     // v0.42.52.0 (PR #22xx): bump last_sync_at as a heartbeat on every successful
     // 0-changes sync. D4 invariant ("never advance last_commit on partial") is
     // preserved: last_sync_at is a monitoring signal (doctor sync_freshness
@@ -2348,6 +2426,27 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   if (totalChanges === 0) {
+    // #3068: same guard as the git-HEAD-equality gate above — a failed pull
+    // plus zero imports must not produce a clean `up_to_date` (and must not
+    // advance the anchor past commits this run never looked at remotely).
+    // Reached when local-only commits landed with no syncable content while
+    // the pull kept failing. Nothing is written; the next sync re-diffs the
+    // same trivial range and retries the pull.
+    if (pullFailed) {
+      serr(
+        `[sync] git pull failed and no syncable changes imported — reporting partial ` +
+        `(not up_to_date); sync anchor unchanged at ${lastCommit.slice(0, 8)}.`,
+      );
+      return buildPartialResult({
+        fromCommit: lastCommit,
+        toCommit: lastCommit,
+        filesImported: 0,
+        pagesAffected: [],
+        chunksCreated: 0,
+        added: 0, modified: 0, deleted: 0, renamed: 0,
+        reason: 'pull_failed',
+      });
+    }
     // Update sync state even with no syncable changes (git advanced). v0.42.x
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
@@ -2456,6 +2555,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   };
 
   const pagesAffected: string[] = [];
+  // #1284: slugs deleted this run (delete loop, or renamed-away old slugs are
+  // NOT pushed — only confirmed deletes land here). pagesAffected stays the
+  // full manifest for extract/report paths, but the auto-embed at the end
+  // must NOT be handed deleted slugs: embedPage throws 'Page not found' for
+  // each one and serr-logs noise. A slug re-imported later in the same run
+  // (delete + re-add) is removed from this set at its push site.
+  const deletedSlugs = new Set<string>();
   // issue #1939: file paths that imported cleanly this run. The failure-ledger
   // gate clears these so a previously-failing file's `attempts` streak resets
   // on success (consecutive-failure semantics for the auto-skip valve).
@@ -2616,6 +2722,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // slugs (paths in filtered.deleted but with no DB row) so
           // downstream extract/embed don't waste lookups.
           pagesAffected.push(...deleted);
+          for (const s of deleted) deletedSlugs.add(s);
           // v0.42.x (#1794): the whole batch is handled (deleted or already
           // gone); checkpoint every path so a resume skips it.
           for (const p of batch) await markCompleted(p);
@@ -2628,6 +2735,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             try {
               await engine.deletePage(slugs[j], deleteScopedOpts);
               pagesAffected.push(slugs[j]);
+              deletedSlugs.add(slugs[j]);
               await markCompleted(batch[j]);
             } catch (perSlugErr) {
               failedFiles.push({
@@ -2655,6 +2763,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         try {
           await engine.deletePage(slug, deleteOpts);
           pagesAffected.push(slug);
+          deletedSlugs.add(slug);
           await markCompleted(path);
         } catch (err) {
           failedFiles.push({
@@ -2755,6 +2864,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         }
       }
       pagesAffected.push(newSlug);
+      deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
       await markCompleted(to);
       progress.tick(1, newSlug);
     }
@@ -2955,6 +3065,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
+          deletedSlugs.delete(result.slug); // #1284: deleted-then-re-added in the same run → embeddable again
           // issue #1939: record the file path (not slug) so the gate clears any
           // prior failure-ledger row — success resets the auto-skip attempt streak.
           succeededPaths.push(path);
@@ -3129,6 +3240,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //     pin..HEAD diff. Advance to pin.
   //   - pin NOT an ancestor of HEAD (history REWRITE / reset / force-push) →
   //     the tree we imported against is gone. Block; do not advance.
+  let headVerificationSucceeded = false;
   try {
     const currentHead = git(gitContextRoot, ['rev-parse', 'HEAD']);
     if (currentHead !== pin) {
@@ -3144,8 +3256,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           path: '<head>',
           error: `git history rewritten during sync: pinned target ${pin.slice(0, 8)} is no longer an ancestor of HEAD ${currentHead.slice(0, 8)}`,
         });
+      } else {
+        headVerificationSucceeded = true;
       }
       // else: forward progress (enrich committed on top) — safe, advance to pin.
+    } else {
+      headVerificationSucceeded = true;
     }
   } catch (e) {
     // rev-parse failure is itself a drift signal (worktree disappeared).
@@ -3191,6 +3307,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     ...succeededPaths,
     ...filtered.deleted,
     ...filtered.renamed.map(r => r.from),
+    // A prior transient rev-parse timeout records a hard-blocking sentinel that
+    // operators cannot acknowledge manually. Once pin ancestry is verified on
+    // a later run, clear that stale sentinel through the ordinary success path.
+    ...(headVerificationSucceeded ? ['<head>'] : []),
   ];
 
   const gate = await applySyncFailureGate({
@@ -3265,6 +3385,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Log ingest
   await engine.logIngest({
+    // #3242 (attribution sub-bug): credit the sync to the source it wrote
+    // to, not the shared 'default' bucket.
+    ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     source_type: 'git_sync',
     source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
     pages_updated: pagesAffected,
@@ -3368,14 +3491,19 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // sync. Non-mismatch errors stay best-effort (rate limits, transient
   // network) — those shouldn't break sync.
   let embedded = 0;
-  if (!noEmbed && pagesAffected.length > 0 && pagesAffected.length <= 100) {
+  // #1284: never hand deleted slugs to the embedder — embedPage throws
+  // 'Page not found' per deleted slug and logs one error line each. Filter
+  // against this run's confirmed-deleted set (slugs re-imported later in the
+  // run were removed from it at their push sites).
+  const embedSlugs = pagesAffected.filter((s) => !deletedSlugs.has(s));
+  if (!noEmbed && embedSlugs.length > 0 && pagesAffected.length <= 100) {
     try {
       const { runEmbedCore } = await import('./embed.ts');
       const embedOpts = opts.sourceId
-        ? { slugs: pagesAffected, sourceId: opts.sourceId }
-        : { slugs: pagesAffected };
+        ? { slugs: embedSlugs, sourceId: opts.sourceId }
+        : { slugs: embedSlugs };
       await runEmbedCore(engine, embedOpts);
-      embedded = pagesAffected.length;
+      embedded = embedSlugs.length;
     } catch (e: unknown) {
       const { EmbeddingDimMismatchError } = await import('./embed.ts');
       if (e instanceof EmbeddingDimMismatchError) {
@@ -3392,7 +3520,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   return {
     status: 'synced',
     fromCommit: lastCommit,
-    toCommit: headCommit,
+    toCommit: pin,
     added: filtered.added.length,
     modified: filtered.modified.length,
     deleted: filtered.deleted.length,
@@ -4014,7 +4142,7 @@ See also:
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
-  const noEmbed = args.includes('--no-embed');
+  const noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
@@ -4546,6 +4674,9 @@ See also:
           status: r.status,
           ...(r.result ? {
             sync_status: r.result.status,
+            // #3068: surface the partial reason (e.g. pull_failed) so JSON
+            // consumers can distinguish a self-healing timeout from a wedge.
+            ...(r.result.reason ? { reason: r.result.reason } : {}),
             added: r.result.added,
             modified: r.result.modified,
             deleted: r.result.deleted,
@@ -4567,7 +4698,14 @@ See also:
     // Best-effort, stderr-only; skipped on dry-run.
     if (!dryRun) await maybeExtractionNudge(engine);
 
-    if (errCount > 0) process.exit(1);
+    // #3068: any source wedged on a failed pull (partial/pull_failed) makes
+    // the whole --all run non-zero — it will not self-heal on retry, so a
+    // green exit would hide it from cron/monitoring. Timeout-class partials
+    // keep the pre-existing exit-0 behavior (they converge on retry).
+    const pullFailedCount = perSourceResults.filter(
+      (r) => r.status === 'ok' && r.result?.status === 'partial' && r.result.reason === 'pull_failed',
+    ).length;
+    if (errCount > 0 || pullFailedCount > 0) process.exit(1);
     return;
   }
 
@@ -4655,6 +4793,16 @@ See also:
       process.off('SIGINT', onSingleSourceSigint);
     }
     printSyncResult(result);
+    // #3068: a pull_failed partial is NOT a success — unlike timeout-class
+    // partials (which converge on retry), a failing pull will not self-heal.
+    // Exit non-zero so cron/monitoring sees the wedge instead of a green run.
+    // Routed through the owned verdict channel (NOT bare `process.exitCode`,
+    // which PGLite's Emscripten runtime clobbers mid-run — see
+    // src/core/cli-force-exit.ts).
+    if (result.status === 'partial' && result.reason === 'pull_failed') {
+      const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+      setCliExitVerdict(1);
+    }
     // v0.42.7 (#1696, D5): extraction-lag nudge after a completed single-source
     // sync. Fire on every non-error completion (synced | first_sync | up_to_date)
     // — NOT just 'synced'; a fresh/--full import (`first_sync`) is the biggest
@@ -5360,6 +5508,17 @@ function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.
       write(`  Fix the files then re-run 'gbrain sync', or 'gbrain sync --skip-failed' to move on.`);
       break;
     case 'partial':
+      // #3068: a failed (non-timeout) pull with zero imports gets its own
+      // message — "imported 0 of 0" reads like success, but the local
+      // checkout may be behind a remote we could not fetch.
+      if (result.reason === 'pull_failed') {
+        write(
+          `Sync INCOMPLETE at ${result.fromCommit?.slice(0, 8) ?? '<initial>'}: ` +
+          `git pull failed — the local checkout may be behind its remote.`,
+        );
+        write(`  Fix the pull (see the warning above), then re-run 'gbrain sync' (last_commit unchanged; safe to retry).`);
+        break;
+      }
       // v0.41.13.0 (T7 / D-V3-5): --timeout fired before the bookmark write
       // so last_commit is UNCHANGED. The next sync re-walks the same diff
       // and content_hash short-circuits already-imported files at ~10ms each.

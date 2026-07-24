@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from '../helpers/with-env.ts';
-import { hasAnthropicKey } from '../../src/core/ai/anthropic-key.ts';
+import { hasAnthropicKey, resolveAnthropicKey } from '../../src/core/ai/anthropic-key.ts';
 
 const tmpDirs: string[] = [];
 function freshHome(withConfig?: Record<string, unknown>): string {
@@ -58,6 +58,38 @@ describe('hasAnthropicKey', () => {
       { ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
       async () => {
         expect(hasAnthropicKey()).toBe(false);
+      },
+    );
+  });
+});
+
+describe('resolveAnthropicKey (#2048 — subagent config-key auth)', () => {
+  test('env wins over config', async () => {
+    const home = freshHome({ anthropic_api_key: 'sk-from-config' });
+    await withEnv(
+      { ANTHROPIC_API_KEY: 'sk-from-env', GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      async () => {
+        expect(resolveAnthropicKey()).toBe('sk-from-env');
+      },
+    );
+  });
+
+  test('config key returned when env unset', async () => {
+    const home = freshHome({ anthropic_api_key: 'sk-from-config' });
+    await withEnv(
+      { ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      async () => {
+        expect(resolveAnthropicKey()).toBe('sk-from-config');
+      },
+    );
+  });
+
+  test('neither → undefined', async () => {
+    const home = freshHome();
+    await withEnv(
+      { ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      async () => {
+        expect(resolveAnthropicKey()).toBeUndefined();
       },
     );
   });

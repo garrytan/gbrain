@@ -26,6 +26,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import {
   runCycle,
+  resolveSourceForDir,
   ALL_PHASES,
   type CyclePhase,
   type CycleReport,
@@ -85,7 +86,7 @@ interface DreamArgs {
    * `--phase <name>`; bare `--once` is a usage error (there'd be no single
    * phase to target). Applies only to phases with a config `.enabled` gate
    * (patterns, synthesize, conversation_facts_backfill, enrich_thin,
-   * skillopt) — a no-op for phases that always run when named directly.
+   * skillopt, drift) — a no-op for phases that always run when named directly.
    */
   once: boolean;
 }
@@ -366,7 +367,7 @@ Options:
                       unlike toggling the flag on/off around the run, a
                       crash mid-invocation can't leave it stuck. Applies to
                       patterns, synthesize, conversation_facts_backfill,
-                      enrich_thin, skillopt; no-op on phases with no such
+                      enrich_thin, skillopt, drift; no-op on phases with no such
                       gate. Requires an EXPLICIT --phase <name> — a phase
                       implied by --input or --drain does not count (bare
                       --once, or --once with --input/--drain and no
@@ -380,9 +381,9 @@ Options:
 
   --source <id>       Scope the cycle to one source so doctor's
                       cycle_freshness check sees a fresh stamp on
-                      completion. Without this, gbrain dream's
-                      timestamp never lands and federated brains
-                      see "stale cycle" forever.
+                      completion. When omitted, gbrain derives the
+                      source from --dir / the configured checkout
+                      when it matches a source's local_path (#1869).
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 
@@ -633,6 +634,25 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       'Pass --dir <path> or configure a brain via `gbrain init`.',
     );
     process.exit(1);
+  }
+
+  // #1869: a path-scoped run (--dir, or the configured sync.repo_path) whose
+  // directory matches a registered source's local_path IS that source's cycle
+  // — derive the source id so runCycle writes last_source_cycle_at /
+  // last_full_cycle_at on success and doctor's cycle_freshness check stops
+  // reading perpetually stale. Explicit --source still wins (resolved above).
+  // Fixed here at the command level, NOT in runCycle's stamp gate, so legacy
+  // global callers (autopilot-global-maintenance runs GLOBAL_PHASES with a
+  // brainDir and no sourceId) can't falsely stamp per-source freshness.
+  // A derived match on an archived source is skipped silently (falls back to
+  // legacy unscoped behavior) — stamping it would mask staleness on restore,
+  // mirroring the explicit --source archived guard above.
+  if (resolvedSourceId === undefined && engine !== null && brainDir !== null) {
+    const derived = await resolveSourceForDir(engine, brainDir);
+    if (derived !== undefined) {
+      const src = await fetchSource(engine, derived);
+      if (src?.archived !== true) resolvedSourceId = derived;
+    }
   }
   // ─── issue #1678: bounded single-hold extract_atoms drain ──────────
   if (opts.drain) {

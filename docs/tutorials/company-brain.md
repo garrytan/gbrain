@@ -484,6 +484,10 @@ Returns a per-source dashboard: when each source last synced, how many pages, ho
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
 
+### If agents run as containers on the same Docker host
+
+OAuth source scoping only guards the HTTP MCP path. If the brain's Postgres and your teammates' agent runtimes are containers on the same Docker host, make sure the agents can't reach Postgres directly over Docker's default bridge network — a direct DB session skips OAuth entirely. Put Postgres on its own user-defined network, publish it loopback-only if at all, and never hand agent containers a `DATABASE_URL`. The copy-paste operator checklist lives in [docs/mcp/DEPLOY.md — Co-located Docker workloads](../mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
+
 ---
 
 ## Part 13: Cost and speed expectations

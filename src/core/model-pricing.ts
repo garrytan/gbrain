@@ -75,6 +75,11 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-4o':                        { input:  2.50, output: 10.00 },
   'openai:gpt-4o-mini':                   { input:  0.15, output:  0.60 },
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
+  // gpt-5.2: rates from the OpenAI recipe chat touchpoint (verified
+  // 2026-04-20). Needed here because it's the cross-modal DEFAULT_SLOTS
+  // slot-A model — without a canonical entry estimateCost silently drops
+  // slot A from the --max-usd pre-flight and est_cost_usd audit rows.
+  'openai:gpt-5.2':                       { input:  1.25, output: 10.00 },
   'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
 
   // ── Google ─────────────────────────────────────────────────────────────

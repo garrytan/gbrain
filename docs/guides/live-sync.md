@@ -21,14 +21,17 @@ GBrain is tuned for the Supabase **Transaction pooler** (port 6543): it
 auto-disables prepared statements there and routes `engine.transaction()`
 (migrations, DDL, sync imports) to a derived **direct** connection
 (`db.<ref>.supabase.co:5432`). That direct host is IPv6-only, so on an
-IPv4-only host, reads work but sync **silently skips most pages**. This is the
-number one cause of "sync ran but nothing happened."
+IPv4-only host it is unreachable. When that happens gbrain now falls back to
+the pooler automatically (one stderr warning, then single-pool mode for the
+rest of the process) — but the pooler's ~2-min statement timeout can truncate
+very long migrations or bulk imports.
 
 Fix: make the direct connection reachable over IPv4. Either set
 `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port 5432 on the
-`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on. Verify by
-running `gbrain sync` and checking that the page count in `gbrain stats` matches
-the syncable file count in the repo.
+`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on.
+`GBRAIN_DISABLE_DIRECT_POOL=1` skips the direct pool (and the fallback warning)
+entirely. Verify by running `gbrain sync` and checking that the page count in
+`gbrain stats` matches the syncable file count in the repo.
 
 ### The Primitives
 

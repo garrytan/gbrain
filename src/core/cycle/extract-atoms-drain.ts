@@ -33,8 +33,14 @@ export interface ExtractAtomsDrainDeps {
    * routine cycle's skip contract.
    */
   withLock: <T>(work: () => Promise<T>) => Promise<T>;
-  /** Process one bounded batch (rediscovers eligibility). Returns counts. */
-  runBatch: () => Promise<{ extracted: number; skipped: number }>;
+  /**
+   * Process one bounded batch (rediscovers eligibility). Returns counts, plus
+   * `providerFailure` (issue #3218) when EVERY item the batch attempted threw
+   * (zero items succeeded, at least one failure) — i.e. the batch's warning
+   * result was actually a total provider outage, not a partial/no-op batch.
+   * Omit/false for the ordinary partial-success or nothing-to-do cases.
+   */
+  runBatch: () => Promise<{ extracted: number; skipped: number; providerFailure?: boolean }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
   countRemaining: () => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
@@ -52,15 +58,22 @@ export interface ExtractAtomsDrainOpts {
 
 export interface ExtractAtomsDrainResult {
   phase: 'extract_atoms';
-  status: 'ok';
+  /**
+   * issue #3218: 'provider_failure' when any batch reported `providerFailure`
+   * (every item it attempted errored). The Minion handler throws on this
+   * status so the durable job retries instead of completing over a backlog
+   * that made zero forward progress. Partial-success batches (>=1 item
+   * succeeded) always report 'ok', unchanged from before.
+   */
+  status: 'ok' | 'provider_failure';
   extracted: number;
   skipped: number;
   /** Eligible pages still pending after the window. null if the count errored. */
   remaining: number | null;
   /** Batches actually processed. */
   batches: number;
-  /** Why the loop stopped: drained | window | no_progress | max_batches. */
-  stopped: 'drained' | 'window' | 'no_progress' | 'max_batches';
+  /** Why the loop stopped: drained | window | no_progress | max_batches | provider_failure. */
+  stopped: 'drained' | 'window' | 'no_progress' | 'max_batches' | 'provider_failure';
 }
 
 export async function runExtractAtomsDrain(
@@ -74,6 +87,10 @@ export async function runExtractAtomsDrain(
     let skipped = 0;
     let batches = 0;
     let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
+    // issue #3218: latched once any batch reports providerFailure — drives
+    // the returned `status`, independent of how `stopped` reads after the
+    // final (possibly overriding) remaining-count check below.
+    let providerFailure = false;
 
     while (deps.now() < deadline) {
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
@@ -87,15 +104,47 @@ export async function runExtractAtomsDrain(
       batches++;
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
+      // issue #3218: every item this batch attempted failed (0 succeeded, >=1
+      // error) — a total provider outage, not ordinary no-op/partial progress.
+      // Stop immediately (same hot-loop guard as no_progress below) and flag
+      // it so the caller can retry via its own policy instead of treating the
+      // drain as a clean completion.
+      if (r.providerFailure) {
+        providerFailure = true;
+        stopped = 'provider_failure';
+        break;
+      }
+
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
       // that spends budget without draining.
-      if (r.extracted === 0 && r.skipped === 0) { stopped = 'no_progress'; break; }
+      //
+      // #2144: a zero-ATOM batch can still be progress — tombstoned
+      // zero-yield pages shrink the backlog without producing atoms. Only
+      // stop when the backlog count genuinely didn't move.
+      if (r.extracted === 0 && r.skipped === 0) {
+        const after = await deps.countRemaining();
+        if (after === null || before === null || after >= before) { stopped = 'no_progress'; break; }
+      }
     }
 
     const remaining = await deps.countRemaining();
-    if (remaining === 0) stopped = 'drained';
-    return { phase: 'extract_atoms', status: 'ok', extracted, skipped, remaining, batches, stopped };
+    // issue #3218 (codex P2): don't let a final remaining===0 recount
+    // overwrite 'provider_failure' back to 'drained' — that would report the
+    // contradictory {status: 'provider_failure', stopped: 'drained'} and
+    // mislead the CLI/JSON consumer (dream.ts prints both fields verbatim).
+    // status already takes precedence for the Minion handler's retry
+    // decision; keep `stopped` consistent with it once a failure latched.
+    if (!providerFailure && remaining === 0) stopped = 'drained';
+    return {
+      phase: 'extract_atoms',
+      status: providerFailure ? 'provider_failure' : 'ok',
+      extracted,
+      skipped,
+      remaining,
+      batches,
+      stopped,
+    };
   });
 }
 
@@ -157,9 +206,22 @@ export async function runExtractAtomsDrainForSource(
           brainDir: opts.brainDir,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
+        // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
+        // (partial success — leave the drain's existing ok/no_progress path
+        // alone) or EVERY item failed (a total provider outage the drain
+        // adapter was silently swallowing). Re-derive the total-failure case
+        // from the per-item counts `runPhaseExtractAtoms` already returns:
+        // >=1 failure AND zero items successfully processed (transcripts_processed
+        // + pages_processed both 0 means every attempted `chat()` call threw —
+        // items that succeed with 0 atoms still count as processed, so this
+        // does not fire on "provider fine, nothing extractable").
+        const failures = Array.isArray(d.failures) ? d.failures : [];
+        const itemsSucceeded =
+          Number(d.transcripts_processed ?? 0) + Number(d.pages_processed ?? 0);
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
+          providerFailure: failures.length > 0 && itemsSucceeded === 0,
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
