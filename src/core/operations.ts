@@ -737,11 +737,15 @@ export interface Operation {
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a page by slug (supports optional fuzzy matching). Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
+  description: 'Read a page by slug (supports optional fuzzy matching and per-call source narrowing). Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: {
+      type: 'string',
+      description: 'v0.43 — optional per-call source narrowing. Grant-bound for remote callers; trusted-local callers may pass any source.',
+    },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -755,7 +759,11 @@ const get_page: Operation = {
     // now honors sourceIds[] (both engines), so the same scope closes both paths.
     // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
     // read sees pages in `federated: true` sources, matching search/query.
-    const sourceOpts = federatedSearchScope(ctx);
+    // v0.43: optional per-call source_id narrows the scope further.
+    const sourceOpts = federatedSearchScope(
+      ctx,
+      typeof p.source_id === 'string' ? p.source_id : undefined,
+    );
     const fuzzyScope = sourceOpts;
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
@@ -1484,7 +1492,6 @@ const list_pages: Operation = {
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
-    limit: { type: 'number', description: 'Max results (default 50)' },
     // v0.29 — surface filter that already exists on PageFilters.
     updated_after: {
       type: 'string',
@@ -1496,6 +1503,15 @@ const list_pages: Operation = {
       description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
+    source_id: {
+      type: 'string',
+      description: 'v0.43 — optional per-call source narrowing. Grant-bound for remote callers; trusted-local callers may pass any source.',
+    },
+    limit: { type: 'number', description: 'Max results. Clamped to 1–100 (default 100).' },
+    offset: {
+      type: 'number',
+      description: 'Skip first N results for pagination (default 0). Must be a nonnegative safe integer.',
+    },
   },
   handler: async (ctx, p) => {
     // Whitelist the sort enum at the handler before passing to the engine.
@@ -1512,11 +1528,21 @@ const list_pages: Operation = {
     // pages indiscriminately.
     // #3242: federatedSearchScope so unqualified listing spans federated
     // sources (same visibility set as search / get_page). Grants still win.
-    const scope = federatedSearchScope(ctx);
+    // v0.43: optional per-call source_id narrows the scope further.
+    const scope = federatedSearchScope(
+      ctx,
+      typeof p.source_id === 'string' ? p.source_id : undefined,
+    );
+    // v0.43: offset for deterministic pagination; validated by dispatch.
+    const rawOffset = p.offset as number | undefined;
+    const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset)
+      ? Math.max(0, Math.trunc(rawOffset))
+      : 0;
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      offset,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
