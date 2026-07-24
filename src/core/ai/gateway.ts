@@ -1629,6 +1629,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
     modelId,
     effectiveDims,
     opts?.inputType,
+    recipe.touchpoints?.embedding?.trust_custom_dims === true,
   );
   const expected = effectiveDims;
 

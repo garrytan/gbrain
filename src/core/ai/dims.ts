@@ -164,12 +164,26 @@ export function supportsNvidiaEmbeddingDimension(modelId: string, dims: number):
  * `'document'`. Per-model filtering happens INSIDE the switch — the field
  * is NEVER emitted for providers that don't accept it (OpenAI text-3,
  * DashScope, Zhipu) so the request body stays clean for those endpoints.
+ *
+ * `trustCustomDims` — recipes that declare `trust_custom_dims: true`
+ * (ollama, llama-server) promise every listed embedding model accepts
+ * OpenAI-shaped `dimensions` truncation (Ollama's `/v1/embeddings` honors
+ * it; llama-server serves whatever model the user launched, so the user
+ * is asserting it does too). Before this flag was wired here, it only
+ * relaxed the schema-width validation in embedding-dim-check.ts — a brain
+ * could be configured for a truncated width, but the gateway silently
+ * requested the model's native (larger) output, producing a dim mismatch
+ * that only surfaced at first embed (or in `gbrain doctor`'s live probe).
+ * This is the generic fallback for any openai-compatible recipe that
+ * opts in, so it covers ollama, llama-server, and future local-model
+ * recipes uniformly instead of a per-model allowlist entry each time.
  */
 export function dimsProviderOptions(
   implementation: Implementation,
   modelId: string,
   dims: number,
   inputType?: 'query' | 'document',
+  trustCustomDims?: boolean,
 ): Record<string, any> | undefined {
   switch (implementation) {
     case 'native-openai': {
@@ -321,6 +335,16 @@ export function dimsProviderOptions(
       // inputType==='query' → type:'query', else 'db'.
       if (modelId === 'embo-01') {
         return { openaiCompatible: { type: 'db' } };
+      }
+      // Generic trust_custom_dims fallback (ollama, llama-server, and any
+      // future local-model recipe that opts in). These recipes serve
+      // arbitrary user-launched/pulled models, so there's no fixed model-id
+      // allowlist to match against — the recipe's own `trust_custom_dims`
+      // flag is the signal that its OpenAI-compatible endpoint honors
+      // `dimensions` truncation. Symmetric retrieval assumed — inputType
+      // ignored, matching the DashScope/Zhipu/text-3 branches above.
+      if (trustCustomDims) {
+        return { openaiCompatible: { dimensions: dims } };
       }
       return undefined;
   }
