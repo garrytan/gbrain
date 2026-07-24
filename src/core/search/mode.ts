@@ -94,8 +94,10 @@ export interface ModeBundle {
    */
   searchLimit: number;
   /**
-   * v0.35.0.0+ — cross-encoder reranker. Off for conservative/balanced,
-   * on for tokenmax. ZeroEntropy zerank-2 by default; can be overridden
+   * v0.35.0.0+ — cross-encoder reranker. Off for conservative, ON for
+   * balanced + tokenmax (the balanced bundle flipped it on so the rerank
+   * quality story reaches default installs — see the balanced bundle's
+   * inline comment). ZeroEntropy zerank-2 by default; can be overridden
    * via `search.reranker.model`. Slots between dedup and token-budget
    * enforcement in hybrid.ts; fail-open on any RerankError (audit-logged).
    * Cost anchor: ~$0.0003/query at tokenmax topNIn=30 × ~400 tokens/chunk

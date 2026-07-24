@@ -1571,9 +1571,13 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  * v0.35.0.0+ reranker_health doctor check.
  *
  * Logic (post-CDX2 review):
- *   1) Read `search.reranker.enabled` first. When disabled and no
- *      failures in window → 'ok: reranker disabled'. Avoids interpreting
- *      "no events" as "broken" when reranker is simply not in use.
+ *   1) Resolve effective reranker enablement through the mode-bundle chain
+ *      (per-key `search.reranker.enabled` override > `search.mode` bundle >
+ *      balanced fallback — the same resolution hybridSearch uses). When
+ *      disabled and no failures in window → 'ok: reranker disabled'. Avoids
+ *      interpreting "no events" as "broken" when reranker is simply not in
+ *      use — and avoids claiming "disabled" on a default balanced-mode brain
+ *      where the bundle enables it (the raw key is unset there).
  *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
  *   3) Auth failures: ANY single one warns (config-time problem doctor's
  *      own probe should have caught — surface it).
@@ -1582,20 +1586,38 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *   5) Payload-too-large failures: warn at >=1 (indicates a workload
  *      mismatch that the operator should know about).
  *
- * Engine-agnostic (file-based + one config-key read).
+ * Engine-agnostic (file-based + config reads). Accepts a null engine
+ * (`--fast` / DB-down): the audit JSONL needs no DB, so failure counts still
+ * surface; only the zero-failure message loses the enabled/disabled nuance
+ * (issue #2059 item 3 — the check used to be silently skipped in exactly the
+ * degraded states where its signal matters most).
+ *
+ * Config-read failures fail open BY DESIGN: `loadSearchModeConfig` swallows
+ * `getConfig` errors and falls back to bundle defaults (its documented
+ * contract; hybridSearch relies on the same). The audit file is this check's
+ * core signal — a broken config table must not mask real failure counts, and
+ * "disabled" can only ever be claimed from a successfully-read explicit
+ * override, never from a failure. (Pre-mode-resolution, a throwing getConfig
+ * made the whole check warn "Could not check reranker audit" even with a
+ * perfectly readable audit file — that was the wrong shape.)
  */
-export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
+export async function checkRerankerHealth(engine: BrainEngine | null): Promise<Check> {
   try {
     const { readRecentRerankFailures } = await import('../core/rerank-audit.ts');
-    const cfg = await engine.getConfig('search.reranker.enabled');
-    const rerankerEnabled = cfg === 'true' || cfg === '1';
+    let rerankerEnabled = false;
+    if (engine) {
+      const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
+      rerankerEnabled = resolveSearchMode(await loadSearchModeConfig(engine)).reranker_enabled;
+    }
 
     const failures = readRecentRerankFailures(7);
     if (failures.length === 0) {
+      // Without an engine the enabled/disabled nuance is unknowable — don't
+      // claim "disabled" from a config key we never read.
       return {
         name: 'reranker_health',
         status: 'ok',
-        message: rerankerEnabled
+        message: engine === null || rerankerEnabled
           ? 'No rerank failures in last 7 days'
           : 'Reranker disabled — no failures expected',
       };
@@ -5624,6 +5646,12 @@ export async function buildChecks(
       }
       checks.push({ name: 'connection', status: 'warn', message: msg });
     }
+    // v0.35.0.0+ reranker_health — the audit JSONL is file-based (no DB),
+    // so `--fast` and DB-down runs still surface rerank failures (#2059
+    // item 3). A null engine only costs the enabled/disabled nuance in the
+    // zero-failure message. Full runs keep their original DB-phase call
+    // site below, so check ordering + progress events are unchanged there.
+    checks.push(await checkRerankerHealth(engine));
     // Early return: caller renders the partial check list + decides exit code.
     // Pre-v0.39 this site called outputResults + process.exit directly; the
     // narrow-seam extract moved both to the runDoctor CLI wrapper.
