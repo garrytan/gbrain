@@ -1542,16 +1542,39 @@ const list_pages: Operation = {
       requestedOffset !== undefined && Number.isFinite(requestedOffset) && requestedOffset > 0
         ? Math.floor(requestedOffset)
         : undefined;
-    const pages = await ctx.engine.listPages({
+    // Probe one row past the effective limit so truncation is detectable
+    // without a COUNT query. The bug class sealed here is SILENT truncation
+    // — an exhaustive consumer (audit, scan, backfill) gets a full-looking
+    // list and never learns rows were dropped, and with the default
+    // updated_desc sort the dropped rows are always the OLDEST, i.e. exactly
+    // the pages such consumers exist to find.
+    const rows = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
-      limit,
+      limit: limit + 1,
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       ...scope,
     });
+    const truncated = rows.length > limit;
+    const pages = truncated ? rows.slice(0, limit) : rows;
+    // Warn only when the caller's limit was NOT honored (unset → default 50):
+    // an explicit honored limit that happens to land on more rows is ordinary
+    // pagination, not a trap. Local (CLI) only — same operator-facing stderr
+    // channel as the put_page unknown-type hint above — but with no isTTY
+    // gate: scripted callers are precisely the consumers that cannot detect
+    // truncation any other way, and stderr keeps stdout parseable for them.
+    // (Local explicit limits are honored unbounded since #3322, so the
+    // requestedLimit > limit arm is defense in depth only.)
+    if (truncated && isLocal && (requestedLimit === undefined || requestedLimit > limit)) {
+      console.error(
+        `[list_pages] output truncated at ${limit} rows (default 50). ` +
+        `Pass an explicit limit, page through with sort=updated_asc + ` +
+        `updated_after=<last row's updated_at>, or narrow with type/tag.`,
+      );
+    }
     return pages.map(pg => ({
       slug: pg.slug,
       source_id: pg.source_id,
