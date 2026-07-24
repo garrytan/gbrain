@@ -554,6 +554,8 @@ export async function runPhaseSynthesize(
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
+    /** #1978: map child job_id → source transcript path so written pages get a raw_source stamp. */
+    const jobRawSource = new Map<number, string>();
     /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
@@ -638,6 +640,7 @@ export async function runPhaseSynthesize(
           { allowProtectedSubmit: true },
         );
         childIds.push(child.id);
+        jobRawSource.set(child.id, t.filePath);
         if (isChunked) {
           chunkInfo.set(child.id, { idx: i, hash6 });
         }
@@ -682,7 +685,7 @@ export async function runPhaseSynthesize(
     // (source, slug) row. #1586: refs are stamped with the cycle's resolved
     // source (children write there via SubagentHandlerData.source_id).
     const cycleSourceId = opts.sourceId ?? 'default';
-    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId);
+    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId, jobRawSource);
 
     const summaryDate = opts.date ?? today();
 
@@ -1234,7 +1237,8 @@ async function collectChildPutPageSlugs(
   childIds: number[],
   chunkInfo: Map<number, { idx: number; hash6: string }>,
   sourceId = 'default',
-): Promise<Array<{ slug: string; source_id: string }>> {
+  jobRawSource?: Map<number, string>,
+): Promise<Array<{ slug: string; source_id: string; raw_source?: string }>> {
   if (childIds.length === 0) return [];
   // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
   // the orchestrator sees what each child wrote. COALESCE handles both
@@ -1256,13 +1260,21 @@ async function collectChildPutPageSlugs(
         AND status = 'complete'`,
     [childIds],
   );
-  const rewritten = new Set<string>();
+  // #1978: slug → source transcript path (first writer wins) so the
+  // provenance stamp can record WHERE the synthesized content came from.
+  const rewritten = new Map<string, string | undefined>();
   for (const r of rows) {
     if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
     const ci = chunkInfo.get(r.job_id);
-    rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
+    const slug = ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug;
+    if (!rewritten.has(slug) || rewritten.get(slug) === undefined) {
+      rewritten.set(slug, jobRawSource?.get(r.job_id));
+    }
   }
-  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: sourceId }));
+  return Array.from(rewritten.keys()).sort().map(slug => {
+    const raw_source = rewritten.get(slug);
+    return { slug, source_id: sourceId, ...(raw_source ? { raw_source } : {}) };
+  });
 }
 
 /**
@@ -1308,12 +1320,12 @@ async function hasLegacySingleChunkCompletion(
  */
 async function stampDreamProvenance(
   engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string }>,
+  refs: Array<{ slug: string; source_id: string; raw_source?: string }>,
   cycleDate: string,
 ): Promise<void> {
   if (refs.length === 0) return;
   const { executeRawJsonb } = await import('../sql-query.ts');
-  for (const { slug, source_id } of refs) {
+  for (const { slug, source_id, raw_source } of refs) {
     try {
       await executeRawJsonb(
         engine,
@@ -1321,7 +1333,14 @@ async function stampDreamProvenance(
             SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $3::jsonb
           WHERE slug = $1 AND source_id = $2`,
         [slug, source_id],
-        [{ dream_generated: true, dream_cycle_date: cycleDate }],
+        // #1978 raw-source persistence: record the transcript path the
+        // synthesis was derived from, so `gbrain doctor` (raw_provenance
+        // check) can verify every generated page carries a raw trace.
+        [{
+          dream_generated: true,
+          dream_cycle_date: cycleDate,
+          ...(raw_source ? { raw_source } : {}),
+        }],
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1423,7 +1442,15 @@ async function writeSummaryPage(
   // parseMarkdown below round-trips it into the DB-stored frontmatter, so the
   // marker survives any later reverse-render of the summary page.
   const fullMarkdown = serializeMarkdown(
-    { dream_generated: true, dream_cycle_date: summaryDate } as Record<string, unknown>,
+    {
+      dream_generated: true,
+      dream_cycle_date: summaryDate,
+      // #1978: deterministic index page — no source document of its own;
+      // raw traces live on the listed pages. Explicit exemption keeps the
+      // doctor raw_provenance check quiet.
+      raw_trace_exempt: true,
+      raw_trace_exempt_reason: 'deterministic dream-cycle index; raw traces live on listed pages',
+    } as Record<string, unknown>,
     body,
     '',
     { type: 'note' as string, title: `Dream cycle ${summaryDate}`, tags: ['dream-cycle'] },

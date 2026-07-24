@@ -26,6 +26,8 @@ export async function runInit(args: string[]) {
     return;
   }
 
+  validateInitFlags(args);
+
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isMcpOnly = args.includes('--mcp-only');
@@ -149,6 +151,65 @@ export async function runInit(args: string[]) {
   }
 
   return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack, skipEmbedCheck });
+}
+
+const INIT_BOOLEAN_FLAGS = new Set([
+  '--pglite',
+  '--supabase',
+  '--mcp-only',
+  '--force',
+  '--non-interactive',
+  '--migrate-only',
+  '--json',
+  '--no-embedding',
+  '--skip-embed-check',
+]);
+
+const INIT_VALUE_FLAGS = new Set([
+  '--url',
+  '--key',
+  '--path',
+  '--schema-pack',
+  '--embedding-model',
+  '--model',
+  '--embedding-dimensions',
+  '--expansion-model',
+  '--chat-model',
+  '--mcp-url',
+  '--issuer-url',
+  '--oauth-client-id',
+  '--oauth-client-secret',
+]);
+
+function validateInitFlags(args: string[]) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith('-')) continue;
+
+    if (INIT_BOOLEAN_FLAGS.has(arg)) continue;
+
+    if (INIT_VALUE_FLAGS.has(arg)) {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        failInitFlag(`gbrain init: ${arg} requires a value`, args.includes('--json'));
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--')) {
+      failInitFlag(`gbrain init: unknown flag ${arg}`, args.includes('--json'));
+    }
+  }
+}
+
+function failInitFlag(message: string, jsonOutput: boolean): never {
+  if (jsonOutput) {
+    console.log(JSON.stringify({ status: 'error', reason: 'invalid_flag', message }));
+  } else {
+    console.error(message);
+    console.error('Run `gbrain init --help` for supported flags.');
+  }
+  process.exit(1);
 }
 
 interface ResolveAIOptionsArgs {
@@ -1491,7 +1552,7 @@ export function reportModStatus(): void {
     console.log('  cd ~/.claude/skills/gstack && ./setup');
   }
   console.log('Resolver: skills/RESOLVER.md');
-  console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  console.log('Soul audit: ask your agent to "run a soul audit" to customize its identity (see skills/soul-audit)');
   // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
   // (no action needed). The policy skill is installed into the HOST repo on
   // request — we PRINT the command rather than silently mutating the host repo.

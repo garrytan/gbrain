@@ -529,6 +529,61 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   };
 }
 
+/**
+ * Raw-source persistence guarantee (#1978, warn-only v1).
+ *
+ * Invariant: every synthesized/derived page (dream_generated:true frontmatter
+ * or type:synthesis) must either carry a raw trace or declare an explicit
+ * exemption. Accepted traces:
+ *   - frontmatter key `raw_trace` / `raw_source` / `source_uri`
+ *   - an attached `raw_data` row
+ *   - `synthesis_evidence` rows (think-op citations)
+ *   - explicit `raw_trace_exempt: true` (reason in `raw_trace_exempt_reason`)
+ *
+ * v1 is deliberately warn-only — no write path is blocked. Escalation to
+ * fail-closed enforcement in the synthesis/import write paths is the v2
+ * follow-up once real brains run clean.
+ *
+ * Pure helper (engine.executeRaw only) for parity with
+ * childTableOrphansCheck so tests can target it directly.
+ */
+export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
+  const where = `
+        p.deleted_at IS NULL
+    AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
+    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
+    AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
+    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
+  try {
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE ${where}`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    if (n === 0) {
+      return {
+        name: 'raw_provenance',
+        status: 'ok',
+        message: 'All synthesized pages carry a raw trace or explicit exemption',
+      };
+    }
+    const sample = await engine.executeRaw<{ slug: string }>(
+      `SELECT p.slug FROM pages p WHERE ${where} ORDER BY p.slug LIMIT 5`,
+    );
+    const slugs = sample.map(r => r.slug).join(', ');
+    return {
+      name: 'raw_provenance',
+      status: 'warn',
+      message:
+        `${n} synthesized page(s) lack a raw trace (no raw_trace/raw_source/source_uri frontmatter, ` +
+        `raw_data row, or synthesis evidence) and carry no raw_trace_exempt marker. e.g. ${slugs}. ` +
+        `Fix: stamp raw_source (path/URI of the source material) or raw_trace_exempt: true + ` +
+        `raw_trace_exempt_reason in frontmatter. Warn-only (#1978).`,
+    };
+  } catch {
+    return { name: 'raw_provenance', status: 'warn', message: 'Could not check raw provenance (older schema?)' };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -6290,6 +6345,12 @@ export async function buildChecks(
   progress.heartbeat('child_table_orphans');
   checks.push(await childTableOrphansCheck(engine));
 
+  // 10d. Raw-source persistence guarantee (#1978, warn-only v1).
+  // Every synthesized/derived page must carry a raw trace or an explicit
+  // exemption. Warn-only in v1 — surfaces violations, blocks nothing.
+  progress.heartbeat('raw_provenance');
+  checks.push(await rawProvenanceCheck(engine));
+
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the
   // "did you do the assignment?" signal.
@@ -7863,27 +7924,71 @@ export async function runRemediationPlan(
     return;
   }
 
-  // Human output
-  console.log(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
+  for (const line of renderRemediationPlanLines(plan, targetScore)) {
+    console.log(line);
+  }
+}
+
+/**
+ * Human-render the remediation plan into a sequence of console lines.
+ * Exported for unit-test access — `runRemediationPlan` consumes it
+ * verbatim and only adds the JSON-mode short-circuit.
+ *
+ * Gating the "at target" line on `brain_score_current >= targetScore`
+ * is load-bearing: when the plan is empty AND the target is unreachable,
+ * the prior shape printed both "Target unreachable: …" and "Brain is at
+ * target" back-to-back, which contradicted itself and hid the real next
+ * step (manual prereq config to lift `max_reachable_score`).
+ */
+export function renderRemediationPlanLines(
+  plan: RemediationPlanShape,
+  targetScore: number,
+): string[] {
+  const lines: string[] = [];
+  lines.push(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
   if (plan.target_unreachable) {
-    console.log(`Target unreachable: max with autonomous remediation is ${plan.max_reachable_score}/100.`);
+    lines.push(`Target unreachable: max with autonomous remediation is ${plan.max_reachable_score}/100.`);
   }
   if (plan.plan.length === 0) {
-    console.log('No remediations needed. Brain is at target.');
+    if (plan.brain_score_current >= targetScore) {
+      lines.push('No remediations needed. Brain is at target.');
+    }
+    // When brain_score < targetScore and plan is empty, the unreachable
+    // line (if applicable) is the user-facing explanation; the blocked-
+    // checks block below surfaces the manual gap. Don't follow with a
+    // misleading "at target" claim.
   } else {
-    console.log(`Plan: ${plan.plan.length} step(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
+    lines.push(`Plan: ${plan.plan.length} step(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
     for (const step of plan.plan) {
       const protectedMark = step.protected ? ' [PROTECTED]' : '';
       const costMark = step.est_usd_cost ? ` ($${step.est_usd_cost.toFixed(2)})` : '';
-      console.log(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
+      lines.push(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
     }
   }
   if (plan.blocked.length > 0) {
-    console.log(`\nBlocked checks (prereq missing):`);
+    lines.push(`\nBlocked checks (prereq missing):`);
     for (const b of plan.blocked) {
-      console.log(`  - ${b.check}: ${b.reason}`);
+      lines.push(`  - ${b.check}: ${b.reason}`);
     }
   }
+  return lines;
+}
+
+interface RemediationPlanShape {
+  brain_score_current: number;
+  target_unreachable: boolean;
+  max_reachable_score: number;
+  plan: Array<{
+    step: number;
+    severity: string;
+    job: string;
+    protected?: boolean;
+    est_usd_cost?: number;
+    rationale: string;
+  }>;
+  est_total_seconds: number;
+  est_total_usd_cost: number;
+  blocked: Array<{ check: string; reason: string }>;
 }
 
 /**

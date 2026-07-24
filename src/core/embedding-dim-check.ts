@@ -32,6 +32,10 @@ import {
   nvidiaEmbeddingDim,
   nvidiaEmbeddingDimOptions,
   supportsNvidiaEmbeddingDimension,
+  isPerplexityEmbeddingModel,
+  isValidPerplexityDim,
+  maxPerplexityEmbeddingDim,
+  PERPLEXITY_MIN_DIMS,
 } from './ai/dims.ts';
 
 /**
@@ -460,6 +464,15 @@ function isCustomDimValidForProvider(
       error:
         `ZeroEntropy model "${modelId}" does not support custom dimensions ${requestedDims} ` +
         `(allowed: ${ZEROENTROPY_VALID_DIMS.join(', ')}).`,
+    };
+  }
+  if (recipe.id === 'perplexity' && isPerplexityEmbeddingModel(modelId)) {
+    if (isValidPerplexityDim(modelId, requestedDims)) return { valid: true, error: '' };
+    return {
+      valid: false,
+      error:
+        `Perplexity ${modelId} accepts dimensions ${PERPLEXITY_MIN_DIMS}..${maxPerplexityEmbeddingDim(modelId)}, ` +
+        `got ${requestedDims}.`,
     };
   }
   if (recipe.id === 'openai' && isOpenAITextEmbedding3Model(modelId)) {

@@ -292,7 +292,7 @@ async function cmdSupersede(engine: BrainEngine, args: string[], sourceId?: stri
     const pageId = await getPageId(engine, slug, sourceId);
 
     // Read existing row to inherit kind/holder unless overridden
-    const existing = await engine.listTakes({ page_id: pageId, active: false, limit: 500 });
+    const existing = await engine.listTakes({ page_id: pageId, active: true, limit: 500 });
     const target = existing.find(t => t.row_num === rowNum);
     if (!target) {
       console.error(`Row #${rowNum} not found on ${slug}.`);

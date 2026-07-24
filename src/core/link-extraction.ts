@@ -960,8 +960,17 @@ export function makeResolver(
 
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
 
-      // Step 1: already a slug? (dir/name shape, lowercase, hyphenated)
-      if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed)) {
+      // Step 1: already a slug? Try an exact page lookup for any slug-shaped
+      // value (contains '/', slug charset). Broadened beyond the original
+      // single-segment lowercase-leading form (`^[a-z][a-z0-9-]*\/[a-z0-9]...`)
+      // to also accept digit-leading folders (`90-people/nicolai`,
+      // `01-trading/...`) and nested paths (`a/b/c`) — common in PARA-numbered
+      // vaults. This is an EXACT getPage match only — no fuzzy — so it never
+      // produces a false positive; a non-existent slug just falls through to
+      // the steps below. Fixes frontmatter `related: [[dir/slug]]` values
+      // (unwrapped by unwrapWikilink) that name a real page the strict regex
+      // could not reach and whose full-path fuzzy score is below threshold.
+      if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed)) {
         const page = await engine.getPage(trimmed);
         if (page) {
           cache.set(cacheKey, trimmed);
@@ -1025,6 +1034,25 @@ export function makeResolver(
 
 // ─── Frontmatter extractor ──────────────────────────────────────
 
+/**
+ * Unwrap an Obsidian `[[wikilink]]` frontmatter value to its bare link
+ * target so the resolver (which expects bare titles / dir slugs) can match
+ * it. Mainstream Obsidian authors frontmatter links as `related: ["[[Page]]"]`;
+ * without this, the resolver treats the brackets as part of the value and a
+ * `[[90-people/nicolai]]` is normalized into `90peoplenicolai`, so it never
+ * resolves. Strips a trailing `|alias`, `#heading`, or `^block` suffix — the
+ * link target only. The regex is anchored to a wholly-wrapped value
+ * (`^\s*\[\[…\]\]\s*$`), so bare titles and any value not fully wrapped pass
+ * through unchanged and existing behavior is preserved exactly.
+ */
+export function unwrapWikilink(value: string): string {
+  const match = /^\s*\[\[(.+?)\]\]\s*$/.exec(value);
+  if (!match) return value;
+  // Take the link target: drop |alias, then #heading / ^block suffixes.
+  const target = match[1].split('|')[0].split('#')[0].split('^')[0];
+  return target.trim();
+}
+
 export interface UnresolvedFrontmatterRef {
   /** The frontmatter field name. */
   field: string;
@@ -1045,18 +1073,6 @@ export interface FrontmatterExtractResult {
  * Arrays of objects: uses the `name` or `slug` property (codex tension 6.3).
  * Non-string / non-object entries: silently skipped (log-only).
  */
-/**
- * Unwrap an Obsidian-style `[[wikilink]]` frontmatter value to its bare link
- * target: drops the surrounding brackets, any `|alias`, and `#heading` /
- * `^block` suffixes. Non-bracketed values pass through unchanged. Used to feed
- * the basename index when global_basename is on (see extractFrontmatterLinks).
- */
-function unwrapWikilink(value: string): string {
-  const match = /^\s*\[\[(.+?)\]\]\s*$/.exec(value);
-  if (!match) return value;
-  return match[1].split('|')[0].split('#')[0].split('^')[0].trim();
-}
-
 export async function extractFrontmatterLinks(
   slug: string,
   pageType: PageType,
@@ -1095,7 +1111,12 @@ export async function extractFrontmatterLinks(
         }
         if (!name) continue;   // skip numbers, nulls, malformed objects
 
-        let resolved = await resolver.resolve(name, mapping.dirHint);
+        // Accept Obsidian `[[wikilink]]` values in frontmatter link fields by
+        // unwrapping to the bare target before resolution. Bare titles pass
+        // through unchanged; the original `name` is preserved for the
+        // unresolved report and edge context.
+        const linkTarget = unwrapWikilink(name);
+        let resolved = await resolver.resolve(linkTarget, mapping.dirHint);
         if (!resolved && globalBasename && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to
           // frontmatter link fields. resolve() can't reach a bare-title
@@ -1104,11 +1125,10 @@ export async function extractFrontmatterLinks(
           // field's dirHint may name folders that don't exist in this brain,
           // so the dir-scoped exact + fuzzy steps miss too. When
           // link_resolution.global_basename is on, fall back to the SAME
-          // basename index the body bare-wikilink pass uses, after unwrapping
-          // the brackets. Unique-match-only: ambiguous basenames (e.g. archive
-          // duplicates, generic hubs like `_index`) stay unresolved rather than
-          // create a wrong edge.
-          const matches = (await resolver.resolveBasenameMatches(unwrapWikilink(name)))
+          // basename index the body bare-wikilink pass uses. Unique-match-only:
+          // ambiguous basenames (e.g. archive duplicates, generic hubs like
+          // `_index`) stay unresolved rather than create a wrong edge.
+          const matches = (await resolver.resolveBasenameMatches(linkTarget))
             .filter((s) => s !== slug);
           if (matches.length === 1) resolved = matches[0];
         }
