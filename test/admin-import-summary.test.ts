@@ -58,6 +58,35 @@ describe('Admin folder import summary', () => {
     expect(summary?.markdown).toContain('broken.pptx（无法提取正文）');
   });
 
+  test('uses the final command totals when per-file logs were truncated', () => {
+    const summary = summarizeImportRun(
+      { slots: { path: 'D:\\duwu' } },
+      {
+        status: 'failed',
+        stdout: [
+          'Found 2057 markdown files',
+          'Import complete (398.7s):',
+          '  20 pages imported',
+          '  2037 pages skipped (2034 unchanged, 3 errors)',
+          '  100 chunks created',
+        ].join('\n'),
+        stderr: [
+          '[pmbrain import-file] {"status":"imported","path":"tail-a.md","chunks":2}',
+          '[pmbrain import-file] {"status":"unchanged","path":"tail-b.md","reason":"内容未变化"}',
+          '[pmbrain import-file] {"status":"failed","path":"tail-c.md","reason":"无法解析"}',
+        ].join('\n'),
+      },
+    );
+
+    expect(summary?.badge).toBe('部分完成');
+    expect(summary?.markdown).toContain('文件夹导入部分完成');
+    expect(summary?.markdown).toContain('本次已处理全部 2,057 个');
+    expect(summary?.markdown).toContain('成功写入 20 个；未变化跳过 2034 个；失败 3 个');
+    expect(summary?.markdown).toContain('逐文件日志超过显示上限');
+    expect(summary?.markdown).not.toContain('仍有至少');
+    expect(summary?.markdown).not.toContain('本次实际检查 3 个');
+  });
+
   test('keeps a precise single-file oversized explanation', () => {
     const summary = summarizeImportRun(
       { slots: { path: 'D:\\project\\large.xlsx' } },

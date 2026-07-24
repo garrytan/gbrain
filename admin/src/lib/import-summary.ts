@@ -123,6 +123,24 @@ function legacyFailures(text: string): ImportFileReport[] {
   }));
 }
 
+function getCompletionTotals(text: string): {
+  imported: number;
+  skipped: number;
+  unchanged: number;
+  errors: number;
+} | null {
+  const match = text.match(
+    /Import complete \([^)]+\):\s*\r?\n\s*(\d+)\s+pages imported\s*\r?\n\s*(\d+)\s+pages skipped\s*\((\d+)\s+unchanged,\s*(\d+)\s+errors\)/i,
+  );
+  if (!match) return null;
+  return {
+    imported: Number(match[1]),
+    skipped: Number(match[2]),
+    unchanged: Number(match[3]),
+    errors: Number(match[4]),
+  };
+}
+
 export function summarizeImportRun(preview: ImportSummaryPreview, run: ImportSummaryRun): ImportRunSummary | null {
   if (run.status === 'queued' || run.status === 'running') return null;
   const single = summarizeSingleFile(preview, run);
@@ -144,18 +162,25 @@ export function summarizeImportRun(preview: ImportSummaryPreview, run: ImportSum
   const checkpointSkipped = checkpointMatch ? Number(checkpointMatch[1]) : 0;
   const timeoutMatch = text.match(/Command timed out after\s+(\d+)\s+minutes/i);
   const timedOut = Boolean(timeoutMatch);
+  const completionTotals = getCompletionTotals(text);
   const legacyFailed = reports.length === 0 ? legacyFailures(text) : [];
-  const processed = reports.length > 0
-    ? reports.length
-    : latestProgress
-      ? Number(latestProgress[1]) + Number(latestProgress[2])
-      : 0;
+  const processed = completionTotals
+    ? completionTotals.imported + completionTotals.skipped
+    : reports.length > 0
+      ? reports.length
+      : latestProgress
+        ? Number(latestProgress[1]) + Number(latestProgress[2])
+        : 0;
   const legacyImported = latestProgress ? Number(latestProgress[1]) : 0;
   const legacySkipped = latestProgress ? Number(latestProgress[2]) : 0;
   const legacyErrors = latestProgress ? Number(latestProgress[3]) : legacyFailed.length;
   const remaining = total === null ? null : Math.max(0, total - checkpointSkipped - processed);
-  const hasProblems = partial.length > 0 || failed.length > 0 || legacyErrors > 0;
-  const tone: ImportRunSummary['tone'] = timedOut || run.status === 'failed' || run.status === 'cancelled'
+  const reportsTruncated = completionTotals !== null && reports.length < processed;
+  const hasProblems = partial.length > 0
+    || failed.length > 0
+    || legacyErrors > 0
+    || (completionTotals?.errors ?? 0) > 0;
+  const tone: ImportRunSummary['tone'] = timedOut || run.status === 'cancelled' || (run.status === 'failed' && !completionTotals)
     ? 'failed'
     : hasProblems
       ? 'partial'
@@ -165,7 +190,7 @@ export function summarizeImportRun(preview: ImportSummaryPreview, run: ImportSum
     ? `文件夹导入未完成：执行 ${timeoutMatch?.[1] ?? ''} 分钟后达到任务时限，进程已停止。`
     : run.status === 'cancelled'
       ? '文件夹导入已取消。'
-      : run.status === 'failed'
+      : run.status === 'failed' && !completionTotals
         ? '文件夹导入未完成。'
       : hasProblems
         ? '文件夹导入部分完成。'
@@ -173,9 +198,16 @@ export function summarizeImportRun(preview: ImportSummaryPreview, run: ImportSum
 
   const lines = [title];
   if (total !== null) {
-    lines.push(`- 共发现 ${total.toLocaleString('zh-CN')} 个可导入文件；本次实际检查 ${processed.toLocaleString('zh-CN')} 个。`);
+    lines.push(remaining === 0 && checkpointSkipped === 0
+      ? `- 共发现 ${total.toLocaleString('zh-CN')} 个可导入文件；本次已处理全部 ${processed.toLocaleString('zh-CN')} 个。`
+      : `- 共发现 ${total.toLocaleString('zh-CN')} 个可导入文件；本次实际检查 ${processed.toLocaleString('zh-CN')} 个。`);
   }
-  if (reports.length > 0) {
+  if (completionTotals && reportsTruncated) {
+    lines.push(
+      `- 任务完成汇总：成功写入 ${completionTotals.imported} 个；未变化跳过 ${completionTotals.unchanged} 个；失败 ${completionTotals.errors} 个。`,
+      '- 逐文件日志超过显示上限，下面只展示当前保留的日志样例；总数以任务完成汇总为准。',
+    );
+  } else if (reports.length > 0) {
     lines.push(
       `- 完整导入 ${imported.length} 个；正文已保存但未切片/向量化 ${partial.length} 个；未变化跳过 ${unchanged.length} 个；失败 ${failed.length} 个。`,
     );
