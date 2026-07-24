@@ -442,16 +442,26 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
     );
   });
 
-  // Codex found: if v24 RAISE WARNINGs instead of raising on non-BYPASSRLS,
-  // the migration runner still bumps schema_version to 24, permanently
-  // skipping the backfill on future runs even after the role is fixed.
-  // The fix is to raise loudly so the transaction aborts, version stays
-  // at 23, and the next initSchema call retries after role reassignment.
-  test('fails loudly on non-BYPASSRLS roles instead of silently bumping version', () => {
+  // PR #3212: managed-Postgres roles (e.g. RDS/Supabase `postgres`) can never
+  // hold BYPASSRLS, so RAISE EXCEPTION permanently wedged the upgrade chain
+  // on those instances (fresh installs were fine — schema.sql WARNs + skips).
+  // New contract: warn AND PROCEED. This is still fail-closed against the
+  // original Codex hazard ("silent WARNING + version bump without RLS"):
+  // ENABLE ROW LEVEL SECURITY requires table ownership, so a non-owner
+  // non-bypass role errors on the ALTER itself, aborting the DO block and
+  // leaving schema_version unbumped. The guards below pin warn-and-proceed
+  // (ALTERs OUTSIDE the IF branch), never warn-and-skip.
+  test('warns on non-BYPASSRLS roles and still enables RLS (warn-and-proceed, not skip)', () => {
     const v24 = MIGRATIONS.find(m => m.version === 24);
     const sql = v24!.sql || '';
-    expect(sql).toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
-    expect(sql).not.toMatch(/RAISE WARNING[^;]*BYPASSRLS/);
+    expect(sql).toMatch(/RAISE WARNING[^;]*BYPASSRLS/);
+    expect(sql).not.toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
+    // The ALTER statements sit AFTER the guard's END IF — the warning branch
+    // must not swallow the RLS enablement (warn-and-skip would silently bump
+    // the version without RLS, the original hazard).
+    expect(sql).toMatch(
+      /IF NOT has_bypass THEN[\s\S]*?RAISE WARNING[\s\S]*?END IF;[\s\S]*ALTER TABLE \w+ ENABLE ROW LEVEL SECURITY/,
+    );
   });
 
   test('LATEST_VERSION has caught up to 24', () => {
@@ -542,11 +552,12 @@ describe('migration v35 — auto_rls_event_trigger structural guards', () => {
     expect(sql).toMatch(/'\^GBRAIN:RLS_EXEMPT\\s\+reason=\\S\.\{3,\}'/);
   });
 
-  test('backfill is gated on rolbypassrls (matches v24 posture)', () => {
+  test('backfill warns on missing rolbypassrls and proceeds (matches v24 posture, PR #3212)', () => {
     const v35 = MIGRATIONS.find(m => m.version === 35);
     const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
     expect(sql).toMatch(/rolbypassrls/);
-    expect(sql).toMatch(/RAISE\s+EXCEPTION/i);
+    expect(sql).toMatch(/RAISE WARNING[^;]*BYPASSRLS/);
+    expect(sql).not.toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
   });
 });
 
@@ -1339,13 +1350,18 @@ describe('migration v31 — eval_capture_tables', () => {
     }
   });
 
-  test('Postgres variant gates RLS on BYPASSRLS and fails loudly', () => {
+  test('Postgres variant warns on missing BYPASSRLS and still enables RLS (PR #3212 warn-and-proceed)', () => {
     const pgSql = MIGRATIONS.find(m => m.version === 31)!.sqlFor!.postgres!;
     expect(pgSql).toContain('rolbypassrls');
     expect(pgSql).toMatch(/IF NOT has_bypass/);
-    expect(pgSql).toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
+    expect(pgSql).toMatch(/RAISE WARNING[^;]*BYPASSRLS/);
+    expect(pgSql).not.toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
     expect(pgSql).toContain('ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY');
     expect(pgSql).toContain('ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY');
+    // warn-and-proceed: the ALTERs are outside the guard branch.
+    expect(pgSql).toMatch(
+      /IF NOT has_bypass THEN[\s\S]*?RAISE WARNING[\s\S]*?END IF;[\s\S]*ENABLE ROW LEVEL SECURITY/,
+    );
   });
 
   test('PGLite variant has no RLS / no BYPASSRLS gate', () => {

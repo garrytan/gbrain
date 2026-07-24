@@ -906,13 +906,12 @@ export const MIGRATIONS: Migration[] = [
       BEGIN
         SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF NOT has_bypass THEN
-          -- Fail the migration loudly instead of WARNING + version-bump.
-          -- The runner unconditionally records schema_version on success,
-          -- so a silent WARNING here would permanently lock the backfill out
-          -- on future runs even after switching to a bypass role. Raising
-          -- aborts the transaction, leaves schema_version at the prior value,
-          -- and lets the next invocation retry after the role is fixed.
-          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+          -- A non-superuser table OWNER (e.g. a managed-Postgres 'postgres'
+          -- role) can't hold BYPASSRLS, but it OWNS these tables and gbrain
+          -- sets no FORCE ROW LEVEL SECURITY and no policies, so the owner is
+          -- exempt and enabling RLS is a harmless no-op. Aborting would
+          -- permanently wedge the migration chain on such instances.
+          RAISE WARNING 'v24 rls_backfill_missing_tables: role % lacks BYPASSRLS — enabling RLS anyway (owner-exempt; safe on a single-owner DB).', current_user;
         END IF;
 
         -- These 8 are guaranteed to exist: schema.sql creates them (idempotent
@@ -1195,7 +1194,8 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v29 cathedral_ii_code_edges_rls: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            -- Owner-exempt: warn + proceed rather than abort (see v24).
+            RAISE WARNING 'v29 cathedral_ii_code_edges_rls: role % lacks BYPASSRLS — enabling RLS anyway (owner-exempt; safe on a single-owner DB).', current_user;
           END IF;
 
           ALTER TABLE code_edges_chunk ENABLE ROW LEVEL SECURITY;
@@ -1424,7 +1424,8 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v31 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            -- Owner-exempt: warn + proceed rather than abort (see v24).
+            RAISE WARNING 'v31 eval_capture_tables: role % lacks BYPASSRLS — enabling RLS anyway (owner-exempt; safe on a single-owner DB).', current_user;
           END IF;
 
           CREATE TABLE IF NOT EXISTS eval_candidates (
@@ -1764,9 +1765,8 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            -- Same posture as v24: raise to abort the migration so the runner
-            -- leaves config.version unbumped and retries on the next call.
-            RAISE EXCEPTION 'v35 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
+            -- Owner-exempt: warn + proceed rather than abort (see v24).
+            RAISE WARNING 'v35 auto_rls_event_trigger backfill: role % lacks BYPASSRLS — enabling RLS anyway (owner-exempt; safe on a single-owner DB).', current_user;
           END IF;
 
           FOR r IN

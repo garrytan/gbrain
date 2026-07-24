@@ -410,7 +410,10 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // #2825: bumped 11→12 to fold the resolved hard-exclude prefix list
     // (hx=) — cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across
     // processes.
-    expect(KNOBS_HASH_VERSION).toBe(12);
+    // bumped 12→13 to fold the resolved source-boost map (sb=) — a
+    // ranking-policy change (GBRAIN_SOURCE_BOOST tune or new defaults)
+    // must not be served rows ranked under the previous policy.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -575,8 +578,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 12 (11→12 hard-exclude fold, #2825)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(12);
+  test('KNOBS_HASH_VERSION is 13 (12→13 source-boost map fold)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

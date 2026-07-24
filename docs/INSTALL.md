@@ -107,7 +107,7 @@ Useful for: team mounts, brain-as-a-service deployments, dev machines without di
 ```bash
 gbrain doctor --json              # full health check
 gbrain models                     # which AI models are configured for what
-gbrain models doctor              # 1-token probe per configured model
+gbrain models doctor              # minimal reachability probe per configured model
 ```
 
 If anything's yellow, `gbrain doctor` names the fix command in the message. Most issues are missing API keys or stale schema (`gbrain upgrade --force-schema`).
