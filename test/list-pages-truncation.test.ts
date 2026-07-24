@@ -1,12 +1,13 @@
 /**
  * list_pages silent-truncation seal.
  *
- * The op clamps limit to max 100 (default 50) — deliberate, pinned in
- * test/search-limit.test.ts. Pre-fix, a caller whose limit was clamped (or
- * defaulted) received a full-looking array with NO signal that rows were
- * dropped, and with the default updated_desc sort the dropped rows are
- * always the OLDEST — precisely what exhaustive consumers (audits, scans,
- * backfills) exist to find.
+ * The op defaults limit to 50 and clamps remote callers to max 100 (local
+ * explicit limits are honored since #3322 — pinned in
+ * test/list-clamp-local-trust.test.ts). Pre-fix, a caller whose limit was
+ * defaulted (or remotely clamped) received a full-looking array with NO
+ * signal that rows were dropped, and with the default updated_desc sort the
+ * dropped rows are always the OLDEST — precisely what exhaustive consumers
+ * (audits, scans, backfills) exist to find.
  *
  * Covers, at the op-handler layer (engine listPages surface unchanged —
  * the handler only probes limit+1):
@@ -102,12 +103,20 @@ describe('list_pages truncation signal', () => {
     expect(warnings.length).toBe(0);
   }, 30_000);
 
-  test('requested above cap and rows above cap: 100 returned + warning', async () => {
+  test('local explicit limit above 100 is honored (#3322) — all rows, no warning', async () => {
     await seed(101);
     const { result, warnings } = await runCapturing(ctxOf(), { limit: 200 });
+    expect(result.length).toBe(101);
+    expect(warnings.length).toBe(0);
+  }, 60_000);
+
+  test('remote requested above cap: clamped to 100, truncation stays off stderr', async () => {
+    await seed(101);
+    const { result, warnings } = await runCapturing(ctxOf({ remote: true }), { limit: 200 });
     expect(result.length).toBe(100);
-    expect(warnings.length).toBe(1);
-    expect(warnings[0]).toContain('truncated at 100 rows');
+    // The #3322 clamp warning goes through ctx.logger.warn; the [list_pages]
+    // truncation hint is local-only, so console.error stays clean here.
+    expect(warnings.length).toBe(0);
   }, 60_000);
 
   test('remote ctx: truncation stays silent on stderr (MCP logs clean)', async () => {

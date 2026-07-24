@@ -15,6 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
 
 const AUTOPILOT_SRC = readFileSync(
   join(import.meta.dir, '..', 'src', 'commands', 'autopilot.ts'),
@@ -46,6 +47,21 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     const fullCycleIdx = AUTOPILOT_SRC.indexOf('shouldFullCycle');
     expect(fullCycleIdx).toBeGreaterThan(-1);
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
+  });
+
+  test('applies the 30-minute timeout floor only to full-cycle dispatch', () => {
+    const baseIntervalSeconds = 60;
+    const intervalDerivedTimeoutMs = Math.max(baseIntervalSeconds * 2 * 1000, 300_000);
+
+    expect(resolveAutopilotDispatchTimeoutMs(baseIntervalSeconds, true)).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(resolveAutopilotDispatchTimeoutMs(baseIntervalSeconds, false)).toBe(intervalDerivedTimeoutMs);
+
+    expect(AUTOPILOT_SRC).toContain(
+      'const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);',
+    );
+    expect(AUTOPILOT_SRC).toMatch(
+      /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: resolveAutopilotDispatchTimeoutMs\(baseInterval, true\)/,
+    );
   });
 
   test('updates lastFullCycleAt on dispatch (so the 60-min floor is honored)', () => {

@@ -1484,7 +1484,11 @@ const list_pages: Operation = {
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
-    limit: { type: 'number', description: 'Max results (default 50)' },
+    limit: { type: 'number', description: 'Max results (default 50; remote callers are capped at 100)' },
+    offset: {
+      type: 'number',
+      description: 'Skip first N rows (pagination). Engine-supported since PageFilters gained offset; previously accepted at the CLI and silently dropped.',
+    },
     // v0.29 — surface filter that already exists on PageFilters.
     updated_after: {
       type: 'string',
@@ -1513,19 +1517,42 @@ const list_pages: Operation = {
     // #3242: federatedSearchScope so unqualified listing spans federated
     // sources (same visibility set as search / get_page). Grants still win.
     const scope = federatedSearchScope(ctx);
-    const requested = p.limit as number | undefined;
-    const limit = clampSearchLimit(requested, 50, 100);
+    // The 100-row cap exists to protect remote MCP/OAuth transports from
+    // unbounded result dumps. Local CLI callers (ctx.remote === false — the
+    // same trust boundary that already bypasses scope enforcement, see the
+    // Operation.scope doc above) own the machine, and a full enumeration is a
+    // legitimate local operation, so an explicit limit above 100 is honored.
+    // Anything that is not strictly `false` stays remote/untrusted (defense
+    // in depth, matching the ctx.remote contract).
+    const requestedLimit = p.limit as number | undefined;
+    const isLocal = ctx.remote === false;
+    const limit = isLocal
+      ? clampSearchLimit(requestedLimit, 50, Number.MAX_SAFE_INTEGER)
+      : clampSearchLimit(requestedLimit, 50, 100);
+    if (!isLocal && requestedLimit !== undefined && Number.isFinite(requestedLimit) && requestedLimit > limit) {
+      // Loud clamp, parity with the three search paths ("search limit clamped
+      // from N to 100"). logger.warn goes to stderr — `list` stdout is
+      // tab-separated and consumed by scripts, so it must stay clean.
+      ctx.logger.warn(`[gbrain] Warning: list limit clamped from ${requestedLimit} to ${limit}; use offset to paginate`);
+    }
+    // Thread offset through — PageFilters has supported it all along; the op
+    // layer just never passed it, so `--offset` was accepted and ignored.
+    const requestedOffset = p.offset as number | undefined;
+    const offset =
+      requestedOffset !== undefined && Number.isFinite(requestedOffset) && requestedOffset > 0
+        ? Math.floor(requestedOffset)
+        : undefined;
     // Probe one row past the effective limit so truncation is detectable
-    // without a COUNT query. The cap itself is deliberate (pinned in
-    // test/search-limit.test.ts); the bug class sealed here is SILENT
-    // truncation — an exhaustive consumer (audit, scan, backfill) gets a
-    // full-looking list and never learns rows were dropped, and with the
-    // default updated_desc sort the dropped rows are always the OLDEST,
-    // i.e. exactly the pages such consumers exist to find.
+    // without a COUNT query. The bug class sealed here is SILENT truncation
+    // — an exhaustive consumer (audit, scan, backfill) gets a full-looking
+    // list and never learns rows were dropped, and with the default
+    // updated_desc sort the dropped rows are always the OLDEST, i.e. exactly
+    // the pages such consumers exist to find.
     const rows = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: limit + 1,
+      offset,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
@@ -1533,18 +1560,19 @@ const list_pages: Operation = {
     });
     const truncated = rows.length > limit;
     const pages = truncated ? rows.slice(0, limit) : rows;
-    // Warn only when the caller's limit was NOT honored (unset → default 50,
-    // or clamped down to the cap): an explicit honored limit that happens to
-    // land on more rows is ordinary pagination, not a trap. Local (CLI) only
-    // — same operator-facing stderr channel as the put_page unknown-type
-    // hint above — but with no isTTY gate: scripted callers are precisely
-    // the consumers that cannot detect truncation any other way, and stderr
-    // keeps stdout parseable for them.
-    if (truncated && ctx.remote === false && (requested === undefined || requested > limit)) {
+    // Warn only when the caller's limit was NOT honored (unset → default 50):
+    // an explicit honored limit that happens to land on more rows is ordinary
+    // pagination, not a trap. Local (CLI) only — same operator-facing stderr
+    // channel as the put_page unknown-type hint above — but with no isTTY
+    // gate: scripted callers are precisely the consumers that cannot detect
+    // truncation any other way, and stderr keeps stdout parseable for them.
+    // (Local explicit limits are honored unbounded since #3322, so the
+    // requestedLimit > limit arm is defense in depth only.)
+    if (truncated && isLocal && (requestedLimit === undefined || requestedLimit > limit)) {
       console.error(
-        `[list_pages] output truncated at ${limit} rows (server cap 100, default 50). ` +
-        `Page through with sort=updated_asc + updated_after=<last row's updated_at>, ` +
-        `or narrow with type/tag.`,
+        `[list_pages] output truncated at ${limit} rows (default 50). ` +
+        `Pass an explicit limit, page through with sort=updated_asc + ` +
+        `updated_after=<last row's updated_at>, or narrow with type/tag.`,
       );
     }
     return pages.map(pg => ({
