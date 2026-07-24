@@ -39,6 +39,7 @@ const { runRemediation } = await import('../src/core/remediation/run.ts');
 function makeHealth(): BrainHealth {
   return {
     page_count: 100,
+    linkable_page_count: 100,
     embed_coverage: 1,
     stale_pages: 1,
     orphan_pages: 0,
