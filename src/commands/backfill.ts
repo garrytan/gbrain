@@ -79,11 +79,17 @@ Usage:
   gbrain backfill <kind> [flags]      Run a registered backfill.
   gbrain backfill list                 Show registered backfills + checkpoints.
 
-Backfills (v0.30.1):
+Backfills (\`gbrain backfill list\` is the authoritative registry):
   effective_date     Compute effective_date for pages imported pre-v0.29.1.
   emotional_weight   Recompute emotional_weight for pages with stale stamp.
   embedding_voyage   Declared-only in v0.30.1 (multi-column embedding lands
                      in v0.30.2 alongside the schema migration).
+  modality           Tag image-asset chunks whose modality was missed by
+                     pre-v0.27.1 ingest.
+  dream_cycle_index_provenance
+                     Stamp raw_trace_exempt on dream-cycle index pages that
+                     predate synthesize.ts stamping it (clears the doctor
+                     raw_provenance warn for those pages, #1978).
 
 Flags:
   --batch-size N     Initial batch size before adaptive halving (default 1000).

@@ -46,6 +46,10 @@ import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { PAGE_SLUG_SEG } from '../cjk.ts';
+import {
+  DREAM_CYCLE_SUMMARY_SLUG_PREFIX,
+  DREAM_INDEX_RAW_TRACE_EXEMPT_REASON,
+} from '../raw-provenance.ts';
 
 // Slug grammar from validatePageSlug — shared via PAGE_SLUG_SEG (#738).
 // Used for the orchestrator-written summary index slug.
@@ -700,7 +704,7 @@ export async function runPhaseSynthesize(
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
-    const summarySlug = `dream-cycle-summaries/${summaryDate}`;
+    const summarySlug = `${DREAM_CYCLE_SUMMARY_SLUG_PREFIX}${summaryDate}`;
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
@@ -1447,9 +1451,13 @@ async function writeSummaryPage(
       dream_cycle_date: summaryDate,
       // #1978: deterministic index page — no source document of its own;
       // raw traces live on the listed pages. Explicit exemption keeps the
-      // doctor raw_provenance check quiet.
+      // doctor raw_provenance check quiet. Literals shared with the
+      // `dream_cycle_index_provenance` backfill (core/raw-provenance.ts)
+      // so the stamp
+      // this writes prospectively and the stamp the backfill applies to
+      // pre-existing index pages stay byte-identical.
       raw_trace_exempt: true,
-      raw_trace_exempt_reason: 'deterministic dream-cycle index; raw traces live on listed pages',
+      raw_trace_exempt_reason: DREAM_INDEX_RAW_TRACE_EXEMPT_REASON,
     } as Record<string, unknown>,
     body,
     '',

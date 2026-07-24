@@ -127,6 +127,53 @@ describe('runBackfill — happy path', () => {
   });
 });
 
+describe('runBackfill — columnUpdateSql + resumable', () => {
+  test('default write is `col = $N`; columnUpdateSql rewrites the RHS and keeps param order', async () => {
+    const engine = new FakeEngine();
+    engine.rows = [{ id: 7, needs_backfill: true }];
+    const seen: Array<{ sql: string; params: unknown[] }> = [];
+    const raw = engine.executeRaw.bind(engine);
+    engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('UPDATE')) seen.push({ sql, params: params ?? [] });
+      return raw(sql, params);
+    }) as typeof engine.executeRaw;
+
+    const spec: BackfillSpec<FakeRow> = {
+      ...makeSpec(),
+      compute: async (rows) => rows.map(r => ({
+        id: r.id,
+        updates: { frontmatter: { a: 1 }, needs_backfill: false },
+      })),
+      columnUpdateSql: {
+        frontmatter: v => `COALESCE(frontmatter, '{}'::jsonb) || ${v}::jsonb`,
+      },
+    };
+    await runBackfill(engine as never, spec, { batchSize: 10 });
+
+    expect(seen).toHaveLength(1);
+    // frontmatter takes the custom RHS at $2; needs_backfill keeps the
+    // default `col = $N` at $3. Params stay [id, ...values] in key order,
+    // and the jsonb value is bound as a raw OBJECT (never JSON.stringify —
+    // that is the #2339 double-encode shape).
+    expect(seen[0].sql).toBe(
+      `UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $2::jsonb, needs_backfill = $3 WHERE id = $1`,
+    );
+    expect(seen[0].params).toEqual([7, { a: 1 }, false]);
+  });
+
+  test('resumable:false ignores and does not write a checkpoint', async () => {
+    const engine = new FakeEngine();
+    engine.config.set('backfill.test_backfill.last_id', '999');
+    engine.rows = [{ id: 5, needs_backfill: true }];
+
+    const result = await runBackfill(engine as never, { ...makeSpec(), resumable: false }, { batchSize: 10 });
+    // A checkpoint of 999 would have skipped id=5 entirely.
+    expect(result.examined).toBe(1);
+    expect(result.updated).toBe(1);
+    expect(engine.config.get('backfill.test_backfill.last_id')).toBe('999');
+  });
+});
+
 describe('runBackfill — error handling', () => {
   test('non-retryable error during SELECT throws', async () => {
     const engine = new FakeEngine();
