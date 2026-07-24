@@ -22,7 +22,9 @@ import {
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
+  isWellFormedEmptyExtraction,
   PROPOSE_TAKES_PROMPT_VERSION,
+  EMPTY_EXTRACTION_TOMBSTONE_TEXT,
   type ProposeTakesExtractor,
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
@@ -73,10 +75,17 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT ... RETURNING id — one row per successful insert (#2138).
+      // INSERT into take_proposals — persist the idempotency key so a
+      // subsequent cycle observes a cache hit (the real unique index folds
+      // md5(claim_text) in per #2138/v125, but the SELECT above matches any
+      // row for the per-page 4-tuple), and return one row per successful
+      // insert to satisfy RETURNING id.
       if (sql.includes('INSERT INTO take_proposals')) {
+        const [sourceId, slug, ch, pv] = params ?? [];
+        existing.add(`${sourceId}|${slug}|${ch}|${pv}`);
         return [{ id: captured.length } as unknown as T];
       }
+      // Other writes — return nothing.
       return [];
     },
   } as unknown as BrainEngine;
@@ -196,6 +205,52 @@ describe('parseExtractorOutput', () => {
     const out = parseExtractorOutput(raw);
     expect(out).toHaveLength(1);
     expect(out[0]!.claim_text).toBe('Z');
+  });
+});
+
+// ─── isWellFormedEmptyExtraction ────────────────────────────────────
+// Guards the tombstone against permanently memoizing a transient parse
+// failure as "no claims". Only a cleanly-parsed empty array counts as a
+// genuine empty extraction; malformed/prose/truncated output must not.
+
+describe('isWellFormedEmptyExtraction', () => {
+  test('true for a clean empty array (the well-behaved "no claims" response)', () => {
+    expect(isWellFormedEmptyExtraction('[]')).toBe(true);
+    expect(isWellFormedEmptyExtraction('  []  ')).toBe(true);
+    expect(isWellFormedEmptyExtraction('[   ]')).toBe(true);
+  });
+
+  test('true for a fenced empty array', () => {
+    expect(isWellFormedEmptyExtraction('```json\n[]\n```')).toBe(true);
+  });
+
+  test('true for leading prose then an empty array', () => {
+    expect(isWellFormedEmptyExtraction('No gradeable claims.\n\n[]')).toBe(true);
+  });
+
+  test('false for empty / whitespace output (transient, must retry)', () => {
+    expect(isWellFormedEmptyExtraction('')).toBe(false);
+    expect(isWellFormedEmptyExtraction('   \n  ')).toBe(false);
+  });
+
+  test('false for prose-only / non-JSON output (transient, must retry)', () => {
+    expect(isWellFormedEmptyExtraction('There are no gradeable claims here.')).toBe(false);
+    expect(isWellFormedEmptyExtraction('null')).toBe(false);
+  });
+
+  test('false for malformed / truncated JSON (transient, must retry)', () => {
+    expect(isWellFormedEmptyExtraction('[')).toBe(false);
+    expect(isWellFormedEmptyExtraction('[{"claim_text":"x"')).toBe(false);
+  });
+
+  test('false for a NON-empty array (has content — not an empty extraction)', () => {
+    expect(isWellFormedEmptyExtraction('[{"claim_text":"x","kind":"take","holder":"brain","weight":0.5}]')).toBe(false);
+    // Parseable but claim-less array is ambiguous garbage → not a genuine empty.
+    expect(isWellFormedEmptyExtraction('[{"foo":"bar"}]')).toBe(false);
+  });
+
+  test('false for an empty object (model ignored the array-format instruction)', () => {
+    expect(isWellFormedEmptyExtraction('{}')).toBe(false);
   });
 });
 
@@ -596,5 +651,64 @@ New prose appended here.`;
     expect(pageSelect).toBeDefined();
     expect(pageSelect!.sql).toContain('source_id = ANY(');
     expect(pageSelect!.params[0]).toEqual(['team-a', 'team-b']);
+  });
+});
+
+// ─── Empty-extraction memoization (idle-cost fix) ───────────────────
+// A page that yields zero gradeable claims must still record an
+// idempotency row, or every cycle re-spends an LLM call on unchanged
+// prose. Regression guard for the "empty result never memoized" bug.
+
+describe('runPhaseProposeTakes — empty extraction memoization', () => {
+  test('zero-claim page writes a tombstone row (proposals_inserted stays 0)', async () => {
+    const pages = [buildPage({ slug: 'test/embed-probe', body: '# probe\njust a test, nothing to grade.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const details = result.details as Record<string, unknown>;
+    expect(details.cache_misses).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+    expect(details.tombstones_written).toBe(1);
+
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(1);
+    // Tombstone carries the sentinel claim_text and an out-of-queue status.
+    expect(inserts[0]!.params[5]).toBe(EMPTY_EXTRACTION_TOMBSTONE_TEXT); // claim_text
+    expect(inserts[0]!.sql).toContain("'rejected'");
+  });
+
+  test('unchanged zero-claim page is a cache hit next cycle (no repeat LLM call)', async () => {
+    const pages = [buildPage({ slug: 'test/embed-probe', body: '# probe\njust a test, nothing to grade.' })];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+
+    // Cycle 1: cache miss → LLM call → tombstone written.
+    const r1 = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(extractorCalls).toBe(1);
+    expect((r1.details as Record<string, unknown>).cache_misses).toBe(1);
+    expect((r1.details as Record<string, unknown>).tombstones_written).toBe(1);
+
+    // Cycle 2: same unchanged page → cache hit → extractor NOT called again.
+    const r2 = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(extractorCalls).toBe(1); // the whole point: no re-spend
+    expect((r2.details as Record<string, unknown>).cache_hits).toBe(1);
+    expect((r2.details as Record<string, unknown>).cache_misses).toBe(0);
+  });
+
+  test('extractor error does NOT write a tombstone (page retried next cycle)', async () => {
+    const pages = [buildPage({ slug: 'wiki/x', body: 'some prose' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      throw new Error('LLM timeout');
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect((result.details as Record<string, unknown>).tombstones_written).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 });
