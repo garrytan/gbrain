@@ -143,6 +143,31 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
   return parsed;
 }
 
+/**
+ * #3026: the thin-client `list`/`get` branches receive jobs as parsed JSON
+ * off the MCP wire, where every timestamp is an ISO string — but formatJob /
+ * formatJobDetail (and the stalled-detection comparison) hold a Date
+ * contract, hydrated locally by MinionQueue.rowToJob. Rehydrate once at the
+ * unpack boundary so both paths hand the formatters real Dates. Exported for
+ * unit tests.
+ */
+const JOB_DATE_FIELDS = [
+  'created_at', 'updated_at', 'started_at', 'finished_at', 'lock_until', 'delay_until',
+] as const;
+
+export function rehydrateJobDates<T>(job: T): T {
+  if (!job || typeof job !== 'object') return job;
+  const rec = job as { [k: string]: unknown };
+  for (const field of JOB_DATE_FIELDS) {
+    const v = rec[field];
+    if (typeof v === 'string') {
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) rec[field] = d;
+    }
+  }
+  return job;
+}
+
 function formatJob(job: MinionJob): string {
   const dur = job.finished_at && job.started_at
     ? `${((job.finished_at.getTime() - job.started_at.getTime()) / 1000).toFixed(1)}s`
@@ -496,7 +521,7 @@ HANDLER TYPES (built in)
         const raw = await callRemoteTool(cfg!, 'list_jobs', {
           status, queue: queueName, limit,
         }, { timeoutMs: 30_000 });
-        jobs = unpackToolResult<MinionJob[]>(raw);
+        jobs = unpackToolResult<MinionJob[]>(raw).map((j) => rehydrateJobDates(j));
       } else {
         try { await queue.ensureSchema(); }
         catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
@@ -525,7 +550,7 @@ HANDLER TYPES (built in)
       if (isThinClient(cfg)) {
         try {
           const raw = await callRemoteTool(cfg!, 'get_job', { id }, { timeoutMs: 30_000 });
-          job = unpackToolResult<MinionJob | null>(raw);
+          job = rehydrateJobDates(unpackToolResult<MinionJob | null>(raw));
         } catch (e) {
           // The remote op throws `invalid_params` on not-found; surface as
           // the same "Job not found" exit-1 the local path produces.
