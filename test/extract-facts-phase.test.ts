@@ -453,6 +453,141 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
   });
 });
 
+describe('runExtractFacts — skip-wipe-on-warnings (TODOS P2)', () => {
+  test('malformed fence row → page skipped entirely, existing DB facts survive', async () => {
+    // Seed a clean fence and reconcile it into the DB.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // Corrupt the fence: row 2's kind becomes unparseable — the exact
+    // shape where the old wipe-then-reinsert would delete both rows
+    // and reinsert only row 1 (a parse defect as a deletion vector).
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | UNPARSEABLE-KIND | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.pagesSkippedMalformed).toBe(1);
+    expect(r.factsInserted).toBe(0);
+    expect(r.factsDeleted).toBe(0);
+    expect(r.warnings.some(w => w.includes('FACTS_TABLE_MALFORMED'))).toBe(true);
+    expect(r.warnings.some(w => w.includes('page skipped'))).toBe(true);
+
+    // Both previously-reconciled DB rows survive untouched.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['A', 'B']);
+  });
+
+  test('fixing the fence resumes reconciliation on the next run', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | UNPARSEABLE-KIND | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    const r1 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(r1.pagesSkippedMalformed).toBe(1);
+    expect(r1.factsInserted).toBe(0);
+
+    // Fix the broken row.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    const r2 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(r2.pagesSkippedMalformed).toBe(0);
+    expect(r2.factsInserted).toBe(2);
+    expect(r2.pagesWithFacts).toBe(1);
+  });
+
+  test('unbalanced fence markers also skip the page (no empty-fence wipe from a broken fence)', async () => {
+    // Reconcile a clean fence first.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // Break the fence: drop the end marker. parseFactsFence returns
+    // zero facts + FACTS_FENCE_UNBALANCED — without the skip, the
+    // empty-fence branch would wipe the page's DB facts.
+    await putPage('people/alice', `# Page
+
+## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+`);
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.pagesSkippedMalformed).toBe(1);
+    expect(r.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice'`,
+    );
+    expect(rows.rows).toHaveLength(1);
+  });
+
+  test('dry-run counter semantics: malformed page counts as scanned + skipped, not pagesWithFacts', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | Broken | UNPARSEABLE-KIND | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'], dryRun: true });
+    expect(r.pagesScanned).toBe(1);
+    expect(r.pagesWithFacts).toBe(0);
+    expect(r.pagesSkippedMalformed).toBe(1);
+    expect(r.factsInserted).toBe(0);
+    expect(r.factsDeleted).toBe(0);
+  });
+
+  test('mixed batch: valid pages reconcile, malformed pages skip, counters split correctly', async () => {
+    await putPage('people/valid', FACT_FENCE(
+      `| 1 | Good fact | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await putPage('people/broken', FACT_FENCE(
+      `| 1 | Bad fact | UNPARSEABLE-KIND | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/valid', 'people/broken'] });
+    expect(r.pagesScanned).toBe(2);
+    expect(r.pagesWithFacts).toBe(1);
+    expect(r.pagesSkippedMalformed).toBe(1);
+    expect(r.factsInserted).toBe(1);
+    expect(r.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, source_markdown_slug FROM facts ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]).toMatchObject({ fact: 'Good fact', source_markdown_slug: 'people/valid' });
+  });
+
+  test('fence-less pages are NOT skipped — the empty-fence wipe still works', async () => {
+    // Regression guard for the skip itself: a page with no fence at all
+    // produces zero parse warnings, so removing a fence entirely must
+    // still reconcile to an empty index (pre-existing contract).
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    await putPage('people/alice', '# Just a page\n\nNo fence.\n');
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.pagesSkippedMalformed).toBe(0);
+    expect(r.factsDeleted).toBe(1);
+  });
+});
+
 describe('runExtractFacts — multi-source isolation', () => {
   test('deleteFactsForPage scoping does not affect other sources', async () => {
     // Seed sources work + home.

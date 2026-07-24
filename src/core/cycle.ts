@@ -1161,17 +1161,25 @@ async function runPhaseExtractFacts(
         `destructive full walk may have wiped non-fence facts (#1928).`,
       );
     }
+    // TODOS P2 (skip-wipe-on-warnings): pages with a warning-bearing
+    // fence parse are skipped wholesale — surface the count in the
+    // summary line so the daily report shows the un-reconciled backlog
+    // instead of it hiding inside the warning list.
+    const skippedSummary = result.pagesSkippedMalformed > 0
+      ? `, ${result.pagesSkippedMalformed} page(s) skipped (malformed fence)`
+      : '';
     return {
       phase: 'extract_facts',
       status: result.warnings.length > 0 ? 'warn' : 'ok',
       duration_ms: 0,
-      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}` +
+      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}${skippedSummary}` +
         (result.warnings.length > 0 ? ` (${result.warnings.length} warning(s))` : ''),
       details: {
         pagesScanned: result.pagesScanned,
         pagesWithFacts: result.pagesWithFacts,
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
+        pagesSkippedMalformed: result.pagesSkippedMalformed,
         warnings: result.warnings.slice(0, 5),
         // v0.35.5: phantom counters surfaced so extractTotals() can lift
         // them to CycleReport.totals and the daily report makes the

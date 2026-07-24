@@ -21,13 +21,6 @@ source scope).
   under that harness. The real regression guard lives in `test/bootstrap.test.ts` (which
   does drop → re-bootstrap → assert). Add the DROP statements to the strip block so the
   coverage test genuinely exercises its own entry.
-- [ ] **P2 — extract-facts reconcile still wipes-then-reinserts when the parse emitted MALFORMED warnings.**
-  `runExtractFacts` (`src/core/cycle/extract-facts.ts`) deletes a page's facts and
-  reinserts from the parsed fence even when `parseFactsFence` surfaced
-  `FACTS_TABLE_MALFORMED` warnings — any future parse defect becomes a deletion vector
-  (rows the parser failed to read get wiped with nothing to reinsert). Consider
-  skip-wipe-on-warnings: treat a warning-bearing parse as non-authoritative for that page
-  (skip the wipe, surface a warn), mirroring the empty-fence legacy-row guard's posture.
 - [ ] **P3 — bare-name resolution quarantines even on an exact unique match when prefix siblings exist.**
   With pages `companies/acme` + `companies/acme-labs`, a bare `"Acme"` yields two
   `findPrefixCandidates` rows, so `tryUnambiguousPrefixExpansion` declines — even though
