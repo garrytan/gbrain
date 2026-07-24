@@ -265,3 +265,206 @@ describe('handler invocation — historically-broken trust-boundary classes', ()
     expect(message.toLowerCase()).toContain('permission_denied');
   });
 });
+
+describe('get_job/list_jobs redact protected-job payloads for remote callers (#2786 codex round 8)', () => {
+  // Read-side counterpart to the submission-side PROTECTED_JOB_NAMES guard:
+  // protecting SUBMISSION of a job kind stops an untrusted caller from
+  // TRIGGERING it, but does nothing about a DIFFERENT untrusted caller
+  // later reading back the `data`/`result` of a job a TRUSTED caller
+  // legitimately submitted. chronicle_extract's mirror guard first
+  // surfaced this (its result can reveal a hidden source's existence).
+  //
+  // codex review round 10 (P1): this was originally "general — applies to
+  // every PROTECTED_JOB_NAMES entry," which broke the supported remote
+  // `submit_agent` workflow (an OAuth agent/admin client submits a
+  // `subagent` job over MCP and reads its result back via get_job — both
+  // legitimately remote). The redaction now checks the narrower
+  // CROSS_SOURCE_SENSITIVE_JOB_NAMES set instead; see the "does NOT redact
+  // a cost-protected-but-not-leak-sensitive job" test below.
+  async function submitProtectedJob(): Promise<number> {
+    // resetPgliteState() (this file's shared beforeEach) TRUNCATEs the
+    // `config` table along with everything else it doesn't explicitly
+    // preserve — including the `version` key MinionQueue.ensureSchema()
+    // reads to confirm the minion_jobs table is migrated in. The TABLE
+    // itself survives (TRUNCATE empties rows, doesn't drop schema), only
+    // the config row does not; restore it before touching the queue so
+    // `queue.add()` doesn't see a false "unmigrated" state.
+    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
+    await engine.setConfig('version', String(LATEST_VERSION));
+    const { MinionQueue } = await import('../src/core/minions/queue.ts');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add(
+      'chronicle_extract',
+      { slug: 'meetings/secret-mirror-test', sourceId: 'default' },
+      undefined,
+      { allowProtectedSubmit: true },
+    );
+    // Stamp a completed-with-result state directly via SQL — exercising the
+    // full claim/complete job lifecycle isn't the point of this test, only
+    // that get_job/list_jobs redact whatever `data`/`result` a protected
+    // job row carries. Raw object bind (not JSON.stringify) per the repo's
+    // own JSONB rule (CLAUDE.md — postgres.js double-encodes a stringified
+    // scalar into a jsonb string).
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'completed', result = $1 WHERE id = $2`,
+      [{ status: 'skipped', reason: 'mirrored_source_slug' }, job.id],
+    );
+    return job.id;
+  }
+
+  test('get_job redacts data + result of a protected job for ctx.remote=true', async () => {
+    const id = await submitProtectedJob();
+
+    const getJob = operations.find(op => op.name === 'get_job');
+    const remoteResult = await getJob!.handler(makeContext({ remote: true }), { id });
+    expect((remoteResult as { data: unknown }).data).toEqual({ redacted: true });
+    expect((remoteResult as { result: unknown }).result).toEqual({ redacted: true });
+  });
+
+  test('get_job does NOT redact a protected job for ctx.remote=false (trusted local)', async () => {
+    const id = await submitProtectedJob();
+
+    const getJob = operations.find(op => op.name === 'get_job');
+    const localResult = await getJob!.handler(makeContext({ remote: false }), { id });
+    expect((localResult as { data: { slug: string } }).data.slug).toBe('meetings/secret-mirror-test');
+    expect((localResult as { result: { reason: string } }).result?.reason).toBe('mirrored_source_slug');
+  });
+
+  test('get_job does NOT redact a NON-protected job for ctx.remote=true', async () => {
+    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
+    await engine.setConfig('version', String(LATEST_VERSION));
+    const { MinionQueue } = await import('../src/core/minions/queue.ts');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add('enrich', { slug: 'wiki/some-page' });
+
+    const getJob = operations.find(op => op.name === 'get_job');
+    const remoteResult = await getJob!.handler(makeContext({ remote: true }), { id: job.id });
+    expect((remoteResult as { data: { slug: string } }).data.slug).toBe('wiki/some-page');
+  });
+
+  test('list_jobs redacts protected jobs but leaves non-protected jobs visible for ctx.remote=true', async () => {
+    const protectedId = await submitProtectedJob();
+    const { MinionQueue } = await import('../src/core/minions/queue.ts');
+    const queue = new MinionQueue(engine);
+    const nonProtected = await queue.add('enrich', { slug: 'wiki/visible-page' });
+
+    const listJobs = operations.find(op => op.name === 'list_jobs');
+    const remoteResults = await listJobs!.handler(makeContext({ remote: true }), { limit: 50 }) as Array<{ id: number; data: Record<string, unknown> }>;
+
+    const protectedRow = remoteResults.find(j => j.id === protectedId);
+    const visibleRow = remoteResults.find(j => j.id === nonProtected.id);
+    expect(protectedRow?.data).toEqual({ redacted: true });
+    expect(visibleRow?.data?.slug).toBe('wiki/visible-page');
+  });
+
+  // codex review round 9 (P1): cancel_job/retry_job return the full job row
+  // too — redacting only get_job/list_jobs left these two mutation
+  // endpoints as an unpatched way to recover a protected job's data/result.
+  test('cancel_job redacts data of a protected job for ctx.remote=true', async () => {
+    // submitProtectedJob() stamps the job 'completed' (a terminal status
+    // cancelJob refuses), so this test adds one directly and leaves it in
+    // its default 'waiting' status instead.
+    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
+    await engine.setConfig('version', String(LATEST_VERSION));
+    const { MinionQueue } = await import('../src/core/minions/queue.ts');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add(
+      'chronicle_extract',
+      { slug: 'meetings/secret-mirror-test', sourceId: 'default' },
+      undefined,
+      { allowProtectedSubmit: true },
+    );
+    const id = job.id;
+
+    const cancelJob = operations.find(op => op.name === 'cancel_job');
+    const remoteResult = await cancelJob!.handler(makeContext({ remote: true }), { id });
+    expect((remoteResult as { data: unknown }).data).toEqual({ redacted: true });
+  });
+
+  // codex review round 9 (P2): retryJob() has no PROTECTED_JOB_NAMES check
+  // of its own (only add() does) — without a submit-time-equivalent guard
+  // here, a remote admin token could re-trigger a failed/dead protected
+  // job's LLM call / cross-source mirror lookup, bypassing the
+  // submission-side trust guarantee entirely.
+  test('retry_job rejects retrying a protected (failed) job for ctx.remote=true', async () => {
+    const id = await submitProtectedJob();
+    await engine.executeRaw(`UPDATE minion_jobs SET status = 'failed' WHERE id = $1`, [id]);
+
+    const retryJob = operations.find(op => op.name === 'retry_job');
+    let threw = false;
+    let message = '';
+    try {
+      await retryJob!.handler(makeContext({ remote: true }), { id });
+    } catch (e) {
+      threw = true;
+      message = e instanceof Error ? e.message : String(e);
+    }
+    expect(threw, 'retry_job on a protected job with remote=true MUST reject').toBe(true);
+    expect(message.toLowerCase()).toContain('chronicle_extract');
+  });
+
+  test('retry_job allows retrying a protected (failed) job for ctx.remote=false (trusted local)', async () => {
+    const id = await submitProtectedJob();
+    await engine.executeRaw(`UPDATE minion_jobs SET status = 'failed' WHERE id = $1`, [id]);
+
+    const retryJob = operations.find(op => op.name === 'retry_job');
+    const localResult = await retryJob!.handler(makeContext({ remote: false }), { id });
+    expect((localResult as { data: { slug: string } }).data.slug).toBe('meetings/secret-mirror-test');
+    expect((localResult as { status: string }).status).toBe('waiting');
+  });
+
+  // codex review round 10 (P1): a `subagent` job is submission-protected
+  // (cost control — PROTECTED_JOB_NAMES) but NOT cross-source-sensitive,
+  // so a remote caller that legitimately submitted one via `submit_agent`
+  // must still be able to read its own result back.
+  test('get_job does NOT redact a cost-protected-but-not-leak-sensitive job (subagent) for ctx.remote=true', async () => {
+    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
+    await engine.setConfig('version', String(LATEST_VERSION));
+    const { MinionQueue } = await import('../src/core/minions/queue.ts');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add(
+      'subagent',
+      { prompt: 'summarize wiki/some-page' },
+      undefined,
+      { allowProtectedSubmit: true },
+    );
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'completed', result = $1 WHERE id = $2`,
+      [{ output: 'summary text' }, job.id],
+    );
+
+    const getJob = operations.find(op => op.name === 'get_job');
+    const remoteResult = await getJob!.handler(makeContext({ remote: true }), { id: job.id });
+    expect((remoteResult as { result: { output: string } }).result?.output).toBe('summary text');
+  });
+
+  // codex review round 10 (P2): replayJob() re-submits via add(), which
+  // rejects PROTECTED_JOB_NAMES without allowProtectedSubmit — mirrors the
+  // retry_job trust gate above, applied to replay_job.
+  test('replay_job rejects replaying a protected (failed) job for ctx.remote=true', async () => {
+    const id = await submitProtectedJob();
+    await engine.executeRaw(`UPDATE minion_jobs SET status = 'failed' WHERE id = $1`, [id]);
+
+    const replayJob = operations.find(op => op.name === 'replay_job');
+    let threw = false;
+    let message = '';
+    try {
+      await replayJob!.handler(makeContext({ remote: true }), { id });
+    } catch (e) {
+      threw = true;
+      message = e instanceof Error ? e.message : String(e);
+    }
+    expect(threw, 'replay_job on a protected job with remote=true MUST reject').toBe(true);
+    expect(message.toLowerCase()).toContain('chronicle_extract');
+  });
+
+  test('replay_job allows replaying a protected (failed) job for ctx.remote=false (trusted local)', async () => {
+    const id = await submitProtectedJob();
+    await engine.executeRaw(`UPDATE minion_jobs SET status = 'failed' WHERE id = $1`, [id]);
+
+    const replayJob = operations.find(op => op.name === 'replay_job');
+    const localResult = await replayJob!.handler(makeContext({ remote: false }), { id });
+    expect((localResult as { name: string }).name).toBe('chronicle_extract');
+    expect((localResult as { status: string }).status).toBe('waiting');
+  });
+});

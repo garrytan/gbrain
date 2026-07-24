@@ -63,9 +63,53 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain
   // --allow-protected`) can insert it.
   'extract-atoms-drain',
+  // #2786 (codex review) — chronicle_extract's mirror guard queries EVERY
+  // source (not just the caller's scope) and persists the matched foreign
+  // source_id(s) in `minion_jobs.result.mirror_sources`. `get_job`/
+  // `list_jobs` don't source-scope job results at all, so an unprotected
+  // submit path would let a source-restricted remote caller learn a hidden
+  // source's existence/content by submitting this job directly (rather than
+  // through the trusted `put_page` backstop or the admin+localOnly
+  // `chronicle_backfill` op, both of which already pass
+  // allowProtectedSubmit). Protecting the name closes the submission vector;
+  // the broader "get_job/list_jobs aren't source-scoped for ANY job kind" gap
+  // is pre-existing and out of scope here (would need scoping job reads in
+  // general, not just this one job's payload).
+  'chronicle_extract',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */
 export function isProtectedJobName(name: string): boolean {
   return PROTECTED_JOB_NAMES.has(name.trim());
+}
+
+/**
+ * Job names whose `data`/`result` payload can leak information about a
+ * source the remote caller isn't scoped to, independent of who was allowed
+ * to SUBMIT the job. A DIFFERENT, deliberately narrower set from
+ * PROTECTED_JOB_NAMES above.
+ *
+ * #2786 (codex review round 10) — the read-side redaction in operations.ts
+ * (`redactProtectedJobForRemote`) originally reused PROTECTED_JOB_NAMES
+ * wholesale, on the theory that "protected" already meant "sensitive."  It
+ * doesn't: most of PROTECTED_JOB_NAMES exists to gate SUBMISSION for cost
+ * control (subagent/synthesize/patterns/consolidate/contextual_reindex_
+ * per_chunk/skillopt/extract-atoms-drain/unify-types all cost real
+ * Anthropic-API money to run and must not be remotely triggerable) — their
+ * `result` is exactly what a legitimate remote submitter (e.g. an OAuth agent/admin
+ * client using the explicitly remote-callable `submit_agent` op) needs to
+ * read back. Blanket-redacting those broke that supported workflow.
+ * `chronicle_extract` is different in kind: its mirror guard queries EVERY
+ * source and its `result` can carry a foreign source_id, which is a
+ * cross-source leak regardless of who submitted it. Only list a job name
+ * here if its payload itself is sensitive to read, not merely expensive to
+ * submit.
+ */
+export const CROSS_SOURCE_SENSITIVE_JOB_NAMES: ReadonlySet<string> = new Set([
+  'chronicle_extract',
+]);
+
+/** Check a job name against the read-sensitive set. Normalizes whitespace first. */
+export function isCrossSourceSensitiveJobName(name: string): boolean {
+  return CROSS_SOURCE_SENSITIVE_JOB_NAMES.has(name.trim());
 }

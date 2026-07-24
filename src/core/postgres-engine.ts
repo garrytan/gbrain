@@ -978,7 +978,19 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
-    const pool = this.sql;
+    // v0.42.x (codex review, gbrain#2786/#125 migration) — route through the
+    // direct/DDL pool when ConnectionManager is in dual-pool mode, same as
+    // initSchema() above. Every current caller (backfill-base.ts's T3
+    // pinned-backend writes, vector-index.ts rebuilds, migrate.ts's
+    // transaction:false Postgres branch) wants a robust, long-running
+    // dedicated backend — reserving from the pooler/read pool on a
+    // dual-pool Supabase brain defeats that: the pooler's short
+    // statement_timeout can still truncate the very statement this
+    // primitive exists to protect, and PgBouncer transaction-mode pooling
+    // doesn't reliably honor session-scoped SET on a "reserved" pooler
+    // connection the way it does on a genuinely dedicated direct-pool
+    // backend.
+    const pool = this.connectionManager ? await this.connectionManager.ddl() : this.sql;
     const reserved = await pool.reserve();
     try {
       const conn: ReservedConnection = {
@@ -1000,6 +1012,27 @@ export class PostgresEngine implements BrainEngine {
       };
       return await fn(conn);
     } finally {
+      // #2786 (codex review round 12) — reset session-level GUCs a caller may
+      // have SET on this connection (most callers issue a session-scoped
+      // `SET statement_timeout = ...` since a reserved connection can't use
+      // `SET LOCAL`, which requires a transaction) before it goes back to
+      // the pool. Dual-pool mode reuses these DDL-pool backends across
+      // callers (migrate.ts's generic `transaction:false` sql path,
+      // backfill-base.ts, vector-index.ts, migration v126's own handler) —
+      // without this, a caller that shortened the timeout for its own DDL
+      // (e.g. the pre-existing 10min override several sql-declared
+      // migrations use) would leak that shortened value into whichever
+      // caller reserves this same backend next, silently truncating an
+      // unrelated long-running operation expecting the pool's real 30min
+      // baseline. Centralized here (rather than in each caller) so it
+      // covers every current and future `withReservedConnection` use site
+      // uniformly. Best-effort: some managed Postgres restricts this GUC,
+      // and a reset failure shouldn't fail whatever `fn` already completed.
+      try {
+        await reserved.unsafe('RESET statement_timeout');
+      } catch {
+        // Non-fatal — see comment above.
+      }
       reserved.release();
     }
   }

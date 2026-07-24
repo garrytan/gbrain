@@ -5724,6 +5724,111 @@ export const MIGRATIONS: Migration[] = [
         ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
     `,
   },
+  {
+    version: 126,
+    name: 'chronicle_mirror_lookup_index',
+    // #2786 (codex review P2) — `findMirrorSources` (multi-source-drift.ts)
+    // runs once per page on the Life Chronicle derivation hot path, filtering
+    // `pages` on `slug = $1 AND content_hash = $3` (source_id is an EXCLUSION
+    // predicate, `<>`, so it can't lead an index). The only existing
+    // content_hash index, `pages_dedup_idx` (v0.41.13, #1309), leads with
+    // `source_id` — exactly backwards for this query's WHERE shape, so a
+    // large brain's per-page mirror check during a bulk backfill becomes an
+    // unindexed sequential scan repeated once per candidate page (O(backfill
+    // pages x total pages)). This partial index leads with (slug,
+    // content_hash) instead, matching findMirrorSources's actual filter.
+    //
+    // Same Postgres/PGLite split as pages_dedup_idx (v97): Postgres uses
+    // CREATE INDEX CONCURRENTLY (transaction: false, pre-drops any invalid
+    // remnant from a prior failed CONCURRENTLY attempt) since a concurrent
+    // writer could hold the table lock CREATE INDEX would otherwise need;
+    // PGLite has no concurrent writers, so the `sqlFor.pglite` branch reuses
+    // plain CREATE INDEX.
+    //
+    // The invalid-remnant probe + conditional drop run as two SEPARATE
+    // top-level statements (probe via a plain `executeRaw` SELECT in
+    // application code, drop via its own standalone statement) rather than
+    // the DO-block-with-EXECUTE shape v97 used — codex review caught that
+    // `DROP INDEX CONCURRENTLY` cannot run inside a PL/pgSQL DO block (it
+    // establishes an implicit transaction context, and CONCURRENTLY
+    // commands are rejected inside any transaction block, dynamic EXECUTE
+    // included), which would have permanently wedged this migration on a
+    // brain carrying an invalid remnant until an operator manually dropped
+    // it by hand.
+    //
+    // Both CONCURRENTLY statements run on a `withReservedConnection` session
+    // with `statement_timeout` raised to 30min (codex review round 2,
+    // corrected round 11): a `handler`-based migration with `sql: ''` at the
+    // top level is NEVER routed through `runMigrations`'s
+    // `runMigrationSQLWithRetry` (that path only wraps a truthy
+    // `m.sql`/`m.sqlFor`), so without this, both DDLs would run under
+    // whatever statement_timeout the reserved connection happens to carry,
+    // with none of the 3-attempt retry+backoff that sql-declared migrations
+    // get — on a large brain (hundreds of thousands of pages) the index
+    // build could get cancelled outright and leave this migration
+    // permanently pending. `runMigrationSQL`'s own `transaction: false` +
+    // Postgres branch (see below in this file) uses the exact same primitive
+    // for the same reason; reused directly here rather than routed through
+    // the sql-migration dispatch path so the probe-then-conditional-drop
+    // shape stays intact.
+    //
+    // #2786 (codex review round 11) — round 2's original value here was
+    // 600000ms (10min), sized against the server's ~2min default at the
+    // time. Round 3's `withReservedConnection` fix (routing through the
+    // direct/DDL pool on dual-pool Postgres) changed that baseline to a
+    // 30min connection-startup timeout — so the unconditional 10min `SET`
+    // was silently SHORTENING the connection's timeout instead of raising
+    // it, undoing round 3's fix for this exact call site. Matching the DDL
+    // pool's 30min baseline here makes the `SET` a no-op on the dual-pool
+    // path (the value it already carries) while still defensively covering
+    // the non-dual-pool fallback (`withReservedConnection` falls back to
+    // `this.sql` when `connectionManager` is unset), whose default is not
+    // guaranteed to be this generous.
+    sql: '',
+    transaction: false,
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        const invalid = await engine.executeRaw<{ has_invalid: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_index i
+             JOIN pg_class c ON c.oid = i.indexrelid
+             WHERE c.relname = 'pages_chronicle_mirror_idx' AND NOT i.indisvalid
+           ) AS has_invalid;`
+        );
+        await engine.withReservedConnection(async (conn) => {
+          try {
+            // 1800000ms = 30min, matching DDL_STMT_TIMEOUT_MS
+            // (connection-manager.ts) — see the block comment above for why
+            // this must not be lower than the DDL pool's own baseline.
+            await conn.executeRaw("SET statement_timeout = '1800000'");
+          } catch {
+            // Non-fatal: some managed Postgres may restrict this GUC; falls
+            // through to the server default.
+          }
+          if (invalid[0]?.has_invalid) {
+            await conn.executeRaw('DROP INDEX CONCURRENTLY IF EXISTS pages_chronicle_mirror_idx;');
+          }
+          await conn.executeRaw(
+            `CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_chronicle_mirror_idx
+               ON pages (slug, content_hash)
+               WHERE deleted_at IS NULL;`
+          );
+          // #2786 (codex review round 10, centralized round 12) — no reset
+          // needed here: `withReservedConnection` (postgres-engine.ts) now
+          // resets `statement_timeout` on every session before it returns to
+          // the pool, covering this call site and every other caller of the
+          // shared primitive uniformly.
+        });
+      } else {
+        await engine.runMigration(
+          126,
+          `CREATE INDEX IF NOT EXISTS pages_chronicle_mirror_idx
+             ON pages (slug, content_hash)
+             WHERE deleted_at IS NULL;`
+        );
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

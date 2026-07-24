@@ -3265,6 +3265,35 @@ const submit_agent: Operation = {
   },
 };
 
+/**
+ * #2786 (codex review round 8, narrowed round 10) — read-side counterpart to
+ * PROTECTED_JOB_NAMES. Protecting SUBMISSION of a job kind (protected-names.ts)
+ * stops an untrusted/remote caller from TRIGGERING it, but does nothing about
+ * a DIFFERENT untrusted/remote caller later reading back the `data`/`result`
+ * of a job that a TRUSTED caller legitimately submitted — `get_job`/
+ * `list_jobs` return the raw row with no source-scoping for ANY job kind
+ * (the repo-wide, pre-existing gap chronicle_extract's mirror guard first
+ * surfaced).
+ *
+ * Deliberately checks CROSS_SOURCE_SENSITIVE_JOB_NAMES here, NOT
+ * PROTECTED_JOB_NAMES — round 8 originally reused the submission-gate set
+ * wholesale, which also redacted `subagent`/`subagent_aggregator` results.
+ * Those are protected for cost-control (submission side only); their result
+ * is exactly what a legitimate remote submitter of `submit_agent` (an
+ * explicitly remote-callable op) needs to read back, so blanket redaction
+ * broke that supported workflow (round 10 finding). Only job kinds whose
+ * PAYLOAD is itself a cross-source leak belong in the narrower set.
+ */
+async function redactProtectedJobForRemote<T extends { name: string; data: unknown; result: unknown }>(
+  ctx: OperationContext,
+  job: T,
+): Promise<T> {
+  if (ctx.remote === false) return job;
+  const { isCrossSourceSensitiveJobName } = await import('./minions/protected-names.ts');
+  if (!isCrossSourceSensitiveJobName(job.name)) return job;
+  return { ...job, data: { redacted: true }, result: job.result ? { redacted: true } : null };
+}
+
 const get_job: Operation = {
   name: 'get_job',
   description: 'Get job status and details by ID',
@@ -3277,7 +3306,7 @@ const get_job: Operation = {
     const queue = new MinionQueue(ctx.engine);
     const job = await queue.getJob(p.id as number);
     if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
-    return job;
+    return redactProtectedJobForRemote(ctx, job);
   },
 };
 
@@ -3294,12 +3323,13 @@ const list_jobs: Operation = {
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    return queue.getJobs({
+    const jobs = await queue.getJobs({
       status: p.status as string | undefined,
       queue: p.queue as string | undefined,
       name: p.name as string | undefined,
       limit: (p.limit as number) || 50,
     } as Parameters<typeof queue.getJobs>[0]);
+    return Promise.all(jobs.map((job) => redactProtectedJobForRemote(ctx, job)));
   },
 };
 
@@ -3317,7 +3347,10 @@ const cancel_job: Operation = {
     const queue = new MinionQueue(ctx.engine);
     const cancelled = await queue.cancelJob(p.id as number);
     if (!cancelled) throw new OperationError('invalid_params', `Cannot cancel job ${p.id} (may already be in terminal status)`);
-    return cancelled;
+    // #2786 (codex review round 9) — cancel_job returns the full job row too;
+    // without this it re-exposes a protected job's data/result that
+    // get_job/list_jobs already redact for a remote caller.
+    return redactProtectedJobForRemote(ctx, cancelled);
   },
 };
 
@@ -3333,9 +3366,24 @@ const retry_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
+    // #2786 (codex review round 9) — MinionQueue.retryJob() re-queues the
+    // job as-is with no PROTECTED_JOB_NAMES check of its own (that guard
+    // lives only in add()). Without this, a remote admin token could retry
+    // a failed/dead protected job (e.g. chronicle_extract) to re-trigger
+    // its LLM call / cross-source mirror lookup, bypassing the
+    // submission-side trust guarantee entirely. Same fail-closed shape as
+    // submit_job's guard: reject unless the caller is strictly local.
+    const existing = await queue.getJob(p.id as number);
+    if (existing && ctx.remote !== false) {
+      const { isProtectedJobName } = await import('./minions/protected-names.ts');
+      if (isProtectedJobName(existing.name)) {
+        throw new OperationError('permission_denied', `'${existing.name}' jobs cannot be retried over MCP (CLI-only for security)`);
+      }
+    }
     const retried = await queue.retryJob(p.id as number);
     if (!retried) throw new OperationError('invalid_params', `Cannot retry job ${p.id} (must be failed or dead)`);
-    return retried;
+    // cancel_job's sibling fix: retry_job also returns the full row.
+    return redactProtectedJobForRemote(ctx, retried);
   },
 };
 
@@ -3399,7 +3447,24 @@ const replay_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'replay_job', id: p.id };
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    const job = await queue.replayJob(p.id as number, p.data_overrides as Record<string, unknown> | undefined);
+    // #2786 (codex review round 10) — replaying a protected job re-triggers
+    // its side effects (LLM call / cross-source mirror lookup) exactly like
+    // retry_job does; apply the same fail-closed submission gate, and pass
+    // allowProtectedSubmit through for the trusted-local case so a CLI/
+    // doctor-remediate replay of e.g. chronicle_extract isn't rejected by
+    // MinionQueue.add()'s own guard.
+    const existing = await queue.getJob(p.id as number);
+    if (existing && ctx.remote !== false) {
+      const { isProtectedJobName } = await import('./minions/protected-names.ts');
+      if (isProtectedJobName(existing.name)) {
+        throw new OperationError('permission_denied', `'${existing.name}' jobs cannot be replayed over MCP (CLI-only for security)`);
+      }
+    }
+    const job = await queue.replayJob(
+      p.id as number,
+      p.data_overrides as Record<string, unknown> | undefined,
+      ctx.remote === false ? { allowProtectedSubmit: true } : undefined,
+    );
     if (!job) throw new OperationError('invalid_params', `Job not found or not in terminal state: ${p.id}`);
     return { id: job.id, name: job.name, status: job.status, source_id: p.id };
   },
@@ -5556,7 +5621,14 @@ const chronicle_backfill: Operation = {
     const updated_after = typeof p.since === 'string' ? p.since : undefined;
     const dryRun = p.dry_run === true;
     const scope = sourceScopeOpts(ctx);
-    type QueueLike = { add: (n: string, d: Record<string, unknown>) => Promise<unknown> };
+    type QueueLike = {
+      add: (
+        n: string,
+        d: Record<string, unknown>,
+        opts?: unknown,
+        trusted?: { allowProtectedSubmit?: boolean },
+      ) => Promise<unknown>;
+    };
     let queue: QueueLike | null = null;
     if (!dryRun) {
       const { MinionQueue } = await import('./minions/queue.ts');
@@ -5574,7 +5646,15 @@ const chronicle_backfill: Operation = {
         eligible++;
         if (dryRun || !queue) continue;
         try {
-          await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId ?? 'default' });
+          // #2786 — chronicle_extract is PROTECTED (see protected-names.ts).
+          // chronicle_backfill is admin+localOnly, so this call is already
+          // trusted-only.
+          await queue.add(
+            'chronicle_extract',
+            { slug: page.slug, sourceId: ctx.sourceId ?? 'default' },
+            undefined,
+            { allowProtectedSubmit: true },
+          );
           enqueued++;
         } catch (e) {
           // Never swallow — surface per-page failures (the #2057 no-swallow pattern).
