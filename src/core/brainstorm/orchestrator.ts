@@ -32,6 +32,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { resolveAlias } from '../model-config.ts';
 import { chat as defaultChat, embedQuery, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
 import { hybridSearch, hybridSearchCached } from '../search/hybrid.ts';
 import { fetchFar, type CloseRef, type FarPage } from './domain-bank.ts';
@@ -574,7 +575,19 @@ async function _runBrainstormInner(
   const embedFn = opts.embedQueryFn ?? embedQuery;
 
   // ---- Phase 0: cost preview + TTY grace ----
-  const modelStr = resolveBrainstormChatModel(config, opts.modelOverride);
+  // Tier-aware (mirrors the cycle phases): an explicit override wins, then
+  // the models.brainstorm key, then the reasoning-tier config, then
+  // upstream's resolveBrainstormChatModel chain (config.chat_model >
+  // gateway fallback) — so brains with no phase/tier config keep stock
+  // behavior identical.
+  const brainstormCfg = opts.modelOverride
+    ? null
+    : ((await engine.getConfig('models.brainstorm'))?.trim()
+      || (await engine.getConfig('models.tier.reasoning'))?.trim()
+      || null);
+  const modelStr = brainstormCfg
+    ? await resolveAlias(engine, brainstormCfg)
+    : resolveBrainstormChatModel(config, opts.modelOverride);
   const { aborted, estimate } = await previewCostAndWait({
     profile,
     model: modelStr,

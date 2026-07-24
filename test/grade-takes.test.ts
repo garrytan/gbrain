@@ -52,6 +52,7 @@ function buildMockEngine(opts: {
   const cached = opts.cachedGrades ?? new Set<string>();
 
   const engine = {
+    async getConfig() { return null; },
     kind: 'pglite',
     async listTakes() {
       return opts.takes;

@@ -28,7 +28,7 @@
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
-import { TIER_DEFAULTS } from '../model-config.ts';
+import { resolveModel } from '../model-config.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
@@ -233,7 +233,16 @@ class CalibrationProfilePhase extends BaseCyclePhase {
       configValue: await engine.getConfig('emotional_weight.user_holder'),
     });
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? TIER_DEFAULTS.reasoning;
+    // Tier-resolved (see propose-takes.ts for rationale). The FULL
+    // provider-prefixed string is stored to model_id and drives the
+    // generator's chat call (#2451: a bare id fed back into gateway.chat()
+    // throws "missing a provider prefix"). Unconfigured brains resolve to
+    // TIER_DEFAULTS.reasoning, same as before this change.
+    const modelId = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.calibration_profile',
+      tier: 'reasoning',
+      fallback: 'claude-sonnet-4-6',
+    });
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
@@ -269,6 +278,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard,
         holder,
         attempt,
+        modelHint: modelId,
         ...(feedback !== undefined ? { feedback } : {}),
       });
       return lines.join('\n');
