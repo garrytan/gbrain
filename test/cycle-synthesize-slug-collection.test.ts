@@ -117,6 +117,22 @@ describe('C6: collectChildPutPageSlugs survives double-encoded jsonb (#745)', ()
     expect(refs.length).toBeGreaterThan(0);
     for (const r of refs) expect(r.source_id).toBe('default');
   });
+
+  // #1978: refs carry the source transcript path when the orchestrator
+  // supplies a job_id → path map, so stampDreamProvenance can persist it.
+  test('stamps refs with raw_source from the jobRawSource map (#1978)', async () => {
+    const jobRawSource = new Map([[1001, '/transcripts/2026-07-01-standup.md']]);
+    const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map(), 'default', jobRawSource);
+    const ref = refs.find((r: { slug: string }) => r.slug === 'wiki/agents/test/normal-shape');
+    expect(ref?.raw_source).toBe('/transcripts/2026-07-01-standup.md');
+  });
+
+  test('omits raw_source when no map entry exists for the job (#1978)', async () => {
+    const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map(), 'default', new Map());
+    const ref = refs.find((r: { slug: string }) => r.slug === 'wiki/agents/test/normal-shape');
+    expect(ref).toBeDefined();
+    expect('raw_source' in (ref as object)).toBe(false);
+  });
 });
 
 describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', () => {
@@ -150,5 +166,32 @@ describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', 
     const refs = [{ slug: 'wiki/originals/ideas/does-not-exist', source_id: 'default' }];
     await stampDreamProvenance(engine as any, refs, '2026-07-17'); // no throw
     await stampDreamProvenance(engine as any, refs, '2026-07-17'); // idempotent
+  });
+
+  // #1978: raw-source persistence — the stamp carries the transcript path
+  // the synthesis was derived from, when the ref supplies one.
+  test('persists raw_source into pages.frontmatter when the ref carries it (#1978)', async () => {
+    await engine.putPage('wiki/originals/ideas/2026-07-17-raw-src-def456', {
+      type: 'note',
+      title: 'Raw source stamp',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    });
+    await stampDreamProvenance(
+      engine as any,
+      [{
+        slug: 'wiki/originals/ideas/2026-07-17-raw-src-def456',
+        source_id: 'default',
+        raw_source: '/transcripts/2026-07-17-standup.md',
+      }],
+      '2026-07-17',
+    );
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = 'wiki/originals/ideas/2026-07-17-raw-src-def456'`,
+    );
+    const fm = rows[0].fm as Record<string, unknown>;
+    expect(fm.dream_generated).toBe(true);
+    expect(fm.raw_source).toBe('/transcripts/2026-07-17-standup.md');
   });
 });

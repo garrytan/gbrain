@@ -76,6 +76,18 @@ describe('extractLinksFromFile', () => {
     }
   });
 
+  it('resolves wrapped [[wikilink]] digit-leading slug-path in frontmatter (fs resolver, broadened step 1)', async () => {
+    // Same bug class as makeResolver step 1 (#1983): the fs resolver's strict
+    // `^[a-z]…` slug regex rejected digit-leading / nested paths, so a PARA-vault
+    // `related: "[[90-people/nicolai]]"` never resolved even though the page exists.
+    const content = '---\nrelated: "[[90-people/nicolai]]"\ntype: concept\n---\nContent.';
+    const allSlugs = new Set(['wiki/note', '90-people/nicolai']);
+    const links = await extractLinksFromFile(content, 'wiki/note.md', allSlugs, { includeFrontmatter: true });
+    const related = links.filter(l => l.link_type === 'related_to');
+    expect(related).toHaveLength(1);
+    expect(related[0].to_slug).toBe('90-people/nicolai');
+  });
+
   it('frontmatter extraction is default OFF (back-compat)', async () => {
     // Without includeFrontmatter, fs-source no longer auto-extracts frontmatter.
     // Matches db-source behavior. User opts in with --include-frontmatter flag.
