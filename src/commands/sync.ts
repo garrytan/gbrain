@@ -2854,12 +2854,25 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const filePath = join(gitContextRoot, to);
       if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
         try {
-          const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
+          // #1950: signal threaded so a wedge inside the reimport respects
+          // --timeout; an abort mid-file exits the same way the loop's
+          // per-iteration check does (the rename itself already landed, and
+          // the path is not checkpointed, so the resumed run re-imports it).
+          const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack, signal: opts.signal });
           if (result.status === 'imported') chunksCreated += result.chunks;
           else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
           }
         } catch (e: unknown) {
+          // #1950: OUR signal firing means the drain was cancelled, not that
+          // this file is broken — exit through the same partial('timeout') the
+          // loop's per-iteration check uses instead of recording an innocent
+          // file into the failure ledger. The signal is the authority, not
+          // the exception name.
+          if (opts.signal?.aborted) {
+            progress.finish();
+            return await partial('timeout');
+          }
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
         }
       }
@@ -3060,8 +3073,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // / addLink) target (sourceId, slug). Pre-fix the schema DEFAULT
         // 'default' was applied even for non-default sources, fabricating
         // duplicate rows that crashed bare-slug subqueries with Postgres 21000.
+        // #1950: thread the composed signal (user --timeout/SIGINT + stall
+        // watchdog) into importFile so its phase-boundary checks + the
+        // in-flight embed request observe the abort — a hang inside one
+        // file is now reaped, not just detected.
         const result = await observed(pacer, () =>
-          importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack }));
+          importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack, signal: opts.signal }));
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -3084,6 +3101,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           await markCompleted(path);
         }
       } catch (e: unknown) {
+        // #1950: an error escaping importFile while OUR signal has fired is
+        // a cancelled drain, not a broken file — do NOT record it in the
+        // failure ledger (that would auto-skip an innocent file on the
+        // resumed run). The worker loop sees signal.aborted next tick; the
+        // checkpoint has NOT marked this path completed, so the next sync
+        // retries it. The signal itself is the authority (Codex P1): a
+        // provider-generated AbortError with our signal still live is a
+        // real failure and must be recorded, or the file silently vanishes
+        // from this sync with no ledger row.
+        if (opts.signal?.aborted) return;
         const msg = e instanceof Error ? e.message : String(e);
         serr(`  Warning: skipped ${path}: ${msg}`);
         failedFiles.push({ path, error: msg });
