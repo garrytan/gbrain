@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
+import { isPathContained, isResolvedContained } from '../core/path-confine.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -1156,15 +1157,14 @@ function createSyncBaselineCommit(repoPath: string): void {
  * #774 NAV-1 TOCTOU: true only if filePath realpath-resolves inside gitRoot.
  * Guards symlink escape at the per-file level (a committed symlink whose
  * target lives outside the repo), not just at scope entry.
+ *
+ * #3057: delegates to the shared separator-agnostic helper — the previous
+ * inline `startsWith(rootReal + '/')` was always false on Windows
+ * (realpathSync returns backslashes), recording every in-repo file as
+ * SYMLINK_NOT_ALLOWED and freezing the sync bookmark.
  */
 function isPathSafe(filePath: string, gitRoot: string): boolean {
-  try {
-    const real = realpathSync(filePath);
-    const rootReal = realpathSync(gitRoot);
-    return real === rootReal || real.startsWith(rootReal + '/');
-  } catch {
-    return false;
-  }
+  return isPathContained(filePath, gitRoot);
 }
 
 function hasOriginRemote(repoPath: string): boolean {
@@ -1932,7 +1932,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // NAV-1/NAV-2 scope-entry guard: the realpath-resolved scope must live
   // inside the realpath-resolved git root. Catches `--src-subpath ../escape`
   // AND a symlinked subdir pointing outside the repo, before any git op runs.
-  if (syncScopeRoot !== gitContextRoot && !syncScopeRoot.startsWith(gitContextRoot + '/')) {
+  // #3057: separator-agnostic (both sides already realpath'd above).
+  if (!isResolvedContained(syncScopeRoot, gitContextRoot)) {
     throw new Error(
       `Sync scope ${syncScopeRoot} resolves outside git repo ${gitContextRoot}. ` +
       `Refusing to sync: possible path traversal via --src-subpath.`,

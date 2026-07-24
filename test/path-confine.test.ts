@@ -15,10 +15,10 @@ import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync,
   lstatSync, type Stats,
 } from 'fs';
-import { join } from 'path';
+import { join, win32, posix } from 'path';
 import { tmpdir } from 'os';
 import {
-  isTrustedDotfile, isPathContained, realpathOrResolve, isWriteTargetContained,
+  isTrustedDotfile, isPathContained, isResolvedContained, realpathOrResolve, isWriteTargetContained,
 } from '../src/core/path-confine.ts';
 import { validateSlug } from '../src/core/utils.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
@@ -146,6 +146,37 @@ describe('isPathContained', () => {
     const foo = join(base, 'foo'); const foobar = join(base, 'foobar');
     mkdirSync(foo); mkdirSync(foobar);
     expect(isPathContained(foobar, foo)).toBe(false);
+  });
+});
+
+// #3057: the containment predicate must be separator-agnostic. On Windows,
+// realpathSync returns backslash separators, and the old
+// `startsWith(parent + '/')` form was false for EVERY in-repo file — sync's
+// isPathSafe recorded every file SYMLINK_NOT_ALLOWED and froze the bookmark.
+// win32 semantics are pinned here via the injectable path module so this
+// regression is caught on POSIX CI.
+describe('isResolvedContained — win32 separators (#3057)', () => {
+  test('in-repo file with backslash separators IS contained', () => {
+    expect(isResolvedContained('C:\\repo\\notes\\a.md', 'C:\\repo', win32)).toBe(true);
+  });
+  test('root itself is contained', () => {
+    expect(isResolvedContained('C:\\repo', 'C:\\repo', win32)).toBe(true);
+  });
+  test('upward escape is NOT contained', () => {
+    expect(isResolvedContained('C:\\other\\x.md', 'C:\\repo', win32)).toBe(false);
+    expect(isResolvedContained('C:\\', 'C:\\repo', win32)).toBe(false);
+  });
+  test('sibling prefix does not match (C:\\repo vs C:\\repofoo)', () => {
+    expect(isResolvedContained('C:\\repofoo\\x.md', 'C:\\repo', win32)).toBe(false);
+  });
+  test('different drive is NOT contained', () => {
+    expect(isResolvedContained('D:\\repo\\x.md', 'C:\\repo', win32)).toBe(false);
+  });
+  test('posix semantics unchanged', () => {
+    expect(isResolvedContained('/repo/notes/a.md', '/repo', posix)).toBe(true);
+    expect(isResolvedContained('/repofoo/x.md', '/repo', posix)).toBe(false);
+    expect(isResolvedContained('/repo', '/repo', posix)).toBe(true);
+    expect(isResolvedContained('/', '/repo', posix)).toBe(false);
   });
 });
 
