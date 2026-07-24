@@ -13,10 +13,25 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // This file inserts 1536-dim unit vectors (vec() below). The legacy
+  // preload's beforeEach re-applies the 1536-d gateway default before every
+  // TEST, but not before this beforeAll — so if the previous file in the
+  // shard resetGateway()'d in its afterAll, initSchema() here would size
+  // facts.embedding at the 1280-d production default and every embedding
+  // insert would throw "expected 1280 dimensions, not 1536". Pin the gateway
+  // so this file is hermetic against shard composition (same pattern as
+  // test/consolidate-valid-until.test.ts).
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -24,6 +39,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 const vec = (...vals: number[]): Float32Array => {
