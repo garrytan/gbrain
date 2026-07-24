@@ -50,6 +50,40 @@ export interface BackfillSpec<TRow = Record<string, unknown>> {
    */
   compute: (rows: TRow[], engine: BrainEngine) => Promise<Array<{ id: number; updates: Record<string, unknown> }>>;
   /**
+   * Optional per-column right-hand-side SQL. The runner's default write is
+   * `col = $N` (whole-value replace). A backfill that needs a cast or a
+   * read-modify-write done IN SQL supplies a builder here; it receives the
+   * bound placeholder (`"$2"`) and returns the RHS expression, e.g.
+   *
+   *   { frontmatter: v => `COALESCE(frontmatter, '{}'::jsonb) || ${v}::jsonb` }
+   *
+   * Two reasons this exists rather than merging in JS:
+   *   - JSONB binding: a JS object only round-trips at an explicit
+   *     `$N::jsonb` position (see executeRawJsonb's contract in sql-query.ts).
+   *     Never pre-stringify into that position — that is the #2339
+   *     double-encode bug, guarded by scripts/check-jsonb-params.mjs.
+   *   - Concurrency: `||` merges against the CURRENT row, so a concurrent
+   *     writer's keys survive. A JS-side merge would write back a snapshot
+   *     read one statement earlier and clobber them.
+   *
+   * Developer-authored SQL only, exactly like `needsBackfill` — never
+   * interpolate user input here.
+   */
+  columnUpdateSql?: Record<string, (valuePlaceholder: string) => string>;
+  /**
+   * Whether progress is checkpointed to `backfill.<name>.last_id`.
+   * Default true (the historical behavior).
+   *
+   * Set false for a backfill whose predicate is SELF-CLEARING — i.e. the
+   * write it performs is itself excluded by `needsBackfill`, so a re-run
+   * naturally finds only rows that still need work. For those, a checkpoint
+   * buys nothing and costs correctness: if a row regresses (e.g. a later
+   * import overwrites the column the backfill stamped), a checkpointed
+   * re-run skips it because its id is below the watermark, and only
+   * `--fresh` would repair it.
+   */
+  resumable?: boolean;
+  /**
    * Optional partial-index requirement (P2 / X4). Runner verifies/creates
    * the index CONCURRENTLY on first run. Skipped on PGLite (no CONCURRENTLY).
    */
@@ -181,8 +215,9 @@ export async function runBackfill<TRow = Record<string, unknown>>(
     await ensureBackfillIndex(engine, spec);
   }
 
+  const resumable = spec.resumable !== false;
   let batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
-  let lastId = await getCheckpoint(engine, spec.name, opts.fresh === true);
+  let lastId = resumable ? await getCheckpoint(engine, spec.name, opts.fresh === true) : 0;
   let examined = 0;
   let updated = 0;
   let errors = 0;
@@ -269,7 +304,9 @@ export async function runBackfill<TRow = Record<string, unknown>>(
               const params: unknown[] = [id];
               let paramIdx = 2;
               for (const [col, val] of Object.entries(updates)) {
-                setClauses.push(`${col} = $${paramIdx}`);
+                const placeholder = `$${paramIdx}`;
+                const rhs = spec.columnUpdateSql?.[col]?.(placeholder) ?? placeholder;
+                setClauses.push(`${col} = ${rhs}`);
                 params.push(val);
                 paramIdx++;
               }
@@ -306,7 +343,7 @@ export async function runBackfill<TRow = Record<string, unknown>>(
     const idAccessor = idCol;
     const lastBatchId = (rows[rows.length - 1] as Record<string, unknown>)[idAccessor];
     if (typeof lastBatchId === 'number') lastId = lastBatchId;
-    if (!opts.dryRun) await setCheckpoint(engine, spec.name, lastId);
+    if (!opts.dryRun && resumable) await setCheckpoint(engine, spec.name, lastId);
 
     opts.onBatch?.({
       batch: batchNum,

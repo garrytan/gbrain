@@ -26,6 +26,9 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   hasDatabase, setupDB, teardownDB, getEngine, getConn,
 } from './helpers.ts';
+import { getBackfill } from '../../src/core/backfill-registry.ts';
+import { runBackfill } from '../../src/core/backfill-base.ts';
+import { DREAM_INDEX_RAW_TRACE_EXEMPT_REASON } from '../../src/core/raw-provenance.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -170,5 +173,44 @@ describeE2E('Postgres JSONB round-trip — frontmatter / data / pages_updated / 
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].jt).toBe('object');
     expect(rows[0].mood).toBe('happy');
+  });
+  test('backfill columnUpdateSql — jsonb merge binds an object, not a string literal (#1978)', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+
+    // A dream-cycle index page written before synthesize.ts stamped the
+    // raw-trace exemption. PGLite cannot surface the double-encode class
+    // (#2339), so the runner's `$N::jsonb` write path is pinned HERE.
+    await engine.putPage('dream-cycle-summaries/2026-05-24', {
+      type: 'note',
+      title: 'Dream cycle 2026-05-24',
+      compiled_truth: '# Dream cycle 2026-05-24',
+      frontmatter: { dream_generated: true, dream_cycle_date: '2026-05-24' },
+    });
+
+    const reg = getBackfill('dream_cycle_index_provenance');
+    expect(reg).toBeDefined();
+    const result = await runBackfill(engine, reg!.spec, { batchSize: 100 });
+    expect(result.updated).toBe(1);
+
+    const rows = await conn.unsafe(`
+      SELECT
+        jsonb_typeof(frontmatter)              AS jt,
+        frontmatter->>'raw_trace_exempt'       AS exempt,
+        frontmatter->>'raw_trace_exempt_reason' AS reason,
+        frontmatter->>'dream_cycle_date'       AS cycle_date,
+        frontmatter->>'dream_generated'        AS generated
+      FROM pages
+      WHERE slug = 'dream-cycle-summaries/2026-05-24'
+    `);
+
+    expect(rows).toHaveLength(1);
+    // 'object', not 'string' — a double-encoded write would report 'string'.
+    expect(rows[0].jt).toBe('object');
+    expect(rows[0].exempt).toBe('true');
+    expect(rows[0].reason).toBe(DREAM_INDEX_RAW_TRACE_EXEMPT_REASON);
+    // Merge, not replace: the pre-existing keys survive.
+    expect(rows[0].cycle_date).toBe('2026-05-24');
+    expect(rows[0].generated).toBe('true');
   });
 });

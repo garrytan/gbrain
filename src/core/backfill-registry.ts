@@ -16,6 +16,11 @@ import type { BrainEngine } from './engine.ts';
 import type { BackfillSpec } from './backfill-base.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { computeEmotionalWeight } from './cycle/emotional-weight.ts';
+import {
+  DREAM_CYCLE_INDEX_SLUG_SQL_PATTERN,
+  DREAM_INDEX_RAW_TRACE_EXEMPT_REASON,
+  untracedSynthesizedPagesPredicate,
+} from './raw-provenance.ts';
 
 export interface RegisteredBackfill {
   spec: BackfillSpec<Record<string, unknown>>;
@@ -234,11 +239,90 @@ function modalityBackfill(): RegisteredBackfill {
   };
 }
 
+interface DreamCycleIndexRow {
+  id: number;
+  slug: string;
+}
+
+/**
+ * #1978 follow-up: stamp the raw-trace exemption on dream-cycle index pages
+ * written BEFORE synthesize.ts started stamping it prospectively.
+ *
+ * `writeSummaryPage` in core/cycle/synthesize.ts now stamps every new
+ * `dream-cycle-summaries/<date>` page with `raw_trace_exempt: true` plus a
+ * reason — the index is deterministic, it has no source document of its own,
+ * and the raw traces live on the pages it lists. Index pages written before
+ * that code landed carry no stamp, so `doctor`'s `raw_provenance` check warns
+ * about them forever with no way to clear it. This backfill applies the
+ * writer's own stamp to those rows.
+ *
+ * Scope is deliberately just the index pages. Other pre-existing synthesized
+ * pages (wiki/*, extracts/*) want a `raw_source` pointing at the transcript
+ * they were derived from, and that mapping cannot be reconstructed after the
+ * fact — blanket-exempting them would silence the check rather than satisfy
+ * it, so they are left alone.
+ *
+ * Predicate = doctor's own `raw_provenance` predicate (shared, so the two
+ * cannot drift) AND the dream-cycle index slug shape AND the writer's
+ * `dream_generated` marker. Idempotent: the stamp adds `raw_trace_exempt`,
+ * which the shared predicate excludes, so a second run matches no rows.
+ *
+ * Content is untouched — only `frontmatter` moves, so `content_hash` /
+ * `compiled_truth` are unchanged and nothing re-chunks or re-embeds.
+ *
+ * Known limitation: this repairs the DB row, not the historical markdown
+ * file the dream cycle dual-wrote. If such a file is later edited and
+ * re-imported, the import replaces frontmatter wholesale and the exemption
+ * is lost again. `resumable: false` below is what makes that recoverable —
+ * re-running the backfill re-stamps the row instead of skipping it because
+ * a checkpoint says the id was already visited.
+ */
+function dreamCycleIndexProvenanceBackfill(): RegisteredBackfill {
+  return {
+    description: 'Stamp raw_trace_exempt on dream-cycle index pages written before synthesize.ts stamped it (#1978)',
+    v030_1_status: 'implemented',
+    spec: {
+      name: 'dream_cycle_index_provenance',
+      table: 'pages',
+      idColumn: 'id',
+      selectColumns: ['slug'],
+      // The predicate is self-clearing (the stamp it writes is one of the
+      // keys the shared predicate excludes), so a checkpoint buys nothing
+      // and actively harms the re-import repair path described above.
+      resumable: false,
+      needsBackfill: `
+        ${untracedSynthesizedPagesPredicate('pages')}
+    AND pages.slug ~ '${DREAM_CYCLE_INDEX_SLUG_SQL_PATTERN}'
+    AND COALESCE(pages.frontmatter->>'dream_generated', '') = 'true'
+    AND pages.frontmatter->>'dream_cycle_date' = right(pages.slug, 10)`,
+      // Merge in SQL against the CURRENT row (not a JS-side snapshot) and
+      // bind the delta as a raw object at an explicit ::jsonb position —
+      // mirrors stampDreamProvenance's write in core/cycle/synthesize.ts.
+      columnUpdateSql: {
+        frontmatter: v => `COALESCE(frontmatter, '{}'::jsonb) || ${v}::jsonb`,
+      },
+      compute: async (rows) => {
+        return (rows as unknown as DreamCycleIndexRow[]).map(r => ({
+          id: r.id,
+          updates: {
+            frontmatter: {
+              raw_trace_exempt: true,
+              raw_trace_exempt_reason: DREAM_INDEX_RAW_TRACE_EXEMPT_REASON,
+            },
+          },
+        }));
+      },
+      estimateRowsPerSecond: 5000, // metadata-only merge
+    },
+  };
+}
+
 function registerCoreBackfills(): void {
   registerBackfill(effectiveDateBackfill());
   registerBackfill(emotionalWeightBackfill());
   registerBackfill(embeddingVoyageBackfill());
   registerBackfill(modalityBackfill());
+  registerBackfill(dreamCycleIndexProvenanceBackfill());
 }
 
 // Auto-register on first import.

@@ -22,6 +22,7 @@ import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
+import { untracedSynthesizedPagesPredicate } from '../core/raw-provenance.ts';
 import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
@@ -548,12 +549,10 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
  * childTableOrphansCheck so tests can target it directly.
  */
 export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
-  const where = `
-        p.deleted_at IS NULL
-    AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
-    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
-    AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
-    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
+  // Predicate lives in core/raw-provenance.ts so the
+  // `dream_cycle_index_provenance` backfill (which exists to clear exactly
+  // these rows) cannot drift from the check it satisfies.
+  const where = untracedSynthesizedPagesPredicate('p');
   try {
     const rows = await engine.executeRaw<{ n: string | number }>(
       `SELECT COUNT(*)::int AS n FROM pages p WHERE ${where}`,
@@ -576,7 +575,8 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
       message:
         `${n} synthesized page(s) lack a raw trace (no raw_trace/raw_source/source_uri frontmatter, ` +
         `raw_data row, or synthesis evidence) and carry no raw_trace_exempt marker. e.g. ${slugs}. ` +
-        `Fix: stamp raw_source (path/URI of the source material) or raw_trace_exempt: true + ` +
+        `Fix: for pre-existing dream-cycle index pages run \`gbrain backfill dream_cycle_index_provenance\`; ` +
+        `otherwise stamp raw_source (path/URI of the source material) or raw_trace_exempt: true + ` +
         `raw_trace_exempt_reason in frontmatter. Warn-only (#1978).`,
     };
   } catch {

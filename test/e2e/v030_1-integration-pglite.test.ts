@@ -83,11 +83,16 @@ describe('Lane C — backfill registry on empty brain', () => {
   test('listBackfills returns the canonical registry entries', () => {
     // v0.30.1 shipped 3 entries (effective_date, embedding_voyage,
     // emotional_weight). v0.36 cross-modal wave adds `modality` for
-    // historical image-asset chunks. Extend this assertion as new
-    // backfills land.
+    // historical image-asset chunks. #1978 adds
+    // `dream_cycle_index_provenance` for dream-cycle index pages written
+    // before synthesize.ts stamped their raw-trace exemption. Extend this
+    // assertion as new backfills land.
     const list = listBackfills();
     const names = list.map(e => e.spec.name).sort();
-    expect(names).toEqual(['effective_date', 'embedding_voyage', 'emotional_weight', 'modality']);
+    expect(names).toEqual([
+      'dream_cycle_index_provenance', 'effective_date', 'embedding_voyage',
+      'emotional_weight', 'modality',
+    ]);
   });
 
   test('embedding_voyage is declared-only in v0.30.1', () => {
