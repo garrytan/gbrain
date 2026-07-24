@@ -25,6 +25,7 @@ if (skip) {
 
 const PORT = 19131; // Avoid collision with production 3131
 const BASE = `http://localhost:${PORT}`;
+const ADMIN_BOOTSTRAP_TOKEN = 'e2e-admin-bootstrap-token-000000000000';
 
 describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
@@ -72,7 +73,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       '--enable-dcr',
     ], {
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, GBRAIN_ADMIN_BOOTSTRAP_TOKEN: ADMIN_BOOTSTRAP_TOKEN },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -139,6 +140,18 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
     });
+  }
+
+  async function adminCookie(): Promise<string> {
+    const login = await fetch(`${BASE}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: ADMIN_BOOTSTRAP_TOKEN }),
+    });
+    expect(login.ok).toBe(true);
+    const match = (login.headers.get('set-cookie') || '').match(/gbrain_admin=([^;]+)/);
+    expect(match).toBeTruthy();
+    return `gbrain_admin=${match![1]}`;
   }
 
   // =========================================================================
@@ -261,6 +274,46 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(html).toContain('GBrain Admin');
   });
 
+  test('admin source access APIs enumerate sources and rescope an OAuth client', async () => {
+    const cookie = await adminCookie();
+    const sourcesRes = await fetch(`${BASE}/admin/api/sources`, {
+      headers: { Cookie: cookie },
+    });
+    expect(sourcesRes.ok).toBe(true);
+    const sources = await sourcesRes.json() as Array<{ id: string; name: string; federated: boolean }>;
+    expect(sources.some(source => source.id === 'default')).toBe(true);
+
+    const rescopeRes = await fetch(`${BASE}/admin/api/rescope-client`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId,
+        sourceId: 'default',
+        federatedRead: ['default'],
+      }),
+    });
+    expect(rescopeRes.ok).toBe(true);
+    expect(await rescopeRes.json()).toEqual({
+      clientId,
+      clientName: 'e2e-oauth-test',
+      sourceId: 'default',
+      federatedRead: ['default'],
+    });
+
+    const agentsRes = await fetch(`${BASE}/admin/api/agents`, {
+      headers: { Cookie: cookie },
+    });
+    expect(agentsRes.ok).toBe(true);
+    const agents = await agentsRes.json() as Array<{
+      id: string;
+      source_id: string | null;
+      federated_read: string[];
+    }>;
+    const agent = agents.find(row => row.id === clientId);
+    expect(agent?.source_id).toBe('default');
+    expect(agent?.federated_read).toEqual(['default']);
+  }, 15_000);
+
   // v0.36.1.x #1076: GET /mcp must return 405 (Method Not Allowed) per the
   // MCP Streamable HTTP spec, not 404. claude.ai + other probing clients
   // distinguish "endpoint exists, no SSE channel" from "endpoint missing"
@@ -347,34 +400,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   });
 
   test('v0.28.10: /admin/api/full-stats with valid admin cookie returns getStats() body', async () => {
-    // Same magic-link cookie dance the existing single-use test uses.
-    // Skip gracefully if the bootstrap token isn't extractable — the 401
-    // case above pins the auth gate; this test pins the happy path.
-    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
-    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
-    if (!tokenMatch) {
-      console.warn('[e2e] skipped /admin/api/full-stats happy path: could not extract bootstrap token');
-      return;
-    }
-    const bootstrapToken = tokenMatch[1];
-
-    const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bootstrapToken}` },
-      body: '{}',
-    });
-    expect(issueRes.ok).toBe(true);
-    const { url } = await issueRes.json() as any;
-
-    const click = await fetch(url, { redirect: 'manual' });
-    expect(click.status).toBe(302);
-    const setCookie = click.headers.get('set-cookie') || '';
-    const cookieMatch = setCookie.match(/gbrain_admin=([^;]+)/);
-    expect(cookieMatch).toBeTruthy();
-    const cookieValue = cookieMatch![1];
+    const cookie = await adminCookie();
 
     const statsRes = await fetch(`${BASE}/admin/api/full-stats`, {
-      headers: { Cookie: `gbrain_admin=${cookieValue}` },
+      headers: { Cookie: cookie },
     });
     expect(statsRes.ok).toBe(true);
     const stats = await statsRes.json() as any;
@@ -920,32 +949,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   });
 
   test('v0.26.3: magic-link nonce is single-use (second click fails)', async () => {
-    // Get a real bootstrap token from the spawned server's environment.
-    // The server prints it to stderr at startup but commit 16 removed our
-    // regex extractor. Use the issue-magic-link endpoint directly with the
-    // bootstrap token from process env — except that env var doesn't exist
-    // in the test fixture. The portable approach: extract from the server
-    // process's stderr.
-
-    // Pull the bootstrap token from server stderr by re-reading the
-    // spawn handle. The spawn already started so stderr has flushed.
-    // Skip if we can't extract — the test is best-effort coverage of the
-    // single-use semantic; the styled-401 test above covers the negative path.
-    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
-    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
-    if (!tokenMatch) {
-      // No way to get the bootstrap token in this test fixture — skip gracefully.
-      // The unit-level coverage for nonce single-use is in oauth.test.ts and
-      // the styled-401 test above pins the consumed-nonce path.
-      console.warn('[e2e] skipped magic-link single-use: could not extract bootstrap token');
-      return;
-    }
-    const bootstrapToken = tokenMatch[1];
-
     // Mint a one-time nonce.
     const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bootstrapToken}` },
+      headers: { 'Content-Type': 'application/json', Authorization: ['Bearer', ADMIN_BOOTSTRAP_TOKEN].join(' ') },
       body: '{}',
     });
     expect(issueRes.ok).toBe(true);
