@@ -16,6 +16,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, resolve as resolvePath, join } from 'path';
+import { fileURLToPath } from 'url';
 
 import {
   bundledSkillSlugs,
@@ -179,11 +180,24 @@ function resolveAbs(p: string): string {
 
 function findGbrainOrDie(): string {
   const root = findGbrainRoot();
-  if (!root) {
-    console.error('Error: could not find gbrain repo root.');
-    process.exit(2);
+  if (root) return root;
+
+  // Bundled-skill commands need two independent locations:
+  //  1. the target workspace (resolved elsewhere, e.g. --workspace / OPENCLAW_WORKSPACE)
+  //  2. the gbrain bundle source (openclaw.plugin.json + skills/)
+  // When the operator runs from a host workspace instead of the gbrain repo,
+  // cwd-walk lookup can legitimately fail even though the CLI itself lives
+  // inside a valid gbrain install tree. Fall back to the module install path.
+  try {
+    const modulePath = fileURLToPath(import.meta.url);
+    const installRoot = findGbrainRoot(modulePath);
+    if (installRoot) return installRoot;
+  } catch {
+    // Fall through to the existing hard error — better to refuse than guess.
   }
-  return root;
+
+  console.error('Error: could not find gbrain repo root.');
+  process.exit(2);
 }
 
 function resolveWorkspace(opts: { workspace?: string | null; skillsDir?: string | null }): string {
