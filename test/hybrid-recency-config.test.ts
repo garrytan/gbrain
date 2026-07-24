@@ -9,7 +9,8 @@
  * assert the boost the hybrid path applies reflects that config.
  */
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { runPostFusionStages } from '../src/core/search/hybrid.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -59,38 +60,36 @@ function makeResult(slug: string): SearchResult {
 
 const RECENCY_ONLY = { applyBacklinks: false, salience: 'off', recency: 'on' } as const;
 
-afterEach(() => {
-  delete process.env.GBRAIN_RECENCY_DECAY;
-});
-
 describe('runPostFusionStages recency config wiring', () => {
   test('GBRAIN_RECENCY_DECAY evergreen override suppresses the boost on the hybrid path', async () => {
     // `custom/` is absent from DEFAULT_RECENCY_DECAY. Without honoring the env,
     // the slug falls to DEFAULT_FALLBACK (90d/0.5) and gets boosted. Declaring
     // it evergreen (0/0) must short-circuit the boost — proof the env reached
     // the hybrid stage.
-    process.env.GBRAIN_RECENCY_DECAY = 'custom/:0:0';
-    const results = [makeResult('custom/foo')];
-    await runPostFusionStages(makeEngine(30), results, RECENCY_ONLY);
+    await withEnv({ GBRAIN_RECENCY_DECAY: 'custom/:0:0' }, async () => {
+      const results = [makeResult('custom/foo')];
+      await runPostFusionStages(makeEngine(30), results, RECENCY_ONLY);
 
-    expect(results[0].recency_boost).toBeUndefined();
-    expect(results[0].score).toBe(1.0);
+      expect(results[0].recency_boost).toBeUndefined();
+      expect(results[0].score).toBe(1.0);
+    });
   });
 
   test('GBRAIN_RECENCY_DECAY custom coefficient/halflife flows into the applied factor', async () => {
     // Pin an aggressive config for a prefix the defaults don't carry. The
     // applied factor must match the custom config, not DEFAULT_FALLBACK.
     const halflife = 14, coefficient = 2.0, daysOld = 14;
-    process.env.GBRAIN_RECENCY_DECAY = `custom/:${halflife}:${coefficient}`;
-    const results = [makeResult('custom/foo')];
-    await runPostFusionStages(makeEngine(daysOld), results, RECENCY_ONLY);
+    await withEnv({ GBRAIN_RECENCY_DECAY: `custom/:${halflife}:${coefficient}` }, async () => {
+      const results = [makeResult('custom/foo')];
+      await runPostFusionStages(makeEngine(daysOld), results, RECENCY_ONLY);
 
-    // factor = 1 + coefficient * halflife / (halflife + daysOld); at daysOld==halflife → 1 + coefficient/2.
-    const expected = 1 + coefficient * halflife / (halflife + daysOld);
-    const fallbackFactor = 1 + DEFAULT_FALLBACK_COEFF * DEFAULT_FALLBACK_HL / (DEFAULT_FALLBACK_HL + daysOld);
-    expect(results[0].recency_boost).toBeCloseTo(expected, 4);
-    // Sanity: the custom factor is distinguishable from the fallback the
-    // unpatched hybrid path would have applied.
-    expect(Math.abs(expected - fallbackFactor)).toBeGreaterThan(0.1);
+      // factor = 1 + coefficient * halflife / (halflife + daysOld); at daysOld==halflife → 1 + coefficient/2.
+      const expected = 1 + coefficient * halflife / (halflife + daysOld);
+      const fallbackFactor = 1 + DEFAULT_FALLBACK_COEFF * DEFAULT_FALLBACK_HL / (DEFAULT_FALLBACK_HL + daysOld);
+      expect(results[0].recency_boost).toBeCloseTo(expected, 4);
+      // Sanity: the custom factor is distinguishable from the fallback the
+      // unpatched hybrid path would have applied.
+      expect(Math.abs(expected - fallbackFactor)).toBeGreaterThan(0.1);
+    });
   });
 });
