@@ -269,6 +269,11 @@ export interface ExtractConversationFactsResult {
   /** Pages whose claim reached extraction but failed before durable outcome. */
   pages_failed: number;
   /**
+   * Pages whose built-in parse returned `no_match` and whose messages were
+   * recovered by the explicitly enabled LLM fallback.
+   */
+  pages_llm_fallback: number;
+  /**
    * v0.41.15.0 (D6): pages we attempted to claim but skipped because
    * another worker / parallel process held the advisory lock. The pages
    * stay in the backlog; the next enumeration cycle picks them up once
@@ -305,10 +310,13 @@ export interface ExtractConversationFactsResult {
 // ---------------------------------------------------------------------------
 
 import {
+  deriveDateContext,
   parseConversation,
   type ParseConversationOpts as OrchestratorParseOpts,
 } from '../core/conversation-parser/parse.ts';
 import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
+import { runLlmFallback } from '../core/conversation-parser/llm-fallback.ts';
+import { resolveModel } from '../core/model-config.ts';
 
 /**
  * v0.41.13.0 — back-compat shape for direct callers + the existing
@@ -636,6 +644,12 @@ interface ExtractCoreState {
    * batch boundaries + final flush.
    */
   cpMap: Map<string, string>;
+  /**
+   * Opt-in LLM parser state, resolved once per source run. A null model means
+   * the fallback is disabled and no chat content leaves the deterministic
+   * parser path.
+   */
+  llmFallbackModel: string | null;
 }
 
 function cpMapKey(sourceId: string, slug: string): string {
@@ -831,9 +845,36 @@ async function processPage(
   // meant Telegram-bracket pages with frontmatter dates landed at
   // 1970-01-01. Now they pick up the correct date.
   const parseResult = parseConversation(body, { page });
-  const messages = parseResult.messages;
+  let messages = parseResult.messages;
   if (parseResult.timezone_warning) {
     process.stderr.write(parseResult.timezone_warning + '\n');
+  }
+  // The fallback runs only for a true built-in miss. It never replaces or
+  // polishes a deterministic parse, and it remains unreachable unless the
+  // operator explicitly enables conversation_parser.llm_fallback_enabled.
+  if (
+    !state.dryRun &&
+    messages.length === 0 &&
+    parseResult.phase === 'no_match' &&
+    state.llmFallbackModel
+  ) {
+    const fallbackMessages = await runLlmFallback({
+      modelStr: state.llmFallbackModel,
+      body,
+      engine: state.engine,
+      signal: state.signal,
+      fallbackDate: deriveDateContext({ page }).fallbackDate,
+      propagateError: (error) =>
+        error instanceof BudgetExhausted ||
+        (state.signal?.aborted === true && isAbortError(error)),
+    });
+    if (fallbackMessages && fallbackMessages.length > 0) {
+      messages = fallbackMessages;
+      state.result.pages_llm_fallback++;
+      process.stderr.write(
+        `[extract-conversation-facts] LLM fallback parsed ${fallbackMessages.length} message(s) for ${page.slug}\n`,
+      );
+    }
   }
   const allSegments = splitIntoSegments(messages);
   const segments = splitIntoSegments(messages, { sinceIso });
@@ -1081,6 +1122,7 @@ export async function runExtractConversationFactsCore(
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
     pages_failed: 0,
+    pages_llm_fallback: 0,
     pages_lock_skipped: 0,
     orphan_facts_cleaned: 0,
     segments_processed: 0,
@@ -1126,6 +1168,18 @@ export async function runExtractConversationFactsCore(
   );
   const workers = workersResolved.workers;
 
+  // Privacy boundary: the parser never sends page content to an LLM unless
+  // this exact DB-plane key is explicitly true. Resolve the model once rather
+  // than probing configuration for every page.
+  const llmFallbackEnabled =
+    (await engine.getConfig('conversation_parser.llm_fallback_enabled')) === 'true';
+  const llmFallbackModel = llmFallbackEnabled
+    ? await resolveModel(engine, {
+        tier: 'utility',
+        fallback: 'anthropic:claude-haiku-4-5-20251001',
+      })
+    : null;
+
   const state: ExtractCoreState = {
     result,
     engine,
@@ -1136,6 +1190,7 @@ export async function runExtractConversationFactsCore(
     types,
     signal,
     cpMap: new Map(),
+    llmFallbackModel,
   };
 
   // Run body. Either inside the externally-provided tracker scope (no
@@ -1275,8 +1330,19 @@ export async function runExtractConversationFactsCore(
             workers,
             signal,
             onItem: (page) => processPageWithLock(page),
+            onError: (error) => (isAbortError(error) ? 'abort' : 'continue'),
             failureLabel: (page) => page.slug,
           });
+          const cancellation = poolResult.failures.find((failure) =>
+            isAbortError(failure.error),
+          );
+          if (cancellation) throw cancellation.error;
+          if (signal?.aborted) {
+            if (signal.reason instanceof Error) throw signal.reason;
+            throw Object.assign(new Error('caller cancelled'), {
+              name: 'AbortError',
+            });
+          }
           result.pages_failed += poolResult.errored;
           for (const failure of poolResult.failures) {
             const message = failure.error instanceof Error
@@ -1306,6 +1372,7 @@ export async function runExtractConversationFactsCore(
     }
   };
 
+  let ownedTracker: BudgetTracker | null = null;
   try {
     if (opts.budgetTracker) {
       // Caller-managed scope — use as-is, no wrap (nested wrap REPLACES
@@ -1316,6 +1383,7 @@ export async function runExtractConversationFactsCore(
         maxCostUsd: opts.maxCostUsd ?? DEFAULT_MAX_COST_USD,
         label: `extract-conversation-facts:${sourceId}`,
       });
+      ownedTracker = tracker;
       try {
         await withBudgetTracker(tracker, body);
       } finally {
@@ -1339,13 +1407,34 @@ export async function runExtractConversationFactsCore(
     throw err;
   }
 
+  // gateway.chat preserves a successful provider result when the final
+  // tracker.record() discovers an underestimated overage. Usually the next
+  // reserve surfaces it, but a fallback that yields fewer than two messages
+  // has no next call. Detect that terminal overage so the result and rollup
+  // remain honest.
+  const effectiveTracker = opts.budgetTracker ?? ownedTracker;
+  if (
+    effectiveTracker?.cap !== undefined &&
+    effectiveTracker.totalSpent > effectiveTracker.cap
+  ) {
+    result.budget_exhausted = true;
+    result.spent_usd = effectiveTracker.totalSpent;
+  }
+
   // v0.42 — Wave B1: extract-conversation-facts writes a receipt page
   // (queryable + citable per D-EXTRACT-17/19) AND UPSERTs the per-day
   // rollup row (best-effort cache per F-OUT-19). Both are best-effort —
   // failures stderr-warn but never fail the parent operation.
   // --dry-run must not persist cache/knowledge state: skip the rollup UPSERT +
   // receipt-page write so a preview leaves no extract cache row behind.
-  if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
+  if (!dryRun) {
+    await writeRunReceiptAndRollup(
+      engine,
+      sourceId,
+      result,
+      /* halted */ result.budget_exhausted === true,
+    );
+  }
 
   return result;
 }
@@ -1640,6 +1729,7 @@ export async function runExtractConversationFacts(
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
     pages_failed: 0,
+    pages_llm_fallback: 0,
     pages_lock_skipped: 0,
     orphan_facts_cleaned: 0,
     segments_processed: 0,
@@ -1684,6 +1774,7 @@ export async function runExtractConversationFacts(
       aggregate.pages_skipped_non_extractable += perSource.pages_skipped_non_extractable;
       aggregate.pages_marked_non_extractable += perSource.pages_marked_non_extractable;
       aggregate.pages_failed += perSource.pages_failed;
+      aggregate.pages_llm_fallback += perSource.pages_llm_fallback;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
@@ -1726,6 +1817,9 @@ export async function runExtractConversationFacts(
   }
   if (aggregate.pages_failed > 0) {
     console.error(`  Failed ${aggregate.pages_failed} page(s); they remain unfinished and will retry.`);
+  }
+  if (aggregate.pages_llm_fallback > 0) {
+    console.log(`  Parsed ${aggregate.pages_llm_fallback} page(s) with the opt-in LLM fallback.`);
   }
   if (aggregate.pages_lock_skipped > 0) {
     console.log(`  Skipped ${aggregate.pages_lock_skipped} page(s) held by another worker / process (will retry next run).`);

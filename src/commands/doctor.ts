@@ -584,6 +584,48 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
   }
 }
 
+/**
+ * #2829: source `config` is a jsonb OBJECT column (`DEFAULT '{}'::jsonb`), but a
+ * re-wrapping bug could store it as a JSON string scalar ("{}", "\"{}\"", ...)
+ * that grows a layer on every read→write cycle. Any row where
+ * `jsonb_typeof(config) <> 'object'` is corrupted — federation and ACL settings
+ * on that source are read off a string instead of the settings object. Surface
+ * the affected sources with the repair path. The `gbrain sources` config writers
+ * now normalize before write, so any config-writing command self-heals the row
+ * (the app unwraps up to 10 nested layers); the SQL below repairs one layer
+ * directly for the common case.
+ */
+export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ id: string; typ: string | null }>(
+      `SELECT id, jsonb_typeof(config) AS typ FROM sources WHERE jsonb_typeof(config) <> 'object'`,
+    );
+    if (rows.length === 0) {
+      return {
+        name: 'source_config_shape',
+        status: 'ok',
+        message: 'All source config values are JSON objects',
+      };
+    }
+    const affected = rows.map((r) => `${r.id} (${r.typ ?? 'null'})`).join(', ');
+    return {
+      name: 'source_config_shape',
+      status: 'warn',
+      message:
+        `${rows.length} source(s) have a non-object config — a JSON string/scalar ` +
+        `instead of an object (the #2829 re-wrapping bug): ${affected}. ` +
+        `Federation and ACL settings on these sources won't be read correctly. ` +
+        `Repair by running any 'gbrain sources' config write (self-heals up to 10 ` +
+        `nested layers), or in SQL: ` +
+        `UPDATE sources SET config = (config #>> '{}')::jsonb ` +
+        `WHERE jsonb_typeof(config) <> 'object';`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'source_config_shape', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -6426,6 +6468,12 @@ export async function buildChecks(
   // exemption. Warn-only in v1 — surfaces violations, blocks nothing.
   progress.heartbeat('raw_provenance');
   checks.push(await rawProvenanceCheck(engine));
+
+  // #2829: detect sources whose jsonb `config` was re-wrapped into a string
+  // scalar (grows a layer per read→write cycle). Non-object configs break
+  // federation + ACL reads; surface them with the repair path.
+  progress.heartbeat('source_config_shape');
+  checks.push(await checkSourceConfigShape(engine));
 
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the

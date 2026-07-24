@@ -13,10 +13,25 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Pin the embedding dim to 1536 BEFORE initSchema. vec() hardcodes
+  // Float32Array(1536), but initSchema sizes vector columns from
+  // process-global gateway state (getEmbeddingDimensions(), default 1280).
+  // Whether this file passes therefore depends on which test files run
+  // before it in the shard; adding test files to the repo reshuffles the
+  // weight-packed shards, so unrelated PRs trip it ("expected 1280
+  // dimensions, not 1536"). Same fix + rationale as
+  // doctor-hidden-by-search-policy.test.ts (#2801),
+  // engine-find-trajectory.test.ts and cosine-rescore-column.test.ts.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-test-facts-engine' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -24,6 +39,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 const vec = (...vals: number[]): Float32Array => {
