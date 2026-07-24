@@ -122,27 +122,6 @@ export function parseNiceFlag(args: string[], env: NodeJS.ProcessEnv = process.e
   }
 }
 
-/** Parse `--lock-duration MS` (then `GBRAIN_LOCK_DURATION` env; flag wins).
- *  Tunes the worker's stall-lock window — the wall-clock dead-letter cap is
- *  lockDuration × max_stalled, so the default 30s lock caps long jobs at
- *  ~180s with the schema defaults (issue #1014). Returns undefined when
- *  absent (worker default 30000ms applies). Throws on non-integer values or
- *  values < 1000 — sub-1000 is almost always a seconds-vs-ms unit-confusion
- *  typo (parity with --health-interval). Exported for unit tests; CLI call
- *  sites wrap with console.error + process.exit(1). */
-export function parseLockDurationFlag(args: string[], env: NodeJS.ProcessEnv = process.env): number | undefined {
-  const raw = parseFlag(args, '--lock-duration') ?? env.GBRAIN_LOCK_DURATION;
-  if (raw === undefined || raw === '') return undefined;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1000) {
-    throw new Error(
-      `--lock-duration must be an integer >= 1000 (milliseconds), got "${raw}". ` +
-      `The flag takes milliseconds; for a 60-second lock pass 60000.`,
-    );
-  }
-  return parsed;
-}
-
 export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv = process.env): number {
   const raw = parseFlag(args, '--concurrency') ?? env.GBRAIN_WORKER_CONCURRENCY ?? '1';
   const parsed = parseInt(raw, 10);
@@ -225,7 +204,7 @@ USAGE
                             [--idempotency-key K] [--queue Q] [--dry-run]
                             [--redact-secrets]   (shell only; scrubs inherit
                                                   values from stdout/stderr)
-  gbrain jobs list [--status S] [--queue Q] [--limit N] [--json]
+  gbrain jobs list [--status S] [--queue Q] [--limit N]
   gbrain jobs get <id>
   gbrain jobs cancel <id>
   gbrain jobs retry <id>
@@ -234,17 +213,12 @@ USAGE
   gbrain jobs stats
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
-                   [--health-interval MS] [--nice N] [--lock-duration MS]
+                   [--health-interval MS] [--nice N]
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
                          [--allow-shell-jobs] [--cli-path PATH]
-                         [--max-rss MB] [--nice N] [--lock-duration MS]
-
-    --lock-duration MS  Worker stall-lock window in milliseconds (default
-               30000). The wall-clock dead-letter cap for a running job is
-               lock-duration × max_stalled, so raise this for long-running
-               handlers. Minimum 1000. Env: GBRAIN_LOCK_DURATION (flag wins).
+                         [--max-rss MB] [--nice N]
 
     --nice N   OS scheduling priority, -20 (highest) to 19 (nicest). Lowers CPU
                priority without cutting concurrency — full throughput when the
@@ -510,7 +484,6 @@ HANDLER TYPES (built in)
       const status = parseFlag(args, '--status') as MinionJobStatus | undefined;
       const queueName = parseFlag(args, '--queue');
       const limit = parseInt(parseFlag(args, '--limit') ?? '20', 10);
-      const jsonMode = hasFlag(args, '--json');
 
       // v0.32: thin-client routing. The `list_jobs` MCP op is admin-scoped
       // but not localOnly, so a thin-client install with admin access can
@@ -528,14 +501,6 @@ HANDLER TYPES (built in)
         try { await queue.ensureSchema(); }
         catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
         jobs = await queue.getJobs({ status, queue: queueName, limit });
-      }
-
-      // --json: machine-readable output (one JSON array on stdout) so
-      // downstream tooling (e.g. `gbrain integrations doctor`) never
-      // screen-scrapes the human table, whose column widths shift.
-      if (jsonMode) {
-        console.log(JSON.stringify(jobs));
-        return;
       }
 
       if (jobs.length === 0) {
@@ -980,16 +945,6 @@ HANDLER TYPES (built in)
         healthCheckInterval = parsed;
       }
 
-      // --lock-duration MS (issue #1014): tune the stall-lock window (and so
-      // the lockDuration × max_stalled wall-clock dead-letter cap).
-      let lockDuration: number | undefined;
-      try {
-        lockDuration = parseLockDurationFlag(args);
-      } catch (e) {
-        console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-
       // --nice N (issue #1815): renice this worker process so background work
       // yields CPU to foreground tasks without sacrificing concurrency. Applied
       // at the CLI layer (worker.ts stays embeddable). Niceness inherits to the
@@ -1011,7 +966,6 @@ HANDLER TYPES (built in)
 
       const worker = new MinionWorker(engine, {
         queue: queueName, concurrency, maxRssMb, healthCheckInterval,
-        ...(lockDuration !== undefined ? { lockDuration } : {}),
       });
       await registerBuiltinHandlers(worker, engine);
 
@@ -1052,8 +1006,7 @@ HANDLER TYPES (built in)
             : `, health-check: ${Math.round(healthCheckInterval / 1000)}s`)
         : '';
       const niceNote = niceResult ? `, nice: ${formatNice(niceResult.effective ?? niceVal!)}` : '';
-      const lockNote = lockDuration !== undefined ? `, lock: ${lockDuration}ms` : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${niceNote}${lockNote})`);
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${niceNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
 
       // Register in the live worker registry (issue #1815) so jobs stats / doctor
@@ -1305,15 +1258,6 @@ HANDLER TYPES (built in)
         }
         healthInterval = parsed;
       }
-      // --lock-duration (supervisor): validated here (fail-fast even for
-      // --detach), passed down to the spawned worker via buildWorkerArgs.
-      let supLockDuration: number | undefined;
-      try {
-        supLockDuration = parseLockDurationFlag(args);
-      } catch (e) {
-        console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
       const allowShellJobs = hasFlag(args, '--allow-shell-jobs') ||
                              !!process.env.GBRAIN_ALLOW_SHELL_JOBS;
       const detach = hasFlag(args, '--detach');
@@ -1381,7 +1325,6 @@ HANDLER TYPES (built in)
         allowShellJobs,
         json: jsonMode,
         maxRssMb,
-        ...(supLockDuration !== undefined ? { lockDuration: supLockDuration } : {}),
         ...(supNice !== undefined ? { nice_requested: supNice } : {}),
         ...(supNiceResult?.effective != null ? { nice_effective: supNiceResult.effective } : {}),
         ...(supNiceResult?.error ? { nice_error: supNiceResult.error } : {}),
@@ -1942,6 +1885,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal,
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       phases,
+      forceGlobalOrphans: true,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
 

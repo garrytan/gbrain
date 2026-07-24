@@ -36,15 +36,4 @@ describe('buildWorkerArgs', () => {
     expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0 }))
       .not.toContain('--nice');
   });
-
-  // issue #1014: --lock-duration propagates supervisor → worker child.
-  test('appends --lock-duration when lockDuration is set', () => {
-    expect(buildWorkerArgs({ concurrency: 2, queue: 'default', maxRssMb: 0, lockDuration: 120000 }))
-      .toEqual(['jobs', 'work', '--concurrency', '2', '--queue', 'default', '--lock-duration', '120000']);
-  });
-
-  test('omits --lock-duration when undefined (worker default 30000ms)', () => {
-    expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0 }))
-      .not.toContain('--lock-duration');
-  });
 });

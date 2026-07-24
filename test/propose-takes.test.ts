@@ -15,6 +15,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
@@ -52,6 +53,14 @@ function buildMockEngine(opts: {
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
+      // Narrow candidate-page projection (replaces listPages in the phase).
+      if (sql.includes('SELECT slug, source_id, compiled_truth')) {
+        return opts.pages.map((p) => ({
+          slug: p.slug,
+          source_id: p.source_id,
+          compiled_truth: p.compiled_truth,
+        })) as T[];
+      }
       // SELECT idempotency check
       if (sql.includes('SELECT id FROM take_proposals')) {
         const [sourceId, slug, ch, pv] = params ?? [];
@@ -59,7 +68,10 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT — return nothing
+      // INSERT ... RETURNING id — one row per successful insert (#2138).
+      if (sql.includes('INSERT INTO take_proposals')) {
+        return [{ id: captured.length } as unknown as T];
+      }
       return [];
     },
   } as unknown as BrainEngine;
@@ -159,6 +171,26 @@ describe('parseExtractorOutput', () => {
     const raw = '[{"claim_text":"X","kind":"take","holder":"brain","weight":0.5,"domain":"macro"}]';
     const out = parseExtractorOutput(raw);
     expect(out[0]!.domain).toBe('macro');
+  });
+
+  test('strips <think> reasoning tags before parsing (MiniMax-M3, DeepSeek-R1)', () => {
+    const raw = '<think>Analyzing the prose... I see several claims.</think>\n\n```json\n[{"claim_text":"X","kind":"take","holder":"brain","weight":0.5}]\n```';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('X');
+  });
+
+  test('strips multiple <think> blocks', () => {
+    const raw = '<think>First thought.</think>\n<tool_call>...</tool_call>\n<think>Second thought.</think>\n\n[{"claim_text":"Y","kind":"bet","holder":"brain","weight":0.7}]';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+  });
+
+  test('handles trailing noise after JSON (leftover fences)', () => {
+    const raw = '<think>done</think>\n```json\n[{"claim_text":"Z","kind":"take","holder":"brain","weight":0.6}]\n```\n';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Z');
   });
 });
 
@@ -265,6 +297,22 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+  });
+
+  test('#2138: multi-claim page inserts every claim with a per-claim conflict target', async () => {
+    const pages = [buildPage({ slug: 'wiki/essays/thesis', body: 'Two strong claims live here.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'Claim one', kind: 'take', holder: 'brain', weight: 0.6 },
+      { claim_text: 'Claim two', kind: 'bet', holder: 'brain', weight: 0.8 },
+    ];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect((result.details as Record<string, unknown>).proposals_inserted).toBe(2);
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(2);
+    for (const insert of inserts) expect(insert.sql).toContain('md5(claim_text)');
+    expect(inserts.map(i => i.params[5])).toEqual(['Claim one', 'Claim two']);
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {
@@ -475,5 +523,73 @@ New prose appended here.`;
     } finally {
       resetGateway();
     }
+  });
+
+  test('default extractor skips cleanly when the Anthropic chat model has no key', async () => {
+    // Empty GBRAIN_HOME so hasAnthropicKey's config-file fallback can't find
+    // the operator's real key.
+    await withEnv({ GBRAIN_HOME: emptyHome(), ANTHROPIC_API_KEY: undefined }, async () => {
+      configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
+      try {
+        const { engine, captured } = buildMockEngine({
+          pages: [buildPage({ slug: 'wiki/a', body: 'claim-ish prose' })],
+        });
+        const result = await runPhaseProposeTakes(buildCtx(engine));
+
+        expect(result.status).toBe('skipped');
+        expect((result.details as Record<string, unknown>).reason).toBe('no_provider');
+        // Skips BEFORE touching the engine — no page scan, no cache probes.
+        expect(captured).toHaveLength(0);
+      } finally {
+        resetGateway();
+      }
+    });
+  });
+
+  test('an injected extractor is never gated on provider availability', async () => {
+    await withEnv({ GBRAIN_HOME: emptyHome(), ANTHROPIC_API_KEY: undefined }, async () => {
+      configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
+      try {
+        const { engine } = buildMockEngine({
+          pages: [buildPage({ slug: 'wiki/b', body: 'still processed' })],
+        });
+        const extractor: ProposeTakesExtractor = async () => [];
+        const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+        expect(result.status).toBe('ok');
+        expect((result.details as Record<string, unknown>).pages_scanned).toBe(1);
+      } finally {
+        resetGateway();
+      }
+    });
+  });
+
+  test('loads proposal candidates with a narrow page projection', async () => {
+    const pages = [buildPage({ slug: 'wiki/narrow', body: 'A narrow projection avoids unrelated page columns.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const pageSelect = captured.find(c => c.sql.includes('FROM pages'));
+    expect(pageSelect).toBeDefined();
+    expect(pageSelect!.sql).toContain('SELECT slug, source_id, compiled_truth');
+    expect(pageSelect!.sql).not.toContain('*');
+    // Scalar sourceId scope from ctx binds as a plain equality param.
+    expect(pageSelect!.params[0]).toBe('default');
+  });
+
+  test('narrow projection: federated sourceIds beat scalar sourceId', async () => {
+    const { engine, captured } = buildMockEngine({ pages: [] });
+    const extractor: ProposeTakesExtractor = async () => [];
+    const ctx = {
+      ...buildCtx(engine),
+      auth: { allowedSources: ['team-a', 'team-b'] },
+    } as OperationContext;
+    await runPhaseProposeTakes(ctx, { extractor });
+
+    const pageSelect = captured.find(c => c.sql.includes('FROM pages'));
+    expect(pageSelect).toBeDefined();
+    expect(pageSelect!.sql).toContain('source_id = ANY(');
+    expect(pageSelect!.params[0]).toEqual(['team-a', 'team-b']);
   });
 });

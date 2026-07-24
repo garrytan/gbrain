@@ -55,23 +55,75 @@ describe('whoami op contract', () => {
     expect(result.scopes).toEqual([]);
   });
 
-  test('oauth transport returns full client identity', async () => {
+  test('oauth transport returns client identity and exact source grants', async () => {
     const auth: AuthInfo = {
       token: 'gbrain_at_xxx',
       clientId: 'gbrain_cl_abc',
       clientName: 'gstack-test',
       scopes: ['read', 'sources_admin'],
       expiresAt: 1234567890,
+      sourceId: 'hot-memory',
+      allowedSources: ['hot-memory', 'canonical-brain'],
+    };
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, sourceId: 'transport-fallback', auth }),
+      {},
+    )) as any;
+    expect(result).toEqual({
+      transport: 'oauth',
+      client_id: 'gbrain_cl_abc',
+      client_name: 'gstack-test',
+      scopes: ['read', 'sources_admin'],
+      expires_at: 1234567890,
+      source_id: 'hot-memory',
+      federated_read: ['hot-memory', 'canonical-brain'],
+    });
+  });
+
+  test('oauth transport uses fail-closed empty values when source grants are absent', async () => {
+    const auth: AuthInfo = {
+      token: 'gbrain_at_pre_migration',
+      clientId: 'gbrain_cl_pre_migration',
+      scopes: ['read'],
+    };
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, sourceId: 'transport-fallback', auth }),
+      {},
+    )) as any;
+    expect(result.source_id).toBeNull();
+    expect(result.federated_read).toEqual([]);
+  });
+
+  test('oauth transport preserves an explicit empty federated grant', async () => {
+    const auth: AuthInfo = {
+      token: 'gbrain_at_empty',
+      clientId: 'gbrain_cl_empty',
+      scopes: ['read', 'write'],
+      sourceId: 'hot-memory',
+      allowedSources: [],
     };
     const result = (await whoami.handler(
       ctxWith({ remote: true, auth }),
       {},
     )) as any;
-    expect(result.transport).toBe('oauth');
-    expect(result.client_id).toBe('gbrain_cl_abc');
-    expect(result.client_name).toBe('gstack-test');
-    expect(result.scopes).toEqual(['read', 'sources_admin']);
-    expect(result.expires_at).toBe(1234567890);
+    expect(result.source_id).toBe('hot-memory');
+    expect(result.federated_read).toEqual([]);
+  });
+
+  test('oauth transport does not widen federated_read with the write source', async () => {
+    const auth: AuthInfo = {
+      token: 'gbrain_at_narrow',
+      clientId: 'gbrain_cl_narrow',
+      scopes: ['read', 'write'],
+      sourceId: 'hot-memory',
+      allowedSources: ['canonical-brain'],
+    };
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, auth }),
+      {},
+    )) as any;
+    expect(result.source_id).toBe('hot-memory');
+    expect(result.federated_read).toEqual(['canonical-brain']);
   });
 
   test('legacy transport (token name as clientId, no gbrain_cl_ prefix)', async () => {
@@ -150,6 +202,11 @@ describe('whoami op contract', () => {
 });
 
 describe('whoami op metadata', () => {
+  test('description documents OAuth source grant fields', () => {
+    expect(whoami.description).toContain('source_id');
+    expect(whoami.description).toContain('federated_read');
+  });
+
   test('scope is read (any authenticated caller can introspect itself)', () => {
     expect(whoami.scope).toBe('read');
   });

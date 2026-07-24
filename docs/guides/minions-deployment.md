@@ -93,29 +93,6 @@ usually want both.
 | **Linux VM with systemd** | Two-layer recommended: systemd supervises `gbrain jobs supervisor`, which in turn supervises `gbrain jobs work`. Buys you automatic restart on reboot (systemd) plus fast crash recovery (supervisor). See [systemd](#systemd). |
 | **Dev laptop / macOS** | `gbrain jobs supervisor` in a terminal. Ctrl-C stops it. No system-level setup needed. |
 
-### Running alongside autopilot (production deployment shape)
-
-`gbrain autopilot` and `gbrain jobs supervisor` overlap: by default,
-autopilot spawns its own managed worker for the jobs it dispatches. If you
-run BOTH a default autopilot and a supervisor on the same brain, you get two
-worker lanes claiming from the same queue — double concurrency, double memory,
-and two processes competing for the same job locks. Pick one shape:
-
-| Shape | When | How |
-|---|---|---|
-| **Split (recommended for production)** | You already run (or want) a platform-supervised worker: systemd, Fly, container. | `gbrain autopilot --no-worker` as the dispatcher + `gbrain jobs supervisor` as the single worker lane. Autopilot submits jobs and probes for peer-worker liveness (it warns loudly after a few cycles if nothing is claiming); the supervisor owns execution, crash recovery, and drain. |
-| **All-in-one** | Single machine, nothing else runs workers. | `gbrain autopilot` alone (it manages its own worker child). Do NOT also start a supervisor. |
-
-Never run a default (worker-spawning) autopilot and a supervisor
-side-by-side. If `gbrain jobs stats` shows more active workers than you
-expect, this footgun is the first thing to check.
-
-`gbrain autopilot --install` currently installs the all-in-one shape; for
-the split shape, install the supervisor via systemd/your platform (below)
-and run autopilot with `--no-worker`. See also
-[queue-operations-runbook.md](queue-operations-runbook.md) for the
-`--no-worker` liveness probe.
-
 ### Variables used in this guide
 
 Substitute these once before copy-pasting any snippet.
@@ -324,13 +301,6 @@ silently. The stall detector then dead-letters the job after
 `--backoff-jitter 0..1`, and `--timeout-ms N` as first-class flags
 (since v0.13.1). These write onto the job row at submit time — which is
 what `handleStalled()` reads — so per-job tuning is the real knob today.
-
-**Tune per-worker.** `--lock-duration MS` on `gbrain jobs work` /
-`gbrain jobs supervisor` (env: `GBRAIN_LOCK_DURATION`, flag wins; minimum
-1000) raises the 30 s stall-lock window itself. The wall-clock dead-letter
-cap for a running job is `lock-duration × max_stalled`, so with the
-defaults (30000 × 5 ≈ 180 s wall-clock sweep window) long jobs on flaky
-connections benefit from raising either side.
 
 ### DO NOT pass `maxStalledCount` to `MinionWorker`
 

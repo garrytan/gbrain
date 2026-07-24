@@ -30,11 +30,15 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { withEnv } from './helpers/with-env.ts';
 
 // ─────────────────────────────────────────────────────────────────────
-// Lane A.7 — Chunk-row INSERT model default tracks defaults.ts constant
-// (not stale OpenAI literal). Pre-fix `chunk.model || 'text-embedding-3-large'`
-// in both engines; post-fix `chunk.model || DEFAULT_EMBEDDING_MODEL`.
+// Lane A.7 — Chunk-row INSERT model default tracks the gateway-resolved
+// model (not a stale OpenAI literal, not the compile-time constant).
+// Pre-fix `chunk.model || 'text-embedding-3-large'` in both engines;
+// v0.37 fix `chunk.model || DEFAULT_EMBEDDING_MODEL`; #2846 tightened it
+// to the gateway's runtime model so provenance matches the vector's
+// actual producer (falls back to DEFAULT_EMBEDDING_MODEL only when the
+// gateway is unconfigured).
 // ─────────────────────────────────────────────────────────────────────
-describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant', () => {
+describe('Lane A.7 — chunk-row INSERT default tracks the gateway-resolved model', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -47,8 +51,11 @@ describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant',
     await engine.disconnect();
   });
 
-  test('upsertChunks without explicit model: row stores DEFAULT_EMBEDDING_MODEL', async () => {
-    const { DEFAULT_EMBEDDING_MODEL } = await import('../src/core/ai/defaults.ts');
+  test('upsertChunks without explicit model: row stores the gateway-resolved model', async () => {
+    // The test preload (test/helpers/legacy-embedding-preload.ts) pins the
+    // gateway to 'openai:text-embedding-3-large', so that's what the write
+    // site must stamp — NOT the compile-time DEFAULT_EMBEDDING_MODEL (#2846).
+    const { getEmbeddingModel } = await import('../src/core/ai/gateway.ts');
     await engine.putPage('test/a7', { type: 'note', title: 'A.7', compiled_truth: 'hello' });
     await engine.upsertChunks('test/a7', [
       { chunk_index: 0, chunk_text: 'hello', chunk_source: 'compiled_truth' },
@@ -57,9 +64,9 @@ describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant',
     const rows = await engine.executeRaw<{ model: string }>(
       `SELECT model FROM content_chunks WHERE chunk_index = 0 LIMIT 1`,
     );
-    expect(rows[0]?.model).toBe(DEFAULT_EMBEDDING_MODEL);
+    expect(rows[0]?.model).toBe(getEmbeddingModel());
     // CDX2-4 regression: would have been 'text-embedding-3-large'
-    // (a literal pre-fix; production write site that was never tested).
+    // (a bare literal pre-fix; provider-prefixed form is required).
     expect(rows[0]?.model).not.toBe('text-embedding-3-large');
   });
 });

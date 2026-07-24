@@ -161,6 +161,33 @@ export async function resolveSourceId(
 }
 
 /**
+ * Engine-free tiers (1-3) of the resolution chain: explicit flag →
+ * GBRAIN_SOURCE env → .gbrain-source dotfile walk. Used by the thin-client
+ * CLI path (#2098), which has no local engine to run tiers 4-6 or
+ * assertSourceExists against — the remote server enforces existence + grant.
+ * Returns null when no engine-free tier fires.
+ */
+export function resolveSourceIdEngineFree(
+  explicit: string | null | undefined,
+  cwd: string = process.cwd(),
+): string | null {
+  if (explicit) {
+    if (!SOURCE_ID_RE.test(explicit)) {
+      throw new Error(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
+    }
+    return explicit;
+  }
+  const env = process.env.GBRAIN_SOURCE;
+  if (env && env.length > 0) {
+    if (!SOURCE_ID_RE.test(env)) {
+      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+    }
+    return env;
+  }
+  return readDotfileWalk(cwd);
+}
+
+/**
  * Returns the id of the SINGLE registered non-default source with a
  * local_path, when exactly one such row exists. Returns null when:
  *   - zero non-default sources are registered (fresh install)

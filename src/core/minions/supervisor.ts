@@ -87,10 +87,6 @@ export interface SupervisorOpts {
    *  resolveDefaultMaxRssMb() (issue #1678) instead of a flat default.
    *  Set to 0 to spawn the worker without a watchdog. */
   maxRssMb: number;
-  /** Worker stall-lock window in ms (issue #1014), passed to the spawned
-   *  worker as `--lock-duration N`. The wall-clock dead-letter cap is
-   *  lockDuration × max_stalled. Undefined → worker default (30000ms). */
-  lockDuration?: number;
   /** Niceness (issue #1815) the operator requested via `--nice` / `GBRAIN_NICE`,
    *  or undefined to inherit. When set, the worker is spawned with `--nice N` so
    *  it re-applies the value (the supervisor itself is reniced by the CLI layer,
@@ -176,7 +172,7 @@ const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
  * niceness also inherits to the worker's own children automatically.
  */
 export function buildWorkerArgs(
-  opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested' | 'lockDuration'>,
+  opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested'>,
 ): string[] {
   const args = [
     'jobs', 'work',
@@ -188,9 +184,6 @@ export function buildWorkerArgs(
   }
   if (opts.nice_requested !== undefined) {
     args.push('--nice', String(opts.nice_requested));
-  }
-  if (opts.lockDuration !== undefined) {
-    args.push('--lock-duration', String(opts.lockDuration));
   }
   return args;
 }

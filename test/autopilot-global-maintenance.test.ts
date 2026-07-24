@@ -11,6 +11,9 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
@@ -130,13 +133,23 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
 
   test('runs global phases (no source_id) and stamps autopilot.last_global_at on success', async () => {
     expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
+    const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-global-maintenance-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['repo-a', 'repo-a', repoPath],
+    );
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-global-maintenance');
     expect(handler).toBeTruthy();
 
-    const result = await handler!({ data: { phases: ['orphans', 'embed'] }, signal: undefined });
+    const result = await handler!({
+      data: { phases: ['orphans', 'embed'], repoPath },
+      signal: undefined,
+    });
     // The cycle ran the requested global phases (DB-only on an empty brain).
-    expect(result.report.phases.some((p: any) => p.phase === 'orphans')).toBe(true);
+    const orphans = result.report.phases.find((p: any) => p.phase === 'orphans');
+    expect(orphans).toBeTruthy();
+    expect(orphans.details.source_id).toBeUndefined();
     expect(['ok', 'clean', 'partial']).toContain(result.report.status);
     // Freshness stamped so the dispatch gate backs off.
     const stamped = await engine.getConfig(LAST_GLOBAL_AT_KEY);
