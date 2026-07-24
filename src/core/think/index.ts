@@ -174,19 +174,58 @@ function inferIntent(question: string, anchor?: string): string {
   return 'general';
 }
 
+/**
+ * Parse the synthesis model's response into the `{answer, citations, gaps}`
+ * shape, tolerating a Markdown code fence around (or a lead-in sentence
+ * before) the JSON — models routinely add one despite the system prompt
+ * asking for "no prose outside JSON" (#2364).
+ *
+ * Three candidate substrings are tried, in this fixed order, and — this is
+ * the important part — EVERY candidate that parses as an object is
+ * considered before returning: a candidate whose parsed shape actually has
+ * a string `answer` field always wins over one that doesn't, regardless of
+ * which candidate was tried first. Short-circuiting on the first candidate
+ * that merely parses (rather than the first one that looks like a real
+ * response) is what caused earlier regressions here — e.g. a fenced code
+ * snippet embedded INSIDE a valid `answer` value can itself look like a
+ * wrapping fence, or even parse to a valid-but-wrong object like `{}`.
+ *   1. The full trimmed text (handles the common no-fence case, and any
+ *      fence-looking sequence that's actually just part of a string value).
+ *   2. The Markdown-fenced region, if a fence is present: from the first
+ *      opening fence marker to the LAST closing one (not anchored to the
+ *      very start/end, so a lead-in sentence before the fence doesn't
+ *      defeat it; not non-greedy, so a nested fence inside the JSON's own
+ *      `answer` markdown doesn't truncate it early).
+ *   3. The first `{...}` block found anywhere in the full text — the
+ *      original fallback, for prose-wrapped JSON with no fence at all.
+ */
 function tryParseJSON(text: string): unknown {
-  // The model may wrap JSON in code fences. Strip if present.
-  const stripped = text.trim().replace(/^```(?:json)?\s*\n?/, '').replace(/```\s*$/, '');
-  try {
-    return JSON.parse(stripped);
-  } catch {
-    // Fallback: extract the first {...} block. Useful when the model emits prose alongside JSON.
-    const m = stripped.match(/\{[\s\S]*\}/);
-    if (m) {
-      try { return JSON.parse(m[0]); } catch { /* ignore */ }
-    }
-    return null;
+  const trimmed = text.trim();
+  const candidates: string[] = [trimmed];
+
+  const fenceOpen = trimmed.match(/```[ \t]*(?:json)?[ \t]*\n?/i);
+  if (fenceOpen && fenceOpen.index !== undefined) {
+    const contentStart = fenceOpen.index + fenceOpen[0].length;
+    const closeIdx = trimmed.lastIndexOf('```');
+    candidates.push((closeIdx > contentStart ? trimmed.slice(contentStart, closeIdx) : trimmed.slice(contentStart)).trim());
   }
+
+  const braceMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (braceMatch) candidates.push(braceMatch[0]);
+
+  let weakMatch: unknown = null;
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object') continue;
+    if (typeof (parsed as Record<string, unknown>).answer === 'string') return parsed;
+    if (weakMatch === null) weakMatch = parsed;
+  }
+  return weakMatch;
 }
 
 /**
