@@ -22,6 +22,7 @@ import type { ChunkInput } from './types.ts';
 import { embedBatchWithBackoff } from '../commands/embed.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
+import { AIConfigError } from './ai/errors.ts';
 
 /** Last visited (page_id, chunk_index) for keyset-resume across runs. */
 export interface StaleCursor {
@@ -132,6 +133,7 @@ export async function embedStaleForSource(
     aborted: false,
   };
   const signature = opts.embeddingSignature;
+  let providerUnavailable = false;
 
   // v0.41.31: invalidate embeddings stamped under a prior model signature so
   // the NULL cursor below re-embeds them. GRANDFATHER: NULL signature
@@ -238,6 +240,7 @@ export async function embedStaleForSource(
       } catch (e: unknown) {
         // Aborted mid-fetch is expected; treat as graceful exit.
         if (signal?.aborted) return;
+        if (e instanceof AIConfigError) providerUnavailable = true;
         // Otherwise log and skip — the chunk stays NULL and next call retries.
         process.stderr.write(
           `\n  [embed-stale] error on ${keySourceId}/${slug}: ${
@@ -263,7 +266,13 @@ export async function embedStaleForSource(
       }
     }
 
-    const numWorkers = Math.min(concurrency, keys.length);
+    // Probe a single page before starting the pool. Provider-wide billing or
+    // configuration failures often arrive as HTTP 429; without the probe,
+    // every worker would issue the same doomed request concurrently.
+    const probeKey = keys[nextIdx++];
+    if (probeKey !== undefined) await embedOneKey(probeKey);
+    if (providerUnavailable) return result;
+    const numWorkers = Math.min(concurrency, keys.length - nextIdx);
     await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
     if (opts.onProgress) {

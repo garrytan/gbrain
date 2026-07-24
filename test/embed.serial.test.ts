@@ -663,6 +663,22 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
     expect(lastEmbedBatchOpts).toBeDefined();
     expect((lastEmbedBatchOpts as { maxRetries?: number }).maxRetries).toBe(0);
   });
+
+  test('provider billing-cap 429 is not retried', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    const { AIConfigError } = await import('../src/core/ai/errors.ts');
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      throw new AIConfigError(
+        'Your project has exceeded its monthly spending cap.',
+        'Increase the provider spending cap.',
+        { status: 429 },
+      );
+    };
+    await expect(embedBatchWithBackoff(['x'])).rejects.toThrow('monthly spending cap');
+    expect(calls).toBe(1);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────
