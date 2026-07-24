@@ -120,7 +120,10 @@ function resolveGbrainCliPath(): string {
 function credStoreFile(): string {
   return join(gbrainHome(), 'git-credentials');
 }
-function pushLogPath(): string {
+/** Exported for doctor's durability_push_health check — the push-retry
+ *  template below appends every outcome (ok / rejected / lock-timeout /
+ *  LOCAL-ONLY) here, so the log is the observable record of the push tier. */
+export function pushLogPath(): string {
   return join(gbrainHome(), 'brain-push.log');
 }
 
