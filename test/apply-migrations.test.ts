@@ -10,7 +10,10 @@ import { describe, test, expect } from 'bun:test';
 import { __testing } from '../src/commands/apply-migrations.ts';
 import type { CompletedMigrationEntry } from '../src/core/preferences.ts';
 
-const { parseArgs, indexCompleted, buildPlan, statusForVersion } = __testing;
+const {
+  parseArgs, indexCompleted, buildPlan, statusForVersion,
+  evaluateV0_32_2RepairOutcome,
+} = __testing;
 
 describe('parseArgs', () => {
   test('default flags', () => {
@@ -206,12 +209,47 @@ describe('force-retry escape hatch', () => {
 // date" paths must exit 0 so shell scripts gating on the exit code work.
 // Pre-fix, these `return` statements left the CLI dispatcher's implicit
 // non-zero exit code in place when callers checked $?.
+describe('evaluateV0_32_2RepairOutcome (#2646 drift-repair lane)', () => {
+  test('complete + remaining 0 → success', () => {
+    const v = evaluateV0_32_2RepairOutcome('complete', 0);
+    expect(v.failed).toBe(false);
+    expect(v.message).toContain('Drift repair complete');
+  });
+
+  test('complete + remaining > 0 → success with loud pending warning (legitimate skips must not perma-fail postinstall)', () => {
+    const v = evaluateV0_32_2RepairOutcome('complete', 3);
+    expect(v.failed).toBe(false);
+    expect(v.message).toContain('3 active legacy row(s) still pending');
+  });
+
+  test('complete + unverifiable remainder → failure', () => {
+    const v = evaluateV0_32_2RepairOutcome('complete', null);
+    expect(v.failed).toBe(true);
+    expect(v.message).toContain('could not be verified');
+  });
+
+  test('partial → failure (exit 1) with resume guidance', () => {
+    const v = evaluateV0_32_2RepairOutcome('partial', null);
+    expect(v.failed).toBe(true);
+    expect(v.message).toContain('PARTIAL');
+  });
+
+  test('failed → failure', () => {
+    const v = evaluateV0_32_2RepairOutcome('failed', null);
+    expect(v.failed).toBe(true);
+    expect(v.message).toContain('status=failed');
+  });
+});
+
 describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
   test('source contains process.exit(0) on list/dry-run/up-to-date branches', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
-    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed\);\s*process\.exit\(0\);/);
-    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed\);\s*process\.exit\(0\);/);
+    // #2646: the list/dry-run blocks may print a drift-repair notice
+    // between the plan print and the exit — the invariant is that each
+    // block still terminates with process.exit(0).
+    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed\);[\s\S]{0,800}?process\.exit\(0\);/);
+    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed\);[\s\S]{0,800}?process\.exit\(0\);/);
     expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
   });
 });
