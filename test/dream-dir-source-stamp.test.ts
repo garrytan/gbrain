@@ -18,7 +18,7 @@
  * cycle's PGLite file lock lives under ~/.gbrain).
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, symlinkSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -94,6 +94,72 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
       // Stamping an archived source would mask data staleness when it is
       // later restored (mirrors the explicit --source archived guard).
       expect(await readLastFullCycleAt('mothballed')).toBeNull();
+    });
+  }, 60_000);
+});
+
+/**
+ * #2540 — `--dir` matching against `sources.local_path` compares two path
+ * SPELLINGS, and neither side is canonicalized: `--dir` goes through
+ * `resolve()`, while `sources.local_path` stores whatever spelling the
+ * source was registered with (`--path` as typed, or `defaultCloneDir`).
+ * So a source registered through a symlink but dreamt via the real path
+ * (or vice versa) never string-matched — `resolveSourceForDir`
+ * (src/core/cycle.ts) derived no source, the #1869 freshness stamp never
+ * landed, and doctor's `cycle_freshness` stayed permanently stale on an
+ * otherwise healthy install. Symlinked vault locations are ordinary (a
+ * brain inside a synced cloud-storage folder, a /home -> /mnt relocation).
+ *
+ * Fix: on an exact-match miss, `resolveSourceForDir` retries with
+ * `realpathSync` applied to BOTH sides, so the match is symmetric no
+ * matter which side holds the link. Both directions are pinned below.
+ * Symlinks are constructed explicitly here (rather than relying on the
+ * host's own tmpdir layout) so the test is deterministic on macOS and
+ * Linux CI alike.
+ */
+describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', () => {
+  test('local_path stored as the REAL path, --dir given the SYMLINKED path still stamps', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      const realTarget = mkdtempSync(join(tmpdir(), 'gbrain-2540-real-'));
+      const linkParent = mkdtempSync(join(tmpdir(), 'gbrain-2540-link-'));
+      const symlinkedDir = join(linkParent, 'vault');
+      symlinkSync(realTarget, symlinkedDir, 'dir');
+      expect(realpathSync(symlinkedDir)).not.toBe(symlinkedDir); // sanity: the symlink actually diverges
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+         VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
+        ['vault-real', 'vault-real', realTarget],
+      );
+
+      const report = await runDream(engine, ['--dir', symlinkedDir, '--phase', 'lint', '--json']);
+      expect(report).toBeTruthy();
+      expect(await readLastFullCycleAt('vault-real')).not.toBeNull();
+
+      rmSync(realTarget, { recursive: true, force: true });
+      rmSync(linkParent, { recursive: true, force: true });
+    });
+  }, 60_000);
+
+  test('local_path stored as the SYMLINKED path, --dir given the REAL path still stamps', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      const realTarget = mkdtempSync(join(tmpdir(), 'gbrain-2540-real2-'));
+      const linkParent = mkdtempSync(join(tmpdir(), 'gbrain-2540-link2-'));
+      const symlinkedDir = join(linkParent, 'vault');
+      symlinkSync(realTarget, symlinkedDir, 'dir');
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+         VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
+        ['vault-link', 'vault-link', symlinkedDir],
+      );
+
+      const report = await runDream(engine, ['--dir', realpathSync(symlinkedDir), '--phase', 'lint', '--json']);
+      expect(report).toBeTruthy();
+      expect(await readLastFullCycleAt('vault-link')).not.toBeNull();
+
+      rmSync(realTarget, { recursive: true, force: true });
+      rmSync(linkParent, { recursive: true, force: true });
     });
   }, 60_000);
 });
