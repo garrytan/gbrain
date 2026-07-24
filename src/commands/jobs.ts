@@ -80,6 +80,67 @@ export function parseMaxWaitingFlag(args: string[]): number | undefined {
   return Math.max(1, Math.min(100, parsed));
 }
 
+export interface JobsPruneArgs {
+  help: boolean;
+  dryRun: boolean;
+  olderThanDays: number;
+}
+
+function parseOlderThanDays(raw: string): number {
+  const m = raw.trim().match(/^(\d+)(d?)$/);
+  if (!m) {
+    throw new Error(`--older-than must be a positive number of days (e.g. 30d), got: ${JSON.stringify(raw)}`);
+  }
+  const days = parseInt(m[1], 10);
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new Error(`--older-than must be a positive number of days (e.g. 30d), got: ${JSON.stringify(raw)}`);
+  }
+  return days;
+}
+
+export function parseJobsPruneArgs(args: string[]): JobsPruneArgs {
+  const out: JobsPruneArgs = { help: false, dryRun: false, olderThanDays: 30 };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--help' || arg === '-h') {
+      out.help = true;
+      continue;
+    }
+    if (arg === '--dry-run') {
+      out.dryRun = true;
+      continue;
+    }
+    if (arg === '--older-than') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error('Error: --older-than requires a value (e.g. 30d).');
+      }
+      out.olderThanDays = parseOlderThanDays(value);
+      i++;
+      continue;
+    }
+    if (arg.startsWith('--older-than=')) {
+      out.olderThanDays = parseOlderThanDays(arg.slice('--older-than='.length));
+      continue;
+    }
+    throw new Error(`Error: unknown jobs prune flag ${JSON.stringify(arg)}.`);
+  }
+  return out;
+}
+
+function printJobsPruneHelp(): void {
+  console.log(`gbrain jobs prune — delete old terminal jobs
+
+USAGE
+  gbrain jobs prune [--older-than 30d] [--dry-run]
+
+FLAGS
+  --older-than DAYS  Delete terminal jobs older than this many days (default: 30d).
+  --dry-run          Report how many rows would be deleted; do not delete.
+  --help, -h         Show this help.
+`);
+}
+
 /** Parse `--max-rss N` (MB). Returns:
  *  - undefined if the flag is absent (caller decides the default)
  *  - 0 if `--max-rss 0` (explicit disable)
@@ -598,18 +659,30 @@ HANDLER TYPES (built in)
     }
 
     case 'prune': {
-      const olderThanStr = parseFlag(args, '--older-than') ?? '30d';
-      const days = parseInt(olderThanStr, 10);
-      if (isNaN(days) || days <= 0) {
-        console.error('Error: --older-than must be a positive number (days). Example: --older-than 30d');
+      let pruneArgs: JobsPruneArgs;
+      try {
+        pruneArgs = parseJobsPruneArgs(args.slice(1));
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
         process.exit(1);
+      }
+      if (pruneArgs.help) {
+        printJobsPruneHelp();
+        break;
       }
 
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
-      const count = await queue.prune({ olderThan: new Date(Date.now() - days * 86400000) });
-      console.log(`Pruned ${count} jobs older than ${days} days.`);
+      const olderThan = new Date(Date.now() - pruneArgs.olderThanDays * 86400000);
+      if (pruneArgs.dryRun) {
+        const count = await queue.countPrunable({ olderThan });
+        console.log(`[dry-run] would prune ${count} jobs older than ${pruneArgs.olderThanDays} days.`);
+        break;
+      }
+
+      const count = await queue.prune({ olderThan });
+      console.log(`Pruned ${count} jobs older than ${pruneArgs.olderThanDays} days.`);
       break;
     }
 
