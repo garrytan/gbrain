@@ -5,11 +5,17 @@
  * a tuned LLM extractor, writes the extracted gradeable claims to the
  * `take_proposals` queue. User accepts/rejects via `gbrain takes propose`.
  *
- * Idempotency contract (D17 schema spec):
- *   The unique index on (source_id, page_slug, content_hash, prompt_version)
- *   means an unchanged page never re-spends LLM tokens. Bumping
- *   PROPOSE_TAKES_PROMPT_VERSION cleanly invalidates the cache so a tuned
- *   prompt re-runs proposals on every page.
+ * Idempotency contract (D17 schema spec; per-claim rows since migration
+ * v125, zero-claim sentinels since v126):
+ *   Every scan of a (source_id, page_slug, content_hash, prompt_version)
+ *   tuple leaves at least one row — one per extracted claim, or a single
+ *   status='empty' sentinel when extraction yields nothing — so an unchanged
+ *   page never re-spends LLM tokens. Pre-v126 only proposal rows were
+ *   written: a zero-claim page never entered the cache and was re-extracted
+ *   on EVERY cycle (observed live: ~60 such pages × every cycle ≈ 1,400
+ *   wasted extractor calls / ~$15 per day — ~90% of total autopilot spend).
+ *   Bumping PROPOSE_TAKES_PROMPT_VERSION cleanly invalidates the cache so a
+ *   tuned prompt re-runs proposals on every page.
  *
  * F2 fence dedup:
  *   The phase reads the page's existing `<!-- gbrain:takes:begin -->` fence
@@ -500,12 +506,36 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Write proposals to take_proposals. #2138: the idempotency key is
-      // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
-      // the per-page tuple (migration v125), so a multi-claim page keeps every
-      // claim. RETURNING id prevents a repeated claim from inflating the count.
+      // Zero-claim scans MUST still enter the idempotency cache. Pre-v126
+      // only proposal rows were written, so a page whose extraction yielded
+      // no gradeable claims never got a row for its (page, content_hash) —
+      // the cache check above missed on every subsequent cycle and the LLM
+      // call was re-spent on the same unchanged page, forever. The sentinel
+      // row (status='empty', empty claim_text) is invisible to the review
+      // queue (pending_idx is partial on status='pending'); it exists only
+      // so the cache check hits.
+      if (proposals.length === 0) {
+        await engine.executeRaw(
+          `INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              status, claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
+           VALUES ($1, $2, $3, $4, $5, 'empty', '', 'none', 'brain', 0, NULL, NULL, $6)
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
+          [sourceId, page.slug, ch, promptVersion, proposalRunId, modelId],
+        );
+        continue;
+      }
+
+      // Write proposals to take_proposals, one row per claim. The v125
+      // idempotency index includes md5(claim_text), so a same-page
+      // multi-claim run keeps EVERY claim — the pre-v125 four-column unique
+      // index made claims 2..N conflict with claim 1 and ON CONFLICT DO
+      // NOTHING silently dropped them (the review queue only ever saw the
+      // first claim of each page version). RETURNING id keeps
+      // proposals_inserted honest: it counts rows that actually landed,
+      // not insert attempts.
       for (const p of proposals) {
-        const inserted = await engine.executeRaw<{ id: number }>(
+        const landed = await engine.executeRaw<{ id: number }>(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
@@ -527,7 +557,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             modelId,
           ],
         );
-        result.proposals_inserted += inserted.length;
+        if (landed.length > 0) result.proposals_inserted += 1;
       }
     }
 

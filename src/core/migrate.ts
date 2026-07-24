@@ -5724,6 +5724,29 @@ export const MIGRATIONS: Migration[] = [
         ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
     `,
   },
+  {
+    version: 126,
+    name: 'take_proposals_empty_scan_sentinels',
+    // v0.42.x — kill the propose_takes rescan loop (the COST half of the
+    // original two-defect fix; the per-claim index half shipped as v125 /
+    // take_proposals_per_claim_idempotency, #2138 class).
+    //
+    // Zero-claim scans never entered the idempotency cache (only proposal
+    // rows were written), so pages whose extraction yielded nothing were
+    // re-extracted on EVERY cycle. Observed live: ~60 such pages per run
+    // ≈ 1,400 wasted extractor calls / ~$15 per day — ~90% of total
+    // autopilot LLM spend. Fix: the phase now writes a status='empty'
+    // sentinel row per zero-claim scan; the status CHECK gains the 'empty'
+    // value. Sentinels are excluded from the partial pending index, so the
+    // review queue never sees them. The DROP+ADD CONSTRAINT pair is
+    // idempotent as a unit.
+    idempotent: true,
+    sql: `
+      ALTER TABLE take_proposals DROP CONSTRAINT IF EXISTS take_proposals_status_check;
+      ALTER TABLE take_proposals ADD CONSTRAINT take_proposals_status_check
+        CHECK (status IN ('pending','accepted','rejected','superseded','empty'));
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

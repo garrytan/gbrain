@@ -68,9 +68,12 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT ... RETURNING id — one row per successful insert (#2138).
-      if (sql.includes('INSERT INTO take_proposals')) {
-        return [{ id: captured.length } as unknown as T];
+      // INSERT ... RETURNING id — emulate a successful insert so the
+      // honest proposals_inserted counter (counts RETURNING rows, not
+      // attempts) sees the row land (#2138). Guarded on RETURNING id so the
+      // zero-claim sentinel INSERT (no RETURNING) correctly returns [].
+      if (sql.includes('INSERT INTO take_proposals') && sql.includes('RETURNING id')) {
+        return [{ id: 1 } as unknown as T];
       }
       return [];
     },

@@ -1269,8 +1269,15 @@ CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
   ON calibration_profiles (source_id, published, holder)
   WHERE published = true;
 
--- take_proposals: per-claim idempotency via source/page/content/prompt plus
--- md5(claim_text). The old per-page key silently dropped claim #2+ (#2138).
+-- take_proposals: propose_takes phase queue. Idempotency cache via the
+-- composite unique index (source_id, page_slug, content_hash, prompt_version,
+-- md5(claim_text)) — the 4-column prefix is the per-scan cache key (mirrors
+-- v0.23 dream_verdicts); md5(claim_text) makes rows per-claim so multi-claim
+-- pages keep every claim (v125, #2138 class). status='empty' rows are
+-- zero-claim scan sentinels (v126): they hold the cache slot for a page
+-- version whose extraction yielded nothing — the phase never re-spends the
+-- LLM call on that page version. Excluded from the partial pending index.
+-- proposal_run_id supports --rollback by run.
 CREATE TABLE IF NOT EXISTS take_proposals (
   id                          BIGSERIAL PRIMARY KEY,
   source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -1281,7 +1288,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
   proposal_run_id             TEXT         NOT NULL,
   status                      TEXT         NOT NULL DEFAULT 'pending'
-                                           CHECK (status IN ('pending','accepted','rejected','superseded')),
+                                           CHECK (status IN ('pending','accepted','rejected','superseded','empty')),
   claim_text                  TEXT         NOT NULL,
   kind                        TEXT         NOT NULL,
   holder                      TEXT         NOT NULL,
