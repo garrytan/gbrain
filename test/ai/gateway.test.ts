@@ -4,6 +4,8 @@ import {
   resetGateway,
   isAvailable,
   embed,
+  embedOne,
+  __setEmbedTransportForTests,
   getEmbeddingModel,
   getEmbeddingDimensions,
   getExpansionModel,
@@ -16,7 +18,10 @@ import {
 // (capture / ingest-capture tests), where it produced "Incorrect API key
 // provided: openai-fake" against the real OpenAI endpoint and wedged
 // the shard. Reset once at file teardown so no caller sees the residue.
-afterAll(() => resetGateway());
+afterAll(() => {
+  resetGateway();
+  __setEmbedTransportForTests(null);
+});
 import { parseModelId, resolveRecipe } from '../../src/core/ai/model-resolver.ts';
 import {
   dimsProviderOptions,
@@ -48,6 +53,35 @@ describe('gateway configuration', () => {
     expect(getEmbeddingModel()).toBe('zeroentropyai:zembed-1');
     expect(getEmbeddingDimensions()).toBe(1280);
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
+  });
+});
+
+describe('gateway.embedOne options', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setEmbedTransportForTests(null);
+  });
+
+  test('passes maxRetries=0 to the provider transport for health probes', async () => {
+    let observedMaxRetries: number | undefined;
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    __setEmbedTransportForTests(async (args: any) => {
+      observedMaxRetries = args.maxRetries;
+      return {
+        embeddings: [new Array(3).fill(0.1)],
+        usage: { tokens: 1 },
+      } as any;
+    });
+
+    const vector = await embedOne('health probe', { maxRetries: 0 });
+
+    expect(observedMaxRetries).toBe(0);
+    expect(vector.length).toBe(3);
+    __setEmbedTransportForTests(null);
   });
 });
 

@@ -5590,7 +5590,10 @@ export async function buildChecks(
     } else {
       // Live embed test
       const start = Date.now();
-      const vec = await embedOne('gbrain doctor embedding smoke test');
+      // Doctor is itself the provider-health circuit breaker. A permanent
+      // billing/auth failure must be sampled once, not multiplied by the AI
+      // SDK's default retries (which can add ~90s to every health check).
+      const vec = await embedOne('gbrain doctor embedding smoke test', { maxRetries: 0 });
       const ms = Date.now() - start;
       const actualDims = vec.length;
 

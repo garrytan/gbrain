@@ -1756,8 +1756,8 @@ async function embedSubBatch(
 }
 
 /** Embed one text (convenience wrapper). */
-export async function embedOne(text: string): Promise<Float32Array> {
-  const [v] = await embed([text]);
+export async function embedOne(text: string, opts?: EmbedOpts): Promise<Float32Array> {
+  const [v] = await embed([text], opts);
   return v;
 }
 
