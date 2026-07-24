@@ -2,6 +2,144 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.65.0] - 2026-07-23
+
+**A large maintenance release: 93 verified fixes and small features merged since v0.42.64.0, most of them community contributions.**
+
+If you use gbrain day to day, this release makes the boring parts trustworthy. Importing and syncing notes is safer: a failed pull no longer pretends everything is up to date, imported pages are read back after writing to confirm they landed, and a page with real content can no longer be silently overwritten by an empty one. Search answers get better inputs: the think command now picks excerpts that actually match your question, and results respect your federated source settings. Background enrichment (the "dream" cycle) wastes less money and retries properly when an AI provider is down. Spending caps now fail closed, so a billing hiccup can never turn into an uncapped spend. And `gbrain doctor` is quieter, with several false alarms removed and real problems (like an embedding backlog with no worker running) now flagged.
+
+More AI providers work out of the box, including OpenRouter prompt caching, MiniMax and Zhipu GLM recipes, Ollama Matryoshka embedding dimensions, and llama-server batch limits.
+
+## To take advantage of v0.42.65.0
+
+`gbrain upgrade` should do this automatically. No new schema migrations ship in this release.
+
+1. **Upgrade and verify:**
+   ```bash
+   gbrain upgrade
+   gbrain doctor
+   gbrain stats
+   ```
+2. **If `gbrain doctor` reports new findings after upgrading,** that is the quieter, more accurate check set working as intended. Each finding names its fix.
+3. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+#### Security
+
+- MCP source scoping for remote callers got a hardening pass, so agent-facing connections stay confined to the sources they were granted. (#2881, contributed by @spinsirr)
+- Paid MCP spend accounting is now atomic and fails closed, and resolver spend is recorded before a cap error is raised, so caps cannot be raced past or undercounted. (#3203, #3204, contributed by @caterpillarC15)
+- The OAuth token endpoint rate limit on the HTTP server is now configurable via env for deployments behind shared IPs. (#3114, contributed by @time-attack)
+- `WWW-Authenticate` responses now carry `resource_metadata` per the MCP spec and RFC 9728, so conforming clients can discover the auth server. (#1410, contributed by @rayers)
+
+#### Search, retrieval, and think
+
+- `think` selects query-relevant excerpts instead of generic ones. (#3197, contributed by @Y0lan)
+- Unqualified local CLI `search`/`query` now honors `sources.config.federated` read visibility. (#2561, #3141, contributed by @time-attack)
+- Email citation metadata is projected into search results. (#2873, contributed by @amtagrwl)
+- The `think` Gaps section renders once instead of twice. (#1662, contributed by @howwohmm)
+- Fuzzy entity lookup threads the caller's source scope and skips soft-deleted entities. (#1508, contributed by @tim404x)
+- `code-def` surfaces method, constructor, field, and struct definitions, not just top-level symbols. (#1628, contributed by @rayers)
+- Briefing pages are excluded from their own Brain Pulse salience. (#1202, contributed by @rwbaker)
+- Reranker calls with missing auth are classified as configuration errors before falling back. (#2059, #3139, contributed by @time-attack)
+
+#### Import, sync, and ingestion
+
+- A failed git pull with zero imports reports `partial (pull_failed)` instead of `up_to_date`. (#3068, #3253, contributed by @Masashi-Ono0611)
+- Imports run a post-write read-back verification with a durable ingest-log record. (#2869, contributed by @Andredsouza1984)
+- `put` refuses to overwrite a non-empty page with empty content. (#2708, contributed by @symmetric-matthew)
+- `putPage` restores soft-deleted rows instead of colliding with them. (#2779, contributed by @RerankerGuo)
+- Mixed-case slugs are normalized before chunk upsert, ending duplicate-chunk churn. (#430, #3143, contributed by @time-attack)
+- Imports fall back to the body H1 for the title when frontmatter lacks `title:`. (#2446, #3072, contributed by @time-attack)
+- YAML comments inside the frontmatter fence are no longer treated as markdown headings. (#3225, #3247, contributed by @Masashi-Ono0611)
+- Write-through guards case-insensitive filesystem collisions before the atomic write. (#2831, #3119, contributed by @time-attack)
+- Path-qualified wikilinks outside the known directory pattern resolve on the DB/put_page path. (#2866, contributed by @paul-0320)
+- CJK slugs are supported in the slug registry and dream-cycle summary slugs. (#782, #738, #3083, contributed by @time-attack)
+- Three ingest/sync/serve singleton fixes: page-type round-trip, deleted-slug embed noise, and a stateless width guard. (#3140, contributed by @time-attack)
+- Sync honors the `embedding_disabled` sentinel as an implicit `--no-embed`. (#2879, contributed by @gawievanblerk)
+- Verified sync head sentinels are cleared correctly. (#2734, contributed by @symmetric-matthew)
+- Resumed syncs report the pinned commit they actually landed on. (#3202, contributed by @caterpillarC15)
+- The expected `discover_git_root` probe failure stays off stderr. (#3232, contributed by @Masashi-Ono0611)
+- `extract --stale` runs the real resolver so basename resolution reaches stale pages, and clears pre-version-bump pages. (#2576, #2717, contributed by @paul-0320; #1791, contributed by @Nazim22)
+- Oversized code chunks are capped so they stay embeddable, and code-chunk metadata survives re-embeds. (#1675, contributed by @lubosxyz; #769, #1232, contributed by @rayers)
+
+#### Background cycle, dream, and facts
+
+- Path-derived dream sources are stamped, and the engine closes cleanly on autopilot shutdown. (#3178, contributed by @time-attack)
+- All-provider-failed atom drains propagate so durable jobs retry instead of silently dropping work. (#3218, #3248, contributed by @Masashi-Ono0611)
+- Atom extraction raises `maxTokens` and case-normalizes `atom_type` for Gemini models. (#3211, contributed by @alexey-metaengage)
+- The conversation extractor gates anonymous-speaker self-attribution instead of guessing. (#3228, contributed by @asenkovskiy)
+- Incremental dream extraction stamps its watermark so re-runs stop reprocessing. (#2636, #3115, contributed by @time-attack)
+- `dream --dry-run --json` keeps stdout clean of embed summaries. (#394, #3109, contributed by @time-attack)
+- Synthesized dream pages require a self-contained opening summary. (#2770, contributed by @Masashi-Ono0611)
+- PGLite inline synth subagent drains complete, and `lint` gains `--exclude`. (#2699, #2649, #3162, contributed by @time-attack)
+- Live context reads the documented "P1 Today" heading form with plain checkbox tasks, matching the daily-task-manager skill's output format. (#2186, #3124, contributed by @time-attack)
+- Queued AI jobs refresh gateway config at execution time instead of using a stale snapshot. (#2125, contributed by @maxpetrusenkoagent)
+- `brainstorm`/`propose_takes` honor configured models: cost preview uses the configured model, the judge reads its config key, provider probes are skipped when unneeded, and page projection is narrowed. (#3120, contributed by @time-attack)
+- Backlog hardening wave: x-to-brain health check, propose_takes deadlines, capture title truncation, extract_atoms backlog handling, and pooler direct-URL routing. (#3165, contributed by @time-attack)
+- `skillopt` emits `proposed.md` in no-mutate mode. (#2635, #3182, contributed by @time-attack)
+- Nightly quality probe enable path and conversation-parser probe are wired up. (#2629, #2630, #3094, contributed by @time-attack)
+
+#### Doctor, health, and maintenance
+
+- New safe maintenance automation with a shared orphan-exclusion policy, so routine cleanup runs without risking linked content. (#3015, #3023, contributed by @time-attack)
+- `orphan_ratio` excludes the chronicle volume under `life/events/`. (#2264, #3214, contributed by @asenkovskiy)
+- `brain_score` orphan/timeline components use the orphans-audit linkable scope. (#3155, contributed by @time-attack)
+- Entity timeline coverage is measured separately from whole-brain density. (#2761, contributed by @TurgutKural)
+- Doctor flags embed backfills queued with no worker running. (#2696, contributed by @javieraldape)
+- Two doctor false-positive/timeout fixes: the drift walk skips `node_modules`, and the bare-tweet check skips inline code and cited lines. (#1772, contributed by @sonlndv)
+- A dead `llm_fallback_enabled` recommendation is dropped from conversation format coverage. (#1903, contributed by @ElliotDrel)
+- Skill triggers with CRLF line endings parse on Windows. (#1149, contributed by @samporter-31)
+- Onboard check names are registered in doctor categories, ending unknown-check warnings, and onboard-check remediations survive the `--apply --auto` path. (#3075, #3097, contributed by @time-attack)
+- Dead slug prefixes are counted by slug. (#2697, contributed by @RerankerGuo)
+- The backlinks worker defaults to check, not fix, and `check-backlinks` honors its positional directory argument. (#1853, contributed by @choomz; #3076, contributed by @time-attack)
+- Calibration resolves the owner holder via config, defaulting to `self`. (#3077, contributed by @time-attack)
+- Memory throttling on Linux reads `/proc/meminfo` MemAvailable. (#556, contributed by @chengzehsu)
+
+#### AI providers and gateway
+
+- OpenRouter gets family-scoped prompt caching, and query expansion works on chat-capable openai-compat recipes. (#3152, contributed by @time-attack)
+- MiniMax recipe: embedding wire-shape compat fetch plus a chat touchpoint. (#1977, #3089, contributed by @time-attack)
+- The Zhipu recipe gains a chat touchpoint so GLM subagents work. (#1157, #3084, contributed by @time-attack)
+- Tier-configured models reach the recipe allowlist, Anthropic model lists are refreshed, tier resolutions are registered, and probe labels are honest. (#2800, contributed by @p3ob7o)
+- Provider base URL config merges from the DB. (#1676, contributed by @TheLordArgus)
+- The gateway falls back to the pooler when the derived direct host is unreachable. (#1641, #3088, contributed by @time-attack)
+- Config-plane `voyage_api_key` folds into `VOYAGE_API_KEY` like the other hosted keys. (#3236, contributed by @Masashi-Ono0611)
+- The `zeroentropyai:zerank-2` reranker has a pricing entry so the budget tracker can meter it. (#3223, #3233, contributed by @Masashi-Ono0611)
+- llama-server embedding batches are capped at its 32-input request limit. (#1281, contributed by @mmekkaoui)
+- Matryoshka dimensions thread through for Qwen3-Embedding on Ollama. (#1072, contributed by @mgandal)
+- `init` seeds AI options from env on cold install, and `whoami` reports the stdio transport. (#3091, contributed by @time-attack)
+- The `models` dispatch subcommand reads its first argument correctly. (#1428, contributed by @BenjaminDSmithy)
+- Synopsis generation tail-truncates document text for small-model chat handlers. (#1427, contributed by @BenjaminDSmithy)
+- The contradiction judge token cap is raised for thinking models. (#3210, contributed by @alexey-metaengage)
+
+#### Schema, migrations, and storage engines
+
+- Engine migration counts and surfaces per-page copy failures instead of silently advancing. (#3241, contributed by @Masashi-Ono0611)
+- Invalid `CONCURRENTLY`-build index remnants are dropped without a DO block. (#3191, contributed by @Masashi-Ono0611)
+- Unsupported large-dimension HNSW indexes are skipped instead of failing schema setup. (#1734, #3080, contributed by @time-attack)
+- The v0.32.2 migration dirty-check scopes to targeted sources and surfaces failed phase detail. (#3093, contributed by @time-attack)
+- Schema packs merge the full `extends` chain and `borrow_from` into the resolved manifest. (#1749, #3181, contributed by @time-attack)
+- The schema-pack stats catch-all is narrowed so masked errors surface instead of fake zero-page counts. (#2466, #3133, contributed by @time-attack)
+- Bundled schema-pack inspection reports the pack actually shipped in the binary, and minion subagent auth resolves through config. (#3110, contributed by @time-attack)
+- PGLite `putPage` guards against zero-row RETURNING. (#1649, contributed by @alexhawkins)
+
+#### MCP server and CLI surface
+
+- `list_pages` rows include `source_id`. (#3209, contributed by @alexey-metaengage)
+- Running CLI commands while `gbrain serve` (MCP) holds the brain now notifies about the conflict instead of failing confusingly. (#3243, contributed by @fdefitte)
+- The OpenClaw plugin manifest entry is declared so the plugin loads. (#2551, #3185, contributed by @time-attack)
+
+#### For contributors
+
+- CI scanner roots are normalized on macOS. (#3198, contributed by @caterpillarC15)
+- CI shard timeout raised to 22 minutes plus a delta-assert reporter leak test. (#3231, contributed by @time-attack)
+- E2E suite hardening: flaky tests, no-op assertions, and cross-test coupling removed. (#1704, contributed by @auroracapital)
+- `mechanical.test.ts` isolates `$HOME` so the E2E suite stops clobbering user config. (#434, contributed by @lloydarmbrust)
+- The lint code-fence-wrap detector and fixer regex now agree. (#1597, contributed by @chungty)
+- README project links for OpenClaw and Hermes are corrected. (#1961, #3179, contributed by @time-attack)
+- A completed TODOS entry is dropped. (#3229, contributed by @Masashi-Ono0611)
+
 ## [0.42.64.0] - 2026-07-20
 
 ### Fixed

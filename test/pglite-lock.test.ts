@@ -212,6 +212,26 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 
+  test('explains live gbrain serve contention is not a sync advisory lock', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: 'bun /Users/master/.bun/bin/gbrain serve',
+    });
+
+    let message = '';
+    try {
+      await acquireLock(TEST_DIR, { timeoutMs: 100 });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('serve↔sync contention');
+    expect(message).toContain('not the `gbrain-sync:*` advisory lock');
+    expect(message).toContain('`gbrain sync --break-lock` will not clear a live PGLite holder');
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
   test('[REGRESSION] releaseLock does NOT remove a lock that was stolen + re-acquired by another process', async () => {
     // We acquire, then simulate a steal: another process reaped us past grace
     // and now owns the lock (different pid + acquired_at). Our releaseLock must

@@ -149,6 +149,9 @@ describe('list_schema_packs', () => {
       seedPack('mine');
       const result = await operationsByName.list_schema_packs!.handler(ctxOf(), {}) as { bundled: string[]; installed: string[] };
       expect(result.bundled).toContain('gbrain-base');
+      expect(result.bundled).toContain('gbrain-recommended');
+      expect(result.bundled).toContain('gbrain-base-v2');
+      expect(result.bundled).toContain('gbrain-investor');
       expect(result.installed).toContain('mine');
     });
   });

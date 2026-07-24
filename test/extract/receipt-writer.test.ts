@@ -115,6 +115,11 @@ describe('writeReceipt — frontmatter D-EXTRACT-19 belt+suspenders', () => {
     // belt + suspenders: both anti-loop flags are present
     expect(page.frontmatter?.type).toBe('extract_receipt');
     expect(page.frontmatter?.dream_generated).toBe(true);
+    // #1978: receipts are operation records, not derived documents —
+    // explicit raw-trace exemption so the doctor raw_provenance check
+    // (warn-only v1) stays quiet.
+    expect(page.frontmatter?.raw_trace_exempt).toBe(true);
+    expect(typeof page.frontmatter?.raw_trace_exempt_reason).toBe('string');
   });
 
   test('stamps optional model_id + eval_pass + eval_score when supplied', async () => {

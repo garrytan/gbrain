@@ -174,7 +174,11 @@ export async function writePageThrough(
       }
     }
 
-    mkdirSync(dirname(filePath), { recursive: true });
+    // On Bun + Windows, mkdirSync(dir, { recursive: true }) can still throw
+    // EEXIST when the directory already exists (POSIX no-ops it). That aborts
+    // the put_page / enrich / capture write-through whenever the prefix dir
+    // already exists, silently leaving the DB and the .md file plane out of sync.
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     // Atomic write: unique temp sibling + rename. Unique name (pid + random)
     // so two concurrent saves to the same target can't clobber each other's

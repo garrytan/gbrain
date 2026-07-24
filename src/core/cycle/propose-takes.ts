@@ -321,12 +321,15 @@ export async function defaultExtractor(
  * to return `[]`). Distinguishes a genuine empty extraction (safe to memoize
  * via a tombstone) from malformed / prose / truncated output (transient —
  * must be retried, never tombstoned). Mirrors parseExtractorOutput's
- * fence-strip + first-array handling so both agree on what "the model
- * returned []" means.
+ * think-strip + fence-strip + first-array handling so both agree on what
+ * "the model returned []" means.
  */
 export function isWellFormedEmptyExtraction(raw: string): boolean {
   if (!raw || raw.trim().length === 0) return false;
   let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.),
+  // same as parseExtractorOutput (#2559).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) text = (fenced[1] ?? '').trim();
   const arrStart = text.indexOf('[');
@@ -348,6 +351,8 @@ export function isWellFormedEmptyExtraction(raw: string): boolean {
 export function parseExtractorOutput(raw: string): ProposedTake[] {
   if (!raw || raw.trim().length === 0) return [];
   let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   // Strip markdown code fence wrapper.
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) text = (fenced[1] ?? '').trim();
@@ -360,7 +365,21 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    return [];
+    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
+    // markdown fences after <think> stripping). Try array-closing first.
+    const sliced = text.slice(start);
+    const lastArr = sliced.lastIndexOf(']');
+    const lastObj = sliced.lastIndexOf('}');
+    const end = Math.max(lastArr, lastObj);
+    if (end > 0) {
+      try {
+        parsed = JSON.parse(sliced.slice(0, end + 1));
+      } catch {
+        return [];
+      }
+    } else {
+      return [];
+    }
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const out: ProposedTake[] = [];
@@ -534,16 +553,18 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Write proposals to take_proposals. Each row is a separate INSERT
-      // because the composite idempotency key is on the per-page tuple — a
-      // bulk UPSERT would collapse a same-page-multi-claim run into one row.
+      // Write proposals to take_proposals. #2138: the idempotency key is
+      // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
+      // the per-page tuple (migration v125), so a multi-claim page keeps every
+      // claim. RETURNING id prevents a repeated claim from inflating the count.
       for (const p of proposals) {
-        await engine.executeRaw(
+        const inserted = await engine.executeRaw<{ id: number }>(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
+           RETURNING id`,
           [
             sourceId,
             page.slug,
@@ -559,25 +580,27 @@ class ProposeTakesPhase extends BaseCyclePhase {
             modelId,
           ],
         );
-        result.proposals_inserted += 1;
+        result.proposals_inserted += inserted.length;
       }
 
       // Memoize the empty case too. A page that extracted zero claims gets
       // NO row from the loop above, so without this its idempotency tuple is
       // never recorded and the next cycle re-spends an LLM call on unchanged
       // prose (the idle-cost bug). Write one tombstone row keyed by the same
-      // (source, slug, content_hash, prompt_version) tuple. status='rejected'
-      // keeps it out of any pending-review query; its sole purpose is to make
-      // the next cycle a cache hit. Only reached on a SUCCESSFUL empty extract
-      // — the extractor-throw path `continue`s above, so failed pages are
-      // retried rather than tombstoned.
+      // per-page tuple (the cache-hit lookup above matches ANY row for the
+      // 4-tuple; the unique index — take_proposals_idempotency_idx, migration
+      // v125 — folds md5(claim_text) in, so the conflict target must too).
+      // status='rejected' keeps it out of any pending-review query; its sole
+      // purpose is to make the next cycle a cache hit. Only reached on a
+      // SUCCESSFUL empty extract — the extractor-throw path `continue`s above,
+      // so failed pages are retried rather than tombstoned.
       if (proposals.length === 0) {
         await engine.executeRaw(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'rejected')
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
           [
             sourceId,
             page.slug,
@@ -590,7 +613,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             0,
             null,
             JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
+            modelId,
           ],
         );
         result.tombstones_written += 1;

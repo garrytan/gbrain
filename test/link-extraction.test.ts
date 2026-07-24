@@ -9,6 +9,7 @@ import {
   parseTimelineEntries,
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
+  unwrapWikilink,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -1397,5 +1398,177 @@ describe('parseTimelineEntries — Format 3: inline [Source: ..., YYYY-MM-DD] ci
   test('skips invalid calendar dates and bare citations', () => {
     expect(parseTimelineEntries('Claim. [Source: memo, 2026-13-45]')).toHaveLength(0);
     expect(parseTimelineEntries('[Source: import batch, 2025-07-01]')).toHaveLength(0);
+  });
+});
+// ─── Frontmatter [[wikilink]] + slug-path resolution ──────────────────────
+// Mainstream Obsidian authors frontmatter links as `related: ["[[Page]]"]`,
+// and PARA-numbered vaults use digit-leading / nested slug paths like
+// `[[90-people/nicolai]]`. Both were silently dropped: brackets were treated
+// as part of the value and the step-1 slug regex (`^[a-z]…`) rejected
+// digit-leading / nested paths, while full-path fuzzy scored below threshold.
+// Fix: unwrapWikilink() before resolution + an exact getPage() for any
+// slug-shaped value (exact-match only → no false positives).
+
+describe('unwrapWikilink', () => {
+  test('wrapped title → bare title', () => {
+    expect(unwrapWikilink('[[Monday Range]]')).toBe('Monday Range');
+  });
+  test('wrapped slug-path (digit-leading folder) → bare slug', () => {
+    expect(unwrapWikilink('[[90-people/nicolai]]')).toBe('90-people/nicolai');
+  });
+  test('wrapped nested slug-path → bare slug', () => {
+    expect(unwrapWikilink('[[01-trading/wiki/strategies/opening-range-breakout]]'))
+      .toBe('01-trading/wiki/strategies/opening-range-breakout');
+  });
+  test('strips |alias', () => {
+    expect(unwrapWikilink('[[90-people/nicolai|Nicolai]]')).toBe('90-people/nicolai');
+  });
+  test('strips #heading', () => {
+    expect(unwrapWikilink('[[Page#Section]]')).toBe('Page');
+  });
+  test('strips ^block', () => {
+    expect(unwrapWikilink('[[Page^abc123]]')).toBe('Page');
+  });
+  test('surrounding whitespace tolerated', () => {
+    expect(unwrapWikilink('  [[Page]]  ')).toBe('Page');
+  });
+  test('bare title passes through unchanged', () => {
+    expect(unwrapWikilink('Monday Range')).toBe('Monday Range');
+  });
+  test('bare slug passes through unchanged', () => {
+    expect(unwrapWikilink('90-people/nicolai')).toBe('90-people/nicolai');
+  });
+  test('partially-wrapped value is NOT unwrapped (anchored)', () => {
+    // Not a wholly-wrapped value → left intact so existing behavior is exact.
+    expect(unwrapWikilink('see [[Page]] for detail')).toBe('see [[Page]] for detail');
+  });
+});
+
+describe('makeResolver — slug-path exact getPage (step 1 broadened)', () => {
+  function fakeEngine(
+    slugs: string[],
+    fuzzyMap: Map<string, { slug: string; similarity: number }> = new Map(),
+  ): BrainEngine {
+    const lookup = new Set(slugs);
+    return {
+      async getPage(slug: string) { return lookup.has(slug) ? { slug } as any : null; },
+      async findByTitleFuzzy(name: string) { return fuzzyMap.get(name) ?? null; },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+  }
+
+  test('digit-leading folder slug resolves via exact getPage', async () => {
+    const r = makeResolver(fakeEngine(['90-people/nicolai']));
+    expect(await r.resolve('90-people/nicolai')).toBe('90-people/nicolai');
+  });
+
+  test('nested (>2 segment) slug resolves via exact getPage', async () => {
+    const r = makeResolver(fakeEngine(['01-trading/wiki/strategies/opening-range-breakout']));
+    expect(await r.resolve('01-trading/wiki/strategies/opening-range-breakout'))
+      .toBe('01-trading/wiki/strategies/opening-range-breakout');
+  });
+
+  test('regression: single-segment lowercase slug still resolves', async () => {
+    const r = makeResolver(fakeEngine(['people/pedro']));
+    expect(await r.resolve('people/pedro')).toBe('people/pedro');
+  });
+
+  test('exact-only: slug-shaped value with no matching page falls through (no false positive)', async () => {
+    // `90-people/ghost` is slug-shaped but absent → step-1 getPage misses,
+    // no fuzzy hit → null. Never invents an edge.
+    const r = makeResolver(fakeEngine(['90-people/nicolai']));
+    expect(await r.resolve('90-people/ghost')).toBeNull();
+  });
+
+  test('non-slug value still routes to fuzzy', async () => {
+    const r = makeResolver(fakeEngine(
+      ['01-trading/monday-range'],
+      new Map([['Monday Range', { slug: '01-trading/monday-range', similarity: 1 }]]),
+    ));
+    expect(await r.resolve('Monday Range')).toBe('01-trading/monday-range');
+  });
+});
+
+describe('extractFrontmatterLinks — [[wikilink]] related: values (end-to-end)', () => {
+  function fakeEngine(
+    slugs: string[],
+    fuzzyMap: Map<string, { slug: string; similarity: number }> = new Map(),
+  ): BrainEngine {
+    const lookup = new Set(slugs);
+    return {
+      async getPage(slug: string) { return lookup.has(slug) ? { slug } as any : null; },
+      async findByTitleFuzzy(name: string) { return fuzzyMap.get(name) ?? null; },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+  }
+
+  test('wrapped slug-path related: resolves (the core win)', async () => {
+    const resolver = makeResolver(fakeEngine(['90-people/nicolai']));
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'wiki/originals/ideas/note', 'note' as never,
+      { related: '[[90-people/nicolai]]' }, resolver,
+    );
+    expect(unresolved).toHaveLength(0);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      fromSlug: 'wiki/originals/ideas/note',
+      targetSlug: '90-people/nicolai',
+      linkType: 'related_to',
+      linkSource: 'frontmatter',
+    });
+  });
+
+  test('wrapped nested slug-path related: resolves', async () => {
+    const resolver = makeResolver(fakeEngine(['01-trading/wiki/strategies/opening-range-breakout']));
+    const { candidates } = await extractFrontmatterLinks(
+      'wiki/note', 'note' as never,
+      { related: ['[[01-trading/wiki/strategies/opening-range-breakout]]'] }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].targetSlug).toBe('01-trading/wiki/strategies/opening-range-breakout');
+  });
+
+  test('wrapped value with |alias resolves to the target', async () => {
+    const resolver = makeResolver(fakeEngine(['90-people/nicolai']));
+    const { candidates } = await extractFrontmatterLinks(
+      'wiki/note', 'note' as never,
+      { related: '[[90-people/nicolai|Nicolai]]' }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].targetSlug).toBe('90-people/nicolai');
+  });
+
+  test('regression: bare slug related: still resolves', async () => {
+    const resolver = makeResolver(fakeEngine(['90-people/nicolai']));
+    const { candidates } = await extractFrontmatterLinks(
+      'wiki/note', 'note' as never,
+      { related: '90-people/nicolai' }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].targetSlug).toBe('90-people/nicolai');
+  });
+
+  test('regression: wrapped title resolves via fuzzy (brackets harmless)', async () => {
+    const resolver = makeResolver(fakeEngine(
+      ['01-trading/monday-range'],
+      new Map([['Monday Range', { slug: '01-trading/monday-range', similarity: 1 }]]),
+    ));
+    const { candidates } = await extractFrontmatterLinks(
+      'wiki/note', 'note' as never,
+      { related: '[[Monday Range]]' }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].targetSlug).toBe('01-trading/monday-range');
+  });
+
+  test('unknown wrapped slug → unresolved (no crash), original value preserved', async () => {
+    const resolver = makeResolver(fakeEngine(['90-people/nicolai']));
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'wiki/note', 'note' as never,
+      { related: '[[99-archive/does-not-exist]]' }, resolver,
+    );
+    expect(candidates).toHaveLength(0);
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]).toEqual({ field: 'related', name: '[[99-archive/does-not-exist]]' });
   });
 });

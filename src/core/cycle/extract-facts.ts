@@ -23,14 +23,24 @@
  * page coordinate only; legacy NULL-source_markdown_slug rows survive
  * because deleteFactsForPage targets source_markdown_slug = slug only.
  *
- * Empty-fence guard (Codex R2-#7): the phase refuses to do its
- * destructive reconciliation pass when legacy rows (row_num IS NULL,
- * entity_slug IS NOT NULL) still exist in the brain — they're the
- * v0.31 hot-memory facts pending the v0_32_2 backfill. Status returns
- * `warn` with a hint to run `gbrain apply-migrations --yes`. Without
- * the guard, an interrupted upgrade where v0_32_2 hasn't run could
- * leave the cycle silently misreporting "0 facts on people/alice"
- * while legacy rows linger in the DB.
+ * Empty-fence guard (Codex R2-#7; #2484): the phase refuses to do its
+ * destructive reconciliation pass when genuinely-backfillable legacy
+ * rows still exist — `row_num IS NULL` (never fenced) AND `entity_slug`
+ * resolves to a live page in this source (so the v0_32_2 migration's
+ * Phase B could fence them). Status returns `warn` with a hint to run
+ * `gbrain apply-migrations --yes`. Without the guard, an interrupted
+ * upgrade where v0_32_2 hasn't run could leave the cycle silently
+ * misreporting "0 facts on people/alice" while legacy rows linger.
+ *
+ * The live-page requirement (#2484) is load-bearing: the inline facts
+ * writer keeps producing `row_num IS NULL, entity_slug IS NOT NULL`
+ * rows AFTER the migration completes, whenever a resolved slug has no
+ * fenceable page (slugify-floor / stub-guard-blocked unprefixed slugs).
+ * Those are structurally unfenceable — no page to fence onto, and the
+ * ledger-complete migration won't re-run — so they must NOT gate, or
+ * the phase jams forever (~16/day observed). Requiring a backing page
+ * keeps genuine pre-v0.32.2 rows (whose entity page exists) gating
+ * while excluding the inline-writer's permanent-unfenceable rows.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -163,22 +173,48 @@ export async function runExtractFacts(
     phantomsMorePending: false,
   };
 
-  // ── Empty-fence guard (Codex R2-#7) ────────────────────────────
-  // Pre-check: if any legacy fact rows exist (row_num NULL but
-  // entity_slug NOT NULL), refuse to run the destructive
-  // reconciliation pass. The v0_32_2 orchestrator must complete
-  // first.
+  // ── Empty-fence guard (Codex R2-#7; #2484) ─────────────────────
+  // Pre-check: if any genuinely-backfillable legacy fact rows exist,
+  // refuse to run the destructive reconciliation pass — the v0_32_2
+  // orchestrator must fence them first.
+  //
+  // A row is a real backfill candidate only when `row_num IS NULL`
+  // (never fenced) AND its `entity_slug` resolves to a LIVE page in
+  // this source (the migration's Phase B only fences rows whose
+  // entity_slug maps to a writable page). #2484: the original
+  // predicate was just `row_num IS NULL AND entity_slug IS NOT NULL`,
+  // which ALSO matched structurally-unfenceable hot-memory rows the
+  // inline writer keeps producing post-migration: the legacy DB-only
+  // fallback (backstop.ts) writes `entity_slug` (a resolved slug, e.g.
+  // a slugify-floor or stub-guard-blocked unprefixed slug like
+  // `people-jane-doe`) with `row_num` NULL whenever the slug has no
+  // fenceable page. Those rows can never satisfy the migration's exit
+  // condition (no page to fence onto, and `apply-migrations` is a
+  // ledger-complete no-op for them), so they jammed the phase forever
+  // — ~16/day, mislabeled "v0.31 pending backfill." We now require a
+  // live backing page, which both genuine pre-v0.32.2 rows (their
+  // entity page exists) satisfy and inline-writer unfenceable rows do
+  // not.
   const legacy = await engine.executeRaw<{ n: string }>(
-    `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NOT NULL`,
+    `SELECT COUNT(*) AS n
+       FROM facts f
+      WHERE f.row_num IS NULL
+        AND f.entity_slug IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM pages p
+           WHERE p.source_id = f.source_id
+             AND p.slug = f.entity_slug
+             AND p.deleted_at IS NULL
+        )`,
   );
   const legacyCount = parseInt(legacy[0]?.n ?? '0', 10);
   result.legacyRowsPending = legacyCount;
   if (legacyCount > 0) {
     result.guardTriggered = true;
     result.warnings.push(
-      `extract_facts: ${legacyCount} legacy v0.31 fact rows pending fence backfill. ` +
-      `Run \`gbrain apply-migrations --yes\` to complete v0_32_2 before this phase ` +
-      `can safely reconcile fence → DB.`,
+      `extract_facts: ${legacyCount} legacy v0.31 fact rows (entity page present, not yet ` +
+      `fenced) pending fence backfill. Run \`gbrain apply-migrations --yes\` to complete ` +
+      `v0_32_2 before this phase can safely reconcile fence → DB.`,
     );
     return result;
   }
