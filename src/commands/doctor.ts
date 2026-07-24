@@ -6975,7 +6975,7 @@ export async function buildChecks(
           pair_id?: string;
         }>;
       }> | undefined) ?? [];
-      // v124: dismissal ledger — a manual review's outcome must apply
+      // v126: dismissal ledger — a manual review's outcome must apply
       // immediately, without paying for a fresh probe run, so the shared
       // projection runs here at read time over the UNION of surfaced +
       // runner-parked dismissed findings (dismiss hides at once; undismiss

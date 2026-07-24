@@ -88,12 +88,12 @@ interface ParsedFlags {
   // review flags
   severity?: Severity;
   since?: string;
-  /** v124: review — also render ledger-dismissed findings. */
+  /** v126: review — also render ledger-dismissed findings. */
   includeDismissed: boolean;
   // dismiss/undismiss flags
-  /** v124: positional pair_id for dismiss/undismiss. */
+  /** v126: positional pair_id for dismiss/undismiss. */
   pairId?: string;
-  /** v124: --reason for dismiss. Required — an unexplained suppression is unreviewable. */
+  /** v126: --reason for dismiss. Required — an unexplained suppression is unreviewable. */
   reason?: string;
   // help
   help: boolean;
@@ -112,7 +112,7 @@ export function parseFlags(args: string[]): ParsedFlags {
         continue;
       }
     }
-    // v124: dismiss/undismiss take one positional pair_id after the sub name.
+    // v126: dismiss/undismiss take one positional pair_id after the sub name.
     if ((sub === 'dismiss' || sub === 'undismiss') && !a.startsWith('--') && pairId === undefined) {
       pairId = a;
       continue;
@@ -440,7 +440,7 @@ async function runReview(engine: BrainEngine, f: ParsedFlags): Promise<void> {
     console.error('Latest run has no findings to review.');
     return;
   }
-  // v124: project the UNION of surfaced + runner-parked dismissed findings
+  // v126: project the UNION of surfaced + runner-parked dismissed findings
   // against the CURRENT ledger — the ledger may have grown (dismiss takes
   // effect without a fresh probe run) or shrunk (undismiss must restore
   // findings the runner already parked under `dismissed`). pair_keys are
@@ -504,7 +504,7 @@ async function runReview(engine: BrainEngine, f: ParsedFlags): Promise<void> {
 }
 
 /**
- * v124: record a manual-review dismissal. The given hex prefix must match
+ * v126: record a manual-review dismissal. The given hex prefix must match
  * exactly one finding pair_key across probe runs from the last 90 days —
  * that is where the member texts (and therefore the content hashes the
  * ledger is keyed on) come from. Requiring a recent-run match stops typo'd
@@ -569,7 +569,7 @@ async function runDismiss(engine: BrainEngine, f: ParsedFlags): Promise<void> {
   console.error('It stops surfacing in review/doctor/MCP/synthesize until either chunk\'s text changes (which re-flags it automatically). Restore with `undismiss`.');
 }
 
-/** v124: soft-revoke a dismissal so the pair surfaces again (audit row kept). */
+/** v126: soft-revoke a dismissal so the pair surfaces again (audit row kept). */
 async function runUndismiss(engine: BrainEngine, f: ParsedFlags): Promise<void> {
   if (!f.pairId) {
     console.error('Usage: gbrain eval suspected-contradictions undismiss <pair_id>');
