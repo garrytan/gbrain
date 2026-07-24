@@ -254,6 +254,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
+      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -327,6 +328,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -341,6 +343,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $2
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -586,6 +589,25 @@ export async function runPhaseExtractAtoms(
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
+        // #2144: tombstone zero-yield pages so they stop being rediscovered.
+        // Idempotency is keyed on atom rows — a page that yields no atoms
+        // leaves no row, so pre-fix it re-entered the discovery window every
+        // run (wedging --drain with a false no_progress and re-spending
+        // nightly budget on the same pages). Stamp the content hash we
+        // scanned; discovery skips the page only while its content is
+        // unchanged (edits re-eligibilize, mirroring atom-row staleness).
+        // Only stamped after a SUCCESSFUL chat call — LLM failures take the
+        // catch path below and stay retryable.
+        if (!opts.dryRun && item.kind === 'page') {
+          try {
+            await engine.executeRaw(
+              `UPDATE pages
+                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+              [item.contentHash.slice(0, 16), sourceId, item.slug],
+            );
+          } catch { /* fail-soft: page stays rediscoverable */ }
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
