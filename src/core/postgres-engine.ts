@@ -5517,14 +5517,21 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Sync
-  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void> {
+  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string; sourcePath?: string }): Promise<number> {
     newSlug = validateSlug(newSlug);
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (which would either rename them all OR fail the
     // (source_id, slug) UNIQUE if the new slug already exists in another source).
-    await sql`UPDATE pages SET slug = ${newSlug}, updated_at = now() WHERE slug = ${oldSlug} AND source_id = ${sourceId}`;
+    // #3056: opts.sourcePath refreshes source_path in the same UPDATE (file
+    // moves); omitted for pure slug migrations.
+    const result = opts?.sourcePath !== undefined
+      ? await sql`UPDATE pages SET slug = ${newSlug}, source_path = ${opts.sourcePath}, updated_at = now() WHERE slug = ${oldSlug} AND source_id = ${sourceId}`
+      : await sql`UPDATE pages SET slug = ${newSlug}, updated_at = now() WHERE slug = ${oldSlug} AND source_id = ${sourceId}`;
+    // #3056: report rows moved so callers can distinguish a real rename from
+    // a zero-row no-op (old slug absent), which UPDATE does not throw on.
+    return result.count ?? 0;
   }
 
   async rewriteLinks(_oldSlug: string, _newSlug: string): Promise<void> {

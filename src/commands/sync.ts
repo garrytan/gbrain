@@ -199,6 +199,15 @@ export interface SyncResult {
   pagesAffected: string[];
   failedFiles?: number; // count of parse failures (Bug 9)
   /**
+   * #3056: renames whose cheap path (updateSlug) did not move a row — either
+   * the UPDATE matched nothing (old slug absent in the scoped source) or it
+   * threw (destination slug occupied, invalid slug). Each one fell back to
+   * add semantics; where the stale old row could be located it was reconciled
+   * (deleted after a successful import), otherwise a warn names both slugs.
+   * 0 / absent = every rename took the cheap page_id-preserving path.
+   */
+  renameFallbacks?: number;
+  /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
    *
    * D-V3-1 (honest scope): --timeout aborts ONLY in pre-bookmark phases
@@ -2785,10 +2794,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // v0.41.19.0 (T4): pre-batched slug resolution per Phase 3 of the plan.
   // Renames' per-file cost is dominated by importFile() (file IO + chunking
   // + embedding), so the per-iteration updateSlug + importFile loop stays;
-  // only the upfront slug-resolve N+1 gets batched. The try/catch around
-  // updateSlug for slug-doesn't-exist preserves verbatim.
+  // only the upfront slug-resolve N+1 gets batched. #3056: a failed/no-op
+  // updateSlug is no longer silently swallowed — see the fallback handling
+  // inside the loop.
   // v0.42.x (#1794): resume-filter renames on the destination path.
   const renamesToDo = filtered.renamed.filter(r => !completed.has(r.to));
+  // #3056: renames that fell off the cheap updateSlug path (zero-row match or
+  // throw). Surfaced in SyncResult.renameFallbacks + a per-file warn so a
+  // rename that didn't actually rename is visible without reading the DB.
+  let renameFallbacks = 0;
   if (renamesToDo.length > 0) {
     progress.start('sync.renames', renamesToDo.length);
     // v0.18.0+ multi-source: scope updateSlug so the rename only touches the
@@ -2836,11 +2850,36 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         : await resolveSlugByPathOrSourcePath(engine, from, undefined);
       // The new path doesn't yet have a row, so resolve from path only.
       const newSlug = resolveSlugForPath(to);
+      // #3056: the cheap rename is OBSERVED, not assumed. A zero-row UPDATE
+      // doesn't throw, and a thrown collision used to be swallowed by an
+      // empty catch — both fell through to importFile, which created/updated
+      // the row at the new path while the old row stayed behind live
+      // (0 chunks after the next embed pass, slug occupied, page count
+      // unchanged: invisible to every existing signal). Now both shapes are
+      // warned with enough context to self-diagnose, counted in
+      // renameFallbacks, and — where the stale row can be located — the
+      // reconcile below removes it after a successful import.
+      let renameApplied = false;
       try {
-        await engine.updateSlug(oldSlug, newSlug, renameOpts);
-      } catch {
-        // Slug doesn't exist or collision, treat as add
+        // sourcePath: this rename tracks a FILE move, so refresh source_path
+        // in the same UPDATE — an unchanged-file rename skips reimport and
+        // would otherwise keep the OLD path, breaking every later
+        // source_path-based resolution for this row (#3056 round-2 review).
+        renameApplied = (await engine.updateSlug(oldSlug, newSlug, { ...renameOpts, sourcePath: to })) > 0;
+        if (!renameApplied) {
+          serr(
+            `  [sync] rename fallback: updateSlug matched no row for ` +
+            `${oldSlug} -> ${newSlug} (${from} -> ${to}); treating as add.`,
+          );
+        }
+      } catch (err) {
+        serr(
+          `  [sync] rename fallback: updateSlug failed for ${oldSlug} -> ${newSlug} ` +
+          `(${from} -> ${to}): ${err instanceof Error ? err.message : String(err)}; ` +
+          `treating as add.`,
+        );
       }
+      if (!renameApplied) renameFallbacks++;
       // Reimport at new path (picks up content changes). Wrapped to match the
       // deletes/adds loops: a malformed renamed file is recorded to failedFiles
       // and skipped, NOT thrown uncaught. importFile still throws on content
@@ -2852,23 +2891,152 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // NAV-1 TOCTOU: refuse a destination that realpath-resolves outside the
       // repo (committed symlink pointing out).
       const filePath = join(gitContextRoot, to);
+      // #3056: "destination materialized" = the new path's row demonstrably
+      // exists with the file's content. A bare errorless `skipped` is NOT
+      // enough — identity dedup can skip against the OLD row (result.slug ===
+      // oldSlug), in which case nothing landed at newSlug and reconciling
+      // would delete the only copy.
+      let destMaterialized = false;
+      let importAttempted = false;
+      let importFailureRecorded = false;
+      let importResult: Awaited<ReturnType<typeof importFile>> | undefined;
       if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
+        importAttempted = true;
         try {
           const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
+          importResult = result;
           if (result.status === 'imported') chunksCreated += result.chunks;
           else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
+            importFailureRecorded = true;
           }
+          destMaterialized = result.status === 'imported' ||
+            (result.status === 'skipped' && !result.error && result.slug === newSlug);
         } catch (e: unknown) {
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
+          importFailureRecorded = true;
+        }
+      }
+      // #3056 fallback resolution. Three outcomes:
+      //   1. destination materialized → reconcile the stale old row (below);
+      //   2. import skipped against the very row that represents the old file
+      //      (source_path = from) and the destination slug is FREE → the row
+      //      keeps its identity-derived slug (a supported divergence — e.g.
+      //      frontmatter-pinned or exotic-filename slugs whose path-derived
+      //      form is degenerate) and only its source_path moves to `to`;
+      //   3. anything else (identity dedup against the old row while a
+      //      foreign row occupies the destination, or an unrelated skip) is a
+      //      rename that never happened → record it so the failure gate
+      //      blocks the bookmark instead of silently advancing (round-2/3
+      //      review).
+      let reconcileFailed = false;
+      let renameUnresolved = false;
+      if (!renameApplied && importAttempted) {
+        const scopeOpts = { sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID };
+        if (destMaterialized) {
+          // Reconcile: the rename fell back to add semantics, so the row that
+          // still represents the OLD path is the stale half of the rename
+          // (git reported the old path gone; a plain delete of that path
+          // would remove this row — same delete-and-add posture the F-C
+          // rename-to-unsyncable path already takes). The stale row is
+          // located POSITIVELY by `source_path = from`, never by the oldSlug
+          // guess: after a destination collision, a path-derived fallback
+          // slug could name an unrelated (e.g. manually curated) row. No
+          // source_path match → nothing is deleted and the warn above stands
+          // as the only trace. Runs only after the destination demonstrably
+          // materialized, so a failed import never widens into losing the
+          // old row too.
+          try {
+            const staleMap = await engine.resolveSlugsByPaths([from], scopeOpts);
+            const staleSlug = staleMap.get(from);
+            if (staleSlug !== undefined && staleSlug !== newSlug) {
+              await engine.deletePage(staleSlug, renameOpts);
+              serr(`  [sync] rename fallback: reconciled stale row ${staleSlug} (source_path ${from}).`);
+            } else if (staleSlug === undefined) {
+              serr(
+                `  [sync] rename fallback: no row has source_path ${from}; ` +
+                `a stale row (if any) could not be located for reconcile.`,
+              );
+            }
+          } catch (e: unknown) {
+            // Surface through failedFiles so the failure gate blocks the
+            // bookmark and the next run retries the rename — a warn alone
+            // would checkpoint past the duplicate permanently.
+            reconcileFailed = true;
+            failedFiles.push({
+              path: to,
+              error: `rename reconcile failed (stale row for ${from} not removed): ` +
+                `${e instanceof Error ? e.message : String(e)}`,
+            });
+          }
+        } else {
+          const skippedAt = importResult && importResult.status === 'skipped' && !importResult.error
+            ? importResult.slug
+            : undefined;
+          if (skippedAt !== undefined) {
+            try {
+              const staleMap = await engine.resolveSlugsByPaths([from], scopeOpts);
+              let destOccupied = false;
+              if (staleMap.get(from) === skippedAt) {
+                try {
+                  destOccupied = (await engine.getPage(newSlug, scopeOpts)) !== null;
+                } catch {
+                  // Degenerate path-derived slug (e.g. exotic filename) —
+                  // nothing can occupy it.
+                  destOccupied = false;
+                }
+              }
+              if (staleMap.get(from) === skippedAt && !destOccupied) {
+                // Outcome 2: same row, destination free — keep the identity
+                // slug, move only source_path (slug=slug is a no-op rename).
+                await engine.updateSlug(skippedAt, skippedAt, { ...scopeOpts, sourcePath: to });
+                serr(
+                  `  [sync] rename fallback resolved: row ${skippedAt} keeps its slug; ` +
+                  `source_path now tracks ${to}.`,
+                );
+              } else {
+                renameUnresolved = true;
+              }
+            } catch (e: unknown) {
+              reconcileFailed = true;
+              failedFiles.push({
+                path: to,
+                error: `rename fallback resolution failed for ${from} -> ${to}: ` +
+                  `${e instanceof Error ? e.message : String(e)}`,
+              });
+            }
+          } else {
+            renameUnresolved = true;
+          }
+          if (renameUnresolved && !importFailureRecorded) {
+            failedFiles.push({
+              path: to,
+              error: `rename fallback: destination row ${newSlug} did not materialize ` +
+                `(import skipped against a different row); old row left in place`,
+            });
+          }
         }
       }
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
-      await markCompleted(to);
+      // An unresolved fallback or a failed reconcile must NOT checkpoint —
+      // the failure gate keeps last_commit in place and the next run retries
+      // this rename from the same diff. A resolved rename records `to` as
+      // succeeded so any prior open failure-ledger row for the destination
+      // clears (round-3 review).
+      if (!reconcileFailed && !renameUnresolved) {
+        succeededPaths.push(to);
+        await markCompleted(to);
+      }
       progress.tick(1, newSlug);
     }
     progress.finish();
+    if (renameFallbacks > 0) {
+      serr(
+        `  [sync] ${renameFallbacks} rename(s) fell back to add semantics ` +
+        `(updateSlug did not move a row; see warnings above).`,
+      );
+    }
   }
 
   // Process adds and modifies.
@@ -3366,6 +3534,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       pagesAffected,
       failedFiles: failedFiles.length,
       bankedFiles,
+      ...(renameFallbacks > 0 ? { renameFallbacks } : {}),
     };
   }
 
@@ -3391,7 +3560,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     source_type: 'git_sync',
     source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
     pages_updated: pagesAffected,
-    summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms`,
+    summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms` +
+      (renameFallbacks > 0 ? `, ${renameFallbacks} rename fallback(s)` : ''),
   });
 
   // Auto-extract links + timeline (cheap CPU, but skip-inline for LARGE syncs).
@@ -3528,6 +3698,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     chunksCreated,
     embedded,
     pagesAffected,
+    ...(renameFallbacks > 0 ? { renameFallbacks } : {}),
   };
 }
 
