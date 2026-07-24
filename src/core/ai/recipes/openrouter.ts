@@ -119,6 +119,14 @@ export const openrouterCompatFetch = (async (
  * envelope, not every individual model's capability. When in doubt about a
  * specific model, check https://openrouter.ai/models.
  *
+ * Reranker: `/api/v1/rerank` proxies cross-encoder rerankers (Cohere v3.5/4-fast/4-pro
+ * and NVIDIA Nemotron VL). Wire shape matches `gateway.rerank()`:
+ * `{ query, documents, model }` → `{ results: [{ index, relevance_score }] }`.
+ * Unlike embedding/chat, the reranker path strictly enforces the `models`
+ * allowlist (no openai-compat bypass) — adding new rerank models requires a
+ * recipe edit. Cohere bills per-search; the `cost_per_1m_tokens_usd` value
+ * is a pseudo-rate for the budget tracker's `chars/4` heuristic.
+ *
  * Attribution: OpenRouter recommends `HTTP-Referer` (required for app
  * attribution) + `X-OpenRouter-Title` (preferred; `X-Title` kept as
  * back-compat alias per OR docs). Defaults to `https://gbrain.ai` / `gbrain`;
@@ -196,6 +204,30 @@ export const openrouter: Recipe = {
       // value is either unsafe for smaller models or wasteful for larger ones.
       // Let upstream errors surface per-model.
       price_last_verified: '2026-05-20',
+    },
+    reranker: {
+      models: [
+        'cohere/rerank-v3.5',
+        'cohere/rerank-4-fast',
+        'cohere/rerank-4-pro',
+        'nvidia/llama-nemotron-rerank-vl-1b-v2:free',
+      ],
+      default_model: 'cohere/rerank-v3.5',
+      // Cohere bills per-search, not per-token. This is a pseudo-per-1M rate
+      // for the budget tracker's heuristic (estimates tokens as chars/4).
+      // At ~4K chars/search the tracker estimates ~$0.00025 — in the right
+      // ballpark for the per-search bill. Patch budget-tracker.ts to honour a
+      // `cost_per_search_usd` field for exact accounting.
+      cost_per_1m_tokens_usd: 0.001,
+      price_last_verified: '2026-06-13',
+      // OpenRouter doesn't publish an explicit payload cap; 5MB matches
+      // ZeroEntropy's upstream limit and the gateway's pre-flight ceiling.
+      max_payload_bytes: 5_000_000,
+      // OR serves /rerank under /api/v1. base_url_default already ends in /v1,
+      // so gateway concatenates to …/api/v1/rerank.
+      path: '/rerank',
+      // OpenRouter rerank is fast (<200 ms p50); 5 s covers cold path safely.
+      default_timeout_ms: 5_000,
     },
   },
   setup_hint:
