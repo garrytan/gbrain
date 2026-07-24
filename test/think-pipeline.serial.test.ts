@@ -265,6 +265,190 @@ describe('runThink (with stub client)', () => {
     expect(result.citations.length).toBeGreaterThanOrEqual(2);
   });
 
+  // #2364: models routinely wrap the JSON response in a Markdown code fence
+  // despite the system prompt asking for "no prose outside JSON". Before the
+  // fix, the parser only stripped an ANCHORED fence (one wrapping the whole
+  // response) and otherwise fell through to a naive `{...}` brace-scan of
+  // the raw text — so a fenced response was previously misreported as
+  // synthesisOk=false with the raw fenced blob leaking into `answer`.
+  test('unwraps a markdown-fenced JSON response → synthesisOk true, clean answer', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_stub_fenced',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: '```json\n' + JSON.stringify({
+            answer: 'Alice [people/alice-example#1] is the CEO of Acme.',
+            citations: [
+              { page_slug: 'people/alice-example', row_num: 1, citation_index: 1 },
+            ],
+            gaps: [],
+          }) + '\n```',
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, {
+      question: 'fenced json test',
+      client: stubClient,
+    });
+
+    expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
+    expect(result.warnings).not.toContain('CITATIONS_REGEX_FALLBACK');
+    expect(result.synthesisOk).toBe(true);
+    expect(result.answer).toBe('Alice [people/alice-example#1] is the CEO of Acme.');
+    expect(result.answer).not.toContain('```');
+    expect(result.citations).toHaveLength(1);
+    expect(result.citations[0].page_slug).toBe('people/alice-example');
+  });
+
+  // Regression case for the actual defect: a lead-in sentence before the
+  // fence (common with reasoning-style models) that itself contains a brace
+  // used to poison the naive whole-text `{...}` brace-scan fallback, since
+  // the anchored fence-strip only handles a fence wrapping the ENTIRE text.
+  test('unwraps a fenced JSON response with a brace in the lead-in prose', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_stub_fenced_preamble',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: 'Based on the context above (e.g. {some background}), here is the synthesis:\n```json\n'
+            + JSON.stringify({ answer: 'Clean synthesis text.', citations: [], gaps: [] })
+            + '\n```',
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, {
+      question: 'fenced json with preamble test',
+      client: stubClient,
+    });
+
+    expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
+    expect(result.synthesisOk).toBe(true);
+    expect(result.answer).toBe('Clean synthesis text.');
+  });
+
+  // Codex review regression guard: a valid, UNFENCED top-level JSON response
+  // whose own `answer` value happens to contain a markdown code fence (e.g.
+  // a code snippet) must parse as-is, not get truncated by the fence
+  // heuristic above.
+  test('parses valid unfenced JSON whose answer field contains an embedded code fence', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_stub_embedded_fence',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          // No outer fence — this is already valid top-level JSON. The
+          // `answer` value itself embeds a markdown code fence.
+          text: JSON.stringify({
+            answer: 'Example: ```ts const x = {}; ```',
+            citations: [],
+            gaps: [],
+          }),
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, {
+      question: 'embedded fence test',
+      client: stubClient,
+    });
+
+    expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
+    expect(result.synthesisOk).toBe(true);
+    expect(result.answer).toBe('Example: ```ts const x = {}; ```');
+  });
+
+  // Codex review regression guard (round 2): same embedded-fence case as
+  // above, PLUS trailing prose after the JSON object. The trailing prose
+  // means a full-text JSON.parse fails, forcing the fence heuristic to run;
+  // it must not mistake the embedded fence for a real wrapper and hand the
+  // brace-match fallback an over-narrow (and wrong) slice of text.
+  test('recovers full JSON via whole-text fallback when an embedded fence + trailing prose both confuse the fence heuristic', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_stub_embedded_fence_postamble',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answer: 'Example: ```ts const x = {}; ```',
+            citations: [],
+            gaps: [],
+          }) + '\nHope this helps.',
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, {
+      question: 'embedded fence plus postamble test',
+      client: stubClient,
+    });
+
+    expect(result.answer).toBe('Example: ```ts const x = {}; ```');
+  });
+
+  // Codex review regression guard (round 3): the embedded fence's own
+  // content happens to be valid JSON on its own ("{}"), so the fence-scoped
+  // candidate parses successfully — but it isn't the REAL response (it has
+  // no `answer` field). The whole-text candidate (found via the final
+  // brace-match fallback, since trailing postamble breaks a direct parse)
+  // has to win because it's the one that actually looks like a
+  // ThinkResponse, even though the mis-scoped candidate parsed "first".
+  test('prefers the answer-shaped candidate over a coincidentally-valid embedded-fence fragment', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_stub_embedded_fence_valid_json',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answer: 'Example: ```{}```',
+            citations: [],
+            gaps: [],
+          }) + '\nHope this helps.',
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, {
+      question: 'embedded fence with coincidentally valid json test',
+      client: stubClient,
+    });
+
+    expect(result.answer).toBe('Example: ```{}```');
+    expect(result.synthesisOk).toBe(true);
+  });
+
   test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
     // Hermetic: neutralize BOTH the env var AND ~/.gbrain config key, else a
     // developer/CI machine with a configured key fires a real LLM call and this
