@@ -1,4 +1,12 @@
 # Bug 修复台账
+## 2026-07-24 GitHub Actions 文档一致性检查失败
+
+- 时间：2026-07-24
+- 版本号：PMBrain 1.1.52
+- 标题：修复 README 锚点与 LLM 导航生成物未同步导致的 CI 失败
+- 描述：README 重写后，回归测试仍按旧的纯本文案和前 50 行范围检查 GBrain 链接及 Office 导入章节；同时 llms-full.txt 未按最新 README 与 AGENTS.md 重新生成，导致 Test 工作流的两个分片稳定失败。E2E 的 xlsx tarball 解压失败属于依赖安装瞬时故障，单独重跑验证。
+- 是否完成：是
+- 最终结果：README 回归断言改为匹配当前 Markdown 链接和数据本地化表述，Office 导入承诺按完整 README 检查；重新生成 llms-full.txt，并通过相关回归测试与 TypeScript 全量检查。未修改 README 产品内容、核心能力、数据库或用户知识库数据。
 ## 2026-07-24 Admin 完整导入被日志截断误报未完成
 
 - 时间：2026-07-24

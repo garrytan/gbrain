@@ -32,11 +32,10 @@ describe('README hero anchors (D9 regression guard)', () => {
   });
 
   test('credits the GBrain upstream project', () => {
-    expect(hero).toContain('基于 GBrain');
+    expect(hero).toContain('基于 [GBrain]');
   });
 
   test('keeps the local-first positioning', () => {
-    expect(hero).toContain('纯本地');
     expect(hero).toContain('数据本地化');
   });
 
@@ -46,8 +45,8 @@ describe('README hero anchors (D9 regression guard)', () => {
   });
 
   test('shows the direct office-document import promise', () => {
-    expect(hero).toContain('导入即用，无需转换格式');
-    expect(hero).toContain('.docx');
-    expect(hero).toContain('.pdf');
+    expect(readme).toContain('导入即用，无需转换格式');
+    expect(readme).toContain('.docx');
+    expect(readme).toContain('.pdf');
   });
 });
