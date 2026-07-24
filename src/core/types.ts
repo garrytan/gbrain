@@ -1451,6 +1451,19 @@ export interface BrainHealth {
   orphan_pages: number;
   missing_embeddings: number;
   /**
+   * Subset of `missing_embeddings` whose page carries the `embed_skip`
+   * frontmatter marker (src/core/embed-skip.ts) — the NULL embedding is
+   * the intentional privacy mechanism, not a backlog. Same JSONB
+   * key-existence test (`frontmatter ? 'embed_skip'`) the embed path
+   * (`countStaleChunks` / `listStaleChunks`) already applies, so this
+   * count can never promise work `gbrain embed --stale` won't actually
+   * do. Optional (engines populate it; older callers/mocks may omit it,
+   * treat as 0). Consumed by brain-score-recommendations.ts to keep the
+   * onboard/doctor "invisible to vector search" critical check from
+   * firing forever on installs that use embed_skip (#2539).
+   */
+  embed_skip_missing_embeddings?: number;
+  /**
    * Composite quality score, 0-100. Weighted sum of five components: embed
    * coverage, link density, timeline coverage, orphan avoidance, dead-link
    * avoidance. See the per-component *_score fields below for breakdown.

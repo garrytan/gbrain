@@ -1141,6 +1141,31 @@ describe('PGLiteEngine: Stats & Health', () => {
     expect(health.missing_embeddings).toBe(1); // chunk has no embedding
     expect(health.embed_coverage).toBe(0);
   });
+
+  // #2539: a NULL-embedding chunk on an embed_skip page must be counted
+  // in `embed_skip_missing_embeddings` (same key-existence test the embed
+  // path uses), not just lumped into the raw `missing_embeddings` total —
+  // otherwise onboard/doctor can't tell a policy-skip from a real backlog.
+  test('#2539: embed_skip_missing_embeddings tracks NULL-embedding chunks on embed_skip pages', async () => {
+    const before = await engine.getHealth();
+    await engine.putPage('test/embed-skip-health', {
+      ...testPage,
+      title: 'Embed-skip page',
+      frontmatter: { embed_skip: { reason: 'oversized', bytes: 999999, assessed_at: new Date().toISOString() } },
+    });
+    await engine.upsertChunks('test/embed-skip-health', [
+      { chunk_index: 0, chunk_text: 'skipped chunk', chunk_source: 'compiled_truth' },
+    ]);
+    try {
+      const health = await engine.getHealth();
+      // Total NULL-embedding count grows by exactly the one new chunk...
+      expect(health.missing_embeddings).toBe(before.missing_embeddings + 1);
+      // ...and that growth is entirely attributed to the policy-skip bucket.
+      expect(health.embed_skip_missing_embeddings).toBe((before.embed_skip_missing_embeddings ?? 0) + 1);
+    } finally {
+      await engine.deletePage('test/embed-skip-health');
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
