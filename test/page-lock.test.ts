@@ -56,15 +56,22 @@ describe('acquirePageLock', () => {
     await lock!.release();
   });
 
-  test('reclaims lock when holder PID is no longer alive', async () => {
+  test('#2840: does NOT steal a fresh lock whose PID looks dead (cross-PID-namespace holder)', async () => {
     const slug = 'people/charlie';
     const path = lockFile(slug);
     require('node:fs').mkdirSync(tmp, { recursive: true });
-    // PID 999999999 is virtually guaranteed to not exist.
+    // PID 999999999 reads as ESRCH here — exactly what a LIVE holder in
+    // another PID namespace (container sharing GBRAIN_HOME) looks like.
+    // Fresh mtime → must NOT be stolen; staleness is mtime-TTL only.
     writeFileSync(path, `999999999\n${new Date().toISOString()}\n`);
     const lock = await acquirePageLock(slug, { lockRoot: tmp });
-    expect(lock).not.toBeNull();
-    await lock!.release();
+    expect(lock).toBeNull();
+    // Same lock past the TTL IS reclaimable (dead holders age out).
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(path, tenMinAgo, tenMinAgo);
+    const after = await acquirePageLock(slug, { lockRoot: tmp });
+    expect(after).not.toBeNull();
+    await after!.release();
   });
 
   test('refresh() updates timestamp', async () => {
@@ -86,12 +93,15 @@ describe('acquirePageLock', () => {
     const path = lockFile(slug);
     require('node:fs').mkdirSync(tmp, { recursive: true });
     writeFileSync(path, `999999999\n${new Date().toISOString()}\n`);
-    // Acquire — this rewrites the lock with our pid.
+    // Backdate past the TTL so the lock is reclaimable (staleness is mtime-only).
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(path, tenMinAgo, tenMinAgo);
+    // Acquire — this rewrites the lock with our pid + owner token.
     const lock = await acquirePageLock(slug, { lockRoot: tmp });
     expect(lock).not.toBeNull();
-    // Manually rewrite with a foreign pid.
+    // Manually rewrite with a foreign owner (no matching token).
     writeFileSync(path, `888888888\n${new Date().toISOString()}\n`);
-    // Release should be a no-op (different pid).
+    // Release should be a no-op (different owner).
     await lock!.release();
     expect(existsSync(path)).toBe(true);
   });
