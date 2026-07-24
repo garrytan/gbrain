@@ -82,8 +82,8 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
     expect(
       messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
-      'google should warn when configured because it has fixed-cap models',
-    ).toBe(true);
+      'google declares max_batch_tokens and must not warn even when configured',
+    ).toBe(false);
   });
 
   test('every recipe with empty models[] declares user_provided_models OR has openai-fast-path', () => {

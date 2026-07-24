@@ -12,6 +12,14 @@ export const google: Recipe = {
   touchpoints: {
     embedding: {
       models: ['gemini-embedding-001'],
+      // Without max_batch_tokens the gateway's recursive-halving safety net
+      // never engages (see warnRecipesMissingBatchTokens), so oversized
+      // batches hit the provider raw and fail. Conservative declaration in
+      // the dashscope pattern: pre-split before whatever server-side limit
+      // applies. chars_per_token=3 overestimates tokens for mixed content,
+      // leaving headroom.
+      max_batch_tokens: 8192,
+      chars_per_token: 3,
       default_dims: 768,
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,
