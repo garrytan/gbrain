@@ -108,9 +108,9 @@ describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () =>
 // operators put in ~/.bashrc never reach this subprocess. Without the
 // explicit export the wrapper silently dies with `env: bun: No such file
 // or directory`, leaves a stale lockfile, and blocks every subsequent tick
-// for the 10-min stale-lock window. Regression: see Hermes `cron doctor`
-// reports — this caused a 1-week nightly-cycle outage on at least one
-// operator machine before being diagnosed.
+// for the 10-min stale-lock window. Regression: see a downstream agent
+// fork's `cron doctor` reports — this caused a 1-week nightly-cycle outage
+// on at least one operator machine before being diagnosed.
 describe('autopilot wrapper script — bun PATH export (v0.42.x regression)', () => {
   test('wrapper exports ~/.bun/bin onto PATH before the exec', async () => {
     const { readFileSync } = await import('fs');
