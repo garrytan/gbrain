@@ -2,10 +2,6 @@
 
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
-- [ ] **P2 — cherry-pick #2112's uncovered doctor.ts hunk.** Fix-wave A (#2820) superseded
-  most of #2112 but not its `checkSubagentCapability` fix (check explicit `models.subagent`
-  before `models.tier.subagent`). Refile or cherry-pick; the rest of that PR is covered.
-
 ## v0.42.59.0 follow-ups (five-fix rollup #2735–#2739)
 
 Filed as follow-ups from v0.42.59.0 (bootstrap probe for
