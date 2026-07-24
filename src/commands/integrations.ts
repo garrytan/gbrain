@@ -707,14 +707,6 @@ async function cmdDoctor(args: string[]): Promise<void> {
     }
   }
 
-  // Cross-cutting check (PR #1185, @ethanbeard): dead jobs in the minions
-  // queue. Shell jobs submitted by collectors die silently from the
-  // per-integration perspective — the collector's drain sees the submit
-  // succeed and stays green while the worker job dead-letters on the queue
-  // side, so a whole pipeline can be broken for days before anyone notices.
-  const deadJobsCheck = checkDeadJobs();
-  if (deadJobsCheck) results.push(deadJobsCheck);
-
   if (jsonMode) {
     const fails = results.filter(r => r.status !== 'ok');
     console.log(JSON.stringify({
@@ -734,83 +726,8 @@ async function cmdDoctor(args: string[]): Promise<void> {
     }
   }
 
-  // Surface cross-cutting [queue] checks below the per-integration sections.
-  const queueChecks = results.filter(r => r.integration === '[queue]');
-  if (queueChecks.length > 0) {
-    console.log(`  [queue]: ${queueChecks.every(c => c.status === 'ok') ? 'OK' : 'ISSUES'}`);
-    for (const c of queueChecks) {
-      const icon = c.status === 'ok' ? '  ✓' : c.status === 'timeout' ? '  ⏱' : '  ✗';
-      console.log(`${icon} ${c.output}`);
-    }
-  }
-
   const totalFails = results.filter(r => r.status !== 'ok').length;
   console.log(`\n  OVERALL: ${totalFails === 0 ? 'All checks passed' : `${totalFails} issue(s) found`}`);
-}
-
-/**
- * Pure aggregation for the dead-jobs queue check (PR #1185 rework): given
- * parsed `jobs list --status dead --json` output, count jobs whose
- * finished_at falls inside the last 24 hours — parity with the main
- * `gbrain doctor` queue checks, so one ancient dead job can't flag
- * `[queue]: ISSUES` forever — grouped by job name, biggest first.
- * Exported for unit tests.
- */
-export function summarizeDeadJobs(
-  jobs: Array<{ name?: unknown; finished_at?: unknown }>,
-  now: Date = new Date(),
-): { total: number; breakdown: string } {
-  const cutoff = now.getTime() - 24 * 60 * 60 * 1000;
-  const byName: Record<string, number> = {};
-  let total = 0;
-  for (const job of jobs) {
-    if (typeof job.finished_at !== 'string' && !(job.finished_at instanceof Date)) continue;
-    const finished = new Date(job.finished_at as string | Date);
-    if (!Number.isFinite(finished.getTime()) || finished.getTime() < cutoff) continue;
-    const name = typeof job.name === 'string' ? job.name : 'unknown';
-    byName[name] = (byName[name] ?? 0) + 1;
-    total++;
-  }
-  const breakdown = Object.entries(byName)
-    .sort((a, b) => b[1] - a[1])
-    .map(([n, c]) => `${n}:${c}`)
-    .join(', ');
-  return { total, breakdown };
-}
-
-/**
- * Dead minion jobs in the last 24h. Returns a CheckResult only when dead
- * jobs exist (silent when healthy, per doctor's ISSUES-only model).
- *
- * Shells out to `gbrain jobs list --json` instead of opening a DB
- * connection — preserves this file's standalone-CLI design. The JSON
- * surface exists for exactly this: the human table's column widths shift
- * with long job names, so screen-scraping it is not an option.
- */
-function checkDeadJobs(): CheckResult | null {
-  try {
-    // --limit 500 caps memory while comfortably covering a day of failures;
-    // getJobs orders by created_at DESC so the most recent dead jobs come first.
-    const out = execSync('gbrain jobs list --status dead --limit 500 --json', {
-      encoding: 'utf8',
-      timeout: 10_000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const jobs: unknown = JSON.parse(out);
-    if (!Array.isArray(jobs)) return null;
-    const { total, breakdown } = summarizeDeadJobs(jobs);
-    if (total === 0) return null;
-    return {
-      integration: '[queue]',
-      check: 'dead_jobs',
-      status: 'fail',
-      output: `${total} dead job(s) in the last 24h (${breakdown}). Inspect: gbrain jobs list --status dead; details: gbrain jobs get <id>`,
-    };
-  } catch {
-    // DB unreachable / gbrain not on PATH / non-JSON output — skip silently.
-    // Doctor still surfaces the per-recipe checks; this one is best-effort.
-    return null;
-  }
 }
 
 function cmdStats(args: string[]): void {

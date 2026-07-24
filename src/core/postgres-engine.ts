@@ -2438,6 +2438,23 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    // Provenance fallback for chunks that don't carry an explicit `model`:
+    // resolve the model the gateway ACTUALLY uses at runtime, not the
+    // compile-time DEFAULT_EMBEDDING_MODEL constant. Callers like `embed`
+    // build ChunkInputs without a `model` field (src/commands/embed.ts), so
+    // the old `chunk.model || DEFAULT_EMBEDDING_MODEL` fallback stamped the
+    // hardcoded default (e.g. zeroentropyai:zembed-1) onto rows whose vectors
+    // were produced by a different, config-resolved model — corrupting the
+    // provenance that signature-drift staleness + dim-migration logic trust.
+    // Mirrors the resolve-then-fallback pattern used for schema sizing above.
+    let resolvedModel: string = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const gw = await import('./ai/gateway.ts');
+      resolvedModel = gw.getEmbeddingModel() || resolvedModel;
+    } catch {
+      // Gateway unconfigured (unit tests / pre-connect): keep the default.
+    }
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -2467,7 +2484,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null,
+        chunk.model || resolvedModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
@@ -4962,11 +4979,11 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
-             similarity(t.claim, ${query})::real AS score
+             word_similarity(${query}, t.claim)::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
-        AND t.claim % ${query}
+        AND ${query} <% t.claim
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
@@ -5364,7 +5381,7 @@ export class PostgresEngine implements BrainEngine {
     // dashboard health.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -5389,7 +5406,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('entity', 'person', 'company')
       ORDER BY link_count DESC
       LIMIT 5
     `;
@@ -6293,6 +6310,12 @@ export class PostgresEngine implements BrainEngine {
           )`
       : sql``;
 
+    // Exclude dream/synthesize-generated pages (reflections, originals, cycle
+    // logs carrying frontmatter dream_generated:true). enrich develops ENTITY
+    // stubs; running it on a generated essay/log creates circular self-citation
+    // and drops the H1. IS DISTINCT FROM 'true' keeps NULL/'false' rows.
+    const dreamCondition = sql`AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true'`;
+
     // Whitelisted ORDER BY (no injection — enum maps to a literal fragment).
     const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
     const orderBy = sql.unsafe(ENRICH_ORDER_SQL[orderKey]);
@@ -6316,6 +6339,7 @@ export class PostgresEngine implements BrainEngine {
         AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < ${threshold}
         ${sourceCondition}
         ${recencyCondition}
+        ${dreamCondition}
       ORDER BY ${orderBy}
       LIMIT ${limit}
     `;

@@ -361,7 +361,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
       'Usage: gbrain autopilot [--repo <path>] [--interval N] [--json] [--no-worker]\n' +
-      '       gbrain autopilot --install [--repo <path>] [--interval N]\n' +
+      '       gbrain autopilot --install [--repo <path>]\n' +
       '       gbrain autopilot --uninstall\n' +
       '       gbrain autopilot --status [--json]\n\n' +
       'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
@@ -385,12 +385,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   }
 
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
-  // Flag → persisted config (written by --install --interval, #2794) → 300s.
-  const intervalRaw = parseArg(args, '--interval')
-    || await engine.getConfig('autopilot.interval')
-    || '300';
-  const intervalParsed = parseInt(intervalRaw, 10);
-  const baseInterval = Number.isFinite(intervalParsed) && intervalParsed >= 1 ? intervalParsed : 300;
+  const baseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
   const jsonMode = args.includes('--json');
   const forceInline = args.includes('--inline');
   const noWorker = !shouldSpawnAutopilotWorker(args);
@@ -1303,8 +1298,7 @@ function detectOpenClaw(): { detected: boolean; bootstrapCandidates: string[] } 
   return { detected: signal, bootstrapCandidates: existing };
 }
 
-// Exported for tests (issue #2794: the wrapper must carry --interval).
-export function writeWrapperScript(repoPath: string, intervalSeconds?: number): string {
+function writeWrapperScript(repoPath: string): string {
   const home = process.env.HOME || '';
   const gbrainDir = join(home, '.gbrain');
   mkdirSync(gbrainDir, { recursive: true });
@@ -1324,7 +1318,7 @@ export function writeWrapperScript(repoPath: string, intervalSeconds?: number): 
 # OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
-exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'${intervalSeconds !== undefined ? ` --interval '${intervalSeconds}'` : ''}
+exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
@@ -1343,29 +1337,7 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
   const injectBootstrap = args.includes('--inject-bootstrap');
   const noInject = args.includes('--no-inject');
 
-  // issue #2794: --install used to silently drop --interval — the wrapper
-  // always exec'd bare `autopilot --repo ...` (default 300s). Parse it here,
-  // persist to config so a later flag-less --install regenerates the wrapper
-  // with the same tuning, and thread it into the exec line.
-  const intervalRaw = parseArg(args, '--interval');
-  let intervalSeconds: number | undefined;
-  if (intervalRaw !== undefined) {
-    const parsed = Number(intervalRaw);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      console.error(`Error: --interval must be a positive integer (seconds), got "${intervalRaw}"`);
-      process.exit(2);
-    }
-    intervalSeconds = parsed;
-    await engine.setConfig('autopilot.interval', String(parsed));
-  } else {
-    const persisted = await engine.getConfig('autopilot.interval');
-    if (persisted) {
-      const parsed = Number(persisted);
-      if (Number.isInteger(parsed) && parsed >= 1) intervalSeconds = parsed;
-    }
-  }
-
-  const wrapperPath = writeWrapperScript(repoPath, intervalSeconds);
+  const wrapperPath = writeWrapperScript(repoPath);
   const home = process.env.HOME || '';
 
   switch (target) {

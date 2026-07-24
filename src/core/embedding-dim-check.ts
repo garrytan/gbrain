@@ -32,6 +32,10 @@ import {
   nvidiaEmbeddingDim,
   nvidiaEmbeddingDimOptions,
   supportsNvidiaEmbeddingDimension,
+  isPerplexityEmbeddingModel,
+  isValidPerplexityDim,
+  maxPerplexityEmbeddingDim,
+  PERPLEXITY_MIN_DIMS,
 } from './ai/dims.ts';
 
 /**
@@ -71,8 +75,9 @@ export function assertEmbeddingEnabled(cfg: { embedding_disabled?: boolean } | n
     throw new EmbeddingDisabledError(
       'This brain was initialized with `--no-embedding` (deferred setup).\n' +
       'Configure an embedding provider before running embed / import:\n' +
-      '  gbrain init --force --embedding-model <provider>:<model>   # re-init to size schema\n' +
-      '(`gbrain config set embedding_model` is refused — schema-sizing fields are set at init.)\n',
+      '  gbrain config set embedding_model <provider>:<model>\n' +
+      '  gbrain config set embedding_dimensions <N>\n' +
+      '  gbrain init --force --embedding-model <provider>:<model>   # re-init to size schema\n',
     );
   }
 }
@@ -459,6 +464,15 @@ function isCustomDimValidForProvider(
       error:
         `ZeroEntropy model "${modelId}" does not support custom dimensions ${requestedDims} ` +
         `(allowed: ${ZEROENTROPY_VALID_DIMS.join(', ')}).`,
+    };
+  }
+  if (recipe.id === 'perplexity' && isPerplexityEmbeddingModel(modelId)) {
+    if (isValidPerplexityDim(modelId, requestedDims)) return { valid: true, error: '' };
+    return {
+      valid: false,
+      error:
+        `Perplexity ${modelId} accepts dimensions ${PERPLEXITY_MIN_DIMS}..${maxPerplexityEmbeddingDim(modelId)}, ` +
+        `got ${requestedDims}.`,
     };
   }
   if (recipe.id === 'openai' && isOpenAITextEmbedding3Model(modelId)) {

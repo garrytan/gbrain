@@ -44,6 +44,9 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // Mistral (https://mistral.ai/pricing/api/, verified 2026-07-19)
   'mistral:mistral-embed':         { pricePerMTok: 0.10 },
   'mistral:mistral-embed-2312':    { pricePerMTok: 0.10 },
+  // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-21)
+  'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
+  'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },
 };
 
 export type PriceLookupResult =

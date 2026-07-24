@@ -370,3 +370,69 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
     expect((page[0].fm as Record<string, unknown>).tier).toBe('T1');
   });
 });
+
+// #2123 — extract_atoms must stamp `concepts` so synthesize_concepts has
+// material. The pre-fix pipeline was broken end-to-end: the extractor
+// never wrote the field, and every synthesize_concepts cycle skipped with
+// "no atoms with concept refs". The earlier describe blocks feed
+// synthesize via the `_atoms` seam, which is exactly how the gap survived
+// — so the last test here goes extractor → REAL frontmatter → real DB
+// query path → concept page.
+describe('#2123: concepts label parsing', () => {
+  test('keeps valid kebab-case labels', () => {
+    const raw = `[{"title":"T","atom_type":"insight","body":"b","concepts":["captive-portal","tls-certificates"]}]`;
+    expect(parseAtomsResponse(raw)[0].concepts).toEqual(['captive-portal', 'tls-certificates']);
+  });
+
+  test('filters non-kebab labels, keeps the rest', () => {
+    const raw = `[{"title":"T","atom_type":"insight","body":"b","concepts":["Captive Portal","tp_link","UPPER","valid-label"]}]`;
+    expect(parseAtomsResponse(raw)[0].concepts).toEqual(['valid-label']);
+  });
+
+  test('truncates to 3 labels', () => {
+    const raw = `[{"title":"T","atom_type":"insight","body":"b","concepts":["a","b","c","d","e"]}]`;
+    expect(parseAtomsResponse(raw)[0].concepts).toEqual(['a', 'b', 'c']);
+  });
+
+  test('absent / non-array / all-invalid → undefined', () => {
+    expect(parseAtomsResponse(`[{"title":"T","atom_type":"insight","body":"b"}]`)[0].concepts).toBeUndefined();
+    expect(parseAtomsResponse(`[{"title":"T","atom_type":"insight","body":"b","concepts":"not-an-array"}]`)[0].concepts).toBeUndefined();
+    expect(parseAtomsResponse(`[{"title":"T","atom_type":"insight","body":"b","concepts":["Bad Label!"]}]`)[0].concepts).toBeUndefined();
+  });
+});
+
+describe('#2123: extractor stamps concepts → synthesize_concepts consumes via real DB path', () => {
+  test('end-to-end: atoms with shared label materialize a concept page', async () => {
+    const chat = stubChat(`[
+      {"title":"Cert warning on guest wifi","atom_type":"insight","body":"Portal redirects to an IP-based HTTPS URL.","concepts":["captive-portal"]},
+      {"title":"iPhone portal popup is flaky","atom_type":"critique","body":"CNA probe behavior differs across iOS versions.","concepts":["captive-portal"]}
+    ]`);
+    const extract = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/fake/notes.txt', content: 'content', contentHash: 'cc2123' }],
+      _pages: [],
+      _chat: chat,
+    });
+    expect(extract.status).toBe('ok');
+    expect(extract.details?.atoms_extracted).toBe(2);
+
+    // Frontmatter really carries the label (a jsonb array, not a string).
+    const stamped = await engine.executeRaw<{ concepts: unknown }>(
+      `SELECT frontmatter->'concepts' AS concepts FROM pages WHERE type = 'atom'`,
+    );
+    expect(stamped.length).toBe(2);
+    for (const row of stamped) {
+      const arr = typeof row.concepts === 'string' ? JSON.parse(row.concepts) : row.concepts;
+      expect(arr).toEqual(['captive-portal']);
+    }
+
+    // NO _atoms seam: synthesize discovers the atoms through its own
+    // DB query — this is the path that was dead before the fix.
+    const synth = await runPhaseSynthesizeConcepts(engine, { _chat: stubChat('unused — T3 is deterministic') });
+    expect(synth.status).toBe('ok');
+    expect(synth.details?.concepts_written).toBe(1);
+    const concept = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE slug = 'concepts/captive-portal' AND type = 'concept'`,
+    );
+    expect(concept.length).toBe(1);
+  });
+});

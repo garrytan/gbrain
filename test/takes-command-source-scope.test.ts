@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runTakes } from '../src/commands/takes.ts';
-import type { BrainEngine, TakeBatchInput } from '../src/core/engine.ts';
+import type { BrainEngine, TakeBatchInput, TakesListOpts } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const tmpRoots: string[] = [];
@@ -149,5 +149,49 @@ describe('gbrain takes CLI source scoping', () => {
     expect(pageLookups).toHaveLength(0);
     expect(added).toHaveLength(0);
     expect(existsSync(join(brainDir, 'shared/page.md'))).toBe(false);
+  });
+
+  test('supersede looks up the active row it is replacing (#2663)', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-supersede-'));
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-takes-home-'));
+    tmpRoots.push(brainDir, home);
+    const listCalls: TakesListOpts[] = [];
+    const engine = {
+      getConfig: async () => null,
+      executeRaw: async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('FROM sources WHERE id = $1')) return [{ id: params[0] as string }];
+        if (sql.includes('FROM sources WHERE local_path IS NOT NULL')) return [];
+        if (sql.includes('FROM pages WHERE slug = $1 AND source_id = $2')) return [{ id: 11 }];
+        return [];
+      },
+      listTakes: async (opts: TakesListOpts) => {
+        listCalls.push(opts);
+        return [{
+          page_id: 11,
+          row_num: 3,
+          claim: 'Current claim',
+          kind: 'take',
+          holder: 'self',
+          weight: 0.8,
+          active: true,
+        }];
+      },
+      supersedeTake: async () => ({ oldRow: 3, newRow: 4 }),
+    } as unknown as BrainEngine;
+
+    await withEnv({ GBRAIN_SOURCE: undefined, GBRAIN_HOME: home }, async () => {
+      await runTakes(engine, [
+        'supersede',
+        'shared/page',
+        '--row',
+        '3',
+        '--claim',
+        'Replacement claim',
+        '--dir',
+        brainDir,
+      ]);
+    });
+
+    expect(listCalls).toEqual([{ page_id: 11, active: true, limit: 500 }]);
   });
 });

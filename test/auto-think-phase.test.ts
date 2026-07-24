@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseAutoThink } from '../src/core/cycle/auto-think.ts';
-import { runPhaseDrift, __testing as driftTesting } from '../src/core/cycle/drift.ts';
+import { runPhaseDrift, parseDriftOutput, __testing as driftTesting } from '../src/core/cycle/drift.ts';
 import { _resetBudgetMeterWarningsForTest } from '../src/core/cycle/budget-meter.ts';
 import type { ThinkLLMClient } from '../src/core/think/index.ts';
 
@@ -153,6 +153,18 @@ describe('runPhaseAutoThink', () => {
   });
 });
 
+describe('parseDriftOutput', () => {
+  test('parses fenced JSON with clamped fields', () => {
+    const v = parseDriftOutput('```json\n{"drifted": true, "confidence": 1.7, "reasoning": "r", "suggested_weight": -0.2}\n```');
+    expect(v).toEqual({ drifted: true, confidence: 1, reasoning: 'r', suggested_weight: 0 });
+  });
+
+  test('returns null on garbage / missing drifted', () => {
+    expect(parseDriftOutput('not json at all')).toBeNull();
+    expect(parseDriftOutput('{"confidence": 0.5}')).toBeNull();
+  });
+});
+
 describe('runPhaseDrift', () => {
   test('skipped when not enabled', async () => {
     const r = await runPhaseDrift(engine, { dryRun: false, auditPath: join(tmpDir, 'd0.jsonl') });
@@ -166,14 +178,87 @@ describe('runPhaseDrift', () => {
     expect(cands.every(c => c.weight >= 0.3 && c.weight <= 0.85)).toBe(true);
   });
 
-  test('runs and surfaces candidates when enabled', async () => {
+  test('judges candidates and writes a report-only drift report page (#2653)', async () => {
     await engine.setConfig('dream.drift.enabled', 'true');
     await engine.setConfig('dream.drift.lookback_days', '30');
     await engine.setConfig('dream.drift.budget', '1.0');
-    const r = await runPhaseDrift(engine, { dryRun: false, auditPath: join(tmpDir, 'd1.jsonl') });
+    const judgedRows: number[] = [];
+    const r = await runPhaseDrift(engine, {
+      dryRun: false,
+      auditPath: join(tmpDir, 'd1.jsonl'),
+      judge: async ({ candidate, evidence }) => {
+        judgedRows.push(candidate.rowNum);
+        expect(evidence).toContain('Funding round closed'); // real timeline evidence reached the judge
+        return candidate.rowNum === 2
+          ? { drifted: true, confidence: 0.9, reasoning: 'evidence shifted', suggested_weight: 0.3 }
+          : { drifted: false, confidence: 0.7, reasoning: 'consistent' };
+      },
+    });
     expect(r.status).toBe('complete');
-    expect((r.totals as { candidates?: number }).candidates).toBeGreaterThanOrEqual(0);
+    const totals = r.totals as { candidates: number; judged: number; drifted: number };
+    expect(totals.judged).toBeGreaterThanOrEqual(2);
+    expect(totals.drifted).toBe(1);
+    expect(judgedRows).toContain(2);
+
+    // Report page landed.
+    const date = new Date().toISOString().slice(0, 10);
+    const page = await engine.getPage(`reports/drift-${date}`);
+    expect(page).not.toBeNull();
+    expect(page!.compiled_truth).toContain('DRIFTED');
+    expect(page!.compiled_truth).toContain('Strong technical founder');
+
+    // Report-only v1: no take was mutated even though the judge suggested a weight.
+    const rows = await engine.executeRaw<{ weight: number; resolved_at: string | null }>(
+      'SELECT weight, resolved_at FROM takes WHERE page_id = $1 AND row_num = 2',
+      [alicePageId],
+    );
+    expect(Number(rows[0]!.weight)).toBe(0.6);
+    expect(rows[0]!.resolved_at).toBeNull();
     await engine.setConfig('dream.drift.enabled', 'false');
+  });
+
+  test('auto_update mutates nothing in v1', async () => {
+    await engine.setConfig('dream.drift.enabled', 'true');
+    await engine.setConfig('dream.drift.auto_update', 'true');
+    const r = await runPhaseDrift(engine, {
+      dryRun: false,
+      auditPath: join(tmpDir, 'd-auto.jsonl'),
+      judge: async () => ({ drifted: true, confidence: 0.99, reasoning: 'x', suggested_weight: 0.1 }),
+    });
+    expect(r.status).toBe('complete');
+    const rows = await engine.executeRaw<{ weight: number }>(
+      'SELECT weight FROM takes WHERE page_id = $1 AND row_num = 3',
+      [alicePageId],
+    );
+    expect(Number(rows[0]!.weight)).toBe(0.5); // untouched
+    await engine.setConfig('dream.drift.auto_update', 'false');
+    await engine.setConfig('dream.drift.enabled', 'false');
+  });
+
+  test('budget exhaustion stops judging (partial, no judge calls)', async () => {
+    await engine.setConfig('dream.drift.enabled', 'true');
+    await engine.setConfig('dream.drift.budget', '0.0000001');
+    let judgeCalls = 0;
+    const r = await runPhaseDrift(engine, {
+      dryRun: false,
+      auditPath: join(tmpDir, 'd-budget.jsonl'),
+      judge: async () => { judgeCalls += 1; return { drifted: false, confidence: 0.5, reasoning: '' }; },
+    });
+    expect(r.status).toBe('partial');
+    expect(judgeCalls).toBe(0);
+    await engine.setConfig('dream.drift.budget', '1.0');
+    await engine.setConfig('dream.drift.enabled', 'false');
+  });
+
+  test('forceEnabled (--once) bypasses the dream.drift.enabled gate', async () => {
+    await engine.setConfig('dream.drift.enabled', 'false');
+    const r = await runPhaseDrift(engine, {
+      dryRun: false,
+      auditPath: join(tmpDir, 'd-once.jsonl'),
+      forceEnabled: true,
+      judge: async () => ({ drifted: false, confidence: 0.5, reasoning: 'ok' }),
+    });
+    expect(r.status).toBe('complete');
   });
 
   test('dry-run returns skipped with candidate count', async () => {

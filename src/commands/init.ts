@@ -26,6 +26,8 @@ export async function runInit(args: string[]) {
     return;
   }
 
+  validateInitFlags(args);
+
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isMcpOnly = args.includes('--mcp-only');
@@ -151,6 +153,65 @@ export async function runInit(args: string[]) {
   return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack, skipEmbedCheck });
 }
 
+const INIT_BOOLEAN_FLAGS = new Set([
+  '--pglite',
+  '--supabase',
+  '--mcp-only',
+  '--force',
+  '--non-interactive',
+  '--migrate-only',
+  '--json',
+  '--no-embedding',
+  '--skip-embed-check',
+]);
+
+const INIT_VALUE_FLAGS = new Set([
+  '--url',
+  '--key',
+  '--path',
+  '--schema-pack',
+  '--embedding-model',
+  '--model',
+  '--embedding-dimensions',
+  '--expansion-model',
+  '--chat-model',
+  '--mcp-url',
+  '--issuer-url',
+  '--oauth-client-id',
+  '--oauth-client-secret',
+]);
+
+function validateInitFlags(args: string[]) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith('-')) continue;
+
+    if (INIT_BOOLEAN_FLAGS.has(arg)) continue;
+
+    if (INIT_VALUE_FLAGS.has(arg)) {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        failInitFlag(`gbrain init: ${arg} requires a value`, args.includes('--json'));
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--')) {
+      failInitFlag(`gbrain init: unknown flag ${arg}`, args.includes('--json'));
+    }
+  }
+}
+
+function failInitFlag(message: string, jsonOutput: boolean): never {
+  if (jsonOutput) {
+    console.log(JSON.stringify({ status: 'error', reason: 'invalid_flag', message }));
+  } else {
+    console.error(message);
+    console.error('Run `gbrain init --help` for supported flags.');
+  }
+  process.exit(1);
+}
+
 interface ResolveAIOptionsArgs {
   verbose: string | null;        // --embedding-model
   shorthand: string | null;      // --model
@@ -248,13 +309,6 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
   }
 
   // --- Tier 1+2: explicit flags ---------------------------------------------
-
-  // #2301: an explicit embedding flag on THIS invocation overrides the
-  // persisted deferred-setup sentinel above. Without this, a stale
-  // `embedding_disabled: true` in config.json made every re-init defer
-  // embedding — including `gbrain init --embedding-model ...`, the exact
-  // recovery path the deferred-setup message tells users to take.
-  if (verbose || shorthand) delete out.noEmbedding;
 
   if (verbose) {
     out.embedding_model = verbose;
@@ -442,7 +496,7 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   console.error('  gbrain init --pglite --embedding-model openai:text-embedding-3-large');
   console.error('');
   console.error('Or defer setup: gbrain init --pglite --no-embedding');
-  console.error('  (you can configure later with `gbrain init --force --embedding-model <provider>:<model>`)');
+  console.error('  (you can configure later with `gbrain config set embedding_model <id>`)');
   // D13: surface near-miss env vars (e.g. OPENAPI_API_KEY → OPENAI_API_KEY).
   if (typos.length > 0) {
     console.error('');
@@ -840,7 +894,7 @@ async function initPGLite(opts: {
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    console.log(`  --no-embedding: deferred setup — run \`gbrain init --force --embedding-model <provider>:<model>\` before import`);
+    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -979,12 +1033,6 @@ async function initPGLite(opts: {
       // unless explicitly overridden by --schema-pack on re-init.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
-    // #2301: a resolved embedding model supersedes any stale deferred-setup
-    // sentinel carried over via ...existingFile — otherwise the sentinel
-    // re-defers embedding on every future init/embed forever.
-    if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
-      delete config.embedding_disabled;
-    }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
@@ -1069,7 +1117,7 @@ async function initPostgres(opts: {
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
-    console.log(`  --no-embedding: deferred setup — run \`gbrain init --force --embedding-model <provider>:<model>\` before import`);
+    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1233,10 +1281,6 @@ async function initPostgres(opts: {
       // v0.42 (T17): same schema_pack default as PGLite path.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
-    // #2301: same stale-sentinel drop as the PGLite path above.
-    if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
-      delete config.embedding_disabled;
-    }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
@@ -1508,7 +1552,7 @@ export function reportModStatus(): void {
     console.log('  cd ~/.claude/skills/gstack && ./setup');
   }
   console.log('Resolver: skills/RESOLVER.md');
-  console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  console.log('Soul audit: ask your agent to "run a soul audit" to customize its identity (see skills/soul-audit)');
   // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
   // (no action needed). The policy skill is installed into the HOST repo on
   // request — we PRINT the command rather than silently mutating the host repo.
