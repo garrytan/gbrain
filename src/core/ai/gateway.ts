@@ -445,7 +445,16 @@ export function resolveNativeBaseUrl(
   cfg: AIGatewayConfig,
 ): string | undefined {
   const envKey = provider === 'anthropic' ? 'ANTHROPIC_BASE_URL' : 'OPENAI_BASE_URL';
-  const raw = cfg.env[envKey];
+  // Fall back to the config plane (provider_base_urls.<provider>, routed into
+  // cfg.base_urls by buildGatewayConfig) when the *_BASE_URL env var is absent or
+  // empty, so a native provider can target an OpenAI/Anthropic-compatible endpoint
+  // from config.json alone, with no dependence on an exported env var. This is the
+  // same fallback rationale buildGatewayConfig already applies to API keys: env
+  // wins when it carries a real value, but daemon/launchd/MCP contexts that never
+  // sourced the shell (or that inject an empty ANTHROPIC_BASE_URL) still resolve
+  // from config.json.
+  const envRaw = cfg.env[envKey];
+  const raw = envRaw && envRaw.trim() ? envRaw : cfg.base_urls?.[provider];
   if (!raw || !raw.trim()) return undefined;
   const trimmed = raw.trim().replace(/\/+$/, '');
   return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
