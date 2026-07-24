@@ -1446,9 +1446,15 @@ export class PostgresEngine implements BrainEngine {
                END
              WHEN jsonb_typeof(config) = 'array'
                THEN COALESCE(
+                 -- #2251: skip non-object elements (the in-the-wild bad shape
+                 -- mixes double-encoded strings with patch objects); jsonb_each
+                 -- on a non-object raises and would fail the whole UPDATE,
+                 -- permanently blocking last_full_cycle_at writes. The CASE
+                 -- guard (not a WHERE) guarantees jsonb_each never sees a
+                 -- non-object regardless of qual-evaluation order.
                  (SELECT jsonb_object_agg(kv.key, kv.value)
                     FROM jsonb_array_elements(config) elem,
-                         jsonb_each(elem) kv),
+                         jsonb_each(CASE WHEN jsonb_typeof(elem) = 'object' THEN elem ELSE '{}'::jsonb END) kv),
                  '{}'::jsonb
                )
              ELSE '{}'::jsonb

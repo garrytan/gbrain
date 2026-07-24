@@ -17,7 +17,7 @@ import type { BrainEngine } from './engine.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswMaxDimsForType } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
-import type { Recipe } from './ai/types.ts';
+import type { Recipe, EmbeddingTouchpoint } from './ai/types.ts';
 import { AIConfigError } from './ai/errors.ts';
 import {
   supportsVoyageOutputDimension,
@@ -279,6 +279,17 @@ export interface ResolveSchemaEmbeddingDimOpts {
  *     `dims_options` list (Matryoshka providers). Otherwise reject — the
  *     user picked a model that doesn't support custom dims.
  */
+/**
+ * The embedding width a specific model actually emits: its per-model override
+ * from `model_dims` (e.g. Ollama `bge-m3` -> 1024) when present, else the
+ * recipe's provider-wide `default_dims`. Single source of truth for "what
+ * width will this model's schema column be" — schema/gateway dim sites resolve
+ * through it instead of reading `default_dims` directly (#2170).
+ */
+export function effectiveDefaultDims(tp: EmbeddingTouchpoint, modelId: string): number {
+  return tp.model_dims?.[modelId] ?? tp.default_dims;
+}
+
 export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): ResolveSchemaDimResult {
   try {
     const { recipe, parsed } = resolveRecipe(opts.embedding_model);
@@ -291,7 +302,7 @@ export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): 
           `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_dimensions);
+    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp, opts.embedding_dimensions);
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
@@ -342,7 +353,7 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
           `Pick a multimodal-capable model from this provider.`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_multimodal_dimensions);
+    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp, opts.embedding_multimodal_dimensions);
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
@@ -369,13 +380,13 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
 function validateDimAgainstTouchpoint(
   modelId: string,
   recipe: Recipe,
-  defaultDims: number,
-  dimsOptions: number[] | undefined,
+  tp: EmbeddingTouchpoint,
   requestedDims: number | undefined,
 ): ResolveSchemaDimResult {
+  const dimsOptions = tp.dims_options;
   const nvidiaNaturalDims = recipe.id === 'nvidia' ? nvidiaEmbeddingDim(modelId) : undefined;
-  const effectiveDefaultDims = nvidiaNaturalDims ?? defaultDims;
-  const dim = requestedDims ?? effectiveDefaultDims;
+  const modelDefaultDims = nvidiaNaturalDims ?? effectiveDefaultDims(tp, modelId);
+  const dim = requestedDims ?? modelDefaultDims;
 
   if (!Number.isInteger(dim) || dim <= 0) {
     return {
@@ -392,7 +403,7 @@ function validateDimAgainstTouchpoint(
     };
   }
 
-  if (requestedDims !== undefined && requestedDims !== defaultDims) {
+  if (requestedDims !== undefined && requestedDims !== modelDefaultDims) {
     // User asked for a non-default dim. Walk the precedence chain.
     const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
     if (!customDimOk.valid) {
@@ -405,7 +416,7 @@ function validateDimAgainstTouchpoint(
     dim,
     model: `${recipe.id}:${modelId}`,
     provider: recipe.id,
-    recipeDefault: effectiveDefaultDims,
+    recipeDefault: modelDefaultDims,
   };
 }
 

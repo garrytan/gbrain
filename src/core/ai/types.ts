@@ -29,6 +29,18 @@ export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
   dims_options?: number[]; // for Matryoshka-aware providers
+  /**
+   * #2170: per-model native embedding width, for providers whose models emit
+   * DIFFERENT fixed dimensions under one recipe (e.g. Ollama: nomic-embed-text
+   * = 768, bge-m3 = 1024, all-minilm = 384). When a model is named here, this
+   * width overrides the provider-wide `default_dims` for schema-column sizing
+   * (resolved via `effectiveDefaultDims` in embedding-dim-check.ts); models
+   * absent from the map fall back to `default_dims`. Keys MUST be a subset of
+   * `models` (pinned by test/embedding-dim-check.test.ts). Distinct from
+   * `dims_options` (a set of *choosable* Matryoshka widths for ONE flexible
+   * model) — `model_dims` is each model's single, fixed native width.
+   */
+  model_dims?: Record<string, number>;
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
   /**

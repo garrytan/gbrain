@@ -160,4 +160,33 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
     expect(rows[0]?.typeof).toBe('object');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
   });
+
+  test('array config with non-object elements is repaired, not fatal (#2251)', async () => {
+    await seedSource('echo');
+    // In-the-wild bad shape (#2251): a leading double-encoded STRING element
+    // mixed with patch objects. jsonb_each on the string element used to raise
+    // "cannot call jsonb_each on a non-object", failing the whole UPDATE —
+    // last_full_cycle_at never wrote and the dream cycle re-ran the source
+    // forever. Non-object elements must be skipped, object elements flattened.
+    await engine.executeRaw(
+      `UPDATE sources
+          SET config = '["{\\"double\\": true}", {"remote_url": "https://x"}, {"stale_key": "keep"}]'::jsonb
+        WHERE id = 'echo'`,
+    );
+    const updated = await engine.updateSourceConfig('echo', {
+      last_full_cycle_at: '2026-05-22T13:00:00.000Z',
+    });
+    expect(updated).toBe(true);
+    const rows = await engine.executeRaw<{ typeof: string; value: string | null; remote: string | null; stale: string | null }>(
+      `SELECT jsonb_typeof(config) AS typeof,
+              config->>'last_full_cycle_at' AS value,
+              config->>'remote_url' AS remote,
+              config->>'stale_key' AS stale
+         FROM sources WHERE id = 'echo'`,
+    );
+    expect(rows[0]?.typeof).toBe('object');
+    expect(rows[0]?.value).toBe('2026-05-22T13:00:00.000Z');
+    expect(rows[0]?.remote).toBe('https://x');
+    expect(rows[0]?.stale).toBe('keep');
+  });
 });

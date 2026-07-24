@@ -14,19 +14,29 @@ export const ollama: Recipe = {
   touchpoints: {
     embedding: {
       // #2271: modern local embed models added so assertTouchpoint accepts them.
-      // Each carries its own native dim (qwen3-embed-8b=4096, arctic-l-v2=1024);
-      // the recipe-wide default_dims below is only the nomic fallback, so users
-      // of the larger models pass --embedding-dimensions (allowed via
-      // trust_custom_dims). Per-model dims metadata is a tracked follow-up.
       models: [
         'nomic-embed-text',
+        'bge-m3',
         'mxbai-embed-large',
         'all-minilm',
         'qwen3-embed-8b',
         'snowflake-arctic-embed-l-v2',
       ],
-      default_dims: 768, // nomic-embed-text native dim
-      trust_custom_dims: true, // #2271: local models carry varied native dims
+      default_dims: 768, // nomic-embed-text native dim (fallback for models absent from model_dims)
+      // #2170: Ollama models emit DIFFERENT fixed native widths, but one
+      // provider-wide default_dims silently built a 768d schema for 1024d
+      // models (bge-m3, mxbai-embed-large) → `gbrain embed` then failed with a
+      // dim mismatch. Declare each model's real native width so the schema is
+      // sized correctly with no --embedding-dimensions flag.
+      model_dims: {
+        'nomic-embed-text': 768,
+        'bge-m3': 1024,
+        'mxbai-embed-large': 1024,
+        'all-minilm': 384,
+        'qwen3-embed-8b': 4096,
+        'snowflake-arctic-embed-l-v2': 1024,
+      },
+      trust_custom_dims: true, // #2271: locally-pulled model variants may carry non-listed dims
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
       // Ollama's batch capacity depends on the locally loaded model + the
