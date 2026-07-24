@@ -18,19 +18,20 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
-  // This file inserts 1536-dim unit vectors (vec() below). The legacy
-  // preload's beforeEach re-applies the 1536-d gateway default before every
-  // TEST, but not before this beforeAll — so if the previous file in the
-  // shard resetGateway()'d in its afterAll, initSchema() here would size
-  // facts.embedding at the 1280-d production default and every embedding
-  // insert would throw "expected 1280 dimensions, not 1536". Pin the gateway
-  // so this file is hermetic against shard composition (same pattern as
-  // test/consolidate-valid-until.test.ts).
+  // Pin the embedding dim to 1536 BEFORE initSchema. vec() hardcodes
+  // Float32Array(1536), but initSchema sizes vector columns from
+  // process-global gateway state (getEmbeddingDimensions(), default 1280).
+  // Whether this file passes therefore depends on which test files run
+  // before it in the shard; adding test files to the repo reshuffles the
+  // weight-packed shards, so unrelated PRs trip it ("expected 1280
+  // dimensions, not 1536"). Same fix + rationale as
+  // doctor-hidden-by-search-policy.test.ts (#2801),
+  // engine-find-trajectory.test.ts and cosine-rescore-column.test.ts.
   resetGateway();
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: 1536,
-    env: { OPENAI_API_KEY: 'sk-fake' },
+    env: { OPENAI_API_KEY: 'sk-test-facts-engine' },
   });
   engine = new PGLiteEngine();
   await engine.connect({});

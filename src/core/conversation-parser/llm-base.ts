@@ -14,9 +14,11 @@
  * Provider/key probing follows `makeJudgeClient` from
  * `src/core/cycle/synthesize.ts:734` — construction-time
  * `resolveRecipe` + Anthropic-key probe, returns `null` on
- * unavailable provider. Per-call calls fail-open: any error
- * (timeout, parse failure, transport error, AIConfigError mid-run)
- * returns null and the caller falls through to regex-only output.
+ * unavailable provider. Per-call calls fail-open by default: a timeout,
+ * parse failure, transport error, or AIConfigError returns null and the
+ * caller falls through to regex-only output. Non-terminal model results are
+ * rejected before parsing or caching. A caller may explicitly propagate
+ * selected control-flow errors such as cancellation or budget stop.
  *
  * Cache: in-process Map keyed on
  *   `${call_shape}:${model_id}:${content_sha256}`
@@ -128,7 +130,7 @@ export function probeLlmAvailability(modelStr: string): string | null {
  *   - Transport throws (network, timeout, AIConfigError mid-run).
  *   - Parse throws or returns null.
  *
- * NEVER throws.
+ * Throws only when `propagateError` explicitly selects a transport error.
  */
 export interface RunLlmCallOpts<TOutput> {
   shape: CallShape;
@@ -150,6 +152,12 @@ export interface RunLlmCallOpts<TOutput> {
   engine?: BrainEngine;
   /** Test seam: override the chat transport. */
   chatTransport?: ChatTransport;
+  /**
+   * Optional caller policy for control-flow errors that must escape the
+   * fallback's default fail-open boundary, such as cancellation or a hard
+   * budget stop. Ordinary provider and parsing failures still return null.
+   */
+  propagateError?: (error: unknown) => boolean;
 }
 
 export async function runLlmCall<TOutput>(
@@ -200,10 +208,18 @@ export async function runLlmCall<TOutput>(
       maxTokens: opts.maxTokens ?? 4000,
       abortSignal: opts.signal,
     });
-  } catch {
+  } catch (error) {
+    if (opts.propagateError?.(error)) throw error;
     // Transport failure: fail-open.
     return null;
   }
+
+  // Structured output is complete only on a normal end turn. In particular,
+  // `length` can contain a syntactically valid JSON prefix that would otherwise
+  // be cached as a complete result. Refusals, content filters, tool calls, and
+  // unknown provider stops are likewise not parseable successes for these
+  // tool-free calls.
+  if (result.stopReason !== 'end') return null;
 
   // Parse output.
   let parsed: TOutput | null = null;
