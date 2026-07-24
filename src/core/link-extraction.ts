@@ -570,7 +570,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1078,6 +1078,7 @@ export async function extractFrontmatterLinks(
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  globalBasename = false,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
@@ -1115,7 +1116,22 @@ export async function extractFrontmatterLinks(
         // through unchanged; the original `name` is preserved for the
         // unresolved report and edge context.
         const linkTarget = unwrapWikilink(name);
-        const resolved = await resolver.resolve(linkTarget, mapping.dirHint);
+        let resolved = await resolver.resolve(linkTarget, mapping.dirHint);
+        if (!resolved && globalBasename && typeof resolver.resolveBasenameMatches === 'function') {
+          // Issue #972 follow-up: extend global_basename resolution to
+          // frontmatter link fields. resolve() can't reach a bare-title
+          // wikilink value (e.g. `sources: "[[2025-12-25_mentor-extraction]]"`)
+          // — it has no '/', so the slug-direct getPage is skipped, and the
+          // field's dirHint may name folders that don't exist in this brain,
+          // so the dir-scoped exact + fuzzy steps miss too. When
+          // link_resolution.global_basename is on, fall back to the SAME
+          // basename index the body bare-wikilink pass uses. Unique-match-only:
+          // ambiguous basenames (e.g. archive duplicates, generic hubs like
+          // `_index`) stay unresolved rather than create a wrong edge.
+          const matches = (await resolver.resolveBasenameMatches(linkTarget))
+            .filter((s) => s !== slug);
+          if (matches.length === 1) resolved = matches[0];
+        }
         if (!resolved) {
           unresolved.push({ field, name });
           continue;
