@@ -20,6 +20,12 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.13);
   });
 
+  test('Google gemini-embedding-001 at $0.15/MTok', () => {
+    const r = lookupEmbeddingPrice('google:gemini-embedding-001');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.15);
+  });
+
   test('Voyage voyage-3-large at $0.18/MTok', () => {
     const r = lookupEmbeddingPrice('voyage:voyage-3-large');
     expect(r.kind).toBe('known');

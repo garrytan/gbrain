@@ -16,6 +16,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { embedStaleForSource } from '../src/core/embed-stale.ts';
 import type { ChunkInput } from '../src/core/types.ts';
+import { AIConfigError } from '../src/core/ai/errors.ts';
 
 let engine: PGLiteEngine;
 
@@ -194,6 +195,30 @@ describe('embedStaleForSource', () => {
     expect(result.embedded).toBe(2);
     const stale = await engine.countStaleChunks({ sourceId: 'default' });
     expect(stale).toBe(2);
+  });
+
+  test('provider config failure probes once and stops before pool fan-out', async () => {
+    await seedPageWithStaleChunks('a', 2);
+    await seedPageWithStaleChunks('b', 2);
+    await seedPageWithStaleChunks('c', 2);
+    let calls = 0;
+
+    const result = await embedStaleForSource(engine, 'default', {
+      concurrency: 20,
+      embedFn: async () => {
+        calls++;
+        throw new AIConfigError(
+          'Your project has exceeded its monthly spending cap.',
+          'Increase the provider spending cap.',
+          { status: 429 },
+        );
+      },
+    });
+
+    expect(calls).toBe(1);
+    expect(result.done).toBe(false);
+    expect(result.embedded).toBe(0);
+    expect(await engine.countStaleChunks({ sourceId: 'default' })).toBe(6);
   });
 
   test('source-scoped: does not touch other sources', async () => {
