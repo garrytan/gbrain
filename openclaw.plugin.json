@@ -75,7 +75,11 @@
     "skills/_AGENT_README.md",
     "skills/_brain-filing-rules.md",
     "skills/_brain-filing-rules.json",
-    "skills/_output-rules.md"
+    "skills/_output-rules.md",
+    "skills/RESOLVER.md",
+    "skills/manifest.json",
+    "skills/_friction-protocol.md",
+    "skills/migrations"
   ],
   "excluded_from_install": [
     "skills/setup",
