@@ -30,6 +30,7 @@ Repo: https://github.com/garrytan/gbrain
 
 ## AI providers
 
+- [docs/guides/downstream-ai-runtime.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/downstream-ai-runtime.md): Supported package exports for downstream gateway configuration, provider probes, BudgetTracker scopes, and durable spend reservations.
 - [docs/ai-providers/zeroentropy.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ai-providers/zeroentropy.md): ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config.
 - [docs/ai-providers/llama-server-reranker.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ai-providers/llama-server-reranker.md): Local reranker via llama.cpp --reranking: Qwen3-Reranker or self-hosted ZE weights, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.
 

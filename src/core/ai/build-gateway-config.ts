@@ -19,6 +19,9 @@
 import type { GBrainConfig } from '../config.ts';
 import type { AIGatewayConfig } from './types.ts';
 
+/** Public return type for downstream startup/configuration integrations. */
+export type { AIGatewayConfig } from './types.ts';
+
 export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // v0.32 (#121 reworked): when ~/.gbrain/config.json declares
   // openai_api_key / anthropic_api_key, fold them into the gateway env so
