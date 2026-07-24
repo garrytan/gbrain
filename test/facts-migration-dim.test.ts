@@ -22,6 +22,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // #3244 guard: module-scope reset so gateway state configured by the
+  // describe below can never outlive this file in a shared shard process.
+  // Before the await on purpose: a rejected disconnect must not skip it.
+  resetGateway();
   await engine.disconnect();
 });
 
