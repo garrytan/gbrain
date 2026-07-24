@@ -5,8 +5,9 @@
  *   - Default path (minion_mode != off AND engine == postgres): spawn a
  *     `gbrain jobs work` child process, submit ONE `autopilot-cycle` job
  *     per interval with an idempotency_key so slow cycles don't stack up.
- *     The forked worker drains the queue durably; restart with 10s backoff
- *     on crash (5-crash cap → autopilot stops with a clear error).
+ *     The forked worker drains the queue durably; the shared progress watchdog
+ *     restarts alive-but-wedged workers, while crash handling uses bounded
+ *     backoff (5-crash soft cap → degraded retry, hard ceiling as backstop).
  *   - Fallback (minion_mode=off, PGLite, or `--inline`): run sync →
  *     extract → embed inline, same as pre-v0.11.1 behavior.
  *
@@ -25,6 +26,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+import {
+  DEFAULT_WEDGE_WATCHDOG_OPTIONS,
+  WorkerWedgeWatchdog,
+  deriveClaimableHandlerNames,
+  queryWedgeSignals,
+} from '../core/minions/wedge-watchdog.ts';
 import { VERSION } from '../version.ts';
 import {
   canSelfUpdate,
@@ -433,6 +440,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
   let stopping = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
+  let wedgeWatchdog: WorkerWedgeWatchdog | null = null;
+  let wedgeHealthTimer: ReturnType<typeof setInterval> | null = null;
+  let wedgeHealthInFlight = false;
 
   // #1872: graceful engine shutdown. On PGLite the cycle steps run INLINE in
   // this process, so a hard `process.exit` mid-write (systemctl stop →
@@ -479,7 +489,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       args: ['jobs', 'work', '--max-rss', String(autopilotMaxRssMb)],
       // process.env clone; autopilot doesn't gate shell jobs the way the
       // standalone supervisor does (autopilot is the operator-trust path).
-      env: { ...process.env },
+      env: { ...process.env, GBRAIN_SUPERVISED: '1' },
       maxCrashes: 5,
       isStopping: () => stopping,
       onMaxCrashesExceeded: (count, max) => {
@@ -491,6 +501,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // Matches the prior console output shape so operators reading
         // existing logs see the same lines.
         if (event.kind === 'worker_spawned') {
+          wedgeWatchdog?.noteWorkerSpawned();
           console.log(
             `[autopilot] Minions worker spawned (pid: ${event.pid}, watchdog: ${autopilotMaxRssMb}MB${event.tini ? ', tini: active' : ''})`,
           );
@@ -522,6 +533,46 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         }
       },
     });
+
+    // Autopilot owns the worker process directly, so it must also own the
+    // cause-agnostic progress watchdog. Reuse the same state machine as
+    // `gbrain jobs supervisor`: waiting claimable work + no live active job +
+    // stale progress for three checks triggers a bounded child restart.
+    let handlerNames: string[] = [];
+    try {
+      handlerNames = await deriveClaimableHandlerNames(engine, 'default');
+    } catch (e) {
+      console.error(
+        `[autopilot] health_warn: wedge_watchdog_inert error=${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    wedgeWatchdog = new WorkerWedgeWatchdog({
+      queue: 'default',
+      restartMinutes: DEFAULT_WEDGE_WATCHDOG_OPTIONS.restartMinutes,
+      checks: DEFAULT_WEDGE_WATCHDOG_OPTIONS.checks,
+      loopBudget: DEFAULT_WEDGE_WATCHDOG_OPTIONS.loopBudget,
+      loopWindowMs: DEFAULT_WEDGE_WATCHDOG_OPTIONS.loopWindowMs,
+      startupGraceMs: DEFAULT_WEDGE_WATCHDOG_OPTIONS.startupGraceMs,
+      restartGraceMs: DEFAULT_WEDGE_WATCHDOG_OPTIONS.restartGraceMs,
+      getChild: () => childSupervisor,
+      isStopping: () => stopping,
+      onWarn: (fields) => {
+        console.error(`[autopilot] health_warn: ${JSON.stringify(fields)}`);
+      },
+    });
+    wedgeHealthTimer = setInterval(() => {
+      if (wedgeHealthInFlight || stopping) return;
+      wedgeHealthInFlight = true;
+      void queryWedgeSignals(engine, 'default', handlerNames)
+        .then((signals) => wedgeWatchdog?.evaluate(signals))
+        .catch((e) => {
+          console.error(
+            `[autopilot] wedge watchdog probe failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        })
+        .finally(() => { wedgeHealthInFlight = false; });
+    }, DEFAULT_WEDGE_WATCHDOG_OPTIONS.healthIntervalMs);
+
     // Fire-and-forget; runs alongside the dispatch loop. shutdown() drives
     // the child-supervisor's isStopping accessor + drain.
     void childSupervisor.run();
@@ -545,6 +596,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     if (stopping) return;
     stopping = true;
     console.log(`Autopilot stopping (${sig}).`);
+    if (wedgeHealthTimer) {
+      clearInterval(wedgeHealthTimer);
+      wedgeHealthTimer = null;
+    }
     if (childSupervisor) {
       childSupervisor.killChild('SIGTERM');
       await childSupervisor.awaitChildExit(35_000);
