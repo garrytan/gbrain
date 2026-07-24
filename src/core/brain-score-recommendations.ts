@@ -226,13 +226,27 @@ export function computeRecommendations(
 
   // ---------------------------------------------------------------------
   // embed.stale — missing embeddings. Critical: invisible to vector search
+  //
+  // #2539: chunks on `embed_skip` pages are excluded from the critical
+  // count — their NULL embedding is the intentional privacy mechanism
+  // (embed-skip.ts), not a backlog. Pre-fix this fired [critical] forever
+  // on any install using embed_skip, training users to ignore onboard
+  // output. `gbrain embed --stale` (the job this recommendation queues)
+  // already excludes embed_skip pages via the same key-existence test
+  // (countStaleChunks/listStaleChunks), so subtracting them here just
+  // makes the count match what the job will actually do.
   // ---------------------------------------------------------------------
-  if (health.missing_embeddings > 0 && ctx.embeddingProviderConfigured !== false) {
+  const skippedByPolicy = Math.min(
+    health.embed_skip_missing_embeddings ?? 0,
+    health.missing_embeddings,
+  );
+  const genuineMissingEmbeddings = health.missing_embeddings - skippedByPolicy;
+  if (genuineMissingEmbeddings > 0 && ctx.embeddingProviderConfigured !== false) {
     const params = { stale: true, sourceId: ctx.sourceId };
     const embedModel = ctx.embeddingModel ?? 'openai:text-embedding-3-large';
     const embedDims = ctx.embeddingDimensions ?? 3072;
     // Rough char estimate per chunk ~ 1.5k chars (chunker target).
-    const estChars = health.missing_embeddings * 1500;
+    const estChars = genuineMissingEmbeddings * 1500;
     let est_usd_cost = 0;
     try {
       const priceLookup = lookupEmbeddingPrice(embedModel);
@@ -242,17 +256,21 @@ export function computeRecommendations(
     } catch {
       /* unknown model — leave at 0, surface as warning elsewhere */
     }
+    const rationale = `${genuineMissingEmbeddings} chunk${genuineMissingEmbeddings === 1 ? '' : 's'} invisible to vector search` +
+      (skippedByPolicy > 0
+        ? ` (${skippedByPolicy} more skipped by embed_skip policy, not counted)`
+        : '');
     out.push({
       id: 'embed.stale',
       job: 'embed',
       params,
       idempotency_key: idemKey(source, 'embed', { ...params, embedModel, embedDims }),
       severity: 'critical',
-      est_seconds: Math.min(3600, 5 + health.missing_embeddings * 0.05),
+      est_seconds: Math.min(3600, 5 + genuineMissingEmbeddings * 0.05),
       est_usd_cost,
       // sync should run first so embed sees fresh pages.
       depends_on: ctx.repoPath && health.stale_pages > 0 ? ['sync.repo'] : [],
-      rationale: `${health.missing_embeddings} chunk${health.missing_embeddings === 1 ? '' : 's'} invisible to vector search`,
+      rationale,
       status: 'remediable',
     });
   }

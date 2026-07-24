@@ -129,6 +129,7 @@ function makeHealth(overrides: Partial<BrainHealth> = {}): BrainHealth {
     stale_pages: 0,
     orphan_pages: 0,
     missing_embeddings: 0,
+    embed_skip_missing_embeddings: 0,
     brain_score: 100,
     dead_links: 0,
     link_coverage: 1.0,
@@ -159,6 +160,62 @@ describe('computeRecommendations', () => {
     expect(embedRec.severity).toBe('critical');
     expect(embedRec.job).toBe('embed');
     expect(embedRec.params.stale).toBe(true);
+  });
+
+  // #2539: chunks on embed_skip pages are an intentional privacy
+  // mechanism, not a backlog — they must never make onboard/doctor cry
+  // [critical] forever.
+  test('#2539: chunks entirely on embed_skip pages are NOT counted as critical', () => {
+    const health = makeHealth({
+      missing_embeddings: 40,
+      embed_skip_missing_embeddings: 40,
+      brain_score: 65,
+    });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    expect(recs.find((r) => r.id === 'embed.stale')).toBeUndefined();
+  });
+
+  // #2539: a genuine backlog on non-skipped pages must still be critical
+  // — the fix must not silently swallow real embed backlogs.
+  test('#2539: genuine missing embeddings on normal pages still fire critical', () => {
+    const health = makeHealth({ missing_embeddings: 25, embed_skip_missing_embeddings: 0, brain_score: 65 });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    const embedRec = recs.find((r) => r.id === 'embed.stale');
+    expect(embedRec).toBeDefined();
+    expect(embedRec!.severity).toBe('critical');
+    expect(embedRec!.rationale).toBe('25 chunks invisible to vector search');
+  });
+
+  // #2539: mixed case — genuine backlog still critical, but the count and
+  // est_seconds/est_usd_cost reflect ONLY the genuine subset, and the
+  // skipped subset is surfaced informationally in the rationale text
+  // (fits the existing onboard "why:" line without a new output surface).
+  test('#2539: mixed genuine + policy-skipped — count excludes skipped, rationale notes them', () => {
+    const health = makeHealth({
+      missing_embeddings: 110,
+      embed_skip_missing_embeddings: 100,
+      brain_score: 65,
+    });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    const embedRec = recs.find((r) => r.id === 'embed.stale');
+    expect(embedRec).toBeDefined();
+    expect(embedRec!.severity).toBe('critical');
+    expect(embedRec!.rationale).toBe(
+      '10 chunks invisible to vector search (100 more skipped by embed_skip policy, not counted)',
+    );
+    // Cost/time estimates must scale off the genuine count, not the raw total.
+    expect(embedRec!.est_seconds).toBeCloseTo(5 + 10 * 0.05, 5);
+  });
+
+  // #2539: BrainHealth.embed_skip_missing_embeddings is optional (older
+  // callers/mocks may omit it) — must default to 0, not throw/NaN.
+  test('#2539: embed_skip_missing_embeddings omitted defaults to 0 (no behavior change)', () => {
+    const health = makeHealth({ missing_embeddings: 30, brain_score: 65 });
+    delete (health as { embed_skip_missing_embeddings?: number }).embed_skip_missing_embeddings;
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
+    const embedRec = recs.find((r) => r.id === 'embed.stale');
+    expect(embedRec).toBeDefined();
+    expect(embedRec!.rationale).toBe('30 chunks invisible to vector search');
   });
 
   test('missing embeddings + API key absent: NOT emitted (blocked surfaces separately)', () => {

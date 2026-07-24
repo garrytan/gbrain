@@ -5287,6 +5287,15 @@ export class PGLiteEngine implements BrainEngine {
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
+        -- #2539: same embed_skip key-existence test the embed path
+        -- (countStaleChunks/listStaleChunks) already applies, so onboard's
+        -- critical count can subtract exactly the chunks the embed job
+        -- would never touch.
+        (SELECT count(*) FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE cc.embedded_at IS NULL
+           AND COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip'
+        ) as embed_skip_missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
@@ -5366,6 +5375,7 @@ export class PGLiteEngine implements BrainEngine {
       stale_pages: stalePages,
       orphan_pages: orphanPages,
       missing_embeddings: Number(r.missing_embeddings),
+      embed_skip_missing_embeddings: Number(r.embed_skip_missing_embeddings),
       brain_score: brainScore,
       dead_links: deadLinks,
       link_coverage: Number(r.link_coverage),
