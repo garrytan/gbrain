@@ -43,6 +43,11 @@ afterAll(() => {
   __setGenerateTextTransportForTests(null);
 });
 
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
+
 describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
   beforeEach(() => {
     resetGateway();

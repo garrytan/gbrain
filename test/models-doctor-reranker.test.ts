@@ -13,9 +13,14 @@
  * config sources mode.ts knows about.
  */
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach, afterAll } from 'bun:test';
 import { resolveLiveRerankerModel } from '../src/commands/models.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 /**
  * Minimal engine stub matching the `{ getConfig(key): Promise<string|null> }`

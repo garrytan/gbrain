@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   detectRegressions,
   computeDriftScore,
@@ -44,6 +44,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // #3066: reset gateway state at file teardown so it doesn't leak into
+  // whichever file runs next in this shard process.
+  resetGateway();
   await engine.disconnect();
 });
 

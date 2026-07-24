@@ -14,7 +14,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
-import { __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { __setEmbedTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 import { parseQuestionsJsonl, runRetrievalQuality, evaluateGate, type SearchFn } from '../src/eval/retrieval-quality/harness.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 
@@ -60,7 +60,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // #3066: reset gateway state at file teardown so it doesn't leak into
+  // whichever file runs next in this shard process.
   __setEmbedTransportForTests(null);
+  resetGateway();
   await engine.disconnect();
 });
 

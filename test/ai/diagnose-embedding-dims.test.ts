@@ -31,6 +31,9 @@ afterEach(() => resetGateway());
 // ambient gateway) runs before any beforeEach — so leaving the gateway null
 // here would seed 1280-d schemas under that file's 1536-d fixtures.
 afterAll(() => {
+  // #3066: resetGateway() first so the guard sees a clean teardown, then
+  // restore the legacy pin below for sibling files in this shard.
+  resetGateway();
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: 1536,

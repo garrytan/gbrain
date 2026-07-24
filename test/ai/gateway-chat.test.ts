@@ -16,7 +16,7 @@
  * `generateText` import via Bun's module-replace pattern.
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -29,6 +29,11 @@ import {
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 describe('chat touchpoint — recipe registry', () => {
   test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {

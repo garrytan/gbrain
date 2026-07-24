@@ -12,7 +12,7 @@
  * Uses a deliberately fictional model id so the test stays valid no matter how
  * current the recipe list is.
  */
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach, afterAll } from 'bun:test';
 import {
   configureGateway,
   reconfigureGatewayWithEngine,
@@ -20,6 +20,11 @@ import {
   validateModelId,
 } from '../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 function stubEngine(config: Record<string, string>): BrainEngine {
   return { getConfig: async (k: string) => config[k] ?? null } as unknown as BrainEngine;

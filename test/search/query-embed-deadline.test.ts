@@ -12,13 +12,18 @@
  * insufficient against a wedged provider), and that a shared/elapsed deadline
  * makes a second embed fail FAST (worst case ~one timeout, not two).
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
   __setEmbedTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../../src/core/search/hybrid.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 describe('embedQueryBounded — query-embed deadline', () => {
   beforeEach(() => {

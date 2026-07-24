@@ -40,6 +40,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // #3066: reset gateway state at file teardown so it doesn't leak into
+  // whichever file runs next in this shard process.
+  resetGateway();
   await engine.disconnect();
 });
 

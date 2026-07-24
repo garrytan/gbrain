@@ -18,7 +18,7 @@
  *   `embedQuery`, this test fails before the regression ships.
  */
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach, afterAll } from 'bun:test';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
@@ -28,6 +28,11 @@ import {
   embedQuery,
   __setEmbedTransportForTests,
 } from '../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 function configureZE() {
   configureGateway({

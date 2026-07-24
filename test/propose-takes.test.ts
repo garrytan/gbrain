@@ -14,7 +14,7 @@
  *  - parseExtractorOutput unit tests for the raw JSON parser
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterAll } from 'bun:test';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   runPhaseProposeTakes,
@@ -33,6 +33,11 @@ import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 // ─── Mock engine ────────────────────────────────────────────────────
 

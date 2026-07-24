@@ -10,7 +10,7 @@
 //   - embedQueryMultimodal returns 1024-dim vector
 //   - embedQueryMultimodalImage returns 1024-dim vector
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, afterAll } from 'bun:test';
 import {
   configureGateway,
   embedMultimodal,
@@ -19,6 +19,11 @@ import {
   embedQueryMultimodalImage,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 type FetchHandler = (url: string, init: RequestInit) => Promise<Response>;
 let fetchHandler: FetchHandler | null = null;

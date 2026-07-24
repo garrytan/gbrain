@@ -22,7 +22,7 @@
  *    check directly.
  */
 
-import { describe, test, expect, afterEach, beforeEach } from 'bun:test';
+import { describe, test, expect, afterEach, beforeEach, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -30,6 +30,11 @@ import {
   RerankError,
   __setRerankTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+
+// #3066: gateway module state is process-scoped; without a file-level
+// reset the last test's configureGateway()/__setEmbedTransportForTests()
+// state leaks into whichever file runs next in this shard process.
+afterAll(() => resetGateway());
 
 function configureZE(model: string = 'zeroentropyai:zerank-2'): void {
   configureGateway({
