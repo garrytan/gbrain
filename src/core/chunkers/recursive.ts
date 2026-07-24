@@ -17,7 +17,13 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import {
+  countCJKAwareWords,
+  CJK_SENTENCE_DELIMITERS,
+  CJK_CLAUSE_DELIMITERS,
+  charEmbedTokenWeight,
+  estimateEmbeddingTokens,
+} from '../cjk.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -33,8 +39,20 @@ import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } fr
  * re-embed (not re-chunk) so existing pages pick up the wrapper on the
  * post-upgrade reembed sweep. See
  * `src/core/contextual-retrieval-service.ts`.
+ *
+ * v4: estimated-token hard cap + whitespace-word undercount fix. The word
+ * pipeline counted a 150-char URL as ONE whitespace word, so URL/phone/
+ * email-dense docs (CJK density < 0.30 → whitespace fallback) produced
+ * 3-4K-char chunks that overflow strict per-request embedding-token
+ * limits (measured: local llama-server crashes past ~2,050 tokens; URL
+ * soup tokenizes at ~1.6 chars/token). Two changes:
+ *   1. countWords() floors the count at ceil(nonWhitespaceChars/6) so a
+ *      URL counts roughly per-character, not as one word.
+ *   2. capByEstimatedTokens() final pass guarantees every chunk fits
+ *      `maxTokens` (default 1500) under a conservative per-char-class
+ *      token estimate, regardless of how word counting misjudged it.
  */
-export const MARKDOWN_CHUNKER_VERSION = 3;
+export const MARKDOWN_CHUNKER_VERSION = 4;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
@@ -48,7 +66,19 @@ export interface ChunkOptions {
   chunkSize?: number;    // target words per chunk (default 300)
   chunkOverlap?: number; // overlap words (default 50)
   maxChars?: number;     // hard cap on any chunk's char length (default 6000)
+  /**
+   * v4: hard cap on any chunk's ESTIMATED embedding tokens (default 1500).
+   * Estimate = conservative per-char-class weights (see cjk.ts
+   * estimateEmbeddingTokens) — deliberately high, so the real tokenizer
+   * count stays below this value. Default leaves headroom for the
+   * contextual-retrieval wrapper (≤ ~630 chars) under a ~2,050-token
+   * per-request embedding server limit.
+   */
+  maxTokens?: number;
 }
+
+/** v4 default for ChunkOptions.maxTokens — see the field doc above. */
+export const DEFAULT_MAX_EST_TOKENS = 1500;
 
 export interface TextChunk {
   text: string;
@@ -73,6 +103,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
   const maxChars = opts?.maxChars || 6000;
+  const maxTokens = opts?.maxTokens || DEFAULT_MAX_EST_TOKENS;
 
   if (!text || text.trim().length === 0) return [];
 
@@ -89,8 +120,9 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
 
   const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
-    // Single-chunk path: still apply the maxChars cap.
-    const capped = capByChars(stripped.trim(), maxChars);
+    // Single-chunk path: still apply the maxChars + maxTokens caps.
+    const capped = capByChars(stripped.trim(), maxChars)
+      .flatMap((t) => capByEstimatedTokens(t, maxTokens));
     return capped.map((t, i) => ({ text: t, index: i }));
   }
 
@@ -101,9 +133,14 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // v0.32.7: hard char cap. Catches pathological CJK + whitespace-less text
   // that the word-level pipeline can't bound (a single Chinese paragraph can
   // exceed 8192 OpenAI embedding tokens at any word count).
+  // v4: estimated-token cap on top — the char cap alone passes token-dense
+  // content (URL soup at ~1.6 chars/token) that overflows strict embedding
+  // server limits.
   const capped: string[] = [];
   for (const chunk of withOverlap) {
-    capped.push(...capByChars(chunk.trim(), maxChars));
+    for (const piece of capByChars(chunk.trim(), maxChars)) {
+      capped.push(...capByEstimatedTokens(piece, maxTokens));
+    }
   }
   return capped.map((t, i) => ({ text: t, index: i }));
 }
@@ -128,6 +165,68 @@ function capByChars(text: string, maxChars: number): string[] {
     const slice = text.slice(i, i + maxChars).trim();
     if (slice.length > 0) out.push(slice);
     if (i + maxChars >= text.length) break;
+  }
+  return out;
+}
+
+/**
+ * How far back (in chars) the token cap looks for a friendly cut point
+ * before falling back to a hard cut. 300 covers typical rollup/list line
+ * lengths so forced splits land at line starts, not mid-URL.
+ */
+const TOKEN_CAP_CUT_LOOKBACK = 300;
+
+/**
+ * v4: hard-cap a chunk's ESTIMATED embedding tokens. Final safety pass —
+ * runs after capByChars on every chunk, so no upstream miscounting
+ * (whitespace-word fallback, overlap inflation, char-cap survivors) can
+ * emit a chunk past `maxTokens`.
+ *
+ * Cut placement prefers, within the last TOKEN_CAP_CUT_LOOKBACK chars of
+ * the window: a newline, then any whitespace, then a hard cut. This keeps
+ * forced splits off mid-line/mid-URL positions for list-shaped content
+ * and inside code fences. No overlap is added (pieces stay lossless
+ * modulo the trims the char cap already applies).
+ *
+ * @internal exported for the code chunker (code.ts) and tests.
+ */
+export function capByEstimatedTokens(text: string, maxTokens: number): string[] {
+  if (text.length === 0) return [];
+  if (estimateEmbeddingTokens(text) <= maxTokens) return [text];
+
+  const out: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    // Greedily extend the window until the next char would break the cap.
+    // Always take at least one char so the loop makes forward progress.
+    let est = 0;
+    let end = start;
+    while (end < text.length) {
+      const w = charEmbedTokenWeight(text.charCodeAt(end));
+      if (est + w > maxTokens && end > start) break;
+      est += w;
+      end++;
+    }
+
+    if (end < text.length) {
+      const windowStart = Math.max(start + 1, end - TOKEN_CAP_CUT_LOOKBACK);
+      let cut = text.lastIndexOf('\n', end - 1);
+      if (cut < windowStart) {
+        cut = -1;
+        for (let i = end - 1; i >= windowStart; i--) {
+          const code = text.charCodeAt(i);
+          if (code === 0x20 || (code >= 0x09 && code <= 0x0d)) {
+            cut = i;
+            break;
+          }
+        }
+      }
+      if (cut >= windowStart) end = cut + 1;
+    }
+
+    const slice = text.slice(start, end).trim();
+    if (slice.length > 0) out.push(slice);
+    start = end;
   }
   return out;
 }
@@ -317,7 +416,19 @@ function extractTrailingContext(text: string, targetWords: number): string {
  * Delegated to src/core/cjk.ts so the slugify whitelist, expansion
  * detection, and PGLite keyword fallback all agree on what "CJK enough"
  * means.
+ *
+ * v4: floored at ceil(nonWhitespaceChars/6). The whitespace fallback
+ * counts a 150-char URL as ONE word, so URL/phone/email-dense docs
+ * (whose ASCII mass pushes CJK density below the 0.30 threshold) were
+ * sized at a fraction of their real bulk and merged into 3-4K-char
+ * chunks. The floor makes long whitespace-less runs count roughly
+ * per-character while leaving normal Latin prose untouched (average
+ * English word ≈ 5 chars < 6, so the whitespace count still wins).
+ * Kept local to the chunker — search/expansion.ts keeps the original
+ * countCJKAwareWords semantics for its query-length check.
  */
 function countWords(text: string): number {
-  return countCJKAwareWords(text);
+  const cjkAware = countCJKAwareWords(text);
+  const nonWhitespace = text.replace(/\s/g, '').length;
+  return Math.max(cjkAware, Math.ceil(nonWhitespace / 6));
 }
