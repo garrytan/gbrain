@@ -12,6 +12,8 @@ import { commandForPreview, resolveCliEntry } from './commands.ts';
 import { previews, runs, startRun, type RunHooks } from './executor.ts';
 import { ALL_PHASES, type CyclePhase } from '../../core/cycle.ts';
 
+export const ADMIN_IMPORT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // Import-path helpers
 // ---------------------------------------------------------------------------
@@ -116,6 +118,9 @@ export async function executePreview(engine: BrainEngine, previewId: string, con
   if (preview.requiresConfirmation && !confirmed) throw new Error('Confirmation required');
   if (preview.intent === 'import_path' && typeof preview.slots.path === 'string') {
     preview.slots.sourceId = await resolveImportSourceIdForPath(engine, preview.slots.path, preview.slots.sourceId);
+    const command = commandForPreview(preview);
+    command.push('--fresh', '--report-files');
+    return await startRun(preview.intent, command, cwd, hooks, ADMIN_IMPORT_TIMEOUT_MS);
   }
   return await startRun(preview.intent, commandForPreview(preview), cwd, hooks);
 }
@@ -131,6 +136,9 @@ export async function startImportRun(engine: BrainEngine, input: {
   includeImages?: boolean;
   noEmbed?: boolean;
   workers?: number;
+  fresh?: boolean;
+  reportFiles?: boolean;
+  timeoutMs?: number;
 }, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
   if (!input.path.trim()) throw new Error('Path is required');
   const prefix = resolveCliEntry();
@@ -138,10 +146,12 @@ export async function startImportRun(engine: BrainEngine, input: {
   if (input.includeOffice) cmd.push('--include-office');
   if (input.includeImages) cmd.push('--include-images');
   if (input.noEmbed) cmd.push('--no-embed');
+  if (input.fresh) cmd.push('--fresh');
+  if (input.reportFiles) cmd.push('--report-files');
   const sourceId = await resolveImportSourceIdForPath(engine, input.path, input.sourceId);
   if (sourceId) cmd.push('--source-id', sourceId);
   if (input.workers && input.workers > 1) cmd.push('--workers', String(Math.min(8, Math.floor(input.workers))));
-  return await startRun('import_path', cmd, cwd, hooks);
+  return await startRun('import_path', cmd, cwd, hooks, input.timeoutMs ?? ADMIN_IMPORT_TIMEOUT_MS);
 }
 
 export function buildCaptureCommand(content: string, sourceId?: string): string[] {

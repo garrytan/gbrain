@@ -3943,7 +3943,8 @@ html[data-theme="dark"] .pm-ghost.danger { color: #ff8f99; background: #2d171b; 
   .mcp-endpoint-grid { grid-template-columns: 1fr; }
   .import-option-grid { grid-template-columns: 1fr; }
   .appearance-settings { align-items: flex-start; flex-direction: column; }
-  .dream-settings-grid { grid-template-columns: 1fr; }
+  .dream-settings-grid,
+  .dream-schedule-row { grid-template-columns: 1fr; }
   .theme-choice { width: 100%; }
   .theme-choice button { flex: 1; }
   .export-path-row { grid-template-columns: 1fr; }
@@ -5692,6 +5693,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, var(--conso
 }
 
 .dream-settings-card,
+.dream-schedule-settings,
 .import-vector-settings,
 .settings-source-section,
 .markdown-export-card,
@@ -5700,6 +5702,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, var(--conso
 }
 
 .dream-settings-card,
+.dream-schedule-settings,
 .import-vector-settings,
 .markdown-export-card,
 .model-snapshot-card {
@@ -5739,6 +5742,18 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, var(--conso
 .dream-output-action-row input { min-width: 0; flex: 1; }
 .dream-output-action-row button { flex: 0 0 auto; }
 
+.dream-schedule-settings { display: grid; gap: 14px; }
+.dream-schedule-row { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(360px, 1.2fr); gap: 12px; }
+.dream-schedule-toggle { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin: 0; padding: 14px 16px; border: 1px solid var(--console-line); border-radius: 9px; background: var(--console-surface-soft); cursor: pointer; }
+.dream-schedule-toggle span { display: grid; gap: 4px; }
+.dream-schedule-toggle b { color: var(--text-primary); }
+.dream-schedule-toggle small { color: var(--text-secondary); font-size: 12px; }
+.dream-schedule-toggle input { width: 38px; height: 20px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+.dream-schedule-time { display: grid; grid-template-columns: auto minmax(130px, 180px) auto; gap: 10px; align-items: center; padding: 14px 16px; border: 1px solid var(--console-line); border-radius: 9px; background: var(--console-surface-soft); }
+.dream-schedule-time label { color: var(--text-secondary); font-size: 12px; font-weight: 680; }
+.dream-schedule-time input { width: 100%; }
+.dream-schedule-time button { justify-self: end; }
+.dream-schedule-note { margin: -2px 0 0; line-height: 1.65; }
 .import-vector-settings { display: grid; gap: 14px; }
 .import-vector-setting-row { display: grid; grid-template-columns: auto minmax(120px, 180px) auto auto; gap: 10px; align-items: center; }
 .import-vector-setting-row input { width: 100%; }
@@ -5992,7 +6007,8 @@ html[data-theme="dark"] .dream-journey { background: var(--console-surface-soft)
 @media (max-width: 980px) {
   .nl-shell { grid-template-columns: 1fr; }
   .nl-history { position: static; }
-  .dream-settings-grid { grid-template-columns: 1fr; }
+  .dream-settings-grid,
+  .dream-schedule-row { grid-template-columns: 1fr; }
   .agents-section-head { display: grid; }
   .agents-section-actions { justify-content: flex-start; }
 }
@@ -6010,6 +6026,8 @@ html[data-theme="dark"] .dream-journey { background: var(--console-surface-soft)
   .settings-operations,
   .metrics-grid,
   .system-diagnostic-page .metrics-grid { grid-template-columns: 1fr; }
+  .dream-schedule-time { grid-template-columns: 1fr; }
+  .dream-schedule-time button { width: 100%; justify-self: stretch; }
   .request-agent-filter { grid-template-columns: auto minmax(0, 1fr); }
   .agents-section { padding: 16px; }
   .agents-section-actions { display: grid; grid-template-columns: 1fr 1fr; }

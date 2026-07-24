@@ -101,6 +101,9 @@ export const api = {
   dreamSettings: () => apiFetch('/admin/api/dream/settings'),
   saveDreamSettings: (body: { outputDir: string; dualWrite: boolean }) =>
     apiFetch('/admin/api/dream/settings', { method: 'POST', body: JSON.stringify(body) }),
+  dreamSchedule: () => apiFetch('/admin/api/dream/schedule'),
+  saveDreamSchedule: (body: { enabled: boolean; time: string }) =>
+    apiFetch('/admin/api/dream/schedule', { method: 'POST', body: JSON.stringify(body) }),
   startDreamRun: (body: { phase?: string; preset?: 'full' | 'meeting' | 'quick'; sourceId?: string; maxPages?: number; drainProposals?: boolean; windowSeconds?: number; dryRun: boolean; input?: string; date?: string; from?: string; to?: string; timeoutMs?: number }) =>
     apiFetch('/admin/api/dream-runs', { method: 'POST', body: JSON.stringify(body) }),
   breakDreamLock: (id: string, holderPid: number) =>

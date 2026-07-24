@@ -178,7 +178,7 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
       const on = collectSyncableFiles(tmp, { strategy: 'markdown', includeOffice: true });
 
       expect(off.map(f => basename(f)).sort()).toEqual(['a.md']);
-      expect(on.map(f => basename(f)).sort()).toEqual(['a.md', 'proposal.docx', 'report.pdf', 'sheet.xlsx']);
+      expect(on.map(f => basename(f)).sort()).toEqual(['a.md', 'proposal.docx', 'report.pdf', 'sheet.xlsx', 'slides.pptx']);
     });
   });
 

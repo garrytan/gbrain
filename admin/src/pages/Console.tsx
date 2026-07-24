@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useCallback, useRef } from 'react';
 import { AgentsPage } from './Agents';
@@ -6,6 +6,7 @@ import { ChatGptTunnelPanel } from './ChatGptTunnel';
 import { RunOutput, InfoIcon, formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun, type BrainPageChunk } from '../lib/shared';
 import type { ThemeMode } from '../lib/theme';
 import { getThinkRetrievalWarning, parseThinkOutput } from '../lib/think-output';
+import { summarizeImportRun } from '../lib/import-summary';
 import { CopyButton } from '../lib/clipboard';
 import { parseMarkdownTable } from '../lib/markdown-table';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -563,7 +564,7 @@ const MAX_NATURAL_TASK_CHARACTERS = 10_000;
 const MAX_KNOWLEDGE_ATTACHMENTS = 10;
 const MAX_KNOWLEDGE_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const KNOWLEDGE_ATTACHMENT_EXTENSIONS = new Set([
-  '.md', '.mdx', '.docx', '.doc', '.wps', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv',
+  '.md', '.mdx', '.docx', '.doc', '.wps', '.pptx', '.ppt', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv',
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif', '.avif',
 ]);
 const KNOWLEDGE_ATTACHMENT_ACCEPT = Array.from(KNOWLEDGE_ATTACHMENT_EXTENSIONS).join(',');
@@ -588,7 +589,7 @@ function looksLikeLocalImportPath(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed || /[\r\n]/.test(trimmed)) return false;
   if (/^(?:[a-zA-Z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/.test(trimmed)) return true;
-  return /^[^<>:"|?*\r\n]+\.(?:md|mdx|docx|doc|wps|pdf|xlsx|xlsm|xls|csv|png|jpe?g|gif|webp|heic|heif|avif)$/i.test(trimmed);
+  return /^[^<>:"|?*\r\n]+\.(?:md|mdx|docx|doc|wps|pptx|ppt|pdf|xlsx|xlsm|xls|csv|png|jpe?g|gif|webp|heic|heif|avif)$/i.test(trimmed);
 }
 
 async function waitForConsoleRun(runId: string, onUpdate: (run: ConsoleRun) => void): Promise<ConsoleRun> {
@@ -824,22 +825,22 @@ function NaturalLanguagePanel({
     if (files.length === 0) return;
     const existing = new Set(attachments.map(item => item.id));
     const accepted: KnowledgeAttachment[] = [];
-    const warnings: string[] = [];
+    const warnings = new Set<string>();
 
     for (const file of files) {
       const extension = attachmentExtension(file.name);
       const id = `${file.name}:${file.size}:${file.lastModified}`;
       const unsupportedMarkdownCase = (extension === '.md' || extension === '.mdx') && !file.name.endsWith(extension);
       if (!KNOWLEDGE_ATTACHMENT_EXTENSIONS.has(extension) || unsupportedMarkdownCase) {
-        warnings.push(`不支持 ${file.name} 的文件格式`);
+        warnings.add(`不支持 ${file.name} 的文件格式`);
         continue;
       }
       if (file.size === 0) {
-        warnings.push(`${file.name} 是空文件`);
+        warnings.add(`${file.name} 是空文件`);
         continue;
       }
       if (file.size > MAX_KNOWLEDGE_ATTACHMENT_BYTES) {
-        warnings.push(`${file.name} 超过 ${attachmentSizeLabel(MAX_KNOWLEDGE_ATTACHMENT_BYTES)} 限制`);
+        warnings.add(`${file.name} 超过 ${attachmentSizeLabel(MAX_KNOWLEDGE_ATTACHMENT_BYTES)} 限制`);
         continue;
       }
       if (existing.has(id)) continue;
@@ -848,9 +849,9 @@ function NaturalLanguagePanel({
     }
 
     const available = Math.max(0, MAX_KNOWLEDGE_ATTACHMENTS - attachments.length);
-    if (accepted.length > available) warnings.push(`一次最多添加 ${MAX_KNOWLEDGE_ATTACHMENTS} 个文件`);
+    if (accepted.length > available) warnings.add(`一次最多添加 ${MAX_KNOWLEDGE_ATTACHMENTS} 个文件`);
     setAttachments(current => [...current, ...accepted.slice(0, available)]);
-    setAttachmentError(warnings.join('；'));
+    setAttachmentError(Array.from(warnings).join('；'));
     setSubmitClicked(false);
     setExecuteClicked(false);
   };
@@ -1129,8 +1130,9 @@ function NaturalLanguagePanel({
     return () => clearInterval(timer);
   }, [run?.id, run?.status, activeHistoryId]);
 
-  const importEmbeddingSkip = preview?.intent === 'import_path' && run ? getImportEmbeddingSkip(run) : null;
-  const summary = preview && run ? summarizeRunResult(preview, run) : null;
+  const importRunSummary = preview?.intent === 'import_path' && run ? summarizeImportRun(preview, run) : null;
+  const importEmbeddingSkip = preview?.intent === 'import_path' && run && !importRunSummary ? getImportEmbeddingSkip(run) : null;
+  const summary = importRunSummary?.markdown ?? (preview && run ? summarizeRunResult(preview, run) : null);
   const searchWarning = preview?.intent === 'search_brain' && run
     ? getThinkRetrievalWarning(run.stderr)
     : null;
@@ -1138,7 +1140,7 @@ function NaturalLanguagePanel({
   const completenessNote = preview?.intent === 'capture_memory'
     ? '页面只显示内容摘要；实际提交和保存的是上方标注字数的完整文本。'
     : preview?.intent === 'import_path'
-      ? '页面只显示导入摘要；实际导入范围不会因这里的省略展示而截断，完整日志可展开查看。'
+      ? '摘要会区分完整导入、未切片、未变化跳过和失败；逐文件名单可展开执行详情查看。'
       : null;
 
   return (
@@ -1224,7 +1226,7 @@ function NaturalLanguagePanel({
           </div>
         </div>
         <div className={`nl-input-meta ${inputTooLong ? 'is-over-limit' : ''}`}>
-          <span>{attachments.length > 0 ? '导入会处理附件；发送会先导入再按文字要求处理；搜索只使用文字。' : '导入可保存正文或导入路径；搜索会一步执行；发送由 AI 判断后处理。'}</span>
+          <span>{attachments.length > 0 ? '导入会处理附件；发送会先导入再按文字要求处理；搜索只使用文字。' : '导入会检查整个路径：未变化文件跳过，修改过的文件重新导入，并按成功、跳过和失败分类。'}</span>
           <strong>{inputLength.toLocaleString('zh-CN')} / {MAX_NATURAL_TASK_CHARACTERS.toLocaleString('zh-CN')} 字</strong>
         </div>
         {attachmentError && <div className="pm-error-text" role="alert">{attachmentError}</div>}
@@ -1278,13 +1280,19 @@ function NaturalLanguagePanel({
         )}
         {run && (
           <div className="nl-result">
-            <div className={`nl-summary ${importEmbeddingSkip ? 'is-partial' : ''}`}>
+            <div className={`nl-summary ${importRunSummary?.tone === 'partial' || importEmbeddingSkip ? 'is-partial' : ''}`}>
               <div className="nl-summary-text">
                 {summary && <MarkdownArticle markdown={summary} />}
                 {completenessNote && <div className="nl-completeness-note">{completenessNote}</div>}
               </div>
-              <span className={`pm-pill run-pill ${importEmbeddingSkip ? 'run-partial' : `run-${run.status}`}`}>
-                {searchWarning ? '检索超时' : importEmbeddingSkip ? '部分完成' : run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'running' ? '执行中' : '排队中'}
+              <span className={`pm-pill run-pill ${
+                importRunSummary?.tone === 'partial' || importEmbeddingSkip
+                  ? 'run-partial'
+                  : importRunSummary?.tone === 'failed'
+                    ? 'run-failed'
+                    : `run-${run.status}`
+              }`}>
+                {searchWarning ? '检索超时' : importRunSummary?.badge ?? (importEmbeddingSkip ? '部分完成' : run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'running' ? '执行中' : '排队中')}
               </span>
             </div>
             <details className="nl-details">
@@ -2264,12 +2272,17 @@ function DreamSettings() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savedOutputDir, setSavedOutputDir] = useState('output');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     void api.dreamSettings()
-      .then(value => setSettings(value as DreamSettingsValue))
+      .then(value => {
+        const loaded = value as DreamSettingsValue;
+        setSettings(loaded);
+        setSavedOutputDir(loaded.outputDir);
+      })
       .catch(nextError => setError(nextError instanceof Error ? nextError.message : String(nextError)))
       .finally(() => setLoading(false));
   }, []);
@@ -2286,6 +2299,7 @@ function DreamSettings() {
     try {
       const saved = await api.saveDreamSettings({ ...settings, outputDir }) as DreamSettingsValue;
       setSettings(current => ({ ...current, ...saved }));
+      setSavedOutputDir(saved.outputDir);
       setMessage('知识整理设置已保存');
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -2308,6 +2322,7 @@ function DreamSettings() {
     try {
       const saved = await api.saveDreamSettings({ outputDir, dualWrite }) as DreamSettingsValue;
       setSettings(current => ({ ...current, ...saved }));
+      setSavedOutputDir(saved.outputDir);
       setMessage(dualWrite ? '已开启本地 Markdown 写入' : '已关闭本地 Markdown 写入');
     } catch (nextError) {
       setSettings(current => ({ ...current, dualWrite: previousValue }));
@@ -2317,6 +2332,7 @@ function DreamSettings() {
     }
   };
 
+  const outputDirDirty = settings.outputDir.trim() !== savedOutputDir.trim();
   const outputIsAbsolute = /^[A-Za-z]:[\\/]/.test(settings.outputDir)
     || /^\\\\/.test(settings.outputDir)
     || settings.outputDir.startsWith('/');
@@ -2349,8 +2365,8 @@ function DreamSettings() {
               placeholder="output"
               disabled={loading || saving}
             />
-            <button className="pm-primary" onClick={() => void save()} disabled={loading || saving}>
-              {saving ? '正在保存…' : '保存设置'}
+            <button className="pm-primary" onClick={() => void save()} disabled={loading || saving || !outputDirDirty || !settings.outputDir.trim()}>
+              {saving ? '正在保存…' : '保存'}
             </button>
           </div>
           <div className="dream-output-preview">
@@ -2386,6 +2402,110 @@ function DreamSettings() {
   );
 }
 
+interface DreamScheduleSettingsValue {
+  enabled: boolean;
+  time: string;
+  lastStartedDate: string | null;
+  timeZone: string;
+}
+
+const DEFAULT_DREAM_SCHEDULE: DreamScheduleSettingsValue = {
+  enabled: false,
+  time: '02:00',
+  lastStartedDate: null,
+  timeZone: 'local',
+};
+
+function DreamScheduleSettings() {
+  const [value, setValue] = useState<DreamScheduleSettingsValue>(DEFAULT_DREAM_SCHEDULE);
+  const [saved, setSaved] = useState<DreamScheduleSettingsValue>(DEFAULT_DREAM_SCHEDULE);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void api.dreamSchedule()
+      .then(next => {
+        const loaded = next as DreamScheduleSettingsValue;
+        setValue(loaded);
+        setSaved(loaded);
+      })
+      .catch(nextError => setError(nextError instanceof Error ? nextError.message : String(nextError)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const dirty = value.enabled !== saved.enabled || value.time !== saved.time;
+  const validTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.time);
+
+  const save = async () => {
+    if (!validTime) {
+      setError('请选择有效的执行时间');
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const next = await api.saveDreamSchedule({ enabled: value.enabled, time: value.time }) as DreamScheduleSettingsValue;
+      setValue(next);
+      setSaved(next);
+      setMessage(next.enabled ? `已设置每天 ${next.time} 自动整理` : '已关闭定时一键整理');
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="pm-card dream-schedule-settings settings-panel">
+      <div className="settings-panel-title">
+        <span className="settings-panel-icon"><Clock3 /></span>
+        <div>
+          <h2>定时一键整理</h2>
+          <p>每天到设定时间后，自动执行一次与“知识整理”页面相同的一键整理。</p>
+        </div>
+      </div>
+      <div className="dream-schedule-row">
+        <label className="dream-schedule-toggle" htmlFor="dream-schedule-enabled">
+          <span>
+            <b>每天自动整理</b>
+            <small>默认关闭。开启后按本机时间运行。</small>
+          </span>
+          <input
+            id="dream-schedule-enabled"
+            type="checkbox"
+            checked={value.enabled}
+            onChange={event => setValue(current => ({ ...current, enabled: event.target.checked }))}
+            disabled={loading || saving}
+          />
+        </label>
+        <div className="dream-schedule-time">
+          <label htmlFor="dream-schedule-time">每日执行时间</label>
+          <input
+            id="dream-schedule-time"
+            type="time"
+            value={value.time}
+            onChange={event => setValue(current => ({ ...current, time: event.target.value }))}
+            disabled={loading || saving}
+          />
+          <button className="pm-primary" onClick={() => void save()} disabled={loading || saving || !dirty || !validTime}>
+            {saving ? '正在保存…' : '保存'}
+          </button>
+        </div>
+      </div>
+      <p className="pm-hint dream-schedule-note">
+        PMBrain 服务需要保持运行；如果设定时间已过，会在当天服务恢复后补跑。已有整理任务时会等待，避免重复执行。
+        当前时区：{value.timeZone}。{value.lastStartedDate ? `上次自动启动：${value.lastStartedDate}` : '尚未自动启动。'}
+      </p>
+      {(message || error) && <div className="settings-feedback" aria-live="polite">
+        {message && <span className="pm-ok">{message}</span>}
+        {error && <span className="pm-error-text">{error}</span>}
+      </div>}
+    </section>
+  );
+}
 interface ImportSettingsValue {
   thresholdKb: number;
   minKb: number;
@@ -2394,13 +2514,18 @@ interface ImportSettingsValue {
 
 function ImportVectorizationSettings() {
   const [value, setValue] = useState<ImportSettingsValue>({ thresholdKb: 500, minKb: 100, maxKb: 5000 });
+  const [savedThresholdKb, setSavedThresholdKb] = useState(500);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     void api.importSettings()
-      .then(next => setValue(next as ImportSettingsValue))
+      .then(next => {
+        const loaded = next as ImportSettingsValue;
+        setValue(loaded);
+        setSavedThresholdKb(loaded.thresholdKb);
+      })
       .catch(nextError => setError(nextError instanceof Error ? nextError.message : String(nextError)));
   }, []);
 
@@ -2411,6 +2536,7 @@ function ImportVectorizationSettings() {
     try {
       const saved = await api.saveImportSettings(value.thresholdKb) as ImportSettingsValue;
       setValue(saved);
+      setSavedThresholdKb(saved.thresholdKb);
       setMessage('切片与向量化上限已保存');
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -2441,8 +2567,8 @@ function ImportVectorizationSettings() {
           disabled={saving}
         />
         <span>KB</span>
-        <button className="pm-primary" onClick={() => void save()} disabled={saving || value.thresholdKb < value.minKb || value.thresholdKb > value.maxKb}>
-          {saving ? '正在保存…' : '保存设置'}
+        <button className="pm-primary" onClick={() => void save()} disabled={saving || value.thresholdKb === savedThresholdKb || value.thresholdKb < value.minKb || value.thresholdKb > value.maxKb}>
+          {saving ? '正在保存…' : '保存'}
         </button>
       </div>
       <p className="pm-hint">默认 500 KB，可设置 100–5000 KB。上限越大，切片和向量化耗时越长，也会增加内存、模型调用量和 API 消耗。该项不限制原文件上传大小。</p>
@@ -2500,6 +2626,7 @@ export function SettingsPage({
         <MainSourceSettings overview={overview} onSaved={reload} />
       </div>
       <DreamSettings />
+      <DreamScheduleSettings />
       <ImportVectorizationSettings />
       <SourceManagementSettings />
       <MarkdownExportSettings />

@@ -50,6 +50,7 @@ export async function runImport(
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  const reportFiles = args.includes('--report-files');
   const includeOffice = args.includes('--include-office');
   const includeImages = args.includes('--include-images');
 
@@ -240,6 +241,10 @@ export async function runImport(
     progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
   }
 
+  function reportFile(result: { status: 'imported' | 'partial' | 'unchanged' | 'failed'; path: string; chunks?: number; bytes?: number; reason?: string }) {
+    if (reportFiles) console.error(`[pmbrain import-file] ${JSON.stringify(result)}`);
+  }
+
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(importRoot, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
@@ -265,15 +270,24 @@ export async function runImport(
         imported++;
         chunksCreated += result.chunks;
         importedSlugs.push(result.slug);
+        const embedSkip = result.parsedPage?.frontmatter?.embed_skip;
+        const embedSkipBytes = embedSkip && typeof embedSkip === 'object' && typeof (embedSkip as { bytes?: unknown }).bytes === 'number'
+          ? (embedSkip as { bytes: number }).bytes
+          : undefined;
+        reportFile(embedSkip
+          ? { status: 'partial', path: relativePath, chunks: result.chunks, bytes: embedSkipBytes, reason: '正文超过切片与向量化上限' }
+          : { status: 'imported', path: relativePath, chunks: result.chunks });
         // v0.33.2: path-based checkpoint — record only on success.
         completed.add(relativePath);
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
+          reportFile({ status: 'failed', path: relativePath, reason: result.error });
           // Bug 9 — non-"unchanged" skips carry a real error reason.
           failures.push({ path: relativePath, error: result.error });
         } else {
+          reportFile({ status: 'unchanged', path: relativePath, reason: '内容未变化或知识库已有相同资料' });
           // 'unchanged' or no-error skip: content_hash matched a prior
           // successful import, so this file IS done for checkpoint purposes.
           completed.add(relativePath);
@@ -290,6 +304,7 @@ export async function runImport(
       }
       errors++;
       skipped++;
+      reportFile({ status: 'failed', path: relativePath, reason: msg });
       failures.push({ path: relativePath, error: msg });
     }
     processed++;

@@ -50,6 +50,13 @@ import { resolveMainSourceId } from '../core/source-resolver.ts';
 import { isImageFilePath, isMarkdownFilePath, isOfficeFilePath } from '../core/sync.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import {
+  DEFAULT_ADMIN_DREAM_SCHEDULE_TIME,
+  adminDreamScheduleDateKey,
+  isAdminDreamScheduleDue,
+  isValidAdminDreamScheduleTime,
+  type AdminDreamScheduleSettings,
+} from './admin-dream-schedule.ts';
+import {
   computeContentHash,
   validateIngestionEvent,
   type IngestionContentType,
@@ -99,6 +106,11 @@ const ADMIN_README_CANDIDATES = [
 const ADMIN_DOCS_EMPTY_MARKDOWN = '暂无';
 
 export const ADMIN_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+export const ADMIN_DREAM_SCHEDULE_CHECK_MS = 30_000;
+
+const ADMIN_DREAM_SCHEDULE_ENABLED_KEY = 'dream.schedule.enabled';
+const ADMIN_DREAM_SCHEDULE_TIME_KEY = 'dream.schedule.time';
+const ADMIN_DREAM_SCHEDULE_LAST_STARTED_DATE_KEY = 'dream.schedule.last_started_date';
 
 export type AdminUploadFileKind = 'markdown' | 'office' | 'image';
 
@@ -246,6 +258,41 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+async function ensureAdminWorkerStarted(): Promise<{
+  event: 'already_running' | 'started';
+  worker_pid: number;
+  pid_file: string;
+  mode: 'direct-worker';
+}> {
+  const { spawn } = await import('child_process');
+  const { mkdirSync, readFileSync, writeFileSync } = await import('fs');
+  const { dirname } = await import('path');
+  const pidFile = await adminWorkerPidFile();
+  try {
+    const existingPid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0] ?? '', 10);
+    if (isPidAlive(existingPid)) {
+      return { event: 'already_running', worker_pid: existingPid, pid_file: pidFile, mode: 'direct-worker' };
+    }
+  } catch {
+    // no usable direct worker pid file
+  }
+  const command = [...resolveCliEntry(), 'jobs', 'work', '--concurrency', '2'];
+  const child = spawn(command[0], command.slice(1), {
+    cwd: process.cwd(),
+    shell: false,
+    windowsHide: true,
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
+  child.unref();
+  const workerPid = child.pid ?? 0;
+  if (workerPid <= 0) throw new Error('worker_start_failed');
+  mkdirSync(dirname(pidFile), { recursive: true });
+  writeFileSync(pidFile, `${workerPid}\n`, 'utf8');
+  return { event: 'started', worker_pid: workerPid, pid_file: pidFile, mode: 'direct-worker' };
 }
 
 /**
@@ -1525,6 +1572,108 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  const dreamScheduleView = async (overrides?: { enabled?: boolean; time?: string; lastStartedDate?: string | null }) => {
+    const [storedEnabled, storedTime, storedLastStartedDate] = await Promise.all([
+      engine.getConfig(ADMIN_DREAM_SCHEDULE_ENABLED_KEY),
+      engine.getConfig(ADMIN_DREAM_SCHEDULE_TIME_KEY),
+      engine.getConfig(ADMIN_DREAM_SCHEDULE_LAST_STARTED_DATE_KEY),
+    ]);
+    const storedTimeValue = storedTime?.trim() ?? '';
+    return {
+      enabled: overrides?.enabled ?? storedEnabled === 'true',
+      time: overrides?.time ?? (isValidAdminDreamScheduleTime(storedTimeValue)
+        ? storedTimeValue
+        : DEFAULT_ADMIN_DREAM_SCHEDULE_TIME),
+      lastStartedDate: overrides?.lastStartedDate ?? (storedLastStartedDate?.trim() || null),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
+    };
+  };
+
+  let scheduledDreamStarting = false;
+  let scheduledDreamRetryAfter = 0;
+  const checkScheduledDream = async (now = new Date()) => {
+    if (scheduledDreamStarting || Date.now() < scheduledDreamRetryAfter) return;
+    let settings: AdminDreamScheduleSettings;
+    try {
+      settings = await dreamScheduleView();
+    } catch (e) {
+      console.error('[admin dream schedule] Unable to read settings:', e instanceof Error ? e.message : e);
+      return;
+    }
+    if (!isAdminDreamScheduleDue(settings, now)) return;
+    const hasActiveDream = listRuns().some(run => (
+      run.kind.startsWith('dream_') && (run.status === 'running' || run.status === 'queued')
+    ));
+    if (hasActiveDream) return;
+
+    scheduledDreamStarting = true;
+    const today = adminDreamScheduleDateKey(now);
+    try {
+      const sourceId = await resolveMainSourceId(engine);
+      await ensureAdminWorkerStarted();
+      await engine.setConfig(ADMIN_DREAM_SCHEDULE_LAST_STARTED_DATE_KEY, today);
+      const run = await startDreamRun({
+        preset: 'full',
+        sourceId,
+        drainProposals: true,
+        windowSeconds: 90 * 60,
+        timeoutMs: 120 * 60 * 1000,
+      }, process.cwd(), runHooks);
+      if (run.status !== 'running' && run.status !== 'queued') {
+        throw new Error(run.error || `dream_schedule_start_${run.status}`);
+      }
+      console.error(`[admin dream schedule] Started one-click organization for ${today} at ${settings.time} (run ${run.id}).`);
+    } catch (e) {
+      scheduledDreamRetryAfter = Date.now() + 5 * 60 * 1000;
+      try {
+        await engine.setConfig(
+          ADMIN_DREAM_SCHEDULE_LAST_STARTED_DATE_KEY,
+          settings.lastStartedDate ?? '',
+        );
+      } catch {
+        // A PGLite child may temporarily own the engine; the next service start can retry if needed.
+      }
+      console.error('[admin dream schedule] Automatic start failed:', e instanceof Error ? e.message : e);
+    } finally {
+      scheduledDreamStarting = false;
+    }
+  };
+
+  app.get('/admin/api/dream/schedule', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await dreamScheduleView());
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'dream_schedule_settings_failed' });
+    }
+  });
+
+  app.post('/admin/api/dream/schedule', requireAdmin, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
+    const enabled = req.body?.enabled;
+    const time = typeof req.body?.time === 'string' ? req.body.time.trim() : '';
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'dream_schedule_enabled_must_be_boolean' });
+      return;
+    }
+    if (!isValidAdminDreamScheduleTime(time)) {
+      res.status(400).json({ error: 'dream_schedule_time_must_be_hh_mm' });
+      return;
+    }
+    try {
+      await Promise.all([
+        engine.setConfig(ADMIN_DREAM_SCHEDULE_ENABLED_KEY, enabled ? 'true' : 'false'),
+        engine.setConfig(ADMIN_DREAM_SCHEDULE_TIME_KEY, time),
+      ]);
+      const view = await dreamScheduleView({ enabled, time });
+      res.json(view);
+      if (enabled) {
+        const immediateCheck = setTimeout(() => void checkScheduledDream(), 0);
+        immediateCheck.unref?.();
+      }
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'save_dream_schedule_failed' });
+    }
+  });
+
   app.get('/admin/api/dream/overview', requireAdmin, async (_req: Request, res: Response) => {
     try {
       res.json(await getAdminDreamOverview(engine, config, VERSION));
@@ -1631,32 +1780,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.post('/admin/api/jobs/supervisor/start', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const { spawn } = await import('child_process');
-      const { mkdirSync, readFileSync, writeFileSync } = await import('fs');
-      const { dirname } = await import('path');
-      const pidFile = await adminWorkerPidFile();
-      try {
-        const existingPid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0] ?? '', 10);
-        if (isPidAlive(existingPid)) {
-          res.json({ event: 'already_running', worker_pid: existingPid, pid_file: pidFile, mode: 'direct-worker' });
-          return;
-        }
-      } catch {
-        // no usable direct worker pid file
-      }
-      const command = [...resolveCliEntry(), 'jobs', 'work', '--concurrency', '2'];
-      const child = spawn(command[0], command.slice(1), {
-        cwd: process.cwd(),
-        shell: false,
-        windowsHide: true,
-        detached: true,
-        stdio: 'ignore',
-        env: process.env,
-      });
-      child.unref();
-      mkdirSync(dirname(pidFile), { recursive: true });
-      writeFileSync(pidFile, `${child.pid ?? 0}\n`, 'utf8');
-      res.json({ event: 'started', worker_pid: child.pid, pid_file: pidFile, mode: 'direct-worker' });
+      res.json(await ensureAdminWorkerStarted());
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'supervisor_start_failed' });
     }
@@ -1885,6 +2009,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         includeImages: req.body?.includeImages === true,
         noEmbed: req.body?.autoEmbed === false,
         workers: Number(req.body?.workers ?? 1),
+        fresh: true,
+        reportFiles: true,
       }, process.cwd(), runHooks);
       res.json({ runId: run.id, status: run.status });
     } catch (e) {
@@ -1949,6 +2075,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           includeImages: fileKind === 'image',
           noEmbed: !queryFlag(req.query.autoEmbed, true),
           workers,
+          reportFiles: true,
         }, process.cwd(), uploadRunHooks);
 
         // beforeSpawn failures return a terminal run without invoking
@@ -3482,6 +3609,14 @@ ${renderAdminTokenFooter({ suppressBootstrapPrint, bootstrapFromEnv, bootstrapTo
       // non-blocking, swallow error
     }
   });
+
+  const dreamScheduleTimer = setInterval(
+    () => void checkScheduledDream(),
+    ADMIN_DREAM_SCHEDULE_CHECK_MS,
+  );
+  dreamScheduleTimer.unref?.();
+  httpServer.once('close', () => clearInterval(dreamScheduleTimer));
+  void checkScheduledDream();
 
   await waitForHttpServerClose(httpServer, engine);
 }

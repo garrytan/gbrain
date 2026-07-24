@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import {
   loadCheckpoint,
   saveCheckpoint,
@@ -170,14 +170,12 @@ describe('resumeFilter', () => {
   });
 
   test('absolute paths get normalized to relative for lookup', () => {
-    const all = [
-      '/tmp/example-brain/meetings/2026-05-13.md',
-      '/tmp/example-brain/concepts/a.md',
-    ];
-    const completed = new Set(['meetings/2026-05-13.md']);
-    expect(resumeFilter(all, '/tmp/example-brain', completed)).toEqual([
-      '/tmp/example-brain/concepts/a.md',
-    ]);
+    const root = resolve(tmpdir(), 'example-brain');
+    const meetings = join(root, 'meetings', '2026-05-13.md');
+    const concept = join(root, 'concepts', 'a.md');
+    const all = [meetings, concept];
+    const completed = new Set([join('meetings', '2026-05-13.md')]);
+    expect(resumeFilter(all, root, completed)).toEqual([concept]);
   });
 
   test('mixed absolute and relative inputs both work', () => {

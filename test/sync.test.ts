@@ -84,7 +84,7 @@ describe('isSyncable', () => {
     expect(isSyncable('docs/report.pdf', { includeOffice: true })).toBe(true);
     expect(isSyncable('docs/sheet.xlsx', { includeOffice: true })).toBe(true);
     expect(isSyncable('docs/sheet.xls', { includeOffice: true })).toBe(true);
-    expect(isSyncable('docs/slides.pptx', { includeOffice: true })).toBe(false);
+    expect(isSyncable('docs/slides.pptx', { includeOffice: true })).toBe(true);
   });
 
   test('rejects files in hidden directories', () => {
@@ -196,7 +196,7 @@ describe('isOfficeFilePath', () => {
     expect(isOfficeFilePath('docs/sheet.xlsx')).toBe(true);
     expect(isOfficeFilePath('docs/sheet.xlsm')).toBe(true);
     expect(isOfficeFilePath('docs/sheet.xls')).toBe(true);
-    expect(isOfficeFilePath('docs/slides.pptx')).toBe(false);
+    expect(isOfficeFilePath('docs/slides.pptx')).toBe(true);
   });
 });
 
