@@ -183,6 +183,41 @@ describe('buildBrainTools', () => {
   });
 });
 
+describe('source routing (opts.sourceId → ctx.sourceId)', () => {
+  test('put_page writes to the source passed via opts.sourceId', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('corporate', 'Corporate') ON CONFLICT (id) DO NOTHING`,
+    );
+    const tools = buildBrainTools({ subagentId: 42, engine, config, sourceId: 'corporate' });
+    const putPage = tools.find(t => t.name === 'brain_put_page');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await putPage!.execute(
+      { slug: 'wiki/agents/42/routed', content: '---\ntitle: Routed\n---\nbody' },
+      ctx,
+    );
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = 'wiki/agents/42/routed'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.source_id).toBe('corporate');
+  });
+
+  test('omitted sourceId falls back to the seed default source (legacy behavior)', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const putPage = tools.find(t => t.name === 'brain_put_page');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await putPage!.execute(
+      { slug: 'wiki/agents/42/unrouted', content: '---\ntitle: Unrouted\n---\nbody' },
+      ctx,
+    );
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = 'wiki/agents/42/unrouted'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.source_id).toBe('default');
+  });
+});
+
 describe('filterAllowedTools', () => {
   test('passes prefixed names through', () => {
     const tools = buildBrainTools({ subagentId: 1, engine, config });

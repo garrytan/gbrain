@@ -462,14 +462,15 @@ export interface SubagentHandlerData {
    */
   allowed_slug_prefixes?: string[];
   /**
-   * Brain source the subagent's tool calls are scoped to (#1586).
+   * Write-target source for the subagent's brain tools (put_page etc.).
    *
-   * When set, every tool-call `OperationContext.sourceId` uses this value
-   * instead of the legacy 'default', so put_page writes land in the cycle's
-   * resolved source. Same trust story as `allowed_slug_prefixes`:
-   * PROTECTED_JOB_NAMES gates subagent submission, so only cycle.ts and
-   * direct CLI submitters can set it. Validated via `validateSourceId` at
-   * tool-registry build time.
+   * Resolved AT SUBMIT TIME by the CLI (`gbrain agent run [--source <id>]`)
+   * through the canonical chain in src/core/source-resolver.ts (flag →
+   * GBRAIN_SOURCE env → .gbrain-source dotfile → local_path match →
+   * `sources.default` config → seed 'default') and persisted on the job
+   * payload, so restart/replay writes to the same source regardless of the
+   * worker's cwd/env. When absent (legacy rows, direct submitters), tools
+   * fall back to the seed 'default' — the pre-existing behavior.
    */
   source_id?: string;
   /**

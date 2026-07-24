@@ -203,10 +203,10 @@ export interface BuildBrainToolsOpts {
    */
   allowedSlugPrefixes?: readonly string[];
   /**
-   * Brain source every tool-call OperationContext is scoped to (#1586).
-   * Trusted (flows from SubagentHandlerData.source_id, which only
-   * PROTECTED_JOB_NAMES-gated submitters can set); validated at build time.
-   * Unset → legacy 'default'.
+   * Write-target source for every tool dispatch (put_page etc.). Resolved
+   * at submit time and carried on SubagentHandlerData.source_id — see that
+   * field's doc for the resolution chain. Absent → seed 'default' (the
+   * pre-existing behavior for legacy rows / direct submitters).
    */
   sourceId?: string;
 }
@@ -233,7 +233,9 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     },
     dryRun: false,
     remote: true,                // match MCP trust boundary for auto-link skip
-    // #1586: cycle-resolved source when provided; legacy host default else.
+    // Submit-time resolved source (SubagentHandlerData.source_id) when
+    // present; seed 'default' otherwise (v0.34 D4 required the field —
+    // the literal fallback preserves that behavior for legacy rows).
     sourceId: deps.sourceId ?? 'default',
     jobId: deps.jobId,
     subagentId: deps.subagentId,

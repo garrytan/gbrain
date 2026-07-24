@@ -18,6 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../core/minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from '../core/minions/types.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 import { runAgentLogs } from './agent-logs.ts';
 
 // ── arg parsing helpers ────────────────────────────────────
@@ -71,6 +72,8 @@ SUBMITTING
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
     --fanout-manifest <path>     JSON array of {prompt, input_vars?} — one child each
+    --source <id>                Write-target source for brain tools (default:
+                                 canonical resolution — env/dotfile/path/brain default)
     --follow                     Tail status until terminal (default on TTY)
     --detach                     Submit + print job id, exit immediately
 
@@ -102,6 +105,7 @@ interface RunFlags {
   tools?: string[];
   timeoutMs?: number;
   fanoutManifest?: string;
+  source?: string;
   follow: boolean;
   detach: boolean;
 }
@@ -167,6 +171,7 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
       case '--tools':           flags.tools = requireFlagValue(args, ++i, a).split(',').map(s => s.trim()).filter(Boolean); break;
       case '--timeout-ms':      flags.timeoutMs = parseIntFlagValue(requireFlagValue(args, ++i, a), a); break;
       case '--fanout-manifest': flags.fanoutManifest = requireFlagValue(args, ++i, a); break;
+      case '--source':          flags.source = requireFlagValue(args, ++i, a); break;
       case '--follow':          flags.follow = true; break;
       case '--no-follow':       flags.follow = false; break;
       case '--detach':          flags.detach = true; flags.follow = false; break;
@@ -208,7 +213,15 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
     process.exit(2);
   }
 
-  const data: SubagentHandlerData = { prompt };
+  // Resolve the write-target source AT SUBMIT TIME through the canonical
+  // chain (--source flag → GBRAIN_SOURCE env → .gbrain-source dotfile →
+  // local_path match → sources.default config → seed 'default') and persist
+  // it on the payload. Resolving at claim time would route by the WORKER's
+  // cwd/env, not the submitter's — and pre-fix the subagent tool context
+  // hardcoded 'default', ignoring `gbrain sources default <id>` entirely.
+  const sourceId = await resolveSourceId(engine, flags.source ?? null);
+
+  const data: SubagentHandlerData = { prompt, source_id: sourceId };
   if (flags.subagentDef) data.subagent_def = flags.subagentDef;
   if (flags.model) data.model = flags.model;
   if (flags.maxTurns) data.max_turns = flags.maxTurns;
@@ -252,11 +265,16 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
     process.exit(2);
   }
 
+  // Same submit-time source resolution as the single-job path — one resolve
+  // stamped on every child so the whole fan-out writes to one source.
+  const sourceId = await resolveSourceId(engine, flags.source ?? null);
+
   // Short-circuit: 1 entry → single subagent, no aggregator.
   if (manifest.length === 1) {
     const entry = manifest[0]!;
     const data: SubagentHandlerData = {
       prompt: entry.prompt ?? promptTemplate,
+      source_id: sourceId,
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
       ...(flags.model ? { model: flags.model } : {}),
@@ -288,6 +306,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   for (const entry of manifest) {
     const data: SubagentHandlerData = {
       prompt: entry.prompt ?? promptTemplate,
+      source_id: sourceId,
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
       ...(flags.model ? { model: flags.model } : {}),
