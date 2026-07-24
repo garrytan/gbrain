@@ -19,6 +19,7 @@ import {
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
+import { AIConfigError } from '../core/ai/errors.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -942,6 +943,10 @@ async function embedAllStale(
   // with stale chunks still remaining (un-embeddable for a non-transient reason)
   // surfaces that loudly instead of looking like a clean run.
   let embedFailures = 0;
+  // Provider-wide configuration/billing failures cannot be repaired by
+  // retrying another page. Probe one page before opening the worker pool and
+  // stop the whole pass when that probe trips this breaker.
+  let providerUnavailable = false;
 
   // E-3 (paced-backfill): bounded end-of-run re-entry. A longer paced run gives
   // a live writer (sync / put_page) more time to insert NEW stale rows BEHIND
@@ -1066,6 +1071,7 @@ async function embedAllStale(
           // spam per-page "Error embedding" lines when we're shutting down.
           if (effectiveSignal.aborted) return;
           embedFailures++;
+          if (e instanceof AIConfigError) providerUnavailable = true;
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
         }
         totalProcessedPages++;
@@ -1091,11 +1097,16 @@ async function embedAllStale(
       // `!budgetSignal.aborted` gate) AND threads abort into in-flight
       // onItem via the local-abort composition for D13. embedOneKey
       // already handles its own per-key errors via try/catch + stderr.
+      // Serial first-call probe prevents a permanent account/spend-cap error
+      // from fanning out to every worker before the first response arrives.
+      const [probeKey, ...remainingKeys] = keys;
+      if (probeKey !== undefined) await embedOneKey(probeKey);
+      if (providerUnavailable) break;
       await runSlidingPool({
-        items: keys,
+        items: remainingKeys,
         workers: CONCURRENCY,
         signal: effectiveSignal,
-        onItem: (key) => embedOneKey(key),
+        onItem: (key) => providerUnavailable ? Promise.resolve() : embedOneKey(key),
         failureLabel: (key) => key,
       });
 
@@ -1242,6 +1253,10 @@ export async function embedBatchWithBackoff(
     } catch (e: unknown) {
       // If the budget fired we may have been aborted mid-fetch; bubble out.
       if (signal?.aborted) throw e;
+      // Billing caps, bad credentials, and invalid model configuration are
+      // provider-wide. Retrying a 429-shaped AIConfigError wastes minutes and
+      // amplifies one permanent failure across the worker pool.
+      if (e instanceof AIConfigError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       // D4: structured detection first (handles gateway-wrapped errors via
       // cause chain); message-match as fallback for providers whose wrappers
