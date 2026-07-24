@@ -24,9 +24,15 @@ export const ollama: Recipe = {
         'all-minilm',
         'qwen3-embed-8b',
         'snowflake-arctic-embed-l-v2',
+        'qwen3-embedding:8b',
+        'qwen3-embedding:4b',
+        'qwen3-embedding:0.6b',
       ],
       default_dims: 768, // nomic-embed-text native dim
       trust_custom_dims: true, // #2271: local models carry varied native dims
+      // Ollama honors the OpenAI `dimensions` param (MRL truncation) for
+      // Matryoshka models like qwen3-embedding; validated dims listed here.
+      dims_options: [256, 512, 768, 1024, 1536, 2048, 2560, 4096],
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
       // Ollama's batch capacity depends on the locally loaded model + the
