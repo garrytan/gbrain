@@ -10,7 +10,10 @@
  *      — read with stderr deprecation warning, one-per-process
  *   4. Global default (models.default)
  *   5. Env var (process.env[envVar] or GBRAIN_MODEL)
- *   6. Hardcoded fallback (caller-supplied)
+ *   6. User-configured fallback (`userFallback` — caller-attested explicit
+ *      user config, e.g. file-plane chat_model; beats tier defaults, #3206)
+ *   7. Tier default (TIER_DEFAULTS[tier])
+ *   8. Hardcoded fallback (caller-supplied)
  *
  * Aliases (`opus`, `sonnet`, `haiku`, `gemini`, `gpt`) resolve at the end so any
  * tier can use a short name. Unknown alias passes through unchanged so users can
@@ -44,6 +47,16 @@ export interface ResolveModelOpts {
    * with a one-shot stderr warn instead).
    */
   tier?: ModelTier;
+  /**
+   * A value the CALLER knows was explicitly user-configured (e.g. the
+   * file-plane `chat_model` from `~/.gbrain/config.json`), as opposed to a
+   * hardcoded caller default (#3206). Ranks above the tier default (step 7)
+   * but below every config-key / env override — so a user's file-plane
+   * setting can't be silently replaced by `TIER_DEFAULTS`, while incident
+   * escape hatches (`GBRAIN_MODEL`) still win. Callers MUST NOT pass their
+   * own hardcoded defaults here; those belong in `fallback`.
+   */
+  userFallback?: string;
   /** Hardcoded last-resort fallback. */
   fallback: string;
 }
@@ -188,6 +201,15 @@ export async function resolveModel(
   if (env && env.trim()) {
     const resolved = await resolveAlias(engine, env.trim());
     return enforceSubagentCapable(resolved, opts.tier, `env:${envVar}`);
+  }
+
+  // 6.5. Explicitly user-configured fallback (#3206). Beats the tier default:
+  //      a user who set `chat_model` in config.json meant it, and the tier
+  //      default silently overriding it disabled every chat-gated feature on
+  //      non-Anthropic brains with no error.
+  if (opts.userFallback && opts.userFallback.trim()) {
+    const resolved = await resolveAlias(engine, opts.userFallback.trim());
+    return enforceSubagentCapable(resolved, opts.tier, 'userFallback');
   }
 
   // 7. Tier default (v0.31.12 — when no override beats us, the tier's

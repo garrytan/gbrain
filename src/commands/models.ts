@@ -9,8 +9,9 @@
  *                               per-task overrides, alias map, and source-of-truth
  *                               column (default / config / env).
  *
- *   `gbrain models doctor`    — opt-in probe. Fires a 1-token `gateway.chat()`
- *                               call against each configured chat / expansion
+ *   `gbrain models doctor`    — opt-in probe. Fires a small bounded
+ *                               `gateway.chat()` call (PROBE_MAX_OUTPUT_TOKENS)
+ *                               against each configured chat / expansion
  *                               model and reports reachability with the
  *                               provider's error string. Catches the bug class
  *                               that motivated v0.31.12 (the v0.31.6 chat
@@ -22,9 +23,10 @@
  *   --skip=<provider>         — narrow `doctor` probe to skip a provider
  *                               (e.g. cost-sensitive operators with rate limits)
  *
- * Per Codex F11 in plan review: no specific dollar cost claim. Probe uses
- * `max_tokens: 1` against each configured model; actual cost depends on
- * provider billing minimums.
+ * Per Codex F11 in plan review: no specific dollar cost claim. Probe caps
+ * output at PROBE_MAX_OUTPUT_TOKENS against each configured model (widened
+ * above any configured extended-thinking budget); actual cost depends on
+ * tokens actually generated and provider billing minimums.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -161,7 +163,14 @@ type ProbeStatus = 'ok' | 'model_not_found' | 'auth' | 'rate_limit' | 'network' 
 
 interface ProbeResult {
   model: string;
-  touchpoint: 'chat' | 'expansion' | 'embedding_config' | 'embedding_reachability' | 'reranker_config';
+  /**
+   * Which surface this probe covers. The fixed labels ('chat', 'expansion',
+   * 'embedding_config', 'embedding_reachability', 'reranker_config') are
+   * joined by per-task route keys (#3219): a probe covering one or more
+   * PER_TASK_KEYS routes carries the comma-joined route keys (e.g.
+   * 'models.dream.synthesize,models.think') for attribution.
+   */
+  touchpoint: string;
   status: ProbeStatus;
   message: string;
   elapsed_ms: number;
@@ -503,28 +512,108 @@ async function probeEmbeddingReachability(): Promise<ProbeResult | null> {
   }
 }
 
-async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
+/**
+ * Output budget for the chat/expansion reachability probe.
+ *
+ * This was `maxTokens: 1`, which falsely fails reasoning models: they spend
+ * output budget on internal reasoning before emitting any text, so a 1-token
+ * cap is either exhausted with zero usable text (finishReason 'length') or
+ * rejected outright by providers that require the cap to exceed the model's
+ * minimum reasoning spend — and the probe then reported a config failure for
+ * a perfectly reachable model. 64 tokens gives every model class enough
+ * headroom to prove transport + auth + model routing, while staying a
+ * minimal-cost probe: providers bill actual tokens generated, not the cap,
+ * and non-reasoning models answer '.' in a handful of tokens and stop.
+ *
+ * @internal exported for tests (test/models-doctor-probe-token-budget.test.ts).
+ */
+export const PROBE_MAX_OUTPUT_TOKENS = 64;
+
+/** @internal exported for tests (test/models-doctor-probe-token-budget.test.ts). */
+export async function probeModel(modelStr: string, touchpoint: string): Promise<ProbeResult> {
   const start = Date.now();
   try {
-    const { chat } = await import('../core/ai/gateway.ts');
+    const { chat, getConfiguredThinkingBudget } = await import('../core/ai/gateway.ts');
+    // Anthropic requires max_tokens > thinking.budgetTokens. When the user
+    // configured an extended-thinking budget for this model via
+    // provider_chat_options, a fixed small cap would be rejected outright —
+    // the same false-FAIL class this probe budget exists to prevent. Widen
+    // the cap above the configured budget; billing is still actual tokens.
+    const thinkingBudget = getConfiguredThinkingBudget(modelStr);
+    const maxTokens = (thinkingBudget ?? 0) + PROBE_MAX_OUTPUT_TOKENS;
     // Use AbortController so the 5s timeout doesn't hang on a stuck network.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
     try {
-      await chat({
+      const res = await chat({
         model: modelStr,
         messages: [{ role: 'user', content: '.' }],
-        maxTokens: 1,
+        maxTokens,
         abortSignal: controller.signal,
       });
-      return { model: modelStr, touchpoint, status: 'ok', message: 'reachable', elapsed_ms: Date.now() - start };
+      // A length-exhausted response with no text is still proof of
+      // reachability: the request survived transport + auth + model routing,
+      // and the model generated tokens — a reasoning model may spend the
+      // whole probe budget on internal reasoning. Report ok, but surface the
+      // generation limitation instead of a bare 'reachable'.
+      const message =
+        res.stopReason === 'length' && res.text.length === 0
+          ? `reachable (spent the ${maxTokens}-token probe budget on internal reasoning without emitting text; transport verified, text generation not exercised)`
+          : 'reachable';
+      return { model: modelStr, touchpoint, status: 'ok', message, elapsed_ms: Date.now() - start };
     } finally {
       clearTimeout(timeoutId);
     }
   } catch (err) {
+    // #3249 coherence: when the gateway rejects contentless length-exhausted
+    // completions (AIConfigError "output budget exhausted before any content
+    // was emitted"), the request still survived transport + auth + model
+    // routing — the same reachable-but-reasoning-burned class the in-band
+    // stopReason === 'length' branch above handles. Classify it as reachable
+    // instead of a probe failure.
+    const raw = err instanceof Error ? err.message : String(err);
+    if (/output budget exhausted before any content/i.test(raw)) {
+      return {
+        model: modelStr,
+        touchpoint,
+        status: 'ok',
+        message: 'reachable (spent the probe budget on internal reasoning without emitting text; transport verified, text generation not exercised)',
+        elapsed_ms: Date.now() - start,
+      };
+    }
     const { status, message } = classifyError(err);
     return { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
   }
+}
+
+/**
+ * #3219: resolve every PER_TASK_KEYS route (dream synthesis, think, facts
+ * extraction, …) the same way `buildReport` does, drop the routes whose
+ * resolved model is already covered by another probe, and group the rest by
+ * resolved model so each distinct provider:model is probed exactly once with
+ * the route keys retained for attribution. Pre-fix, doctor probed only the
+ * global chat + expansion models, so a per-task route configured to a
+ * distinct unreachable provider still reported green.
+ *
+ * `models.chat` / `models.expansion` are excluded up front — those routes ARE
+ * the chat/expansion probes.
+ *
+ * @internal exported for tests (test/models-doctor-per-task-routes.test.ts).
+ */
+export async function resolvePerTaskProbePlan(
+  engine: BrainEngine,
+  alreadyProbed: ReadonlySet<string>,
+): Promise<Array<{ model: string; routes: string[] }>> {
+  const byModel = new Map<string, string[]>();
+  for (const { key, tier } of PER_TASK_KEYS) {
+    if (key === 'models.chat' || key === 'models.expansion') continue;
+    const resolved = await resolveModel(engine, { configKey: key, tier, fallback: TIER_DEFAULTS[tier] });
+    if (alreadyProbed.has(resolved)) continue;
+    const routes = byModel.get(resolved) ?? [];
+    routes.push(key);
+    byModel.set(resolved, routes);
+  }
+  return [...byModel.entries()].map(([model, routes]) => ({ model, routes }));
 }
 
 function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
@@ -555,7 +644,7 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
     process.stdout.write(
 `Usage:
   gbrain models                   Show routing table (read-only)
-  gbrain models doctor [flags]    Probe each configured model (~1 token each)
+  gbrain models doctor [flags]    Probe each configured model (one small bounded request each)
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
@@ -611,6 +700,20 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
     results.push(await probeModel(modelStr, touchpoint));
   }
 
+  // #3219: per-task background routes (dream synthesis, think, facts
+  // extraction, …) can resolve to a provider/model neither the chat nor the
+  // expansion probe covers — pre-fix doctor stayed green while every
+  // background job against a misconfigured route failed. Probe each distinct
+  // additional resolved model once, attributed to its route keys.
+  for (const { model, routes } of await resolvePerTaskProbePlan(engine, new Set([chatModel, expansionModel]))) {
+    const touchpoint = routes.join(',');
+    if (shouldSkipProvider(model, skip)) {
+      if (!json) process.stderr.write(`[skip] ${touchpoint}: ${model} (provider in --skip)\n`);
+      continue;
+    }
+    results.push(await probeModel(model, touchpoint));
+  }
+
   // v0.40.x: embedding reachability — only when the config probe passed
   // (codex #8: a config failure shouldn't be reported twice) AND the provider
   // isn't in --skip. Catches a dead/misconfigured LOCAL embed server early.
@@ -648,6 +751,11 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
       if (r.status !== 'ok') {
         process.stdout.write(`      ${r.message}\n`);
         if (r.fix) process.stdout.write(`      fix: ${r.fix}\n`);
+      } else if (r.message !== 'reachable') {
+        // Probe passed with a caveat (e.g. a reasoning model spent the whole
+        // budget on internal reasoning) — surface it in human output too, not
+        // only in --json.
+        process.stdout.write(`      ${r.message}\n`);
       }
     }
     process.stdout.write(`\nSummary: ${report.summary.ok}/${report.summary.total} reachable.\n`);

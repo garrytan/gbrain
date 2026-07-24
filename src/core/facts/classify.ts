@@ -95,7 +95,11 @@ export async function classifyAgainstCandidates(
   }
 
   // Try the classifier. On failure, fall back to cosine ≥ 0.92 → DUPLICATE.
-  if (!isAvailable('chat')) {
+  // #3206: gate on the model this call will ACTUALLY use — an opts.model
+  // pointing at a non-default provider must not be vetoed by an unavailable
+  // global chat default (and vice versa).
+  const classifierModel = opts.model ?? 'anthropic:claude-haiku-4-5-20251001';
+  if (!isAvailable('chat', classifierModel)) {
     if (topId !== null && topScore >= fallback) {
       return { decision: 'duplicate', matched_id: topId, reason: 'cosine_fallback' };
     }
@@ -105,7 +109,7 @@ export async function classifyAgainstCandidates(
   let classifierResult: ChatResult | null = null;
   try {
     classifierResult = await chat({
-      model: opts.model ?? 'anthropic:claude-haiku-4-5-20251001',
+      model: classifierModel,
       system: CLASSIFIER_SYSTEM,
       messages: [
         {

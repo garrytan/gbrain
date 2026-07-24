@@ -175,6 +175,34 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(m).toBe(TIER_DEFAULTS.reasoning);
   });
 
+  test('#3206: userFallback beats the tier default (explicit user config survives)', async () => {
+    const m = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      userFallback: 'litellm:qwen-test',
+      fallback: 'anthropic:claude-sonnet-4-6',
+    });
+    expect(m).toBe('litellm:qwen-test');
+  });
+
+  test('#3206: config keys and env still beat userFallback', async () => {
+    stub.set('models.chat', 'opus');
+    const viaConfig = await resolveModel(stub as never, {
+      configKey: 'models.chat',
+      tier: 'reasoning',
+      userFallback: 'litellm:qwen-test',
+      fallback: 'sonnet',
+    });
+    expect(viaConfig).toBe(DEFAULT_ALIASES.opus);
+
+    process.env.GBRAIN_MODEL = 'haiku';
+    const viaEnv = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      userFallback: 'litellm:qwen-test',
+      fallback: 'sonnet',
+    });
+    expect(viaEnv).toBe(DEFAULT_ALIASES.haiku);
+  });
+
   test('v0.38 D7: tier.subagent accepts non-Anthropic models that support tools (with cost warn)', async () => {
     // Pre-v0.38 the resolver hard-fell-back to TIER_DEFAULTS.subagent for any
     // non-Anthropic model. v0.38 (D6/D7) replaces that with a capability check:

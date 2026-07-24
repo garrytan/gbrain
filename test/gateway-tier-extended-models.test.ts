@@ -15,6 +15,8 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import {
   configureGateway,
+  getChatModel,
+  getExpansionModel,
   reconfigureGatewayWithEngine,
   resetGateway,
   validateModelId,
@@ -59,5 +61,58 @@ describe('reconfigureGatewayWithEngine — tier models extend the allowlist', ()
       stubEngine({ 'models.default': 'anthropic:claude-hypothetical-10' }),
     );
     expect(validateModelId('anthropic:claude-hypothetical-10').ok).toBe(true);
+  });
+});
+
+describe('#3206 — reconfigure keeps explicitly configured file-plane models', () => {
+  const savedGbrainModel = process.env.GBRAIN_MODEL;
+  afterEach(() => {
+    if (savedGbrainModel === undefined) delete process.env.GBRAIN_MODEL;
+    else process.env.GBRAIN_MODEL = savedGbrainModel;
+  });
+
+  test('config.json chat_model / expansion_model survive reconfigure with no models.* keys set', async () => {
+    delete process.env.GBRAIN_MODEL;
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      chat_model: 'litellm:qwen-test',
+      expansion_model: 'litellm:expander-test',
+      env: {},
+    });
+
+    await reconfigureGatewayWithEngine(stubEngine({}));
+
+    // Pre-fix: cfg.chat_model rode resolveModel's bottom-rung `fallback` and
+    // TIER_DEFAULTS silently replaced it with anthropic:claude-sonnet-4-6.
+    expect(getChatModel()).toBe('litellm:qwen-test');
+    expect(getExpansionModel()).toBe('litellm:expander-test');
+  });
+
+  test('DB-plane models.chat still beats the file-plane chat_model', async () => {
+    delete process.env.GBRAIN_MODEL;
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      chat_model: 'litellm:qwen-test',
+      env: { ANTHROPIC_API_KEY: 'sk-fake' },
+    });
+
+    await reconfigureGatewayWithEngine(stubEngine({ 'models.chat': 'anthropic:claude-sonnet-4-6' }));
+
+    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('unset chat_model still resolves through the tier default', async () => {
+    delete process.env.GBRAIN_MODEL;
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { ANTHROPIC_API_KEY: 'sk-fake' },
+    });
+
+    await reconfigureGatewayWithEngine(stubEngine({}));
+
+    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6');
   });
 });
