@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/oauth_auth_tests
+title: OAuth 认证与 HTTP 服务单元测试集
+scope:
+    - test/oauth-*.test.ts
+    - test/auth-*.test.ts
+    - test/serve-http-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

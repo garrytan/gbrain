@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify
+title: Skill 生态与优化 CLI 编排层
+scope:
+    - src/core/skillpack/
+    - src/core/skillify/
+    - src/core/skillopt/
+source_files: []
+depends_on: []
+related_to: []

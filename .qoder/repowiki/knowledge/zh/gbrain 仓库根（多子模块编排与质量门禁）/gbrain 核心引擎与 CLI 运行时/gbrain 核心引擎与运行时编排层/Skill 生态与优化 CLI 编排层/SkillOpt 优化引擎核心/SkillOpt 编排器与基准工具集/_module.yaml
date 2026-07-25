@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillopt/orchestrator_and_benchmark
+title: SkillOpt 编排器与基准工具集
+scope:
+    - src/core/skillopt/orchestrator.ts
+    - src/core/skillopt/batch.ts
+    - src/core/skillopt/benchmark.ts
+    - src/core/skillopt/bootstrap-benchmark.ts
+source_files: []
+depends_on: []
+related_to: []

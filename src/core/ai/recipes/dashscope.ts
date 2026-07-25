@@ -23,6 +23,22 @@ export const dashscope: Recipe = {
     setup_url: 'https://help.aliyun.com/zh/model-studio/getting-started/',
   },
   touchpoints: {
+    chat: {
+      // DashScope OpenAI-compatible /chat/completions — Qwen series.
+      // qwen-max: strongest reasoning (think/deep tier)
+      // qwen-plus: balanced cost/quality (judge/utility tier)
+      // qwen-turbo: fastest/cheapest (lightweight tasks)
+      models: ['qwen3.7-plus', 'qwen3.7-max', 'qwen3-plus', 'qwen3-max', 'qwen-max', 'qwen-plus', 'qwen-turbo'],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      max_context_tokens: 131072,
+      // Pricing is extremely low (~¥0.004/1k tokens for qwen-plus);
+      // cost gating is effectively a non-issue. USD estimates below.
+      cost_per_1m_input_usd: 0.14,  // qwen-plus approximate
+      cost_per_1m_output_usd: 0.56,
+      price_last_verified: '2026-07-02',
+    },
     embedding: {
       models: ['text-embedding-v3', 'text-embedding-v2'],
       default_dims: 1024,

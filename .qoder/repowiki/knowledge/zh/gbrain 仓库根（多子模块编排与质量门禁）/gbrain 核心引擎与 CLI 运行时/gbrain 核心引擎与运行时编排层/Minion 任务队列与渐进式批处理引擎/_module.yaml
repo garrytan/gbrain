@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/minions_workers
+title: Minion 任务队列与渐进式批处理引擎
+scope:
+    - src/core/minions/
+    - src/core/progressive-batch/
+    - src/core/background-work.ts
+source_files: []
+depends_on: []
+related_to: []

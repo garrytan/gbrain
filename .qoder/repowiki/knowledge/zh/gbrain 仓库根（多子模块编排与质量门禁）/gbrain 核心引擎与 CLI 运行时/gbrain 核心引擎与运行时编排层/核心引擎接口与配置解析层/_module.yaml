@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/core_runtime
+title: 核心引擎接口与配置解析层
+scope:
+    - src/core/engine.ts
+    - src/core/index.ts
+    - src/core/config.ts
+    - src/core/types.ts
+source_files: []
+depends_on: []
+related_to: []

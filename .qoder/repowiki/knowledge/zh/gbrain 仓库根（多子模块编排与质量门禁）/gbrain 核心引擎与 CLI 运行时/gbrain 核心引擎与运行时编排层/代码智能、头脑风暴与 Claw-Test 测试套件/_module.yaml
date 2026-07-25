@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/code_intel_brainstorm
+title: 代码智能、头脑风暴与 Claw-Test 测试套件
+scope:
+    - src/core/code-intel/
+    - src/core/brainstorm/
+    - src/core/claw-test/
+source_files: []
+depends_on: []
+related_to: []

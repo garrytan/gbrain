@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/minions_subagent_tests
+title: Minions 子代理与 Worker 进程测试套件
+scope:
+    - test/minions/
+    - test/subagent-*.test.ts
+    - test/child-worker-supervisor.test.ts
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/audit_quality
+title: Skillpack 质量审计与合规检查
+scope:
+    - src/core/skillpack/rubric.ts
+    - src/core/skillpack/doctor.ts
+    - src/core/skillpack/harvest-lint.ts
+    - src/core/skillpack/brain-pack-lint.ts
+source_files: []
+depends_on: []
+related_to: []

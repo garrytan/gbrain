@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack
+title: gbrain Skillpack 核心引擎与 CLI 子命令
+scope:
+    - src/core/skillpack/
+source_files: []
+depends_on: []
+related_to: []

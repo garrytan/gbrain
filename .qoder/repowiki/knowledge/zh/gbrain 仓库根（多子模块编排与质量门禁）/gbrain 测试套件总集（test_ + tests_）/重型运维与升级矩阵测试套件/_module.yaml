@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: test_suite/heavy_tests
+title: 重型运维与升级矩阵测试套件
+scope:
+    - tests/heavy/
+source_files: []
+depends_on: []
+related_to: []

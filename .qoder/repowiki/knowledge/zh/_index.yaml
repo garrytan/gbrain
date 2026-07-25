@@ -1,0 +1,1333 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: upgrade-v0.42.53
+nodes_managed: true
+exported_at: "2026-07-17T10:40:23Z"
+modules:
+    "":
+        dir_name: gbrain 仓库根（多子模块编排与质量门禁）
+        title: gbrain 仓库根（多子模块编排与质量门禁）
+        scope:
+            - README.md
+            - CONTRIBUTING.md
+            - DESIGN.md
+            - SECURITY.md
+            - CLAUDE.md
+            - AGENTS.md
+            - TODOS.md
+            - .gitignore
+            - .gitleaks.toml
+            - bunfig.toml
+            - package.json
+            - tsconfig.json
+            - docker-compose.ci.yml
+            - docker-compose.test.yml
+            - gbrain.yml
+            - llms-full.txt
+            - llms.txt
+            - openclaw.plugin.json
+            - .env.testing.example
+            - CHANGELOG.md
+            - INSTALL_FOR_AGENTS.md
+            - LICENSE
+            - VERSION
+            - bun.lock
+        source_files: []
+        children:
+            - admin_frontend
+            - core_engine_and_cli
+            - documentation
+            - evals
+            - examples_skillpack_reference
+            - recipes
+            - scripts
+            - skills_registry
+            - templates
+            - test_suite
+        depends_on: []
+        related_to: []
+    admin_frontend:
+        dir_name: GBrain 管理后台前端 (Admin SPA)
+        title: GBrain 管理后台前端 (Admin SPA)
+        scope:
+            - admin/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli:
+        dir_name: gbrain 核心引擎与 CLI 运行时
+        title: gbrain 核心引擎与 CLI 运行时
+        scope:
+            - src/
+        source_files: []
+        children:
+            - core_engine_and_cli/app_shell_and_types
+            - core_engine_and_cli/cli_commands
+            - core_engine_and_cli/core_engine
+            - core_engine_and_cli/mcp_server
+            - core_engine_and_cli/standalone_evals
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/app_shell_and_types:
+        dir_name: 应用外壳与运行时类型
+        title: 应用外壳与运行时类型
+        scope:
+            - src/cli.ts
+            - src/openclaw-context-engine.ts
+            - src/admin-embedded.ts
+            - src/schema.sql
+            - src/types/
+            - src/version.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/cli_commands:
+        dir_name: gbrain CLI 命令集与迁移编排器
+        title: gbrain CLI 命令集与迁移编排器
+        scope:
+            - src/commands/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine:
+        dir_name: gbrain 核心引擎与运行时编排层
+        title: gbrain 核心引擎与运行时编排层
+        scope:
+            - src/core/
+        source_files: []
+        children:
+            - core_engine_and_cli/core_engine/ai_gateway
+            - core_engine_and_cli/core_engine/code_intel_brainstorm
+            - core_engine_and_cli/core_engine/core_runtime
+            - core_engine_and_cli/core_engine/cycle_orchestration
+            - core_engine_and_cli/core_engine/eval_suites
+            - core_engine_and_cli/core_engine/facts_think_context
+            - core_engine_and_cli/core_engine/ingestion_pipeline
+            - core_engine_and_cli/core_engine/minions_workers
+            - core_engine_and_cli/core_engine/remediation_resolvers_storage
+            - core_engine_and_cli/core_engine/schema_pack
+            - core_engine_and_cli/core_engine/search_retrieval
+            - core_engine_and_cli/core_engine/skillpack_skillify
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/ai_gateway:
+        dir_name: AI Gateway 与 Provider 配方系统
+        title: AI Gateway 与 Provider 配方系统
+        scope:
+            - src/core/ai/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/code_intel_brainstorm:
+        dir_name: 代码智能、头脑风暴与 Claw-Test 测试套件
+        title: 代码智能、头脑风暴与 Claw-Test 测试套件
+        scope:
+            - src/core/code-intel/
+            - src/core/brainstorm/
+            - src/core/claw-test/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/core_runtime:
+        dir_name: 核心引擎接口与配置解析层
+        title: 核心引擎接口与配置解析层
+        scope:
+            - src/core/engine.ts
+            - src/core/index.ts
+            - src/core/config.ts
+            - src/core/types.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/cycle_orchestration:
+        dir_name: Dream Cycle 编排与校准输出
+        title: Dream Cycle 编排与校准输出
+        scope:
+            - src/core/cycle/
+            - src/core/calibration/
+            - src/core/enrichment/
+            - src/core/enrich/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/eval_suites:
+        dir_name: 评估套件与矛盾探测子系统
+        title: 评估套件与矛盾探测子系统
+        scope:
+            - src/core/eval/
+            - src/core/eval-contradictions/
+            - src/core/takes-quality-eval/
+            - src/core/cross-modal-eval/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/facts_think_context:
+        dir_name: 事实抽取、实体消歧与 Think 推理管线
+        title: 事实抽取、实体消歧与 Think 推理管线
+        scope:
+            - src/core/facts/
+            - src/core/think/
+            - src/core/entities/
+            - src/core/by-mention.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/ingestion_pipeline:
+        dir_name: 内容摄取管道与代码_文本分块器
+        title: 内容摄取管道与代码/文本分块器
+        scope:
+            - src/core/ingestion/
+            - src/core/chunkers/
+            - src/core/diarize/
+            - src/core/transcription.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/minions_workers:
+        dir_name: Minion 任务队列与渐进式批处理引擎
+        title: Minion 任务队列与渐进式批处理引擎
+        scope:
+            - src/core/minions/
+            - src/core/progressive-batch/
+            - src/core/background-work.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/remediation_resolvers_storage:
+        dir_name: 修复计划编排、解析器 SDK 与可插拔存储后端
+        title: 修复计划编排、解析器 SDK 与可插拔存储后端
+        scope:
+            - src/core/remediation/
+            - src/core/resolvers/
+            - src/core/storage/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/schema_pack:
+        dir_name: Schema Pack 运行时、顾问诊断与 Onboard 引导
+        title: Schema Pack 运行时、顾问诊断与 Onboard 引导
+        scope:
+            - src/core/schema-pack/
+            - src/core/advisor/
+            - src/core/onboard/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/search_retrieval:
+        dir_name: 混合检索与实体指针注入管线
+        title: 混合检索与实体指针注入管线
+        scope:
+            - src/core/search/
+            - src/core/context/
+            - src/core/embedding.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify:
+        dir_name: Skill 生态与优化 CLI 编排层
+        title: Skill 生态与优化 CLI 编排层
+        scope:
+            - src/core/skillpack/
+            - src/core/skillify/
+            - src/core/skillopt/
+        source_files: []
+        children:
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillopt
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillopt:
+        dir_name: SkillOpt 优化引擎核心
+        title: SkillOpt 优化引擎核心
+        scope:
+            - src/core/skillopt/
+        source_files: []
+        children:
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillopt/evaluation_and_scoring
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillopt/orchestrator_and_benchmark
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillopt/rollout_and_versioning
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillopt/support_and_types
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillopt/validation_and_gates
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillopt/evaluation_and_scoring:
+        dir_name: SkillOpt 评分、学习率调度与写入捕获
+        title: SkillOpt 评分、学习率调度与写入捕获
+        scope:
+            - src/core/skillopt/score.ts
+            - src/core/skillopt/held-out.ts
+            - src/core/skillopt/lr-schedule.ts
+            - src/core/skillopt/write-capture.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillopt/orchestrator_and_benchmark:
+        dir_name: SkillOpt 编排器与基准工具集
+        title: SkillOpt 编排器与基准工具集
+        scope:
+            - src/core/skillopt/orchestrator.ts
+            - src/core/skillopt/batch.ts
+            - src/core/skillopt/benchmark.ts
+            - src/core/skillopt/bootstrap-benchmark.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillopt/rollout_and_versioning:
+        dir_name: SkillOpt 执行、版本与运行期持久化
+        title: SkillOpt 执行、版本与运行期持久化
+        scope:
+            - src/core/skillopt/rollout.ts
+            - src/core/skillopt/version-store.ts
+            - src/core/skillopt/checkpoint.ts
+            - src/core/skillopt/lock.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillopt/support_and_types:
+        dir_name: SkillOpt 类型、审计与编辑应用支撑层
+        title: SkillOpt 类型、审计与编辑应用支撑层
+        scope:
+            - src/core/skillopt/types.ts
+            - src/core/skillopt/audit.ts
+            - src/core/skillopt/help.ts
+            - src/core/skillopt/reflect.ts
+            - src/core/skillopt/rejected-buffer.ts
+            - src/core/skillopt/apply-edits.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillopt/validation_and_gates:
+        dir_name: SkillOpt 验证门控与前置检查
+        title: SkillOpt 验证门控与前置检查
+        scope:
+            - src/core/skillopt/validate-gate.ts
+            - src/core/skillopt/bundled-skill-gate.ts
+            - src/core/skillopt/preflight.ts
+            - src/core/skillopt/cycle-phase.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack:
+        dir_name: gbrain Skillpack 核心引擎与 CLI 子命令
+        title: gbrain Skillpack 核心引擎与 CLI 子命令
+        scope:
+            - src/core/skillpack/
+        source_files: []
+        children:
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/audit_quality
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/misc_ops
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/publish_install
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/reference_apply
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/registry_client
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/scaffold_init
+            - core_engine_and_cli/core_engine/skillpack_skillify/skillpack/state_trust
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/audit_quality:
+        dir_name: Skillpack 质量审计与合规检查
+        title: Skillpack 质量审计与合规检查
+        scope:
+            - src/core/skillpack/rubric.ts
+            - src/core/skillpack/doctor.ts
+            - src/core/skillpack/harvest-lint.ts
+            - src/core/skillpack/brain-pack-lint.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/misc_ops:
+        dir_name: Skillpack 杂项工具与提示（审计、背书、迁移、采集、提示）
+        title: Skillpack 杂项工具与提示（审计、背书、迁移、采集、提示）
+        scope:
+            - src/core/skillpack/endorse.ts
+            - src/core/skillpack/post-install-advisory.ts
+            - src/core/skillpack/brain-pack-advisory.ts
+            - src/core/skillpack/brain-resident-locate.ts
+            - src/core/skillpack/bootstrap-display.ts
+            - src/core/skillpack/migrate-fence.ts
+            - src/core/skillpack/scrub-legacy.ts
+            - src/core/skillpack/audit.ts
+            - src/core/skillpack/harvest.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/publish_install:
+        dir_name: Skillpack 打包发布与安装卸载
+        title: Skillpack 打包发布与安装卸载
+        scope:
+            - src/core/skillpack/pack-publish.ts
+            - src/core/skillpack/installer.ts
+            - src/core/skillpack/bundle.ts
+            - src/core/skillpack/copy.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/reference_apply:
+        dir_name: Skillpack Reference 与 Clean-Hunk Apply（差异生成、解析与应用）
+        title: Skillpack Reference 与 Clean-Hunk Apply（差异生成、解析与应用）
+        scope:
+            - src/core/skillpack/reference.ts
+            - src/core/skillpack/apply-hunks.ts
+            - src/core/skillpack/diff-text.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/registry_client:
+        dir_name: Skillpack 注册表客户端与远程源解析
+        title: Skillpack 注册表客户端与远程源解析
+        scope:
+            - src/core/skillpack/registry-client.ts
+            - src/core/skillpack/remote-source.ts
+            - src/core/skillpack/tarball.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/scaffold_init:
+        dir_name: Skillpack 脚手架与初始化生成器
+        title: Skillpack 脚手架与初始化生成器
+        scope:
+            - src/core/skillpack/init-scaffold.ts
+            - src/core/skillpack/init-brain-pack.ts
+            - src/core/skillpack/scaffold.ts
+            - src/core/skillpack/scaffold-third-party.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/core_engine/skillpack_skillify/skillpack/state_trust:
+        dir_name: Skillpack 安装信任与提醒状态持久化
+        title: Skillpack 安装信任与提醒状态持久化
+        scope:
+            - src/core/skillpack/state.ts
+            - src/core/skillpack/trust-prompt.ts
+            - src/core/skillpack/nag-state.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/mcp_server:
+        dir_name: MCP 服务器与 HTTP_stdio 双传输层
+        title: MCP 服务器与 HTTP/stdio 双传输层
+        scope:
+            - src/mcp/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    core_engine_and_cli/standalone_evals:
+        dir_name: 独立评测集与基准测试 (Standalone Evals)
+        title: 独立评测集与基准测试 (Standalone Evals)
+        scope:
+            - src/eval/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    documentation:
+        dir_name: GBrain 项目文档与规范集
+        title: GBrain 项目文档与规范集
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    evals:
+        dir_name: gbrain 评估套件（功能域解析器、SkillOpt Judge_Reflect）
+        title: gbrain 评估套件（功能域解析器、SkillOpt Judge/Reflect）
+        scope:
+            - evals/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    examples_skillpack_reference:
+        dir_name: gbrain Skillpack 10_10 参考模板
+        title: gbrain Skillpack 10/10 参考模板
+        scope:
+            - examples/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    recipes:
+        dir_name: 语音 Agent 参考实现与技能包 (agent-voice)
+        title: 语音 Agent 参考实现与技能包 (agent-voice)
+        scope:
+            - recipes/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    scripts:
+        dir_name: 构建、测试与质量门禁脚本集
+        title: 构建、测试与质量门禁脚本集
+        scope:
+            - scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    skills_registry:
+        dir_name: GBrain 技能包注册表与路由目录
+        title: GBrain 技能包注册表与路由目录
+        scope:
+            - skills/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    templates:
+        dir_name: soul-audit 模板文件集
+        title: soul-audit 模板文件集
+        scope:
+            - templates/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite:
+        dir_name: gbrain 测试套件总集（test_ + tests_）
+        title: gbrain 测试套件总集（test/ + tests/）
+        scope:
+            - test/
+            - tests/
+        source_files: []
+        children:
+            - test_suite/admin_publish_tests
+            - test_suite/bench_scripts
+            - test_suite/brain_backlink_tests
+            - test_suite/cli_command_tests
+            - test_suite/config_service_tests
+            - test_suite/cycle_autopilot_tests
+            - test_suite/doctor_tests
+            - test_suite/e2e_tests
+            - test_suite/embed_embedding_tests
+            - test_suite/engine_core_tests
+            - test_suite/eval_tests
+            - test_suite/facts_extraction_tests
+            - test_suite/fix_wave_tests
+            - test_suite/frontmatter_markdown_tests
+            - test_suite/heavy_tests
+            - test_suite/longmemeval_tests
+            - test_suite/mcp_llm_provider_tests
+            - test_suite/migration_tests
+            - test_suite/minions_subagent_tests
+            - test_suite/misc_unit_tests
+            - test_suite/oauth_auth_tests
+            - test_suite/schema_pack_tests
+            - test_suite/search_tests
+            - test_suite/skillpack_skill_tests
+            - test_suite/sources_ingestion_tests
+            - test_suite/storage_db_tests
+        depends_on: []
+        related_to: []
+    test_suite/admin_publish_tests:
+        dir_name: 管理员发布与预算审计测试套件
+        title: 管理员发布与预算审计测试套件
+        scope:
+            - test/publish.test.ts
+            - test/admin-*.test.ts
+            - test/quarantine-*.test.ts
+            - test/budget-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/bench_scripts:
+        dir_name: 测试套件与基准脚本回归测试集
+        title: 测试套件与基准脚本回归测试集
+        scope:
+            - test/bench/
+            - test/scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/brain_backlink_tests:
+        dir_name: Brain 子系统测试套件（解析器、注册表、写入器、反向链接）
+        title: Brain 子系统测试套件（解析器、注册表、写入器、反向链接）
+        scope:
+            - test/brain-*.test.ts
+            - test/backlinks.test.ts
+            - test/backlink-count-mention-filter.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/cli_command_tests:
+        dir_name: CLI 命令与子命令集成测试套件
+        title: CLI 命令与子命令集成测试套件
+        scope:
+            - test/cli-*.test.ts
+            - test/commands/
+            - test/claw-test-cli.test.ts
+            - test/calibration-cli.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/config_service_tests:
+        dir_name: 配置、偏好与初始化流程单元测试套件
+        title: 配置、偏好与初始化流程单元测试套件
+        scope:
+            - test/config-*.test.ts
+            - test/preferences.test.ts
+            - test/feature-flags.test.ts
+            - test/features.test.ts
+            - test/init-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/cycle_autopilot_tests:
+        dir_name: Autopilot Cycle 与 Jobs 集成测试套件
+        title: Autopilot Cycle 与 Jobs 集成测试套件
+        scope:
+            - test/cycle/
+            - test/autopilot-*.test.ts
+            - test/jobs-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/doctor_tests:
+        dir_name: Doctor 诊断与自愈修复测试套件
+        title: Doctor 诊断与自愈修复测试套件
+        scope:
+            - test/doctor-*.test.ts
+            - test/self-fix.test.ts
+            - test/dry-fix.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/e2e_tests:
+        dir_name: 端到端集成测试套件（E2E）
+        title: 端到端集成测试套件（E2E）
+        scope:
+            - test/e2e/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/embed_embedding_tests:
+        dir_name: 嵌入与向量索引测试套件
+        title: 嵌入与向量索引测试套件
+        scope:
+            - test/embed-*.test.ts
+            - test/embedding-*.test.ts
+            - test/gateway-embed-model-override.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/engine_core_tests:
+        dir_name: 引擎核心与解析器单元测试套件
+        title: 引擎核心与解析器单元测试套件
+        scope:
+            - test/engine-*.test.ts
+            - test/resolver-*.test.ts
+            - test/resolvers.test.ts
+            - test/orphans-*.test.ts
+            - test/relational-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/eval_tests:
+        dir_name: 评估与矛盾检测测试套件（eval & contradictions）
+        title: 评估与矛盾检测测试套件（eval & contradictions）
+        scope:
+            - test/eval/
+            - test/eval-*.test.ts
+            - test/routing-eval.test.ts
+            - test/routing-eval-cli.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/facts_extraction_tests:
+        dir_name: Facts 抽取与回灌测试套件
+        title: Facts 抽取与回灌测试套件
+        scope:
+            - test/facts-*.test.ts
+            - test/extract/*.ts
+            - test/extract/*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/fix_wave_tests:
+        dir_name: 修复回归的结构化与工厂测试
+        title: 修复回归的结构化与工厂测试
+        scope:
+            - test/fix-wave-structural.test.ts
+            - test/remediation-step.test.ts
+            - test/repair-jsonb.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/frontmatter_markdown_tests:
+        dir_name: Frontmatter、Markdown 序列化与 Lint 测试套件
+        title: Frontmatter、Markdown 序列化与 Lint 测试套件
+        scope:
+            - test/frontmatter-*.test.ts
+            - test/markdown-*.test.ts
+            - test/lint-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/heavy_tests:
+        dir_name: 重型运维与升级矩阵测试套件
+        title: 重型运维与升级矩阵测试套件
+        scope:
+            - tests/heavy/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/longmemeval_tests:
+        dir_name: LongMemEval 与跨模态评测套件测试
+        title: LongMemEval 与跨模态评测套件测试
+        scope:
+            - test/longmemeval-*.test.ts
+            - test/cross-modal-*.test.ts
+            - test/notability-eval.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/mcp_llm_provider_tests:
+        dir_name: MCP 客户端与 LLM Provider 测试套件
+        title: MCP 客户端与 LLM Provider 测试套件
+        scope:
+            - test/mcp-*.test.ts
+            - test/llm-*.test.ts
+            - test/providers.test.ts
+            - test/model-*.test.ts
+            - test/anthropic-*.test.ts
+            - test/openai-compat-multimodal.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/migration_tests:
+        dir_name: 迁移与版本升级测试套件
+        title: 迁移与版本升级测试套件
+        scope:
+            - test/migration-*.test.ts
+            - test/migrations-*.test.ts
+            - test/migrate-*.test.ts
+            - test/file-migration.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/minions_subagent_tests:
+        dir_name: Minions 子代理与 Worker 进程测试套件
+        title: Minions 子代理与 Worker 进程测试套件
+        scope:
+            - test/minions/
+            - test/subagent-*.test.ts
+            - test/child-worker-supervisor.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/misc_unit_tests:
+        dir_name: 通用单元测试套件与测试基础设施
+        title: 通用单元测试套件与测试基础设施
+        scope:
+            - test/core/
+            - test/helpers/
+            - test/fixtures/
+            - test/audit/
+            - test/brainstorm/
+            - test/context/
+            - test/conversation-parser/
+            - test/enrich/
+            - test/eval-contradictions/
+            - test/fuzz/
+            - test/minions/
+            - test/progressive-batch/
+            - test/regressions/
+            - test/abort-check.test.ts
+            - test/active-pack-wiring.test.ts
+            - test/advisor-*.test.ts
+            - test/anomalies.test.ts
+            - test/archive-crawler-config.test.ts
+            - test/artifact-abstraction.test.ts
+            - test/asymmetric-encoding-contract.test.ts
+            - test/auto-think-phase.test.ts
+            - test/backfill-*.test.ts
+            - test/balanced-reranker-default.test.ts
+            - test/batch-projection.test.ts
+            - test/bench-publish.test.ts
+            - test/benchmark-*.ts
+            - test/binary-self-update.test.ts
+            - test/book-mirror.test.ts
+            - test/bootstrap.test.ts
+            - test/cache-scope-key.test.ts
+            - test/capture-*.test.ts
+            - test/check-*.test.ts
+            - test/chunk-grain-fts.test.ts
+            - test/chunker-timeout.test.ts
+            - test/chunker-version-gate.test.ts
+            - test/cjk.test.ts
+            - test/cli-dispatch-thin-client.test.ts
+            - test/cli-dream-engine-warn.test.ts
+            - test/cli-exit-verdict-pin.test.ts
+            - test/cli-finish-teardown.test.ts
+            - test/cli-force-exit-teardown-arming.test.ts
+            - test/cli-format-volunteer.test.ts
+            - test/cli-help-discoverability.test.ts
+            - test/cli-multimodal-integration.test.ts
+            - test/cli-options.test.ts
+            - test/cli-pipe-truncation.test.ts
+            - test/cli-pty-runner.test.ts
+            - test/cli-query-image.test.ts
+            - test/cli-search-dispatch.test.ts
+            - test/cli-should-force-exit.test.ts
+            - test/cli.test.ts
+            - test/code-callers-cli.test.ts
+            - test/code-callers-pin.serial.test.ts
+            - test/code-def-refs.test.ts
+            - test/code-edges.test.ts
+            - test/code-graph-readiness.test.ts
+            - test/code-retrieval-harness.test.ts
+            - test/code-scoped-source-resolve.test.ts
+            - test/commands-search.test.ts
+            - test/config-ensure-gitignore.test.ts
+            - test/config-env-hijack.test.ts
+            - test/config-env.test.ts
+            - test/connect.test.ts
+            - test/connection-manager.serial.test.ts
+            - test/connection-resilience.test.ts
+            - test/console-prefix.test.ts
+            - test/consolidate-valid-until.test.ts
+            - test/content-sanity-literals.test.ts
+            - test/content-sanity.test.ts
+            - test/context-engine.test.ts
+            - test/contextual-retrieval-doctor.serial.test.ts
+            - test/contextual-retrieval-resolver.test.ts
+            - test/contextual-retrieval-service-pure.test.ts
+            - test/conversation-parser-cli.test.ts
+            - test/cosine-rescore-column.test.ts
+            - test/cross-brain-calibration.test.ts
+            - test/cross-modal-eval-aggregate.test.ts
+            - test/cross-modal-eval-cli.test.ts
+            - test/cross-modal-eval-json-repair.test.ts
+            - test/cross-modal-hybrid-integration.serial.test.ts
+            - test/cross-modal-phase1.test.ts
+            - test/cross-modal-phase2.test.ts
+            - test/cycle-abort.test.ts
+            - test/cycle-consolidate.test.ts
+            - test/cycle-last-full-cycle-at.test.ts
+            - test/cycle-lock-per-source.test.ts
+            - test/cycle-pack-gating.test.ts
+            - test/cycle-patterns.test.ts
+            - test/cycle-pglite-lock-ordering.serial.test.ts
+            - test/cycle-synthesize-braindir-resolve.test.ts
+            - test/cycle-synthesize-chunker.test.ts
+            - test/cycle-synthesize-md-discovery.test.ts
+            - test/cycle-synthesize-slug-collection.test.ts
+            - test/cycle-synthesize.test.ts
+            - test/data-research.test.ts
+            - test/db-disconnect-audit.test.ts
+            - test/db-lock-auto-takeover.test.ts
+            - test/db-lock-election.test.ts
+            - test/db-lock-heartbeat-takeover.test.ts
+            - test/db-lock-inspect.test.ts
+            - test/db-lock-per-source.test.ts
+            - test/db-lock-reap.test.ts
+            - test/db-lock-refresh.test.ts
+            - test/db-pacer.test.ts
+            - test/dedup.test.ts
+            - test/destructive-guard.test.ts
+            - test/disk-walk.test.ts
+            - test/distribution-import-boundary.test.ts
+            - test/domain-aggregators.test.ts
+            - test/dream-cli-flags.test.ts
+            - test/dream-postgres.serial.test.ts
+            - test/dream.test.ts
+            - test/drift-watch.test.ts
+            - test/durability-cron.test.ts
+            - test/edge-extractor.test.ts
+            - test/effective-date.test.ts
+            - test/emotional-weight.test.ts
+            - test/error-classify.test.ts
+            - test/errors.test.ts
+            - test/exit-classification.test.ts
+            - test/expert-types-pack.test.ts
+            - test/facts-absorb-log.test.ts
+            - test/facts-anti-loop.test.ts
+            - test/facts-backstop-gating.test.ts
+            - test/facts-backstop-integration.test.ts
+            - test/facts-backstop.test.ts
+            - test/facts-canonicality.test.ts
+            - test/facts-classify.test.ts
+            - test/facts-context-injection.serial.test.ts
+            - test/facts-decay.test.ts
+            - test/facts-doctor-shape.test.ts
+            - test/facts-eligibility.test.ts
+            - test/facts-engine.test.ts
+            - test/facts-extract-silent-no-op.test.ts
+            - test/facts-extract-smoke.test.ts
+            - test/facts-extract.test.ts
+            - test/facts-fence-typed.test.ts
+            - test/facts-fence.test.ts
+            - test/facts-mcp-allowlist.serial.test.ts
+            - test/facts-meta-cache.test.ts
+            - test/facts-migration-dim.test.ts
+            - test/facts-multi-tenant.test.ts
+            - test/facts-queue-drain-pending.test.ts
+            - test/facts-queue.test.ts
+            - test/facts-recall-render.test.ts
+            - test/facts-reconcile-protect-cli.test.ts
+            - test/facts-separation-pglite.test.ts
+            - test/facts-visibility.test.ts
+            - test/fail-improve.test.ts
+            - test/fence-extraction.test.ts
+            - test/fence-write.test.ts
+            - test/file-resolver.test.ts
+            - test/file-upload-security.test.ts
+            - test/files.test.ts
+            - test/filing-audit.test.ts
+            - test/find-experts-op.test.ts
+            - test/flush-then-exit-harness.test.ts
+            - test/friction-cli.test.ts
+            - test/friction.test.ts
+            - test/get-brain-identity.test.ts
+            - test/get-page-federated-scope.test.ts
+            - test/get-status-snapshot-op.test.ts
+            - test/git-remote-durable.serial.test.ts
+            - test/git-remote.test.ts
+            - test/grade-takes-ensemble.test.ts
+            - test/grade-takes.test.ts
+            - test/graph-query.test.ts
+            - test/gstack-learnings-coupling.test.ts
+            - test/guardrails.test.ts
+            - test/handlers-embed-backfill.test.ts
+            - test/handlers.test.ts
+            - test/http-transport.test.ts
+            - test/hybrid-meta.serial.test.ts
+            - test/hybrid-search-lite.serial.test.ts
+            - test/import-checkpoint.test.ts
+            - test/import-code-edges-source-id.test.ts
+            - test/import-dedup-frontmatter-id.test.ts
+            - test/import-file-content-sanity.test.ts
+            - test/import-file.test.ts
+            - test/import-image-file.test.ts
+            - test/import-resume.test.ts
+            - test/import-signature-stamp.serial.test.ts
+            - test/import-source-id.test.ts
+            - test/import-walker.test.ts
+            - test/incremental-chunking.test.ts
+            - test/infer-type-pack.test.ts
+            - test/init-embed-check.test.ts
+            - test/init-env-detection.test.ts
+            - test/init-mcp-only.test.ts
+            - test/init-migrate-only.test.ts
+            - test/init-mode-picker.test.ts
+            - test/init-provider-picker.test.ts
+            - test/insert-facts-batch.test.ts
+            - test/integrations-install.test.ts
+            - test/integrations.test.ts
+            - test/integrity.test.ts
+            - test/intent-weights.test.ts
+            - test/jobs-nice-flag.test.ts
+            - test/jobs-watch-mode.test.ts
+            - test/jobs-watch-snapshot.test.ts
+            - test/language-manifest.test.ts
+            - test/last-retrieved.test.ts
+            - test/lease-cap-controller.test.ts
+            - test/legacy-token-federated-scope.test.ts
+            - test/lens-pack-manifests.test.ts
+            - test/levenshtein.test.ts
+            - test/link-extraction-code-refs.test.ts
+            - test/link-extraction.test.ts
+            - test/link-inference-pack.test.ts
+            - test/link-source-namespaced-regex.test.ts
+            - test/links-timeline-jsonb-poison.test.ts
+            - test/lint-content-sanity.test.ts
+            - test/lint-frontmatter.test.ts
+            - test/lint-shared-engine.test.ts
+            - test/lint.test.ts
+            - test/list-all-sources.test.ts
+            - test/llm-intent-escalation.test.ts
+            - test/llm-intent-hybrid-integration.serial.test.ts
+            - test/loadConfig-merge.test.ts
+            - test/markdown-serializer.test.ts
+            - test/markdown-validation.test.ts
+            - test/markdown.test.ts
+            - test/mcp-client-hardening.test.ts
+            - test/mcp-client.test.ts
+            - test/mcp-dispatch-summarize.test.ts
+            - test/mcp-eval-capture.test.ts
+            - test/mcp-tool-defs.test.ts
+            - test/metric-glossary.test.ts
+            - test/migrate-retry.test.ts
+            - test/migrate.test.ts
+            - test/migration-in-process.serial.test.ts
+            - test/migration-orchestrator-v0_21_0.test.ts
+            - test/migration-orchestrator-v0_31_0.test.ts
+            - test/migration-resume.test.ts
+            - test/migration-v0-29-1.serial.test.ts
+            - test/migrations-cjk-wave.test.ts
+            - test/migrations-registry.test.ts
+            - test/migrations-v0_11_0.test.ts
+            - test/migrations-v0_12_0.test.ts
+            - test/migrations-v0_12_2.test.ts
+            - test/migrations-v0_13_0.test.ts
+            - test/migrations-v0_13_1-grandfather.test.ts
+            - test/migrations-v0_13_1.test.ts
+            - test/migrations-v0_14_0.test.ts
+            - test/migrations-v0_16_0.test.ts
+            - test/migrations-v0_19_0.test.ts
+            - test/migrations-v0_21_0.test.ts
+            - test/migrations-v0_22_4.test.ts
+            - test/migrations-v0_27_1.test.ts
+            - test/migrations-v0_32_2.test.ts
+            - test/migrations-v48-takes-weight-backfill.test.ts
+            - test/migrations-v94.test.ts
+            - test/migrations-v99.test.ts
+            - test/minions-lease-full-retry.test.ts
+            - test/minions-quiet-hours.test.ts
+            - test/minions-shell-inherit.test.ts
+            - test/minions-shell-redact.test.ts
+            - test/minions-shell-validate.test.ts
+            - test/minions-shell.test.ts
+            - test/minions.test.ts
+            - test/mode-switch-ux.test.ts
+            - test/model-config.serial.test.ts
+            - test/model-id.test.ts
+            - test/model-pricing.test.ts
+            - test/models-doctor-embed.test.ts
+            - test/models-doctor-reranker.test.ts
+            - test/mounts-cache.test.ts
+            - test/mounts-cli.test.ts
+            - test/multi-source-drift.test.ts
+            - test/multi-source-integration.test.ts
+            - test/niceness.test.ts
+            - test/nightly-quality-probe.test.ts
+            - test/nudge.test.ts
+            - test/onboard-pack-upgrade-checks.test.ts
+            - test/op-checkpoint-mentions-fingerprint.test.ts
+            - test/op-checkpoint.test.ts
+            - test/operation-context-sourceid-required.test.ts
+            - test/operations-allow-list.test.ts
+            - test/operations-descriptions.test.ts
+            - test/operations-embedding-column.test.ts
+            - test/operations-find-trajectory.test.ts
+            - test/operations-fuzzy-source-scope.test.ts
+            - test/operations-schema-pack.test.ts
+            - test/operations-trust-boundary.test.ts
+            - test/orphans-pure-fn.test.ts
+            - test/orphans-source-scope.test.ts
+            - test/orphans.test.ts
+            - test/pace-mode.test.ts
+            - test/page-generation-counter.test.ts
+            - test/page-lock.test.ts
+            - test/page-type-exhaustive.test.ts
+            - test/pages-soft-delete.test.ts
+            - test/parallel.test.ts
+            - test/parent-scope.test.ts
+            - test/parity.test.ts
+            - test/performfullsync-source-id.test.ts
+            - test/phantom-redirect-engine-parity.test.ts
+            - test/phantom-redirect-per-source-lock.test.ts
+            - test/phantom-redirect.test.ts
+            - test/phase-scope-coverage.test.ts
+            - test/plugin-loader.test.ts
+            - test/post-install-advisory.test.ts
+            - test/post-write-lint.test.ts
+            - test/postgres-disconnect-bounded.test.ts
+            - test/postgres-engine-getter-selfheal.test.ts
+            - test/postgres-engine-singleton-ownership.test.ts
+            - test/postgres-engine.test.ts
+            - test/postgres-execute-raw-direct.test.ts
+            - test/privacy-script-wired.test.ts
+            - test/privacy-strip-and-forget.test.ts
+            - test/process-cleanup.test.ts
+            - test/process-watchdog.serial.test.ts
+            - test/process-watchdog.test.ts
+            - test/progress-tail.test.ts
+            - test/progress.test.ts
+            - test/propose-takes.test.ts
+            - test/public-exports.test.ts
+            - test/qualified-names.test.ts
+            - test/quarantine-cli.test.ts
+            - test/quarantine.test.ts
+            - test/query-cache-gate.test.ts
+            - test/query-cache-knobs-hash.serial.test.ts
+            - test/query-cache.test.ts
+            - test/query-image-flag.serial.test.ts
+            - test/query-intent-legacy.test.ts
+            - test/query-intent.test.ts
+            - test/query-sanitization.test.ts
+            - test/queue-child-done.test.ts
+            - test/queue-getstats-wedge.test.ts
+            - test/queue-lock-retry.test.ts
+            - test/rate-leases-uncapped.test.ts
+            - test/rate-leases.test.ts
+            - test/readme-hero-anchors.test.ts
+            - test/recall-extensions.test.ts
+            - test/recall-footer.test.ts
+            - test/recall-rollup.test.ts
+            - test/recency-decay.test.ts
+            - test/recompute-emotional-weight.test.ts
+            - test/reconcile-links.serial.test.ts
+            - test/redos-hardening.test.ts
+            - test/regression-strict-source-id.test.ts
+            - test/regression-v0_16_4.test.ts
+            - test/reindex-code-max-cost.serial.test.ts
+            - test/reindex-code-model-source.serial.test.ts
+            - test/reindex-code-nudge.serial.test.ts
+            - test/reindex-code.test.ts
+            - test/reindex-cost-refusal.test.ts
+            - test/reindex-frontmatter-connect.test.ts
+            - test/reindex-preserve-tags.test.ts
+            - test/reindex.test.ts
+            - test/relational-ab.test.ts
+            - test/relational-fanout.test.ts
+            - test/relational-intent.test.ts
+            - test/relational-recall.test.ts
+            - test/remediation-step.test.ts
+            - test/repair-jsonb.test.ts
+            - test/repo-root.test.ts
+            - test/report.test.ts
+            - test/repos-alias.test.ts
+            - test/rerank-audit.test.ts
+            - test/resolve-prepare.test.ts
+            - test/resolver-merge.test.ts
+            - test/resolver.test.ts
+            - test/resolvers.test.ts
+            - test/restart-sweep.test.ts
+            - test/retrieval-quality-harness.test.ts
+            - test/retrieval-reflex.test.ts
+            - test/retrieval-upgrade-planner.test.ts
+            - test/retry-matcher.test.ts
+            - test/rrf-source-key.test.ts
+            - test/rss-default.test.ts
+            - test/salience.test.ts
+            - test/scenarios.test.ts
+            - test/schema-bootstrap-coverage.test.ts
+            - test/schema-cli-contract.test.ts
+            - test/schema-cli.test.ts
+            - test/schema-migrate-link-source-mentions.test.ts
+            - test/schema-pack-best-effort.test.ts
+            - test/schema-pack-expand-type-filter.test.ts
+            - test/schema-pack-find-pack-successors.serial.test.ts
+            - test/schema-pack-infer-type-and-subtype.test.ts
+            - test/schema-pack-lint-rules.test.ts
+            - test/schema-pack-load-active.serial.test.ts
+            - test/schema-pack-loader.test.ts
+            - test/schema-pack-manifest-v041_2.test.ts
+            - test/schema-pack-mutate-audit.test.ts
+            - test/schema-pack-mutate.test.ts
+            - test/schema-pack-pack-lock.test.ts
+            - test/schema-pack-page-to-alias.test.ts
+            - test/schema-pack-page-to-link.test.ts
+            - test/schema-pack-query-cache-invalidator.test.ts
+            - test/schema-pack-registry-reload.test.ts
+            - test/schema-pack-registry.test.ts
+            - test/schema-pack-retype.test.ts
+            - test/schema-pack-rewrite-links-batch.test.ts
+            - test/schema-pack-stats.test.ts
+            - test/schema-pack-sync.test.ts
+            - test/schema-pack-trust-boundary.test.ts
+            - test/schema-pack-unify-types-handler.test.ts
+            - test/schema-verify.test.ts
+            - test/scope-agent-isolation.test.ts
+            - test/scope-normalize.test.ts
+            - test/scope.test.ts
+            - test/search-alias-resolved-boost.test.ts
+            - test/search-by-image-op.test.ts
+            - test/search-image-column.test.ts
+            - test/search-lang-symbol-kind.test.ts
+            - test/search-limit.test.ts
+            - test/search-mode.test.ts
+            - test/search-telemetry.test.ts
+            - test/search-types-filter.test.ts
+            - test/search.test.ts
+            - test/seed-pglite.serial.test.ts
+            - test/select-e2e.test.ts
+            - test/self-upgrade-checkonly.serial.test.ts
+            - test/self-upgrade.test.ts
+            - test/serve-skills-publish-nudge.test.ts
+            - test/serve-stdio-lifecycle.test.ts
+            - test/setup-branching.test.ts
+            - test/skill-brain-first.test.ts
+            - test/skill-catalog-block-scalar.test.ts
+            - test/skill-catalog-security.test.ts
+            - test/skill-catalog-transports.test.ts
+            - test/skill-catalog.test.ts
+            - test/skill-manifest.test.ts
+            - test/skill-trigger-index.test.ts
+            - test/skillify-check.test.ts
+            - test/skillify-scaffold.test.ts
+            - test/skillpack-apply-hunks.test.ts
+            - test/skillpack-bootstrap-display.test.ts
+            - test/skillpack-brain-resident-locate.test.ts
+            - test/skillpack-changed-since-version.test.ts
+            - test/skillpack-check.test.ts
+            - test/skillpack-copy.test.ts
+            - test/skillpack-endorse.test.ts
+            - test/skillpack-frontmatter-sources.test.ts
+            - test/skillpack-harvest-lint.test.ts
+            - test/skillpack-harvest.test.ts
+            - test/skillpack-init-brain-pack.test.ts
+            - test/skillpack-init-pack.test.ts
+            - test/skillpack-install.test.ts
+            - test/skillpack-manifest-v1.test.ts
+            - test/skillpack-migrate-fence.test.ts
+            - test/skillpack-nag-state.test.ts
+            - test/skillpack-reference-apply.test.ts
+            - test/skillpack-reference-pack-is-ten.test.ts
+            - test/skillpack-reference.test.ts
+            - test/skillpack-registry-client.test.ts
+            - test/skillpack-registry-schema.test.ts
+            - test/skillpack-remote-source.test.ts
+            - test/skillpack-rubric-doctor.test.ts
+            - test/skillpack-scaffold-third-party.test.ts
+            - test/skillpack-scaffold.test.ts
+            - test/skillpack-scrub-legacy.test.ts
+            - test/skillpack-state.test.ts
+            - test/skillpack-tarball.test.ts
+            - test/skillpack-trust-prompt.test.ts
+            - test/skills-conformance.test.ts
+            - test/slug-validation.test.ts
+            - test/sort-newest-first.test.ts
+            - test/source-config-redact.test.ts
+            - test/source-health.test.ts
+            - test/source-id-routing.test.ts
+            - test/source-id-tx-regression.test.ts
+            - test/source-id.test.ts
+            - test/source-resolver-silent-fallback.test.ts
+            - test/source-resolver-sole-non-default.test.ts
+            - test/source-resolver-with-tier.test.ts
+            - test/source-resolver.test.ts
+            - test/source-scope-resolver.test.ts
+            - test/sources-load.test.ts
+            - test/sources-mcp.test.ts
+            - test/sources-ops.test.ts
+            - test/sources-resync-recovery.test.ts
+            - test/sources-set-cr-mode.test.ts
+            - test/sources-webhook.test.ts
+            - test/sources.test.ts
+            - test/spawn-helpers.test.ts
+            - test/spend-off-switch.test.ts
+            - test/sql-query.test.ts
+            - test/sql-ranking.test.ts
+            - test/ssrf-validate.test.ts
+            - test/status-sections.test.ts
+            - test/storage-backfill.test.ts
+            - test/storage-config.test.ts
+            - test/storage-export.test.ts
+            - test/storage-pglite.test.ts
+            - test/storage-status.test.ts
+            - test/storage-sync.test.ts
+            - test/storage.test.ts
+            - test/stub-guard-audit.test.ts
+            - test/subagent-aggregator.test.ts
+            - test/subagent-audit.test.ts
+            - test/subagent-handler.test.ts
+            - test/subagent-prompt-too-long.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/oauth_auth_tests:
+        dir_name: OAuth 认证与 HTTP 服务单元测试集
+        title: OAuth 认证与 HTTP 服务单元测试集
+        scope:
+            - test/oauth-*.test.ts
+            - test/auth-*.test.ts
+            - test/serve-http-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/schema_pack_tests:
+        dir_name: Schema Pack 模块测试套件
+        title: Schema Pack 模块测试套件
+        scope:
+            - test/schema-pack/
+            - test/schema-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/search_tests:
+        dir_name: 搜索、代码智能与分块器测试套件
+        title: 搜索、代码智能与分块器测试套件
+        scope:
+            - test/search/
+            - test/code-intel/
+            - test/chunkers/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/skillpack_skill_tests:
+        dir_name: Skillpack & SkillOpt 测试套件
+        title: Skillpack & SkillOpt 测试套件
+        scope:
+            - test/skillpack-*.test.ts
+            - test/skill-*.test.ts
+            - test/skillopt/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/sources_ingestion_tests:
+        dir_name: 来源导入与索引重算测试套件
+        title: 来源导入与索引重算测试套件
+        scope:
+            - test/sources-*.test.ts
+            - test/ingestion/
+            - test/import-*.test.ts
+            - test/reindex-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    test_suite/storage_db_tests:
+        dir_name: 存储与数据库层集成测试套件
+        title: 存储与数据库层集成测试套件
+        scope:
+            - test/storage-*.test.ts
+            - test/postgres-*.test.ts
+            - test/pglite-*.test.ts
+            - test/db-*.test.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

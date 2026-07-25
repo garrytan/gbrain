@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/search_retrieval
+title: 混合检索与实体指针注入管线
+scope:
+    - src/core/search/
+    - src/core/context/
+    - src/core/embedding.ts
+source_files: []
+depends_on: []
+related_to: []

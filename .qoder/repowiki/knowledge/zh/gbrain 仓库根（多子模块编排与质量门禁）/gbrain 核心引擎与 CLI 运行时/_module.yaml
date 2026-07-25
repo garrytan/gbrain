@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli
+title: gbrain 核心引擎与 CLI 运行时
+scope:
+    - src/
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/facts_extraction_tests
+title: Facts 抽取与回灌测试套件
+scope:
+    - test/facts-*.test.ts
+    - test/extract/*.ts
+    - test/extract/*.test.ts
+source_files: []
+depends_on: []
+related_to: []

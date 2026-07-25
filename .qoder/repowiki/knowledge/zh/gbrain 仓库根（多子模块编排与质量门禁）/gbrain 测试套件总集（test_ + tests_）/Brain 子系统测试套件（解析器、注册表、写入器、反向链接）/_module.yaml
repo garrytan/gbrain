@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/brain_backlink_tests
+title: Brain 子系统测试套件（解析器、注册表、写入器、反向链接）
+scope:
+    - test/brain-*.test.ts
+    - test/backlinks.test.ts
+    - test/backlink-count-mention-filter.test.ts
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillopt/support_and_types
+title: SkillOpt 类型、审计与编辑应用支撑层
+scope:
+    - src/core/skillopt/types.ts
+    - src/core/skillopt/audit.ts
+    - src/core/skillopt/help.ts
+    - src/core/skillopt/reflect.ts
+    - src/core/skillopt/rejected-buffer.ts
+    - src/core/skillopt/apply-edits.ts
+source_files: []
+depends_on: []
+related_to: []

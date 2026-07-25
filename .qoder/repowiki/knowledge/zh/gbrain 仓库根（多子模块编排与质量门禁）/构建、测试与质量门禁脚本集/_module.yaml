@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: scripts
+title: 构建、测试与质量门禁脚本集
+scope:
+    - scripts/
+source_files: []
+depends_on: []
+related_to: []

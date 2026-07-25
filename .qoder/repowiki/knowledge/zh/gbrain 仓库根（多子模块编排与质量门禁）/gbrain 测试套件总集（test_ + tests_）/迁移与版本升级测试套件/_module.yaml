@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: test_suite/migration_tests
+title: 迁移与版本升级测试套件
+scope:
+    - test/migration-*.test.ts
+    - test/migrations-*.test.ts
+    - test/migrate-*.test.ts
+    - test/file-migration.test.ts
+source_files: []
+depends_on: []
+related_to: []

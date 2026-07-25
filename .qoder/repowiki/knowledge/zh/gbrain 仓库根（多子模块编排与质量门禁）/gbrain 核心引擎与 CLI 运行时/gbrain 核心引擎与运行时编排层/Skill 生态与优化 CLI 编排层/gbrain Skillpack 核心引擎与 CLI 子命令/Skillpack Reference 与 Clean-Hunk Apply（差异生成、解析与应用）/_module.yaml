@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/reference_apply
+title: Skillpack Reference 与 Clean-Hunk Apply（差异生成、解析与应用）
+scope:
+    - src/core/skillpack/reference.ts
+    - src/core/skillpack/apply-hunks.ts
+    - src/core/skillpack/diff-text.ts
+source_files: []
+depends_on: []
+related_to: []

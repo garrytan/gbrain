@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/facts_think_context
+title: 事实抽取、实体消歧与 Think 推理管线
+scope:
+    - src/core/facts/
+    - src/core/think/
+    - src/core/entities/
+    - src/core/by-mention.ts
+source_files: []
+depends_on: []
+related_to: []

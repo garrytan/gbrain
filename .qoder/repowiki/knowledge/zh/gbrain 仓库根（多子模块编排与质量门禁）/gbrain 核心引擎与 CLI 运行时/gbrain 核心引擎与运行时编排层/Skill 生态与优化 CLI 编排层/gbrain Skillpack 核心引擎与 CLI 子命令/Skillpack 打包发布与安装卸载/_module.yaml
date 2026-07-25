@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/publish_install
+title: Skillpack 打包发布与安装卸载
+scope:
+    - src/core/skillpack/pack-publish.ts
+    - src/core/skillpack/installer.ts
+    - src/core/skillpack/bundle.ts
+    - src/core/skillpack/copy.ts
+source_files: []
+depends_on: []
+related_to: []

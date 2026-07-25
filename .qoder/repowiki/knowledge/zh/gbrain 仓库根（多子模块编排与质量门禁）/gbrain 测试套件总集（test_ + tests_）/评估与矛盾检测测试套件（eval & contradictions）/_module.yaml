@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: test_suite/eval_tests
+title: 评估与矛盾检测测试套件（eval & contradictions）
+scope:
+    - test/eval/
+    - test/eval-*.test.ts
+    - test/routing-eval.test.ts
+    - test/routing-eval-cli.test.ts
+source_files: []
+depends_on: []
+related_to: []

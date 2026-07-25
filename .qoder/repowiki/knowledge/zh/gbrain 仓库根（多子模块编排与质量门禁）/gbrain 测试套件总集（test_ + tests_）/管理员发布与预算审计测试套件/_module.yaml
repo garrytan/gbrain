@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: test_suite/admin_publish_tests
+title: 管理员发布与预算审计测试套件
+scope:
+    - test/publish.test.ts
+    - test/admin-*.test.ts
+    - test/quarantine-*.test.ts
+    - test/budget-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

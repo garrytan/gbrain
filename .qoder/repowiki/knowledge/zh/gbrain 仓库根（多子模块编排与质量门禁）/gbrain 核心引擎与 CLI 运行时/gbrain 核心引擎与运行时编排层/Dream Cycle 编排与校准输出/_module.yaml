@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/cycle_orchestration
+title: Dream Cycle 编排与校准输出
+scope:
+    - src/core/cycle/
+    - src/core/calibration/
+    - src/core/enrichment/
+    - src/core/enrich/
+source_files: []
+depends_on: []
+related_to: []

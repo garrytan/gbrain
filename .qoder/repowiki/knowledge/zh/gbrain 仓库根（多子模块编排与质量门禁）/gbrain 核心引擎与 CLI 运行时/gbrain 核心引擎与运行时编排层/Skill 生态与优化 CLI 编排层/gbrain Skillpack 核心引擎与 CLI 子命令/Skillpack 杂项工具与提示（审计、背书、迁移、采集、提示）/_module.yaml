@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/misc_ops
+title: Skillpack 杂项工具与提示（审计、背书、迁移、采集、提示）
+scope:
+    - src/core/skillpack/endorse.ts
+    - src/core/skillpack/post-install-advisory.ts
+    - src/core/skillpack/brain-pack-advisory.ts
+    - src/core/skillpack/brain-resident-locate.ts
+    - src/core/skillpack/bootstrap-display.ts
+    - src/core/skillpack/migrate-fence.ts
+    - src/core/skillpack/scrub-legacy.ts
+    - src/core/skillpack/audit.ts
+    - src/core/skillpack/harvest.ts
+source_files: []
+depends_on: []
+related_to: []

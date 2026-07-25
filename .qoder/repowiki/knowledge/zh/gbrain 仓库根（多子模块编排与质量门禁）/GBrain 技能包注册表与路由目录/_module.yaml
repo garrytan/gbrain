@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: skills_registry
+title: GBrain 技能包注册表与路由目录
+scope:
+    - skills/
+source_files: []
+depends_on: []
+related_to: []

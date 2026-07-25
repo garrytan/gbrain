@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: evals
+title: gbrain 评估套件（功能域解析器、SkillOpt Judge/Reflect）
+scope:
+    - evals/
+source_files: []
+depends_on: []
+related_to: []

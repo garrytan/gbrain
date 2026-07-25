@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: templates
+title: soul-audit 模板文件集
+scope:
+    - templates/
+source_files: []
+depends_on: []
+related_to: []

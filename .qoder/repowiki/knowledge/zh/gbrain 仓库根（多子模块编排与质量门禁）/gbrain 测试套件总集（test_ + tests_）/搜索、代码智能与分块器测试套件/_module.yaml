@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/search_tests
+title: 搜索、代码智能与分块器测试套件
+scope:
+    - test/search/
+    - test/code-intel/
+    - test/chunkers/
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: test_suite/storage_db_tests
+title: 存储与数据库层集成测试套件
+scope:
+    - test/storage-*.test.ts
+    - test/postgres-*.test.ts
+    - test/pglite-*.test.ts
+    - test/db-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

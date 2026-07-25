@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/remediation_resolvers_storage
+title: 修复计划编排、解析器 SDK 与可插拔存储后端
+scope:
+    - src/core/remediation/
+    - src/core/resolvers/
+    - src/core/storage/
+source_files: []
+depends_on: []
+related_to: []

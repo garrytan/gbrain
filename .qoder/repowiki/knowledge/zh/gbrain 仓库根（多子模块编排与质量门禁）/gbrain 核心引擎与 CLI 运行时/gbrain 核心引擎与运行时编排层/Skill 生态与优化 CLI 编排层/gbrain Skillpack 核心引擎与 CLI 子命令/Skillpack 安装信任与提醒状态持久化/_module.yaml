@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/state_trust
+title: Skillpack 安装信任与提醒状态持久化
+scope:
+    - src/core/skillpack/state.ts
+    - src/core/skillpack/trust-prompt.ts
+    - src/core/skillpack/nag-state.ts
+source_files: []
+depends_on: []
+related_to: []

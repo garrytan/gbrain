@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/doctor_tests
+title: Doctor 诊断与自愈修复测试套件
+scope:
+    - test/doctor-*.test.ts
+    - test/self-fix.test.ts
+    - test/dry-fix.test.ts
+source_files: []
+depends_on: []
+related_to: []

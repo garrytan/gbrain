@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: test_suite/engine_core_tests
+title: 引擎核心与解析器单元测试套件
+scope:
+    - test/engine-*.test.ts
+    - test/resolver-*.test.ts
+    - test/resolvers.test.ts
+    - test/orphans-*.test.ts
+    - test/relational-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

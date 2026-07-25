@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli/standalone_evals
+title: 独立评测集与基准测试 (Standalone Evals)
+scope:
+    - src/eval/
+source_files: []
+depends_on: []
+related_to: []

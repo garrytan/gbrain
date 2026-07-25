@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/frontmatter_markdown_tests
+title: Frontmatter、Markdown 序列化与 Lint 测试套件
+scope:
+    - test/frontmatter-*.test.ts
+    - test/markdown-*.test.ts
+    - test/lint-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

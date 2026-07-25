@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/registry_client
+title: Skillpack 注册表客户端与远程源解析
+scope:
+    - src/core/skillpack/registry-client.ts
+    - src/core/skillpack/remote-source.ts
+    - src/core/skillpack/tarball.ts
+source_files: []
+depends_on: []
+related_to: []

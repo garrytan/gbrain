@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillopt
+title: SkillOpt 优化引擎核心
+scope:
+    - src/core/skillopt/
+source_files: []
+depends_on: []
+related_to: []

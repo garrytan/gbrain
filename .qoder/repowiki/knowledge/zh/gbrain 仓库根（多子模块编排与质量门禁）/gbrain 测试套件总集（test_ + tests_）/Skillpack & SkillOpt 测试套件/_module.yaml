@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/skillpack_skill_tests
+title: Skillpack & SkillOpt 测试套件
+scope:
+    - test/skillpack-*.test.ts
+    - test/skill-*.test.ts
+    - test/skillopt/
+source_files: []
+depends_on: []
+related_to: []

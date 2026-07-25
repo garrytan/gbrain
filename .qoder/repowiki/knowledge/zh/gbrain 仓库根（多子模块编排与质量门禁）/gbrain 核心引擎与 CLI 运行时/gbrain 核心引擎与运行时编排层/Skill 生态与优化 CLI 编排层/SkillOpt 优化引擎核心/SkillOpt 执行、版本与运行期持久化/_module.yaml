@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillopt/rollout_and_versioning
+title: SkillOpt 执行、版本与运行期持久化
+scope:
+    - src/core/skillopt/rollout.ts
+    - src/core/skillopt/version-store.ts
+    - src/core/skillopt/checkpoint.ts
+    - src/core/skillopt/lock.ts
+source_files: []
+depends_on: []
+related_to: []

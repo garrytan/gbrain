@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/eval_suites
+title: 评估套件与矛盾探测子系统
+scope:
+    - src/core/eval/
+    - src/core/eval-contradictions/
+    - src/core/takes-quality-eval/
+    - src/core/cross-modal-eval/
+source_files: []
+depends_on: []
+related_to: []

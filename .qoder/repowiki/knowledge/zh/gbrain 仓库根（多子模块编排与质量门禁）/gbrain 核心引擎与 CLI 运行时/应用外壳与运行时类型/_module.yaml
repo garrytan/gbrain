@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: core_engine_and_cli/app_shell_and_types
+title: 应用外壳与运行时类型
+scope:
+    - src/cli.ts
+    - src/openclaw-context-engine.ts
+    - src/admin-embedded.ts
+    - src/schema.sql
+    - src/types/
+    - src/version.ts
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: test_suite/e2e_tests
+title: 端到端集成测试套件（E2E）
+scope:
+    - test/e2e/
+source_files: []
+depends_on: []
+related_to: []

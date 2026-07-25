@@ -1,0 +1,31 @@
+schema_version: 1
+module_path: ""
+title: gbrain 仓库根（多子模块编排与质量门禁）
+scope:
+    - README.md
+    - CONTRIBUTING.md
+    - DESIGN.md
+    - SECURITY.md
+    - CLAUDE.md
+    - AGENTS.md
+    - TODOS.md
+    - .gitignore
+    - .gitleaks.toml
+    - bunfig.toml
+    - package.json
+    - tsconfig.json
+    - docker-compose.ci.yml
+    - docker-compose.test.yml
+    - gbrain.yml
+    - llms-full.txt
+    - llms.txt
+    - openclaw.plugin.json
+    - .env.testing.example
+    - CHANGELOG.md
+    - INSTALL_FOR_AGENTS.md
+    - LICENSE
+    - VERSION
+    - bun.lock
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli/mcp_server
+title: MCP 服务器与 HTTP/stdio 双传输层
+scope:
+    - src/mcp/
+source_files: []
+depends_on: []
+related_to: []

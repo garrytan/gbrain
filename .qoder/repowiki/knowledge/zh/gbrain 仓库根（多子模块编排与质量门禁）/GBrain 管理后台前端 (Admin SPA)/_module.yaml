@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: admin_frontend
+title: GBrain 管理后台前端 (Admin SPA)
+scope:
+    - admin/
+source_files: []
+depends_on: []
+related_to: []

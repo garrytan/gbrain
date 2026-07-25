@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: test_suite/mcp_llm_provider_tests
+title: MCP 客户端与 LLM Provider 测试套件
+scope:
+    - test/mcp-*.test.ts
+    - test/llm-*.test.ts
+    - test/providers.test.ts
+    - test/model-*.test.ts
+    - test/anthropic-*.test.ts
+    - test/openai-compat-multimodal.test.ts
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/embed_embedding_tests
+title: 嵌入与向量索引测试套件
+scope:
+    - test/embed-*.test.ts
+    - test/embedding-*.test.ts
+    - test/gateway-embed-model-override.test.ts
+source_files: []
+depends_on: []
+related_to: []

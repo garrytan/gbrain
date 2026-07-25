@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/ingestion_pipeline
+title: 内容摄取管道与代码/文本分块器
+scope:
+    - src/core/ingestion/
+    - src/core/chunkers/
+    - src/core/diarize/
+    - src/core/transcription.ts
+source_files: []
+depends_on: []
+related_to: []

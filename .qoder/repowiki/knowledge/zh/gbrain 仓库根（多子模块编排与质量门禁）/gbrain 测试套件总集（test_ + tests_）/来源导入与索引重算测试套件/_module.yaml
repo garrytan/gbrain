@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: test_suite/sources_ingestion_tests
+title: 来源导入与索引重算测试套件
+scope:
+    - test/sources-*.test.ts
+    - test/ingestion/
+    - test/import-*.test.ts
+    - test/reindex-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

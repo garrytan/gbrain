@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: recipes
+title: 语音 Agent 参考实现与技能包 (agent-voice)
+scope:
+    - recipes/
+source_files: []
+depends_on: []
+related_to: []

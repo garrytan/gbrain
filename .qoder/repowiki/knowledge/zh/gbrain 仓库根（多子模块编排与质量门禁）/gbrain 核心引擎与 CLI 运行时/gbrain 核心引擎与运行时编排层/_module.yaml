@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine
+title: gbrain 核心引擎与运行时编排层
+scope:
+    - src/core/
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: test_suite/bench_scripts
+title: 测试套件与基准脚本回归测试集
+scope:
+    - test/bench/
+    - test/scripts/
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/cycle_autopilot_tests
+title: Autopilot Cycle 与 Jobs 集成测试套件
+scope:
+    - test/cycle/
+    - test/autopilot-*.test.ts
+    - test/jobs-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/schema_pack
+title: Schema Pack 运行时、顾问诊断与 Onboard 引导
+scope:
+    - src/core/schema-pack/
+    - src/core/advisor/
+    - src/core/onboard/
+source_files: []
+depends_on: []
+related_to: []

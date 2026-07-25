@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: examples_skillpack_reference
+title: gbrain Skillpack 10/10 参考模板
+scope:
+    - examples/
+source_files: []
+depends_on: []
+related_to: []

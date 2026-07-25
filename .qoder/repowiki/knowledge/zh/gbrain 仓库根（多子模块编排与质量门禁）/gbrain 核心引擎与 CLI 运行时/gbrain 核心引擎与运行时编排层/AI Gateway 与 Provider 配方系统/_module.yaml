@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/ai_gateway
+title: AI Gateway 与 Provider 配方系统
+scope:
+    - src/core/ai/
+source_files: []
+depends_on: []
+related_to: []

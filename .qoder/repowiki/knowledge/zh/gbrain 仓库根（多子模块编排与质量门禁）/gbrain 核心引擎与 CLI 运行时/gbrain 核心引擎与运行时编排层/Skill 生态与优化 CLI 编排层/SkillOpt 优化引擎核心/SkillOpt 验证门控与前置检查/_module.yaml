@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillopt/validation_and_gates
+title: SkillOpt 验证门控与前置检查
+scope:
+    - src/core/skillopt/validate-gate.ts
+    - src/core/skillopt/bundled-skill-gate.ts
+    - src/core/skillopt/preflight.ts
+    - src/core/skillopt/cycle-phase.ts
+source_files: []
+depends_on: []
+related_to: []

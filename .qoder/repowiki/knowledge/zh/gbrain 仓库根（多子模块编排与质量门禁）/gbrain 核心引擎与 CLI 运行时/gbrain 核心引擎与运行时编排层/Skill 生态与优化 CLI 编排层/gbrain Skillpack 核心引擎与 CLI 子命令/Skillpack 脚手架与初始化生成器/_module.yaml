@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillpack/scaffold_init
+title: Skillpack 脚手架与初始化生成器
+scope:
+    - src/core/skillpack/init-scaffold.ts
+    - src/core/skillpack/init-brain-pack.ts
+    - src/core/skillpack/scaffold.ts
+    - src/core/skillpack/scaffold-third-party.ts
+source_files: []
+depends_on: []
+related_to: []

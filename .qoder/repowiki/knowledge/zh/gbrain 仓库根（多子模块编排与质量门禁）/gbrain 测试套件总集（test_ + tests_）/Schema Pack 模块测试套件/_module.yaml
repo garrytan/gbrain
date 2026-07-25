@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: test_suite/schema_pack_tests
+title: Schema Pack 模块测试套件
+scope:
+    - test/schema-pack/
+    - test/schema-*.test.ts
+source_files: []
+depends_on: []
+related_to: []

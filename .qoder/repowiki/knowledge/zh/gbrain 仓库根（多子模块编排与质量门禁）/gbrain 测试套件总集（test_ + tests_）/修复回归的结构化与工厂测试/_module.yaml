@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: test_suite/fix_wave_tests
+title: 修复回归的结构化与工厂测试
+scope:
+    - test/fix-wave-structural.test.ts
+    - test/remediation-step.test.ts
+    - test/repair-jsonb.test.ts
+source_files: []
+depends_on: []
+related_to: []

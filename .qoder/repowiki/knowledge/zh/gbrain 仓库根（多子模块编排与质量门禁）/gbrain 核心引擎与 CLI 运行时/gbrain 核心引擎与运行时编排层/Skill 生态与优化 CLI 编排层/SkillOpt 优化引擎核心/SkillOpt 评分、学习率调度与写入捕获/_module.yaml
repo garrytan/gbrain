@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: core_engine_and_cli/core_engine/skillpack_skillify/skillopt/evaluation_and_scoring
+title: SkillOpt 评分、学习率调度与写入捕获
+scope:
+    - src/core/skillopt/score.ts
+    - src/core/skillopt/held-out.ts
+    - src/core/skillopt/lr-schedule.ts
+    - src/core/skillopt/write-capture.ts
+source_files: []
+depends_on: []
+related_to: []

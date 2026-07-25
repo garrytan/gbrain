@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: documentation
+title: GBrain 项目文档与规范集
+scope:
+    - docs/
+source_files: []
+depends_on: []
+related_to: []
