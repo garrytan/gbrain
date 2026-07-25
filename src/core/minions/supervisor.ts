@@ -41,7 +41,10 @@ import {
   unlinkSync,
   writeSync,
 } from 'fs';
-import { dirname } from 'path';
+import { execFileSync } from 'child_process';
+import { randomUUID } from 'crypto';
+import { homedir } from 'os';
+import { basename, dirname, join } from 'path';
 import type { BrainEngine } from '../engine.ts';
 
 export type SupervisorEvent =
@@ -96,9 +99,73 @@ export interface SupervisorOpts {
 export const DEFAULT_PID_FILE: string = (() => {
   const envOverride = process.env.GBRAIN_SUPERVISOR_PID_FILE;
   if (envOverride && envOverride.length > 0) return envOverride;
-  const home = process.env.HOME ?? '/tmp';
-  return `${home}/.gbrain/supervisor.pid`;
+  return join(homedir(), '.gbrain', 'supervisor.pid');
 })();
+
+export interface SupervisorPidRecord {
+  pid: number;
+  started_at: string;
+  instance_id: string;
+  executable: string;
+}
+
+export function parseSupervisorPidRecord(contents: string): SupervisorPidRecord | null {
+  const trimmed = contents.trim();
+  if (!trimmed) return null;
+  try {
+    const value = JSON.parse(trimmed) as Partial<SupervisorPidRecord>;
+    if (!Number.isInteger(value.pid) || (value.pid ?? 0) <= 0) return null;
+    return {
+      pid: value.pid!,
+      started_at: typeof value.started_at === 'string' ? value.started_at : '',
+      instance_id: typeof value.instance_id === 'string' ? value.instance_id : '',
+      executable: typeof value.executable === 'string' ? value.executable : '',
+    };
+  } catch {
+    const pid = parseInt(trimmed.split(/\r?\n/, 1)[0] ?? '', 10);
+    return Number.isInteger(pid) && pid > 0
+      ? { pid, started_at: '', instance_id: '', executable: '' }
+      : null;
+  }
+}
+
+export function readSupervisorPidRecord(pidFile: string): SupervisorPidRecord | null {
+  try {
+    return parseSupervisorPidRecord(readFileSync(pidFile, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function readProcessCommandLine(pid: number): string {
+  try {
+    if (process.platform === 'win32') {
+      const script = `$p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; if ($p) { $p.CommandLine }`;
+      return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000,
+      }).trim();
+    }
+    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf8',
+      timeout: 5000,
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+export function isExpectedSupervisorProcess(record: SupervisorPidRecord): boolean {
+  if (!isProcessAlive(record.pid)) return false;
+  const commandLine = readProcessCommandLine(record.pid).toLowerCase();
+  if (!commandLine || !commandLine.includes('supervisor')) return false;
+  if (record.executable) {
+    const executableName = basename(record.executable).toLowerCase();
+    if (executableName && !commandLine.includes(executableName)) return false;
+  }
+  return commandLine.includes('jobs') || commandLine.includes('supervisor-runner');
+}
 
 const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
   concurrency: 2,
@@ -162,10 +229,12 @@ export class MinionSupervisor {
   private stopping = false;
   private healthInFlight = false;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private controlTimer: ReturnType<typeof setInterval> | null = null;
   private exitListener: (() => void) | null = null;
   private sigtermListener: (() => void) | null = null;
   private sigintListener: (() => void) | null = null;
   private lockAcquired = false;
+  private readonly instanceId = randomUUID();
   private consecutiveHealthFailures = 0;
 
   constructor(engine: BrainEngine, opts: Partial<SupervisorOpts> & { cliPath: string }) {
@@ -247,11 +316,13 @@ export class MinionSupervisor {
     this.exitListener = () => {
       try {
         if (existsSync(this.opts.pidFile)) {
-          const contents = readFileSync(this.opts.pidFile, 'utf8').trim().split('\n')[0];
-          if (contents === String(process.pid)) {
+          const record = readSupervisorPidRecord(this.opts.pidFile);
+          if (record?.pid === process.pid && record.instance_id === this.instanceId) {
             unlinkSync(this.opts.pidFile);
           }
         }
+        const stopFile = `${this.opts.pidFile}.stop`;
+        if (existsSync(stopFile)) unlinkSync(stopFile);
       } catch { /* best effort */ }
     };
     process.on('exit', this.exitListener);
@@ -261,6 +332,20 @@ export class MinionSupervisor {
     this.sigintListener = () => { void this.shutdown('SIGINT', ExitCodes.CLEAN); };
     process.on('SIGTERM', this.sigtermListener);
     process.on('SIGINT', this.sigintListener);
+    this.controlTimer = setInterval(() => {
+      const stopFile = `${this.opts.pidFile}.stop`;
+      if (!existsSync(stopFile)) return;
+      try {
+        const request = JSON.parse(readFileSync(stopFile, 'utf8')) as { instance_id?: string };
+        unlinkSync(stopFile);
+        if (request.instance_id === this.instanceId) {
+          void this.shutdown('control_file', ExitCodes.CLEAN);
+        }
+      } catch {
+        try { unlinkSync(stopFile); } catch { /* best effort */ }
+      }
+    }, 250);
+    this.controlTimer.unref?.();
 
     // 4. Health monitoring. Skip when healthInterval=0 — that's the explicit
      // "disable" contract documented on `--health-interval 0`. setInterval(0)
@@ -292,6 +377,10 @@ export class MinionSupervisor {
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
       this.healthTimer = null;
+    }
+    if (this.controlTimer) {
+      clearInterval(this.controlTimer);
+      this.controlTimer = null;
     }
 
     if (this.childSupervisor) {
@@ -351,7 +440,12 @@ export class MinionSupervisor {
       // O_CREAT | O_EXCL | O_WRONLY — fails with EEXIST if the file exists.
       const fd = openSync(this.opts.pidFile, 'wx');
       try {
-        writeSync(fd, String(process.pid));
+        writeSync(fd, JSON.stringify({
+          pid: process.pid,
+          started_at: new Date().toISOString(),
+          instance_id: this.instanceId,
+          executable: process.execPath,
+        } satisfies SupervisorPidRecord));
       } finally {
         closeSync(fd);
       }
@@ -363,8 +457,7 @@ export class MinionSupervisor {
         // File exists — check if the owner is alive.
         let existingPid = -1;
         try {
-          const contents = readFileSync(this.opts.pidFile, 'utf8').trim().split('\n')[0];
-          existingPid = parseInt(contents, 10);
+          existingPid = readSupervisorPidRecord(this.opts.pidFile)?.pid ?? -1;
         } catch { /* corrupt file */ }
 
         if (!isNaN(existingPid) && existingPid > 0 && isProcessAlive(existingPid)) {
@@ -377,7 +470,12 @@ export class MinionSupervisor {
         try {
           const fd = openSync(this.opts.pidFile, 'wx');
           try {
-            writeSync(fd, String(process.pid));
+            writeSync(fd, JSON.stringify({
+              pid: process.pid,
+              started_at: new Date().toISOString(),
+              instance_id: this.instanceId,
+              executable: process.execPath,
+            } satisfies SupervisorPidRecord));
           } finally {
             closeSync(fd);
           }

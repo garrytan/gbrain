@@ -1,4 +1,13 @@
 # Bug 修复台账
+## 2026-07-25 P1/P2 稳定性、安全与文档一致性修复
+
+- 时间：2026-07-25
+- 版本号：PMBrain 1.1.54；PMBrain Desktop 1.0.78
+- 标题：修复 PGLite 任务竞态、Worker 进程身份、连接池、OAuth 与长期内存增长问题
+- 描述：统一所有 Admin PGLite 子进程的独占队列，等待子进程完全退出和主引擎重连后再完成任务；Admin Worker 改为复用正式 Jobs Supervisor，PID 记录增加启动时间、实例 ID 和可执行文件并在停止前校验进程身份；Postgres 子 Manager 的 Direct Pool 操作代理父 Manager；OAuth `/token` 只执行一次限流；桌面端复用 Admin Cookie 并在 401 后更新；Admin Session、Run 和 Preview 增加过期与数量上限；修正 README 本地化及未接入音频导入的承诺，并修复转写模块的 Windows 临时目录、Shell 参数拼接和 Deepgram 路由。
+- 是否完成：是
+- 最终结果：PGLite 导入、Dream、同步、Capture、Think、导出和 Source 添加不再并发抢占文件锁，超时或取消会等待子进程退出后再重连；Admin 不再创建裸 PID Direct Worker，也不会向身份不匹配的 PID 发送停止信号；子引擎不再重复创建 Direct Pool；桌面连续 Admin 请求不再持续制造 7 天会话。根项目与桌面端 TypeScript 检查、P1/P2 定向测试和桌面 Sidecar 测试通过；未修改数据库 schema、用户知识库或原始资料，Windows 安装包仍由用户执行 `bun run build:win`。
+
 ## 2026-07-25 Admin 导入提示、数据源重连与桌面模型保存状态修复
 
 - 时间：2026-07-25

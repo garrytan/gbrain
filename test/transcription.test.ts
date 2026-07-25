@@ -60,11 +60,40 @@ describe('transcription', () => {
   });
 
   test('supported audio extensions are comprehensive', () => {
-    // Verify common audio formats are supported
+    const { AUDIO_EXTENSIONS } = require('../src/core/transcription.ts');
     const expected = ['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.mp4', '.webm'];
-    // We can't access the private set directly, but we can test via error messages
-    // The unsupported format test above verifies .txt is rejected
-    // This test documents the expected formats
-    expect(expected.length).toBeGreaterThan(5);
+    expect(expected.every(extension => AUDIO_EXTENSIONS.has(extension))).toBe(true);
+  });
+
+  test('routes Deepgram to its native endpoint and authorization scheme', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestUrl = '';
+    let authorization = '';
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input);
+      authorization = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? '');
+      return new Response(JSON.stringify({
+        metadata: { duration: 1.25 },
+        results: {
+          channels: [{
+            detected_language: 'zh',
+            alternatives: [{
+              transcript: '测试',
+              words: [{ start: 0, end: 1.25, punctuated_word: '测试', speaker: 0 }],
+            }],
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const { transcribe } = await import('../src/core/transcription.ts');
+      const result = await transcribe(TMP_MP3, { provider: 'deepgram', apiKey: 'dg-test' });
+      expect(requestUrl).toStartWith('https://api.deepgram.com/v1/listen?');
+      expect(authorization).toBe('Token dg-test');
+      expect(result.provider).toBe('deepgram');
+      expect(result.text).toBe('测试');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

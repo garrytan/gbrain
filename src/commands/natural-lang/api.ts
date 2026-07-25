@@ -13,6 +13,29 @@ import { previews, runs, startRun, type RunHooks } from './executor.ts';
 import { ALL_PHASES, type CyclePhase } from '../../core/cycle.ts';
 
 export const ADMIN_IMPORT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+export const MAX_STORED_PREVIEWS = 100;
+const previewCreatedAt = new Map<string, number>();
+
+function prunePreviews(now = Date.now()): void {
+  const entries = [...previewCreatedAt.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [previewId, createdAt] of entries) {
+    if (now - createdAt > 60 * 60 * 1000) {
+      previewCreatedAt.delete(previewId);
+      previews.delete(previewId);
+    }
+  }
+  const retained = [...previewCreatedAt.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [previewId] of retained.slice(MAX_STORED_PREVIEWS)) {
+    previewCreatedAt.delete(previewId);
+    previews.delete(previewId);
+  }
+}
+
+function storePreview(preview: IntentPreview): void {
+  previews.set(preview.previewId, preview);
+  previewCreatedAt.set(preview.previewId, Date.now());
+  prunePreviews();
+}
 
 // ---------------------------------------------------------------------------
 // Import-path helpers
@@ -94,7 +117,7 @@ export async function previewIntent(text: string, config: GBrainConfig | null): 
         };
       }
       const preview = normalizeIntentPreview(obj);
-      previews.set(preview.previewId, preview);
+      storePreview(preview);
       return preview;
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
@@ -112,10 +135,13 @@ function captureContentFromInput(text: string): string {
 }
 
 export async function executePreview(engine: BrainEngine, previewId: string, confirmed: boolean, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
+  prunePreviews();
   const preview = previews.get(previewId);
   if (!preview) throw new Error('Preview not found or expired');
   if (preview.clarification) throw new Error(preview.clarification);
   if (preview.requiresConfirmation && !confirmed) throw new Error('Confirmation required');
+  previews.delete(previewId);
+  previewCreatedAt.delete(previewId);
   if (preview.intent === 'import_path' && typeof preview.slots.path === 'string') {
     preview.slots.sourceId = await resolveImportSourceIdForPath(engine, preview.slots.path, preview.slots.sourceId);
     const command = commandForPreview(preview);

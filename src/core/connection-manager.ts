@@ -191,6 +191,7 @@ export function resolveDirectPoolSize(explicit?: number): number {
 
 export class ConnectionManager {
   private readonly opts: ConnectionManagerOpts;
+  private readonly parent?: ConnectionManager;
   private _readPool: Sql | null = null;
   private _readPoolOwnedExternally: boolean;
   private _directInit: Promise<Sql | null> | null = null;
@@ -201,6 +202,7 @@ export class ConnectionManager {
 
   constructor(opts: ConnectionManagerOpts) {
     this.opts = opts;
+    this.parent = opts.parent;
     this._readPoolOwnedExternally = opts.readPoolOwnedExternally === true;
 
     // A2: kill-switch resolution. Parent overrides env when present.
@@ -287,6 +289,7 @@ export class ConnectionManager {
    * await the same init instead of racing two pool constructions.
    */
   async ddl(): Promise<Sql> {
+    if (this.parent) return this.parent.ddl();
     if (!this.isDualPoolActive()) {
       return this.getReadPool();
     }
@@ -300,6 +303,7 @@ export class ConnectionManager {
    * + caller-side timeout SET LOCAL).
    */
   async bulk(_timeoutSeconds?: number): Promise<Sql> {
+    if (this.parent) return this.parent.bulk(_timeoutSeconds);
     if (!this.isDualPoolActive()) {
       return this.getReadPool();
     }
@@ -307,6 +311,7 @@ export class ConnectionManager {
   }
 
   private async getDirectPool(): Promise<Sql> {
+    if (this.parent) return this.parent.getDirectPool();
     if (this._directPool) return this._directPool;
     // A1: cache the Promise so concurrent first callers await the same init.
     if (!this._directInit) {
@@ -400,7 +405,7 @@ export class ConnectionManager {
    * (db.ts singleton path). Direct pool is always ours.
    */
   async disconnect(): Promise<void> {
-    if (this._directPool) {
+    if (!this.parent && this._directPool) {
       try { await this._directPool.end(); } catch { /* idempotent */ }
       this._directPool = null;
       this._directInit = null;

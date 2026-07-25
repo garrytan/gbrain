@@ -68,11 +68,13 @@ import {
   getAdminBrainPageDetail,
   getAdminBrainPageChunks,
   getAdminDreamOverview,
+  getSupervisorStatus,
   getAdminLlmStatus,
   getRun,
   cancelRun,
   listAdminBrainPages,
   listRuns,
+  PgliteRunCoordinator,
   previewIntent,
   resolveCliEntry,
   startActionRun,
@@ -107,6 +109,8 @@ const ADMIN_DOCS_EMPTY_MARKDOWN = '暂无';
 
 export const ADMIN_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const ADMIN_DREAM_SCHEDULE_CHECK_MS = 30_000;
+export const ADMIN_SESSION_CAP = 1000;
+export const ADMIN_SESSION_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 const ADMIN_DREAM_SCHEDULE_ENABLED_KEY = 'dream.schedule.enabled';
 const ADMIN_DREAM_SCHEDULE_TIME_KEY = 'dream.schedule.time';
@@ -245,54 +249,62 @@ async function normalizeAdminAgentSourceScope(
   return { sourceId, federatedRead };
 }
 
-async function adminWorkerPidFile(): Promise<string> {
-  const { join } = await import('path');
-  return join(process.cwd(), '.gbrain', 'admin-worker.pid');
-}
-
-function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function ensureAdminWorkerStarted(): Promise<{
   event: 'already_running' | 'started';
   worker_pid: number;
   pid_file: string;
-  mode: 'direct-worker';
+  mode: 'supervisor';
 }> {
-  const { spawn } = await import('child_process');
-  const { mkdirSync, readFileSync, writeFileSync } = await import('fs');
-  const { dirname } = await import('path');
-  const pidFile = await adminWorkerPidFile();
-  try {
-    const existingPid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0] ?? '', 10);
-    if (isPidAlive(existingPid)) {
-      return { event: 'already_running', worker_pid: existingPid, pid_file: pidFile, mode: 'direct-worker' };
-    }
-  } catch {
-    // no usable direct worker pid file
+  const current = await getSupervisorStatus();
+  if (current.running && current.supervisor_pid) {
+    return {
+      event: 'already_running',
+      worker_pid: current.supervisor_pid,
+      pid_file: current.pid_file,
+      mode: 'supervisor',
+    };
   }
-  const command = [...resolveCliEntry(), 'jobs', 'work', '--concurrency', '2'];
+  if (current.supervisor_pid) {
+    try {
+      process.kill(current.supervisor_pid, 0);
+      throw new Error('supervisor_process_identity_mismatch');
+    } catch (e) {
+      if (e instanceof Error && e.message === 'supervisor_process_identity_mismatch') throw e;
+      // Stale record for a process that no longer exists; the canonical
+      // supervisor start path will remove it atomically.
+    }
+  }
+  const { spawn } = await import('child_process');
+  const command = [...resolveCliEntry(), 'jobs', 'supervisor', 'start', '--detach', '--json'];
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
     shell: false,
     windowsHide: true,
-    detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'ignore'],
     env: process.env,
   });
-  child.unref();
-  const workerPid = child.pid ?? 0;
-  if (workerPid <= 0) throw new Error('worker_start_failed');
-  mkdirSync(dirname(pidFile), { recursive: true });
-  writeFileSync(pidFile, `${workerPid}\n`, 'utf8');
-  return { event: 'started', worker_pid: workerPid, pid_file: pidFile, mode: 'direct-worker' };
+  let stdout = '';
+  child.stdout?.on('data', chunk => {
+    stdout = (stdout + String(chunk)).slice(-64_000);
+  });
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  if (code !== 0) throw new Error(`supervisor_start_failed_exit_${code ?? 'unknown'}`);
+  const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  const payload = line ? JSON.parse(line) as {
+    event?: string;
+    supervisor_pid?: number;
+    pid_file?: string;
+  } : {};
+  if (!payload.supervisor_pid || !payload.pid_file) throw new Error('supervisor_start_invalid_response');
+  return {
+    event: payload.event === 'already_running' ? 'already_running' : 'started',
+    worker_pid: payload.supervisor_pid,
+    pid_file: payload.pid_file,
+    mode: 'supervisor',
+  };
 }
 
 /**
@@ -896,9 +908,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const config = loadConfig() || { engine: 'pglite' as const };
 
   // PGLite lock coordination: release the engine lock before spawning a child
-  // process (import/sync/etc.) so the child can acquire it; reconnect after.
+  // process (import/sync/etc.) so the child can acquire it. Every child shares
+  // one coordinator, and the next child cannot start until the previous child
+  // has fully exited and the main engine has reconnected.
+  const pgliteRunCoordinator = engine.kind === 'pglite' ? new PgliteRunCoordinator() : null;
   const runHooks = engine.kind === 'pglite' && config
     ? {
+        acquireExclusive: () => pgliteRunCoordinator!.acquire(),
         beforeSpawn: () => engine.disconnect(),
         afterComplete: () => engine.connect(toEngineConfig(config as GBrainConfig)),
       }
@@ -966,6 +982,28 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const bootstrapHash = createHash('sha256').update(bootstrapToken).digest('hex');
   const suppressBootstrapPrint = options.suppressBootstrapToken === true;
   const adminSessions = new Map<string, number>(); // sessionId → expiresAt
+  const pruneAdminSessions = (now = Date.now()) => {
+    for (const [sessionId, expiresAt] of adminSessions) {
+      if (expiresAt <= now) adminSessions.delete(sessionId);
+    }
+    if (adminSessions.size > ADMIN_SESSION_CAP) {
+      const drop = adminSessions.size - ADMIN_SESSION_CAP;
+      const oldest = adminSessions.keys();
+      for (let i = 0; i < drop; i++) {
+        const sessionId = oldest.next().value;
+        if (typeof sessionId === 'string') adminSessions.delete(sessionId);
+      }
+    }
+  };
+  const createAdminSession = (ttlMs: number): { sessionId: string; expiresAt: number } => {
+    pruneAdminSessions();
+    const sessionId = randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + ttlMs;
+    adminSessions.set(sessionId, expiresAt);
+    pruneAdminSessions();
+    return { sessionId, expiresAt };
+  };
+  setInterval(pruneAdminSessions, ADMIN_SESSION_PRUNE_INTERVAL_MS).unref?.();
 
   // SSE clients for live activity feed
   const sseClients = new Set<express.Response>();
@@ -1083,7 +1121,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Public clients (token_endpoint_auth_method='none') fall through to
   // the SDK's handler — the v0.34.1.0 PKCE path stays canonical.
   // ---------------------------------------------------------------------------
-  app.post('/token', ccRateLimiter, async (req, res, next) => {
+  app.post('/token', async (req, res, next) => {
     const grantType = req.body?.grant_type;
     if (grantType !== 'authorization_code' && grantType !== 'refresh_token') {
       return next();
@@ -1239,9 +1277,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       return;
     }
 
-    const sessionId = randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-    adminSessions.set(sessionId, expiresAt);
+    const { sessionId } = createAdminSession(24 * 60 * 60 * 1000); // 24 hours
 
     res.cookie('pmbrain_admin', sessionId, adminCookie(req, 24 * 60 * 60 * 1000));
     res.json({ status: 'authenticated' });
@@ -1350,9 +1386,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     magicLinkNonces.delete(nonce);
     consumedNonces.add(nonce);
 
-    const sessionId = randomBytes(32).toString('hex');
-    const sessionExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
-    adminSessions.set(sessionId, sessionExpiresAt);
+    const { sessionId } = createAdminSession(7 * 24 * 60 * 60 * 1000); // 7 days for magic link
 
     res.cookie('pmbrain_admin', sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
     res.redirect('/admin/');
@@ -1360,6 +1394,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Admin auth middleware
   function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+    pruneAdminSessions();
     const cookies = req.cookies as Record<string, string>;
     const sessionId = cookies?.pmbrain_admin || cookies?.gbrain_admin;
     if (!sessionId || !adminSessions.has(sessionId)) {
@@ -1610,7 +1645,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const today = adminDreamScheduleDateKey(now);
     try {
       const sourceId = await resolveMainSourceId(engine);
-      await ensureAdminWorkerStarted();
+      if (engine.kind !== 'pglite') await ensureAdminWorkerStarted();
       await engine.setConfig(ADMIN_DREAM_SCHEDULE_LAST_STARTED_DATE_KEY, today);
       const run = await startDreamRun({
         preset: 'full',
@@ -1788,30 +1823,29 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.post('/admin/api/jobs/supervisor/stop', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const { existsSync, readFileSync, unlinkSync } = await import('fs');
       const { spawn } = await import('child_process');
-      const pidFile = await adminWorkerPidFile();
-      if (!existsSync(pidFile)) {
-        res.json({ stopped: false, reason: 'pid_file_missing', pid_file: pidFile });
-        return;
+      const command = [...resolveCliEntry(), 'jobs', 'supervisor', 'stop', '--json'];
+      const child = spawn(command[0], command.slice(1), {
+        cwd: process.cwd(),
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: process.env,
+      });
+      let stdout = '';
+      child.stdout?.on('data', chunk => {
+        stdout = (stdout + String(chunk)).slice(-64_000);
+      });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+      const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+      const payload = line ? JSON.parse(line) as Record<string, unknown> : {};
+      if (code !== 0 && payload.stopped !== false) {
+        throw new Error(`supervisor_stop_failed_exit_${code ?? 'unknown'}`);
       }
-      const pid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0] ?? '', 10);
-      if (!Number.isFinite(pid) || pid <= 0) {
-        unlinkSync(pidFile);
-        res.json({ stopped: false, reason: 'pid_file_corrupt', pid_file: pidFile });
-        return;
-      }
-      if (process.platform === 'win32') {
-        const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
-          windowsHide: true,
-          stdio: 'ignore',
-        });
-        await new Promise(resolve => killer.on('close', resolve));
-      } else {
-        try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
-      }
-      try { unlinkSync(pidFile); } catch { /* best-effort */ }
-      res.json({ stopped: true, worker_pid: pid, mode: 'direct-worker' });
+      res.json({ ...payload, mode: 'supervisor' });
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'supervisor_stop_failed' });
     }
@@ -2058,6 +2092,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           if (tempDir) await removeAdminUploadTempDir(tempDir);
         };
         const uploadRunHooks = {
+          acquireExclusive: runHooks?.acquireExclusive,
           beforeSpawn: runHooks?.beforeSpawn,
           afterComplete: async () => {
             try {

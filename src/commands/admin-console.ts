@@ -8,64 +8,30 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
-import { join } from 'path';
 import { isSensitiveConfigKey, redactConfigValue } from './config.ts';
 import { loadAllSources, isSourceFederated } from '../core/sources-load.ts';
 import { resolveMainSourceId } from '../core/source-resolver.ts';
 import { ALL_PHASES } from '../core/cycle.ts';
 import { getProviderStatus, listRuns } from './natural-lang/index.ts';
 
-async function getSupervisorStatus(): Promise<{
+export async function getSupervisorStatus(): Promise<{
   running: boolean;
   supervisor_pid: number | null;
   pid_file: string;
   mode: 'supervisor' | 'direct-worker' | 'none';
 }> {
-  const [{ DEFAULT_PID_FILE }, { existsSync, readFileSync }] = await Promise.all([
-    import('../core/minions/supervisor.ts'),
-    import('fs'),
-  ]);
+  const {
+    DEFAULT_PID_FILE,
+    isExpectedSupervisorProcess,
+    readSupervisorPidRecord,
+  } = await import('../core/minions/supervisor.ts');
   let supervisorPid: number | null = null;
   let running = false;
-  if (existsSync(DEFAULT_PID_FILE)) {
-    try {
-      const line = readFileSync(DEFAULT_PID_FILE, 'utf8').trim().split('\n')[0];
-      const parsed = parseInt(line ?? '', 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        supervisorPid = parsed;
-        try {
-          process.kill(parsed, 0);
-          running = true;
-        } catch {
-          running = false;
-        }
-      }
-    } catch {
-      supervisorPid = null;
-      running = false;
-    }
-  }
+  const record = readSupervisorPidRecord(DEFAULT_PID_FILE);
+  supervisorPid = record?.pid ?? null;
+  running = record ? isExpectedSupervisorProcess(record) : false;
   if (running) return { running, supervisor_pid: supervisorPid, pid_file: DEFAULT_PID_FILE, mode: 'supervisor' };
-
-  const directPidFile = join(process.cwd(), '.gbrain', 'admin-worker.pid');
-  if (existsSync(directPidFile)) {
-    try {
-      const line = readFileSync(directPidFile, 'utf8').trim().split('\n')[0];
-      const parsed = parseInt(line ?? '', 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        supervisorPid = parsed;
-        try {
-          process.kill(parsed, 0);
-          return { running: true, supervisor_pid: supervisorPid, pid_file: directPidFile, mode: 'direct-worker' };
-        } catch {
-          // stale direct worker pid file; report stopped below.
-        }
-      }
-    } catch {
-      // unreadable direct worker pid file; report stopped below.
-    }
-  }
-  return { running: false, supervisor_pid: supervisorPid, pid_file: directPidFile, mode: 'none' };
+  return { running: false, supervisor_pid: supervisorPid, pid_file: DEFAULT_PID_FILE, mode: 'none' };
 }
 
 // ---------------------------------------------------------------------------

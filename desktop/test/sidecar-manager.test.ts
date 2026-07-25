@@ -89,4 +89,67 @@ describe('desktop sidecar manager', () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
   });
+
+  test('reuses the Admin cookie and renews it once after a 401', async () => {
+    let issuedLinks = 0;
+    let activeSession = 'session-1';
+    let rejectCurrentSession = false;
+    const server = createServer((req, res) => {
+      if (req.url === '/admin/api/issue-magic-link') {
+        issuedLinks += 1;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ url: `http://127.0.0.1:${(server.address() as any).port}/admin/auth/${issuedLinks}` }));
+        return;
+      }
+      if (req.url?.startsWith('/admin/auth/')) {
+        activeSession = `session-${req.url.split('/').at(-1)}`;
+        res.writeHead(302, {
+          location: '/admin/',
+          'set-cookie': `pmbrain_admin=${activeSession}; HttpOnly; Path=/admin`,
+        });
+        res.end();
+        return;
+      }
+      if (req.url === '/admin/api/value') {
+        const cookie = String(req.headers.cookie ?? '');
+        if (!cookie.includes(activeSession) || rejectCurrentSession) {
+          rejectCurrentSession = false;
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'expired' }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test port.');
+    const manager = new SidecarManager({
+      packaged: false,
+      appPath: '',
+      resourcesPath: '',
+      port: address.port,
+      bootstrapToken: 'test-bootstrap-token',
+      clientVersion: '1.0.78',
+      logger,
+    });
+
+    try {
+      expect(await manager.adminRequest('/admin/api/value')).toEqual({ ok: true });
+      expect(await manager.adminRequest('/admin/api/value')).toEqual({ ok: true });
+      expect(issuedLinks).toBe(1);
+
+      rejectCurrentSession = true;
+      expect(await manager.adminRequest('/admin/api/value')).toEqual({ ok: true });
+      expect(issuedLinks).toBe(2);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
 });
