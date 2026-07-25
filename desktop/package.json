@@ -1,10 +1,10 @@
 {
   "name": "pmbrain-desktop",
   "productName": "PMBrain Desktop",
-  "version": "1.0.78",
+  "version": "1.0.80",
   "private": true,
   "author": "PMBrain",
-  "description": "PMBrain Windows desktop shell",
+  "description": "PMBrain cross-platform desktop shell",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -12,7 +12,10 @@
     "build": "electron-vite build",
     "build:sidecar": "bun run scripts/build-sidecar.ts",
     "build:win": "bun run build && bun run build:sidecar && electron-builder --win nsis --x64 && bun run verify:package",
+    "build:mac": "bun run build && bun run build:sidecar && electron-builder --mac dmg zip --arm64 --publish never && bun run verify:package --platform=darwin",
+    "build:linux": "bun run build && bun run build:sidecar && electron-builder --linux AppImage --x64 --publish never && bun run verify:package --platform=linux",
     "preview:renderer": "bun run scripts/preview-renderer.ts",
+    "verify:runtime": "bun run scripts/verify-runtime.ts",
     "verify:package": "bun run scripts/verify-package.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test test"

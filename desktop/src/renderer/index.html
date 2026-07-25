@@ -295,6 +295,13 @@
             <button class="primary" id="update-action"><span>检查更新</span><i></i></button>
           </article>
           <div class="update-progress" id="update-progress" hidden role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+          <section class="update-release-notes" id="update-release-notes" hidden aria-labelledby="update-release-notes-title">
+            <div class="update-release-notes-head">
+              <div><span>VERSION NOTES</span><h3 id="update-release-notes-title">版本更新记录</h3></div>
+              <time id="update-release-date"></time>
+            </div>
+            <div class="update-release-notes-body" id="update-release-notes-body"></div>
+          </section>
           <div class="update-safety">
             <span>SAFE UPDATE</span>
             <p>安装前自动停止 sidecar；更新后自动执行数据库迁移，再启动服务并完成健康检查。现有数据库、API Key 和原始资料目录不会被覆盖。桌面端不会自动降级数据库，也不会自动备份 PGLite；重要升级或手动回退前请保留数据库副本。</p>

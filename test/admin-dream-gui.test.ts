@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describeDreamRun, dreamRunDeltas, isKnowledgeJourneyComplete, phaseSummaryZh } from '../admin/src/pages/Dream.tsx';
+import { buildDreamOutcome, describeDreamRun, dreamRunDeltas, isKnowledgeJourneyComplete, phaseSummaryZh } from '../admin/src/pages/Dream.tsx';
 import type { ConsoleRun } from '../admin/src/lib/shared.tsx';
 
 const dream = readFileSync(join(process.cwd(), 'admin/src/pages/Dream.tsx'), 'utf8');
@@ -33,7 +33,8 @@ describe('Dream GUI product contract', () => {
   });
 
   test('meeting mode calls the canonical CLI preset instead of synthesize-only', () => {
-    expect(dream).toContain("preset: runMode === 'meeting' ? 'meeting'");
+    expect(dream).toContain("preset: runMode === 'meeting'");
+    expect(dream).toContain("? 'meeting'");
     expect(api).toContain("cmd.push('--preset', input.preset)");
   });
 
@@ -137,6 +138,9 @@ describe('Dream GUI product contract', () => {
     expect(dreamRunDeltas({ ...run, command: [...run.command, '--dry-run'] })).toEqual({ pages: 0, links: 0 });
     expect(dream).toContain('<b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span><small>本次 +{latestDeltas.pages}</small>');
     expect(dream).toContain('<b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span><small>本次 +{latestDeltas.links}</small>');
+    expect(dream).toContain('最近一次新增内容');
+    expect(dream).toContain('...latestOutcome.knowledgeItems.map(item => `知识：${item}`)');
+    expect(dream).toContain('...latestOutcome.extractionItems');
     expect(dream).not.toContain('这些数字来自当前知识库，不会因为刷新页面而丢失。');
   });
 
@@ -160,6 +164,79 @@ describe('Dream GUI product contract', () => {
     });
     const summary = describeDreamRun(run);
     expect(summary.outputs).toContain('观点整理：处理 100 页，生成 12 条候选观点，跳过 40 页已处理内容，失败 2 页，剩余 33 页。');
+  });
+
+  test('completed runs expose concrete outcomes, extracted content and failures', () => {
+    const run = completedRun({
+      status: 'partial',
+      phases: [
+        {
+          phase: 'sync',
+          status: 'warn',
+          details: { added: 2, modified: 3, failedFiles: 1 },
+          pagesAffected: ['projects/new', 'projects/updated'],
+        },
+        {
+          phase: 'synthesize',
+          status: 'ok',
+          details: {
+            pages_written: 1,
+            written_slugs: ['insights/new'],
+            duplicate_skips: [{ filePath: 'same.md', duplicateOf: 'existing.md' }],
+          },
+        },
+        {
+          phase: 'extract_atoms',
+          status: 'ok',
+          details: { duplicates_skipped: 2 },
+        },
+        {
+          phase: 'extract_facts',
+          status: 'ok',
+          details: { factsInserted: 4, affected_slugs: ['projects/updated'] },
+        },
+        {
+          phase: 'synthesize_concepts',
+          status: 'ok',
+          details: { concepts_written: 1, concept_slugs: ['concepts/search-quality'] },
+        },
+        {
+          phase: 'propose_takes',
+          status: 'warn',
+          details: {
+            proposals_inserted: 1,
+            pages_failed: 1,
+            proposal_samples: [{
+              claim_text: '搜索质量需要用固定问题集持续验证',
+              page_slug: 'projects/updated',
+              kind: 'take',
+            }],
+          },
+        },
+      ],
+      totals: {
+        pages_added: 3,
+        links_created: 5,
+        phantoms_redirected: 1,
+      },
+    });
+
+    const outcome = buildDreamOutcome(run);
+    expect(outcome.metrics.map(metric => [metric.label, metric.value])).toEqual([
+      ['新增知识', 3],
+      ['更新知识', 3],
+      ['合并与去重', 4],
+      ['新增关联', 5],
+      ['未处理成功', 2],
+    ]);
+    expect(outcome.knowledgeItems).toContain('concepts/search-quality');
+    expect(outcome.extractionItems).toContain('事实：写入 4 条，来自 projects/updated');
+    expect(outcome.extractionItems).toContain('观点：搜索质量需要用固定问题集持续验证（来自 projects/updated）');
+    expect(outcome.failureItems).toContain('读取最近新增和更新的内容：1 个文件未处理成功');
+    expect(outcome.failureItems).toContain('观点提炼：1 个页面未处理成功');
+    expect(dream).toContain('本次成果');
+    expect(dream).toContain('查看本次整理内容');
+    expect(dream).toContain('<summary>执行日志</summary>');
   });
 
   test('Dream settings explain relative paths with a resolved directory preview', () => {

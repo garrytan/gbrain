@@ -1281,6 +1281,7 @@ if (!app.requestSingleInstanceLock()) {
     handleTrustedIpc('desktop:copy', (_event, value: string) => clipboard.writeText(value));
     handleTrustedIpc('desktop:open-admin', () => openAdmin());
     handleTrustedIpc('desktop:check-updates', () => updateManager?.check());
+    handleTrustedIpc('desktop:download-update', () => updateManager?.download());
     handleTrustedIpc('desktop:install-update', () => updateManager?.install());
     handleTrustedIpc('desktop:open-previous-release', async () => {
       const previous = desktopVersionHistory.previous;

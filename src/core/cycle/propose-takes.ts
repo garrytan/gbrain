@@ -195,6 +195,7 @@ export interface ProposeTakesResult {
   dry_run_no_llm?: boolean;
   budget_exhausted: boolean;
   warnings: string[];
+  proposal_samples: Array<{ claim_text: string; page_slug: string; kind: ProposedTake['kind'] }>;
 }
 
 /**
@@ -482,6 +483,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       stopped: opts.dryRun ? 'preview' : 'drained',
       budget_exhausted: false,
       warnings: [],
+      proposal_samples: [],
     };
 
     // Load the complete source-scoped candidate set before applying the batch
@@ -645,6 +647,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
             ],
           );
           result.proposals_inserted += inserted.length;
+          if (inserted.length > 0 && result.proposal_samples.length < 20) {
+            result.proposal_samples.push({
+              claim_text: p.claim_text,
+              page_slug: page.slug,
+              kind: p.kind,
+            });
+          }
         }
         // Successful empty extraction must also populate the idempotency
         // cache. Extractor failures continue above and are deliberately not

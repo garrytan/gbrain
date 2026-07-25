@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, rename, rm } from 'node:fs/promises';
+import { chmod, cp, mkdir, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import JSZip from 'jszip';
-import { DESKTOP_RUNTIME_CONTRACT } from '../src/main/runtime-contract.ts';
+import { getDesktopRuntimeContract } from '../src/main/runtime-contract.ts';
 
 const desktopRoot = resolve(import.meta.dir, '..');
 const projectRoot = resolve(desktopRoot, '..');
 const outputDirectory = join(desktopRoot, 'build', 'extraResources', 'pmbrain-runtime');
-const runtimeContract = DESKTOP_RUNTIME_CONTRACT;
+const runtimeContract = getDesktopRuntimeContract();
 const runtimeCacheDirectory = join(desktopRoot, 'build', 'runtime-cache');
 const runtimeArchivePath = join(runtimeCacheDirectory, basename(new URL(runtimeContract.archiveUrl).pathname));
-const runtimeExecutablePath = join(outputDirectory, 'bun.exe');
+const runtimeExecutablePath = join(outputDirectory, runtimeContract.runtimeExecutableName);
 const RUNTIME_DOWNLOAD_ATTEMPTS = 3;
 const RUNTIME_DOWNLOAD_TIMEOUT_MS = 120_000;
 
@@ -29,10 +29,10 @@ async function readSha256(path: string): Promise<string | null> {
 function assertRuntimeContract(): void {
   if (process.platform !== runtimeContract.platform || process.arch !== runtimeContract.arch) {
     throw new Error(
-      `Windows Desktop runtime must be assembled on win32-x64; current builder is ${process.platform}-${process.arch}.`,
+      `Desktop runtime must be assembled on ${runtimeContract.platform}-${runtimeContract.arch}; current builder is ${process.platform}-${process.arch}.`,
     );
   }
-  if (runtimeContract.schemaVersion !== 1 || runtimeContract.flavor !== 'baseline') {
+  if (runtimeContract.schemaVersion !== 1) {
     throw new Error('Unsupported PMBrain Desktop runtime contract.');
   }
   for (const [label, value] of [
@@ -101,6 +101,7 @@ async function extractRuntimeExecutable(archivePath: string): Promise<void> {
     );
   }
   await Bun.write(runtimeExecutablePath, executable);
+  if (runtimeContract.platform !== 'win32') await chmod(runtimeExecutablePath, 0o755);
 
   const identity = Bun.spawnSync([runtimeExecutablePath, '--revision'], {
     cwd: outputDirectory,
@@ -119,7 +120,7 @@ async function extractRuntimeExecutable(archivePath: string): Promise<void> {
 const runtimePackages = [
   ['@electric-sql', 'pglite'],
   ['@napi-rs', 'canvas'],
-  ['@napi-rs', 'canvas-win32-x64-msvc'],
+  ['@napi-rs', runtimeContract.nativeCanvasPackage],
   ['@dqbd', 'tiktoken'],
   ['@aws-sdk'],
   ['@smithy'],

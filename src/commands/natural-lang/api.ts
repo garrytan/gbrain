@@ -11,6 +11,7 @@ import { callIntentModel, getAdminLlmStatus } from './llm.ts';
 import { commandForPreview, resolveCliEntry } from './commands.ts';
 import { previews, runs, startRun, type RunHooks } from './executor.ts';
 import { ALL_PHASES, type CyclePhase } from '../../core/cycle.ts';
+import { assertValidSourceId } from '../../core/source-id.ts';
 
 export const ADMIN_IMPORT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 export const MAX_STORED_PREVIEWS = 100;
@@ -313,6 +314,18 @@ export async function startDreamRun(input: {
 }, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
   const mode = input.preset ?? (input.phase && input.phase !== 'all' ? input.phase : 'cycle');
   return await startRun(`dream_${mode}`, buildDreamCommand({ ...input, json: true }), cwd, hooks, input.timeoutMs);
+}
+
+export function buildSourceGitCommand(sourceId: string, action: 'init' | 'commit', message?: string): string[] {
+  const normalizedSourceId = sourceId.trim();
+  assertValidSourceId(normalizedSourceId);
+  const command = [...resolveCliEntry(), 'sources', action === 'init' ? 'git-init' : 'git-commit', normalizedSourceId, '--json'];
+  if (action === 'commit' && message?.trim()) command.push('--message', message.trim());
+  return command;
+}
+
+export async function startSourceGitRun(sourceId: string, action: 'init' | 'commit', message: string | undefined, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
+  return await startRun(`source_git_${action}`, buildSourceGitCommand(sourceId, action, message), cwd, hooks);
 }
 
 export async function startActionRun(action: 'doctor_check' | 'show_sources' | 'show_stats' | 'embed_stale' | 'sync_all', cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {

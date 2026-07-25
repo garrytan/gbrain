@@ -105,6 +105,7 @@ export interface PMBrainDesktopApi {
   copy(value: string): Promise<void>;
   openAdmin(): Promise<void>;
   checkUpdates(): Promise<UpdateState | null>;
+  downloadUpdate(): Promise<UpdateState | null>;
   installUpdate(): Promise<void>;
   openPreviousRelease(): Promise<void>;
   retry(): Promise<void>;
@@ -168,6 +169,7 @@ const api: PMBrainDesktopApi = {
   copy: (value) => ipcRenderer.invoke('desktop:copy', value),
   openAdmin: () => ipcRenderer.invoke('desktop:open-admin'),
   checkUpdates: () => ipcRenderer.invoke('desktop:check-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('desktop:download-update'),
   installUpdate: () => ipcRenderer.invoke('desktop:install-update'),
   openPreviousRelease: () => ipcRenderer.invoke('desktop:open-previous-release'),
   retry: () => ipcRenderer.invoke('desktop:retry'),

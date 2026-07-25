@@ -83,6 +83,7 @@ import {
   startImportRun,
   startMarkdownExportRun,
   startSourceAddRun,
+  startSourceGitRun,
   startThinkRun,
 } from './admin-console.ts';
 import {
@@ -2176,6 +2177,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json({ runId: run.id, status: run.status });
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'source_add_failed' });
+    }
+  });
+
+  app.post('/admin/api/sources/:id/git/:action', requireAdmin, express.json({ limit: '8kb' }), async (req: Request, res: Response) => {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const rawAction = Array.isArray(req.params.action) ? req.params.action[0] : req.params.action;
+    if (!id) {
+      res.status(400).json({ error: 'source_id_required' });
+      return;
+    }
+    if (rawAction !== 'init' && rawAction !== 'commit') {
+      res.status(400).json({ error: 'source_git_action_invalid' });
+      return;
+    }
+    try {
+      const run = await startSourceGitRun(
+        id,
+        rawAction,
+        typeof req.body?.message === 'string' ? req.body.message : undefined,
+        process.cwd(),
+        runHooks,
+      );
+      res.status(202).json({ runId: run.id, status: run.status });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'source_git_failed' });
     }
   });
 

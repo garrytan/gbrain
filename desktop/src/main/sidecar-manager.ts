@@ -8,6 +8,7 @@ import {
   projectRoot,
   type CliRuntime,
 } from './cli-runner.js';
+import { getDesktopRuntimeContract } from './runtime-contract.js';
 
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_INTERVAL_MS = 500;
@@ -227,8 +228,9 @@ export class SidecarManager {
     this.adminCookieRequest = null;
     const root = projectRoot(this.options);
     const workingDirectory = this.options.packaged ? packagedRuntimeRoot(this.options) : root;
+    const runtimeContract = this.options.packaged ? getDesktopRuntimeContract() : null;
     const command = this.options.packaged
-      ? join(workingDirectory, 'bun.exe')
+      ? join(workingDirectory, runtimeContract!.runtimeExecutableName)
       : process.env.PMBRAIN_DESKTOP_BUN || 'bun';
     const args = this.options.packaged
       ? [join(workingDirectory, 'pmbrain-sidecar.js'), 'serve', '--http', '--port', String(this.port), '--bind', '127.0.0.1', '--suppress-bootstrap-token']

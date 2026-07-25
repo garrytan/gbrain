@@ -17,6 +17,8 @@ export interface UpdateState {
   currentVersion: string;
   previousVersion?: string;
   availableVersion?: string;
+  releaseDate?: string;
+  releaseNotes?: string;
   fileName?: string;
   percent?: number;
   transferred?: number;
@@ -27,6 +29,8 @@ export interface UpdateState {
 
 interface UpdateInfo {
   version: string;
+  releaseDate?: string;
+  releaseNotes?: string | Array<{ version?: string; note?: string }>;
   files?: Array<{ url: string; size?: number }>;
   downloadedFile?: string;
 }
@@ -46,6 +50,20 @@ function updateFileName(info: UpdateInfo): string | undefined {
   } catch {
     return basename(clean) || undefined;
   }
+}
+
+export function normalizeReleaseNotes(notes: UpdateInfo['releaseNotes']): string {
+  if (typeof notes === 'string') return notes.trim();
+  if (!Array.isArray(notes)) return '';
+  return notes
+    .map(item => {
+      const note = typeof item?.note === 'string' ? item.note.trim() : '';
+      if (!note) return '';
+      const version = typeof item.version === 'string' ? item.version.trim() : '';
+      return version ? `### ${version}\n${note}` : note;
+    })
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export interface UpdaterLike {
@@ -137,6 +155,14 @@ export class UpdateManager {
     this.options.updater.quitAndInstall(false, true);
   }
 
+  async download(): Promise<UpdateState> {
+    if (this.state.phase !== 'available' || !this.state.availableVersion) {
+      throw new Error('当前没有等待下载的新版本。');
+    }
+    await this.startDownload(this.state.availableVersion);
+    return this.state;
+  }
+
   private bindEvents(): void {
     const updater = this.options.updater;
     updater.on('checking-for-update', () => {
@@ -149,10 +175,13 @@ export class UpdateManager {
       const file = info.files?.[0];
       this.emit({
         phase: 'available', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion,
-        availableVersion: info.version, fileName: updateFileName(info), total: file?.size,
-        message: `发现新版本 ${info.version}，准备下载…`,
+        availableVersion: info.version,
+        releaseDate: info.releaseDate,
+        releaseNotes: normalizeReleaseNotes(info.releaseNotes),
+        fileName: updateFileName(info),
+        total: file?.size,
+        message: `发现新版本 ${info.version}，查看更新记录后可开始下载`,
       });
-      void this.download(info.version);
     });
     updater.on('download-progress', (progress) => {
       const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
@@ -169,8 +198,11 @@ export class UpdateManager {
     updater.on('update-downloaded', (info) => {
       this.downloading = false;
       this.emit({
+        ...this.state,
         phase: 'downloaded', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion,
         availableVersion: info.version,
+        releaseDate: info.releaseDate ?? this.state.releaseDate,
+        releaseNotes: normalizeReleaseNotes(info.releaseNotes) || this.state.releaseNotes,
         fileName: updateFileName(info) ?? this.state.fileName,
         percent: 100,
         transferred: this.state.total ?? this.state.transferred,
@@ -182,7 +214,7 @@ export class UpdateManager {
     updater.on('error', (error) => this.handleError(error));
   }
 
-  private async download(version: string): Promise<void> {
+  private async startDownload(version: string): Promise<void> {
     if (this.downloading) return;
     this.downloading = true;
     this.emit({
@@ -203,6 +235,7 @@ export class UpdateManager {
     if (this.state.phase === 'error' && this.state.message === displayMessage) return;
     this.options.logger.write('updater', message);
     this.emit({
+      ...this.state,
       phase: 'error', currentVersion: this.options.currentVersion, previousVersion: this.options.previousVersion,
       message: displayMessage,
     });

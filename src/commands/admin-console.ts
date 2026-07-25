@@ -8,6 +8,8 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { isSensitiveConfigKey, redactConfigValue } from './config.ts';
 import { loadAllSources, isSourceFederated } from '../core/sources-load.ts';
 import { resolveMainSourceId } from '../core/source-resolver.ts';
@@ -79,6 +81,7 @@ export async function getAdminBrainOverview(engine: BrainEngine, config: GBrainC
       id: source.id,
       name: source.name,
       local_path: source.local_path,
+      git_repo: source.local_path ? existsSync(join(source.local_path, '.git')) : false,
       federated: isSourceFederated(source.config),
       page_count: count?.page_count ?? 0,
       last_sync_at: source.last_sync_at ? new Date(source.last_sync_at).toISOString() : null,

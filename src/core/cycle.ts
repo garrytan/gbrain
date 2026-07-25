@@ -1054,6 +1054,7 @@ async function runPhaseExtractFacts(
         pagesWithFacts: result.pagesWithFacts,
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
+        affected_slugs: result.affectedSlugs,
         warnings: result.warnings.slice(0, 5),
         // v0.35.5: phantom counters surfaced so extractTotals() can lift
         // them to CycleReport.totals and the daily report makes the

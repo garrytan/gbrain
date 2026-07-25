@@ -66,6 +66,7 @@ export interface ExtractFactsResult {
   pagesWithFacts: number;
   factsInserted: number;
   factsDeleted: number;
+  affectedSlugs: string[];
   legacyRowsPending: number;
   guardTriggered: boolean;
   warnings: string[];
@@ -93,6 +94,7 @@ export async function runExtractFacts(
     pagesWithFacts: 0,
     factsInserted: 0,
     factsDeleted: 0,
+    affectedSlugs: [],
     legacyRowsPending: 0,
     guardTriggered: false,
     warnings: [],
@@ -262,6 +264,9 @@ export async function runExtractFacts(
 
     const inserted = await engine.insertFacts(extracted, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
+    if (inserted.inserted > 0 && result.affectedSlugs.length < 100) {
+      result.affectedSlugs.push(slug);
+    }
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic

@@ -8,7 +8,7 @@ describe('desktop package version contract', () => {
   test('compares the root VERSION, root package and packaged runtime versions', () => {
     expect(verifierSource).toContain("join(desktopRoot, '..', 'VERSION')");
     expect(verifierSource).toContain("join(desktopRoot, '..', 'package.json')");
-    expect(verifierSource).toContain("join(runtimeRoot, 'package.json')");
+    expect(verifierSource).toContain("join(shape.runtimeRoot, 'package.json')");
     expect(verifierSource).toContain('rootPackageVersion');
     expect(verifierSource).toContain('runtimePackageVersion');
   });
@@ -22,8 +22,8 @@ describe('desktop package version contract', () => {
   });
 
   test('requires the packaged runtime manifest and pinned Bun revision', () => {
-    expect(verifierSource).toContain("join(runtimeRoot, 'runtime-manifest.json')");
-    expect(verifierSource).toContain('DESKTOP_RUNTIME_CONTRACT.bunRevision');
+    expect(verifierSource).toContain("join(shape.runtimeRoot, 'runtime-manifest.json')");
+    expect(verifierSource).toContain('runtimeContract.bunRevision');
     expect(verifierSource).toContain('Packaged Bun checksum mismatch');
   });
 });
