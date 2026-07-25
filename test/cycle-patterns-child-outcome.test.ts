@@ -5,10 +5,17 @@
  * zero pattern pages written (e.g. when no subagent-capable worker slot was
  * free for the whole wait window) — a silent no-op for days.
  *
- * Drives the real phase against PGLite with the (#1594-family) configurable
- * wait timeout set to 1ms and NO worker running, so the child job never
- * completes: waitForCompletion throws TimeoutError → outcome 'timeout' →
- * nothing written → the phase must report status 'fail', not 'ok'.
+ * A later fix added runPgliteSubagentsInline to this phase (patterns.ts
+ * previously submitted a job and waited without anything ever claiming it on
+ * PGLite — synthesize.ts already had this inline drain, patterns.ts didn't).
+ * So a fake ANTHROPIC_API_KEY here now gets claimed and actually attempted;
+ * the real Anthropic call fails immediately, exhausting max_attempts and
+ * landing the job in 'dead' (not 'timeout' — nothing ever times out, the
+ * failure is immediate). The #2782 status-reflects-outcome contract this
+ * test exists to pin is unchanged: any non-'complete' outcome with zero
+ * writes must still surface as status 'fail', just under the outcome that
+ * actually occurs now that the job is drained instead of left stuck in
+ * 'waiting' for the full wait window.
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -57,24 +64,20 @@ async function seedReflections(): Promise<void> {
 }
 
 describe('runPhasePatterns child-outcome status (#2782)', () => {
-  test('child timeout with zero writes → status fail (was silent ok)', async () => {
+  test('child dead with zero writes → status fail (was silent ok)', async () => {
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-outcome-'));
     try {
       await seedReflections();
-
-      // #1594-family knob: make the wait window elapse immediately. No
-      // minion worker runs in this test, so the child job stays queued.
-      await engine.setConfig('dream.patterns.subagent_wait_timeout_ms', '1');
 
       const result = await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-test' }, () =>
         runPhasePatterns(engine, { brainDir, dryRun: false }),
       );
 
       expect(result.status).toBe('fail');
-      expect(result.details.child_outcome).toBe('timeout');
+      expect(result.details.child_outcome).toBe('dead');
       expect(result.details.patterns_written).toBe(0);
-      expect(result.error?.code).toBe('PATTERNS_CHILD_TIMEOUT');
-      expect(result.error?.class).toBe('Timeout');
+      expect(result.error?.code).toBe('PATTERNS_CHILD_DEAD');
+      expect(result.error?.class).toBe('InternalError');
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
     }

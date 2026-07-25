@@ -276,7 +276,7 @@ const INLINE_PGLITE_LOCK_MS = 30_000;
  * `yieldDuringPhase` is ticked on a 60s interval while a child runs so the
  * 5-min cycle lock TTL keeps refreshing during long (up to 30-min) children.
  */
-async function runPgliteSubagentsInline(
+export async function runPgliteSubagentsInline(
   engine: BrainEngine,
   queue: MinionQueue,
   queueName: string,

@@ -20,6 +20,7 @@
 
 import { join, dirname } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -29,7 +30,14 @@ import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
 // phase — both phases must agree on the configured namespace.
-import { loadAllowedSlugPrefixes, loadOutputRoot } from './synthesize.ts';
+// runPgliteSubagentsInline is shared too: PGLite has no separate Minions
+// worker process (the embedded data-dir holds an exclusive file lock), so a
+// job submitted via queue.add() sits in 'waiting' forever unless something
+// drives the claim -> run -> complete loop inline. synthesize.ts already
+// does this for its own children; patterns.ts previously submitted and
+// waited without ever draining, so every real (non-dry-run) invocation on a
+// PGLite brain hung until subagentWaitTimeoutMs (default 35 min).
+import { loadAllowedSlugPrefixes, loadOutputRoot, runPgliteSubagentsInline } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -177,6 +185,13 @@ export async function runPhasePatterns(
     }
 
     const queue = new MinionQueue(engine);
+    // PGLite children drain inline (no separate worker can open the embedded
+    // data-dir), so give this job a private per-run queue: the inline drain
+    // must never claim unrelated 'default'-queue jobs a Postgres worker owns.
+    // Mirrors synthesize.ts's childQueueName derivation exactly.
+    const childQueueName = engine.kind === 'pglite'
+      ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
+      : 'default';
     const data: SubagentHandlerData = {
       prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
       model: config.model,
@@ -186,10 +201,18 @@ export async function runPhasePatterns(
     const submitOpts: Partial<MinionJobInput> = {
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
+      queue: childQueueName,
     };
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
+
+    // PGLite cannot run a separate Minions worker because the embedded DB
+    // holds an exclusive file lock. Drain this phase's private child queue
+    // inline so the parent observes the terminal state instead of polling
+    // waitForCompletion until subagentWaitTimeoutMs expires. No-op on
+    // Postgres (a real worker process claims the job there).
+    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
 
     let outcome: string;
     try {
