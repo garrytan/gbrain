@@ -58,6 +58,26 @@ describe('Admin folder import summary', () => {
     expect(summary?.markdown).toContain('broken.pptx（无法提取正文）');
   });
 
+  test('omits zero-count problem categories from a successful import summary', () => {
+    const summary = summarizeImportRun(
+      { slots: { path: 'D:\\lebo' } },
+      {
+        status: 'completed',
+        stderr: [
+          '[pmbrain phase] import.collect_files done 3ms files=1',
+          '[pmbrain import-file] {"status":"imported","path":"梨园之殇.md","chunks":2}',
+          '[import.files] 1/1 imported=1 skipped=0 errors=0',
+        ].join('\n'),
+      },
+    );
+
+    expect(summary?.badge).toBe('已完成');
+    expect(summary?.markdown).toContain('完整导入 1 个');
+    expect(summary?.markdown).not.toContain('正文已保存但未切片/向量化 0 个');
+    expect(summary?.markdown).not.toContain('未变化跳过 0 个');
+    expect(summary?.markdown).not.toContain('失败 0 个');
+  });
+
   test('uses the final command totals when per-file logs were truncated', () => {
     const summary = summarizeImportRun(
       { slots: { path: 'D:\\duwu' } },

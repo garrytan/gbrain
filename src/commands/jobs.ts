@@ -865,7 +865,12 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
       //   gbrain jobs supervisor start [--detach]   → foreground or detached start
       //   gbrain jobs supervisor status             → JSON liveness + queue stats
       //   gbrain jobs supervisor stop               → SIGTERM + drain wait
-      const { MinionSupervisor, DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
+      const {
+        MinionSupervisor,
+        DEFAULT_PID_FILE,
+        isExpectedSupervisorProcess,
+        readSupervisorPidRecord,
+      } = await import('../core/minions/supervisor.ts');
       const { writeSupervisorEvent } = await import('../core/minions/handlers/supervisor-audit.ts');
 
       const supCmd = args[1];
@@ -878,20 +883,15 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
 
       // ----- status subcommand -----
       if (isStatusCmd) {
-        const { existsSync, readFileSync } = await import('fs');
+        const { existsSync } = await import('fs');
         const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
 
         let supervisorPid: number | null = null;
         let running = false;
         if (existsSync(pidFile)) {
-          try {
-            const line = readFileSync(pidFile, 'utf8').trim().split('\n')[0];
-            const parsed = parseInt(line, 10);
-            if (!isNaN(parsed) && parsed > 0) {
-              supervisorPid = parsed;
-              try { process.kill(parsed, 0); running = true; } catch { running = false; }
-            }
-          } catch { /* unreadable PID file */ }
+          const record = readSupervisorPidRecord(pidFile);
+          supervisorPid = record?.pid ?? null;
+          running = record ? isExpectedSupervisorProcess(record) : false;
         }
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
@@ -930,25 +930,39 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
 
       // ----- stop subcommand -----
       if (isStopCmd) {
-        const { existsSync, readFileSync } = await import('fs');
+        const { existsSync, unlinkSync, writeFileSync } = await import('fs');
         if (!existsSync(pidFile)) {
           const payload = { stopped: false, reason: 'pid_file_missing', pid_file: pidFile };
           if (jsonMode) console.log(JSON.stringify(payload));
           else console.error(`No PID file at ${pidFile}; supervisor not running.`);
           process.exit(1);
         }
-        let supervisorPid: number;
-        try {
-          supervisorPid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0], 10);
-          if (isNaN(supervisorPid) || supervisorPid <= 0) throw new Error('invalid pid');
-        } catch (err) {
-          const payload = { stopped: false, reason: 'pid_file_corrupt', error: String(err) };
+        const record = readSupervisorPidRecord(pidFile);
+        if (!record) {
+          const payload = { stopped: false, reason: 'pid_file_corrupt', pid_file: pidFile };
           if (jsonMode) console.log(JSON.stringify(payload));
-          else console.error(`PID file corrupt: ${err}`);
+          else console.error(`PID file corrupt: ${pidFile}`);
+          process.exit(1);
+        }
+        const supervisorPid = record.pid;
+        if (!isExpectedSupervisorProcess(record)) {
+          const payload = {
+            stopped: false,
+            reason: 'process_identity_mismatch',
+            supervisor_pid: supervisorPid,
+          };
+          if (jsonMode) console.log(JSON.stringify(payload));
+          else console.error(`PID ${supervisorPid} is not a verified PMBrain jobs supervisor; refusing to signal it.`);
           process.exit(1);
         }
 
-        try { process.kill(supervisorPid, 'SIGTERM'); }
+        try {
+          if (process.platform === 'win32') {
+            writeFileSync(`${pidFile}.stop`, JSON.stringify({ instance_id: record.instance_id }), 'utf8');
+          } else {
+            process.kill(supervisorPid, 'SIGTERM');
+          }
+        }
         catch (err: unknown) {
           const code = (err as NodeJS.ErrnoException)?.code;
           const payload = {
@@ -970,14 +984,37 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
           await new Promise(r => setTimeout(r, 250));
         }
 
+        let forced = false;
+        if (!stoppedCleanly && process.platform === 'win32') {
+          const { spawn } = await import('child_process');
+          const killer = spawn('taskkill', ['/PID', String(supervisorPid), '/T', '/F'], {
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+          await new Promise(resolve => killer.once('close', resolve));
+          const forceDeadline = Date.now() + 5_000;
+          while (Date.now() < forceDeadline) {
+            try { process.kill(supervisorPid, 0); }
+            catch { forced = true; break; }
+            await new Promise(r => setTimeout(r, 100));
+          }
+        }
+        const stopped = stoppedCleanly || forced;
+        if (stopped) {
+          const current = readSupervisorPidRecord(pidFile);
+          if (current?.pid === record.pid && current.instance_id === record.instance_id) {
+            try { unlinkSync(pidFile); } catch { /* supervisor may have removed it */ }
+          }
+          try { unlinkSync(`${pidFile}.stop`); } catch { /* best effort */ }
+        }
         const payload = {
-          stopped: stoppedCleanly,
+          stopped,
           supervisor_pid: supervisorPid,
-          reason: stoppedCleanly ? 'drained' : 'timeout_40s',
+          reason: stoppedCleanly ? 'drained' : forced ? 'forced_after_timeout' : 'timeout_40s',
         };
         if (jsonMode) console.log(JSON.stringify(payload));
-        else console.log(stoppedCleanly ? `Supervisor ${supervisorPid} stopped.` : `Supervisor ${supervisorPid} did not exit within 40s.`);
-        process.exit(stoppedCleanly ? 0 : 1);
+        else console.log(stopped ? `Supervisor ${supervisorPid} stopped.` : `Supervisor ${supervisorPid} did not exit within 40s.`);
+        process.exit(stopped ? 0 : 1);
       }
 
       // ----- start subcommand (default) -----

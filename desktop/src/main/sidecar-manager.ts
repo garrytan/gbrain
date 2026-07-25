@@ -39,6 +39,8 @@ export class SidecarManager {
   private recovering = false;
   private restartTimes: number[] = [];
   private lifecycleQueue: Promise<void> = Promise.resolve();
+  private adminCookie: string | null = null;
+  private adminCookieRequest: Promise<string> | null = null;
 
   constructor(options: SidecarManagerOptions) {
     this.options = options;
@@ -122,11 +124,7 @@ export class SidecarManager {
   }
 
   async adminRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const link = await this.issueMagicLink();
-    const authResponse = await fetch(link, { redirect: 'manual' });
-    const cookie = authResponse.headers.get('set-cookie')?.split(';', 1)[0];
-    if (!cookie) throw new Error('无法创建桌面管理员会话。');
-    const response = await fetch(`http://127.0.0.1:${this.port}${path}`, {
+    const request = async (cookie: string) => fetch(`http://127.0.0.1:${this.port}${path}`, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -134,9 +132,36 @@ export class SidecarManager {
         ...(init.headers ?? {}),
       },
     });
+
+    let cookie = await this.getAdminCookie();
+    let response = await request(cookie);
+    if (response.status === 401) {
+      this.adminCookie = null;
+      this.adminCookieRequest = null;
+      cookie = await this.getAdminCookie();
+      response = await request(cookie);
+    }
     const body = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
     if (!response.ok) throw new Error(body.message || body.error || `Admin API 返回 HTTP ${response.status}`);
     return body;
+  }
+
+  private async getAdminCookie(): Promise<string> {
+    if (this.adminCookie) return this.adminCookie;
+    if (this.adminCookieRequest) return this.adminCookieRequest;
+    this.adminCookieRequest = (async () => {
+      const link = await this.issueMagicLink();
+      const authResponse = await fetch(link, { redirect: 'manual' });
+      const cookie = authResponse.headers.get('set-cookie')?.split(';', 1)[0];
+      if (!cookie) throw new Error('无法创建桌面管理员会话。');
+      this.adminCookie = cookie;
+      return cookie;
+    })();
+    try {
+      return await this.adminCookieRequest;
+    } finally {
+      this.adminCookieRequest = null;
+    }
   }
 
   async smokeTest(token: string): Promise<{ toolCount: number; statsOk: boolean }> {
@@ -198,6 +223,8 @@ export class SidecarManager {
   }
 
   private spawnProcess(): void {
+    this.adminCookie = null;
+    this.adminCookieRequest = null;
     const root = projectRoot(this.options);
     const workingDirectory = this.options.packaged ? packagedRuntimeRoot(this.options) : root;
     const command = this.options.packaged

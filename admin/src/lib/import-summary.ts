@@ -208,9 +208,13 @@ export function summarizeImportRun(preview: ImportSummaryPreview, run: ImportSum
       '- 逐文件日志超过显示上限，下面只展示当前保留的日志样例；总数以任务完成汇总为准。',
     );
   } else if (reports.length > 0) {
-    lines.push(
-      `- 完整导入 ${imported.length} 个；正文已保存但未切片/向量化 ${partial.length} 个；未变化跳过 ${unchanged.length} 个；失败 ${failed.length} 个。`,
-    );
+    const categories = [
+      imported.length > 0 ? `完整导入 ${imported.length} 个` : null,
+      partial.length > 0 ? `正文已保存但未切片/向量化 ${partial.length} 个` : null,
+      unchanged.length > 0 ? `未变化跳过 ${unchanged.length} 个` : null,
+      failed.length > 0 ? `失败 ${failed.length} 个` : null,
+    ].filter((value): value is string => Boolean(value));
+    if (categories.length > 0) lines.push(`- ${categories.join('；')}。`);
   } else if (latestProgress) {
     lines.push(`- 截止任务停止时：导入 ${legacyImported} 个；跳过 ${legacySkipped} 个；错误 ${legacyErrors} 个。`);
   }

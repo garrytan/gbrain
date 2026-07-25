@@ -237,4 +237,35 @@ describe('ConnectionManager — parent inheritance (A2)', () => {
       else process.env.GBRAIN_DISABLE_DIRECT_POOL = original;
     }
   });
+
+  test('child ddl and bulk operations delegate to the parent manager', async () => {
+    const parent = new ConnectionManager({
+      url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+    });
+    const sentinel = {} as Awaited<ReturnType<ConnectionManager['ddl']>>;
+    let ddlCalls = 0;
+    let bulkCalls = 0;
+    (parent as any).ddl = async () => {
+      ddlCalls += 1;
+      return sentinel;
+    };
+    (parent as any).bulk = async () => {
+      bulkCalls += 1;
+      return sentinel;
+    };
+    const children = Array.from({ length: 4 }, () => new ConnectionManager({
+      url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+      parent,
+    }));
+
+    expect(await Promise.all(children.map(child => child.ddl()))).toEqual(Array(4).fill(sentinel));
+    expect(await Promise.all(children.map(child => child.bulk()))).toEqual(Array(4).fill(sentinel));
+    expect(ddlCalls).toBe(4);
+    expect(bulkCalls).toBe(4);
+
+    let parentDisconnects = 0;
+    (parent as any).disconnect = async () => { parentDisconnects += 1; };
+    await Promise.all(children.map(child => child.disconnect()));
+    expect(parentDisconnects).toBe(0);
+  });
 });

@@ -164,6 +164,7 @@ describe('Admin local attachment staging safety contract', () => {
     expect(uploadRoute).toContain('await startImportRun(engine, {');
     expect(uploadRoute).toContain("includeOffice: fileKind === 'office'");
     expect(uploadRoute).toContain("includeImages: fileKind === 'image'");
+    expect(uploadRoute).toContain('acquireExclusive: runHooks?.acquireExclusive');
     expect(uploadRoute).toContain('afterComplete: async () =>');
     expect(uploadRoute).toContain('await cleanup()');
   });

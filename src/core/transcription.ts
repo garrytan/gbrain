@@ -6,8 +6,10 @@
  * For files >25MB: ffmpeg segmentation into <25MB chunks, transcribe each, concatenate.
  */
 
-import { statSync, readFileSync } from 'fs';
-import { basename, extname } from 'path';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'fs';
+import { tmpdir } from 'os';
+import { basename, extname, join } from 'path';
+import { execFileSync } from 'child_process';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,7 +41,7 @@ export interface TranscriptionConfig {
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
 // Supported audio formats
-const AUDIO_EXTENSIONS = new Set([
+export const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.ogg', '.flac',
 ]);
 
@@ -66,7 +68,9 @@ export async function transcribe(
   const provider = config.provider || detectProvider();
   const apiKey = config.apiKey || getApiKey(provider);
   if (!apiKey) {
-    const envVar = provider === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY';
+    const envVar = provider === 'groq'
+      ? 'GROQ_API_KEY'
+      : provider === 'deepgram' ? 'DEEPGRAM_API_KEY' : 'OPENAI_API_KEY';
     throw new Error(
       `${provider} API key not set. Set ${envVar} environment variable. ` +
       (provider === 'groq' ? 'Or set OPENAI_API_KEY to use OpenAI Whisper as fallback.' : '')
@@ -111,6 +115,9 @@ async function transcribeFile(
   apiKey: string,
   config: TranscriptionConfig,
 ): Promise<TranscriptionResult> {
+  if (provider === 'deepgram') {
+    return transcribeDeepgramFile(audioPath, apiKey, config);
+  }
   const model = config.model || (provider === 'groq' ? 'whisper-large-v3' : 'whisper-1');
   const baseUrl = provider === 'groq'
     ? 'https://api.groq.com/openai/v1'
@@ -150,6 +157,50 @@ async function transcribeFile(
   };
 }
 
+async function transcribeDeepgramFile(
+  audioPath: string,
+  apiKey: string,
+  config: TranscriptionConfig,
+): Promise<TranscriptionResult> {
+  const query = new URLSearchParams({
+    model: config.model || 'nova-3',
+    smart_format: 'true',
+    punctuate: 'true',
+  });
+  if (config.language) query.set('language', config.language);
+  if (config.diarize) query.set('diarize', 'true');
+
+  const fileData = readFileSync(audioPath);
+  const response = await fetch(`https://api.deepgram.com/v1/listen?${query.toString()}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${apiKey}`,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: new Blob([fileData]),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Transcription failed (deepgram ${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json() as any;
+  const alternative = data.results?.channels?.[0]?.alternatives?.[0] ?? {};
+  const words = Array.isArray(alternative.words) ? alternative.words : [];
+  return {
+    text: alternative.transcript || '',
+    segments: words.map((word: any) => ({
+      start: Number(word.start) || 0,
+      end: Number(word.end) || 0,
+      text: String(word.punctuated_word || word.word || ''),
+      speaker: word.speaker === undefined ? undefined : String(word.speaker),
+    })),
+    language: data.results?.channels?.[0]?.detected_language || config.language || 'unknown',
+    duration: Number(data.metadata?.duration) || 0,
+    provider: 'deepgram',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Large file segmentation
 // ---------------------------------------------------------------------------
@@ -165,20 +216,21 @@ async function transcribeLargeFile(
   if (!ffmpegAvailable) {
     throw new Error(
       'File exceeds 25MB and ffmpeg is required for segmentation. ' +
-      'Install ffmpeg: brew install ffmpeg (macOS) or apt install ffmpeg (Linux)'
+      'Install ffmpeg and ffprobe, then ensure both commands are on PATH (Windows, macOS, or Linux).'
     );
   }
 
   // Segment into ~20MB chunks (with some overlap for better joining)
-  const { execSync } = await import('child_process');
-  const tmpDir = execSync('mktemp -d').toString().trim();
+  const tmpDir = mkdtempSync(join(tmpdir(), 'pmbrain-transcription-'));
 
   try {
     // Get audio duration
-    const durationStr = execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`,
-      { encoding: 'utf-8' }
-    ).trim();
+    const durationStr = execFileSync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      audioPath,
+    ], { encoding: 'utf-8' }).trim();
     const totalDuration = parseFloat(durationStr) || 0;
 
     // Calculate segment length (~20MB per segment, estimate from file size)
@@ -188,19 +240,21 @@ async function transcribeLargeFile(
 
     // Split audio
     const ext = extname(audioPath);
-    execSync(
-      `ffmpeg -i "${audioPath}" -f segment -segment_time ${segmentSeconds} -c copy "${tmpDir}/segment_%03d${ext}"`,
-      { stdio: 'pipe' }
-    );
+    execFileSync('ffmpeg', [
+      '-i', audioPath,
+      '-f', 'segment',
+      '-segment_time', String(Math.max(segmentSeconds, 1)),
+      '-c', 'copy',
+      join(tmpDir, `segment_%03d${ext}`),
+    ], { stdio: 'pipe' });
 
     // Transcribe each segment
-    const { readdirSync } = await import('fs');
     const segments = readdirSync(tmpDir).filter(f => f.startsWith('segment_')).sort();
     const results: TranscriptionResult[] = [];
     let timeOffset = 0;
 
     for (const seg of segments) {
-      const segPath = `${tmpDir}/${seg}`;
+      const segPath = join(tmpDir, seg);
       const result = await transcribeFile(segPath, provider, apiKey, config);
       // Offset timestamps
       result.segments = result.segments.map(s => ({
@@ -221,15 +275,14 @@ async function transcribeLargeFile(
       provider,
     };
   } finally {
-    // Cleanup temp directory
-    try { execSync(`rm -rf "${tmpDir}"`); } catch {}
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
 async function checkFfmpeg(): Promise<boolean> {
   try {
-    const { execSync } = await import('child_process');
-    execSync('ffmpeg -version', { stdio: 'pipe' });
+    execFileSync('ffmpeg', ['-version'], { stdio: 'pipe' });
+    execFileSync('ffprobe', ['-version'], { stdio: 'pipe' });
     return true;
   } catch {
     return false;
