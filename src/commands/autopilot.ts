@@ -24,6 +24,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -431,7 +432,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
-        const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
+        const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);
 
         // ── v0.40 D17: per-source freshness check ────────────────────
         // Runs first; independent of score gate. Submits a 'sync' job per
@@ -570,7 +571,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const result = await dispatchPerSource(engine, queue, {
             repoPath,
             slot,
-            timeoutMs,
+            timeoutMs: resolveAutopilotDispatchTimeoutMs(baseInterval, true),
             fanoutMax,
             jsonMode,
           });

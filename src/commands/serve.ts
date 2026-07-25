@@ -9,6 +9,10 @@ import { startMcpServer } from '../mcp/server.ts';
 // the dir, sees a dead PID, and removes it).
 const CLEANUP_DEADLINE_MS = 5_000;
 
+// A wedged stdio MCP boot otherwise keeps the PGLite write lock forever.
+// PMBRAIN_* is canonical; GBRAIN_* remains a compatibility fallback.
+const DEFAULT_BOOT_TIMEOUT_SECONDS = 60;
+
 // How often the parent-process watchdog polls the live kernel parent PID
 // (via `readLiveParentPid`, NOT the cached `process.ppid` — see that
 // helper's comment). We don't receive a signal when our parent dies (the
@@ -63,6 +67,8 @@ export interface ServeOptions {
   // transport.onclose still cover legitimate shutdown.
   // Defaults to `process.env.MCP_STDIO === '1'` when omitted.
   mcpStdio?: boolean;
+  /** Test/operator override for the stdio MCP boot-readiness deadline. */
+  bootTimeoutMs?: number;
 }
 
 export async function runServe(
@@ -128,12 +134,56 @@ export async function runServe(
   installStdioLifecycle(engine, args, opts);
 
   const start = opts.startMcpServer ?? startMcpServer;
-  await start(engine);
+  const bootTimeoutMs = opts.bootTimeoutMs ?? resolveBootTimeoutMs();
+  let bootDeadline: ReturnType<typeof setTimeout> | null = null;
+  if (bootTimeoutMs > 0) {
+    const log = opts.log ?? ((msg: string) => console.error(msg));
+    const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
+    bootDeadline = setTimeout(() => {
+      log(
+        `PMBrain MCP server: boot did not complete within ${bootTimeoutMs}ms — ` +
+        'releasing the database lock and exiting so other consumers can continue',
+      );
+      const cleanup = setTimeout(() => { exit(1); }, CLEANUP_DEADLINE_MS);
+      cleanup.unref?.();
+      Promise.resolve()
+        .then(() => engine.disconnect())
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`PMBrain MCP server: boot-deadline cleanup error: ${msg}`);
+        })
+        .finally(() => {
+          clearTimeout(cleanup);
+          exit(1);
+        });
+    }, bootTimeoutMs);
+    bootDeadline.unref?.();
+  }
+  try {
+    await start(engine);
+  } finally {
+    if (bootDeadline) clearTimeout(bootDeadline);
+  }
   // startMcpServer's `await server.connect(transport)` resolves once the
   // SDK has wired up its stdin 'data' listener; that listener keeps the
   // event loop alive. We deliberately do NOT add `await new Promise(() =>
   // {})` here — it would block this async frame and stop the lifecycle
   // hooks from being able to call process.exit() cleanly.
+}
+
+export function resolveBootTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.PMBRAIN_SERVE_BOOT_TIMEOUT_SECONDS
+    ?? env.GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.error(
+      `[pmbrain serve] ignoring invalid PMBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=${JSON.stringify(raw)} ` +
+      `— using default ${DEFAULT_BOOT_TIMEOUT_SECONDS}s`,
+    );
+    return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
+  }
+  return n * 1000;
 }
 
 interface StdioLifecycleDeps {

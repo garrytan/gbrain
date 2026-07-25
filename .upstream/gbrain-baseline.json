@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "upstream_path": "D:\\cursor-claude\\gbrain",
+  "reviewed_head": "3fafb69b077e602e1286af9cb092ed94455657a8",
+  "reviewed_at": "2026-07-25",
+  "product": "PMBrain",
+  "rules": {
+    "upstream_read_only": true,
+    "auto_merge": false,
+    "preserve_pmbrain_adapters": true,
+    "require_tests": true
+  },
+  "capabilities": [
+    {
+      "name": "retrieval-cathedral",
+      "classification": "B/C",
+      "status": "adopted"
+    },
+    {
+      "name": "dream-drift-enrich-thin",
+      "classification": "B/C",
+      "status": "adopted-default-off"
+    },
+    {
+      "name": "mcp-skill-and-link-catalog",
+      "classification": "A/B",
+      "status": "adopted"
+    },
+    {
+      "name": "life-chronicle",
+      "classification": "D",
+      "status": "deferred"
+    },
+    {
+      "name": "skillopt",
+      "classification": "D",
+      "status": "deferred"
+    }
+  ]
+}

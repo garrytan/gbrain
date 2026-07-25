@@ -106,8 +106,8 @@ describe('assessContentSanity — size boundaries', () => {
 // ─── 6 BUILT-IN PATTERNS ──────────────────────────────────────
 
 describe('assessContentSanity — built-in junk patterns', () => {
-  test('built-in pattern count is locked at 7 (v0.41.13 added cloudflare_challenge_title)', () => {
-    expect(BUILT_IN_JUNK_PATTERNS.length).toBe(7);
+  test('built-in pattern count includes browser-verification interstitials', () => {
+    expect(BUILT_IN_JUNK_PATTERNS.length).toBe(10);
     const names = BUILT_IN_JUNK_PATTERNS.map((p) => p.name);
     expect(names).toContain('cloudflare_attention_required');
     expect(names).toContain('cloudflare_just_a_moment');

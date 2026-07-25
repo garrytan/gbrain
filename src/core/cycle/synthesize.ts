@@ -269,6 +269,8 @@ export interface SynthesizePhaseOpts {
    * the synthesize loop. Caller must opt in explicitly.
    */
   bypassDreamGuard?: boolean;
+  /** Source resolved by the cycle; keeps child writes and summary source-local. */
+  sourceId?: string;
 }
 
 export async function loadDreamWriteSettings(
@@ -548,6 +550,7 @@ export async function runPhaseSynthesize(
           model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
+          ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
         };
         // Idempotency key parity:
         //   - single-chunk → legacy `dream:synth:<filePath>:<hash16>` (byte-
@@ -617,21 +620,32 @@ export async function runPhaseSynthesize(
     // even if Sonnet drops the chunk suffix.
     // v0.32.8: refs carry source_id so reverseWriteRefs picks the correct
     // (source, slug) row (currently always 'default' from subagent put_page).
-    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
+    const cycleSourceId = opts.sourceId ?? 'default';
+    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId);
+    const summaryDate = opts.date ?? today();
+    await stampDreamProvenance(engine, writtenRefs, summaryDate);
 
     // Dual-write: reverse-render each DB row → markdown file.
     const reverseWriteCount = dualWrite
-      ? await reverseWriteRefs(engine, outputRoot, writtenRefs)
+      ? await reverseWriteRefs(engine, outputRoot, writtenRefs, cycleSourceId)
       : 0;
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
-    const summaryDate = opts.date ?? today();
     const summarySlug = `dream-cycle-summaries/${summaryDate}`;
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, outputRoot, summarySlug, summaryDate, writtenSlugs, childOutcomes, dualWrite);
+      await writeSummaryPage(
+        engine,
+        outputRoot,
+        summarySlug,
+        summaryDate,
+        writtenSlugs,
+        childOutcomes,
+        dualWrite,
+        cycleSourceId,
+      );
     }
 
     // Write completion timestamp ON SUCCESS only.
@@ -1140,6 +1154,7 @@ async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
   chunkInfo: Map<number, { idx: number; hash6: string }>,
+  sourceId = 'default',
 ): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
   // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
@@ -1168,7 +1183,7 @@ async function collectChildPutPageSlugs(
     const ci = chunkInfo.get(r.job_id);
     rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
   }
-  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: 'default' }));
+  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: sourceId }));
 }
 
 /**
@@ -1199,10 +1214,35 @@ async function hasLegacySingleChunkCompletion(
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
 
+async function stampDreamProvenance(
+  engine: BrainEngine,
+  refs: Array<{ slug: string; source_id: string }>,
+  cycleDate: string,
+): Promise<void> {
+  if (refs.length === 0) return;
+  const { executeRawJsonb } = await import('../sql-query.ts');
+  for (const { slug, source_id } of refs) {
+    try {
+      await executeRawJsonb(
+        engine,
+        `UPDATE pages
+            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $3::jsonb
+          WHERE slug = $1 AND source_id = $2`,
+        [slug, source_id],
+        [{ dream_generated: true, dream_cycle_date: cycleDate }],
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[dream] provenance stamp ${slug}@${source_id} failed: ${message}\n`);
+    }
+  }
+}
+
 async function reverseWriteRefs(
   engine: BrainEngine,
   outputRoot: string,
   refs: Array<{ slug: string; source_id: string }>,
+  nativeSourceId = 'default',
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
@@ -1217,7 +1257,7 @@ async function reverseWriteRefs(
       // so same-slug-different-source pages don't collide. Default-source
       // pages stay at outputRoot/<slug>.md so each configured Dream output tree
       // keeps the same source-safe layout.
-      const filePath = source_id === 'default'
+      const filePath = source_id === nativeSourceId
         ? join(outputRoot, `${slug}.md`)
         : join(outputRoot, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
@@ -1265,6 +1305,7 @@ async function writeSummaryPage(
   writtenSlugs: string[],
   childOutcomes: Array<{ jobId: number; status: string }>,
   dualWrite: boolean,
+  sourceId = 'default',
 ): Promise<void> {
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
@@ -1308,7 +1349,7 @@ async function writeSummaryPage(
     compiled_truth: parsed.compiled_truth,
     timeline: parsed.timeline,
     frontmatter: parsed.frontmatter,
-  });
+  }, { sourceId });
 
   // Also write to disk when orchestrator dual-write is enabled.
   if (!dualWrite) return;
@@ -1402,4 +1443,6 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 // double-encoded jsonb regression). Not part of the runtime contract.
 export const __testing = {
   collectChildPutPageSlugs,
+  stampDreamProvenance,
+  reverseWriteRefs,
 };

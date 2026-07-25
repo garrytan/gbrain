@@ -19,6 +19,13 @@ import { assessContentSanity, ContentSanityBlockError } from './content-sanity.t
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
 import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
+import {
+  QUARANTINE_KEY,
+  CONTENT_FLAG_KEY,
+  buildQuarantineMarker,
+  buildContentFlagMarker,
+  isQuarantined,
+} from './quarantine.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import {
   buildContextualPrefix,
@@ -28,6 +35,8 @@ import {
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { normalizeAliasList } from './search/alias-normalize.ts';
+import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 
 /**
@@ -171,6 +180,12 @@ export interface ParsedPage {
   tags: string[];
 }
 
+export interface ParentSectionInput {
+  title: string;
+  locator: string;
+  text: string;
+}
+
 export interface ImportResult {
   slug: string;
   status: 'imported' | 'skipped' | 'error';
@@ -183,6 +198,9 @@ export interface ImportResult {
    * Absent only on status='error' (early payload-size rejection).
    */
   parsedPage?: ParsedPage;
+  quarantined?: boolean;
+  flagged?: boolean;
+  flag_reason?: 'markup_heavy' | 'oversized';
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
@@ -250,6 +268,9 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
+    remote?: boolean;
+    /** Optional structural child sections whose chunks inherit parent context. */
+    parentSections?: ParentSectionInput[];
   } = {},
 ): Promise<ImportResult> {
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
@@ -272,6 +293,11 @@ export async function importFromContent(
   }
 
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+  if (opts.remote === true && parsed.frontmatter) {
+    delete parsed.frontmatter[QUARANTINE_KEY];
+    delete parsed.frontmatter[CONTENT_FLAG_KEY];
+    delete parsed.frontmatter[EMBED_SKIP_KEY];
+  }
 
   // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
   // sees the parsed body (compiled_truth + timeline), title, and
@@ -300,6 +326,9 @@ export async function importFromContent(
   // acceptable for the per-page cost since the gate runs at most once
   // per ingest. Power-users with 10K-file syncs who care about this
   // overhead can set the keys via env vars instead and skip the DB read.
+  let pageQuarantined = false;
+  let pageFlagged = false;
+  let pageFlagReason: 'markup_heavy' | 'oversized' | undefined;
   {
     const baseCfg = loadConfig();
     let effectiveCfg = baseCfg;
@@ -325,12 +354,17 @@ export async function importFromContent(
       cs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
     const extra_literals =
       cs.junk_patterns_enabled !== false && !sanityDisabled ? loadOperatorLiterals() : [];
+    const junkDisposition: 'quarantine' | 'reject' =
+      cs.junk_disposition === 'reject' ? 'reject' : 'quarantine';
     const sanityResult = assessContentSanity({
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline ?? '',
       title: parsed.title,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
+      max_markup_ratio: cs.max_markup_ratio,
+      prose_check_enabled: cs.prose_check_enabled,
+      page_kind: parsed.type,
       extra_literals,
     });
     // Audit BEFORE branching so hard-block / soft-block / warn / bypass
@@ -344,19 +378,50 @@ export async function importFromContent(
       // Kill-switch active: loud stderr per offending ingest. Operator
       // explicitly opted into the bypass and gets noisy feedback every
       // time it fires so they remember the gate is off.
-      if (sanityResult.shouldHardBlock || sanityResult.shouldSkipEmbed) {
+      if (sanityResult.shouldQuarantine || sanityResult.shouldFlag) {
         process.stderr.write(
           `[pmbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
         );
       }
     } else {
-      if (sanityResult.shouldHardBlock) {
+      if (sanityResult.shouldQuarantine && junkDisposition === 'reject') {
         // Single throw point. Existing exception flow at every wrapper
         // site fires correctly. Caller-side semantics:
         //   - import.ts → runImport's catch increments errors → non-zero exit
         //   - put_page MCP → operations.ts try/catch → OperationError envelope
         //   - sync.ts → existing catch at :929 → records failure with classified code
         throw new ContentSanityBlockError(sanityResult);
+      }
+      if (sanityResult.shouldQuarantine) {
+        const detail = [
+          ...sanityResult.junk_pattern_matches,
+          ...sanityResult.literal_substring_matches,
+        ].join(', ');
+        const reason = sanityResult.junk_pattern_matches.length > 0
+          ? 'junk_pattern'
+          : 'literal_substring';
+        parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker(reason, detail, {
+          bytes: sanityResult.bytes,
+        });
+        pageQuarantined = true;
+        process.stderr.write(
+          `[pmbrain] content-sanity quarantine: ${slug} - ${detail} (hidden from search)\n`,
+        );
+      }
+      if (sanityResult.shouldFlag) {
+        const flagReason = sanityResult.flag_reason!;
+        parsed.frontmatter[CONTENT_FLAG_KEY] = buildContentFlagMarker(
+          flagReason,
+          sanityResult.reason_messages.join('; '),
+          {
+            ...(sanityResult.markup_ratio !== null
+              ? { markup_ratio: sanityResult.markup_ratio }
+              : {}),
+            bytes: sanityResult.bytes,
+          },
+        );
+        pageFlagged = true;
+        pageFlagReason = flagReason;
       }
       if (sanityResult.shouldSkipEmbed) {
         // Soft-block: mutate frontmatter so the embed_skip marker
@@ -394,7 +459,13 @@ export async function importFromContent(
   // would update the frontmatter without changing the body, the hash
   // would not change, and tag reconciliation would silently no-op
   // (this function returns early on hash-match).
-  const HASH_EPHEMERAL_FRONTMATTER_KEYS = ['captured_at', 'ingested_at'];
+  const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
+    'captured_at',
+    'ingested_at',
+    QUARANTINE_KEY,
+    CONTENT_FLAG_KEY,
+    EMBED_SKIP_KEY,
+  ];
   const stableFrontmatter: Record<string, unknown> = { ...parsed.frontmatter };
   for (const k of HASH_EPHEMERAL_FRONTMATTER_KEYS) {
     delete stableFrontmatter[k];
@@ -487,14 +558,29 @@ export async function importFromContent(
   // triggers tx.deleteChunks(slug) which purges any pre-existing
   // chunks (D9 transition invariant: embed_skip means no live chunks).
   const chunks: ChunkInput[] = [];
-  const embedSkipped = isEmbedSkipped(parsed.frontmatter);
+  const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
   if (!embedSkipped) {
-    if (parsed.compiled_truth.trim()) {
+    if (opts.parentSections && opts.parentSections.length > 0) {
+      for (const section of opts.parentSections) {
+        for (const child of chunkText(section.text)) {
+          const parentContext = [
+            `Parent document: ${parsed.title}`,
+            `Section: ${section.title}`,
+            `Locator: ${section.locator}`,
+          ].join('\n');
+          chunks.push({
+            chunk_index: chunks.length,
+            chunk_text: `${parentContext}\n\n${child.text}`,
+            chunk_source: 'office_child',
+          });
+        }
+      }
+    } else if (parsed.compiled_truth.trim()) {
       for (const c of chunkText(parsed.compiled_truth)) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
-    if (parsed.timeline?.trim()) {
+    if (!opts.parentSections && parsed.timeline?.trim()) {
       for (const c of chunkText(parsed.timeline)) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
@@ -502,7 +588,7 @@ export async function importFromContent(
 
     // v0.20.0 Cathedral II Layer 8 D2 — extract fenced code blocks from
     // compiled_truth as first-class code chunks.
-    if (parsed.compiled_truth.trim()) {
+    if (!opts.parentSections && parsed.compiled_truth.trim()) {
       const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length);
       chunks.push(...fenceChunks);
     }
@@ -694,7 +780,33 @@ export async function importFromContent(
     }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length, parsedPage };
+  // T3 — project frontmatter `aliases:` into page_aliases (free-text alias
+  // resolution for search). Runs AFTER the page write commits so the slug
+  // exists. Fail-soft: a pre-v110 brain has no page_aliases table yet (the
+  // migration may not have run); an alias-write failure must NOT fail the
+  // import. Always called (even with []) so REMOVING an alias from frontmatter
+  // clears its row — the content_hash includes non-timestamp frontmatter, so
+  // an alias edit changes the hash and reaches this path (not the skip branch).
+  try {
+    const aliasNorms = normalizeAliasList((parsed.frontmatter as Record<string, unknown>).aliases);
+    await engine.setPageAliases(slug, sourceId ?? 'default', aliasNorms);
+  } catch (e) {
+    if (!isUndefinedTableError(e)) {
+      warnOncePerProcess(
+        'setPageAliases:failed',
+        `[import] page_aliases projection failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  return {
+    slug,
+    status: 'imported',
+    chunks: chunks.length,
+    parsedPage,
+    ...(pageQuarantined ? { quarantined: true } : {}),
+    ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
+  };
 }
 
 /**

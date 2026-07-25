@@ -85,6 +85,8 @@ describe('Office import searchable-content closure', () => {
 
       const chunks = await engine.getChunks(relativePath);
       expect(chunks.some(chunk => chunk.chunk_text.includes(token))).toBe(true);
+      expect(chunks.every(chunk => chunk.chunk_source === 'office_child')).toBe(true);
+      expect(chunks.every(chunk => chunk.chunk_text.includes('Parent document:'))).toBe(true);
 
       const hits = await engine.searchKeyword(token, { limit: 10 });
       expect(hits.some(hit => hit.slug === relativePath)).toBe(true);

@@ -57,6 +57,13 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.1-tuned-cat15-cn';
 
 /**
+ * Rejected sentinel row for a successful extraction that produced no
+ * gradeable claims. It records the page/content/prompt tuple so unchanged
+ * prose becomes a cache hit on the next Dream cycle.
+ */
+export const EMPTY_EXTRACTION_TOMBSTONE_TEXT = '(no gradeable claims)';
+
+/**
  * Tuned extractor prompt, validated against the hand-labeled synthetic
  * corpus at test/fixtures/calibration/. Measured F1 on first live run
  * via gbrain-evals cat15 (claude-sonnet-4-6 extractor, claude-haiku-4-5
@@ -177,6 +184,7 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
+  tombstones_written: number;
   pages_processed: number;
   pages_failed: number;
   pages_eligible: number;
@@ -377,6 +385,8 @@ export async function defaultExtractor(
 export function parseExtractorOutput(raw: string): ProposedTake[] {
   if (!raw || raw.trim().length === 0) return [];
   let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   // Strip markdown code fence wrapper.
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) text = (fenced[1] ?? '').trim();
@@ -389,7 +399,21 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    return [];
+    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
+    // markdown fences after <think> stripping). Try array-closing first.
+    const sliced = text.slice(start);
+    const lastArr = sliced.lastIndexOf(']');
+    const lastObj = sliced.lastIndexOf('}');
+    const end = Math.max(lastArr, lastObj);
+    if (end > 0) {
+      try {
+        parsed = JSON.parse(sliced.slice(0, end + 1));
+      } catch {
+        return [];
+      }
+    } else {
+      return [];
+    }
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const out: ProposedTake[] = [];
@@ -448,6 +472,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
+      tombstones_written: 0,
       pages_processed: 0,
       pages_failed: 0,
       pages_eligible: 0,
@@ -602,7 +627,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
                (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
                 claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-             ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING
+             ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
              RETURNING id`,
             [
               sourceId,
@@ -620,6 +645,34 @@ class ProposeTakesPhase extends BaseCyclePhase {
             ],
           );
           result.proposals_inserted += inserted.length;
+        }
+        // Successful empty extraction must also populate the idempotency
+        // cache. Extractor failures continue above and are deliberately not
+        // tombstoned so transient provider or parse errors retry next cycle.
+        if (proposals.length === 0) {
+          const inserted = await engine.executeRaw<{ id: number }>(
+            `INSERT INTO take_proposals
+               (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+                claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'rejected')
+             ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
+             RETURNING id`,
+            [
+              sourceId,
+              page.slug,
+              contentHash(body),
+              promptVersion,
+              proposalRunId,
+              EMPTY_EXTRACTION_TOMBSTONE_TEXT,
+              'fact',
+              'brain',
+              0,
+              null,
+              JSON.stringify(existingTakes),
+              opts.model ?? 'claude-sonnet-4-6',
+            ],
+          );
+          result.tombstones_written += inserted.length;
         }
         completedKeys.add(key);
         completedThisRun.add(key);
@@ -678,7 +731,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     return {
       summary: opts.dryRun
         ? `propose_takes: dry-run found ${result.cache_misses} pending pages, ${result.cache_hits} cached, 0 proposals written (run ${proposalRunId})`
-        : `propose_takes: processed ${result.pages_processed} pages in ${result.batches} batch(es), ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.remaining} remaining (run ${proposalRunId})`,
+        : `propose_takes: processed ${result.pages_processed} pages in ${result.batches} batch(es), ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty, ${result.remaining} remaining (run ${proposalRunId})`,
       details: {
         ...result,
         chunk_filter: {

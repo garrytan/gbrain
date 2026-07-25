@@ -1,4 +1,13 @@
 # Bug 修复台账
+## 2026-07-25 上游任务、分页与内容质量闭环修复
+
+- 时间：2026-07-25
+- 版本号：PMBrain 1.1.56
+- 标题：修复分页截断、空提案重复调用、Serve 卡锁、配置异常形状和低质量内容污染搜索
+- 描述：`list_pages` 增加 offset、来源标识和截断提示，远程调用保持 100 条上限而本地显式 limit 不再被静默限制；`propose_takes` 为零结果写入拒绝态 tombstone，避免相同内容重复调用模型；stdio Serve 增加可配置启动就绪超时并在超时后释放 PGLite；Postgres `sources.config` 在合并前自愈字符串、数组等非对象 JSONB；高置信浏览器挑战页改为保留原页但隔离搜索，模糊或超大内容通过 `content_flag` 在 search/get_page 中警告，远程写入不能伪造这些标记；新增只读 `pmbrain quarantine list`，用于定位隔离页面，恢复仍通过修正后的干净来源重新导入。
+- 是否完成：是
+- 最终结果：类型检查、分页与中文规范化单元测试、PGLite quarantine/search 恢复测试、提案 tombstone 测试、Office 搜索闭环和 Serve 配置测试通过；Postgres 异常 JSON 形状补充了有数据库环境执行的 E2E 用例。本次不删除页面、不覆盖原始资料，隔离内容可以通过干净来源重新导入恢复。
+
 ## 2026-07-25 P1/P2 稳定性、安全与文档一致性修复
 
 - 时间：2026-07-25

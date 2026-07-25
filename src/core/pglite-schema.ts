@@ -742,7 +742,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier_bucket_n    INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
-  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+  ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)
   WHERE status = 'pending';
@@ -999,6 +999,26 @@ CREATE TABLE IF NOT EXISTS slug_aliases (
 );
 CREATE INDEX IF NOT EXISTS slug_aliases_canonical_idx
   ON slug_aliases (source_id, canonical_slug);
+
+-- T3 retrieval-cathedral (retrieval-maxpool incident): free-text alias
+-- resolution for SEARCH. Distinct from slug_aliases (slug->slug wikilink
+-- redirect): page_aliases maps a normalized free-text name ("hall of light",
+-- "明堂") to a canonical slug so a query that is a chosen name surfaces the
+-- page. alias_norm is normalizeAlias() output; the (source_id, alias_norm,
+-- slug) triple is unique so re-ingest is idempotent without blocking a second
+-- page claiming the same alias (collisions reported + resolved at query time).
+CREATE TABLE IF NOT EXISTS page_aliases (
+  id          BIGSERIAL PRIMARY KEY,
+  source_id   TEXT NOT NULL,
+  alias_norm  TEXT NOT NULL,
+  slug        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT page_aliases_uniq UNIQUE (source_id, alias_norm, slug)
+);
+CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx
+  ON page_aliases (source_id, alias_norm);
+CREATE INDEX IF NOT EXISTS page_aliases_slug_idx
+  ON page_aliases (source_id, slug);
 `;
 
 /**

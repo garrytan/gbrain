@@ -2348,21 +2348,22 @@ pre {
 }
 
 .dream-run-mode {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
 
 .dream-run-mode button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 7px;
-  padding: 8px 11px;
+  padding: 10px 11px;
   background: #fff;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 700;
+  color: var(--text-primary);
+  text-align: left;
   cursor: pointer;
 }
 
@@ -2370,14 +2371,25 @@ pre {
   border-color: var(--accent);
   background: #eef3ff;
   color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.dream-run-mode span {
-  min-width: 220px;
-  flex: 1 1 260px;
+.dream-run-mode strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dream-run-mode button span {
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+@media (max-width: 980px) {
+  .dream-run-mode {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .dream-run-grid {

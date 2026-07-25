@@ -40,14 +40,15 @@ import type {
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
+  EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
-import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -1497,8 +1498,7 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
-    const { rows } = await this.db.query(
-      `WITH ranked AS (
+    const keywordSql = `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
@@ -1518,16 +1518,20 @@ export class PGLiteEngine implements BrainEngine {
          ORDER BY score DESC
          LIMIT $2
        ),
-       best_per_page AS (
-         SELECT DISTINCT ON (slug) *
-         FROM ranked
-         ORDER BY slug, score DESC
-       )
+       ${buildBestPerPagePoolCte('ranked')}
        SELECT * FROM best_per_page
-       ORDER BY score DESC
-       LIMIT $3 OFFSET $4`,
-      params
-    );
+       ORDER BY score DESC, page_id ASC, chunk_id ASC
+       LIMIT $3 OFFSET $4`;
+
+    let { rows } = await this.db.query(keywordSql, params);
+    if (rows.length === 0 && opts?.orFallback) {
+      const orQuery = buildOrFallbackWebsearchQuery(query);
+      if (orQuery) {
+        const fallbackParams = [...params];
+        fallbackParams[0] = orQuery;
+        ({ rows } = await this.db.query(keywordSql, fallbackParams));
+      }
+    }
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
@@ -1650,13 +1654,9 @@ export class PGLiteEngine implements BrainEngine {
            ORDER BY score DESC
            LIMIT $3
          ),
-         best_per_page AS (
-           SELECT DISTINCT ON (slug) *
-           FROM ranked
-           ORDER BY slug, score DESC
-         )
+         ${buildBestPerPagePoolCte('ranked')}
          SELECT * FROM best_per_page
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $4 OFFSET $5`,
         params,
       );
@@ -1776,6 +1776,125 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
+  async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    // language/symbolKind are chunk-grain code filters with no page-grain
+    // meaning; a code-scoped query gets no title candidates rather than
+    // rows that silently violate the caller's filter.
+    if (opts?.language || opts?.symbolKind) return [];
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+    const detailLow = opts?.detail === 'low';
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
+
+    const boostMap = resolveBoostMap();
+    const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
+    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    const visibilityClause = buildVisibilityClause('p', 's');
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = 'english';
+
+    const params: unknown[] = [query, limit, offset];
+    let extraFilter = '';
+    if (opts?.type) {
+      params.push(opts.type);
+      extraFilter += ` AND p.type = $${params.length}`;
+    }
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
+    }
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+    }
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+
+    // Page grain — one row per page by construction, so no best_per_page
+    // pooling CTE is needed. The LEFT JOIN LATERAL picks the representative
+    // chunk (compiled_truth first, then lowest chunk_index); COALESCEs keep
+    // chunkless pages retrievable (the extreme D1 case: a title with no
+    // body) with the alias-hop row shape (chunk_id 0, empty chunk_text).
+    // Accepted limitations (Reviewer F5/F6): the synthetic chunkless row
+    // inherits the compiled-truth RRF boost and dedups on empty chunk_text;
+    // and detail='low' filters only the REPRESENTATIVE — pages without a
+    // compiled_truth chunk still surface (unlike the keyword arm's filter).
+    const titlesSql =
+      `SELECT
+         p.slug, p.id as page_id, p.title, p.type, p.source_id,
+         p.effective_date, p.effective_date_source,
+         COALESCE(rep.id, 0) as chunk_id,
+         COALESCE(rep.chunk_index, 0) as chunk_index,
+         COALESCE(rep.chunk_text, '') as chunk_text,
+         COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
+         ts_rank_cd(p.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+         CASE WHEN p.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+         ) THEN true ELSE false END AS stale
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+       LEFT JOIN LATERAL (
+         SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+         FROM content_chunks cc
+         WHERE cc.page_id = p.id
+           AND cc.modality = 'text'
+           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
+         ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
+         LIMIT 1
+       ) rep ON true
+       WHERE p.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+         ${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       ORDER BY score DESC, p.id ASC
+       LIMIT $2 OFFSET $3`;
+
+    let { rows } = await this.db.query(titlesSql, params);
+    if (rows.length === 0) {
+      const orQuery = buildOrFallbackWebsearchQuery(query);
+      if (orQuery) {
+        const fallbackParams = [...params];
+        fallbackParams[0] = orQuery;
+        ({ rows } = await this.db.query(titlesSql, fallbackParams));
+      }
+    }
+    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+  }
+
+  /**
+   * v0.32.7 CJK keyword fallback. PGLite's `websearch_to_tsquery('english')`
+   * can't tokenize CJK so the FTS path returns empty for Chinese / Japanese /
+   * Korean queries. This routes to an ILIKE substring scan with
+   * bigram-frequency-count ranking as a ts_rank substitute.
+   *
+   * Codex outside-voice C8 corrections in place:
+   *   - Two distinct parameter bindings: $qLike (LIKE-escaped, for ILIKE) and
+   *     $qRaw (un-escaped, for ranking arithmetic via position/replace).
+   *     Escaped chars cannot be reused as ranking substrings.
+   *   - Explicit `ESCAPE '\'` on the ILIKE clause.
+   *   - Symmetric: no asymmetric whitespace strip (caller's query and
+   *     chunk_text are compared as-stored).
+   *   - Empty-query guard returns no results without binding SQL.
+   *
+   * Postgres engine is intentionally untouched (multi-tenant deployments
+   * can install pgroonga / zhparser when needed; out of scope here).
+   */
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = clampSearchLimit(opts?.limit);
     const offset = opts?.offset || 0;
@@ -1797,7 +1916,10 @@ export class PGLiteEngine implements BrainEngine {
     // subquery's WHERE would lexically resolve back to `te.page_id` itself
     // and degrade to `te.page_id = te.page_id` (always true), making every
     // result stale=true. Codex caught this in adversarial review.
-    const sourceFactorCaseOnSlug = buildSourceFactorCase('hc.slug', boostMap, opts?.detail);
+    // Built on the bare `slug` output column: applied inside the `scored` CTE
+    // whose FROM is the single relation `hnsw_candidates`, so unqualified
+    // `slug` resolves cleanly (T1 per-page pool restructure).
+    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
@@ -1876,23 +1998,33 @@ export class PGLiteEngine implements BrainEngine {
          WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
          ORDER BY cc.${col} <=> ${castSql}
          LIMIT $2
-       )
+       ),
+       -- score as a select-list expr; inner ORDER BY stays pure-distance so
+       -- the HNSW index is usable.
+       scored AS (
+         SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
+         FROM hnsw_candidates
+       ),
+       -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
+       -- over the full candidate set before the user LIMIT. Shared builder with
+       -- postgres-engine + the keyword path so they cannot drift.
+       ${buildBestPerPagePoolCte('scored')}
        SELECT
-         hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
-         hc.effective_date, hc.effective_date_source,
-         hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
-         hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
-         CASE WHEN hc.updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id
+         bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
+         bpp.effective_date, bpp.effective_date_source,
+         bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
+         bpp.score,
+         CASE WHEN bpp.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = bpp.page_id
          ) THEN true ELSE false END AS stale
-       FROM hnsw_candidates hc
+       FROM best_per_page bpp
        -- v0.41.13: stable tiebreaker. When two chunks share a score (same
        -- source-prefix boost + same cosine distance, the basis-vector + same-
        -- source-prefix case in eval fixtures), older page_id wins. Without
        -- this, planner choice + index presence can flip ordering between
        -- master and feature branches that add unrelated indexes — see the
        -- pages_dedup_idx (v95) regression that motivated this.
-       ORDER BY score DESC, hc.page_id ASC, hc.chunk_id ASC
+       ORDER BY bpp.score DESC, bpp.page_id ASC, bpp.chunk_id ASC
        LIMIT $3
        OFFSET $4`,
       params
@@ -2490,6 +2622,29 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
+  async listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]> {
+    const params: unknown[] = [];
+    let where = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where = `JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = ANY($1::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where = `JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = $1`;
+    }
+    const { rows } = await this.db.query(
+      `SELECT l.link_source, COUNT(*)::int AS count
+         FROM links l
+         ${where}
+        GROUP BY l.link_source
+        ORDER BY count DESC, l.link_source ASC NULLS LAST`,
+      params,
+    );
+    return rows as unknown as { link_source: string | null; count: number }[];
+  }
+
   async findByTitleFuzzy(
     name: string,
     dirPrefix?: string,
@@ -2747,6 +2902,90 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
+  async relationalFanout(
+    seeds: string[],
+    opts?: import('./types.ts').RelationalFanoutOpts,
+  ): Promise<import('./types.ts').RelationalFanoutRow[]> {
+    if (!seeds || seeds.length === 0) return [];
+    const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
+    const direction = opts?.direction ?? 'both';
+    const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
+    const types = opts?.linkTypes && opts.linkTypes.length > 0 ? opts.linkTypes : null;
+
+    // $1=seeds, $2=depth, $3=limit; optional scope/type params appended.
+    const params: unknown[] = [seeds, depth, limit];
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    let seedScope = '';
+    if (useSourceIds) {
+      params.push(opts!.sourceIds);
+      seedScope = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      seedScope = `AND p.source_id = $${params.length}`;
+    }
+    let typeFilter = '';
+    if (types) {
+      params.push(types);
+      typeFilter = `AND l.link_type = ANY($${params.length}::text[])`;
+    }
+    const mentionsFilter = opts?.includeMentions ? '' : `AND l.link_source IS DISTINCT FROM 'mentions'`;
+
+    const recurStep =
+      direction === 'out'
+        ? `JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id`
+        : direction === 'in'
+          ? `JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id`
+          : `JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+             JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END`;
+
+    const sql = `
+      WITH RECURSIVE walk AS (
+        SELECT p.id, p.slug, p.source_id, 0::int AS depth,
+               ARRAY[p.id] AS visited, ARRAY[p.slug] AS path,
+               p.source_id AS seed_source, NULL::text AS last_link_type
+        FROM pages p
+        WHERE p.slug = ANY($1::text[]) ${seedScope} AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT p2.id, p2.slug, p2.source_id, w.depth + 1,
+               w.visited || p2.id, w.path || p2.slug,
+               w.seed_source, l.link_type
+        FROM walk w
+        ${recurStep}
+        WHERE w.depth < $2
+          AND NOT (p2.id = ANY(w.visited))
+          AND p2.source_id = w.seed_source
+          AND p2.deleted_at IS NULL
+          ${mentionsFilter}
+          ${typeFilter}
+      )
+      SELECT n.source_id, n.slug,
+             MIN(n.depth) AS hop,
+             COUNT(DISTINCT n.last_link_type) AS edge_count,
+             array_agg(DISTINCT n.last_link_type)
+               FILTER (WHERE n.last_link_type IS NOT NULL) AS via_link_types,
+             (array_agg(array_to_string(n.path, chr(9))
+               ORDER BY n.depth ASC, array_length(n.path, 1) ASC))[1] AS path_str,
+             (SELECT cc.id FROM content_chunks cc
+               WHERE cc.page_id = n.id ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
+      FROM walk n
+      WHERE n.depth > 0
+      GROUP BY n.source_id, n.slug, n.id
+      ORDER BY hop ASC, edge_count DESC, n.source_id ASC, n.slug ASC
+      LIMIT $3
+    `;
+
+    const { rows } = await this.db.query(sql, params);
+    return (rows as Record<string, unknown>[]).map(r => ({
+      source_id: r.source_id as string,
+      slug: r.slug as string,
+      hop: Number(r.hop),
+      edge_count: Number(r.edge_count),
+      via_link_types: Array.isArray(r.via_link_types) ? (r.via_link_types as string[]) : [],
+      path: r.path_str ? String(r.path_str).split('\t') : [],
+      canonical_chunk_id: r.canonical_chunk_id == null ? null : Number(r.canonical_chunk_id),
+    }));
+  }
+
   async getBacklinkCounts(slugs: string[]): Promise<Map<string, number>> {
     const result = new Map<string, number>();
     if (slugs.length === 0) return result;
@@ -2812,6 +3051,28 @@ export class PGLiteEngine implements BrainEngine {
         hits: Number(r.hits),
         cross_source_hits: Number(r.cross_source_hits),
       });
+    }
+    return result;
+  }
+
+  async getContentFlagsByPageIds(
+    pageIds: number[],
+  ): Promise<Map<number, { reason: string; detail: string }>> {
+    const result = new Map<number, { reason: string; detail: string }>();
+    if (pageIds.length === 0) return result;
+    const { rows } = await this.db.query(
+      `SELECT id,
+              frontmatter -> 'content_flag' ->> 'reason' AS reason,
+              frontmatter -> 'content_flag' ->> 'detail' AS detail
+         FROM pages
+        WHERE id = ANY($1::int[])
+          AND frontmatter ? 'content_flag'`,
+      [pageIds],
+    );
+    for (const row of rows as Array<{ id: number; reason: string | null; detail: string | null }>) {
+      if (row.reason) {
+        result.set(Number(row.id), { reason: row.reason, detail: row.detail ?? '' });
+      }
     }
     return result;
   }
@@ -4504,6 +4765,48 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
+  async resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>> {
+    const out = new Map<string, Array<{ slug: string; source_id: string }>>();
+    if (!aliasNorms || aliasNorms.length === 0) return out;
+    const sources =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? opts.sourceIds
+        : opts?.sourceId
+          ? [opts.sourceId]
+          : null;
+    let q = `SELECT alias_norm, slug, source_id FROM page_aliases WHERE alias_norm = ANY($1::text[])`;
+    const params: unknown[] = [aliasNorms];
+    if (sources) {
+      params.push(sources);
+      q += ` AND source_id = ANY($2::text[])`;
+    }
+    q += ` ORDER BY alias_norm, source_id, slug`;
+    const { rows } = await this.db.query(q, params);
+    for (const r of rows as Array<{ alias_norm: string; slug: string; source_id: string }>) {
+      const list = out.get(r.alias_norm) ?? [];
+      if (!list.some(x => x.slug === r.slug && x.source_id === r.source_id)) {
+        list.push({ slug: r.slug, source_id: r.source_id });
+      }
+      out.set(r.alias_norm, list);
+    }
+    return out;
+  }
+
+  async setPageAliases(slug: string, sourceId: string, aliasNorms: string[]): Promise<void> {
+    const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
+    await this.db.query(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2`, [sourceId, slug]);
+    if (uniq.length === 0) return;
+    await this.db.query(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       SELECT $1, a, $2 FROM unnest($3::text[]) AS a
+       ON CONFLICT (source_id, alias_norm, slug) DO NOTHING`,
+      [sourceId, slug, uniq],
+    );
+  }
+
   // Config
   async getConfig(key: string): Promise<string | null> {
     const { rows } = await this.db.query('SELECT value FROM config WHERE key = $1', [key]);
@@ -4951,6 +5254,64 @@ export class PGLiteEngine implements BrainEngine {
       take_count: Number(r.take_count ?? 0),
       take_avg_weight: Number(r.take_avg_weight ?? 0),
       score: Number(r.score ?? 0),
+    }));
+  }
+
+  async listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]> {
+    if (!opts.types || opts.types.length === 0) return [];
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 5000));
+    const threshold = Math.max(0, opts.thinThreshold);
+    const params: unknown[] = [opts.types, threshold];
+    const where: string[] = [
+      'p.deleted_at IS NULL',
+      'p.type = ANY($1::text[])',
+      `(char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < $2`,
+    ];
+
+    if (opts.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts.sourceId) {
+      params.push(opts.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
+
+    const reenrichMs = opts.reenrichAfterMs ?? 0;
+    if (reenrichMs > 0) {
+      params.push(new Date(Date.now() - reenrichMs).toISOString());
+      where.push(
+        `NOT (p.frontmatter ->> 'enriched_at' IS NOT NULL AND p.frontmatter ->> 'enriched_at' > $${params.length})`,
+      );
+    }
+
+    const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
+    params.push(limit);
+    const { rows } = await this.db.query(
+      `SELECT
+         p.slug,
+         p.source_id,
+         p.title,
+         p.type,
+         (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len,
+         COALESCE((
+           SELECT COUNT(*)
+             FROM links l
+            WHERE l.to_page_id = p.id
+              AND l.link_source IS DISTINCT FROM 'mentions'
+         ), 0)::int AS inbound_count
+       FROM pages p
+       WHERE ${where.join(' AND ')}
+       ORDER BY ${ENRICH_ORDER_SQL[orderKey]}
+       LIMIT $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map((row) => ({
+      slug: String(row.slug),
+      source_id: String(row.source_id),
+      title: String(row.title ?? ''),
+      type: row.type as EnrichCandidate['type'],
+      body_len: Number(row.body_len ?? 0),
+      inbound_count: Number(row.inbound_count ?? 0),
     }));
   }
 

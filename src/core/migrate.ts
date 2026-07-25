@@ -5004,6 +5004,47 @@ export const MIGRATIONS: Migration[] = [
         setweight(to_tsvector('simple', pmbrain_cjk_search_tokens(COALESCE(chunk_text, ''))), 'B');
     `,
   },
+  {
+    version: 110,
+    name: 'page_aliases',
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS page_aliases (
+        id          BIGSERIAL PRIMARY KEY,
+        source_id   TEXT NOT NULL,
+        alias_norm  TEXT NOT NULL,
+        slug        TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT page_aliases_uniq UNIQUE (source_id, alias_norm, slug)
+      );
+      CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx
+        ON page_aliases (source_id, alias_norm);
+      CREATE INDEX IF NOT EXISTS page_aliases_slug_idx
+        ON page_aliases (source_id, slug);
+    `,
+  },
+  {
+    version: 111,
+    name: 'search_telemetry_rank1_columns',
+    idempotent: true,
+    sql: `
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS sum_rank1_score DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS count_rank1 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_lt_solid INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_solid INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_high INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 112,
+    name: 'take_proposals_per_claim_idempotency',
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

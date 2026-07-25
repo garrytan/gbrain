@@ -86,7 +86,8 @@ export type CyclePhase =
   // see comment above PHASE_SCOPE). Wraps the per-source loop in ONE
   // brain-wide BudgetTracker and passes it through opts.budgetTracker
   // so the core's auto-wrap doesn't REPLACE it.
-  | 'conversation_facts_backfill';
+  | 'conversation_facts_backfill'
+  | 'drift' | 'enrich_thin';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -141,12 +142,16 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  'drift',
   // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
   // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
   // Ordered AFTER calibration_profile (matches the runCycle dispatch
   // block placement, which runs between the calibration trio and embed),
   // and BEFORE embed so newly-inserted facts get embedded same-cycle.
   'conversation_facts_backfill',
+  // Default OFF. Enriches thin pages from grounded local evidence before
+  // embed so changed content is indexed in the same cycle.
+  'enrich_thin',
   'embed',
   'orphans',
   // v0.39 T12: passive schema-suggest. Runs LATE so post-sync brain state
@@ -195,6 +200,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   propose_takes: 'source',
   grade_takes: 'global',
   calibration_profile: 'global',
+  drift: 'global',
   embed: 'global',
   orphans: 'global',
   purge: 'global',
@@ -209,6 +215,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   // fanout enforcement today (per the comment above); the phase
   // wrapper does its own multi-source loop via listSources().
   conversation_facts_backfill: 'source',
+  enrich_thin: 'source',
 };
 
 /**
@@ -239,6 +246,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  'drift',
   // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
   // synthesize_concepts writes concept-typed pages + tier updates. Both
   // mutate DB state and need the lock.
@@ -246,6 +254,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'synthesize_concepts',
   // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
   'conversation_facts_backfill',
+  'enrich_thin',
   'embed',
   'purge',
 ]);
@@ -1563,6 +1572,9 @@ export async function runCycle(
       } else {
         progress.start('cycle.synthesize');
         const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
+        const synthSourceId = opts.sourceId ??
+          (await resolveSourceForDir(engine, opts.brainDir)) ??
+          'default';
         const { result, duration_ms } = await timePhase(() => runPhaseSynthesize(engine, {
           brainDir: opts.brainDir,
           dryRun,
@@ -1572,6 +1584,7 @@ export async function runCycle(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
+          sourceId: synthSourceId,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1989,6 +2002,44 @@ export async function runCycle(
       }
     }
 
+    // Default OFF. Report-only drift detection; never mutates take weights.
+    if (phases.includes('drift')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'drift',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.drift');
+        const { runPhaseDrift } = await import('./cycle/drift.ts');
+        const { result, duration_ms } = await timePhase(async (): Promise<PhaseResult> => {
+          const driftResult = await runPhaseDrift(engine, {
+            dryRun,
+            brainDir: opts.brainDir,
+          });
+          const status: PhaseStatus =
+            driftResult.status === 'complete' ? 'ok' :
+            driftResult.status === 'partial' ? 'warn' :
+            driftResult.status === 'failed' ? 'fail' : 'skipped';
+          return {
+            phase: 'drift',
+            status,
+            duration_ms: 0,
+            summary: driftResult.detail,
+            details: { ...(driftResult.totals ?? {}) },
+          };
+        });
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
     // ── v0.41.11.0: conversation_facts_backfill ─────────────────
     // Opt-in (default OFF). Walks long-form conversation/meeting/slack/
     // email pages, segments by 30-min gap, runs facts extractor with a
@@ -2011,6 +2062,31 @@ export async function runCycle(
         const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
         const { result, duration_ms } = await timePhase(() =>
           runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // Default OFF. Develops a bounded number of thin pages using only
+    // brain-internal evidence, then leaves embedding to the next phase.
+    if (phases.includes('enrich_thin')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'enrich_thin',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.enrich_thin');
+        const { runPhaseEnrichThin } = await import('./cycle/enrich-thin.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseEnrichThin(engine, { dryRun, signal: opts.signal }),
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);

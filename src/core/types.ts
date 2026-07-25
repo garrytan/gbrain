@@ -434,6 +434,70 @@ export interface SalienceResult {
 }
 
 /**
+ * v0.41.39 (issue #1700) — `gbrain enrich --thin` candidate selection.
+ *
+ * One source-aware SQL query enumerates thin (stub) pages of the given
+ * types, computes a source-correct inbound-link count per page, applies an
+ * optional re-enrich recency guard, orders by the chosen signal, and slices
+ * to `limit`. Returns a LIGHTWEIGHT projection (no page bodies) so a 100K-
+ * page brain doesn't pull every stub body into memory just to rank them.
+ *
+ * Why a dedicated engine method instead of composing `listPages` +
+ * `getBacklinkCounts` in memory:
+ *   - `getBacklinkCounts` groups by bare `slug`, so the same slug in two
+ *     sources collapses/contaminates the count. This query counts inbound
+ *     links per page row (`to_page_id = p.id`), which is source-correct by
+ *     construction.
+ *   - `listPages` returns full `Page` rows (bodies). 500 stub bodies per
+ *     type per source is not a memory guarantee. This projection carries
+ *     only `body_len`, never the body.
+ */
+export interface EnrichCandidatesOpts {
+  /** Page types to consider (e.g. ['person', 'company']). Empty → no rows. */
+  types: PageType[];
+  /** Body-length (chars) below which a page is "thin". */
+  thinThreshold: number;
+  /** Ordering signal. Whitelisted via ENRICH_ORDER_SQL. */
+  order: 'inbound-links' | 'updated' | 'salience';
+  /** Max rows to return. */
+  limit: number;
+  /**
+   * Skip pages whose frontmatter `enriched_at` is newer than
+   * `now - reenrichAfterMs`. Omitted/0 → no recency guard (every thin page
+   * is eligible). Pages never enriched (no `enriched_at`) are always eligible.
+   */
+  reenrichAfterMs?: number;
+  /** Single-source scope (canonical scalar form). */
+  sourceId?: string;
+  /** Federated read scope (array form, wins over scalar). */
+  sourceIds?: string[];
+}
+
+/** v0.41.39 — one row per enrich candidate. Lightweight: NO page body. */
+export interface EnrichCandidate {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: PageType;
+  /** char_length(compiled_truth) + char_length(timeline). */
+  body_len: number;
+  /** Source-correct inbound-link count (excludes `link_source='mentions'`). */
+  inbound_count: number;
+}
+
+/**
+ * v0.41.39 — whitelisted ORDER BY fragments for EnrichCandidatesOpts.order.
+ * No SQL-injection risk: callers pass the enum, engines map to these literal
+ * fragments. Every fragment ends with the (source_id, slug) tiebreaker so
+ * tied scores produce a deterministic order across engines and runs.
+ */
+export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
+  'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
+  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+};
+
+/**
  * v0.29 — Anomaly detection: cohorts (tag, type) with unusually-high activity in a window.
  * Cohort baseline is computed over `lookback_days` excluding `since`; current count is
  * the number of distinct pages touched on `since`. A cohort is anomalous when its
@@ -492,7 +556,7 @@ export interface Chunk {
   page_id: number;
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code';
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'office_child';
   embedding: Float32Array | null;
   model: string;
   token_count: number | null;
@@ -519,7 +583,7 @@ export interface StaleChunkRow {
   slug: string;
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: 'compiled_truth' | 'timeline' | 'office_child';
   model: string | null;
   token_count: number | null;
   /** v0.31.12: source_id so embed --stale can thread it through getChunks/upsertChunks. */
@@ -536,7 +600,7 @@ export interface ChunkInput {
    * alongside text/code chunks; modality='image' rows are filtered out of
    * searchKeyword by default so OCR text doesn't drown text-page search.
    */
-  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset';
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset' | 'office_child';
   embedding?: Float32Array;
   model?: string;
   token_count?: number;
@@ -574,10 +638,12 @@ export interface SearchResult {
   title: string;
   type: PageType;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'office_child';
   chunk_id: number;
   chunk_index: number;
   score: number;
+  /** Search-visible warning for suspicious but non-quarantined content. */
+  content_flag?: { reason: string; detail: string };
   stale: boolean;
   /**
    * v0.36 (cross-modal wave): the chunk's modality discriminator from
@@ -619,6 +685,20 @@ export interface SearchResult {
   /** Slug prefix used for the session-diversification grouping. */
   graph_session_prefix?: string;
   /**
+   * v0.43 relational recall arm — set when this result was surfaced by
+   * typed-edge traversal (not lexical/vector). Drives `gbrain search
+   * --explain` attribution ("surfaced via invested_in edge from widget-co").
+   * Absent for organic keyword/vector results.
+   */
+  /** Edge types the result was reached by (e.g. ['invested_in']). */
+  relational_via_link_types?: string[];
+  /** The resolved seed entity slug the traversal started from. */
+  relational_seed?: string;
+  /** Shortest hop distance from the seed (1 = direct neighbor). */
+  relational_hop?: number;
+  /** Shortest connecting slug path seed→…→result (for "how I know this"). */
+  relational_path?: string[];
+  /**
    * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
    * `gbrain search --explain` formatter. Every boost stage stamps its
    * contribution so the formatter can reconstruct the score derivation.
@@ -647,6 +727,11 @@ export interface SearchResult {
    *  Undefined when no reranker fired. The raw reranker relevance score
    *  is separately stamped as `rerank_score` for back-compat. */
   reranker_delta?: number;
+  /** Raw cross-encoder relevance score stamped by applyReranker on the
+   *  reranked head (undefined when no reranker fired). Distinct from `score`
+   *  (RRF + boosts). v0.42.3.0 autocut cuts on this — the trustworthy
+   *  separatrix — never on RRF/cosine. */
+  rerank_score?: number;
   /**
    * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
    * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
@@ -655,6 +740,38 @@ export interface SearchResult {
    * as canonical" and lets canonicals outrank fuzzy matches.
    */
   alias_resolved_boost?: number;
+  /**
+   * T2 (retrieval-maxpool incident) — multiplier applied by applyTitleBoost
+   * (1.0 = unchanged; default ~1.25x). Fires when the normalized query is a
+   * contiguous token-run inside the page title (or an exact full-title match).
+   * Floor-ratio-gated + clamped so a title hit reorders without burying a
+   * strong semantic match or lying about base_score (the agent's dedup gate
+   * keys off base_score / evidence, not the boosted score).
+   */
+  title_match_boost?: number;
+  /**
+   * T3 (retrieval-maxpool incident) — set when this result was surfaced or
+   * boosted by the free-text alias hop (the query exactly matched a page's
+   * declared alias in page_aliases). An injected canonical that wasn't in the
+   * organic candidate set carries alias_hit=true with score = top-of-organic
+   * + epsilon. Drives the evidence=alias_hit signal the agent's don't-duplicate
+   * decision keys off (T4).
+   */
+  alias_hit?: boolean;
+  /**
+   * T4 — the strongest signal that surfaced this page (alias_hit >
+   * exact_title_match > high_vector_match > keyword_exact > weak_semantic).
+   * Computed by classifyEvidence at the end of the hybrid pipeline.
+   */
+  evidence?: import('./search/evidence.ts').Evidence;
+  /**
+   * T4 — derived "is this page already in the brain?" hint. The agent's
+   * don't-write-a-duplicate decision keys off THIS, not a raw score:
+   * 'exists' = strong (don't duplicate), 'probable' = prefer update,
+   * 'unknown' = look closer. This is the contract that prevents the
+   * incident's duplicate-stub class.
+   */
+  create_safety?: import('./search/evidence.ts').CreateSafety;
 }
 
 /**
@@ -725,6 +842,22 @@ export interface ResolvedColumn {
 export interface SearchOpts {
   limit?: number;
   offset?: number;
+  /**
+   * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
+   * default caps; an object overrides caps per-call; omitted/`false` = off
+   * (default, no behavior change). Trims the ranked set to an intent-driven
+   * cap (entity → tight, else → recall-preserving). Only fires when offset===0.
+   * See src/core/search/return-policy.ts.
+   */
+  adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
+  /**
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
+   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
+   * / exploration (the ceiling override). Cuts the ranked set at the largest
+   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
+   * offset===0. See src/core/search/autocut.ts.
+   */
+  autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
   /**
    * v0.33: multi-type filter. When set, search results are filtered to
@@ -790,6 +923,19 @@ export interface SearchOpts {
    * client) → `sourceIds`; otherwise `ctx.sourceId` (scalar) → `sourceId`.
    */
   sourceIds?: string[];
+  /**
+   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall
+   * fallback. When true, `searchKeyword` retries ONCE with OR-of-terms after
+   * the strict websearch AND query returns zero rows (strict results always
+   * win when non-empty). Default false/undefined = strict-AND only — the
+   * pre-fix contract. hybridSearch opts in for its keyword arm; precision
+   * consumers (enrichment countMentions, link-extraction resolution, eval
+   * paths) MUST NOT set this: OR-matches would inflate mention counts and
+   * relax link-candidate resolution ("John Smith" matching every John and
+   * every Smith). `searchTitles` has its own page-grain fallback and
+   * ignores this flag.
+   */
+  orFallback?: boolean;
   /**
    * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
    *
@@ -933,6 +1079,14 @@ export interface SearchOpts {
    * would resolve to the same mode default and the gate would be a no-op.
    */
   graph_signals?: boolean;
+  /**
+   * v0.43 — relational recall arm per-call override. Per-call wins over the
+   * `search.relational_retrieval` config key wins over the mode bundle. Eval
+   * A/B gates need explicit per-call control or both branches resolve to the
+   * same mode default. `relationalRetrievalDepth` caps traversal hops (1..3).
+   */
+  relationalRetrieval?: boolean;
+  relationalRetrievalDepth?: number;
 }
 
 /**
@@ -1019,6 +1173,43 @@ export interface GraphPath {
   context: string;
   /** Depth of `to_slug` from the root (1 for direct neighbors). */
   depth: number;
+}
+
+/**
+ * One reached node from a typed-edge relational fan-out (v0.43). The recall
+ * arm hydrates these into SearchResult rows and injects them as a fourth RRF
+ * arm. Aggregated to the page level: `hop` is the shortest distance from any
+ * seed, `edge_count` is a connection-richness proxy (distinct edge types via
+ * which the node is reached), `via_link_types` names them, `path` is the
+ * shortest connecting slug chain (for --explain), and `canonical_chunk_id` is
+ * the page's lowest-ordinal chunk (null for frontmatter-only entity pages).
+ */
+export interface RelationalFanoutRow {
+  source_id: string;
+  slug: string;
+  hop: number;
+  edge_count: number;
+  via_link_types: string[];
+  path: string[];
+  canonical_chunk_id: number | null;
+}
+
+/** Options for BrainEngine.relationalFanout. */
+export interface RelationalFanoutOpts {
+  /** Edge types to traverse; null/empty = type-agnostic. */
+  linkTypes?: string[] | null;
+  /** Direction from each seed. Default 'both'. */
+  direction?: 'in' | 'out' | 'both';
+  /** Max hops. Default 2, hard-capped at 3. */
+  depth?: number;
+  /** Include `link_source='mentions'` edges. Default false (typed edges only). */
+  includeMentions?: boolean;
+  /** Single-source scope. */
+  sourceId?: string;
+  /** Federated scope; traversal stays WITHIN each seed's own source. */
+  sourceIds?: string[];
+  /** Hard cap on returned candidate nodes. Default 50. */
+  limit?: number;
 }
 
 // Timeline
@@ -1256,6 +1447,17 @@ export interface HybridSearchMeta {
    * weighting decision auditable.
    */
   intent?: 'entity' | 'temporal' | 'event' | 'general';
+  /**
+   * v0.42 — adaptive return-sizing decision (intent, cap, kept, total).
+   * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
+   */
+  adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
+  /**
+   * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
+   * Omitted when autocut didn't run (no reranker). Surfaced for
+   * `gbrain search --explain`.
+   */
+  autocut?: import('./search/autocut.ts').AutocutDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

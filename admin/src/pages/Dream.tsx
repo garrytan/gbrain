@@ -226,7 +226,7 @@ const KNOWLEDGE_STEPS = [
   { key: 'search', title: '更新搜索能力', description: '让最新知识可以被 AI 准确找到', phases: ['embed', 'orphans', 'schema-suggest', 'purge'] },
 ] as const;
 
-type DreamRunMode = 'meeting' | 'cycle' | 'advanced';
+type DreamRunMode = 'quick' | 'meeting' | 'cycle' | 'advanced';
 
 function pct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
@@ -893,7 +893,7 @@ function DreamRunPanel({
   const [timeoutMinutes, setTimeoutMinutes] = useState('120');
   const [runMode, setRunMode] = useState<DreamRunMode>(() => {
     const saved = window.localStorage.getItem(DREAM_RUN_MODE_KEY);
-    return saved === 'meeting' || saved === 'cycle' || saved === 'advanced'
+    return saved === 'quick' || saved === 'meeting' || saved === 'cycle' || saved === 'advanced'
       ? saved
       : defaultPhase === 'all' ? 'cycle' : 'advanced';
   });
@@ -927,7 +927,7 @@ function DreamRunPanel({
       setFrom('');
       setTo('');
       setDryRun(false);
-    } else if (mode === 'cycle') {
+    } else if (mode === 'cycle' || mode === 'quick') {
       setPhase('all');
       setSourceId('');
       setInput('');
@@ -1002,7 +1002,13 @@ function DreamRunPanel({
         onDone?.();
       }
       const res = await api.startDreamRun({
-        preset: runMode === 'meeting' ? 'meeting' : runMode === 'cycle' ? 'full' : undefined,
+        preset: runMode === 'meeting'
+          ? 'meeting'
+          : runMode === 'cycle'
+            ? 'full'
+            : runMode === 'quick'
+              ? 'quick'
+              : undefined,
         phase: runMode === 'advanced' ? phase : undefined,
         sourceId: runMode === 'advanced' ? sourceId.trim() || undefined : defaultSourceId,
         maxPages: runMode === 'advanced' && phase === 'propose_takes' && maxPages.trim() ? Number(maxPages) : undefined,
@@ -1036,21 +1042,44 @@ function DreamRunPanel({
     }
   };
 
+  const modeCopy: Record<DreamRunMode, {
+    title: string;
+    description: string;
+    action: string;
+  }> = {
+    quick: {
+      title: '先做一次轻量维护',
+      description: '同步变化、补全事实与关系并更新搜索索引，不运行深度观点与概念沉淀。',
+      action: '开始快速维护',
+    },
+    cycle: {
+      title: '让知识库完整整理一遍',
+      description: '检查变化、补全关系、沉淀观点、合并重复信息，并更新搜索能力。',
+      action: '开始深度整理',
+    },
+    meeting: {
+      title: '把会议和会话变成长期知识',
+      description: '选择会议记录或会话文件夹，AI 会完成整理、提炼、连接和索引。',
+      action: '开始整理会议',
+    },
+    advanced: {
+      title: '自定义本次整理',
+      description: '按来源、日期或内部阶段运行，适合调试和精细维护。',
+      action: '运行所选流程',
+    },
+  };
+
   return (
     <div id="dream-launcher" className={`dream-launcher ${compact ? 'compact' : ''}`}>
       <div className="dream-launcher-head">
         <div>
           <span className="dream-eyebrow">开始整理</span>
-          <h2>{runMode === 'meeting' ? '把会议和会话变成长期知识' : runMode === 'advanced' ? '自定义本次整理' : '让知识库自己整理一遍'}</h2>
-          <p>{runMode === 'meeting'
-            ? '选择会议记录或会话文件夹，AI 会完成整理、提炼、连接和索引。'
-            : runMode === 'advanced'
-              ? '按来源、日期或内部阶段运行，适合调试和精细维护。'
-              : 'AI 会检查最近的变化，补全关系、合并重复信息，并更新搜索能力。'}</p>
+          <h2>{modeCopy[runMode].title}</h2>
+          <p>{modeCopy[runMode].description}</p>
         </div>
         <div className="dream-run-actions">
           <button className="pm-primary dream-primary-action" onClick={() => void start(runMode === 'advanced' ? undefined : false)} disabled={running}>
-            {running ? '正在整理…' : runMode === 'meeting' ? '开始整理会议' : runMode === 'advanced' ? '运行所选流程' : '开始整理知识'}
+            {running ? '正在整理…' : modeCopy[runMode].action}
           </button>
           {!running && runMode !== 'advanced' && (
             <button className="pm-ghost" onClick={() => void start(true)}>先预览会发生什么</button>
@@ -1059,14 +1088,21 @@ function DreamRunPanel({
         </div>
       </div>
       <div className="dream-run-mode">
+        <button type="button" className={runMode === 'quick' ? 'active' : ''} onClick={() => applyRunMode('quick')}>
+          <strong>快速维护</strong>
+          <span>日常更新 · 较快</span>
+        </button>
         <button type="button" className={runMode === 'cycle' ? 'active' : ''} onClick={() => applyRunMode('cycle')}>
-          一键整理
+          <strong>深度整理</strong>
+          <span>完整 Dream · 最全面</span>
         </button>
         <button type="button" className={runMode === 'meeting' ? 'active' : ''} onClick={() => applyRunMode('meeting')}>
-          会议与会话
+          <strong>会议与会话</strong>
+          <span>指定文件 · 专项提炼</span>
         </button>
         <button type="button" className={runMode === 'advanced' ? 'active' : ''} onClick={() => applyRunMode('advanced')}>
-          高级设置
+          <strong>高级设置</strong>
+          <span>按 Phase 精细控制</span>
         </button>
       </div>
       <div className="dream-run-grid">

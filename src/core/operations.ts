@@ -8,13 +8,13 @@ import { resolve, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
-import type { PageType } from './types.ts';
+import type { PageType, SearchResult } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { serializePageToMarkdown } from './markdown.ts';
 import { resolvePolicyPageFilePath, resolveWritePolicyForPath } from './write-policy.ts';
 import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
 import { dirname } from 'path';
-import { hybridSearch, hybridSearchCached } from './search/hybrid.ts';
+import { hybridSearch, hybridSearchCached, stampContentFlags } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
@@ -24,7 +24,11 @@ import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
 import { bumpLastRetrievedAt } from './last-retrieved.ts';
+import { isSearchMode } from './search/mode.ts';
+import { stampEvidence } from './search/evidence.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
+import { getContentFlag } from './quarantine.ts';
+import { normalizeChineseQuery } from './search/query-normalize-zh.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -41,6 +45,8 @@ import {
   CODE_CALLEES_DESCRIPTION,
   CODE_DEF_DESCRIPTION,
   CODE_REFS_DESCRIPTION,
+  LIST_SKILLS_DESCRIPTION,
+  GET_SKILL_DESCRIPTION,
 } from './operations-descriptions.ts';
 
 // --- Types ---
@@ -458,6 +464,54 @@ export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; s
   return scope;
 }
 
+export function resolvePerCallMode(ctx: OperationContext, raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+  if (ctx.remote !== false) return undefined;
+  if (!isSearchMode(raw)) {
+    throw new OperationError(
+      'invalid_params',
+      `Unknown search mode '${raw}'. Valid: conservative, balanced, tokenmax.`,
+      `pmbrain search "<query>" --mode balanced`,
+    );
+  }
+  return raw;
+}
+
+function stampEvidenceSafe(results: SearchResult[]): void {
+  try {
+    stampEvidence(results);
+  } catch {
+    // Evidence metadata is additive and must never make retrieval unavailable.
+  }
+}
+
+function maybeCaptureSearch(
+  ctx: OperationContext,
+  queryText: string,
+  results: SearchResult[],
+  latency_ms: number,
+  vectorEnabled: boolean,
+  meta?: HybridSearchMeta | null,
+): void {
+  if (!isEvalCaptureEnabled(ctx.config)) return;
+  void captureEvalCandidate(
+    ctx.engine,
+    {
+      tool_name: 'search',
+      query: queryText,
+      results,
+      meta: meta ?? { vector_enabled: vectorEnabled, detail_resolved: null, expansion_applied: false },
+      latency_ms,
+      remote: ctx.remote ?? false,
+      expand_enabled: false,
+      detail: null,
+      job_id: ctx.jobId ?? null,
+      subagent_id: ctx.subagentId ?? null,
+    },
+    { scrub_pii: isEvalScrubEnabled(ctx.config) },
+  );
+}
+
 export interface Operation {
   name: string;
   description: string;
@@ -576,7 +630,13 @@ const get_page: Operation = {
           ),
         }
       : page;
-    return { ...visibleBody, tags, ...(resolved_slug ? { resolved_slug } : {}) };
+    const content_flag = getContentFlag(page.frontmatter);
+    return {
+      ...visibleBody,
+      tags,
+      ...(content_flag ? { content_flag } : {}),
+      ...(resolved_slug ? { resolved_slug } : {}),
+    };
   },
   scope: 'read',
   cliHints: { name: 'get', positional: ['slug'] },
@@ -707,6 +767,7 @@ const put_page: Operation = {
       source_kind: provenanceKind,
       source_uri: provenanceUri,
       ingested_via: provenanceVia,
+      remote: ctx.remote !== false,
     });
 
     // v0.39 T13 — auto-prompt on first unknown-type write.
@@ -1202,7 +1263,11 @@ const list_pages: Operation = {
     source: { type: 'string', description: 'Optional source id. Must remain within the credential source scope for remote callers.' },
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
-    limit: { type: 'number', description: 'Max results (default 50)' },
+    limit: { type: 'number', description: 'Max results (default 50; remote callers are capped at 100)' },
+    offset: {
+      type: 'number',
+      description: 'Skip first N rows for pagination.',
+    },
     // v0.29 — surface filter that already exists on PageFilters.
     updated_after: {
       type: 'string',
@@ -1229,17 +1294,42 @@ const list_pages: Operation = {
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
     const scope = requestedSourceScopeOpts(ctx, p.source);
-    const pages = await ctx.engine.listPages({
+    const requestedLimit = p.limit as number | undefined;
+    const isLocal = ctx.remote === false;
+    const limit = isLocal
+      ? clampSearchLimit(requestedLimit, 50, Number.MAX_SAFE_INTEGER)
+      : clampSearchLimit(requestedLimit, 50, 100);
+    if (!isLocal && requestedLimit !== undefined && Number.isFinite(requestedLimit) && requestedLimit > limit) {
+      ctx.logger.warn(`[pmbrain] Warning: list limit clamped from ${requestedLimit} to ${limit}; use offset to paginate`);
+    }
+    const requestedOffset = p.offset as number | undefined;
+    const offset =
+      requestedOffset !== undefined && Number.isFinite(requestedOffset) && requestedOffset > 0
+        ? Math.floor(requestedOffset)
+        : undefined;
+    // Probe one row past the requested window. This makes silent truncation
+    // detectable without an extra COUNT query and keeps pagination stable.
+    const rows = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
-      limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      limit: limit + 1,
+      offset,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       ...scope,
     });
+    const truncated = rows.length > limit;
+    const pages = truncated ? rows.slice(0, limit) : rows;
+    if (truncated && isLocal && requestedLimit === undefined) {
+      ctx.logger.warn(
+        `[list_pages] output truncated at ${limit} rows (default 50). ` +
+        'Pass an explicit limit, use offset pagination, or narrow with source/type/tag.',
+      );
+    }
     return pages.map(pg => ({
       slug: pg.slug,
+      source_id: pg.source_id,
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
@@ -1258,21 +1348,48 @@ const search: Operation = {
   params: {
     query: { type: 'string', required: true },
     source: { type: 'string', description: 'Optional source id. Must remain within the credential source scope for remote callers.' },
+    mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
     limit: { type: 'number', description: '最大结果数（默认 20）' },
     offset: { type: 'number', description: '跳过前 N 条结果（用于分页）' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
+    const limit = (p.limit as number) || 20;
+    const offset = (p.offset as number) || 0;
+    const scope = requestedSourceScopeOpts(ctx, p.source);
+    const perCallMode = resolvePerCallMode(ctx, p.mode);
+    const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
+    let capturedMeta: HybridSearchMeta | null = null;
     // v0.34.1 (#861 — P0 leak seal): thread caller's source scope into
     // searchKeyword. Pre-fix this op silently returned cross-source hits
     // for any auth'd OAuth client.
-    const raw = await ctx.engine.searchKeyword(queryText, {
-      limit: (p.limit as number) || 20,
-      offset: (p.offset as number) || 0,
-      ...requestedSourceScopeOpts(ctx, p.source),
-    });
-    const results = dedupResults(raw);
+    const chineseQuery = normalizeChineseQuery(queryText);
+    const results = keywordOnly
+      ? dedupResults((await Promise.all(
+          (chineseQuery.lexicalQueries.length > 0
+            ? chineseQuery.lexicalQueries
+            : [queryText]
+          ).map((lexicalQuery) => ctx.engine.searchKeyword(lexicalQuery, {
+            limit,
+            offset,
+            ...scope,
+            ...(chineseQuery.since ? { afterDate: chineseQuery.since.toISOString() } : {}),
+            ...(chineseQuery.until ? { beforeDate: chineseQuery.until.toISOString() } : {}),
+          })),
+        )).flat())
+      : await hybridSearchCached(ctx.engine, queryText, {
+          limit,
+          offset,
+          expansion: false,
+          ...scope,
+          ...(perCallMode ? { mode: perCallMode } : {}),
+          onMeta: (meta) => { capturedMeta = meta; },
+        });
+    if (keywordOnly) {
+      stampEvidenceSafe(results);
+      await stampContentFlags(ctx.engine, results);
+    }
     const latency_ms = Date.now() - startedAt;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Fire-and-forget;
@@ -1290,10 +1407,10 @@ const search: Operation = {
           tool_name: 'search',
           query: queryText,
           results,
-          meta: { vector_enabled: false, detail_resolved: null, expansion_applied: false },
+          meta: capturedMeta ?? { vector_enabled: !keywordOnly, detail_resolved: null, expansion_applied: false },
           latency_ms,
           remote: ctx.remote ?? false,
-          expand_enabled: null,
+          expand_enabled: false,
           detail: null,
           job_id: ctx.jobId ?? null,
           subagent_id: ctx.subagentId ?? null,
@@ -1327,6 +1444,7 @@ const query: Operation = {
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
+    mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
     lang: { type: 'string', description: 'Filter to chunks where content_chunks.language matches (e.g., typescript, python, ruby)' },
     symbol_kind: { type: 'string', description: 'Filter to chunks where content_chunks.symbol_type matches (e.g., function, class, method, type, interface)' },
@@ -1383,6 +1501,27 @@ const query: Operation = {
       type: 'string',
       description:
         "v0.36: route vector search through a non-default embedding column. Defaults to 'embedding' (OpenAI 1536d) unless `search_embedding_column` config sets a different default. Per-call override for A/B benchmarking across providers (e.g. 'embedding_voyage', 'embedding_zeroentropy'). Column MUST be declared in the `embedding_columns` config registry — unknown names throw with a paste-ready hint listing valid columns.",
+    },
+    adaptive_return: {
+      type: 'boolean',
+      description:
+        "v0.41.33 — return a TIGHT, intent-sized result set instead of the full top-K. YOU (the agent) set this per query to serve the user well:\n" +
+        "  TRUE when the user's question has a small, specific answer — a lookup ('what is X', 'who is Y', 'what's my <thing>', 'what did Z decide'), a single-fact recall, or when you'll route the result into a precise downstream step (a classifier, a decision, an exact citation). The user gets the answer, not a wall of loosely-related pages, and you spend fewer tokens reading noise.\n" +
+        "  Omit / FALSE for breadth — 'everything about X', 'list all', 'what do I know about Y', exploration, brainstorming, or any time you'd rather see more candidates and judge for yourself. Recall matters more there, so take the full top-K.\n" +
+        "Safe by construction: it NEVER returns empty when there are matches (you always get at least the top hit), and it only applies to the first page (omit when paginating). Caps come from config (search.adaptive_return_entity_max / _other_max; default 2 / 6) — pass `limit` 1 alongside this for a hard single-answer cap.",
+    },
+    autocut: {
+      type: 'boolean',
+      description:
+        "v0.42.3.0 — autocut is the SMART DEFAULT (already ON when the reranker runs, which it does in the default search mode). It returns only the confident cluster by cutting where the relevance score drops off a cliff, so an obvious single answer comes back as 1 result and a genuine handful comes back as that handful — not a fixed wall of 20+.\n" +
+        "  You almost never set this. Pass FALSE only to FORCE the full top-K when you deliberately want breadth — broad exploration, 'show me everything about X', enumeration where you'd rather over-collect and judge for yourself, or when you suspect the top hit is wrong and want to see the alternatives.\n" +
+        "  TRUE is redundant in default mode (it's already on); it only matters to override a brain whose config turned autocut off.\n" +
+        "Safe by construction: never returns empty when there are matches, only applies to the first page (omit when paginating), and is a no-op when no reranker scored the results (so it can't cut on an untrustworthy signal). Distinct from `adaptive_return`: autocut cuts on the score cliff; adaptive_return caps by question intent. Leave both unset for the smart default.",
+    },
+    relational: {
+      type: 'boolean',
+      description:
+        "v0.43 — relational recall arm. SMART DEFAULT (on in balanced/tokenmax). When the question is about a RELATIONSHIP ('who invested in widget-co', 'who introduced me to alice', 'what connects fund-a and fund-b'), the brain resolves the named entity and walks its typed-edge graph (invested_in, works_at, founded, …), surfacing the answer even when no passage mentions both sides. Pure no-op for non-relational questions. Pass FALSE to force lexical/vector-only retrieval (e.g. debugging why a graph answer appeared). You almost never set this.",
     },
   },
   handler: async (ctx, p) => {
@@ -1449,6 +1588,10 @@ const query: Operation = {
       offset: (p.offset as number) || 0,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
+      ...((): { mode?: string } => {
+        const mode = resolvePerCallMode(ctx, p.mode);
+        return mode ? { mode } : {};
+      })(),
       detail,
       language: (p.lang as string) || undefined,
       symbolKind: (p.symbol_kind as string) || undefined,
@@ -1473,6 +1616,14 @@ const query: Operation = {
       // Source scope is already threaded via ...querySourceScope above
       // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
       embeddingColumn: embeddingColumnParam,
+      // v0.41.33 — agent-explicit adaptive return-sizing. Omitted = off
+      // (config default applies). hybridSearchCached skips the cache when on.
+      adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
+      // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
+      // reranked modes). `false` forces the full top-K.
+      autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : undefined,
+      // v0.43 — relational recall override. Omitted = smart default (mode bundle).
+      relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
     });
     const latency_ms = Date.now() - startedAt;
 
@@ -1813,6 +1964,15 @@ const get_backlinks: Operation = {
   cliHints: { name: 'backlinks', positional: ['slug'] },
 };
 
+const list_link_sources: Operation = {
+  name: 'list_link_sources',
+  description: 'List distinct link_source provenances with source-scoped edge counts.',
+  params: {},
+  handler: async (ctx) => ctx.engine.listLinkSources(sourceScopeOpts(ctx)),
+  scope: 'read',
+  cliHints: { name: 'link-sources' },
+};
+
 /**
  * Hard cap on traverse_graph depth from MCP callers. Each recursive CTE iteration
  * grows a `visited` array per path; in `direction=both` the join is `OR`-based and
@@ -1991,6 +2151,53 @@ const get_brain_identity: Operation = {
  *   - The local CLI composes the same data plus the local-only sections
  *     directly (no MCP round-trip when running against ~/.gbrain).
  */
+const list_skills: Operation = {
+  name: 'list_skills',
+  description: LIST_SKILLS_DESCRIPTION,
+  params: {
+    section: {
+      type: 'string',
+      description: 'Optional exact routing section filter.',
+    },
+  },
+  handler: async (ctx, params) => {
+    const catalog = await import('./skill-catalog.ts');
+    const publish = await catalog.readMcpPublishSkills(ctx);
+    catalog.assertPublishEnabled(ctx, publish);
+    const override = await catalog.readMcpSkillsDir(ctx);
+    const resolved = catalog.resolveSkillsDir(ctx, override);
+    return catalog.buildSkillCatalog(
+      resolved.dir,
+      resolved.source,
+      typeof params.section === 'string' ? params.section : undefined,
+    );
+  },
+  scope: 'read',
+  cliHints: { name: 'skills' },
+};
+
+const get_skill: Operation = {
+  name: 'get_skill',
+  description: GET_SKILL_DESCRIPTION,
+  params: {
+    name: {
+      type: 'string',
+      required: true,
+      description: 'Exact skill name returned by list_skills.',
+    },
+  },
+  handler: async (ctx, params) => {
+    const catalog = await import('./skill-catalog.ts');
+    const publish = await catalog.readMcpPublishSkills(ctx);
+    catalog.assertPublishEnabled(ctx, publish);
+    const override = await catalog.readMcpSkillsDir(ctx);
+    const resolved = catalog.resolveSkillsDir(ctx, override);
+    return catalog.getSkillDetail(resolved.dir, String(params.name ?? ''));
+  },
+  scope: 'read',
+  cliHints: { name: 'skill', positional: ['name'] },
+};
+
 const get_status_snapshot: Operation = {
   name: 'get_status_snapshot',
   description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle. Admin-scope.',
@@ -4399,13 +4606,14 @@ export const operations: Operation[] = [
   // Tags
   add_tag, remove_tag, get_tags,
   // Links
-  add_link, remove_link, get_links, get_backlinks, traverse_graph,
+  add_link, remove_link, get_links, get_backlinks, list_link_sources, traverse_graph,
   // Timeline
   add_timeline_entry, get_timeline,
   // Admin
   get_stats, get_health, run_doctor, get_versions, revert_version,
   // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
   get_brain_identity,
+  list_skills, get_skill,
   // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
   get_status_snapshot,
   // Sync
