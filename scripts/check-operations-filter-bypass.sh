@@ -78,6 +78,9 @@ FAIL=0
 while IFS= read -r file; do
   [ -z "$file" ] && continue
   rel="${file#"$ROOT/"}"
+  # Some grep implementations can return paths with a duplicated separator
+  # when walking a slash-suffixed directory; compare normalized relative paths.
+  rel="$(printf '%s\n' "$rel" | sed 's#//*#/#g')"
   ok=0
   for allowed in "${ALLOWED[@]}"; do
     if [ "$rel" = "$allowed" ]; then

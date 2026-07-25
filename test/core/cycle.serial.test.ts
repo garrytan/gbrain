@@ -27,7 +27,7 @@ let orphansOpts: Array<{ sourceId?: string } | undefined> = [];
 mock.module('../../src/commands/lint.ts', () => ({
   runLintCore: async (opts: any) => {
     lintCalls.push({ target: opts.target, fix: opts.fix, dryRun: opts.dryRun });
-    return { total_issues: 2, total_fixed: opts.dryRun ? 0 : 2, pages_scanned: 5 };
+    return { total_issues: 2, total_fixed: opts.fix && !opts.dryRun ? 2 : 0, pages_scanned: 5 };
   },
 }));
 
@@ -173,6 +173,9 @@ describe('runCycle — dryRun propagates to every phase', () => {
     await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: false });
 
     expect(lintCalls.at(-1)?.dryRun).toBe(false);
+    // Maintenance lint is audit-only: users can still run `gbrain lint --fix`
+    // explicitly, but dream/autopilot must not rewrite tracked brain files.
+    expect(lintCalls.at(-1)?.fix).toBe(false);
     // Maintenance should audit backlink gaps but not run the legacy fixer that
     // appends "Referenced in" timeline entries into entity pages. The graph
     // extractor/auto-link path is the canonical link store; filesystem backlink
@@ -347,12 +350,10 @@ describe('runCycle — status derivation', () => {
     await truncateCycleLocks(sharedEngine);
   });
 
-  test('ok when work was done (non-dry-run)', async () => {
+  test('partial when audit-only lint finds issues while other work runs', async () => {
     const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
-    expect(['ok', 'partial']).toContain(report.status);
-    // Non-dry-run fixtures produce work (fixes:2, added:4 etc.), so:
-    expect(report.status).toBe('ok');
-    expect(report.totals.lint_fixes).toBe(2);
+    expect(report.status).toBe('partial');
+    expect(report.totals.lint_fixes).toBe(0);
     expect(report.totals.backlinks_added).toBe(3);
     expect(report.totals.pages_synced).toBe(6); // added + modified from sync mock
     expect(report.totals.pages_embedded).toBe(8);

@@ -17,7 +17,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
@@ -125,6 +125,35 @@ describe('runDream — --phase <name> restricts the cycle', () => {
     if (report) {
       expect(report.phases.length).toBe(1);
       expect(report.phases[0].phase).toBe('lint');
+    }
+  });
+
+  test('--phase lint reports fixable findings without rewriting markdown', async () => {
+    mkdirSync(join(repo, 'notes'), { recursive: true });
+    const page = join(repo, 'notes', 'alice-example.md');
+    const original = [
+      '---',
+      'title: Alice Example',
+      'type: note',
+      'created: 2026-01-01',
+      '---',
+      '',
+      'Here is a brain page.',
+      '',
+      'Useful body.',
+      '',
+    ].join('\n');
+    writeFileSync(page, original);
+
+    const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
+
+    expect(readFileSync(page, 'utf8')).toBe(original);
+    expect(report).toBeTruthy();
+    if (report) {
+      expect(report.phases).toHaveLength(1);
+      expect(report.phases[0].phase).toBe('lint');
+      expect(report.phases[0].status).toBe('warn');
+      expect(report.phases[0].details).toMatchObject({ mode: 'audit-only', fixed: 0 });
     }
   });
 
