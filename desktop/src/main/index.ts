@@ -693,6 +693,12 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   try {
     await prepareConfiguredDatabase();
     if (saved.needsEmbeddingDimensionProbe || saved.embeddingModelChanged) {
+      sendStartupProgress({
+        visible: true,
+        stage: 'migration',
+        title: '正在验证向量模型',
+        message: '正在检查模型连接并确认向量维度。此步骤不会修改知识库内容。',
+      });
       let probe: Awaited<ReturnType<typeof runCliChecked>>;
       try {
         probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
@@ -719,13 +725,22 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
         saved.config.embedding_dimensions = result.dimensions!;
       }
     }
+    const migrationRequired = needsDesktopMigration(app.getVersion());
+    if (migrationRequired) {
+      sendStartupProgress({
+        visible: true,
+        stage: 'migration',
+        title: '正在升级数据库',
+        message: '检测到桌面版本更新，正在执行兼容升级。知识库与原始资料不会被删除。',
+      });
+      await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
+    }
     sendStartupProgress({
       visible: true,
       stage: 'migration',
-      title: '正在应用数据库迁移',
-      message: '正在确保现有数据库结构与当前桌面版本兼容。知识库与原始资料不会被删除。',
+      title: '正在保存模型配置',
+      message: '正在应用普通模型与向量模型设置。',
     });
-    await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
     await syncModelDefaultsToDatabase({ resetAdvanced: payload.resetAdvancedModelRouting === true });
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const sourceId = saved.config.desktop?.knowledge_source_id;
@@ -739,9 +754,17 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
       }
       await runCliChecked(runtime(), ['sources', 'default', sourceId]);
     }
-    markDesktopMigration(app.getVersion());
+    if (migrationRequired) markDesktopMigration(app.getVersion());
     // Keep this as the final fallible setup step: once the DB column is
     // aligned, no later config rollback may restore an incompatible width.
+    sendStartupProgress({
+      visible: true,
+      stage: 'migration',
+      title: '正在准备搜索索引',
+      message: saved.embeddingModelChanged
+        ? '向量模型已更改，正在对齐维度并准备重新生成向量。'
+        : '正在确认现有向量索引与当前配置一致。',
+    });
     const alignmentArgs = ['models', 'align-embedding-dimension', '--yes', '--json'];
     if (saved.embeddingModelChanged) alignmentArgs.push('--force-reembed');
     await runCliChecked(runtime(), alignmentArgs);

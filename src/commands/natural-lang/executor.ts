@@ -102,36 +102,45 @@ export async function startRun(kind: string, command: string[], cwd: string, hoo
   };
   let finished = false;
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  const finish = (status: ConsoleRun['status'], code: number | null, error?: string) => {
+  const finish = async (status: ConsoleRun['status'], code: number | null, error?: string) => {
     if (finished) return;
     finished = true;
     if (timeout) clearTimeout(timeout);
     children.delete(id);
     run.exitCode = code;
-    run.status = status;
     if (error) run.error = sanitizeOutput(error);
+    if (hooks?.afterComplete) {
+      try {
+        await hooks.afterComplete();
+      } catch (hookError) {
+        status = 'failed';
+        run.error = sanitizeOutput(
+          hookError instanceof Error
+            ? `Command finished, but database reconnection failed: ${hookError.message}`
+            : `Command finished, but database reconnection failed: ${String(hookError)}`,
+        );
+      }
+    }
+    run.status = status;
     run.completedAt = new Date().toISOString();
     run.durationMs = Date.now() - started;
-    if (hooks?.afterComplete) {
-      hooks.afterComplete().catch(() => undefined);
-    }
   };
 
   child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
   child.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
   child.on('error', (err) => {
-    finish(run.status === 'cancelled' ? 'cancelled' : 'failed', null, err.message);
+    void finish(run.status === 'cancelled' ? 'cancelled' : 'failed', null, err.message);
   });
   child.on('close', (code) => {
     if (run.status === 'cancelled') {
-      finish('cancelled', code);
+      void finish('cancelled', code);
     } else {
-      finish(code === 0 ? 'completed' : 'failed', code);
+      void finish(code === 0 ? 'completed' : 'failed', code);
     }
   });
   timeout = setTimeout(() => {
     if (run.status === 'running') {
-      finish('failed', null, 'Command timed out after ' + ((timeoutMs ?? 600000) / 1000 / 60).toFixed(0) + ' minutes');
+      void finish('failed', null, 'Command timed out after ' + ((timeoutMs ?? 600000) / 1000 / 60).toFixed(0) + ' minutes');
       killProcessTree(child);
     }
   }, timeoutMs ?? 10 * 60 * 1000).unref?.();

@@ -84,6 +84,15 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain('Dream 会从剩余内容继续');
   });
 
+  test('shows truthful model-save stages and only migrates after a desktop version change', () => {
+    expect(main).toContain("title: '正在验证向量模型'");
+    expect(main).toContain("title: '正在保存模型配置'");
+    expect(main).toContain("title: '正在准备搜索索引'");
+    expect(main).toContain('const migrationRequired = needsDesktopMigration(app.getVersion())');
+    expect(main).toMatch(/if \(migrationRequired\) \{[\s\S]*?runCliChecked\(runtime\(\), DESKTOP_MIGRATION_ARGS\)/);
+    expect(main).not.toContain("title: '正在应用数据库迁移'");
+  });
+
   test('allows credential listing and revocation while keeping creation behind the live gateway', () => {
     expect(main).toMatch(/readSharedAccess[\s\S]*requireSharedSidecar/);
     expect(main).toMatch(/revokeSharedAccess[\s\S]*requireSharedSidecar/);
