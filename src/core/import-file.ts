@@ -307,6 +307,11 @@ export async function importFromContent(
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
   const sourceId = opts.sourceId;
+  // Write paths need one concrete source for both the read-before-write and
+  // the transaction. An undefined getPage scope federates across sources and
+  // can mistake a foreign same-slug row for the row this import will update.
+  const effectiveSourceId = sourceId ?? 'default';
+  const sourceOpts = { sourceId: effectiveSourceId };
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -347,7 +352,7 @@ export async function importFromContent(
     content,
     metadata: {
       slug,
-      source_id: sourceId ?? 'default',
+      source_id: effectiveSourceId,
       source_path: opts.sourcePath ?? null,
       source_kind: opts.source_kind ?? null,
       source_uri: opts.source_uri ?? null,
@@ -546,7 +551,7 @@ export async function importFromContent(
   // #1035: fetch the existing page BEFORE the hash compute so (a) the type
   // preservation below participates in the hash (a no-op re-put stays a
   // hash-match skip) and (b) the hash short-circuit below reuses this row.
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  const existing = await engine.getPage(slug, sourceOpts);
 
   // #1035: absence of an explicit frontmatter `type:` on an EXISTING page
   // means "preserve the stored type", not "re-infer". Pre-fix, a round-trip
@@ -620,7 +625,7 @@ export async function importFromContent(
   if (!opts.forceRechunk && engine.findDuplicatePage) {
     let dup: { slug: string; id: number } | null = null;
     try {
-      dup = await engine.findDuplicatePage(sourceId ?? 'default', {
+      dup = await engine.findDuplicatePage(effectiveSourceId, {
         hash,
         frontmatterId: fmIdStr,
       });
@@ -632,7 +637,7 @@ export async function importFromContent(
     }
     if (dup && dup.slug !== slug) {
       // Look up the duplicate page so we can compare frontmatter.id.
-      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      const dupPage = await engine.getPage(dup.slug, sourceOpts);
       const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
       const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
       const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
@@ -640,7 +645,7 @@ export async function importFromContent(
         // True duplicate (same external ID). Skip + log to stderr.
         process.stderr.write(
           `[import] skipping ${opts.sourcePath ?? slug}: identical to ${dup.slug} ` +
-          `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
+          `(frontmatter.id=${fmIdStr}) in source ${effectiveSourceId}. ` +
           `Pass --force-rechunk to override.\n`
         );
         return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
@@ -711,7 +716,7 @@ export async function importFromContent(
     const resolution = resolveContextualRetrievalMode({
       pageFrontmatter: parsed.frontmatter,
       source: {
-        id: sourceId ?? 'default',
+        id: effectiveSourceId,
         contextual_retrieval_mode: null,
         trust_frontmatter_overrides: false,
       },
@@ -760,10 +765,8 @@ export async function importFromContent(
         });
 
   // Transaction wraps all DB writes. Every per-page tx call carries the
-  // caller's sourceId so writes target (sourceId, slug) rather than the
-  // schema DEFAULT — required for multi-source brains; harmless ('default')
-  // for single-source callers.
-  const txOpts = sourceId ? { sourceId } : undefined;
+  // same concrete source used by the read-before-write above.
+  const txOpts = sourceOpts;
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -818,7 +821,7 @@ export async function importFromContent(
     if (!opts.noEmbed) {
       await tx.updatePageContextualRetrievalState(
         slug,
-        sourceId ?? 'default',
+        effectiveSourceId,
         effectiveCRMode,
         corpusGeneration,
       );

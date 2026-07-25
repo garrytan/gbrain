@@ -83,6 +83,34 @@ describe('source-id routing (v0.36.x #891 + #978 regression)', () => {
     expect(rows[0].source_id).toBe('default');
   });
 
+  test('default import does not version a same-slug page from another source', async () => {
+    const slug = 'systems/vercel/deployments/dpl-cross-source';
+    await importFromContent(
+      engine,
+      slug,
+      '---\ntype: note\ntitle: Work deployment\n---\nWork-source body.',
+      { noEmbed: true, sourceId: 'work' },
+    );
+
+    await expect(
+      importFromContent(
+        engine,
+        slug,
+        '---\ntype: note\ntitle: Default deployment\n---\nDefault-source body.',
+        { noEmbed: true },
+      ),
+    ).resolves.toBeTruthy();
+
+    const rows = await engine.executeRaw<{ source_id: string; title: string }>(
+      `SELECT source_id, title FROM pages WHERE slug = $1 ORDER BY source_id`,
+      [slug],
+    );
+    expect(rows).toEqual([
+      { source_id: 'default', title: 'Default deployment' },
+      { source_id: 'work', title: 'Work deployment' },
+    ]);
+  });
+
   test('chunks land under the requested source, not default', async () => {
     await importFromContent(engine, 'people/carol', '---\ntype: person\ntitle: Carol\n---\n\nNotes about Carol.', {
       noEmbed: true,

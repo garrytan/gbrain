@@ -2733,6 +2733,7 @@ const sync_brain: Operation = {
   description: 'Sync git repo to brain (incremental)',
   params: {
     repo: { type: 'string', description: 'Path to git repo (optional if configured)' },
+    source_id: { type: 'string', description: 'Named source to sync (defaults to the operation context source)' },
     dry_run: { type: 'boolean', description: 'Preview changes without applying' },
     full: { type: 'boolean', description: 'Full re-sync (ignore checkpoint)' },
     no_pull: { type: 'boolean', description: 'Skip git pull' },
@@ -2749,6 +2750,7 @@ const sync_brain: Operation = {
       noEmbed: (p.no_embed as boolean) || false,
       noPull: (p.no_pull as boolean) || false,
       full: (p.full as boolean) || false,
+      sourceId: (p.source_id as string | undefined) ?? ctx.sourceId,
     });
   },
   cliHints: { name: 'sync', hidden: true },

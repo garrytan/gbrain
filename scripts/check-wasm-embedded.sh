@@ -27,6 +27,15 @@ trap 'rm -f "$OUT_BIN"' EXIT
 # chunker + WASM path resolution, not unrelated CLI wiring.
 bun build --compile --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null 2>&1
 
+# Some hardened macOS hosts kill Bun 1.3.12 compiled binaries because that
+# release emits a corrupt LC_CODE_SIGNATURE. Remove the malformed signature
+# before applying an ad-hoc one so this guard tests the embedded WASM path
+# instead of failing at AppleSystemPolicy. Other platforms are unchanged.
+if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
+  codesign --remove-signature "$OUT_BIN" >/dev/null 2>&1
+  codesign --force --sign - "$OUT_BIN" >/dev/null 2>&1
+fi
+
 # Run it and capture JSON output.
 OUTPUT="$("$OUT_BIN" 2>&1)"
 
