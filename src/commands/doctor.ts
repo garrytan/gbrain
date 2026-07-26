@@ -878,8 +878,8 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   checks.push(await checkEmbeddingEnvOverride(engine));
 
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
-  // The subagent loop is Anthropic-only. If models.tier.subagent or
-  // models.default is explicitly set to a non-Anthropic provider, warn here
+  // The subagent loop requires native tool-calling. If models.subagent,
+  // models.tier.subagent, or models.default resolves to a limited provider, warn here
   // so the user sees it at the next `gbrain doctor` run instead of at the
   // next subagent job submission. (Layers 1+2 also enforce — this is the
   // surfacing layer.)
@@ -3053,6 +3053,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
 export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
+    const modelsSubagent = await engine.getConfig('models.subagent');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
 
@@ -3093,7 +3094,10 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       return null;
     };
 
-    if (tierSubagent) {
+    if (modelsSubagent) {
+      const issue = explain(modelsSubagent, 'models.subagent');
+      if (issue) return issue;
+    } else if (tierSubagent) {
       const issue = explain(tierSubagent, 'models.tier.subagent');
       if (issue) return issue;
     } else if (modelsDefault) {
@@ -3131,7 +3135,9 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
     return {
       name: 'subagent_capability',
       status: 'ok',
-      message: tierSubagent
+      message: modelsSubagent
+        ? `Subagent model resolves to "${modelsSubagent}" with full tool-loop capability`
+        : tierSubagent
         ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
         : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
