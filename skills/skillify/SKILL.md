@@ -60,7 +60,7 @@ Before skillifying, check:
 - Is there >20 lines of logic? (Trivial helpers don't need full infrastructure)
 - Does it have a clear trigger phrase a user would actually say?
 
-If no to all three, it's a script, not a skill. Move on.
+If ANY answer is no, it's a script, not a skill — stop here. Do not scaffold, write a SKILL.md, run evals, or write tests for it. Tell the user why and move on.
 
 ## Phase 1: Audit
 
