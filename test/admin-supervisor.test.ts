@@ -139,4 +139,18 @@ describe('Admin Supervisor readiness', () => {
     expect(source).toContain('!supervisor?.worker_running');
     expect(source).toContain('正在准备 Worker…');
   });
+
+  test('keeps the detached Supervisor and Worker console hidden on Windows', () => {
+    const jobsSource = readFileSync(join(process.cwd(), 'src/commands/jobs.ts'), 'utf8');
+    const workerSource = readFileSync(
+      join(process.cwd(), 'src/core/minions/child-worker-supervisor.ts'),
+      'utf8',
+    );
+    expect(jobsSource).toMatch(
+      /spawn\(process\.execPath,[\s\S]*?detached:\s*true,[\s\S]*?windowsHide:\s*true,/,
+    );
+    expect(workerSource).toMatch(
+      /child = spawn\(spawnCmd, spawnArgs,[\s\S]*?windowsHide:\s*true,/,
+    );
+  });
 });

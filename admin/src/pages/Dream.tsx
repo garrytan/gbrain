@@ -333,6 +333,7 @@ interface DreamPhaseReport {
   summary?: string;
   details?: Record<string, unknown>;
   pagesAffected?: string[];
+  pagesAffectedCount?: number;
   error?: { class?: string; code?: string; message?: string; hint?: string };
 }
 
@@ -345,6 +346,9 @@ interface DreamCycleReport {
 }
 
 function parseDreamReport(run: ConsoleRun): DreamCycleReport | null {
+  if (run.result && typeof run.result === 'object' && !Array.isArray(run.result)) {
+    return run.result as DreamCycleReport;
+  }
   const text = run.stdout.trim();
   if (!text) return null;
   try {
@@ -359,6 +363,15 @@ function parseDreamReport(run: ConsoleRun): DreamCycleReport | null {
       return null;
     }
   }
+}
+
+function effectiveDreamStatus(run: ConsoleRun): string {
+  if (run.status !== 'completed') return run.status;
+  const reportStatus = parseDreamReport(run)?.status;
+  if (reportStatus === 'partial') return 'partial';
+  if (reportStatus === 'failed') return 'failed';
+  if (reportStatus === 'skipped') return 'skipped';
+  return 'completed';
 }
 
 export function dreamRunDeltas(run: ConsoleRun | null): { pages: number; links: number } {
@@ -433,6 +446,7 @@ export function describeDreamRun(run: ConsoleRun): {
   const proposalCacheHits = Number(proposalDetails.cache_hits ?? 0);
   const proposalPagesFailed = Number(proposalDetails.pages_failed ?? 0);
   const proposalRemaining = Number(proposalDetails.remaining ?? 0);
+  const reportIsPartial = report?.status === 'partial';
 
   if (run.status === 'running' || run.status === 'queued') {
     return {
@@ -525,6 +539,13 @@ export function describeDreamRun(run: ConsoleRun): {
     headline = `Dream 已完成，产生 ${totalKnowledgeUpdates} 项知识更新`;
   }
 
+  if (reportIsPartial) {
+    headline = totalKnowledgeUpdates > 0 || pagesSynced > 0 || pagesEmbedded > 0
+      ? 'Dream 已部分完成，成果与待处理项如下'
+      : 'Dream 只完成了部分检查';
+    diagnosis = '部分阶段已成功并保留实际成果，仍有未处理内容；下方会据实显示写入数量和失败原因。';
+  }
+
   if (run.status === 'failed') {
     headline = 'Dream 执行失败';
     diagnosis = firstErrorText(run, report) || diagnosis;
@@ -600,14 +621,33 @@ export function buildDreamOutcome(run: ConsoleRun): DreamOutcomeSummary {
   for (const current of phases) {
     const currentDetails = current.details ?? {};
     const currentLabel = PHASE_USER_ACTIONS[current.phase] ?? PHASE_LABELS[current.phase] ?? current.phase;
-    if (current.status === 'fail' || current.status === 'error') {
-      failureCount += 1;
-      failureItems.push(`${currentLabel}：${current.error?.message ?? current.summary ?? '执行失败'}`);
-    }
     const failedFiles = Math.max(0, Number(currentDetails.failedFiles ?? 0));
     if (failedFiles > 0) {
       failureCount += failedFiles;
       failureItems.push(`${currentLabel}：${failedFiles} 个文件未处理成功`);
+    }
+    const errorsCount = Math.max(0, Number(currentDetails.errors_count ?? 0));
+    const alreadyCounted = current.phase === 'propose_takes'
+      ? Math.max(0, Number(currentDetails.pages_failed ?? 0))
+      : 0;
+    const additionalErrors = Math.max(0, errorsCount - alreadyCounted);
+    if (additionalErrors > 0) {
+      failureCount += additionalErrors;
+      failureItems.push(`${currentLabel}：${additionalErrors} 项模型或数据处理未成功`);
+    }
+    const pending = Math.max(0, Number(currentDetails.pending ?? 0));
+    if (pending > 0) {
+      failureCount += pending;
+      failureItems.push(`${currentLabel}：${pending} 个内容块仍待处理`);
+    }
+    if (
+      (current.status === 'fail' || current.status === 'error')
+      && failedFiles === 0
+      && errorsCount === 0
+      && pending === 0
+    ) {
+      failureCount += 1;
+      failureItems.push(`${currentLabel}：${current.error?.message ?? current.summary ?? '执行失败'}`);
     }
   }
   const failedProposalPages = Math.max(0, Number(proposals.pages_failed ?? 0));
@@ -685,6 +725,16 @@ export function buildDreamOutcome(run: ConsoleRun): DreamOutcomeSummary {
 function DreamRunResult({ run }: { run: ConsoleRun }) {
   const summary = describeDreamRun(run);
   const outcome = buildDreamOutcome(run);
+  const displayStatus = effectiveDreamStatus(run);
+  const statusLabel = ({
+    completed: '已完成',
+    partial: '部分完成',
+    running: '整理中',
+    queued: '等待中',
+    failed: '未完成',
+    skipped: '未执行',
+    cancelled: '已中止',
+  } as Record<string, string>)[displayStatus] ?? displayStatus;
   return (
     <section className="dream-run-narrative dream-outcome">
       <div className="dream-run-headline">
@@ -692,7 +742,7 @@ function DreamRunResult({ run }: { run: ConsoleRun }) {
           <span className="dream-eyebrow">本次成果</span>
           <b>{summary.headline}</b>
         </div>
-        <span className={`run-${run.status}`}>{run.status}</span>
+        <span className={`run-${displayStatus}`}>{statusLabel}</span>
       </div>
       <p>{summary.diagnosis}</p>
       <div className="dream-outcome-metrics">
@@ -771,9 +821,10 @@ export function isKnowledgeJourneyComplete(run: ConsoleRun | null): boolean {
   const report = parseDreamReport(run);
   const embedStatus = report?.phases?.find(phase => phase.phase === 'embed')?.status;
   return !!report
-    && report.status !== 'failed'
+    && (report.status === 'ok' || report.status === 'clean')
     && !report.reason
     && (embedStatus === 'ok' || embedStatus === 'skipped')
+    && Number(report.phases?.find(phase => phase.phase === 'embed')?.details?.pending ?? 0) === 0
     && (report.phases?.length ?? 0) > 1;
 }
 
@@ -841,8 +892,9 @@ export function phaseSummaryZh(phase: DreamPhaseReport): string {
     case 'sync': {
       const candidates = number('added') + number('modified') + number('deleted');
       const failed = number('failedFiles');
-      const result = Array.isArray(phase.pagesAffected)
-        ? `实际写入 ${phase.pagesAffected.length} 个页面`
+      const affectedCount = phase.pagesAffectedCount ?? phase.pagesAffected?.length;
+      const result = typeof affectedCount === 'number'
+        ? `实际写入 ${affectedCount} 个页面`
         : '本次运行记录未提供实际写入明细';
       return `检测到 ${candidates} 个待同步文件，${result}${failed > 0 ? `，${failed} 个文件解析失败` : ''}。`;
     }
@@ -892,7 +944,10 @@ function DreamTechnicalDetails({ run }: { run: ConsoleRun }) {
                     {phaseSummaryZh(phase)}
                     {phase.phase === 'sync' && (phase.pagesAffected?.length ?? 0) > 0 && (
                       <details className="dream-sync-pages">
-                        <summary>查看实际写入的 {phase.pagesAffected?.length ?? 0} 个页面</summary>
+                        <summary>
+                          查看实际写入的 {phase.pagesAffectedCount ?? phase.pagesAffected?.length ?? 0} 个页面
+                          {(phase.pagesAffectedCount ?? 0) > (phase.pagesAffected?.length ?? 0) ? '（展示前 100 个）' : ''}
+                        </summary>
                         <ul>{phase.pagesAffected?.map((slug, index) => <li key={`${slug}:${index}`}><code>{slug}</code></li>)}</ul>
                       </details>
                     )}
@@ -1402,20 +1457,31 @@ function RecentRuns({ runs }: { runs: ConsoleRun[] }) {
       : run.kind.includes('cycle') || run.kind.includes('full')
         ? '完整知识整理'
         : '自定义整理';
-  const statusLabel = (status: string) => ({ completed: '已完成', running: '整理中', queued: '等待中', failed: '未完成', cancelled: '已中止' }[status] ?? status);
+  const statusLabel = (status: string) => ({
+    completed: '已完成',
+    partial: '部分完成',
+    running: '整理中',
+    queued: '等待中',
+    failed: '未完成',
+    skipped: '未执行',
+    cancelled: '已中止',
+  }[status] ?? status);
   return (
     <div className="dream-run-list">
-      {runs.slice(0, 8).map(run => (
-        <div key={run.id}>
-          <span>{runLabel(run)}</span>
-          <b className={`run-${run.status}`}>{statusLabel(run.status)}</b>
-          <small>{formatDate(run.startedAt, '-')}</small>
-          <button type="button" className="pm-ghost" onClick={() => {
-            window.localStorage.setItem(DREAM_LAST_RUN_KEY, run.id);
-            window.location.hash = 'dream-execute';
-          }}>查看本次整理内容</button>
-        </div>
-      ))}
+      {runs.slice(0, 8).map(run => {
+        const displayStatus = effectiveDreamStatus(run);
+        return (
+          <div key={run.id}>
+            <span>{runLabel(run)}</span>
+            <b className={`run-${displayStatus}`}>{statusLabel(displayStatus)}</b>
+            <small>{formatDate(run.startedAt, '-')}</small>
+            <button type="button" className="pm-ghost" onClick={() => {
+              window.localStorage.setItem(DREAM_LAST_RUN_KEY, run.id);
+              window.location.hash = 'dream-execute';
+            }}>查看本次整理内容</button>
+          </div>
+        );
+      })}
     </div>
   );
 }

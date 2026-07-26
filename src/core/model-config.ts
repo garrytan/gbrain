@@ -24,6 +24,12 @@
 
 import type { BrainEngine } from './engine.ts';
 import { splitProviderModelId } from './model-id.ts';
+import {
+  loadConfigFileOnly,
+  readFileConfigValue,
+  saveConfig,
+  writeFileConfigValue,
+} from './config.ts';
 
 export type ModelTier = 'utility' | 'reasoning' | 'deep' | 'subagent';
 
@@ -121,6 +127,33 @@ const _subagentTierWarningsEmitted = new Set<string>();
 // Module-level set of deprecated config keys we've already warned about.
 // Reset on process restart; one warning per (key, process) per Codex P1 #11.
 const _deprecationWarningsEmitted = new Set<string>();
+let _legacyModelConfigMigration = Promise.resolve();
+
+export async function readModelConfigValue(
+  engine: BrainEngine | null,
+  key: string,
+): Promise<string | null> {
+  const fileValue = readFileConfigValue(loadConfigFileOnly(), key);
+  if (typeof fileValue === 'string' && fileValue.trim()) return fileValue.trim();
+  if (!engine) return null;
+  const legacyValue = await engine.getConfig(key);
+  const normalized = legacyValue?.trim();
+  if (!normalized) return null;
+
+  // Older PMBrain releases stored model routing in the database. Move each
+  // legacy value into config.json the first time it is read, then remove the
+  // duplicate DB row so Desktop, Admin, CLI and Dream cannot diverge again.
+  const migrate = _legacyModelConfigMigration.then(async () => {
+    const config = loadConfigFileOnly();
+    if (!config || readFileConfigValue(config, key) !== undefined) return;
+    writeFileConfigValue(config, key, normalized);
+    saveConfig(config);
+    await engine.unsetConfig(key);
+  });
+  _legacyModelConfigMigration = migrate.catch(() => {});
+  await migrate;
+  return normalized;
+}
 
 function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean): void {
   if (_deprecationWarningsEmitted.has(oldKey)) return;
@@ -174,11 +207,11 @@ export async function resolveModelDetailed(
   if (engine) {
     // 2. New-key config
     if (opts.configKey) {
-      const v = await engine.getConfig(opts.configKey);
+      const v = await readModelConfigValue(engine, opts.configKey);
       if (v && v.trim()) {
         // If a deprecated key is also set, warn that it's being ignored.
         if (opts.deprecatedConfigKey) {
-          const old = await engine.getConfig(opts.deprecatedConfigKey);
+          const old = await readModelConfigValue(engine, opts.deprecatedConfigKey);
           if (old && old.trim()) {
             emitDeprecationWarning(opts.deprecatedConfigKey, opts.configKey, /*ignored=*/ true);
           }
@@ -189,7 +222,7 @@ export async function resolveModelDetailed(
 
     // 3. Old-key (deprecated) config
     if (opts.deprecatedConfigKey) {
-      const v = await engine.getConfig(opts.deprecatedConfigKey);
+      const v = await readModelConfigValue(engine, opts.deprecatedConfigKey);
       if (v && v.trim()) {
         emitDeprecationWarning(opts.deprecatedConfigKey, opts.configKey ?? '<no replacement>', /*ignored=*/ false);
         return finish(v.trim(), opts.deprecatedConfigKey);
@@ -202,14 +235,14 @@ export async function resolveModelDetailed(
     const tiers = [opts.tier, ...(opts.fallbackTiers ?? [])]
       .filter((tier): tier is ModelTier => tier !== undefined);
     for (const tier of tiers) {
-      const tierVal = await engine.getConfig(`models.tier.${tier}`);
+      const tierVal = await readModelConfigValue(engine, `models.tier.${tier}`);
       if (tierVal && tierVal.trim()) {
         return finish(tierVal.trim(), `models.tier.${tier}`, opts.tier);
       }
     }
 
     // 5. Global default keeps simple mode working when no tier is configured.
-    const def = await engine.getConfig('models.default');
+    const def = await readModelConfigValue(engine, 'models.default');
     if (def && def.trim()) {
       return finish(def.trim(), 'models.default');
     }
@@ -347,7 +380,7 @@ export async function resolveAlias(
 ): Promise<string> {
   if (depth > 2) return name; // cycle break
   if (engine) {
-    const userAlias = await engine.getConfig(`models.aliases.${name}`);
+    const userAlias = await readModelConfigValue(engine, `models.aliases.${name}`);
     if (userAlias && userAlias.trim() && userAlias.trim() !== name) {
       return await resolveAlias(engine, userAlias.trim(), depth + 1);
     }

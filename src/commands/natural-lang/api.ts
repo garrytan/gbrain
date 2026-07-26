@@ -313,7 +313,13 @@ export async function startDreamRun(input: {
   timeoutMs?: number;
 }, cwd: string, hooks?: RunHooks): Promise<ConsoleRun> {
   const mode = input.preset ?? (input.phase && input.phase !== 'all' ? input.phase : 'cycle');
-  return await startRun(`dream_${mode}`, buildDreamCommand({ ...input, json: true }), cwd, hooks, input.timeoutMs);
+  return await startRun(
+    `dream_${mode}`,
+    buildDreamCommand({ ...input, json: true }),
+    cwd,
+    { ...hooks, captureJsonResult: true },
+    input.timeoutMs,
+  );
 }
 
 export function buildSourceGitCommand(sourceId: string, action: 'init' | 'commit', message?: string): string[] {

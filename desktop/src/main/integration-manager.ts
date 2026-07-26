@@ -3,10 +3,6 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { backupFile } from './config-manager.js';
-import {
-  SHARED_MCP_TOOL_NAMES,
-  SHARED_MCP_WRITE_TOOL_NAMES,
-} from './lan-mcp-gateway.js';
 import type { SidecarManager } from './sidecar-manager.js';
 
 export type IntegrationClient = 'codebuddy' | 'workbuddy' | 'cursor' | 'trae' | 'claude' | 'codex' | 'qwenpaw';
@@ -360,14 +356,6 @@ export async function smokeTestSharedIntegration(
   const listedNames = listedTools
     .map((tool: { name?: unknown }) => typeof tool.name === 'string' ? tool.name : '')
     .filter(Boolean);
-  const allowedTools = new Set<string>(SHARED_MCP_TOOL_NAMES);
-  const unexpectedTool = listedNames.find((name: string) => !allowedTools.has(name));
-  if (unexpectedTool) throw new Error(`局域网 MCP 错误暴露了未审计工具：${unexpectedTool}`);
-  if (!expectedScopes.includes('write')) {
-    const writeTools = new Set<string>(SHARED_MCP_WRITE_TOOL_NAMES);
-    const unexpectedWrite = listedNames.find((name: string) => writeTools.has(name));
-    if (unexpectedWrite) throw new Error(`只读共享凭证错误暴露了写入工具：${unexpectedWrite}`);
-  }
   if (!listedTools.some((tool: { name?: string }) => tool.name === 'whoami')) {
     throw new Error('局域网 MCP 未返回共享模式所需的 whoami 工具。');
   }

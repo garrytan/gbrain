@@ -7,7 +7,7 @@ const cycle = readFileSync(resolve('src/core/cycle.ts'), 'utf8');
 
 describe('embedding model switch contract', () => {
   test('CLI validates before invalidation, rebuilds immediately, and only rolls back before commit', () => {
-    const validateAt = configCommand.indexOf('detectEmbeddingDimensions(nextModel)');
+    const validateAt = configCommand.indexOf('detectEmbeddingDimensions(nextModel, provisionalDimensions)');
     const saveAt = configCommand.indexOf('saveConfig(candidate)');
     const invalidateAt = configCommand.indexOf('forceReembed: Boolean(previousModel)');
     const rebuildAt = configCommand.indexOf('runEmbedCore(engine, { stale: true, catchUp: true })');

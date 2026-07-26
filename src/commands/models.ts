@@ -33,6 +33,7 @@ import {
   TIER_DEFAULTS,
   resolveModel,
   resolveModelDetailed,
+  readModelConfigValue,
   type ModelTier,
 } from '../core/model-config.ts';
 
@@ -68,7 +69,7 @@ interface ModelsReport {
 }
 
 async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
-  const globalDefault = await engine.getConfig('models.default');
+  const globalDefault = await readModelConfigValue(engine, 'models.default');
 
   const tiers = {} as Record<ModelTier, ModelEntry>;
   for (const t of TIERS) {
@@ -86,7 +87,7 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
   // every possible alias key, just the common ones the docs mention).
   const userAliases: Record<string, string> = {};
   for (const name of ['opus', 'sonnet', 'haiku', 'gemini', 'gpt']) {
-    const v = await engine.getConfig(`models.aliases.${name}`);
+    const v = await readModelConfigValue(engine, `models.aliases.${name}`);
     if (v && v.trim()) userAliases[name] = v.trim();
   }
 
@@ -533,8 +534,8 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
   gbrain models doctor [flags]    Probe each configured model (~1 token each)
   gbrain models align-embedding-dimension --yes [--force-reembed]
                                   Align the DB vector column; force also invalidates same-width vectors
-  gbrain models detect-embedding-dimension --json
-                                  Probe a custom model's actual width
+  gbrain models detect-embedding-dimension --json [--requested-dimensions=N]
+                                  Probe the actual width, requesting N when supported
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
@@ -595,8 +596,22 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   if (sub === 'detect-embedding-dimension') {
     const { detectEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
     const model = getEmbeddingModel();
-    const dimensions = await detectEmbeddingDimensions(model);
-    if (json) process.stdout.write(JSON.stringify({ status: 'ok', embedding_model: model, dimensions }) + '\n');
+    const requestedArg = args.find(arg => arg.startsWith('--requested-dimensions='));
+    const requestedDimensions = requestedArg
+      ? Number.parseInt(requestedArg.slice('--requested-dimensions='.length), 10)
+      : undefined;
+    if (requestedArg && (!Number.isInteger(requestedDimensions) || (requestedDimensions ?? 0) <= 0)) {
+      throw new Error('--requested-dimensions must be a positive integer.');
+    }
+    const dimensions = await detectEmbeddingDimensions(model, requestedDimensions);
+    if (json) {
+      process.stdout.write(JSON.stringify({
+        status: 'ok',
+        embedding_model: model,
+        ...(requestedDimensions ? { requested_dimensions: requestedDimensions } : {}),
+        dimensions,
+      }) + '\n');
+    }
     else process.stdout.write(`${model} returned ${dimensions} dimensions.\n`);
     return;
   }

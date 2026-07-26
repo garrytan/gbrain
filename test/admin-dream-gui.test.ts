@@ -80,8 +80,8 @@ describe('Dream GUI product contract', () => {
     expect(summary.headline).not.toContain('没有执行');
   });
 
-  test('a completed multi-phase run with search indexing marks the whole journey complete', () => {
-    const run = completedRun({
+  test('only a fully successful indexed run marks the whole journey complete', () => {
+    const partial = completedRun({
       status: 'partial',
       phases: [
         { phase: 'sync', status: 'warn', summary: '+3 added', details: { added: 3 } },
@@ -89,8 +89,17 @@ describe('Dream GUI product contract', () => {
       ],
       totals: { pages_synced: 3, pages_embedded: 3 },
     });
-    expect(isKnowledgeJourneyComplete(run)).toBe(true);
-    expect(isKnowledgeJourneyComplete({ ...run, command: [...run.command, '--dry-run'] })).toBe(false);
+    const successful = completedRun({
+      status: 'ok',
+      phases: [
+        { phase: 'sync', status: 'ok', summary: '+3 added', details: { added: 3 } },
+        { phase: 'embed', status: 'ok', summary: '3 chunks newly embedded', details: { embedded: 3, pending: 0 } },
+      ],
+      totals: { pages_synced: 3, pages_embedded: 3 },
+    });
+    expect(isKnowledgeJourneyComplete(partial)).toBe(false);
+    expect(isKnowledgeJourneyComplete(successful)).toBe(true);
+    expect(isKnowledgeJourneyComplete({ ...successful, command: [...successful.command, '--dry-run'] })).toBe(false);
   });
 
   test('technical phase explanations are rendered as Chinese user guidance', () => {
@@ -121,7 +130,7 @@ describe('Dream GUI product contract', () => {
       totals: { pages_synced: 693 },
     });
     expect(describeDreamRun(run).outputs).toContain('检测到 693 个待同步文件，实际写入 3 个页面。');
-    expect(dream).toContain('查看实际写入的 {phase.pagesAffected?.length ?? 0} 个页面');
+    expect(dream).toContain('phase.pagesAffectedCount ?? phase.pagesAffected?.length ?? 0');
   });
 
   test('overview metrics show deltas from the latest Dream report', () => {
@@ -142,6 +151,41 @@ describe('Dream GUI product contract', () => {
     expect(dream).toContain('...latestOutcome.knowledgeItems.map(item => `知识：${item}`)');
     expect(dream).toContain('...latestOutcome.extractionItems');
     expect(dream).not.toContain('这些数字来自当前知识库，不会因为刷新页面而丢失。');
+  });
+
+  test('uses the separately captured result when the visible stdout log is truncated', () => {
+    const run = {
+      ...completedRun({ status: 'clean', totals: {} }),
+      stdout: '...only the final 120k log tail...',
+      result: {
+        status: 'partial',
+        phases: [
+          {
+            phase: 'sync',
+            status: 'warn',
+            details: { added: 988, modified: 3 },
+            pagesAffected: ['knowledge/one'],
+            pagesAffectedCount: 985,
+          },
+          {
+            phase: 'embed',
+            status: 'warn',
+            details: { embedded: 12132, total_chunks: 14000, pending: 1868, errors_count: 1 },
+          },
+        ],
+        totals: { pages_added: 988, pages_synced: 991, links_created: 183, pages_embedded: 12132 },
+      },
+    };
+
+    expect(dreamRunDeltas(run)).toEqual({ pages: 988, links: 183 });
+    expect(buildDreamOutcome(run).metrics.map(metric => [metric.label, metric.value])).toEqual([
+      ['新增知识', 988],
+      ['更新知识', 3],
+      ['合并与去重', 0],
+      ['新增关联', 183],
+      ['未处理成功', 1869],
+    ]);
+    expect(describeDreamRun(run).headline).toBe('Dream 已部分完成，成果与待处理项如下');
   });
 
   test('proposal drain statistics are shown from the structured phase report', () => {

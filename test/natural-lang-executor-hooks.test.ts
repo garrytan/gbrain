@@ -76,4 +76,31 @@ describe('natural language child-process hooks', () => {
     await waitFor(() => first.status === 'completed' && second.status === 'completed');
     expect(events).toEqual(['disconnect', 'reconnect', 'disconnect', 'reconnect']);
   });
+
+  test('keeps the complete Dream result separately when the visible log tail is truncated', async () => {
+    const script = [
+      "const report={schema_version:'1',status:'partial',",
+      "totals:{pages_added:988,links_created:183,pages_embedded:12132},",
+      "phases:[{phase:'embed',status:'warn',details:{embedded:12132,total_chunks:14000,",
+      "errors:[{message:'balance unavailable'}],filler:'x'.repeat(140000)}}]};",
+      'process.stdout.write(JSON.stringify(report));',
+    ].join('');
+    const run = await startRun(
+      'dream_full',
+      [process.execPath, '-e', script],
+      process.cwd(),
+      { captureJsonResult: true },
+    );
+
+    await waitFor(() => run.status !== 'running');
+    expect(run.stdout.length).toBeLessThanOrEqual(120_000);
+    expect(run.result).toMatchObject({
+      status: 'partial',
+      totals: { pages_added: 988, links_created: 183, pages_embedded: 12132 },
+      phases: [{
+        phase: 'embed',
+        details: { embedded: 12132, total_chunks: 14000, pending: 1868, errors_count: 1 },
+      }],
+    });
+  });
 });

@@ -1,5 +1,15 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfig, loadConfigWithEngine, saveConfig } from '../core/config.ts';
+import {
+  isFileBackedModelConfigKey,
+  listFileConfigKeys,
+  loadConfig,
+  loadConfigFileOnly,
+  loadConfigWithEngine,
+  readFileConfigValue,
+  saveConfig,
+  unsetFileConfigValue,
+  writeFileConfigValue,
+} from '../core/config.ts';
 import {
   getEmbeddingColumnRegistry,
   validateColumnKey,
@@ -37,10 +47,12 @@ export function redactConfigValue(key: string, value: string): string {
 }
 
 async function switchEmbeddingModel(engine: BrainEngine, nextModel: string): Promise<void> {
-  const current = loadConfig();
+  const current = loadConfigFileOnly();
   if (!current) throw new Error('No config found. Run: pmbrain init');
   const previousModel = current.embedding_model?.trim();
   if (previousModel === nextModel) {
+    await engine.unsetConfig('embedding_model');
+    await engine.unsetConfig('embedding_dimensions');
     console.log(`Embedding model is already ${nextModel}; no re-embedding needed.`);
     return;
   }
@@ -65,7 +77,7 @@ async function switchEmbeddingModel(engine: BrainEngine, nextModel: string): Pro
   configureGateway(buildGatewayConfig(candidate));
   let detectedDimensions: number;
   try {
-    detectedDimensions = await detectEmbeddingDimensions(nextModel);
+    detectedDimensions = await detectEmbeddingDimensions(nextModel, provisionalDimensions);
   } catch (error) {
     configureGateway(buildGatewayConfig(current));
     throw new Error(
@@ -89,6 +101,8 @@ async function switchEmbeddingModel(engine: BrainEngine, nextModel: string): Pro
       `${alignment.cleared_embeddings} derived vectors invalidated. Source content preserved.`,
     );
     if (committed) {
+      await engine.unsetConfig('embedding_model');
+      await engine.unsetConfig('embedding_dimensions');
       const { runEmbedCore } = await import('./embed.ts');
       const result = await runEmbedCore(engine, { stale: true, catchUp: true });
       console.log(
@@ -141,17 +155,28 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         process.exit(1);
       }
       const keys = await engine.listConfigKeys(prefix);
-      if (keys.length === 0) {
+      const fileConfig = loadConfigFileOnly();
+      const fileKeys = listFileConfigKeys(fileConfig).filter(
+        candidate => candidate.startsWith(prefix) && isFileBackedModelConfigKey(candidate),
+      );
+      const allKeys = [...new Set([...fileKeys, ...keys])];
+      if (allKeys.length === 0) {
         console.log(`No keys match prefix "${prefix}".`);
         return;
       }
       let deleted = 0;
+      if (fileConfig) {
+        for (const fileKey of fileKeys) {
+          if (unsetFileConfigValue(fileConfig, fileKey)) deleted += 1;
+        }
+        if (fileKeys.length > 0) saveConfig(fileConfig);
+      }
       for (const k of keys) {
         const n = await engine.unsetConfig(k);
         if (n > 0) deleted += n;
       }
       console.log(`Unset ${deleted} key(s) matching "${prefix}":`);
-      for (const k of keys) console.log(`  - ${k}`);
+      for (const k of allKeys) console.log(`  - ${k}`);
       return;
     }
 
@@ -160,8 +185,16 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('Usage: pmbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
+    let removed = false;
+    if (isFileBackedModelConfigKey(key)) {
+      const fileConfig = loadConfigFileOnly();
+      if (fileConfig && unsetFileConfigValue(fileConfig, key)) {
+        saveConfig(fileConfig);
+        removed = true;
+      }
+    }
     const n = await engine.unsetConfig(key);
-    if (n > 0) {
+    if (n > 0 || removed) {
       console.log(`Unset ${key}`);
     } else {
       console.error(`Config key not found: ${key}`);
@@ -174,7 +207,12 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   const value = args[2];
 
   if (action === 'get' && key) {
-    const val = await engine.getConfig(key);
+    const fileValue = isFileBackedModelConfigKey(key)
+      ? readFileConfigValue(loadConfigFileOnly(), key)
+      : undefined;
+    const val = fileValue !== undefined
+      ? typeof fileValue === 'string' ? fileValue : JSON.stringify(fileValue)
+      : await engine.getConfig(key);
     if (val !== null) {
       console.log(val);
     } else {
@@ -366,6 +404,21 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           );
         }
       }
+    }
+
+    if (isFileBackedModelConfigKey(key)) {
+      const fileConfig = loadConfigFileOnly();
+      if (!fileConfig) throw new Error('No config found. Run: pmbrain init');
+      const fileValue = key === 'embedding_disabled'
+        ? value === 'true'
+        : key === 'chat_fallback_chain'
+          ? value.split(',').map(item => item.trim()).filter(Boolean)
+          : value;
+      writeFileConfigValue(fileConfig, key, fileValue);
+      saveConfig(fileConfig);
+      await engine.unsetConfig(key);
+      console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
+      return;
     }
 
     // v0.40.3.0 (D3 + Phase 2B): capture the OLD search.mode BEFORE the

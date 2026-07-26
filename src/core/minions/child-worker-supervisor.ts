@@ -263,6 +263,7 @@ export class ChildWorkerSupervisor {
         child = spawn(spawnCmd, spawnArgs, {
           stdio: 'inherit',
           env,
+          windowsHide: true,
         });
       } catch (err: unknown) {
         // Synchronous spawn error (e.g. invalid cliPath shape). Count as a crash.

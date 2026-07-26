@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ConsoleRun } from './types.ts';
 
 // In-memory stores (module-level singletons, shared across all importers)
@@ -103,6 +106,88 @@ export interface RunHooks {
   acquireExclusive?: () => Promise<() => void>;
   beforeSpawn?: () => Promise<void>;
   afterComplete?: () => Promise<void>;
+  /** Capture a complete JSON stdout result before applying the bounded log tail. */
+  captureJsonResult?: boolean;
+}
+
+const DREAM_DETAIL_KEYS = new Set([
+  'added', 'modified', 'deleted', 'failedFiles', 'fixed', 'issues',
+  'linksCreated', 'timelineCreated', 'pagesScanned', 'factsInserted',
+  'batches', 'pages_processed', 'proposals_inserted', 'cache_hits',
+  'pages_failed', 'remaining', 'chunks_walked', 'edges_resolved',
+  'edges_ambiguous', 'embedded', 'skipped', 'total_chunks',
+  'total_orphans', 'total_pages', 'model_id', 'verdict_model_id',
+  'input_tokens', 'output_tokens', 'dryRun', 'dry_run', 'pages_written',
+  'transcripts_processed', 'transcripts_discovered', 'written_slugs',
+  'duplicate_skips', 'child_outcomes', 'affected_slugs', 'concepts_written',
+  'concept_slugs', 'failures', 'proposal_samples', 'duplicates_skipped',
+  'stopped',
+]);
+
+function boundedDetailValue(key: string, value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  const limit = key === 'proposal_samples' || key === 'failures' ? 20 : 100;
+  return value.slice(0, limit);
+}
+
+/** Convert the complete Dream JSON into the bounded result consumed by Admin. */
+export function compactDreamResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const report = value as Record<string, unknown>;
+  const phases = Array.isArray(report.phases)
+    ? report.phases.map(raw => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+      const phase = raw as Record<string, unknown>;
+      const rawDetails = phase.details && typeof phase.details === 'object' && !Array.isArray(phase.details)
+        ? phase.details as Record<string, unknown>
+        : {};
+      const details: Record<string, unknown> = {};
+      for (const [key, detailValue] of Object.entries(rawDetails)) {
+        if (DREAM_DETAIL_KEYS.has(key)) details[key] = boundedDetailValue(key, detailValue);
+      }
+      if (Array.isArray(rawDetails.errors)) details.errors_count = rawDetails.errors.length;
+      if (
+        typeof rawDetails.total_chunks === 'number'
+        && typeof rawDetails.embedded === 'number'
+      ) {
+        details.pending = Math.max(0, rawDetails.total_chunks - rawDetails.embedded);
+      }
+      return {
+        phase: phase.phase,
+        status: phase.status,
+        summary: phase.summary,
+        error: phase.error,
+        details,
+        pagesAffected: Array.isArray(phase.pagesAffected) ? phase.pagesAffected.slice(0, 100) : undefined,
+        pagesAffectedCount: Array.isArray(phase.pagesAffected) ? phase.pagesAffected.length : undefined,
+      };
+    }).filter(Boolean)
+    : [];
+  return {
+    schema_version: report.schema_version,
+    status: report.status,
+    reason: report.reason,
+    duration_ms: report.duration_ms,
+    totals: report.totals,
+    phases,
+  };
+}
+
+export function parseCapturedDreamResult(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return compactDreamResult(JSON.parse(trimmed));
+  } catch {
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    if (start < 0 || end <= start) return null;
+    try {
+      return compactDreamResult(JSON.parse(trimmed.slice(start, end + 1)));
+    } catch {
+      return null;
+    }
+  }
 }
 
 export async function startRun(kind: string, command: string[], cwd: string, hooks?: RunHooks, timeoutMs?: number): Promise<ConsoleRun> {
@@ -184,9 +269,29 @@ export async function startRun(kind: string, command: string[], cwd: string, hoo
       return;
     }
     children.set(id, child);
+    const resultDir = hooks?.captureJsonResult
+      ? mkdtempSync(join(tmpdir(), 'pmbrain-admin-run-'))
+      : null;
+    const resultPath = resultDir ? join(resultDir, 'stdout.json') : null;
+    let resultFd = resultPath ? openSync(resultPath, 'w') : null;
     const cap = 120_000;
     const append = (key: 'stdout' | 'stderr', chunk: Buffer) => {
+      if (key === 'stdout' && resultFd !== null) writeSync(resultFd, chunk);
       run[key] = sanitizeOutput((run[key] + chunk.toString('utf8')).slice(-cap));
+    };
+    const captureResult = () => {
+      if (resultFd !== null) {
+        closeSync(resultFd);
+        resultFd = null;
+      }
+      if (!resultPath || !resultDir) return;
+      try {
+        run.result = parseCapturedDreamResult(readFileSync(resultPath, 'utf8'));
+      } catch {
+        run.result = null;
+      } finally {
+        rmSync(resultDir, { recursive: true, force: true });
+      }
     };
     let finished = false;
     let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -196,6 +301,7 @@ export async function startRun(kind: string, command: string[], cwd: string, hoo
       finished = true;
       if (timeout) clearTimeout(timeout);
       children.delete(id);
+      captureResult();
       run.exitCode = code;
       if (error) run.error = sanitizeOutput(error);
       if (hooks?.afterComplete) {

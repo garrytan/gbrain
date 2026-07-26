@@ -14,6 +14,8 @@ export interface ConsoleRun {
   startedAt: string;
   completedAt: string | null;
   durationMs: number | null;
+  /** Bounded structured command result, kept separately from truncated logs. */
+  result?: unknown;
 }
 
 /** Brain page chunk shared across Console and TakeProposals pages. */

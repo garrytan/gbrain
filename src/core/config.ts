@@ -35,6 +35,7 @@ function stripJsonBom(content: string): string {
 }
 
 export interface GBrainConfig {
+  [key: string]: unknown;
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
@@ -810,6 +811,111 @@ export function saveConfig(config: GBrainConfig): void {
   // The doctor check `home_dir_in_worktree` surfaces vectors this can't
   // close (already-tracked files, screenshots, backups, `git add -f`).
   ensureGitignore();
+}
+
+function configRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/** Read a user-facing config value from config.json, accepting flat or nested dotted keys. */
+export function readFileConfigValue(config: GBrainConfig | null, key: string): unknown {
+  if (!config) return undefined;
+  const root = config as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, key)) return root[key];
+  let current: unknown = root;
+  for (const part of key.split('.')) {
+    const record = configRecord(current);
+    if (!record || !Object.prototype.hasOwnProperty.call(record, part)) return undefined;
+    current = record[part];
+  }
+  return current;
+}
+
+/** Persist a dotted user-facing config key without disturbing unrelated settings. */
+export function writeFileConfigValue(config: GBrainConfig, key: string, value: unknown): void {
+  const root = config as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, key)) {
+    root[key] = value;
+    return;
+  }
+  const parts = key.split('.');
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    const existing = configRecord(current[part]);
+    if (existing) {
+      current = existing;
+    } else {
+      const next: Record<string, unknown> = {};
+      current[part] = next;
+      current = next;
+    }
+  }
+  current[parts.at(-1)!] = value;
+}
+
+/** Remove a dotted config.json key and prune empty containers. */
+export function unsetFileConfigValue(config: GBrainConfig, key: string): boolean {
+  const root = config as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, key)) {
+    delete root[key];
+    return true;
+  }
+  const parts = key.split('.');
+  const parents: Array<{ record: Record<string, unknown>; key: string }> = [];
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    const next = configRecord(current[part]);
+    if (!next) return false;
+    parents.push({ record: current, key: part });
+    current = next;
+  }
+  const leaf = parts.at(-1)!;
+  if (!Object.prototype.hasOwnProperty.call(current, leaf)) return false;
+  delete current[leaf];
+  for (let i = parents.length - 1; i >= 0; i--) {
+    const { record, key: parentKey } = parents[i];
+    const child = configRecord(record[parentKey]);
+    if (child && Object.keys(child).length === 0) delete record[parentKey];
+    else break;
+  }
+  return true;
+}
+
+export function listFileConfigKeys(config: GBrainConfig | null): string[] {
+  if (!config) return [];
+  const keys = new Set<string>();
+  const walk = (record: Record<string, unknown>, prefix = '') => {
+    for (const [key, value] of Object.entries(record)) {
+      const dotted = prefix ? `${prefix}.${key}` : key;
+      const nested = configRecord(value);
+      if (nested) walk(nested, dotted);
+      else keys.add(dotted);
+    }
+  };
+  walk(config as Record<string, unknown>);
+  for (const key of Object.keys(config)) keys.add(key);
+  return [...keys];
+}
+
+/** Model/provider choices are machine configuration and have config.json as their system of record. */
+export function isFileBackedModelConfigKey(key: string): boolean {
+  return key === 'embedding_model'
+    || key === 'embedding_dimensions'
+    || key === 'embedding_disabled'
+    || key === 'chat_model'
+    || key === 'expansion_model'
+    || key === 'chat_fallback_chain'
+    || key === 'facts.extraction_model'
+    || key === 'provider_base_urls'
+    || key.startsWith('provider_base_urls.')
+    || key === 'provider_touchpoint_base_urls'
+    || key.startsWith('provider_touchpoint_base_urls.')
+    || key === 'provider_touchpoint_api_keys'
+    || key.startsWith('provider_touchpoint_api_keys.')
+    || key.startsWith('models.')
+    || /(?:^|_)(?:api_)?key$/.test(key);
 }
 
 /**

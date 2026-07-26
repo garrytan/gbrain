@@ -1089,6 +1089,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         const childArgs = process.argv.slice(2).filter(a => a !== '--detach');
         const child = spawn(process.execPath, [process.argv[1], ...childArgs], {
           detached: true,
+          windowsHide: true,
           stdio: ['ignore', 'ignore', jsonMode ? 'ignore' : 'inherit'],
           env: process.env,
         });

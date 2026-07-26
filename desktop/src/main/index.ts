@@ -595,8 +595,8 @@ async function withSidecarPausedForModelConfig<T>(operation: () => Promise<T>): 
   }
 }
 
-async function migrateConfiguredInstallation(): Promise<void> {
-  if (!needsDesktopMigration(app.getVersion())) return;
+async function migrateConfiguredInstallation(): Promise<boolean> {
+  if (!needsDesktopMigration(app.getVersion())) return false;
   sendStartupProgress({
     visible: true,
     stage: 'migration',
@@ -605,11 +605,11 @@ async function migrateConfiguredInstallation(): Promise<void> {
   });
   logger?.write('desktop', `Applying migrations for desktop ${app.getVersion()}`);
   await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
-  await syncModelDefaultsToDatabase();
-  markDesktopMigration(app.getVersion());
+  await syncModelDefaultsToConfigFile();
+  return true;
 }
 
-async function syncModelDefaultsToDatabase(opts: { resetAdvanced?: boolean } = {}): Promise<void> {
+async function syncModelDefaultsToConfigFile(opts: { resetAdvanced?: boolean } = {}): Promise<void> {
   const chatModel = getSetupInfo().current.chatModel?.trim();
   if (!chatModel) return;
   if (opts.resetAdvanced) {
@@ -618,6 +618,77 @@ async function syncModelDefaultsToDatabase(opts: { resetAdvanced?: boolean } = {
   }
   await runCliChecked(runtime(), ['config', 'set', 'chat_model', chatModel]);
   await runCliChecked(runtime(), ['config', 'set', 'models.default', chatModel]);
+}
+
+async function reconcileConfiguredEmbeddingIndex(probeModel: boolean): Promise<string | null> {
+  const setup = getSetupInfo();
+  const model = setup.current.embeddingModel?.trim();
+  let dimensions = setup.current.embeddingDimensions;
+  if (!model || !Number.isInteger(dimensions) || (dimensions ?? 0) <= 0) return null;
+
+  if (probeModel) {
+    sendStartupProgress({
+      visible: true,
+      stage: 'migration',
+      title: '正在检查旧版向量兼容性',
+      message: `正在确认当前向量模型能否继续使用现有 ${dimensions} 维索引。支持旧维度时不会重建向量。`,
+    });
+    const probe = await runCliChecked(runtime(), [
+      'models',
+      'detect-embedding-dimension',
+      '--json',
+      `--requested-dimensions=${dimensions}`,
+    ]);
+    const detected = JSON.parse(probe.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
+      dimensions?: number;
+    };
+    if (!Number.isInteger(detected.dimensions) || (detected.dimensions ?? 0) <= 0) {
+      throw new Error('无法从向量模型响应中判断有效维度。');
+    }
+    if (detected.dimensions !== dimensions) {
+      updateSavedEmbeddingDimension(setup.configPath, detected.dimensions!);
+      dimensions = detected.dimensions;
+    }
+  }
+
+  const alignment = await runCliChecked(runtime(), [
+    'models',
+    'align-embedding-dimension',
+    '--yes',
+    '--json',
+  ]);
+  const result = JSON.parse(alignment.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
+    status?: 'already_aligned' | 'aligned' | 'invalidated';
+    cleared_embeddings?: number;
+  };
+  if (result.status === 'already_aligned') return null;
+  if (result.status !== 'aligned' && result.status !== 'invalidated') {
+    throw new Error('向量索引兼容性检查没有返回有效结果。');
+  }
+
+  sendStartupProgress({
+    visible: true,
+    stage: 'migration',
+    title: '正在恢复旧版搜索索引',
+    message: `已保留页面、分块正文和原始资料，正在自动重新生成 ${result.cleared_embeddings ?? 0} 条兼容向量。`,
+  });
+  const reembed = await runCli(runtime(), ['embed', '--stale', '--catch-up', '--json']);
+  if (reembed.code !== 0) {
+    return (reembed.stderr || reembed.stdout).trim()
+      || '兼容向量尚未全部恢复，Dream 会从剩余内容继续处理。';
+  }
+  try {
+    const rebuild = JSON.parse(reembed.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
+      embedded?: number;
+      total_chunks?: number;
+    };
+    const pending = Math.max(0, (rebuild.total_chunks ?? 0) - (rebuild.embedded ?? 0));
+    return pending > 0
+      ? `仍有 ${pending} 个分块等待向量化；Dream 下次启动会继续处理。`
+      : null;
+  } catch {
+    return '向量维度已修复，但无法确认重新向量化是否全部完成；Dream 下次启动会继续检查。';
+  }
 }
 
 async function ensureServiceReady(): Promise<SidecarManager> {
@@ -629,7 +700,10 @@ async function ensureServiceReady(): Promise<SidecarManager> {
   const pending = (async () => {
     await ensureRuntimeReady();
     await prepareConfiguredDatabase();
-    await migrateConfiguredInstallation();
+    const migrationRequired = await migrateConfiguredInstallation();
+    const embeddingWarning = await reconcileConfiguredEmbeddingIndex(migrationRequired);
+    if (embeddingWarning) logger?.write('desktop', embeddingWarning);
+    if (migrationRequired) markDesktopMigration(app.getVersion());
     if (!sidecar || currentState?.phase !== 'ready') await startSidecar(false);
     if (!sidecar || currentState?.phase !== 'ready') throw new Error('PMBrain 本地服务尚未就绪。');
     return sidecar;
@@ -701,7 +775,12 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
       });
       let probe: Awaited<ReturnType<typeof runCliChecked>>;
       try {
-        probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
+        probe = await runCliChecked(runtime(), [
+          'models',
+          'detect-embedding-dimension',
+          '--json',
+          `--requested-dimensions=${saved.config.embedding_dimensions}`,
+        ]);
       } catch (error) {
         if (saved.config.embedding_model?.startsWith('custom-openai:')) {
           const baseUrl = saved.config.provider_touchpoint_base_urls?.['custom-openai']?.embedding
@@ -741,7 +820,7 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
       title: '正在保存模型配置',
       message: '正在应用普通模型与向量模型设置。',
     });
-    await syncModelDefaultsToDatabase({ resetAdvanced: payload.resetAdvancedModelRouting === true });
+    await syncModelDefaultsToConfigFile({ resetAdvanced: payload.resetAdvancedModelRouting === true });
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const sourceId = saved.config.desktop?.knowledge_source_id;
     if (setDefaultSource && knowledgeDirectory && sourceId) {
@@ -830,7 +909,7 @@ function installMenu(): void {
         { label: '系统设置', click: () => void openSettingsPanel('system') },
         { label: '软件更新', click: () => void openUpdates() },
         { type: 'separator' },
-        { label: '打开日志目录', click: () => logger && void shell.openPath(logger.directory) },
+        { label: '打开日志目录', click: () => logger && shell.showItemInFolder(logger.filePath) },
         { type: 'separator' },
         {
           label: '退出 PMBrain',
@@ -1294,7 +1373,7 @@ if (!app.requestSingleInstanceLock()) {
       const url = await restartSidecarForRetry();
       await mainWindow?.loadURL(url);
     });
-    handleTrustedIpc('desktop:open-logs', () => logger && shell.openPath(logger.directory));
+    handleTrustedIpc('desktop:open-logs', () => logger && shell.showItemInFolder(logger.filePath));
     handleTrustedIpc('desktop:quit', () => {
       app.quit();
     });

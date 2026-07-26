@@ -3,6 +3,9 @@
  * a tiny stub engine — no DB, no PGLite, no Postgres needed.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   resolveModel,
   resolveModelDetailed,
@@ -13,12 +16,14 @@ import {
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
 import { resolveDreamModel } from '../src/core/cycle/model-routing.ts';
+import { loadConfigFileOnly, readFileConfigValue, saveConfig } from '../src/core/config.ts';
 
 class StubEngine {
   readonly kind = 'pglite' as const;
   private cfg = new Map<string, string>();
   set(key: string, value: string) { this.cfg.set(key, value); }
   async getConfig(key: string) { return this.cfg.get(key) ?? null; }
+  async unsetConfig(key: string) { return this.cfg.delete(key) ? 1 : 0; }
   // unused stubs to satisfy the BrainEngine duck-type at the resolveModel boundary
   async setConfig() {}
 }
@@ -26,8 +31,12 @@ class StubEngine {
 let stub: StubEngine;
 let stderrCapture: string;
 const origWrite = process.stderr.write.bind(process.stderr);
+const originalPmbrainHome = process.env.PMBRAIN_HOME;
+let configHome: string;
 
 beforeEach(() => {
+  configHome = mkdtempSync(join(tmpdir(), 'pmbrain-model-config-'));
+  process.env.PMBRAIN_HOME = configHome;
   stub = new StubEngine();
   stderrCapture = '';
   process.stderr.write = ((chunk: string | Uint8Array) => {
@@ -40,6 +49,9 @@ beforeEach(() => {
 
 afterEach(() => {
   process.stderr.write = origWrite;
+  if (originalPmbrainHome === undefined) delete process.env.PMBRAIN_HOME;
+  else process.env.PMBRAIN_HOME = originalPmbrainHome;
+  rmSync(configHome, { recursive: true, force: true });
 });
 
 describe('resolveAlias', () => {
@@ -157,6 +169,42 @@ describe('resolveModel — PMBrain tier system', () => {
       fallback: 'sonnet',
     });
     expect(m).toBe(DEFAULT_ALIASES.haiku);
+  });
+
+  test('config.json model routing wins over stale database model settings', async () => {
+    saveConfig({
+      engine: 'pglite',
+      models: {
+        propose_takes: 'deepseek:deepseek-v4-flash',
+      },
+      'models.default': 'deepseek:deepseek-v4-flash',
+    });
+    stub.set('models.propose_takes', 'mimo:mimo-v2.5-pro');
+    stub.set('models.default', 'openai:gpt-5.2');
+
+    const resolved = await resolveModelDetailed(stub as never, {
+      configKey: 'models.propose_takes',
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+
+    expect(resolved.model).toBe('deepseek:deepseek-v4-flash');
+    expect(resolved.source).toBe('models.propose_takes');
+  });
+
+  test('migrates a legacy database-only model setting into config.json on first read', async () => {
+    saveConfig({ engine: 'pglite' });
+    stub.set('models.propose_takes', 'mimo:mimo-v2.5-pro');
+
+    const resolved = await resolveModelDetailed(stub as never, {
+      configKey: 'models.propose_takes',
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+
+    expect(resolved.model).toBe('mimo:mimo-v2.5-pro');
+    expect(readFileConfigValue(loadConfigFileOnly(), 'models.propose_takes')).toBe('mimo:mimo-v2.5-pro');
+    await expect(stub.getConfig('models.propose_takes')).resolves.toBeNull();
   });
 
   test('detailed resolution reports model source without changing simple mode', async () => {

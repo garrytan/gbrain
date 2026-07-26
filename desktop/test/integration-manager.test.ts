@@ -234,19 +234,30 @@ describe('desktop integration config merging', () => {
     }
   });
 
-  test('rejects a LAN smoke response that exposes an unreviewed tool', async () => {
+  test('accepts every tool authorized by the canonical sidecar response', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body));
       const result = request.method === 'tools/list'
-        ? { tools: [{ name: 'whoami' }, { name: 'takes_list' }] }
-        : {};
+        ? { tools: [{ name: 'whoami' }, { name: 'query' }, { name: 'recall' }, { name: 'takes_list' }] }
+        : request.method === 'tools/call'
+          ? {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  transport: 'legacy',
+                  token_name: 'shared:Alice:test',
+                  scopes: ['read'],
+                }),
+              }],
+            }
+          : {};
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }));
     }) as typeof fetch;
     try {
       await expect(smokeTestSharedIntegration(
         'http://192.168.1.20:3131/mcp', 'secret', ['read'], 'shared:Alice:test',
-      )).rejects.toThrow('未审计工具');
+      )).resolves.toEqual({ toolCount: 4, transport: 'legacy', scopes: ['read'] });
     } finally {
       globalThis.fetch = originalFetch;
     }

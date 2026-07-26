@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 
 const main = readFileSync(resolve('src/main/index.ts'), 'utf8');
 const sidecar = readFileSync(resolve('src/main/sidecar-manager.ts'), 'utf8');
+const gateway = readFileSync(resolve('src/main/lan-mcp-gateway.ts'), 'utf8');
+const integrationManager = readFileSync(resolve('src/main/integration-manager.ts'), 'utf8');
 const preload = readFileSync(resolve('src/preload/index.ts'), 'utf8');
 
 describe('desktop system orchestration contracts', () => {
@@ -15,9 +17,24 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain('不会自动切换到其他网卡');
   });
 
+  test('uses the sidecar as the only MCP tool and permission authority', () => {
+    expect(gateway).not.toContain('SHARED_MCP_READ_TOOL_NAMES');
+    expect(gateway).not.toContain('SHARED_MCP_WRITE_TOOL_NAMES');
+    expect(gateway).not.toContain('SHARED_MCP_TOOL_SET');
+    expect(gateway).not.toContain('filterToolsListResponse');
+    expect(integrationManager).not.toContain('SHARED_MCP_TOOL_NAMES');
+  });
+
+  test('opens the current log in the system file manager instead of the default folder handler', () => {
+    expect(main).toContain('shell.showItemInFolder(logger.filePath)');
+    expect(main).not.toContain('shell.openPath(logger.directory)');
+  });
+
   test('prepares Postgres before migrations and sidecar startup paths', () => {
     expect(main).toMatch(/async function applySetupOnce[\s\S]*?await ensureRuntimeReady\(\);\s+const hadRunningSidecar[\s\S]*?saved = saveSetup\(payload\);/);
-    expect(main).toMatch(/await prepareConfiguredDatabase\(\);\s+await migrateConfiguredInstallation\(\);/);
+    expect(main).toMatch(
+      /await prepareConfiguredDatabase\(\);\s+const migrationRequired = await migrateConfiguredInstallation\(\);/,
+    );
     expect(main).toMatch(/saved = saveSetup\(payload\);\s+\} catch \(error\) \{\s+if \(hadRunningSidecar\) await startSidecar\(false\)[\s\S]*?throw error;\s+\}\s+try \{\s+await prepareConfiguredDatabase\(\);/);
     expect(main).toContain('saveDetectedDockerContainerName');
   });
@@ -82,6 +99,17 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain('(result.total_chunks ?? 0) - (result.embedded ?? 0)');
     expect(main).toContain('if (!embeddingSwitchCommitted) restoreConfig(saved.snapshot)');
     expect(main).toContain('Dream 会从剩余内容继续');
+  });
+
+  test('repairs legacy embedding dimensions before the sidecar accepts imports or captures', () => {
+    expect(main).toContain('reconcileConfiguredEmbeddingIndex');
+    expect(main).toContain('`--requested-dimensions=${dimensions}`');
+    expect(main).toMatch(
+      /const migrationRequired = await migrateConfiguredInstallation\(\);[\s\S]*?reconcileConfiguredEmbeddingIndex\(migrationRequired\)[\s\S]*?markDesktopMigration/,
+    );
+    expect(main).toMatch(
+      /reconcileConfiguredEmbeddingIndex\(migrationRequired\)[\s\S]*?startSidecar\(false\)/,
+    );
   });
 
   test('shows truthful model-save stages and only migrates after a desktop version change', () => {
