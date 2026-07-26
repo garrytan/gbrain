@@ -4,28 +4,41 @@
  * Pins both code paths that must respect the v0.23.2 marker:
  *   - extractFactsFromTurn(isDreamGenerated:true) → []
  *   - put_page backstop on dream_generated:true frontmatter → skipped:dream_generated
+ *
+ * The two `put_page` cases drive `dispatchToolCall → put_page`, whose
+ * importFromContent embeds by design (embed failure PROPAGATES — Codex C2).
+ * A sibling shard file that left the gateway configured with a fake/
+ * non-legacy key makes put_page's embed step 401 and throw (isError), which
+ * is what failed these two tests in CI shard 2 while the engine-free
+ * extractFactsFromTurn cases passed. We don't want embedding here at all,
+ * so resetGateway() before each test → empty gateway → embedBatch is a
+ * graceful no-op → put_page succeeds regardless of sibling pollution.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
-// 30s hook timeout — when this file runs deep in a shard process that's
-// already created ~20 PGLite engines, the WASM cold-start + 95 migrations
-// on a fresh DB legitimately exceeds bun's 5s hook default. CI shard 4
-// hit this on v0.41.17.0 (95 migrations × 21 files × 1 bun process).
+// 60s hook timeout — generous budget for the PGLite WASM cold-start + full
+// migration chain on a fresh DB, well above bun's 5s hook default.
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-}, 30_000);
+}, 60_000);
+
+// Empty gateway → put_page's embed step is a graceful no-op (see header).
+beforeEach(() => {
+  resetGateway();
+});
 
 afterAll(async () => {
   await engine.disconnect();
-}, 30_000);
+}, 60_000);
 
 describe('anti-loop dream_generated marker', () => {
   test('extractFactsFromTurn skips when isDreamGenerated:true', async () => {

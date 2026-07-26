@@ -76,8 +76,10 @@ export interface SupervisorOpts {
   maxCrashes: number;
   /** Health check interval in ms. Default: 60000. */
   healthInterval: number;
-  /** Path to the gbrain CLI executable (MUST be a compiled binary; .ts sources cannot be spawned). */
+  /** Runtime executable used to start the worker. */
   cliPath: string;
+  /** Arguments that select the CLI entrypoint before `jobs work`. */
+  cliArgsPrefix: string[];
   /** Allow shell jobs on child worker. Default: false. When true, sets GBRAIN_ALLOW_SHELL_JOBS=1 on child env. */
   allowShellJobs: boolean;
   /** JSON mode: emit JSONL events on stderr, reserve stdout for data payloads. Default: false. */
@@ -156,6 +158,30 @@ function readProcessCommandLine(pid: number): string {
   }
 }
 
+function readProcessParentPid(pid: number): number | null {
+  try {
+    const value = process.platform === 'win32'
+      ? execFileSync('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; if ($p) { $p.ParentProcessId }`,
+        ], {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 5000,
+        }).trim()
+      : execFileSync('ps', ['-p', String(pid), '-o', 'ppid='], {
+          encoding: 'utf8',
+          timeout: 5000,
+        }).trim();
+    const parentPid = Number.parseInt(value, 10);
+    return Number.isInteger(parentPid) && parentPid > 0 ? parentPid : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isExpectedSupervisorProcess(record: SupervisorPidRecord): boolean {
   if (!isProcessAlive(record.pid)) return false;
   const commandLine = readProcessCommandLine(record.pid).toLowerCase();
@@ -167,12 +193,20 @@ export function isExpectedSupervisorProcess(record: SupervisorPidRecord): boolea
   return commandLine.includes('jobs') || commandLine.includes('supervisor-runner');
 }
 
+export function isExpectedWorkerProcess(pid: number, supervisorPid?: number): boolean {
+  if (!isProcessAlive(pid)) return false;
+  const commandLine = readProcessCommandLine(pid).toLowerCase();
+  if (!commandLine.includes('jobs') || !commandLine.includes('work')) return false;
+  return supervisorPid === undefined || readProcessParentPid(pid) === supervisorPid;
+}
+
 const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
   concurrency: 2,
   queue: 'default',
   pidFile: DEFAULT_PID_FILE,
   maxCrashes: 10,
   healthInterval: 60_000,
+  cliArgsPrefix: [],
   allowShellJobs: false,
   json: false,
   maxRssMb: 2048,
@@ -539,6 +573,7 @@ export class MinionSupervisor {
 
     this.childSupervisor = new ChildWorkerSupervisor({
       cliPath: this.opts.cliPath,
+      cliArgsPrefix: this.opts.cliArgsPrefix,
       args: workerArgs,
       env,
       maxCrashes: this.opts.maxCrashes,

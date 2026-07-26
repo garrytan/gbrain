@@ -283,6 +283,11 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat });
     expect(result.status).toBe('ok');
     expect(result.details?.concepts_written).toBe(3);
+    expect(result.details?.concept_slugs).toEqual([
+      'concepts/ai-agents',
+      'concepts/founder-psychology',
+      'concepts/hardware-renaissance',
+    ]);
     const tiers = result.details?.tier_counts as Record<string, number>;
     expect(tiers.T1).toBe(1); // ai-agents (12)
     expect(tiers.T2).toBe(1); // founder-psychology (6)

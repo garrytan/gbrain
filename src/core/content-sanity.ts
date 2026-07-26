@@ -65,6 +65,9 @@ export const DEFAULT_BYTES_WARN = 50_000;
  *  not searchable until manually re-embedded or split. */
 export const DEFAULT_BYTES_BLOCK = 500_000;
 
+/** Fuzzy markup-heavy pages stay searchable but carry a warning marker. */
+export const DEFAULT_MAX_MARKUP_RATIO = 0.85;
+
 /** Tag added to the start of `reasons` and to error messages so
  *  `src/core/sync.ts:classifyErrorCode` can group hard-blocks under one
  *  code without needing a structured field in the failure shape. The
@@ -74,6 +77,7 @@ export const PAGE_JUNK_PATTERN_CODE = 'PAGE_JUNK_PATTERN';
 export type SanityTripReason =
   | 'oversize_warn'      // informational: bytes > bytes_warn but page lands normally
   | 'oversize_block'     // soft-block: write with frontmatter.embed_skip
+  | 'high_markup'        // warning: write normally with content_flag
   | 'junk_pattern'       // hard-block: throw ContentSanityBlockError
   | 'literal_substring'; // hard-block: operator-supplied literal hit
 
@@ -109,6 +113,8 @@ export interface ContentSanityResult {
   junk_pattern_matches: string[];
   /** Names of operator literals that matched (zero or more). */
   literal_substring_matches: string[];
+  prose_chars?: number | null;
+  markup_ratio?: number | null;
   /** Ordered list of trip reasons. `oversize` first when present,
    *  then `junk_pattern`, then `literal_substring`. Stable across
    *  releases so consumers can pattern-match. */
@@ -121,7 +127,10 @@ export interface ContentSanityResult {
   /** True when any junk pattern or operator literal matched. Caller
    *  should throw `ContentSanityBlockError` when this is set. Note that
    *  oversize alone does NOT trigger this — that's a soft-block. */
+  shouldQuarantine?: boolean;
   shouldHardBlock: boolean;
+  shouldFlag?: boolean;
+  flag_reason?: 'markup_heavy' | 'oversized' | null;
   /** True when oversize without hard-block. Caller should write the
    *  page with `frontmatter.embed_skip` set so the embedder skips. */
   shouldSkipEmbed: boolean;
@@ -149,6 +158,21 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
     name: 'cloudflare_ray_id',
     pattern: /cloudflare ray id:/i,
     applies_to: 'body',
+  },
+  {
+    name: 'cloudflare_checking_browser',
+    pattern: /checking your browser before/i,
+    applies_to: 'both',
+  },
+  {
+    name: 'cf_browser_verification',
+    pattern: /cf[-_]browser[-_]verification/i,
+    applies_to: 'both',
+  },
+  {
+    name: 'enable_javascript_cookies',
+    pattern: /enable javascript and cookies to continue/i,
+    applies_to: 'both',
   },
   // Generic 403 / blocked-access pages.
   {
@@ -216,6 +240,40 @@ export class ContentSanityBlockError extends Error {
   }
 }
 
+export interface ProseAssessment {
+  prose_chars: number;
+  total_chars: number;
+  markup_ratio: number;
+}
+
+const FENCED_CODE_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+const INLINE_CODE_RE = /`[^`\n]*`/g;
+const HTML_TAG_RE = /<\/?[a-z][^>]*>/gi;
+const MD_IMAGE_RE = /!\[[^\]]*\]\([^)]*\)/g;
+const MD_LINK_RE = /\[([^\]]*)\]\([^)]*\)/g;
+const MD_STRUCT_RE = /^[ \t]*(#{1,6}\s|[-*+]\s|>\s|\|.*\||[-=]{3,}\s*$|\d+\.\s)/gm;
+const MD_EMPHASIS_RE = /[*_~]{1,3}/g;
+const TABLE_PIPE_RE = /\|/g;
+
+/** Cheap, conservative markup-vs-prose assessment used only for warnings. */
+export function assessProse(body: string): ProseAssessment {
+  const noCode = body.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+  const total_chars = noCode.replace(/\s+/g, '').length;
+  if (total_chars === 0) {
+    return { prose_chars: 0, total_chars: 0, markup_ratio: 0 };
+  }
+  const prose = noCode
+    .replace(MD_IMAGE_RE, ' ')
+    .replace(MD_LINK_RE, '$1')
+    .replace(HTML_TAG_RE, ' ')
+    .replace(MD_STRUCT_RE, ' ')
+    .replace(TABLE_PIPE_RE, ' ')
+    .replace(MD_EMPHASIS_RE, ' ');
+  const prose_chars = prose.replace(/\s+/g, '').length;
+  const markup_ratio = Math.min(1, Math.max(0, (total_chars - prose_chars) / total_chars));
+  return { prose_chars, total_chars, markup_ratio };
+}
+
 /**
  * Assess a parsed page against the size + junk-pattern surface.
  *
@@ -238,6 +296,12 @@ export function assessContentSanity(opts: {
   bytes_warn?: number;
   /** Effective block threshold; defaults to DEFAULT_BYTES_BLOCK. */
   bytes_block?: number;
+  /** Effective markup warning threshold. */
+  max_markup_ratio?: number;
+  /** Disable the fuzzy prose/markup warning pass when false. */
+  prose_check_enabled?: boolean;
+  /** Code pages are exempt from prose/markup assessment. */
+  page_kind?: string;
   /** Operator-supplied literal substrings loaded from
    *  `~/.gbrain/junk-substrings.txt` via `src/core/content-sanity-literals.ts`.
    *  Empty array (default) means built-ins only. */
@@ -245,6 +309,8 @@ export function assessContentSanity(opts: {
 }): ContentSanityResult {
   const bytes_warn = opts.bytes_warn ?? DEFAULT_BYTES_WARN;
   const bytes_block = opts.bytes_block ?? DEFAULT_BYTES_BLOCK;
+  const max_markup_ratio = opts.max_markup_ratio ?? DEFAULT_MAX_MARKUP_RATIO;
+  const prose_check_enabled = opts.prose_check_enabled !== false;
 
   // Bytes measured against the parsed body (compiled_truth + timeline).
   // Buffer.byteLength counts UTF-8 bytes the same way the doctor's
@@ -259,14 +325,15 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  const titleLower = opts.title.toLowerCase();
+  const title = String(opts.title ?? '');
+  const titleLower = title.toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {
-      if (p.pattern.test(opts.title)) matched = true;
+      if (p.pattern.test(title)) matched = true;
     }
     if (!matched && (scope === 'body' || scope === 'both')) {
       if (p.pattern.test(bodyHead)) matched = true;
@@ -291,10 +358,28 @@ export function assessContentSanity(opts: {
     }
   }
 
+  let prose_chars: number | null = null;
+  let markup_ratio: number | null = null;
+  let high_markup = false;
+  const inProseWindow = bytes > bytes_warn && bytes <= bytes_block;
+  if (prose_check_enabled && inProseWindow && opts.page_kind !== 'code') {
+    const prose = assessProse(body);
+    prose_chars = prose.prose_chars;
+    markup_ratio = prose.markup_ratio;
+    high_markup = markup_ratio > max_markup_ratio;
+  }
+
   const reasons: SanityTripReason[] = [];
   const reason_messages: string[] = [];
-  const shouldHardBlock =
+  const shouldQuarantine =
     junk_pattern_matches.length > 0 || literal_substring_matches.length > 0;
+  const shouldSkipEmbed = oversize && !shouldQuarantine;
+  const shouldFlag = !shouldQuarantine && (high_markup || shouldSkipEmbed);
+  const flag_reason: 'markup_heavy' | 'oversized' | null = !shouldFlag
+    ? null
+    : high_markup
+      ? 'markup_heavy'
+      : 'oversized';
 
   // Reason ordering: block-level oversize first (so a soft-block that
   // ALSO hits a junk pattern documents both), then junk_pattern, then
@@ -309,6 +394,12 @@ export function assessContentSanity(opts: {
     // check can surface flow-rate signal ("operators crossing warn often").
     reasons.push('oversize_warn');
     reason_messages.push(`PAGE_OVERSIZE_WARN: body ${bytes} bytes exceeds ${bytes_warn} byte warn threshold`);
+  }
+  if (high_markup) {
+    reasons.push('high_markup');
+    reason_messages.push(
+      `PAGE_MARKUP_HEAVY: markup ratio ${markup_ratio!.toFixed(2)} exceeds ${max_markup_ratio} (flag, not hide)`,
+    );
   }
   if (junk_pattern_matches.length > 0) {
     reasons.push('junk_pattern');
@@ -328,13 +419,14 @@ export function assessContentSanity(opts: {
     oversize,
     junk_pattern_matches,
     literal_substring_matches,
+    prose_chars,
+    markup_ratio,
     reasons,
     reason_messages,
-    // shouldSkipEmbed: oversize past block threshold but NOT also hard-block.
-    // When BOTH fire (the 890K Cloudflare dump case), hard-block wins and
-    // the page never lands. Embed-skip is reserved for the legitimate
-    // large-content case.
-    shouldHardBlock,
-    shouldSkipEmbed: oversize && !shouldHardBlock,
+    shouldQuarantine,
+    shouldHardBlock: shouldQuarantine,
+    shouldFlag,
+    flag_reason,
+    shouldSkipEmbed,
   };
 }

@@ -1,221 +1,203 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { DESKTOP_RUNTIME_CONTRACT, type DesktopRuntimeContract } from '../src/main/runtime-contract.ts';
+import { getDesktopRuntimeContract, type DesktopRuntimeContract } from '../src/main/runtime-contract.ts';
+
+type SupportedPlatform = 'win32' | 'darwin' | 'linux';
 
 const desktopRoot = resolve(import.meta.dir, '..');
-const unpackedRoot = join(desktopRoot, 'dist', 'win-unpacked');
-const runtimeRoot = join(unpackedRoot, 'resources', 'pmbrain-runtime');
-const appUpdateConfig = join(unpackedRoot, 'resources', 'app-update.yml');
 const distRoot = join(desktopRoot, 'dist');
+const requestedPlatform = process.argv
+  .find(argument => argument.startsWith('--platform='))
+  ?.slice('--platform='.length) as SupportedPlatform | undefined;
+const platform = requestedPlatform ?? process.platform as SupportedPlatform;
+const arch = platform === 'darwin' ? 'arm64' : 'x64';
+const runtimeContract = getDesktopRuntimeContract(platform, arch);
 const desktopPackage = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')) as { version: string };
-const hasRuntimeHtml = existsSync(runtimeRoot)
-  && readdirSync(runtimeRoot).some((name) => /^index-[\w-]+\.html$/.test(name));
+
+if (process.platform !== platform || process.arch !== arch) {
+  throw new Error(`Package verification for ${platform}-${arch} must run on that platform; current runner is ${process.platform}-${process.arch}.`);
+}
+
+const shape = platform === 'win32'
+  ? {
+      unpackedRoot: join(distRoot, 'win-unpacked'),
+      runtimeRoot: join(distRoot, 'win-unpacked', 'resources', 'pmbrain-runtime'),
+      appUpdateConfig: join(distRoot, 'win-unpacked', 'resources', 'app-update.yml'),
+      appExecutable: join(distRoot, 'win-unpacked', 'PMBrain.exe'),
+      metadata: join(distRoot, 'latest.yml'),
+      artifacts: [
+        `PMBrain-Windows-x64-Setup-${desktopPackage.version}.exe`,
+        `PMBrain-Windows-x64-Setup-${desktopPackage.version}.exe.blockmap`,
+      ],
+    }
+  : platform === 'darwin'
+    ? {
+        unpackedRoot: join(distRoot, 'mac-arm64', 'PMBrain.app'),
+        runtimeRoot: join(distRoot, 'mac-arm64', 'PMBrain.app', 'Contents', 'Resources', 'pmbrain-runtime'),
+        appUpdateConfig: join(distRoot, 'mac-arm64', 'PMBrain.app', 'Contents', 'Resources', 'app-update.yml'),
+        appExecutable: join(distRoot, 'mac-arm64', 'PMBrain.app', 'Contents', 'MacOS', 'PMBrain'),
+        metadata: join(distRoot, 'latest-mac.yml'),
+        artifacts: [
+          `PMBrain-macOS-arm64-${desktopPackage.version}.dmg`,
+          `PMBrain-macOS-arm64-${desktopPackage.version}.zip`,
+          `PMBrain-macOS-arm64-${desktopPackage.version}.zip.blockmap`,
+        ],
+      }
+    : {
+        unpackedRoot: join(distRoot, 'linux-unpacked'),
+        runtimeRoot: join(distRoot, 'linux-unpacked', 'resources', 'pmbrain-runtime'),
+        appUpdateConfig: join(distRoot, 'linux-unpacked', 'resources', 'app-update.yml'),
+        appExecutable: join(distRoot, 'linux-unpacked', 'PMBrain'),
+        metadata: join(distRoot, 'latest-linux.yml'),
+        artifacts: [
+          `PMBrain-Linux-x64-${desktopPackage.version}.AppImage`,
+          `PMBrain-Linux-x64-${desktopPackage.version}.AppImage.blockmap`,
+        ],
+      };
+
+const bunPath = join(shape.runtimeRoot, runtimeContract.runtimeExecutableName);
+const nativeCanvasRoot = join(shape.runtimeRoot, 'node_modules', '@napi-rs', runtimeContract.nativeCanvasPackage);
+const nativeCanvasBinary = join(nativeCanvasRoot, runtimeContract.nativeCanvasBinary);
+const runtimeManifestPath = join(shape.runtimeRoot, 'runtime-manifest.json');
+const sidecarPath = join(shape.runtimeRoot, 'pmbrain-sidecar.js');
 const requiredFiles = [
-  join(unpackedRoot, 'PMBrain.exe'),
-  appUpdateConfig,
-  join(distRoot, `PMBrain-Windows-x64-Setup-${desktopPackage.version}.exe`),
-  join(distRoot, `PMBrain-Windows-x64-Setup-${desktopPackage.version}.exe.blockmap`),
-  join(distRoot, 'latest.yml'),
-  join(runtimeRoot, 'bun.exe'),
-  join(runtimeRoot, 'pmbrain-sidecar.js'),
-  join(runtimeRoot, 'runtime-manifest.json'),
-  join(runtimeRoot, 'pdf.worker.mjs'),
-  join(runtimeRoot, 'package.json'),
-  join(runtimeRoot, 'recipes', 'agent-voice.md'),
-  join(runtimeRoot, 'templates', 'SOUL.md.template'),
-  join(runtimeRoot, 'skills', 'manifest.json'),
-  join(runtimeRoot, 'skills', 'RESOLVER.md'),
-  join(runtimeRoot, 'skills', '_brain-filing-rules.json'),
-  join(runtimeRoot, 'skills', '_brain-filing-rules.md'),
-  join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'package.json'),
-  join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'index.js'),
-  join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'vector', 'index.js'),
-  join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'pglite.data'),
-  join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'pglite.wasm'),
-  join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'initdb.wasm'),
-  join(runtimeRoot, 'node_modules', '@napi-rs', 'canvas', 'package.json'),
-  join(runtimeRoot, 'node_modules', '@napi-rs', 'canvas', 'index.js'),
-  join(runtimeRoot, 'node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'package.json'),
-  join(runtimeRoot, 'node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'skia.win32-x64-msvc.node'),
-  join(runtimeRoot, 'node_modules', '@dqbd', 'tiktoken', 'package.json'),
-  join(runtimeRoot, 'node_modules', 'web-tree-sitter', 'package.json'),
-  join(runtimeRoot, 'node_modules', 'libheif-js', 'package.json'),
+  shape.appExecutable,
+  shape.appUpdateConfig,
+  shape.metadata,
+  ...shape.artifacts.map(name => join(distRoot, name)),
+  bunPath,
+  sidecarPath,
+  runtimeManifestPath,
+  join(shape.runtimeRoot, 'pdf.worker.mjs'),
+  join(shape.runtimeRoot, 'package.json'),
+  join(shape.runtimeRoot, 'recipes', 'agent-voice.md'),
+  join(shape.runtimeRoot, 'templates', 'SOUL.md.template'),
+  join(shape.runtimeRoot, 'skills', 'manifest.json'),
+  join(shape.runtimeRoot, 'skills', 'RESOLVER.md'),
+  join(shape.runtimeRoot, 'skills', '_brain-filing-rules.json'),
+  join(shape.runtimeRoot, 'skills', '_brain-filing-rules.md'),
+  join(shape.runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'package.json'),
+  join(shape.runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'index.js'),
+  join(shape.runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'vector', 'index.js'),
+  join(shape.runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'pglite.data'),
+  join(shape.runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'pglite.wasm'),
+  join(shape.runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'initdb.wasm'),
+  join(shape.runtimeRoot, 'node_modules', '@napi-rs', 'canvas', 'package.json'),
+  join(shape.runtimeRoot, 'node_modules', '@napi-rs', 'canvas', 'index.js'),
+  join(nativeCanvasRoot, 'package.json'),
+  nativeCanvasBinary,
+  join(shape.runtimeRoot, 'node_modules', '@dqbd', 'tiktoken', 'package.json'),
+  join(shape.runtimeRoot, 'node_modules', 'web-tree-sitter', 'package.json'),
+  join(shape.runtimeRoot, 'node_modules', 'libheif-js', 'package.json'),
 ];
 
-const missing = requiredFiles.filter((path) => !existsSync(path) || statSync(path).size === 0);
-if (!hasRuntimeHtml) {
-  missing.push(join(runtimeRoot, 'index-*.html'));
-}
-
-const latestYml = existsSync(join(distRoot, 'latest.yml'))
-  ? readFileSync(join(distRoot, 'latest.yml'), 'utf8')
-  : '';
-if (!latestYml.includes(`version: ${desktopPackage.version}`)) {
-  missing.push(`${join(distRoot, 'latest.yml')}#version:${desktopPackage.version}`);
-}
-if (!latestYml.includes(`PMBrain-Windows-x64-Setup-${desktopPackage.version}.exe`)) {
-  missing.push(`${join(distRoot, 'latest.yml')}#artifact:${desktopPackage.version}`);
-}
-
-const updateUrl = 'https://ghproxy.net/https://github.com/zhengyunhui123-dev/PMBrain/releases/latest/download';
-const appUpdateYml = existsSync(appUpdateConfig)
-  ? readFileSync(appUpdateConfig, 'utf8')
-  : '';
-if (!appUpdateYml.includes('provider: generic')) {
-  missing.push(`${appUpdateConfig}#provider:generic`);
-}
-if (!appUpdateYml.includes(updateUrl)) {
-  missing.push(`${appUpdateConfig}#url:${updateUrl}`);
-}
-
+const missing = requiredFiles.filter(path => !existsSync(path) || statSync(path).size === 0);
+const hasRuntimeHtml = existsSync(shape.runtimeRoot)
+  && readdirSync(shape.runtimeRoot).some(name => /^index-[\w-]+\.html$/.test(name));
+if (!hasRuntimeHtml) missing.push(join(shape.runtimeRoot, 'index-*.html'));
 if (missing.length > 0) {
-  console.error('Desktop package verification failed. Missing runtime files:');
+  console.error(`Desktop ${platform} package verification failed. Missing files:`);
   for (const path of missing) console.error(`- ${path}`);
   process.exit(1);
 }
 
+const updateUrl = 'https://ghproxy.net/https://github.com/zhengyunhui123-dev/PMBrain/releases/latest/download';
+const metadata = readFileSync(shape.metadata, 'utf8');
+const appUpdateConfig = readFileSync(shape.appUpdateConfig, 'utf8');
+const metadataArtifact = shape.artifacts.find(name => !name.endsWith('.blockmap'))!;
+const metadataErrors: string[] = [];
+if (!metadata.includes(`version: ${desktopPackage.version}`)) metadataErrors.push(`missing version ${desktopPackage.version}`);
+if (!metadata.includes(metadataArtifact)) metadataErrors.push(`missing artifact ${metadataArtifact}`);
+if (!appUpdateConfig.includes('provider: generic')) metadataErrors.push('missing generic update provider');
+if (!appUpdateConfig.includes(updateUrl)) metadataErrors.push(`missing update URL ${updateUrl}`);
+if (metadataErrors.length > 0) {
+  throw new Error(`Desktop ${platform} update metadata is invalid: ${metadataErrors.join('; ')}`);
+}
+
 const compatibilityErrors: string[] = [];
-const runtimeManifestPath = join(runtimeRoot, 'runtime-manifest.json');
 try {
   const manifest = JSON.parse(readFileSync(runtimeManifestPath, 'utf8')) as Partial<DesktopRuntimeContract>;
-  for (const [key, expected] of Object.entries(DESKTOP_RUNTIME_CONTRACT)) {
+  for (const [key, expected] of Object.entries(runtimeContract)) {
     if (manifest[key as keyof DesktopRuntimeContract] !== expected) {
-      compatibilityErrors.push(`Runtime manifest mismatch for ${key}: expected ${String(expected)}, got ${String(manifest[key as keyof DesktopRuntimeContract])}`);
+      compatibilityErrors.push(`Runtime manifest mismatch for ${key}`);
     }
   }
 } catch (error) {
   compatibilityErrors.push(`Runtime manifest could not be read: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-const packagedBunSha256 = createHash('sha256').update(readFileSync(join(runtimeRoot, 'bun.exe'))).digest('hex');
-if (packagedBunSha256 !== DESKTOP_RUNTIME_CONTRACT.executableSha256) {
-  compatibilityErrors.push(
-    `Packaged Bun checksum mismatch: expected ${DESKTOP_RUNTIME_CONTRACT.executableSha256}, got ${packagedBunSha256}`,
-  );
+const packagedBunSha256 = createHash('sha256').update(readFileSync(bunPath)).digest('hex');
+if (packagedBunSha256 !== runtimeContract.executableSha256) {
+  compatibilityErrors.push(`Packaged Bun checksum mismatch: expected ${runtimeContract.executableSha256}, got ${packagedBunSha256}`);
+}
+if (platform !== 'win32' && (statSync(bunPath).mode & 0o111) === 0) {
+  compatibilityErrors.push(`Packaged Bun is not executable: ${bunPath}`);
 }
 
-function peArchitecture(path: string): string {
-  const file = openSync(path, 'r');
-  try {
-    const dosHeader = Buffer.alloc(64);
-    if (readSync(file, dosHeader, 0, dosHeader.length, 0) !== dosHeader.length || dosHeader.toString('ascii', 0, 2) !== 'MZ') {
-      return 'not-pe';
-    }
-    const peOffset = dosHeader.readUInt32LE(0x3c);
-    const peHeader = Buffer.alloc(6);
-    if (readSync(file, peHeader, 0, peHeader.length, peOffset) !== peHeader.length || peHeader.toString('ascii', 0, 4) !== 'PE\0\0') {
-      return 'not-pe';
-    }
+function binaryArchitecture(path: string): string {
+  const header = readFileSync(path).subarray(0, 64);
+  if (header.toString('ascii', 0, 2) === 'MZ') {
+    const peOffset = header.readUInt32LE(0x3c);
+    const peHeader = readFileSync(path).subarray(peOffset, peOffset + 6);
     const machine = peHeader.readUInt16LE(4);
-    if (machine === 0x8664) return 'x64';
-    if (machine === 0x014c) return 'ia32';
-    if (machine === 0xaa64) return 'arm64';
-    return `unknown-0x${machine.toString(16)}`;
-  } finally {
-    closeSync(file);
+    return machine === 0x8664 ? 'x64' : machine === 0xaa64 ? 'arm64' : `pe-0x${machine.toString(16)}`;
   }
+  if (header[0] === 0x7f && header.toString('ascii', 1, 4) === 'ELF') {
+    const machine = header.readUInt16LE(18);
+    return machine === 0x3e ? 'x64' : machine === 0xb7 ? 'arm64' : `elf-0x${machine.toString(16)}`;
+  }
+  if (header.readUInt32LE(0) === 0xfeedfacf) {
+    const cpuType = header.readUInt32LE(4);
+    return cpuType === 0x0100000c ? 'arm64' : cpuType === 0x01000007 ? 'x64' : `macho-0x${cpuType.toString(16)}`;
+  }
+  return 'unknown';
 }
 
-for (const path of [
-  join(unpackedRoot, 'PMBrain.exe'),
-  join(runtimeRoot, 'bun.exe'),
-  join(runtimeRoot, 'node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'skia.win32-x64-msvc.node'),
-]) {
-  const actual = peArchitecture(path);
-  if (actual !== DESKTOP_RUNTIME_CONTRACT.arch) {
-    compatibilityErrors.push(`PE architecture mismatch: expected ${DESKTOP_RUNTIME_CONTRACT.arch}, got ${actual}: ${path}`);
+for (const path of [shape.appExecutable, bunPath, nativeCanvasBinary]) {
+  const actual = binaryArchitecture(path);
+  if (actual !== runtimeContract.arch) {
+    compatibilityErrors.push(`Binary architecture mismatch: expected ${runtimeContract.arch}, got ${actual}: ${path}`);
   }
 }
-
 if (compatibilityErrors.length > 0) {
-  console.error('Desktop package verification failed. Runtime compatibility contract mismatch:');
-  for (const error of compatibilityErrors) console.error(`- ${error}`);
-  process.exit(1);
+  throw new Error(`Desktop ${platform} runtime compatibility failed:\n- ${compatibilityErrors.join('\n- ')}`);
 }
 
 const rootVersionPath = join(desktopRoot, '..', 'VERSION');
 const rootPackagePath = join(desktopRoot, '..', 'package.json');
-const runtimePackagePath = join(runtimeRoot, 'package.json');
-const bunPath = join(runtimeRoot, 'bun.exe');
-const sidecarPath = join(runtimeRoot, 'pmbrain-sidecar.js');
-const versionErrors: string[] = [];
-
-function readPackageVersion(path: string, label: string): string | undefined {
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown };
-    if (typeof parsed.version === 'string' && parsed.version.trim().length > 0) {
-      return parsed.version.trim();
-    }
-    versionErrors.push(`${label} does not contain a non-empty string version: ${path}`);
-  } catch (error) {
-    versionErrors.push(`${label} could not be read: ${path} (${error instanceof Error ? error.message : String(error)})`);
-  }
-  return undefined;
+const runtimePackagePath = join(shape.runtimeRoot, 'package.json');
+const rootVersion = readFileSync(rootVersionPath, 'utf8').replace(/^\uFEFF/, '').trim();
+const rootPackageVersion = (JSON.parse(readFileSync(rootPackagePath, 'utf8')) as { version: string }).version;
+const runtimePackageVersion = (JSON.parse(readFileSync(runtimePackagePath, 'utf8')) as { version: string }).version;
+if (!rootVersion || rootPackageVersion !== rootVersion || runtimePackageVersion !== rootVersion) {
+  throw new Error(`Runtime version mismatch: VERSION=${rootVersion}, root=${rootPackageVersion}, packaged=${runtimePackageVersion}`);
 }
 
-let rootVersion: string | undefined;
-try {
-  rootVersion = readFileSync(rootVersionPath, 'utf8').replace(/^\uFEFF/, '').trim();
-  if (!rootVersion) versionErrors.push(`Root VERSION is empty: ${rootVersionPath}`);
-} catch (error) {
-  versionErrors.push(`Root VERSION could not be read: ${rootVersionPath} (${error instanceof Error ? error.message : String(error)})`);
-}
-
-const rootPackageVersion = readPackageVersion(rootPackagePath, 'Root package.json');
-const runtimePackageVersion = readPackageVersion(runtimePackagePath, 'Packaged runtime package.json');
-if (rootVersion && rootPackageVersion && rootPackageVersion !== rootVersion) {
-  versionErrors.push(`Root version mismatch: VERSION=${rootVersion}, package.json=${rootPackageVersion}`);
-}
-if (rootVersion && runtimePackageVersion && runtimePackageVersion !== rootVersion) {
-  versionErrors.push(`Packaged runtime version mismatch: expected ${rootVersion}, package.json=${runtimePackageVersion}`);
-}
-
-const sidecarVersionResult = spawnSync(bunPath, [sidecarPath, '--version'], {
-  cwd: runtimeRoot,
-  encoding: 'utf8',
-  shell: false,
-  timeout: 30_000,
-  windowsHide: true,
-});
 const bunRevisionResult = spawnSync(bunPath, ['--revision'], {
-  cwd: runtimeRoot,
+  cwd: shape.runtimeRoot,
   encoding: 'utf8',
   shell: false,
   timeout: 30_000,
   windowsHide: true,
 });
 const bunRevision = `${bunRevisionResult.stdout ?? ''}`.trim();
-if (bunRevisionResult.error) {
-  versionErrors.push(`Packaged Bun --revision failed: ${bunRevisionResult.error.message}`);
-} else if (bunRevisionResult.status !== 0) {
-  versionErrors.push(`Packaged Bun --revision exited with code ${bunRevisionResult.status ?? 'unknown'}`);
-} else if (bunRevision !== DESKTOP_RUNTIME_CONTRACT.bunRevision) {
-  versionErrors.push(`Packaged Bun revision mismatch: expected ${DESKTOP_RUNTIME_CONTRACT.bunRevision}, got ${bunRevision || 'empty output'}`);
+if (bunRevisionResult.error || bunRevisionResult.status !== 0 || bunRevision !== runtimeContract.bunRevision) {
+  throw new Error(`Packaged Bun revision mismatch: expected ${runtimeContract.bunRevision}, got ${bunRevision || bunRevisionResult.error?.message || `exit ${bunRevisionResult.status}`}`);
 }
 
-const sidecarVersionOutput = `${sidecarVersionResult.stdout ?? ''}\n${sidecarVersionResult.stderr ?? ''}`.trim();
-const sidecarVersionMatch = sidecarVersionOutput
-  .split(/\r?\n/)
-  .map((line) => line.trim().match(/^pmbrain\s+v?([^\s]+)$/i))
-  .find((match) => match !== null);
-const sidecarReportedVersion = sidecarVersionMatch?.[1];
-
-if (sidecarVersionResult.error) {
-  versionErrors.push(`Packaged sidecar --version failed: ${sidecarVersionResult.error.message}`);
-} else if (sidecarVersionResult.status !== 0) {
-  versionErrors.push(`Packaged sidecar --version exited with code ${sidecarVersionResult.status ?? 'unknown'}`);
-} else if (!sidecarReportedVersion) {
-  versionErrors.push('Packaged sidecar --version did not report "pmbrain <version>".');
-} else if (rootVersion && sidecarReportedVersion !== rootVersion) {
-  versionErrors.push(`Packaged sidecar version mismatch: expected ${rootVersion}, reported ${sidecarReportedVersion}`);
-}
-
-if (versionErrors.length > 0) {
-  console.error('Desktop package verification failed. Version contract mismatch:');
-  for (const error of versionErrors) console.error(`- ${error}`);
-  process.exit(1);
+const sidecarVersionResult = spawnSync(bunPath, [sidecarPath, '--version'], {
+  cwd: shape.runtimeRoot,
+  encoding: 'utf8',
+  shell: false,
+  timeout: 30_000,
+  windowsHide: true,
+});
+const sidecarVersionOutput = `${sidecarVersionResult.stdout ?? ''}\n${sidecarVersionResult.stderr ?? ''}`;
+const sidecarReportedVersion = sidecarVersionOutput.match(/^pmbrain\s+v?([^\s]+)$/im)?.[1];
+if (sidecarVersionResult.error || sidecarVersionResult.status !== 0 || sidecarReportedVersion !== rootVersion) {
+  throw new Error(`Packaged sidecar version mismatch: expected ${rootVersion}, got ${sidecarReportedVersion ?? sidecarVersionResult.error?.message ?? `exit ${sidecarVersionResult.status}`}`);
 }
 
 const runtimeSmokeScript = [
@@ -229,7 +211,7 @@ const runtimeSmokeScript = [
   "console.log('runtime-smoke-ok');",
 ].join(' ');
 const runtimeSmokeResult = spawnSync(bunPath, ['--eval', runtimeSmokeScript], {
-  cwd: runtimeRoot,
+  cwd: shape.runtimeRoot,
   encoding: 'utf8',
   shell: false,
   timeout: 60_000,
@@ -237,57 +219,29 @@ const runtimeSmokeResult = spawnSync(bunPath, ['--eval', runtimeSmokeScript], {
 });
 const runtimeSmokeOutput = `${runtimeSmokeResult.stdout ?? ''}\n${runtimeSmokeResult.stderr ?? ''}`.trim();
 if (runtimeSmokeResult.error || runtimeSmokeResult.status !== 0 || !runtimeSmokeOutput.includes('runtime-smoke-ok')) {
-  console.error('Desktop package verification failed. Native Canvas/PGLite runtime smoke test failed:');
-  console.error(runtimeSmokeResult.error?.message || runtimeSmokeOutput || `exit ${runtimeSmokeResult.status ?? 'unknown'}`);
-  process.exit(1);
+  throw new Error(`Native Canvas/PGLite runtime smoke failed: ${runtimeSmokeResult.error?.message || runtimeSmokeOutput || `exit ${runtimeSmokeResult.status}`}`);
 }
 
-const forbiddenPatterns = [
-  'D:\\cursor-claude',
-  'D:/cursor-claude',
-  'C:\\Users\\zhengyunhui',
-  'Users\\zhengyunhui',
-];
-const skippedExtensions = new Set([
-  '.7z', '.bin', '.blockmap', '.dat', '.dll', '.exe', '.jpg', '.node',
-  '.pak', '.png', '.wasm',
-]);
-
+const forbiddenPatterns = ['D:\\cursor-claude', 'D:/cursor-claude', 'C:\\Users\\zhengyunhui', 'Users\\zhengyunhui'];
+const skippedExtensions = new Set(['.7z', '.asar', '.bin', '.blockmap', '.dat', '.dll', '.dmg', '.exe', '.jpg', '.node', '.pak', '.png', '.wasm', '.zip']);
 function extension(path: string): string {
   const dot = path.lastIndexOf('.');
   return dot >= 0 ? path.slice(dot).toLowerCase() : '';
 }
-
-function listFiles(dir: string): string[] {
-  const entries = readdirSync(dir, { withFileTypes: true });
-  return entries.flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return listFiles(path);
-    return entry.isFile() ? [path] : [];
+function listFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? listFiles(path) : entry.isFile() ? [path] : [];
   });
 }
-
-const scanRoots = [
-  join(unpackedRoot, 'resources'),
-  join(distRoot, 'latest.yml'),
-];
-const leaked: string[] = [];
-for (const root of scanRoots) {
-  const files = statSync(root).isDirectory() ? listFiles(root) : [root];
-  for (const file of files) {
-    if (skippedExtensions.has(extension(file))) continue;
-    const content = readFileSync(file, 'utf8');
-    for (const pattern of forbiddenPatterns) {
-      if (content.includes(pattern)) leaked.push(`${file}: ${pattern}`);
-    }
-  }
-}
+const leaked = [...listFiles(join(shape.unpackedRoot, platform === 'darwin' ? 'Contents' : 'resources')), shape.metadata]
+  .filter(file => !skippedExtensions.has(extension(file)))
+  .flatMap(file => forbiddenPatterns.filter(pattern => readFileSync(file, 'utf8').includes(pattern)).map(pattern => `${file}: ${pattern}`));
 if (leaked.length > 0) {
-  console.error('Desktop package verification failed. Build-machine paths leaked into package:');
-  for (const item of leaked) console.error(`- ${item}`);
-  process.exit(1);
+  throw new Error(`Build-machine paths leaked into package:\n- ${leaked.join('\n- ')}`);
 }
 
 console.log(
-  `Desktop package verified: ${requiredFiles.length} required runtime files are present, ${DESKTOP_RUNTIME_CONTRACT.arch}-${DESKTOP_RUNTIME_CONTRACT.flavor} Bun ${DESKTOP_RUNTIME_CONTRACT.bunRevision} and native runtime smoke checks pass, runtime version ${rootVersion} matches, and no build-machine paths leaked.`,
+  `Desktop ${platform}-${arch} package verified: ${requiredFiles.length} required files, updater metadata, `
+  + `Bun ${runtimeContract.bunRevision}, sidecar ${rootVersion}, Canvas/PGLite smoke, native architecture, and path-leak checks passed.`,
 );

@@ -595,8 +595,8 @@ async function withSidecarPausedForModelConfig<T>(operation: () => Promise<T>): 
   }
 }
 
-async function migrateConfiguredInstallation(): Promise<void> {
-  if (!needsDesktopMigration(app.getVersion())) return;
+async function migrateConfiguredInstallation(): Promise<boolean> {
+  if (!needsDesktopMigration(app.getVersion())) return false;
   sendStartupProgress({
     visible: true,
     stage: 'migration',
@@ -605,16 +605,23 @@ async function migrateConfiguredInstallation(): Promise<void> {
   });
   logger?.write('desktop', `Applying migrations for desktop ${app.getVersion()}`);
   await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
-  await syncModelDefaultsToDatabase();
-  markDesktopMigration(app.getVersion());
+  await syncModelDefaultsToConfigFile();
+  return true;
 }
 
-async function syncModelDefaultsToDatabase(opts: { resetAdvanced?: boolean } = {}): Promise<void> {
+async function syncModelDefaultsToConfigFile(opts: { resetAdvanced?: boolean } = {}): Promise<void> {
   const chatModel = getSetupInfo().current.chatModel?.trim();
   if (!chatModel) return;
   if (opts.resetAdvanced) {
     await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.tier.']);
     await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.dream.']);
+  }
+  for (const key of ['models.propose_takes', 'models.grade_takes', 'models.calibration_profile']) {
+    const result = await runCli(runtime(), ['config', 'unset', key]);
+    const message = `${result.stderr}\n${result.stdout}`;
+    if (result.code !== 0 && !/Config key not found:/i.test(message)) {
+      throw new Error(message.trim() || `无法清理旧的 Dream 模型覆盖：${key}`);
+    }
   }
   await runCliChecked(runtime(), ['config', 'set', 'chat_model', chatModel]);
   await runCliChecked(runtime(), ['config', 'set', 'models.default', chatModel]);
@@ -629,7 +636,8 @@ async function ensureServiceReady(): Promise<SidecarManager> {
   const pending = (async () => {
     await ensureRuntimeReady();
     await prepareConfiguredDatabase();
-    await migrateConfiguredInstallation();
+    const migrationRequired = await migrateConfiguredInstallation();
+    if (migrationRequired) markDesktopMigration(app.getVersion());
     if (!sidecar || currentState?.phase !== 'ready') await startSidecar(false);
     if (!sidecar || currentState?.phase !== 'ready') throw new Error('PMBrain 本地服务尚未就绪。');
     return sidecar;
@@ -678,6 +686,17 @@ async function currentDesktopSetupState() {
 
 async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   await ensureRuntimeReady();
+  const previousEmbeddingModel = getSetupInfo().current.embeddingModel?.trim();
+  const requestedEmbeddingModel = payload.modelConfig?.embeddingModel?.trim();
+  if (previousEmbeddingModel
+      && requestedEmbeddingModel
+      && previousEmbeddingModel !== requestedEmbeddingModel
+      && payload.confirmEmbeddingRebuild !== true) {
+    throw new Error(
+      `向量模型将从 ${previousEmbeddingModel} 更换为 ${requestedEmbeddingModel}。` +
+      '必须在桌面端明确确认重新向量化后才能继续。',
+    );
+  }
   const hadRunningSidecar = Boolean(sidecar);
   await stopSidecar();
   let saved: ReturnType<typeof saveSetup>;
@@ -701,7 +720,12 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
       });
       let probe: Awaited<ReturnType<typeof runCliChecked>>;
       try {
-        probe = await runCliChecked(runtime(), ['models', 'detect-embedding-dimension', '--json']);
+        probe = await runCliChecked(runtime(), [
+          'models',
+          'detect-embedding-dimension',
+          '--json',
+          `--requested-dimensions=${saved.config.embedding_dimensions}`,
+        ]);
       } catch (error) {
         if (saved.config.embedding_model?.startsWith('custom-openai:')) {
           const baseUrl = saved.config.provider_touchpoint_base_urls?.['custom-openai']?.embedding
@@ -741,7 +765,7 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
       title: '正在保存模型配置',
       message: '正在应用普通模型与向量模型设置。',
     });
-    await syncModelDefaultsToDatabase({ resetAdvanced: payload.resetAdvancedModelRouting === true });
+    await syncModelDefaultsToConfigFile({ resetAdvanced: payload.resetAdvancedModelRouting === true });
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const sourceId = saved.config.desktop?.knowledge_source_id;
     if (setDefaultSource && knowledgeDirectory && sourceId) {
@@ -757,24 +781,26 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
     if (migrationRequired) markDesktopMigration(app.getVersion());
     // Keep this as the final fallible setup step: once the DB column is
     // aligned, no later config rollback may restore an incompatible width.
-    sendStartupProgress({
-      visible: true,
-      stage: 'migration',
-      title: '正在准备搜索索引',
-      message: saved.embeddingModelChanged
-        ? '向量模型已更改，正在对齐维度并准备重新生成向量。'
-        : '正在确认现有向量索引与当前配置一致。',
-    });
-    const alignmentArgs = ['models', 'align-embedding-dimension', '--yes', '--json'];
-    if (saved.embeddingModelChanged) alignmentArgs.push('--force-reembed');
-    await runCliChecked(runtime(), alignmentArgs);
-    embeddingSwitchCommitted = saved.embeddingModelChanged;
     if (saved.embeddingModelChanged) {
       sendStartupProgress({
         visible: true,
         stage: 'migration',
+        title: '正在准备搜索索引',
+        message: '你已确认更换向量模型，正在对齐维度并准备重新生成向量。',
+      });
+      await runCliChecked(runtime(), [
+        'models',
+        'align-embedding-dimension',
+        '--yes',
+        '--json',
+        '--force-reembed',
+      ]);
+      embeddingSwitchCommitted = true;
+      sendStartupProgress({
+        visible: true,
+        stage: 'migration',
         title: '正在使用新模型重建向量',
-        message: '旧向量已安全失效，正在重新生成搜索索引。若本次中断，Dream 会从剩余内容继续。',
+        message: '正在重新生成搜索索引。此操作由你在桌面端明确确认；Dream 不会自行触发模型迁移。',
       });
       const reembed = await runCli(runtime(), ['embed', '--stale', '--catch-up', '--json']);
       if (reembed.code !== 0) {
@@ -830,7 +856,7 @@ function installMenu(): void {
         { label: '系统设置', click: () => void openSettingsPanel('system') },
         { label: '软件更新', click: () => void openUpdates() },
         { type: 'separator' },
-        { label: '打开日志目录', click: () => logger && void shell.openPath(logger.directory) },
+        { label: '打开日志目录', click: () => logger && shell.showItemInFolder(logger.filePath) },
         { type: 'separator' },
         {
           label: '退出 PMBrain',
@@ -1281,6 +1307,7 @@ if (!app.requestSingleInstanceLock()) {
     handleTrustedIpc('desktop:copy', (_event, value: string) => clipboard.writeText(value));
     handleTrustedIpc('desktop:open-admin', () => openAdmin());
     handleTrustedIpc('desktop:check-updates', () => updateManager?.check());
+    handleTrustedIpc('desktop:download-update', () => updateManager?.download());
     handleTrustedIpc('desktop:install-update', () => updateManager?.install());
     handleTrustedIpc('desktop:open-previous-release', async () => {
       const previous = desktopVersionHistory.previous;
@@ -1293,7 +1320,7 @@ if (!app.requestSingleInstanceLock()) {
       const url = await restartSidecarForRetry();
       await mainWindow?.loadURL(url);
     });
-    handleTrustedIpc('desktop:open-logs', () => logger && shell.openPath(logger.directory));
+    handleTrustedIpc('desktop:open-logs', () => logger && shell.showItemInFolder(logger.filePath));
     handleTrustedIpc('desktop:quit', () => {
       app.quit();
     });

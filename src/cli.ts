@@ -34,7 +34,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'advisor', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'advisor', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'quarantine', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -67,6 +67,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   // describing segment splitting + checkpointing + budget caps + the
   // unified types config story. Route around the generic short-circuit.
   'extract-conversation-facts',
+  'enrich',
   'sources',
 ]);
 
@@ -101,6 +102,38 @@ async function main() {
   // DX alias: `ask` is a natural-language alias for `query`
   if (command === 'ask') {
     command = 'query';
+  }
+
+  // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
+  // NOT a free-text search for the literal word "modes". Free-text
+  // `gbrain search "<query>"` falls through to the cheap-hybrid `search` op
+  // below (T4). Preserves the v0.41.6.0 read-only connect+dispatch timeout.
+  if (command === 'search' && ['modes', 'stats', 'tune', 'diagnose'].includes(subArgs[0] ?? '')) {
+    const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
+    const isDiagnose = subArgs[0] === 'diagnose';
+    const label = 'gbrain search';
+    // diagnose runs real retrieval (keyword + vector + hybrid) so it gets a
+    // longer deadline than the read-only dashboard.
+    const timeoutMs = isDiagnose ? 60_000 : 10_000;
+    let engine: BrainEngine;
+    try {
+      engine = await withTimeout(connectEngine(), timeoutMs, `${label}: connect`);
+    } catch (e) {
+      if (e instanceof OperationTimeoutError) { console.error(`${e.label} timed out.`); process.exit(124); }
+      throw e;
+    }
+    try {
+      if (isDiagnose) {
+        const { runSearchDiagnose } = await import('./commands/search-diagnose.ts');
+        await withTimeout(runSearchDiagnose(engine, subArgs), timeoutMs, label);
+      } else {
+        const { runSearch } = await import('./commands/search.ts');
+        await withTimeout(runSearch(engine, subArgs), timeoutMs, label);
+      }
+    } finally {
+      await engine.disconnect();
+    }
+    return;
   }
 
   // Per-command --help
@@ -763,7 +796,7 @@ function formatResult(opName: string, result: unknown): string {
  * `runRemoteDoctor` for thin-client installs.
  */
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
-  'sync', 'embed', 'extract', 'extract-conversation-facts', 'migrate', 'apply-migrations',
+  'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   'dream', 'transcripts', 'storage',
@@ -798,6 +831,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   embed: 'embed runs on the host as part of the autopilot cycle. `pmbrain remote ping` triggers a full cycle including embed.',
   extract: 'extract runs on the host. Use `pmbrain remote ping` to trigger a cycle including extract.',
   'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.',
+  enrich: 'enrich runs on the host (requires local engine + chat gateway). Run on the host machine.',
   migrate: "migrate runs on the host's local engine. Run on the host machine.",
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
@@ -1243,6 +1277,12 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  if (command === 'enrich' && (args.includes('--help') || args.includes('-h'))) {
+    const { runEnrich } = await import('./commands/enrich.ts');
+    await runEnrich(null as never, args);
+    return;
+  }
+
   if (command === 'jobs' && (args.includes('--help') || args.includes('-h'))) {
     const { runJobs } = await import('./commands/jobs.ts');
     await runJobs(null as any, args);
@@ -1403,6 +1443,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runExtractConversationFacts(engine, args);
         break;
       }
+      case 'enrich': {
+        const { runEnrich } = await import('./commands/enrich.ts');
+        await runEnrich(engine, args);
+        break;
+      }
       case 'features': {
         const { runFeatures } = await import('./commands/features.ts');
         await runFeatures(engine, args);
@@ -1430,6 +1475,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
+        break;
+      }
+      case 'quarantine': {
+        const { runQuarantine } = await import('./commands/quarantine.ts');
+        await runQuarantine(engine, args);
         break;
       }
       // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
@@ -1464,6 +1514,13 @@ async function handleCliOnly(command: string, args: string[]) {
           } else {
             console.log(`reindex --multimodal: ${result.reembedded} re-embedded, ${result.failed} failed, ${result.pending_after} pending. est. cost: $${result.cost_usd_estimate.toFixed(2)}`);
           }
+          break;
+        }
+        if (args.includes('--aliases')) {
+          // T8 — backfill the free-text alias layer (page_aliases) for existing
+          // pages whose frontmatter `aliases:` predate the import-time projection.
+          const { runReindexAliases } = await import('./commands/reindex-aliases.ts');
+          await runReindexAliases(engine, args);
           break;
         }
         const { runReindex } = await import('./commands/reindex.ts');
@@ -1946,6 +2003,7 @@ function printHelp() {
   check-backlinks <check|fix> [dir]  检查或修复缺失反向链接
   lint <dir|file> [--fix]            检查 LLM 产物和 frontmatter
   orphans [--json] [--count]         查找没有入链的页面
+  quarantine list [--source id]      列出被隔离、不参与检索的页面
   salience [--days N] [--kind P]     按情绪和活跃度排序页面
   anomalies [--since D] [--sigma N]  查找统计异常
   transcripts recent [--days N]      查看最近的本地转录文本

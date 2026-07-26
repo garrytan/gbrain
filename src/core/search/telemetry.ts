@@ -36,7 +36,18 @@ interface Bucket {
   sum_budget_dropped: number;
   cache_hit: number;
   cache_miss: number;
+  // T7 — rank-1 base_score drift signal (aggregate, NOT per-query rows, D10).
+  // sum/count derive the mean; 3 coarse buckets give a distribution shape.
+  sum_rank1_score: number;
+  count_rank1: number;
+  rank1_lt_solid: number;  // base_score < 0.6
+  rank1_solid: number;     // 0.6 <= base_score < 0.85
+  rank1_high: number;      // base_score >= 0.85
 }
+
+// T7 — coarse rank-1 score bands (mirror evidence.ts SOLID/HIGH floors).
+const RANK1_SOLID_FLOOR = 0.6;
+const RANK1_HIGH_FLOOR = 0.85;
 
 const FLUSH_INTERVAL_MS = 60_000;
 const FLUSH_THRESHOLD_CALLS = 100;
@@ -69,7 +80,7 @@ class TelemetryWriter {
    * immediately after bumping the in-memory bucket. Flush is async +
    * fire-and-forget.
    */
-  record(meta: HybridSearchMeta, opts: { results_count: number; tokens_estimate?: number } = { results_count: 0 }): void {
+  record(meta: HybridSearchMeta, opts: { results_count: number; tokens_estimate?: number; rank1_score?: number } = { results_count: 0 }): void {
     const date = nowDate();
     const mode = meta.mode ?? 'unset';
     const intent = meta.intent ?? 'unset';
@@ -87,6 +98,11 @@ class TelemetryWriter {
         sum_budget_dropped: 0,
         cache_hit: 0,
         cache_miss: 0,
+        sum_rank1_score: 0,
+        count_rank1: 0,
+        rank1_lt_solid: 0,
+        rank1_solid: 0,
+        rank1_high: 0,
       };
       this.buckets.set(key, b);
     }
@@ -97,6 +113,16 @@ class TelemetryWriter {
     b.sum_budget_dropped += Math.max(0, Math.floor(meta.token_budget?.dropped ?? 0));
     if (meta.cache?.status === 'hit') b.cache_hit += 1;
     if (meta.cache?.status === 'miss') b.cache_miss += 1;
+    // T7 — rank-1 base_score drift signal. Only counts queries that returned
+    // a result (rank1_score present + finite).
+    if (typeof opts.rank1_score === 'number' && Number.isFinite(opts.rank1_score)) {
+      const s = opts.rank1_score;
+      b.sum_rank1_score += s;
+      b.count_rank1 += 1;
+      if (s < RANK1_SOLID_FLOOR) b.rank1_lt_solid += 1;
+      else if (s < RANK1_HIGH_FLOOR) b.rank1_solid += 1;
+      else b.rank1_high += 1;
+    }
 
     this.pendingCount += 1;
     if (this.pendingCount >= FLUSH_THRESHOLD_CALLS) {
@@ -129,8 +155,9 @@ class TelemetryWriter {
           try {
             await engine.executeRaw(
               `INSERT INTO search_telemetry
-                 (date, mode, intent, count, sum_results, sum_tokens, sum_budget_dropped, cache_hit, cache_miss, first_seen, last_seen)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+                 (date, mode, intent, count, sum_results, sum_tokens, sum_budget_dropped, cache_hit, cache_miss,
+                  sum_rank1_score, count_rank1, rank1_lt_solid, rank1_solid, rank1_high, first_seen, last_seen)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
                ON CONFLICT (date, mode, intent) DO UPDATE SET
                  count = search_telemetry.count + EXCLUDED.count,
                  sum_results = search_telemetry.sum_results + EXCLUDED.sum_results,
@@ -138,8 +165,14 @@ class TelemetryWriter {
                  sum_budget_dropped = search_telemetry.sum_budget_dropped + EXCLUDED.sum_budget_dropped,
                  cache_hit = search_telemetry.cache_hit + EXCLUDED.cache_hit,
                  cache_miss = search_telemetry.cache_miss + EXCLUDED.cache_miss,
+                 sum_rank1_score = search_telemetry.sum_rank1_score + EXCLUDED.sum_rank1_score,
+                 count_rank1 = search_telemetry.count_rank1 + EXCLUDED.count_rank1,
+                 rank1_lt_solid = search_telemetry.rank1_lt_solid + EXCLUDED.rank1_lt_solid,
+                 rank1_solid = search_telemetry.rank1_solid + EXCLUDED.rank1_solid,
+                 rank1_high = search_telemetry.rank1_high + EXCLUDED.rank1_high,
                  last_seen = now()`,
-              [b.date, b.mode, b.intent, b.count, b.sum_results, b.sum_tokens, b.sum_budget_dropped, b.cache_hit, b.cache_miss],
+              [b.date, b.mode, b.intent, b.count, b.sum_results, b.sum_tokens, b.sum_budget_dropped, b.cache_hit, b.cache_miss,
+               b.sum_rank1_score, b.count_rank1, b.rank1_lt_solid, b.rank1_solid, b.rank1_high],
             );
           } catch {
             // swallow — telemetry write must never break the hot path.
@@ -230,7 +263,7 @@ export function getTelemetryWriter(): TelemetryWriter {
 export function recordSearchTelemetry(
   engine: BrainEngine,
   meta: HybridSearchMeta,
-  opts: { results_count: number; tokens_estimate?: number } = { results_count: 0 },
+  opts: { results_count: number; tokens_estimate?: number; rank1_score?: number } = { results_count: 0 },
 ): void {
   try {
     const w = getTelemetryWriter();
@@ -258,6 +291,11 @@ export interface StatsWindow {
   window_days: number;
   oldest_seen?: string;
   newest_seen?: string;
+  // T7 — rank-1 base_score drift signal. avg_rank1_score is the headline the
+  // doctor/operator watches for downward drift; the 3 buckets give shape.
+  avg_rank1_score: number | null; // null when no rank-1 samples
+  rank1_count: number;
+  rank1_distribution: { lt_solid: number; solid: number; high: number };
 }
 
 export async function readSearchStats(
@@ -277,6 +315,11 @@ export async function readSearchStats(
       sum_budget_dropped: number;
       cache_hit: number;
       cache_miss: number;
+      sum_rank1_score: number;
+      count_rank1: number;
+      rank1_lt_solid: number;
+      rank1_solid: number;
+      rank1_high: number;
       first_seen: string;
       last_seen: string;
     }>(
@@ -287,6 +330,11 @@ export async function readSearchStats(
               SUM(sum_budget_dropped)::int AS sum_budget_dropped,
               SUM(cache_hit)::int         AS cache_hit,
               SUM(cache_miss)::int        AS cache_miss,
+              COALESCE(SUM(sum_rank1_score), 0)::float8 AS sum_rank1_score,
+              COALESCE(SUM(count_rank1), 0)::int        AS count_rank1,
+              COALESCE(SUM(rank1_lt_solid), 0)::int     AS rank1_lt_solid,
+              COALESCE(SUM(rank1_solid), 0)::int        AS rank1_solid,
+              COALESCE(SUM(rank1_high), 0)::int         AS rank1_high,
               MIN(first_seen)::text       AS first_seen,
               MAX(last_seen)::text        AS last_seen
        FROM search_telemetry
@@ -305,6 +353,11 @@ export async function readSearchStats(
     const mode_distribution: Record<string, number> = {};
     let oldest_seen: string | undefined;
     let newest_seen: string | undefined;
+    let sum_rank1 = 0;
+    let count_rank1 = 0;
+    let r1_lt = 0;
+    let r1_solid = 0;
+    let r1_high = 0;
 
     for (const r of rows) {
       total_calls += r.count;
@@ -313,6 +366,11 @@ export async function readSearchStats(
       total_results += r.sum_results;
       total_tokens += r.sum_tokens;
       total_budget_dropped += r.sum_budget_dropped;
+      sum_rank1 += r.sum_rank1_score;
+      count_rank1 += r.count_rank1;
+      r1_lt += r.rank1_lt_solid;
+      r1_solid += r.rank1_solid;
+      r1_high += r.rank1_high;
       intent_distribution[r.intent] = (intent_distribution[r.intent] ?? 0) + r.count;
       mode_distribution[r.mode] = (mode_distribution[r.mode] ?? 0) + r.count;
       if (r.first_seen && (!oldest_seen || r.first_seen < oldest_seen)) oldest_seen = r.first_seen;
@@ -333,6 +391,9 @@ export async function readSearchStats(
       window_days: days,
       oldest_seen,
       newest_seen,
+      avg_rank1_score: count_rank1 > 0 ? sum_rank1 / count_rank1 : null,
+      rank1_count: count_rank1,
+      rank1_distribution: { lt_solid: r1_lt, solid: r1_solid, high: r1_high },
     };
   } catch {
     // Table missing or query failed — return empty stats rather than throw.
@@ -347,6 +408,9 @@ export async function readSearchStats(
       intent_distribution: {},
       mode_distribution: {},
       window_days: days,
+      avg_rank1_score: null,
+      rank1_count: 0,
+      rank1_distribution: { lt_solid: 0, solid: 0, high: 0 },
     };
   }
 }

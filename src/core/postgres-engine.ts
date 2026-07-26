@@ -47,15 +47,16 @@ import type {
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
+  EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { hasCJK } from './cjk.ts';
@@ -1219,11 +1220,10 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: atomic JSONB merge. `||` is the Postgres concat operator —
-    // for jsonb, right-side keys overwrite left-side; nested object keys
-    // are NOT deep-merged (use jsonb_set for nested paths). The patch
-    // shape this autopilot wave uses is flat (`last_full_cycle_at`,
-    // `archive_*`, etc.) so concat is sufficient. Idempotent on re-run.
+    // Atomic single-statement merge. Normalize historical malformed JSONB
+    // shapes under the row lock before applying the patch: older paths could
+    // leave config as a JSON string or an array of patch objects. Keeping the
+    // repair inside UPDATE avoids a read-then-write lost-update race.
     //
     // MUST use sql.json(patch) inside the template tag — postgres-js's
     // positional executeRaw + `$1::jsonb` cast DOUBLE-ENCODES the
@@ -1237,7 +1237,25 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       UPDATE sources
-         SET config = COALESCE(config, '{}'::jsonb) || ${sql.json(patch as Parameters<typeof sql.json>[0])}
+         SET config =
+           CASE
+             WHEN jsonb_typeof(config) = 'object' THEN config
+             WHEN jsonb_typeof(config) = 'string'
+               THEN CASE
+                 WHEN (config #>> '{}') IS JSON
+                   THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
+                 ELSE '{}'::jsonb
+               END
+             WHEN jsonb_typeof(config) = 'array'
+               THEN COALESCE(
+                 (SELECT jsonb_object_agg(kv.key, kv.value)
+                    FROM jsonb_array_elements(config) elem,
+                         jsonb_each(elem) kv),
+                 '{}'::jsonb
+               )
+             ELSE '{}'::jsonb
+           END
+           || ${sql.json(patch as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
     `;
     return (result.count ?? 0) > 0;
@@ -1575,11 +1593,7 @@ export class PostgresEngine implements BrainEngine {
         ORDER BY score DESC
         LIMIT ${innerLimitParam}
       ),
-      best_per_page AS (
-        SELECT DISTINCT ON (slug) *
-        FROM ranked_chunks
-        ORDER BY slug, score DESC
-      )
+      ${buildBestPerPagePoolCte('ranked_chunks')}
       SELECT slug, page_id, title, type, source_id,
         effective_date, effective_date_source,
         chunk_id, chunk_index, chunk_text, chunk_source, score,
@@ -1592,10 +1606,17 @@ export class PostgresEngine implements BrainEngine {
 
     // Search-only timeout. SET LOCAL inside sql.begin() scopes the GUC
     // to the transaction so it can never leak onto a pooled connection.
-    const rows = await sql.begin(async sql => {
-      await sql`SET LOCAL statement_timeout = '8s'`;
-      return await sql.unsafe(rawQuery, params as Parameters<typeof sql.unsafe>[1]);
+    const runKeyword = (queryText: string) => sql.begin(async tx => {
+      await tx`SET LOCAL statement_timeout = '8s'`;
+      const boundParams = [...params];
+      boundParams[0] = queryText;
+      return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
     });
+    let rows = await runKeyword(query);
+    if (rows.length === 0 && opts?.orFallback && !hasCJK(query)) {
+      const orQuery = buildOrFallbackWebsearchQuery(query);
+      if (orQuery) rows = await runKeyword(orQuery);
+    }
     return rows.map(rowToSearchResult);
   }
 
@@ -1723,6 +1744,143 @@ export class PostgresEngine implements BrainEngine {
     return rows.map(rowToSearchResult);
   }
 
+  async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    // language/symbolKind are chunk-grain code filters with no page-grain
+    // meaning; a code-scoped query gets no title candidates rather than
+    // rows that silently violate the caller's filter.
+    if (opts?.language || opts?.symbolKind) return [];
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+    const detailLow = opts?.detail === 'low';
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
+
+    const boostMap = resolveBoostMap();
+    const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
+    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    const visibilityClause = buildVisibilityClause('p', 's');
+    // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
+    // — safe to interpolate into raw SQL.
+    const ftsLang = 'english';
+
+    const params: unknown[] = [query];
+    let typeClause = '';
+    if (opts?.type) {
+      params.push(opts.type);
+      typeClause = `AND p.type = $${params.length}`;
+    }
+    let typesClause = '';
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      typesClause = `AND p.type = ANY($${params.length}::text[])`;
+    }
+    let excludeSlugsClause = '';
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      excludeSlugsClause = `AND p.slug != ALL($${params.length}::text[])`;
+    }
+    // Date filters read COALESCE(effective_date, …) — upstream unified the
+    // Postgres keyword arm onto the PGLite effective-date-first convention
+    // (v0.29.1 parity); the title arm matches it for filter parity.
+    let afterDateClause = '';
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    let beforeDateClause = '';
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    let sourceClause = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+    params.push(offset);
+    const offsetParam = `$${params.length}`;
+
+    // Page grain — one row per page by construction, so no best_per_page
+    // pooling CTE is needed. The LEFT JOIN LATERAL picks the representative
+    // chunk (compiled_truth first, then lowest chunk_index); COALESCEs keep
+    // chunkless pages retrievable (the extreme D1 case: a title with no
+    // body) with the alias-hop row shape (chunk_id 0, empty chunk_text).
+    // Accepted limitations (Reviewer F5/F6): the synthetic chunkless row
+    // inherits the compiled-truth RRF boost and dedups on empty chunk_text;
+    // and detail='low' filters only the REPRESENTATIVE — pages without a
+    // compiled_truth chunk still surface (unlike the keyword arm's filter).
+    const rawQuery = `
+      SELECT
+        p.slug, p.id as page_id, p.title, p.type, p.source_id,
+        p.effective_date, p.effective_date_source,
+        COALESCE(rep.id, 0) as chunk_id,
+        COALESCE(rep.chunk_index, 0) as chunk_index,
+        COALESCE(rep.chunk_text, '') as chunk_text,
+        COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
+        ts_rank_cd(p.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+        false AS stale
+      FROM pages p
+      JOIN sources s ON s.id = p.source_id
+      LEFT JOIN LATERAL (
+        SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+        FROM content_chunks cc
+        WHERE cc.page_id = p.id
+          AND cc.modality = 'text'
+          ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
+        ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
+        LIMIT 1
+      ) rep ON true
+      WHERE p.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+        ${typeClause}
+        ${typesClause}
+        ${excludeSlugsClause}
+        ${afterDateClause}
+        ${beforeDateClause}
+        ${sourceClause}
+        ${hardExcludeClause}
+        ${visibilityClause}
+      ORDER BY score DESC, p.id ASC
+      LIMIT ${limitParam}
+      OFFSET ${offsetParam}
+    `;
+
+    // Same RLS scope-binding wrapper as searchKeyword (alwaysTransaction:
+    // the SET LOCAL statement_timeout needs a transaction regardless of the
+    // GBRAIN_RLS_SCOPE_BINDING flag). The OR retry re-executes through the
+    // same scoped wrapper.
+    const runTitles = (queryText: string) =>
+      sql.begin(async (tx) => {
+        await tx`SET LOCAL statement_timeout = '8s'`;
+        const boundParams = [...params];
+        boundParams[0] = queryText;
+        return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+      });
+    let rows = await runTitles(query);
+    if (rows.length === 0) {
+      const orQuery = buildOrFallbackWebsearchQuery(query);
+      if (orQuery) rows = await runTitles(orQuery);
+    }
+    return rows.map(rowToSearchResult);
+  }
+
+  /**
+   * v0.20.0 Cathedral II Layer 3 (1b) chunk-grain keyword search.
+   * Ranks chunks via content_chunks.search_vector WITHOUT the
+   * dedup-to-page pass searchKeyword applies. Used by A2 two-pass
+   * retrieval (Layer 7) as the anchor-discovery primitive.
+   *
+   * Most callers should prefer searchKeyword (external page-grain
+   * contract). This is intentionally a narrow internal knob.
+   */
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts?.limit);
@@ -1862,14 +2020,25 @@ export class PostgresEngine implements BrainEngine {
           ${visibilityClause}
         ORDER BY cc.${col} <=> ${castSql}
         LIMIT ${innerLimitParam}
-      )
+      ),
+      -- score computed as a select-list expr (NOT in the inner ORDER BY, which
+      -- must stay pure-distance so the HNSW index is usable).
+      scored AS (
+        SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
+        FROM hnsw_candidates
+      ),
+      -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
+      -- over the full candidate set before the user LIMIT, so a page's strong
+      -- chunk can't be crowded out of the result by weaker chunks of other
+      -- pages. Shared builder keeps keyword + vector × postgres + pglite in lockstep.
+      ${buildBestPerPagePoolCte('scored')}
       SELECT
         slug, page_id, title, type, source_id,
         effective_date, effective_date_source,
         chunk_id, chunk_index, chunk_text, chunk_source,
-        raw_score * ${sourceFactorCaseOnSlug} AS score,
+        score,
         false AS stale
-      FROM hnsw_candidates
+      FROM best_per_page
       -- v0.41.13: stable tiebreaker for tied scores. See pglite-engine for
       -- rationale (basis-vector test fixtures, planner-dependent ordering).
       ORDER BY score DESC, page_id ASC, chunk_id ASC
@@ -2527,6 +2696,29 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
+  async listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]> {
+    const params: unknown[] = [];
+    let where = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where = `JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = ANY($1::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where = `JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = $1`;
+    }
+    const rows = await this.executeRaw<{ link_source: string | null; count: number }>(
+      `SELECT l.link_source, COUNT(*)::int AS count
+         FROM links l
+         ${where}
+        GROUP BY l.link_source
+        ORDER BY count DESC, l.link_source ASC NULLS LAST`,
+      params,
+    );
+    return rows;
+  }
+
   async findByTitleFuzzy(
     name: string,
     dirPrefix?: string,
@@ -2790,6 +2982,88 @@ export class PostgresEngine implements BrainEngine {
     return result;
   }
 
+  async relationalFanout(
+    seeds: string[],
+    opts?: import('./types.ts').RelationalFanoutOpts,
+  ): Promise<import('./types.ts').RelationalFanoutRow[]> {
+    if (!seeds || seeds.length === 0) return [];
+    const sql = this.sql;
+    const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
+    const direction = opts?.direction ?? 'both';
+    const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
+    const types = opts?.linkTypes && opts.linkTypes.length > 0 ? opts.linkTypes : null;
+
+    // Scope is applied to SEED selection only. Within-source traversal is
+    // enforced separately by `p2.source_id = w.seed_source` in the recursive
+    // step, so a walk can never cross a source boundary even when several
+    // sources are in scope.
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    const seedScope = useSourceIds
+      ? sql`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+    const typeFilter = types ? sql`AND l.link_type = ANY(${types}::text[])` : sql``;
+    const mentionsFilter = opts?.includeMentions
+      ? sql``
+      : sql`AND l.link_source IS DISTINCT FROM 'mentions'`;
+
+    // Recursive step join differs by direction; everything else is shared.
+    const recurStep =
+      direction === 'out'
+        ? sql`JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id`
+        : direction === 'in'
+          ? sql`JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id`
+          : sql`JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+                JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END`;
+
+    const rows = await sql`
+      WITH RECURSIVE walk AS (
+        SELECT p.id, p.slug, p.source_id, 0::int AS depth,
+               ARRAY[p.id] AS visited, ARRAY[p.slug] AS path,
+               p.source_id AS seed_source, NULL::text AS last_link_type
+        FROM pages p
+        WHERE p.slug = ANY(${seeds}::text[]) ${seedScope} AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT p2.id, p2.slug, p2.source_id, w.depth + 1,
+               w.visited || p2.id, w.path || p2.slug,
+               w.seed_source, l.link_type
+        FROM walk w
+        ${recurStep}
+        WHERE w.depth < ${depth}
+          AND NOT (p2.id = ANY(w.visited))
+          AND p2.source_id = w.seed_source
+          AND p2.deleted_at IS NULL
+          ${mentionsFilter}
+          ${typeFilter}
+      )
+      SELECT n.source_id, n.slug,
+             MIN(n.depth) AS hop,
+             COUNT(DISTINCT n.last_link_type) AS edge_count,
+             array_agg(DISTINCT n.last_link_type)
+               FILTER (WHERE n.last_link_type IS NOT NULL) AS via_link_types,
+             (array_agg(array_to_string(n.path, chr(9))
+               ORDER BY n.depth ASC, array_length(n.path, 1) ASC))[1] AS path_str,
+             (SELECT cc.id FROM content_chunks cc
+               WHERE cc.page_id = n.id ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
+      FROM walk n
+      WHERE n.depth > 0
+      GROUP BY n.source_id, n.slug, n.id
+      ORDER BY hop ASC, edge_count DESC, n.source_id ASC, n.slug ASC
+      LIMIT ${limit}
+    `;
+
+    return (rows as Record<string, unknown>[]).map(r => ({
+      source_id: r.source_id as string,
+      slug: r.slug as string,
+      hop: Number(r.hop),
+      edge_count: Number(r.edge_count),
+      via_link_types: Array.isArray(r.via_link_types) ? (r.via_link_types as string[]) : [],
+      path: r.path_str ? String(r.path_str).split('\t') : [],
+      canonical_chunk_id: r.canonical_chunk_id == null ? null : Number(r.canonical_chunk_id),
+    }));
+  }
+
   async getBacklinkCounts(slugs: string[]): Promise<Map<string, number>> {
     const result = new Map<string, number>();
     if (slugs.length === 0) return result;
@@ -2861,6 +3135,32 @@ export class PostgresEngine implements BrainEngine {
         hits: Number(r.hits),
         cross_source_hits: Number(r.cross_source_hits),
       });
+    }
+    return result;
+  }
+
+  async getContentFlagsByPageIds(
+    pageIds: number[],
+  ): Promise<Map<number, { reason: string; detail: string }>> {
+    const result = new Map<number, { reason: string; detail: string }>();
+    if (pageIds.length === 0) return result;
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id,
+             frontmatter -> 'content_flag' ->> 'reason' AS reason,
+             frontmatter -> 'content_flag' ->> 'detail' AS detail
+        FROM pages
+       WHERE id = ANY(${pageIds}::int[])
+         AND frontmatter ? 'content_flag'
+    `;
+    for (const row of rows as unknown as Array<{
+      id: number;
+      reason: string | null;
+      detail: string | null;
+    }>) {
+      if (row.reason) {
+        result.set(Number(row.id), { reason: row.reason, detail: row.detail ?? '' });
+      }
     }
     return result;
   }
@@ -4549,6 +4849,54 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
+  async resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>> {
+    const out = new Map<string, Array<{ slug: string; source_id: string }>>();
+    if (!aliasNorms || aliasNorms.length === 0) return out;
+    const sql = this.sql;
+    const sources =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? opts.sourceIds
+        : opts?.sourceId
+          ? [opts.sourceId]
+          : null;
+    const rows = sources
+      ? await sql`
+          SELECT alias_norm, slug, source_id
+          FROM page_aliases
+          WHERE alias_norm = ANY(${aliasNorms}::text[])
+            AND source_id = ANY(${sources}::text[])
+          ORDER BY alias_norm, source_id, slug`
+      : await sql`
+          SELECT alias_norm, slug, source_id
+          FROM page_aliases
+          WHERE alias_norm = ANY(${aliasNorms}::text[])
+          ORDER BY alias_norm, source_id, slug`;
+    for (const r of rows) {
+      const a = r.alias_norm as string;
+      const list = out.get(a) ?? [];
+      const ref = { slug: r.slug as string, source_id: r.source_id as string };
+      if (!list.some(x => x.slug === ref.slug && x.source_id === ref.source_id)) list.push(ref);
+      out.set(a, list);
+    }
+    return out;
+  }
+
+  async setPageAliases(slug: string, sourceId: string, aliasNorms: string[]): Promise<void> {
+    const sql = this.sql;
+    const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
+    await sql.begin(async tx => {
+      await tx`DELETE FROM page_aliases WHERE source_id = ${sourceId} AND slug = ${slug}`;
+      if (uniq.length === 0) return;
+      await tx`
+        INSERT INTO page_aliases (source_id, alias_norm, slug)
+        SELECT ${sourceId}, a, ${slug} FROM unnest(${uniq}::text[]) AS a
+        ON CONFLICT (source_id, alias_norm, slug) DO NOTHING`;
+    });
+  }
+
   // Config
   async getConfig(key: string): Promise<string | null> {
     const sql = this.sql;
@@ -5031,6 +5379,67 @@ export class PostgresEngine implements BrainEngine {
       take_count: Number(r.take_count ?? 0),
       take_avg_weight: Number(r.take_avg_weight ?? 0),
       score: Number(r.score ?? 0),
+    }));
+  }
+
+  async listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]> {
+    // v0.41.39 (issue #1700). Empty types → no rows (no SQL).
+    if (!opts.types || opts.types.length === 0) return [];
+    const sql = this.sql;
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 5000));
+    const threshold = Math.max(0, opts.thinThreshold);
+
+    // Source scope: array wins over scalar (canonical precedence).
+    const sourceCondition = opts.sourceIds && opts.sourceIds.length > 0
+      ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+      : opts.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+
+    // Re-enrich recency guard. enriched_at is written as toISOString() so a
+    // lexical text comparison is correct AND can't throw on a malformed value
+    // (a ::timestamptz cast would). Pages never enriched (NULL) are eligible.
+    const reenrichMs = opts.reenrichAfterMs ?? 0;
+    const recencyCondition = reenrichMs > 0
+      ? sql`AND NOT (
+            p.frontmatter ->> 'enriched_at' IS NOT NULL
+            AND p.frontmatter ->> 'enriched_at' > ${new Date(Date.now() - reenrichMs).toISOString()}
+          )`
+      : sql``;
+
+    // Whitelisted ORDER BY (no injection — enum maps to a literal fragment).
+    const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
+    const orderBy = sql.unsafe(ENRICH_ORDER_SQL[orderKey]);
+
+    const rows = await sql`
+      SELECT
+        p.slug,
+        p.source_id,
+        p.title,
+        p.type,
+        (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len,
+        COALESCE((
+          SELECT COUNT(*)
+            FROM links l
+           WHERE l.to_page_id = p.id
+             AND l.link_source IS DISTINCT FROM 'mentions'
+        ), 0)::int AS inbound_count
+      FROM pages p
+      WHERE p.deleted_at IS NULL
+        AND p.type = ANY(${opts.types}::text[])
+        AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < ${threshold}
+        ${sourceCondition}
+        ${recencyCondition}
+      ORDER BY ${orderBy}
+      LIMIT ${limit}
+    `;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as EnrichCandidate['type'],
+      body_len: Number(r.body_len ?? 0),
+      inbound_count: Number(r.inbound_count ?? 0),
     }));
   }
 

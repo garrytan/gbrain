@@ -196,7 +196,7 @@ describe('op-layer capture — query', () => {
 describe('op-layer capture — search', () => {
   const searchOp = operations.find(o => o.name === 'search')!;
 
-  test('captures search call with tool_name="search" and vector_enabled=false', async () => {
+  test('captures search call with tool_name="search" (cheap-hybrid contract, T4/D4)', async () => {
     const ctx = makeCtx();
     await searchOp.handler(ctx, { query: 'alice' });
     await waitForCapture();
@@ -205,9 +205,12 @@ describe('op-layer capture — search', () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect(row.tool_name).toBe('search');
-    expect(row.vector_enabled).toBe(false); // search never runs vector
-    expect(row.expand_enabled).toBeNull(); // no expansion concept for search
-    expect(row.detail_resolved).toBeNull();
+    // T4/D4: search is now cheap-hybrid (vector+keyword+RRF). With no embedding
+    // provider in this test it falls open to keyword (vector_enabled=false), but
+    // expansion is structurally OFF for `search` (the cheap-hybrid contract) —
+    // false, not null, because search now HAS an expansion concept.
+    expect(row.vector_enabled).toBe(false); // no embedding provider configured in test
+    expect(row.expand_enabled).toBe(false); // cheap-hybrid: expansion always off
   });
 
   test('respects eval.capture=false off-switch', async () => {

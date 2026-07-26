@@ -1,29 +1,24 @@
 name: Heavy Tests
 
-# Heavy ops-shape tests under tests/heavy/. Cost minutes per run; NOT part
-# of default PR CI. Two triggers:
-#   - Nightly schedule (catches regressions within 24h of merge to master).
-#   - On-demand opt-in via PR label `heavy-tests` (slow loop kept off by default).
-#   - Manual workflow_dispatch for triage.
+# Heavy ops-shape tests under tests/heavy/. They run for every master change
+# and pull request so a release candidate cannot bypass resource, timeout, and
+# operational-shape regressions. Nightly and manual triggers remain available.
 #
 # See CLAUDE.md "tests/heavy/*.sh" entry and tests/heavy/README.md.
 
 on:
+  push:
+    branches: [master]
   schedule:
     - cron: '17 8 * * *'  # 08:17 UTC daily — staggered to avoid noisy slots
   pull_request:
-    # `synchronize` + `reopened` fire on subsequent pushes / reopens — without
-    # them, a PR labeled `heavy-tests` would NEVER re-run heavy on later
-    # commits. The job-level `if:` below filters to PRs that still carry the
-    # label so we don't fan out on unrelated label changes.
-    types: [labeled, synchronize, reopened]
+    branches: [master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# When a PR gets the heavy-tests label, cancel any in-flight heavy-tests run on
-# the same ref so we only ever measure the latest commit.
+# Cancel any in-flight run on the same ref so only the latest change is tested.
 concurrency:
   group: heavy-tests-${{ github.ref }}
   cancel-in-progress: true
@@ -31,13 +26,6 @@ concurrency:
 jobs:
   heavy:
     name: Heavy tests
-    # On pull_request: only run when the PR currently carries the `heavy-tests`
-    # label. Works for all three trigger types (labeled, synchronize, reopened)
-    # because `contains(labels.*.name, ...)` reads the live label set, not the
-    # event payload's `label.name` (which is only populated for `labeled`).
-    if: |
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:

@@ -6,7 +6,13 @@ import {
   formatCliFailure,
   isWindowsReleaseAtLeast,
 } from '../src/main/cli-runner.js';
-import { DESKTOP_RUNTIME_CONTRACT } from '../src/main/runtime-contract.js';
+import {
+  DESKTOP_RUNTIME_CONTRACTS,
+  LINUX_DESKTOP_RUNTIME_CONTRACT,
+  MACOS_DESKTOP_RUNTIME_CONTRACT,
+  WINDOWS_DESKTOP_RUNTIME_CONTRACT,
+  getDesktopRuntimeContract,
+} from '../src/main/runtime-contract.js';
 
 const buildSource = readFileSync(resolve(import.meta.dir, '../scripts/build-sidecar.ts'), 'utf8');
 const cliRunnerSource = readFileSync(resolve(import.meta.dir, '../src/main/cli-runner.ts'), 'utf8');
@@ -43,18 +49,22 @@ describe('desktop Windows runtime compatibility', () => {
   });
 
   test('enforces the Bun Windows 10 1809 minimum release', () => {
-    expect(isWindowsReleaseAtLeast('10.0.17762', DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(false);
-    expect(isWindowsReleaseAtLeast('10.0.17763', DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(true);
-    expect(isWindowsReleaseAtLeast('10.0.26100', DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(true);
-    expect(isWindowsReleaseAtLeast('invalid', DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(false);
+    expect(isWindowsReleaseAtLeast('10.0.17762', WINDOWS_DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(false);
+    expect(isWindowsReleaseAtLeast('10.0.17763', WINDOWS_DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(true);
+    expect(isWindowsReleaseAtLeast('10.0.26100', WINDOWS_DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(true);
+    expect(isWindowsReleaseAtLeast('invalid', WINDOWS_DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)).toBe(false);
   });
 
-  test('pins a checksum-verified x64 baseline runtime instead of copying the builder Bun', () => {
-    expect(DESKTOP_RUNTIME_CONTRACT.platform).toBe('win32');
-    expect(DESKTOP_RUNTIME_CONTRACT.arch).toBe('x64');
-    expect(DESKTOP_RUNTIME_CONTRACT.flavor).toBe('baseline');
-    expect(DESKTOP_RUNTIME_CONTRACT.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(DESKTOP_RUNTIME_CONTRACT.executableSha256).toMatch(/^[a-f0-9]{64}$/);
+  test('pins checksum-verified runtimes for every desktop platform', () => {
+    expect(getDesktopRuntimeContract('win32', 'x64')).toBe(WINDOWS_DESKTOP_RUNTIME_CONTRACT);
+    expect(getDesktopRuntimeContract('darwin', 'arm64')).toBe(MACOS_DESKTOP_RUNTIME_CONTRACT);
+    expect(getDesktopRuntimeContract('linux', 'x64')).toBe(LINUX_DESKTOP_RUNTIME_CONTRACT);
+    expect(() => getDesktopRuntimeContract('darwin', 'x64')).toThrow('Unsupported PMBrain Desktop platform');
+    for (const contract of DESKTOP_RUNTIME_CONTRACTS) {
+      expect(contract.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(contract.executableSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(contract.bunRevision).toBe('1.3.14+0d9b296af');
+    }
     expect(buildSource).toContain('ensureRuntimeArchive');
     expect(buildSource).toContain('extractRuntimeExecutable');
     expect(buildSource).toContain('RUNTIME_DOWNLOAD_ATTEMPTS');
@@ -62,9 +72,9 @@ describe('desktop Windows runtime compatibility', () => {
     expect(buildSource).not.toContain('cp(process.execPath');
   });
 
-  test('verifies manifest, PE architecture, Bun revision, Canvas and PGLite before release', () => {
-    expect(verifierSource).toContain("join(runtimeRoot, 'runtime-manifest.json')");
-    expect(verifierSource).toContain('peArchitecture');
+  test('verifies manifest, native architecture, Bun revision, Canvas and PGLite before release', () => {
+    expect(verifierSource).toContain("join(shape.runtimeRoot, 'runtime-manifest.json')");
+    expect(verifierSource).toContain('binaryArchitecture');
     expect(verifierSource).toContain('executableSha256');
     expect(verifierSource).toContain("spawnSync(bunPath, ['--revision']");
     expect(verifierSource).toContain("await import('@napi-rs/canvas')");
@@ -78,5 +88,14 @@ describe('desktop Windows runtime compatibility', () => {
     expect(builderConfig).toContain('include: build/installer.nsh');
     expect(installerSource).toContain('${AtLeastWin10}');
     expect(installerSource).toContain('$0 < 17763');
+  });
+
+  test('defines native macOS and Linux desktop artifacts with their updater metadata', () => {
+    expect(desktopPackage.scripts['build:mac']).toContain('--arm64');
+    expect(desktopPackage.scripts['build:linux']).toContain('--x64');
+    expect(builderConfig).toContain('PMBrain-macOS-${arch}-${version}.${ext}');
+    expect(builderConfig).toContain('PMBrain-Linux-${arch}-${version}.${ext}');
+    expect(builderConfig).toContain('canvas-darwin-arm64');
+    expect(builderConfig).toContain('canvas-linux-x64-gnu');
   });
 });

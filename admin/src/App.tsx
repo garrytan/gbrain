@@ -21,6 +21,7 @@ import {
   NaturalLanguagePage,
   DocumentationPage,
   SettingsPage,
+  type SettingsSection,
 } from './pages/Console';
 import { api } from './api';
 import {
@@ -33,15 +34,17 @@ import {
 } from './lib/theme';
 import {
   BookOpenText, Bot, BrainCircuit, Cable,
-  Database, FileClock, FolderKanban, HeartHandshake, LayoutDashboard,
-  SlidersHorizontal, type LucideIcon,
+  Cpu, Database, FileClock, FolderKanban, HeartHandshake, LayoutDashboard,
+  MonitorCog, Sparkles, Upload, type LucideIcon,
 } from 'lucide-react';
 
 const PAGES = [
   'login', 'dashboard', 'natural',
   'dream', 'dream-execute', 'dream-knowledge', 'dream-takes', 'dream-scoring', 'dream-calibration', 'dream-insights',
   'import', 'data', 'docs',
-  'mcp', 'config', 'agents', 'log', 'calibration', 'settings',
+  'mcp', 'config', 'agents', 'log', 'calibration',
+  'settings', 'settings-general', 'settings-knowledge', 'settings-dream',
+  'settings-import', 'settings-models',
 ] as const;
 
 type Page = typeof PAGES[number];
@@ -51,7 +54,10 @@ function getPage(): Page {
   return PAGES.includes(hash as Page) ? hash as Page : 'dashboard';
 }
 
-type NavIconName = 'overview' | 'workspace' | 'database' | 'organize' | 'mcp' | 'log' | 'settings' | 'assistant';
+type NavIconName =
+  | 'overview' | 'workspace' | 'database' | 'organize' | 'mcp' | 'log' | 'assistant'
+  | 'settings-general' | 'settings-knowledge' | 'settings-dream'
+  | 'settings-import' | 'settings-models';
 
 const NAV_ICONS: Record<NavIconName, LucideIcon> = {
   overview: LayoutDashboard,
@@ -60,8 +66,30 @@ const NAV_ICONS: Record<NavIconName, LucideIcon> = {
   organize: BookOpenText,
   mcp: Cable,
   log: FileClock,
-  settings: SlidersHorizontal,
   assistant: Bot,
+  'settings-general': MonitorCog,
+  'settings-knowledge': Database,
+  'settings-dream': Sparkles,
+  'settings-import': Upload,
+  'settings-models': Cpu,
+};
+
+const SETTINGS_NAV_ITEMS: Array<{
+  page: Page;
+  section: SettingsSection;
+  label: string;
+  icon: NavIconName;
+}> = [
+  { page: 'settings-general', section: 'general', label: '常规设置', icon: 'settings-general' },
+  { page: 'settings-knowledge', section: 'knowledge', label: '知识库设置', icon: 'settings-knowledge' },
+  { page: 'settings-dream', section: 'dream', label: '知识整理设置', icon: 'settings-dream' },
+  { page: 'settings-import', section: 'import', label: '导入与向量化', icon: 'settings-import' },
+  { page: 'settings-models', section: 'models', label: '模型配置', icon: 'settings-models' },
+];
+
+const SETTINGS_PAGE_SECTIONS: Partial<Record<Page, SettingsSection>> = {
+  settings: 'general',
+  ...Object.fromEntries(SETTINGS_NAV_ITEMS.map(item => [item.page, item.section])),
 };
 
 function NavIcon({ name }: { name: NavIconName }) {
@@ -93,7 +121,7 @@ export function App() {
   const allNavItems = useMemo(() => [
     { page: 'dashboard' as Page, label: '总体概览' },
     ...navSections.flatMap(section => section.items.map(({ page: itemPage, label }) => ({ page: itemPage, label }))),
-    { page: 'settings' as Page, label: '设置' },
+    ...SETTINGS_NAV_ITEMS.map(({ page: itemPage, label }) => ({ page: itemPage, label })),
   ], [navSections]);
 
   useEffect(() => {
@@ -181,11 +209,18 @@ export function App() {
               ))}
             </section>
           ))}
-          <section className="nav-section" aria-label="系统">
-            <div className="nav-section-label">系统</div>
-            <button type="button" className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}>
-              <NavIcon name="settings" /><span>设置</span>
-            </button>
+          <section className="nav-section nav-section-settings" aria-label="设置">
+            <div className="nav-section-label">设置</div>
+            {SETTINGS_NAV_ITEMS.map(item => (
+              <button
+                type="button"
+                key={item.page}
+                className={`nav-item nav-subitem ${SETTINGS_PAGE_SECTIONS[page] === item.section ? 'active' : ''}`}
+                onClick={() => navigate(item.page)}
+              >
+                <NavIcon name={item.icon} /><span>{item.label}</span>
+              </button>
+            ))}
           </section>
         </div>
         <div className="sidebar-support">
@@ -206,12 +241,12 @@ export function App() {
         <div className="mobile-brand"><BrandMark /><b>PMBrain</b></div>
         <select
           aria-label="选择管理台页面"
-          value={allNavItems.some(item => item.page === page) ? page : 'dashboard'}
+          value={page === 'settings' ? 'settings-general' : allNavItems.some(item => item.page === page) ? page : 'dashboard'}
           onChange={event => navigate(event.target.value as Page)}
         >
           <option value="dashboard">总体概览</option>
           {navSections.map(section => <optgroup key={section.title} label={section.title}>{section.items.map(item => <option key={item.page} value={item.page}>{item.label}</option>)}</optgroup>)}
-          <optgroup label="系统"><option value="settings">设置</option></optgroup>
+          <optgroup label="设置">{SETTINGS_NAV_ITEMS.map(item => <option key={item.page} value={item.page}>{item.label}</option>)}</optgroup>
         </select>
         <button type="button" className="mobile-signout" onClick={handleSignOutEverywhere}>退出</button>
       </header>
@@ -233,8 +268,8 @@ export function App() {
         {page === 'agents' && <AgentsPage />}
         {page === 'log' && <RequestLogPage />}
         {page === 'calibration' && <CalibrationPage />}
-        {page === 'settings' && (
-          <SettingsPage themeMode={themeMode} onThemeModeChange={changeThemeMode} />
+        {SETTINGS_PAGE_SECTIONS[page] && (
+          <SettingsPage section={SETTINGS_PAGE_SECTIONS[page]} themeMode={themeMode} onThemeModeChange={changeThemeMode} />
         )}
       </main>
       {supportPanel && (

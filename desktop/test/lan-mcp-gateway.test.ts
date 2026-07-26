@@ -62,11 +62,13 @@ function call(
 }
 
 describe('desktop LAN MCP gateway', () => {
-  test('blocks remote tool calls that can bypass the credential source scope', async () => {
+  test('forwards tool and source authorization decisions to the canonical sidecar', async () => {
     let targetHits = 0;
-    const target = createServer((_req, res) => {
+    const target = createServer((req, res) => {
       targetHits += 1;
-      res.end('unexpected');
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => res.end(Buffer.concat(chunks)));
     });
     const targetPort = await listen(target);
     const gateway = createGateway({
@@ -77,36 +79,27 @@ describe('desktop LAN MCP gateway', () => {
     cleanup.push(() => gateway.stop());
     const status = await gateway.start();
 
-    const forbiddenCalls = [
+    const canonicalCalls = [
       { id: 'query-snake', name: 'query', arguments: { query: '计划', source_id: 'secret' } },
-      { id: 'query-camel', name: 'query', arguments: { query: '计划', sourceId: 'secret' } },
-      { id: 'query-all', name: 'query', arguments: { filters: { source: '__all__' } } },
-      { id: 'callers-all', name: 'code_callers', arguments: { symbol: 'run', all_sources: true } },
-      { id: 'callees-source', name: 'code_callees', arguments: { symbol: 'run', sourceId: 'secret' } },
-      { id: 'code-def', name: 'code_def', arguments: { symbol: 'run' } },
-      { id: 'code-refs', name: 'code_refs', arguments: { symbol: 'run' } },
-      { id: 'takes-list', name: 'takes_list', arguments: {} },
+      { id: 'recall', name: 'recall', arguments: { query: '上次讨论' } },
       { id: 'unknown', name: 'future_unreviewed_tool', arguments: {} },
-      { id: 'semantic-query', name: 'query', arguments: { query: '跨源缓存' } },
     ];
 
-    for (const item of forbiddenCalls) {
-      const response = await call(status.port, 'POST', '/mcp', JSON.stringify({
+    for (const item of canonicalCalls) {
+      const body = JSON.stringify({
         jsonrpc: '2.0',
         id: item.id,
         method: 'tools/call',
         params: { name: item.name, arguments: item.arguments },
-      }), { authorization: 'Bearer test-key', 'content-type': 'application/json' });
-      expect(response.status).toBe(403);
-      const payload = JSON.parse(response.body);
-      expect(payload).toMatchObject({
-        jsonrpc: '2.0',
-        id: item.id,
-        error: { code: -32003 },
       });
-      expect(payload.error.message).toContain('局域网');
+      const response = await call(status.port, 'POST', '/mcp', body, {
+        authorization: 'Bearer test-key',
+        'content-type': 'application/json',
+      });
+      expect(response.status).toBe(200);
+      expect(response.body).toBe(body);
     }
-    expect(targetHits).toBe(0);
+    expect(targetHits).toBe(canonicalCalls.length);
   });
 
   test('allows ordinary scoped calls, tools/list, and safe JSON-RPC batches', async () => {
@@ -156,7 +149,7 @@ describe('desktop LAN MCP gateway', () => {
     expect(targetHits).toBe(3);
   });
 
-  test('filters tools/list to the audited shared-mode allowlist', async () => {
+  test('returns the canonical sidecar tools/list response without a second allowlist', async () => {
     const target = createServer((req, res) => {
       req.resume();
       req.on('end', () => {
@@ -195,10 +188,12 @@ describe('desktop LAN MCP gateway', () => {
     expect(JSON.parse(response.body).result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       'search',
       'put_page',
+      'takes_list',
+      'get_stats',
     ]);
   });
 
-  test('filters tools/list when the real MCP response uses SSE framing', async () => {
+  test('streams the canonical tools/list response unchanged when MCP uses SSE framing', async () => {
     const target = createServer((req, res) => {
       req.resume();
       req.on('end', () => {
@@ -220,10 +215,14 @@ describe('desktop LAN MCP gateway', () => {
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     const data = response.body.split('\n').find(line => line.startsWith('data:'))!.slice(5).trim();
-    expect(JSON.parse(data).result.tools.map((tool: { name: string }) => tool.name)).toEqual(['search']);
+    expect(JSON.parse(data).result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      'search',
+      'query',
+      'takes_list',
+    ]);
   });
 
-  test('fails closed when an SSE tools/list response cannot be parsed safely', async () => {
+  test('does not parse or rewrite sidecar SSE responses', async () => {
     const target = createServer((req, res) => {
       req.resume();
       req.on('end', () => {
@@ -238,11 +237,11 @@ describe('desktop LAN MCP gateway', () => {
     const response = await call(status.port, 'POST', '/mcp', JSON.stringify({
       jsonrpc: '2.0', id: 9, method: 'tools/list', params: {},
     }), { authorization: 'Bearer test-key', 'content-type': 'application/json' });
-    expect(response.status).toBe(502);
-    expect(JSON.parse(response.body).error).toContain('安全过滤');
+    expect(response.status).toBe(200);
+    expect(response.body).toBe('data: {not-json}\n\n');
   });
 
-  test('rejects an entire unsafe JSON-RPC batch with one bounded response', async () => {
+  test('rejects an entire batch containing an unsupported MCP protocol method', async () => {
     let targetHits = 0;
     const target = createServer((_req, res) => {
       targetHits += 1;
@@ -262,8 +261,8 @@ describe('desktop LAN MCP gateway', () => {
       {
         jsonrpc: '2.0',
         id: 'blocked-id',
-        method: 'tools/call',
-        params: { name: 'query', arguments: { query: '计划', source_id: 'secret' } },
+        method: 'resources/list',
+        params: {},
       },
     ]), { authorization: 'Bearer test-key', 'content-type': 'application/json' });
 
@@ -317,7 +316,7 @@ describe('desktop LAN MCP gateway', () => {
     expect(targetHits).toBe(0);
   });
 
-  test('rejects malformed JSON and BOM-prefixed scope bypasses before proxying', async () => {
+  test('rejects malformed JSON, preserves BOM payloads, and enforces the body limit', async () => {
     let targetHits = 0;
     const target = createServer((req, res) => {
       targetHits += 1;
@@ -359,11 +358,15 @@ describe('desktop LAN MCP gateway', () => {
       })}`,
       { authorization: 'Bearer test-key', 'content-type': 'application/json' },
     );
-    expect(bomBypass.status).toBe(403);
-    expect(JSON.parse(bomBypass.body)).toMatchObject({
-      id: 'bom-query',
-      error: { code: -32003 },
-    });
+    expect(bomBypass.status).toBe(400);
+    expect(JSON.parse(bomBypass.body).nativeBody).toBe(
+      `\uFEFF${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'bom-query',
+        method: 'tools/call',
+        params: { name: 'query', arguments: { query: '机密', source_id: '__all__' } },
+      })}`,
+    );
 
     const largeAllowedBody = JSON.stringify({
       jsonrpc: '2.0',
@@ -387,7 +390,7 @@ describe('desktop LAN MCP gateway', () => {
     );
     expect(oversized.status).toBe(413);
     expect(JSON.parse(oversized.body).error).toContain('过大');
-    expect(targetHits).toBe(1);
+    expect(targetHits).toBe(2);
   });
 
   test('rejects missing or malformed Bearer headers before reading or proxying the body', async () => {

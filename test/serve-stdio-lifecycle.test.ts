@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { EventEmitter } from 'events';
-import { runServe, type ServeOptions } from '../src/commands/serve';
+import { resolveBootTimeoutMs, runServe, type ServeOptions } from '../src/commands/serve';
 import type { BrainEngine } from '../src/core/engine';
 
 // These tests cover the stdio lifecycle hooks added to runServe so that the
@@ -150,6 +150,15 @@ async function startInBackground(
 }
 
 describe('runServe stdio lifecycle', () => {
+  test('boot timeout env uses PMBrain name first and keeps legacy fallback', () => {
+    expect(resolveBootTimeoutMs({ PMBRAIN_SERVE_BOOT_TIMEOUT_SECONDS: '2' })).toBe(2_000);
+    expect(resolveBootTimeoutMs({ GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS: '3' })).toBe(3_000);
+    expect(resolveBootTimeoutMs({
+      PMBRAIN_SERVE_BOOT_TIMEOUT_SECONDS: '4',
+      GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS: '9',
+    })).toBe(4_000);
+  });
+
   test('stdin end triggers engine.disconnect() and process exit(0)', async () => {
     const h = makeHarness();
     await startInBackground(h.engine, [], h.opts);

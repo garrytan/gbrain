@@ -7,7 +7,15 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } from '../src/core/config.ts';
+import {
+  KNOWN_CONFIG_KEYS,
+  KNOWN_CONFIG_KEY_PREFIXES,
+  isFileBackedModelConfigKey,
+  readFileConfigValue,
+  unsetFileConfigValue,
+  writeFileConfigValue,
+  type GBrainConfig,
+} from '../src/core/config.ts';
 import { suggestNearest } from '../src/core/levenshtein.ts';
 
 describe('KNOWN_CONFIG_KEYS', () => {
@@ -58,6 +66,31 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     for (const p of KNOWN_CONFIG_KEY_PREFIXES) {
       expect(p).toMatch(/\.$/);
     }
+  });
+});
+
+describe('config.json model system of record', () => {
+  test('reads existing nested keys and updates them without creating a competing flat value', () => {
+    const config = {
+      engine: 'pglite',
+      models: { propose_takes: 'mimo:mimo-v2.5-pro' },
+    } as GBrainConfig;
+    expect(readFileConfigValue(config, 'models.propose_takes')).toBe('mimo:mimo-v2.5-pro');
+    writeFileConfigValue(config, 'models.propose_takes', 'deepseek:deepseek-v4-flash');
+    expect(readFileConfigValue(config, 'models.propose_takes')).toBe('deepseek:deepseek-v4-flash');
+    expect(Object.hasOwn(config, 'models.propose_takes')).toBe(false);
+  });
+
+  test('removes file-backed model keys and preserves unrelated config', () => {
+    const config = {
+      engine: 'pglite',
+      desktop: { theme: 'system' },
+      models: { tier: { reasoning: 'deepseek:deepseek-v4-flash' } },
+    } as GBrainConfig;
+    expect(isFileBackedModelConfigKey('models.tier.reasoning')).toBe(true);
+    expect(unsetFileConfigValue(config, 'models.tier.reasoning')).toBe(true);
+    expect(readFileConfigValue(config, 'models.tier.reasoning')).toBeUndefined();
+    expect(config.desktop).toEqual({ theme: 'system' });
   });
 });
 

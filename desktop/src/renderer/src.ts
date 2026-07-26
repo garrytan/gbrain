@@ -786,6 +786,75 @@ function formatBytes(value: number): string {
   return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
 }
 
+function releaseDateLabel(value?: string): string {
+  if (!value) return '发布日期未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '发布日期未知';
+  return `发布于 ${date.toLocaleDateString('zh-CN')}`;
+}
+
+function cleanReleaseNoteText(value: string): string {
+  return value
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .trim();
+}
+
+function renderReleaseNotes(notes?: string): void {
+  const body = $('#update-release-notes-body');
+  body.replaceChildren();
+  const lines = (notes ?? '').replace(/\r\n/g, '\n').split('\n');
+  let list: HTMLUListElement | HTMLOListElement | null = null;
+  let listKind: 'ul' | 'ol' | null = null;
+
+  const finishList = () => {
+    list = null;
+    listKind = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      finishList();
+      continue;
+    }
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      finishList();
+      const element = document.createElement('h4');
+      element.textContent = cleanReleaseNoteText(heading[1]);
+      body.append(element);
+      continue;
+    }
+    const bullet = line.match(/^[-*+]\s+(.+)$/);
+    const ordered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (bullet || ordered) {
+      const kind = bullet ? 'ul' : 'ol';
+      if (!list || listKind !== kind) {
+        list = document.createElement(kind);
+        listKind = kind;
+        body.append(list);
+      }
+      const item = document.createElement('li');
+      item.textContent = cleanReleaseNoteText((bullet ?? ordered)![1]);
+      list.append(item);
+      continue;
+    }
+    finishList();
+    const paragraph = document.createElement('p');
+    paragraph.textContent = cleanReleaseNoteText(line);
+    body.append(paragraph);
+  }
+
+  if (!body.childElementCount) {
+    const empty = document.createElement('p');
+    empty.className = 'update-release-notes-empty';
+    empty.textContent = '本版本暂无更新记录';
+    body.append(empty);
+  }
+}
+
 function renderUpdate(update: UpdateState | null): void {
   if (!update) return;
   $('#update-current').textContent = `v${update.currentVersion}`;
@@ -813,15 +882,23 @@ function renderUpdate(update: UpdateState | null): void {
   progress.querySelector<HTMLElement>('i')!.style.width = `${update.percent ?? 0}%`;
   progress.setAttribute('aria-valuenow', String(update.percent ?? 0));
   progress.setAttribute('aria-valuetext', update.message);
+  const releaseNotes = $('#update-release-notes');
+  releaseNotes.hidden = !update.availableVersion;
+  $('#update-release-date').textContent = releaseDateLabel(update.releaseDate);
+  renderReleaseNotes(update.releaseNotes);
   const button = $<HTMLButtonElement>('#update-action');
   const busy = update.phase === 'checking' || update.phase === 'downloading' || update.phase === 'installing';
   button.disabled = busy;
   button.classList.toggle('busy', busy);
-  button.dataset.action = update.phase === 'downloaded' ? 'install' : 'check';
+  button.dataset.action = update.phase === 'downloaded' ? 'install'
+    : update.phase === 'available' ? 'download'
+      : 'check';
   button.querySelector('span')!.textContent = update.phase === 'downloaded' ? '立即安装'
     : update.phase === 'downloading' ? `下载中 ${update.percent ?? 0}%`
       : update.phase === 'checking' ? '正在检查…'
-        : update.phase === 'installing' ? '正在安装…' : '检查更新';
+        : update.phase === 'installing' ? '正在安装…'
+          : update.phase === 'available' ? '下载更新'
+            : '检查更新';
 }
 
 async function save(): Promise<void> {
@@ -863,6 +940,7 @@ async function save(): Promise<void> {
     return;
   }
 
+  let confirmEmbeddingRebuild = false;
   // 检测向量化模型是否变更（非首次配置）
   if (!state?.setup?.needsSetup && state?.setup?.current?.embeddingModel) {
     const newEmbeddingModel = composeModelId(embeddingProvider, embeddingModelName);
@@ -876,6 +954,7 @@ async function save(): Promise<void> {
       )) {
         return;
       }
+      confirmEmbeddingRebuild = true;
     }
   }
 
@@ -906,6 +985,7 @@ async function save(): Promise<void> {
   const payload: SetupPayload = {
     engine: selectedEngine(),
     resetAdvancedModelRouting: false,
+    confirmEmbeddingRebuild,
     databasePath: ($<HTMLInputElement>('#database-path')).value,
     databaseUrl: ($<HTMLInputElement>('#database-url')).value,
     knowledgeDirectory,
@@ -1117,6 +1197,7 @@ $('#update-action').addEventListener('click', async () => {
   const button = $<HTMLButtonElement>('#update-action');
   try {
     if (button.dataset.action === 'install') await window.pmbrainDesktop.installUpdate();
+    else if (button.dataset.action === 'download') renderUpdate(await window.pmbrainDesktop.downloadUpdate());
     else renderUpdate(await window.pmbrainDesktop.checkUpdates());
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));

@@ -9,6 +9,7 @@ import { MinionWorker } from '../core/minions/worker.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { resolveGbrainCliPath } from './autopilot.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -111,6 +112,24 @@ function formatJobDetail(job: MinionJob): string {
   if (job.result != null) lines.push(`  Result: ${JSON.stringify(job.result)}`);
   lines.push(`  Data: ${JSON.stringify(job.data)}`);
   return lines.join('\n');
+}
+
+export function resolveSupervisorWorkerInvocation(
+  cliPathOverride: string | undefined,
+  argv: string[] = process.argv,
+  execPath: string = process.execPath,
+): { cliPath: string; cliArgsPrefix: string[] } {
+  if (cliPathOverride) return { cliPath: cliPathOverride, cliArgsPrefix: [] };
+
+  const entry = argv[1] ?? '';
+  if (/\.(?:[cm]?js|ts)$/i.test(entry)) {
+    return {
+      cliPath: execPath,
+      cliArgsPrefix: [entry],
+    };
+  }
+
+  return { cliPath: resolveGbrainCliPath(), cliArgsPrefix: [] };
 }
 
 export async function runJobs(engine: BrainEngine, args: string[]): Promise<void> {
@@ -1029,8 +1048,6 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         process.exit(1);
       }
 
-      const { resolveGbrainCliPath } = await import('./autopilot.ts');
-
       const concurrency = parseInt(parseFlag(args, '--concurrency') ?? '2', 10);
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const maxCrashes = parseInt(parseFlag(args, '--max-crashes') ?? '10', 10);
@@ -1061,7 +1078,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
       // the supervisor, so the watchdog is on by default here.
       const maxRssMb = parseMaxRssFlag(args) ?? 2048;
 
-      const cliPath = parseFlag(args, '--cli-path') ?? resolveGbrainCliPath();
+      const { cliPath, cliArgsPrefix } = resolveSupervisorWorkerInvocation(parseFlag(args, '--cli-path'));
 
       // --detach: fork a background supervisor, print PID payload, exit 0.
       // Implementation: re-exec the same CLI as a detached child without --detach,
@@ -1072,7 +1089,8 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         const childArgs = process.argv.slice(2).filter(a => a !== '--detach');
         const child = spawn(process.execPath, [process.argv[1], ...childArgs], {
           detached: true,
-          stdio: ['ignore', 'ignore', 'inherit'],
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', jsonMode ? 'ignore' : 'inherit'],
           env: process.env,
         });
         child.unref();
@@ -1095,6 +1113,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         maxCrashes,
         healthInterval,
         cliPath,
+        cliArgsPrefix,
         allowShellJobs,
         json: jsonMode,
         maxRssMb,
@@ -1283,6 +1302,39 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       // `gbrain extract-conversation-facts --background --workers 20`
       // works end-to-end.
       workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
+    });
+    return result;
+  });
+
+  // v0.41.39 (#1700) — enrich. NOT in PROTECTED_JOB_NAMES: per-call cost is
+  // bounded by data.maxCostUsd (default DEFAULT_MAX_COST_USD) and the handler
+  // re-creates the BudgetTracker in its own process. BudgetExhausted is caught
+  // at the core level and returned as result.budget_exhausted (NOT a failure).
+  // Strict per-source: the CLI fans out one job per source when --source is
+  // omitted, so a job ALWAYS carries data.sourceId.
+  worker.register('enrich', async (job) => {
+    const { runEnrichCore } = await import('./enrich.ts');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    if (!sourceId) {
+      throw new Error('enrich Minion job requires data.sourceId (CLI fans out one job per source)');
+    }
+    const types = Array.isArray(job.data.types)
+      ? (job.data.types as string[])
+      : undefined;
+    const order = typeof job.data.order === 'string' ? job.data.order : undefined;
+    const result = await runEnrichCore(engine, {
+      sourceId,
+      types: types as import('../core/types.ts').PageType[] | undefined,
+      order: order as ('inbound-links' | 'salience' | 'updated') | undefined,
+      limit: typeof job.data.limit === 'number' ? job.data.limit : undefined,
+      workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
+      model: typeof job.data.model === 'string' ? job.data.model : undefined,
+      maxCostUsd: typeof job.data.maxCostUsd === 'number' ? job.data.maxCostUsd : undefined,
+      minContextChars: typeof job.data.minContextChars === 'number' ? job.data.minContextChars : undefined,
+      thinThreshold: typeof job.data.thinThreshold === 'number' ? job.data.thinThreshold : undefined,
+      reenrichAfterMs: typeof job.data.reenrichAfterMs === 'number' ? job.data.reenrichAfterMs : undefined,
+      dryRun: !!job.data.dryRun,
+      force: !!job.data.force,
     });
     return result;
   });

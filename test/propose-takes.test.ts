@@ -285,6 +285,11 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(details.cache_misses).toBe(1);
     expect(details.cache_hits).toBe(0);
     expect(details.proposals_inserted).toBe(1);
+    expect(details.proposal_samples).toEqual([{
+      claim_text: 'Marketplaces with cold-start liquidity win',
+      page_slug: 'wiki/concepts/network-effects',
+      kind: 'bet',
+    }]);
 
     const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
     expect(inserts).toHaveLength(1);

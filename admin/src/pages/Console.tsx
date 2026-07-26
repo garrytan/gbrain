@@ -24,6 +24,7 @@ interface SourceSummary {
   id: string;
   name: string;
   local_path: string | null;
+  git_repo: boolean;
   federated: boolean;
   page_count: number;
   last_sync_at: string | null;
@@ -1409,28 +1410,35 @@ function SourceManagementSettings() {
   const [sourceId, setSourceId] = useState('');
   const [sourceName, setSourceName] = useState('');
   const [federated, setFederated] = useState(true);
-  const [run, setRun] = useState<ConsoleRun | null>(null);
+  const [registrationRun, setRegistrationRun] = useState<ConsoleRun | null>(null);
   const [submitError, setSubmitError] = useState('');
   const [sourceActionId, setSourceActionId] = useState<string | null>(null);
+  const [gitDialog, setGitDialog] = useState<{ source: SourceSummary; action: 'init' | 'commit' } | null>(null);
+  const [gitMessage, setGitMessage] = useState('');
+  const [gitError, setGitError] = useState('');
+  const [gitResult, setGitResult] = useState('');
+  const [gitBusy, setGitBusy] = useState(false);
 
   useEffect(() => {
-    if (!run || (run.status !== 'running' && run.status !== 'queued')) return;
+    if (!registrationRun || (registrationRun.status !== 'running' && registrationRun.status !== 'queued')) return;
     const timer = setInterval(async () => {
       try {
-        const next = await api.run(run.id) as ConsoleRun;
-        setRun(next);
-        if (next.status !== 'running') void reload();
+        const next = await api.run(registrationRun.id) as ConsoleRun;
+        setRegistrationRun(next);
+        if (next.status !== 'running' && next.status !== 'queued') {
+          void reload();
+        }
       } catch {}
     }, 1500);
     return () => clearInterval(timer);
-  }, [run, reload]);
+  }, [registrationRun, reload]);
 
   const addSource = async () => {
     setSubmitError('');
     try {
       const res = await api.addSource({ id: sourceId || undefined, path, name: sourceName || undefined, federated }) as { runId: string };
       const first = await api.run(res.runId) as ConsoleRun;
-      setRun(first);
+      setRegistrationRun(first);
       if (first.status !== 'running' && first.status !== 'queued') await reload();
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
@@ -1456,6 +1464,49 @@ function SourceManagementSettings() {
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
     } finally {
+      setSourceActionId(null);
+    }
+  };
+
+  const openGitDialog = (source: SourceSummary, action: 'init' | 'commit') => {
+    setGitDialog({ source, action });
+    setGitMessage('');
+    setGitError('');
+    setGitResult('');
+  };
+
+  const submitGitAction = async () => {
+    if (!gitDialog) return;
+    setGitError('');
+    setGitResult('');
+    setGitBusy(true);
+    setSourceActionId(gitDialog.source.id);
+    try {
+      const response = gitDialog.action === 'init'
+        ? await api.initializeSourceGit(gitDialog.source.id) as { runId: string }
+        : await api.commitSourceGit(gitDialog.source.id, gitMessage) as { runId: string };
+      const completed = await waitForConsoleRun(response.runId, () => {});
+      if (completed.status !== 'completed') {
+        throw new Error(completed.error || completed.stderr || 'Git 操作失败');
+      }
+      const jsonLine = completed.stdout.trim().split(/\r?\n/).reverse().find(line => line.trim().startsWith('{'));
+      if (!jsonLine) throw new Error('Git 操作没有返回结果');
+      const result = JSON.parse(jsonLine) as {
+        created?: boolean;
+        committed?: boolean;
+        changedFiles?: number;
+        shortCommit?: string | null;
+      };
+      setGitResult(gitDialog.action === 'init'
+        ? result.created ? 'Git 仓库已创建，可以继续提交当前资料。' : '这个目录已经是 Git 仓库。'
+        : result.committed
+          ? `已提交 ${result.changedFiles ?? 0} 个变更，版本 ${result.shortCommit ?? ''}。`
+          : '当前没有需要提交的更改。');
+      await reload();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGitBusy(false);
       setSourceActionId(null);
     }
   };
@@ -1494,7 +1545,7 @@ function SourceManagementSettings() {
             </div>
             <div className="import-sources-table">
             <table>
-              <thead><tr><th>Source</th><th>路径</th><th>页面</th><th>同步</th></tr></thead>
+              <thead><tr><th>Source</th><th>路径</th><th>Git</th><th>页面</th><th>上次同步</th><th>操作</th></tr></thead>
               <tbody>
                 {overview.sources.filter(s => showArchived || !s.archived).map(source => (
                   <tr key={source.id}>
@@ -1506,6 +1557,11 @@ function SourceManagementSettings() {
                       )}
                     </td>
                     <td className="mono">{source.local_path ?? '-'}</td>
+                    <td>
+                      <span className={`source-git-status ${source.git_repo ? 'ready' : ''}`}>
+                        {source.git_repo ? 'Git 仓库' : '非 Git'}
+                      </span>
+                    </td>
                     <td>{source.page_count}</td>
                     <td>{formatDate(source.last_sync_at)}</td>
                     <td>
@@ -1513,12 +1569,24 @@ function SourceManagementSettings() {
                         <button className="pm-ghost" onClick={() => void restoreSource(source)} disabled={sourceActionId === source.id}>
                           {sourceActionId === source.id ? '恢复中' : '恢复'}
                         </button>
-                      ) : source.id === 'default' || source.id === overview.main_source_id ? (
-                        <span className="pm-muted">{source.id === overview.main_source_id ? '主源' : '-'}</span>
                       ) : (
-                        <button className="pm-ghost" onClick={() => void archiveSource(source)} disabled={sourceActionId === source.id}>
-                          {sourceActionId === source.id ? '归档中' : '归档'}
-                        </button>
+                        <div className="source-row-actions">
+                          {source.local_path && (
+                            <button
+                              className="pm-ghost"
+                              onClick={() => openGitDialog(source, source.git_repo ? 'commit' : 'init')}
+                              disabled={sourceActionId === source.id}
+                            >
+                              {source.git_repo ? '提交更改' : '创建 Git'}
+                            </button>
+                          )}
+                          {source.id === overview.main_source_id && <span className="pm-muted">主源</span>}
+                          {source.id !== 'default' && source.id !== overview.main_source_id && (
+                            <button className="pm-ghost" onClick={() => void archiveSource(source)} disabled={sourceActionId === source.id}>
+                              {sourceActionId === source.id ? '处理中' : '归档'}
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -1526,6 +1594,7 @@ function SourceManagementSettings() {
               </tbody>
             </table>
             </div>
+            <p className="pm-hint source-git-note">Git 操作只在资料目录内创建仓库或保存本地版本，不会推送远程，也不会改写资料内容。</p>
           </div>
           <div className="pm-card settings-subcard">
             <h3>注册资料目录</h3>
@@ -1547,7 +1616,48 @@ function SourceManagementSettings() {
               <button className="pm-primary" onClick={() => void addSource()} disabled={!path.trim()}>注册数据源</button>
             </div>
             {submitError && <div className="pm-error-text">{submitError}</div>}
-            {run && <RunOutput run={run} />}
+            {registrationRun && <RunOutput run={registrationRun} />}
+          </div>
+        </div>
+      )}
+      {gitDialog && (
+        <div className="modal-overlay" role="presentation" onClick={() => !gitBusy && setGitDialog(null)}>
+          <div className="modal source-git-modal" role="dialog" aria-modal="true" aria-labelledby="source-git-title" onClick={event => event.stopPropagation()}>
+            <div className="source-git-modal-kicker">LOCAL VERSION CONTROL</div>
+            <h2 id="source-git-title">{gitDialog.action === 'init' ? '创建 Git 仓库' : '提交资料更改'}</h2>
+            <div className="source-git-modal-source">
+              <b>{gitDialog.source.name || gitDialog.source.id}</b>
+              <span className="mono">{gitDialog.source.local_path}</span>
+            </div>
+            {gitDialog.action === 'init' ? (
+              <p className="pm-hint">只会在这个资料目录中创建本地 Git 仓库，不会上传文件。创建完成后可再提交第一个版本。</p>
+            ) : (
+              <>
+                <label htmlFor="source-git-message">提交说明</label>
+                <textarea
+                  id="source-git-message"
+                  value={gitMessage}
+                  onChange={event => setGitMessage(event.target.value)}
+                  maxLength={200}
+                  placeholder="例如：整理项目资料和补充会议记录（留空将自动生成）"
+                  disabled={gitBusy}
+                  autoFocus
+                />
+                <p className="pm-hint">将包含新增、修改和删除的文件，只提交到本地仓库，不会推送。</p>
+              </>
+            )}
+            {gitError && <div className="pm-error-text">{gitError}</div>}
+            {gitResult && <div className="source-git-success"><CheckCircle2 />{gitResult}</div>}
+            <div className="source-git-modal-actions">
+              <button className="pm-ghost" type="button" onClick={() => setGitDialog(null)} disabled={gitBusy}>
+                {gitResult ? '完成' : '取消'}
+              </button>
+              {!gitResult && (
+                <button className="pm-primary" type="button" onClick={() => void submitGitAction()} disabled={gitBusy}>
+                  {gitBusy ? '处理中…' : gitDialog.action === 'init' ? '创建 Git 仓库' : '提交更改'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -2580,85 +2690,133 @@ function ImportVectorizationSettings() {
   );
 }
 
-export function SettingsPage({
+export type SettingsSection = 'general' | 'knowledge' | 'dream' | 'import' | 'models';
+
+const SETTINGS_SECTIONS: Array<{
+  key: SettingsSection;
+  label: string;
+  description: string;
+}> = [
+  { key: 'general', label: '常规设置', description: '管理台界面外观' },
+  { key: 'knowledge', label: '知识库设置', description: '主源、数据源与导出' },
+  { key: 'dream', label: '知识整理设置', description: '整理规则与定时任务' },
+  { key: 'import', label: '导入与向量化', description: '文件限制与切片上限' },
+  { key: 'models', label: '模型配置', description: '模型状态与路由核对' },
+];
+
+function AppearanceSettings({
   themeMode,
   onThemeModeChange,
 }: {
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
 }) {
+  return (
+    <section className="pm-card appearance-settings settings-panel">
+      <div className="settings-panel-title">
+        <span className="settings-panel-icon"><MonitorCog /></span>
+        <div><h2>界面外观</h2><p>仅调整当前管理页面，不会覆盖 PMBrain 桌面端的主题选择。</p></div>
+      </div>
+      <div className="theme-choice" role="radiogroup" aria-label="界面主题">
+        {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={themeMode === value}
+            className={themeMode === value ? 'active' : ''}
+            onClick={() => onThemeModeChange(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ModelSnapshotSettings({ overview }: { overview: BrainOverview }) {
+  const advancedModelEntries = Object.entries(overview.config)
+    .filter(([key]) => key.startsWith('models.') || ['chat_model', 'embedding_model', 'embedding_dimensions', 'expansion_model'].includes(key));
+  return (
+    <section className="pm-card model-snapshot-card settings-panel">
+      <div className="pm-section-head settings-panel-head">
+        <div className="settings-panel-title">
+          <span className="settings-panel-icon"><Cpu /></span>
+          <div><h2>桌面端模型配置</h2><p className="pm-hint">这里用于核对当前配置。修改模型和 API Key 请回到 PMBrain 桌面端“模型配置”。</p></div>
+        </div>
+      </div>
+      <div className="pm-grid two-col model-snapshot-grid">
+        <div>
+          <div className="pm-kv"><span>普通模型</span><b>{overview.chat_model ?? '未配置'}</b></div>
+          <div className="pm-kv"><span>向量模型</span><b>{overview.embedding_model ?? '未配置'}</b></div>
+          <div className="pm-kv"><span>向量维度</span><b>{overview.embedding_dimensions ?? '-'}</b></div>
+          <div className="pm-kv"><span>搜索扩展</span><b>{overview.expansion_model ?? '-'}</b></div>
+        </div>
+        <div>
+          {Object.entries(overview.provider_status.providers).map(([name, configured]) => (
+            <div className="pm-kv" key={name}><span>{name}</span><b className={configured ? 'pm-ok' : 'pm-muted'}>{configured ? '已配置' : '未配置'}</b></div>
+          ))}
+        </div>
+      </div>
+      <details className="advanced-config-details">
+        <summary>查看高级模型路由（脱敏）</summary>
+        {advancedModelEntries.length > 0
+          ? <pre>{JSON.stringify(Object.fromEntries(advancedModelEntries), null, 2)}</pre>
+          : <div className="pm-empty compact-empty">当前没有额外的高级模型覆盖。</div>}
+      </details>
+    </section>
+  );
+}
+
+export function SettingsPage({
+  section,
+  themeMode,
+  onThemeModeChange,
+}: {
+  section: SettingsSection;
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
+}) {
   const { overview, error, reload } = useOverview();
   if (error) return <div className="pm-card pm-error">{error}</div>;
   if (!overview) return <LoadingBlock />;
-  const advancedModelEntries = Object.entries(overview.config)
-    .filter(([key]) => key.startsWith('models.') || ['chat_model', 'embedding_model', 'embedding_dimensions', 'expansion_model'].includes(key));
+  const currentSection = SETTINGS_SECTIONS.find(item => item.key === section) ?? SETTINGS_SECTIONS[0];
 
   return (
     <div className="pm-page settings-page">
       <header className="settings-heading">
         <div className="pm-eyebrow">SYSTEM · PREFERENCES</div>
         <h1>设置</h1>
-        <p className="pm-page-intro">管理知识库默认位置、知识整理输出、本地数据源和当前模型状态。</p>
+        <p className="pm-page-intro">按用途管理 PMBrain，只显示当前分类需要的选项。</p>
       </header>
 
-      <div className="settings-primary-grid">
-        <section className="pm-card appearance-settings settings-panel">
-          <div className="settings-panel-title">
-            <span className="settings-panel-icon"><MonitorCog /></span>
-            <div><h2>界面外观</h2><p>仅调整当前浏览器的显示方式，不会改动 PMBrain 桌面端主题。</p></div>
-          </div>
-          <div className="theme-choice" role="radiogroup" aria-label="界面主题">
-            {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={themeMode === value}
-                className={themeMode === value ? 'active' : ''}
-                onClick={() => onThemeModeChange(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </section>
+      <div className="settings-content settings-content-standalone">
+        <div className="settings-content-heading">
+          <div><h2>{currentSection.label}</h2><p>{currentSection.description}</p></div>
+        </div>
 
-        <MainSourceSettings overview={overview} onSaved={reload} />
+        {section === 'general' && (
+          <div className="settings-section-stack">
+            <AppearanceSettings themeMode={themeMode} onThemeModeChange={onThemeModeChange} />
+          </div>
+        )}
+        {section === 'knowledge' && (
+          <div className="settings-section-stack">
+            <MainSourceSettings overview={overview} onSaved={reload} />
+            <SourceManagementSettings />
+            <MarkdownExportSettings />
+          </div>
+        )}
+        {section === 'dream' && (
+          <div className="settings-section-stack">
+            <DreamSettings />
+            <DreamScheduleSettings />
+          </div>
+        )}
+        {section === 'import' && <ImportVectorizationSettings />}
+        {section === 'models' && <ModelSnapshotSettings overview={overview} />}
       </div>
-      <DreamSettings />
-      <DreamScheduleSettings />
-      <ImportVectorizationSettings />
-      <SourceManagementSettings />
-      <MarkdownExportSettings />
-
-      <section className="pm-card model-snapshot-card settings-panel">
-        <div className="pm-section-head settings-panel-head">
-          <div className="settings-panel-title">
-            <span className="settings-panel-icon"><Cpu /></span>
-            <div><h2>桌面端模型配置</h2><p className="pm-hint">这里用于核对当前配置。修改模型和 API Key 请回到 PMBrain 桌面端“模型配置”。</p></div>
-          </div>
-        </div>
-        <div className="pm-grid two-col model-snapshot-grid">
-          <div>
-            <div className="pm-kv"><span>普通模型</span><b>{overview.chat_model ?? '未配置'}</b></div>
-            <div className="pm-kv"><span>向量模型</span><b>{overview.embedding_model ?? '未配置'}</b></div>
-            <div className="pm-kv"><span>向量维度</span><b>{overview.embedding_dimensions ?? '-'}</b></div>
-            <div className="pm-kv"><span>搜索扩展</span><b>{overview.expansion_model ?? '-'}</b></div>
-          </div>
-          <div>
-            {Object.entries(overview.provider_status.providers).map(([name, configured]) => (
-              <div className="pm-kv" key={name}><span>{name}</span><b className={configured ? 'pm-ok' : 'pm-muted'}>{configured ? '已配置' : '未配置'}</b></div>
-            ))}
-          </div>
-        </div>
-        <details className="advanced-config-details">
-          <summary>查看高级模型路由（脱敏）</summary>
-          {advancedModelEntries.length > 0
-            ? <pre>{JSON.stringify(Object.fromEntries(advancedModelEntries), null, 2)}</pre>
-            : <div className="pm-empty compact-empty">当前没有额外的高级模型覆盖。</div>}
-        </details>
-      </section>
-
     </div>
   );
 }

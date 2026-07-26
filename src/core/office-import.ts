@@ -16,7 +16,11 @@ import { XMLParser } from 'fast-xml-parser';
 import { PDFParse } from 'pdf-parse';
 import * as XLSX from 'xlsx';
 import type { BrainEngine } from './engine.ts';
-import { importFromContent, type ImportResult } from './import-file.ts';
+import {
+  importFromContent,
+  type ImportResult,
+  type ParentSectionInput,
+} from './import-file.ts';
 import { isOfficeFilePath, slugifyPath } from './sync.ts';
 
 export const SUPPORTED_OFFICE_EXTS = ['.docx', '.doc', '.wps', '.pptx', '.ppt', '.pdf', '.xlsx', '.xlsm', '.xls', '.csv'] as const;
@@ -37,6 +41,52 @@ function normalizeText(text: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * Split extracted Office text into structural parents. Retrieval indexes
+ * smaller child chunks, while every child carries its document/section
+ * locator so the caller can return to the full parent page.
+ */
+export function buildOfficeParentSections(
+  text: string,
+  documentTitle: string,
+): ParentSectionInput[] {
+  const heading = /^##\s+(.+)$/gm;
+  const matches = [...text.matchAll(heading)];
+  if (matches.length > 0) {
+    return matches.flatMap((match, index) => {
+      const start = (match.index ?? 0) + match[0].length;
+      const end = matches[index + 1]?.index ?? text.length;
+      const body = normalizeText(text.slice(start, end));
+      if (!body) return [];
+      const title = match[1].trim();
+      return [{ title, locator: title, text: body }];
+    });
+  }
+
+  const paragraphs = text.split(/\n{2,}/).map(normalizeText).filter(Boolean);
+  const sections: ParentSectionInput[] = [];
+  let current: string[] = [];
+  let currentLength = 0;
+  const flush = () => {
+    if (current.length === 0) return;
+    const index = sections.length + 1;
+    sections.push({
+      title: sections.length === 0 ? documentTitle : `${documentTitle} - Part ${index}`,
+      locator: `part-${index}`,
+      text: current.join('\n\n'),
+    });
+    current = [];
+    currentLength = 0;
+  };
+  for (const paragraph of paragraphs) {
+    if (currentLength > 0 && currentLength + paragraph.length > 3_000) flush();
+    current.push(paragraph);
+    currentLength += paragraph.length;
+  }
+  flush();
+  return sections;
 }
 
 function collectTextFromNode(node: unknown, out: string[]): void {
@@ -439,6 +489,7 @@ export async function importOfficeFile(
   const title = basename(relativePath, extname(relativePath));
   const ext = extname(relativePath).toLowerCase().slice(1);
   const slug = slugifyPath(relativePath);
+  const parentSections = buildOfficeParentSections(text, title);
   const content = [
     '---',
     'type: source',
@@ -448,6 +499,7 @@ export async function importOfficeFile(
     `original_path: ${yamlScalar(relativePath.replace(/\\/g, '/'))}`,
     `raw_sha256: ${yamlScalar(rawHash)}`,
     `file_size_bytes: ${stat.size}`,
+    'retrieval_mode: office_parent_child',
     '---',
     '',
     `# ${title}`,
@@ -465,5 +517,6 @@ export async function importOfficeFile(
     source_kind: 'document_file',
     source_uri: relativePath.replace(/\\/g, '/'),
     ingested_via: 'gbrain:import',
+    parentSections,
   });
 }

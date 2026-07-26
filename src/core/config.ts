@@ -35,6 +35,7 @@ function stripJsonBom(content: string): string {
 }
 
 export interface GBrainConfig {
+  [key: string]: unknown;
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
@@ -194,6 +195,12 @@ export interface GBrainConfig {
      *  loud stderr per page but lets everything through. Default: false.
      *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
     disabled?: boolean;
+    /** High-confidence junk lands hidden by default; reject restores legacy throw. */
+    junk_disposition?: 'quarantine' | 'reject';
+    /** Markup-heavy warning threshold in (0, 1]. Default: 0.85. */
+    max_markup_ratio?: number;
+    /** Enables the fuzzy prose/markup warning pass. Default: true. */
+    prose_check_enabled?: boolean;
   };
 
   /**
@@ -268,6 +275,11 @@ export interface GBrainConfig {
    * operator escape hatch.
    */
   schema_pack?: string;
+  /** Explicitly published, read-only skill catalog for MCP clients. */
+  mcp?: {
+    publish_skills?: boolean;
+    skills_dir?: string;
+  };
 }
 
 /**
@@ -413,6 +425,13 @@ export function loadConfig(): GBrainConfig | null {
   if (envCompat('PMBRAIN_NO_SANITY', 'GBRAIN_NO_SANITY') === '1') {
     envContentSanity.disabled = true;
   }
+  const maxMarkupRatio = envCompat('PMBRAIN_MAX_MARKUP_RATIO', 'GBRAIN_MAX_MARKUP_RATIO');
+  if (maxMarkupRatio) {
+    const n = parseFloat(maxMarkupRatio);
+    if (Number.isFinite(n) && n > 0 && n <= 1) {
+      envContentSanity.max_markup_ratio = n;
+    }
+  }
   // Only attach the field when at least one env var was set, so the
   // sparse-merge semantics elsewhere in loadConfigWithEngine work
   // (env presence => "this key already has a value, don't read DB").
@@ -536,6 +555,9 @@ export async function loadConfigWithEngine(
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
   const dbSanityDisabled = await dbBool('content_sanity.disabled');
+  const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
+  const dbMaxMarkupRatio = await dbStr('content_sanity.max_markup_ratio');
+  const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -550,6 +572,19 @@ export async function loadConfigWithEngine(
   }
   if (mergedCS.disabled === undefined && dbSanityDisabled !== undefined) {
     mergedCS.disabled = dbSanityDisabled;
+  }
+  if (
+    mergedCS.junk_disposition === undefined &&
+    (dbJunkDisposition === 'quarantine' || dbJunkDisposition === 'reject')
+  ) {
+    mergedCS.junk_disposition = dbJunkDisposition;
+  }
+  if (mergedCS.max_markup_ratio === undefined && dbMaxMarkupRatio !== undefined) {
+    const n = parseFloat(dbMaxMarkupRatio);
+    if (Number.isFinite(n) && n > 0 && n <= 1) mergedCS.max_markup_ratio = n;
+  }
+  if (mergedCS.prose_check_enabled === undefined && dbProseCheckEnabled !== undefined) {
+    mergedCS.prose_check_enabled = dbProseCheckEnabled;
   }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
@@ -686,6 +721,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.dream.synthesize',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
+  'models.dream.extract_atoms',
   'models.propose_takes',
   'models.grade_takes',
   'models.drift',
@@ -705,6 +741,16 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.max_chunks_per_transcript',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
+  'cycle.extract_atoms.budget_usd',
+  'cycle.enrich_thin.enabled',
+  'cycle.enrich_thin.max_cost_usd',
+  'cycle.enrich_thin.max_total_cost_usd',
+  'cycle.enrich_thin.max_total_walltime_min',
+  'cycle.enrich_thin.max_pages_per_tick',
+  'cycle.enrich_thin.types',
+  'cycle.enrich_thin.order',
+  'cycle.enrich_thin.workers',
+  'cycle.enrich_thin.model',
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
@@ -715,6 +761,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.bytes_block',
   'content_sanity.junk_patterns_enabled',
   'content_sanity.disabled',
+  'content_sanity.junk_disposition',
+  'content_sanity.max_markup_ratio',
+  'content_sanity.prose_check_enabled',
+  // MCP skill catalog. Remote publication is opt-in.
+  'mcp.publish_skills',
+  'mcp.skills_dir',
   // Spend controls. Registered so `pmbrain config set` accepts these without
   // --force; `spend.posture` itself is validated by the config command.
   'spend.posture',
@@ -759,6 +811,111 @@ export function saveConfig(config: GBrainConfig): void {
   // The doctor check `home_dir_in_worktree` surfaces vectors this can't
   // close (already-tracked files, screenshots, backups, `git add -f`).
   ensureGitignore();
+}
+
+function configRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/** Read a user-facing config value from config.json, accepting flat or nested dotted keys. */
+export function readFileConfigValue(config: GBrainConfig | null, key: string): unknown {
+  if (!config) return undefined;
+  const root = config as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, key)) return root[key];
+  let current: unknown = root;
+  for (const part of key.split('.')) {
+    const record = configRecord(current);
+    if (!record || !Object.prototype.hasOwnProperty.call(record, part)) return undefined;
+    current = record[part];
+  }
+  return current;
+}
+
+/** Persist a dotted user-facing config key without disturbing unrelated settings. */
+export function writeFileConfigValue(config: GBrainConfig, key: string, value: unknown): void {
+  const root = config as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, key)) {
+    root[key] = value;
+    return;
+  }
+  const parts = key.split('.');
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    const existing = configRecord(current[part]);
+    if (existing) {
+      current = existing;
+    } else {
+      const next: Record<string, unknown> = {};
+      current[part] = next;
+      current = next;
+    }
+  }
+  current[parts.at(-1)!] = value;
+}
+
+/** Remove a dotted config.json key and prune empty containers. */
+export function unsetFileConfigValue(config: GBrainConfig, key: string): boolean {
+  const root = config as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, key)) {
+    delete root[key];
+    return true;
+  }
+  const parts = key.split('.');
+  const parents: Array<{ record: Record<string, unknown>; key: string }> = [];
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    const next = configRecord(current[part]);
+    if (!next) return false;
+    parents.push({ record: current, key: part });
+    current = next;
+  }
+  const leaf = parts.at(-1)!;
+  if (!Object.prototype.hasOwnProperty.call(current, leaf)) return false;
+  delete current[leaf];
+  for (let i = parents.length - 1; i >= 0; i--) {
+    const { record, key: parentKey } = parents[i];
+    const child = configRecord(record[parentKey]);
+    if (child && Object.keys(child).length === 0) delete record[parentKey];
+    else break;
+  }
+  return true;
+}
+
+export function listFileConfigKeys(config: GBrainConfig | null): string[] {
+  if (!config) return [];
+  const keys = new Set<string>();
+  const walk = (record: Record<string, unknown>, prefix = '') => {
+    for (const [key, value] of Object.entries(record)) {
+      const dotted = prefix ? `${prefix}.${key}` : key;
+      const nested = configRecord(value);
+      if (nested) walk(nested, dotted);
+      else keys.add(dotted);
+    }
+  };
+  walk(config as Record<string, unknown>);
+  for (const key of Object.keys(config)) keys.add(key);
+  return [...keys];
+}
+
+/** Model/provider choices are machine configuration and have config.json as their system of record. */
+export function isFileBackedModelConfigKey(key: string): boolean {
+  return key === 'embedding_model'
+    || key === 'embedding_dimensions'
+    || key === 'embedding_disabled'
+    || key === 'chat_model'
+    || key === 'expansion_model'
+    || key === 'chat_fallback_chain'
+    || key === 'facts.extraction_model'
+    || key === 'provider_base_urls'
+    || key.startsWith('provider_base_urls.')
+    || key === 'provider_touchpoint_base_urls'
+    || key.startsWith('provider_touchpoint_base_urls.')
+    || key === 'provider_touchpoint_api_keys'
+    || key.startsWith('provider_touchpoint_api_keys.')
+    || key.startsWith('models.')
+    || /(?:^|_)(?:api_)?key$/.test(key);
 }
 
 /**

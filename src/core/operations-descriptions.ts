@@ -56,7 +56,8 @@ export const GET_RECENT_TRANSCRIPTS_DESCRIPTION =
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const LIST_PAGES_DESCRIPTION =
-  "List pages with optional filters. " +
+  "List pages with optional filters and offset pagination. Results may be capped; " +
+  "continue with offset when a full inventory is required. " +
   "For 'what's recent / what did I touch this week' questions, use list_pages " +
   "with sort=updated_desc instead of semantic search.";
 
@@ -156,3 +157,9 @@ export const CODE_REFS_DESCRIPTION =
   "numbers, not symbol-qualified edges. Use this when planning a rename or " +
   "deprecation where you need to touch every literal mention. " +
   "Returns: `{symbol, count, refs: [{slug, file, language, line, context}]}`.";
+
+export const LIST_SKILLS_DESCRIPTION =
+  'List the host workspace skills explicitly published to MCP. Returns names, routing triggers, declared tools, and mutation metadata.';
+
+export const GET_SKILL_DESCRIPTION =
+  'Fetch one published SKILL.md by its exact list_skills catalog name. The path is server-confined and the response contains prose plus allowlisted frontmatter.';

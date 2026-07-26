@@ -147,6 +147,7 @@ export async function runPhaseSynthesizeConcepts(
 
   // 4. Per group: synthesize narrative (LLM for T1/T2, deterministic for T3+)
   let conceptsWritten = 0;
+  const conceptSlugs: string[] = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
   const failures: Array<{ concept: string; error: string }> = [];
@@ -218,9 +219,10 @@ export async function runPhaseSynthesizeConcepts(
       narrative = deterministicNarrative(group);
     }
 
+    const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
+    const outputSlug = `concepts/${title}`;
     if (!opts.dryRun) {
-      const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
-      await engine.putPage(`concepts/${title}`, {
+      await engine.putPage(outputSlug, {
         title: title.replace(/-/g, ' '),
         type: 'concept',
         compiled_truth: narrative,
@@ -234,6 +236,7 @@ export async function runPhaseSynthesizeConcepts(
         },
         timeline: '',
       });
+      conceptSlugs.push(outputSlug);
     }
     conceptsWritten++;
     // v0.41.19.0 (T4): one tick per concept group with running count.
@@ -290,6 +293,7 @@ export async function runPhaseSynthesizeConcepts(
     details: {
       ...modelDetails,
       concepts_written: conceptsWritten,
+      concept_slugs: conceptSlugs,
       tier_counts: tierCounts,
       groups_found: atomGroups.length,
       atoms_seen: atoms.length,

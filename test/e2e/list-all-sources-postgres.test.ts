@@ -160,4 +160,17 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
     expect(rows[0]?.typeof).toBe('object');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
   });
+
+  test('self-heals legacy non-object config before merging', async () => {
+    await seedSource('legacy-shape');
+    await engine.executeRaw(
+      `UPDATE sources SET config = '"legacy-json-string"'::jsonb WHERE id = 'legacy-shape'`,
+    );
+    expect(await engine.updateSourceConfig('legacy-shape', { repaired: true })).toBe(true);
+    const rows = await engine.executeRaw<{ typeof: string; repaired: boolean }>(
+      `SELECT jsonb_typeof(config) AS typeof, (config->>'repaired')::boolean AS repaired
+         FROM sources WHERE id = 'legacy-shape'`,
+    );
+    expect(rows[0]).toEqual({ typeof: 'object', repaired: true });
+  });
 });

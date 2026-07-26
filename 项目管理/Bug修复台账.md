@@ -1,4 +1,77 @@
 # Bug 修复台账
+
+## 2026-07-26 修复 Dream 无感清空旧向量与桌面模型路由未生效
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.65；PMBrain Desktop 1.0.85
+- 标题：禁止 Dream 和桌面升级自动迁移向量，统一桌面与 CLI 配置回显
+- 描述：`embed --stale` 会把模型标识为空、旧格式或与当前配置不同的历史向量直接清空，桌面版本升级启动又会自动执行同类索引对齐，导致用户未确认更换模型时搜索覆盖率从接近完整骤降；桌面端虽然能读取仅由 CLI 建立的旧配置，却可能将后续保存写到另一份新配置。普通模型保存还保留不可见的 `models.propose_takes`、`models.grade_takes` 等旧阶段覆盖，使桌面显示 DeepSeek 而 Dream 实际继续使用 MIMO。
+- 是否完成：是
+- 最终结果：Dream、同步和普通 `embed --stale` 只补齐缺失向量，遇到明确的既有模型冲突时停止向量阶段并提示到桌面模型配置确认，不再修改或清空历史向量；模型标识为空或仅使用旧分隔格式的老向量继续保留。桌面普通启动和版本升级不再自动探测、对齐或重建向量；只有用户在桌面端明确确认真实模型变化后，主进程才允许执行既有重建流程。桌面端读取 CLI 已有配置后写回同一路径，普通模型保存清理隐藏的旧 Dream 阶段覆盖并继续保留明确设置的高级任务层级路由。根项目定向测试 30 项、桌面定向测试 35 项、桌面完整测试 129 项以及两端类型检查均通过；桌面渲染产物和 Sidecar 资源已生成，Windows x64 的 Bun、Sidecar、Canvas、PGLite 运行时验证通过。聚合验证 21/29 通过，剩余为既有检查漂移或 300 秒并发超时，独立类型检查已通过。未恢复或改写本机已经失效的派生向量，知识页面和原始资料未修改；Windows 安装包仍由用户执行 `bun run build:win`。
+
+## 2026-07-26 修复 Windows 本地 Bash 聚合验证入口
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.64
+- 标题：配置 Git Bash 并让 Windows Bun 显式调用 Shell 检查脚本
+- 描述：Windows 已启用 WSL2，但只有 Docker Desktop 内部发行版，`bash` 入口无法提供可用的 `/bin/bash`；电脑已有 Git Bash，但其目录未加入用户 PATH。补齐 Bash 后，Windows 版 Bun 对 package scripts 中直接写入的 `.sh` 路径仍不会按 Unix shebang 执行，导致聚合验证的多数检查在真正运行前报 `bun: command not found: scripts/*.sh`。
+- 是否完成：是
+- 最终结果：将 `D:\Program Files\Git\bin` 加入当前用户永久 PATH，Git Bash 5.2.37 可直接调用；本机用户级 `GBRAIN_VERIFY_TIMEOUT` 设为 300 秒，适配 Windows 较慢的逐文件隐私扫描。package scripts 对 Shell 检查统一显式使用 `bash scripts/*.sh`，Linux、macOS 行为不变。`bun run verify` 已完整启动并结束 29 项检查，25 项通过；剩余 4 项为真实仓库检查失败：Windows WASM 编译符号检查无输出、指标词典生成物未同步、`src/commands/enrich.ts` 未登记 operations allowlist、Skill resolver 存在既有路由数据问题。未修改用户知识库、数据库或原始资料。
+
+## 2026-07-26 修复模型配置分裂与 Dream 成果归零
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.63；PMBrain Desktop 1.0.84
+- 标题：统一 `config.json` 模型配置并持久化 Dream 完整成果
+- 描述：旧版本允许模型路由同时存在于 `config.json` 和数据库配置表，导致 Desktop、Admin、CLI、Dream 在同一台电脑上可能选择不同模型；Dream 的完整 `CycleReport` 又与日志共用 120 KB 尾部缓存，大批量整理时 JSON 开头被截断，页面即使实际新增、同步、关联和向量化了内容，仍显示全部为 0 和“已完成”。同时需要确保旧用户只有在当前模型真实输出与旧向量列不兼容时才恢复索引，不能无条件改维度。
+- 是否完成：是
+- 最终结果：模型、供应商和路由设置统一写入 `config.json`，旧数据库模型设置首次读取时自动原值迁入文件并删除重复项，既保留老用户选择又消除后续分裂；Desktop、Admin、CLI、Dream 使用同一解析路径。Dream 将完整 JSON 单独写入临时结果文件并保存有界结构化报告，日志仍只保留尾部；Admin 优先读取该报告，据实展示新增、更新、去重、关联、待处理数量及明细，余额不足、待向量化和阶段错误显示为“部分完成”，不再伪装成全完成或全部为 0。向量兼容仍只在桌面版本迁移检查时探测：模型能继续输出旧维度则不重建，真实不兼容才对齐并重建派生向量，页面和原始资料保持不变。根项目类型检查、Admin 生产构建、Desktop 类型检查及相关 94 项定向回归通过；仓库 Bash 聚合验证在本机因 WSL 缺少 `/bin/bash` 无法启动，直接并发运行全部测试又触发既有串行隔离和 Windows PATH 用例失败，未作为本次回归结论。Windows 安装包仍由用户执行 `bun run build:win`。
+
+## 2026-07-26 修复旧用户向量维度漂移导致导入与发送失败
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.62；PMBrain Desktop 1.0.83
+- 标题：自动兼容旧库向量维度并在服务启动前恢复索引
+- 描述：旧用户升级后可能保留 `content_chunks.embedding vector(1280)`，而当前向量模型实际固定返回 1024 维；桌面启动只执行通用数据库迁移，没有验证模型在现有维度下的真实输出，也没有在 Sidecar 就绪前对齐索引，导致文件导入和 `put_page/capture` 都以 `expected 1280 dimensions, not 1024` 失败，修改文件名或标题无法绕过。
+- 是否完成：是
+- 最终结果：桌面版本升级时先请求当前模型继续输出旧库维度；ZeroEntropy、智谱、OpenAI 等支持可变维度的模型若仍能输出旧维度，则保留既有配置和向量，不触发重建。只有固定维模型确实返回不同维度时，才在 Sidecar 启动前更新内部维度，并同时对齐正文分块、事实与查询缓存的向量列，自动重建派生向量；页面、分块正文、事实文本、Source、知识库文件和原始资料不删除。正常模型切换也按请求后的实际维度验证，避免把模型原生默认宽度误当成用户最终宽度；同维度但由旧模型生成的残留向量会被定向失效。1280→1024 临时旧库回归已验证普通导入和 Capture 均可再次写入。
+
+## 2026-07-26 修复局域网 MCP 工具缺失与 Dream 后台黑窗
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.61；PMBrain Desktop 1.0.82
+- 标题：修复共享凭证工具列表被二次裁剪及 Windows 后台进程弹窗
+- 描述：Desktop 局域网网关在 Sidecar 已按凭证权限和 Source 范围授权后，又用固定 12 项只读、10 项写入名单过滤 `tools/list` 和 `tools/call`，导致同一凭证本地可用而局域网缺少 `query`、`recall` 等工具；`jobs supervisor --detach` 与 Worker 子进程未设置 Windows 隐藏窗口，深度整理会弹出空白 Terminal。桌面日志按钮还依赖系统默认目录打开方式。
+- 是否完成：是
+- 最终结果：删除局域网第二套工具权限名单，Sidecar 成为唯一工具与权限来源；网关仍保留网络和协议防护，Sidecar 继续阻止 localOnly、越权 scope 和越权 Source。Supervisor、Worker 增加 `windowsHide`，日志按钮改为在文件管理器中定位日志。Desktop 126 项、MCP/OAuth/信任边界 122 项、Supervisor 10 项和两端类型检查通过；Source MCP 旧测试中的 8 项因测试直接克隆不存在的 `https://github.com/example/repo` 失败，与本次路径无关。未修改用户数据。
+
+## 2026-07-26 修复 Dream 深度整理 Worker 无法启动
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.60；PMBrain Desktop 1.0.81
+- 标题：修复 Supervisor 无法解析开发端与桌面 Sidecar Worker 入口
+- 描述：深度整理启动前会自动启动 Jobs Supervisor，但原实现只接受独立 `gbrain` 可执行文件；开发端实际使用 `bun + src/cli.ts`，桌面安装包实际使用内置 Bun + `pmbrain-sidecar.js`，因此 Supervisor 在真正创建 PID 和 Worker 前以退出码 1 结束，Admin 又丢弃 stderr，只显示 `supervisor_start_failed_exit_1`。
+- 是否完成：是
+- 最终结果：Supervisor 继续复用原有单一 Worker 架构，但可携带运行时入口参数，开发端和桌面 Sidecar 均能启动 `jobs work`；Admin 保留并脱敏返回启动 stderr，启动后校验 Supervisor PID 记录、父子进程身份、当前实例审计事件和 Worker 进程身份，全部就绪后才提交深度整理。页面增加“正在准备 Worker”状态，失败后恢复按钮并刷新诊断，不再把准备阶段显示成已开始整理。新增回归测试 17 项、桌面端 124 项测试、根项目与桌面类型检查、Admin 生产构建、Sidecar 构建及内置 Bun 运行验证均通过；开发入口与打包后的 Sidecar 均实际完成 Supervisor/Worker 启停。Windows 本机没有可用 Bash，shell 型 verify 检查无法本地执行；其中可直接运行的类型检查与会话解析检查通过，`check:resolver` 仍被既有 Skill 路由警告阻断。未启动真实 Dream 写入，未修改知识库、数据库结构或原始资料。
+
+## 2026-07-25 修正数据源“同步”误接知识导入任务
+
+- 时间：2026-07-25
+- 版本号：PMBrain 1.1.59
+- 标题：将错误的 Source 同步按钮改为本地 Git 版本提交
+- 描述：原数据源操作按钮调用 `pmbrain sync --source`，会启动知识导入同步并在注册表单下展示原始 CLI 命令，与用户需要的 Git 提交语义不符；无路径 Source 也显示了不可用操作。
+- 是否完成：是
+- 最终结果：删除旧 `/sources/:id/sync` 管理接口和 `sync_source` 运行绑定，改为受 Source ID 约束的 `sources git-init`、`sources git-commit` 能力；Admin 内部轮询任务但只显示用户结果，无路径不显示操作，非 Git 目录可初始化，Git 目录可输入提交说明并保存全部本地变更，不推送远程。
+
+## 2026-07-25 上游任务、分页与内容质量闭环修复
+
+- 时间：2026-07-25
+- 版本号：PMBrain 1.1.56
+- 标题：修复分页截断、空提案重复调用、Serve 卡锁、配置异常形状和低质量内容污染搜索
+- 描述：`list_pages` 增加 offset、来源标识和截断提示，远程调用保持 100 条上限而本地显式 limit 不再被静默限制；`propose_takes` 为零结果写入拒绝态 tombstone，避免相同内容重复调用模型；stdio Serve 增加可配置启动就绪超时并在超时后释放 PGLite；Postgres `sources.config` 在合并前自愈字符串、数组等非对象 JSONB；高置信浏览器挑战页改为保留原页但隔离搜索，模糊或超大内容通过 `content_flag` 在 search/get_page 中警告，远程写入不能伪造这些标记；新增只读 `pmbrain quarantine list`，用于定位隔离页面，恢复仍通过修正后的干净来源重新导入。
+- 是否完成：是
+- 最终结果：类型检查、分页与中文规范化单元测试、PGLite quarantine/search 恢复测试、提案 tombstone 测试、Office 搜索闭环和 Serve 配置测试通过；Postgres 异常 JSON 形状补充了有数据库环境执行的 E2E 用例。本次不删除页面、不覆盖原始资料，隔离内容可以通过干净来源重新导入恢复。
+
 ## 2026-07-25 P1/P2 稳定性、安全与文档一致性修复
 
 - 时间：2026-07-25

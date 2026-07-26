@@ -27,6 +27,7 @@ import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
+import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
 /**
@@ -189,6 +190,8 @@ export interface BuildBrainToolsOpts {
    * SubagentHandlerData.allowed_slug_prefixes via the handler.
    */
   allowedSlugPrefixes?: readonly string[];
+  /** Source scope inherited from the protected parent job. */
+  sourceId?: string;
 }
 
 interface OpContextDeps {
@@ -199,6 +202,7 @@ interface OpContextDeps {
   signal?: AbortSignal;
   brainId?: string;
   allowedSlugPrefixes?: readonly string[];
+  sourceId?: string;
 }
 
 function buildOpContext(deps: OpContextDeps): OperationContext {
@@ -212,7 +216,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     },
     dryRun: false,
     remote: true,                // match MCP trust boundary for auto-link skip
-    sourceId: 'default',         // v0.34 D4: required; subagent tools default to host source
+    sourceId: deps.sourceId ?? 'default',
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -231,6 +235,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
  * subagentId + engine handle, so it's not shareable across jobs.
  */
 export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
+  if (opts.sourceId !== undefined) validateSourceId(opts.sourceId);
   const filter = opts.allowedNames ?? BRAIN_TOOL_ALLOWLIST;
   const picked: Operation[] = operations.filter(
     op => BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
@@ -265,6 +270,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           signal: ctx.signal,
           brainId: opts.brainId,
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
+          sourceId: opts.sourceId,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         return op.handler(opCtx, params);

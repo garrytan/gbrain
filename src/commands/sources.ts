@@ -53,6 +53,7 @@ import {
   isSourceFederated,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
+import { commitSourceGit, initializeSourceGit } from '../core/source-git.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -116,6 +117,43 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
     [sourceId],
   );
   return rows[0]?.n ?? 0;
+}
+
+async function requireLocalSource(engine: BrainEngine, id: string): Promise<SourceRow & { local_path: string }> {
+  validateSourceId(id);
+  const source = await fetchSource(engine, id);
+  if (!source) throw new Error(`Source not found: ${id}`);
+  if (!source.local_path) throw new Error(`Source ${id} has no local path`);
+  return source as SourceRow & { local_path: string };
+}
+
+async function runGitInit(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) throw new Error('Usage: pmbrain sources git-init <id> [--json]');
+  const source = await requireLocalSource(engine, id);
+  const result = initializeSourceGit(source.local_path);
+  if (args.includes('--json')) {
+    console.log(JSON.stringify({ schema_version: 1, source_id: id, ...result }));
+    return;
+  }
+  console.log(result.created ? `Created Git repository for source ${id}.` : `Source ${id} is already a Git repository.`);
+}
+
+async function runGitCommit(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) throw new Error('Usage: pmbrain sources git-commit <id> [--message <text>] [--json]');
+  const messageIndex = args.indexOf('--message');
+  const message = messageIndex >= 0 ? args[messageIndex + 1] : undefined;
+  if (messageIndex >= 0 && message === undefined) throw new Error('--message requires a value');
+  const source = await requireLocalSource(engine, id);
+  const result = commitSourceGit(source.local_path, message);
+  if (args.includes('--json')) {
+    console.log(JSON.stringify({ schema_version: 1, source_id: id, ...result }));
+    return;
+  }
+  console.log(result.committed
+    ? `Committed ${result.changedFiles} changed file(s) for source ${id} (${result.shortCommit}).`
+    : `Source ${id} has no changes to commit.`);
 }
 
 function normalizeSourceRef(value: string): string {
@@ -1260,6 +1298,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'status':     return runStatus(engine, rest);
     case 'webhook':    return runWebhook(engine, rest);
     case 'tracked-branch': return runTrackedBranch(engine, rest);
+    case 'git-init':   return runGitInit(engine, rest);
+    case 'git-commit': return runGitCommit(engine, rest);
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
     case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
     case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
@@ -1324,6 +1364,9 @@ Subcommands:
   pull <id> | --path <dir> [--branch b]
                                     Safely pull a Git source; --path is DB-free.
   unharden <id>                     Remove local hook/credential/cron durability wiring.
+  git-init <id> [--json]            Create a local Git repository for a Source path.
+  git-commit <id> [--message <text>] [--json]
+                                    Stage all Source changes and create a local commit.
 
 Source id: [a-z0-9-]{1,32}. Immutable citation key.
 

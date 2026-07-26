@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { buildCaptureCommand, buildDreamCommand, buildMarkdownExportCommand, commandForPreview, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
+import { buildCaptureCommand, buildDreamCommand, buildMarkdownExportCommand, buildSourceGitCommand, commandForPreview, deriveSourceIdFromPath, MAX_NATURAL_TASK_CHARACTERS, previewIntent, resolveImportSourceIdForPath } from '../src/commands/admin-console.ts';
 import { getAdminLlmStatus } from '../src/commands/natural-lang/llm.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
@@ -282,6 +282,14 @@ describe('admin console intent planning', () => {
       '--input',
       'D:\\meetings',
     ]);
+  });
+
+  test('source Git actions use scoped CLI commands without a sync import', () => {
+    expect(buildSourceGitCommand('project-docs', 'init').slice(-4)).toEqual(['sources', 'git-init', 'project-docs', '--json']);
+    expect(buildSourceGitCommand('project-docs', 'commit', '保存资料').slice(-6)).toEqual([
+      'sources', 'git-commit', 'project-docs', '--json', '--message', '保存资料',
+    ]);
+    expect(() => buildSourceGitCommand('../outside', 'init')).toThrow('Invalid source_id');
   });
 
   test('full preset enables bounded proposal draining without overriding the upstream 100-page batch', () => {

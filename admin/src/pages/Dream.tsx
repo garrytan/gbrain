@@ -136,8 +136,11 @@ interface DreamData {
   supervisor: {
     running: boolean;
     supervisor_pid: number | null;
+    worker_running?: boolean;
+    worker_pid?: number | null;
     pid_file: string;
-    mode?: 'supervisor' | 'direct-worker' | 'none';
+    mode?: 'supervisor' | 'none';
+    readiness_error?: string;
   };
   quality: {
     takes_quality_runs: Array<{ id: number; verdict: string; overall_score: number; cost_usd: number; created_at: string }>;
@@ -226,7 +229,7 @@ const KNOWLEDGE_STEPS = [
   { key: 'search', title: '更新搜索能力', description: '让最新知识可以被 AI 准确找到', phases: ['embed', 'orphans', 'schema-suggest', 'purge'] },
 ] as const;
 
-type DreamRunMode = 'meeting' | 'cycle' | 'advanced';
+type DreamRunMode = 'quick' | 'meeting' | 'cycle' | 'advanced';
 
 function pct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
@@ -330,6 +333,7 @@ interface DreamPhaseReport {
   summary?: string;
   details?: Record<string, unknown>;
   pagesAffected?: string[];
+  pagesAffectedCount?: number;
   error?: { class?: string; code?: string; message?: string; hint?: string };
 }
 
@@ -342,6 +346,9 @@ interface DreamCycleReport {
 }
 
 function parseDreamReport(run: ConsoleRun): DreamCycleReport | null {
+  if (run.result && typeof run.result === 'object' && !Array.isArray(run.result)) {
+    return run.result as DreamCycleReport;
+  }
   const text = run.stdout.trim();
   if (!text) return null;
   try {
@@ -356,6 +363,15 @@ function parseDreamReport(run: ConsoleRun): DreamCycleReport | null {
       return null;
     }
   }
+}
+
+function effectiveDreamStatus(run: ConsoleRun): string {
+  if (run.status !== 'completed') return run.status;
+  const reportStatus = parseDreamReport(run)?.status;
+  if (reportStatus === 'partial') return 'partial';
+  if (reportStatus === 'failed') return 'failed';
+  if (reportStatus === 'skipped') return 'skipped';
+  return 'completed';
 }
 
 export function dreamRunDeltas(run: ConsoleRun | null): { pages: number; links: number } {
@@ -430,6 +446,7 @@ export function describeDreamRun(run: ConsoleRun): {
   const proposalCacheHits = Number(proposalDetails.cache_hits ?? 0);
   const proposalPagesFailed = Number(proposalDetails.pages_failed ?? 0);
   const proposalRemaining = Number(proposalDetails.remaining ?? 0);
+  const reportIsPartial = report?.status === 'partial';
 
   if (run.status === 'running' || run.status === 'queued') {
     return {
@@ -522,6 +539,13 @@ export function describeDreamRun(run: ConsoleRun): {
     headline = `Dream 已完成，产生 ${totalKnowledgeUpdates} 项知识更新`;
   }
 
+  if (reportIsPartial) {
+    headline = totalKnowledgeUpdates > 0 || pagesSynced > 0 || pagesEmbedded > 0
+      ? 'Dream 已部分完成，成果与待处理项如下'
+      : 'Dream 只完成了部分检查';
+    diagnosis = '部分阶段已成功并保留实际成果，仍有未处理内容；下方会据实显示写入数量和失败原因。';
+  }
+
   if (run.status === 'failed') {
     headline = 'Dream 执行失败';
     diagnosis = firstErrorText(run, report) || diagnosis;
@@ -542,29 +566,233 @@ export function describeDreamRun(run: ConsoleRun): {
   };
 }
 
-function DreamRunNarrative({ run }: { run: ConsoleRun }) {
+interface DreamOutcomeMetric {
+  label: string;
+  value: number;
+  note: string;
+}
+
+export interface DreamOutcomeSummary {
+  isDryRun: boolean;
+  metrics: DreamOutcomeMetric[];
+  knowledgeItems: string[];
+  extractionItems: string[];
+  failureItems: string[];
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return [...new Set(items.map(item => item.trim()).filter(Boolean))];
+}
+
+export function buildDreamOutcome(run: ConsoleRun): DreamOutcomeSummary {
+  const report = parseDreamReport(run);
+  const phases = report?.phases ?? [];
+  const totals = report?.totals ?? {};
+  const phase = (name: string) => phases.find(item => item.phase === name);
+  const details = (name: string) => phase(name)?.details ?? {};
+  const sync = details('sync');
+  const synth = details('synthesize');
+  const atoms = details('extract_atoms');
+  const facts = details('extract_facts');
+  const concepts = details('synthesize_concepts');
+  const proposals = details('propose_takes');
+  const isDryRun = run.command.includes('--dry-run')
+    || synth.dryRun === true
+    || concepts.dry_run === true;
+
+  const added = isDryRun ? 0 : Math.max(0, Number(totals.pages_added ?? 0));
+  const updated = isDryRun ? 0 : Math.max(0, Number(sync.modified ?? 0));
+  const duplicateSkips = asArray(synth.duplicate_skips).length;
+  const merged = isDryRun
+    ? 0
+    : duplicateSkips
+      + Math.max(0, Number(atoms.duplicates_skipped ?? 0))
+      + Math.max(0, Number(totals.phantoms_redirected ?? 0));
+  const links = isDryRun ? 0 : Math.max(0, Number(totals.links_created ?? 0));
+
+  const failureItems: string[] = [];
+  let failureCount = 0;
+  for (const current of phases) {
+    const currentDetails = current.details ?? {};
+    const currentLabel = PHASE_USER_ACTIONS[current.phase] ?? PHASE_LABELS[current.phase] ?? current.phase;
+    const failedFiles = Math.max(0, Number(currentDetails.failedFiles ?? 0));
+    if (failedFiles > 0) {
+      failureCount += failedFiles;
+      failureItems.push(`${currentLabel}：${failedFiles} 个文件未处理成功`);
+    }
+    const errorsCount = Math.max(0, Number(currentDetails.errors_count ?? 0));
+    const alreadyCounted = current.phase === 'propose_takes'
+      ? Math.max(0, Number(currentDetails.pages_failed ?? 0))
+      : 0;
+    const additionalErrors = Math.max(0, errorsCount - alreadyCounted);
+    if (additionalErrors > 0) {
+      failureCount += additionalErrors;
+      failureItems.push(`${currentLabel}：${additionalErrors} 项模型或数据处理未成功`);
+    }
+    const pending = Math.max(0, Number(currentDetails.pending ?? 0));
+    if (pending > 0) {
+      failureCount += pending;
+      failureItems.push(`${currentLabel}：${pending} 个内容块仍待处理`);
+    }
+    if (
+      (current.status === 'fail' || current.status === 'error')
+      && failedFiles === 0
+      && errorsCount === 0
+      && pending === 0
+    ) {
+      failureCount += 1;
+      failureItems.push(`${currentLabel}：${current.error?.message ?? current.summary ?? '执行失败'}`);
+    }
+  }
+  const failedProposalPages = Math.max(0, Number(proposals.pages_failed ?? 0));
+  if (failedProposalPages > 0) {
+    failureCount += failedProposalPages;
+    failureItems.push(`观点提炼：${failedProposalPages} 个页面未处理成功`);
+  }
+  const childOutcomes = asArray(synth.child_outcomes).map(recordOf);
+  const failedChildren = childOutcomes.filter(item =>
+    typeof item.status === 'string' && item.status !== 'completed',
+  );
+  if (failedChildren.length > 0) {
+    failureCount += failedChildren.length;
+    failureItems.push(`知识综合：${failedChildren.length} 个子任务失败、超时或取消`);
+  }
+  const conceptFailures = asArray(concepts.failures).map(recordOf);
+  if (conceptFailures.length > 0) {
+    failureCount += conceptFailures.length;
+    failureItems.push(...conceptFailures.slice(0, 8).map(item =>
+      `概念 ${String(item.concept ?? '未知')}：${String(item.error ?? '模型生成失败，已使用模板')}`,
+    ));
+  }
+
+  const writtenSlugs = asStringArray(synth.written_slugs);
+  const syncedSlugs = asStringArray(phase('sync')?.pagesAffected);
+  const conceptSlugs = asStringArray(concepts.concept_slugs);
+  const knowledgeItems = uniqueStrings([...writtenSlugs, ...syncedSlugs, ...conceptSlugs])
+    .slice(0, 100);
+
+  const factsInserted = Math.max(0, Number(facts.factsInserted ?? 0));
+  const factSlugs = asStringArray(facts.affected_slugs);
+  const conceptsWritten = Math.max(0, Number(concepts.concepts_written ?? 0));
+  const proposalsInserted = Math.max(0, Number(proposals.proposals_inserted ?? 0));
+  const proposalSamples = asArray(proposals.proposal_samples).map(recordOf);
+  const extractionItems: string[] = [];
+  if (factsInserted > 0) {
+    extractionItems.push(
+      factSlugs.length > 0
+        ? `事实：写入 ${factsInserted} 条，来自 ${factSlugs.slice(0, 12).join('、')}${factSlugs.length > 12 ? ' 等页面' : ''}`
+        : `事实：写入 ${factsInserted} 条；这次运行记录未保留来源页面明细`,
+    );
+  }
+  if (conceptsWritten > 0) {
+    extractionItems.push(
+      conceptSlugs.length > 0
+        ? `概念：形成 ${conceptsWritten} 个，包括 ${conceptSlugs.slice(0, 12).join('、')}${conceptSlugs.length > 12 ? ' 等' : ''}`
+        : `概念：形成 ${conceptsWritten} 个；这次运行记录未保留名称明细`,
+    );
+  }
+  if (proposalsInserted > 0) {
+    if (proposalSamples.length > 0) {
+      extractionItems.push(...proposalSamples.slice(0, 20).map(item =>
+        `观点：${String(item.claim_text ?? '').trim()}（来自 ${String(item.page_slug ?? '未知页面')}）`,
+      ));
+    } else {
+      extractionItems.push(`观点：形成 ${proposalsInserted} 条候选观点；这次运行记录未保留内容明细`);
+    }
+  }
+
+  return {
+    isDryRun,
+    metrics: [
+      { label: '新增知识', value: added, note: isDryRun ? '预览不写入' : '新页面与综合知识' },
+      { label: '更新知识', value: updated, note: isDryRun ? '预览不写入' : '已有页面更新' },
+      { label: '合并与去重', value: merged, note: isDryRun ? '预览不写入' : '重复内容与重定向' },
+      { label: '新增关联', value: links, note: isDryRun ? '预览不写入' : '链接和关系边' },
+      { label: '未处理成功', value: failureCount, note: failureCount > 0 ? '可在下方查看原因' : '本次无失败项' },
+    ],
+    knowledgeItems,
+    extractionItems,
+    failureItems: uniqueStrings(failureItems),
+  };
+}
+
+function DreamRunResult({ run }: { run: ConsoleRun }) {
   const summary = describeDreamRun(run);
+  const outcome = buildDreamOutcome(run);
+  const displayStatus = effectiveDreamStatus(run);
+  const statusLabel = ({
+    completed: '已完成',
+    partial: '部分完成',
+    running: '整理中',
+    queued: '等待中',
+    failed: '未完成',
+    skipped: '未执行',
+    cancelled: '已中止',
+  } as Record<string, string>)[displayStatus] ?? displayStatus;
   return (
-    <div className="dream-run-narrative">
+    <section className="dream-run-narrative dream-outcome">
       <div className="dream-run-headline">
-        <b>{summary.headline}</b>
-        <span className={`run-${run.status}`}>{run.status}</span>
+        <div>
+          <span className="dream-eyebrow">本次成果</span>
+          <b>{summary.headline}</b>
+        </div>
+        <span className={`run-${displayStatus}`}>{statusLabel}</span>
       </div>
       <p>{summary.diagnosis}</p>
-      <div className="dream-result-grid">
-        <section>
-          <h3>做了什么</h3>
-          <ul>{summary.actions.slice(0, 12).map((item, index) => <li key={index}>{item}</li>)}</ul>
-        </section>
-        <section>
-          <h3>产出结果</h3>
-          <ul>{summary.outputs.map((item, index) => <li key={index}>{item}</li>)}</ul>
-        </section>
+      <div className="dream-outcome-metrics">
+        {outcome.metrics.map(metric => (
+          <div key={metric.label} className={metric.label === '未处理成功' && metric.value > 0 ? 'has-warning' : ''}>
+            <b>{metric.value}</b>
+            <span>{metric.label}</span>
+            <small>{metric.note}</small>
+          </div>
+        ))}
       </div>
       <div className="dream-detail-chips">
         {summary.details.map((item, index) => <span key={index}>{item}</span>)}
       </div>
-    </div>
+      <details className="dream-outcome-content">
+        <summary>查看本次整理内容</summary>
+        <div className="dream-outcome-content-grid">
+          <section>
+            <h3>新增与更新的知识</h3>
+            {outcome.knowledgeItems.length > 0
+              ? <ul>{outcome.knowledgeItems.map(item => <li key={item}><code>{item}</code></li>)}</ul>
+              : <p>本次没有记录到新增或更新的知识页面。</p>}
+          </section>
+          <section>
+            <h3>事实、概念和观点</h3>
+            {outcome.extractionItems.length > 0
+              ? <ul>{outcome.extractionItems.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}</ul>
+              : <p>本次没有提取出新的事实、概念或观点。</p>}
+          </section>
+          <section className={outcome.failureItems.length > 0 ? 'has-warning' : ''}>
+            <h3>未处理成功的内容</h3>
+            {outcome.failureItems.length > 0
+              ? <ul>{outcome.failureItems.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}</ul>
+              : <p>没有未处理成功的内容。</p>}
+          </section>
+          <section>
+            <h3>本次执行了什么</h3>
+            <ul>{summary.actions.slice(0, 12).map((item, index) => <li key={index}>{item}</li>)}</ul>
+          </section>
+        </div>
+      </details>
+      <details className="dream-execution-log">
+        <summary>执行日志</summary>
+        <DreamTechnicalDetails run={run} />
+        <details className="nl-details">
+          <summary>原始日志与命令</summary>
+          <RunOutput run={run} />
+        </details>
+      </details>
+    </section>
   );
 }
 
@@ -593,9 +821,10 @@ export function isKnowledgeJourneyComplete(run: ConsoleRun | null): boolean {
   const report = parseDreamReport(run);
   const embedStatus = report?.phases?.find(phase => phase.phase === 'embed')?.status;
   return !!report
-    && report.status !== 'failed'
+    && (report.status === 'ok' || report.status === 'clean')
     && !report.reason
     && (embedStatus === 'ok' || embedStatus === 'skipped')
+    && Number(report.phases?.find(phase => phase.phase === 'embed')?.details?.pending ?? 0) === 0
     && (report.phases?.length ?? 0) > 1;
 }
 
@@ -663,8 +892,9 @@ export function phaseSummaryZh(phase: DreamPhaseReport): string {
     case 'sync': {
       const candidates = number('added') + number('modified') + number('deleted');
       const failed = number('failedFiles');
-      const result = Array.isArray(phase.pagesAffected)
-        ? `实际写入 ${phase.pagesAffected.length} 个页面`
+      const affectedCount = phase.pagesAffectedCount ?? phase.pagesAffected?.length;
+      const result = typeof affectedCount === 'number'
+        ? `实际写入 ${affectedCount} 个页面`
         : '本次运行记录未提供实际写入明细';
       return `检测到 ${candidates} 个待同步文件，${result}${failed > 0 ? `，${failed} 个文件解析失败` : ''}。`;
     }
@@ -714,7 +944,10 @@ function DreamTechnicalDetails({ run }: { run: ConsoleRun }) {
                     {phaseSummaryZh(phase)}
                     {phase.phase === 'sync' && (phase.pagesAffected?.length ?? 0) > 0 && (
                       <details className="dream-sync-pages">
-                        <summary>查看实际写入的 {phase.pagesAffected?.length ?? 0} 个页面</summary>
+                        <summary>
+                          查看实际写入的 {phase.pagesAffectedCount ?? phase.pagesAffected?.length ?? 0} 个页面
+                          {(phase.pagesAffectedCount ?? 0) > (phase.pagesAffected?.length ?? 0) ? '（展示前 100 个）' : ''}
+                        </summary>
                         <ul>{phase.pagesAffected?.map((slug, index) => <li key={`${slug}:${index}`}><code>{slug}</code></li>)}</ul>
                       </details>
                     )}
@@ -776,7 +1009,7 @@ function DreamOpsDiagnostics({
   const failed = countBy(subagent, 'failed');
   const hasLiveQueueProblem = waiting > 0 || active > 0 || failed > 0 || (queue?.stalled_active ?? 0) > 0;
   const latestError = latestErrorJob && hasLiveQueueProblem ? formatDreamJobError(latestErrorJob.error_text ?? '') : '';
-  const stuckReason = !supervisor?.running && waiting > 0
+  const stuckReason = !supervisor?.worker_running && waiting > 0
     ? 'Worker 未运行，subagent 只会排队等待。'
     : queue && queue.stalled_active > 0
       ? '存在锁已过期的 active 子任务，需要取消或等待 Worker 回收。'
@@ -817,8 +1050,9 @@ function DreamOpsDiagnostics({
       <div className="dream-ops-grid">
         <section>
           <h4>Worker</h4>
-          <div className="pm-kv"><span>状态</span><b>{supervisor?.running ? 'running' : 'stopped'}</b></div>
-          <div className="pm-kv"><span>PID</span><b>{supervisor?.supervisor_pid ?? '-'}</b></div>
+          <div className="pm-kv"><span>状态</span><b>{supervisor?.worker_running ? 'ready' : supervisor?.running ? 'starting' : 'stopped'}</b></div>
+          <div className="pm-kv"><span>Supervisor PID</span><b>{supervisor?.supervisor_pid ?? '-'}</b></div>
+          <div className="pm-kv"><span>Worker</span><b>{supervisor?.worker_running ? `PID ${supervisor.worker_pid}` : supervisor?.readiness_error ?? 'not ready'}</b></div>
           <div className="pm-kv"><span>模式</span><b>{supervisor?.mode ?? '-'}</b></div>
         </section>
         <section>
@@ -893,14 +1127,16 @@ function DreamRunPanel({
   const [timeoutMinutes, setTimeoutMinutes] = useState('120');
   const [runMode, setRunMode] = useState<DreamRunMode>(() => {
     const saved = window.localStorage.getItem(DREAM_RUN_MODE_KEY);
-    return saved === 'meeting' || saved === 'cycle' || saved === 'advanced'
+    return saved === 'quick' || saved === 'meeting' || saved === 'cycle' || saved === 'advanced'
       ? saved
       : defaultPhase === 'all' ? 'cycle' : 'advanced';
   });
 
   const [run, setRun] = useState<ConsoleRun | null>(null);
   const [error, setError] = useState('');
+  const [starting, setStarting] = useState(false);
   const running = run?.status === 'running' || run?.status === 'queued';
+  const busy = running || starting;
 
   const activeSources = useMemo(
     () => (sources ?? []).filter(s => !s.archived),
@@ -927,7 +1163,7 @@ function DreamRunPanel({
       setFrom('');
       setTo('');
       setDryRun(false);
-    } else if (mode === 'cycle') {
+    } else if (mode === 'cycle' || mode === 'quick') {
       setPhase('all');
       setSourceId('');
       setInput('');
@@ -976,6 +1212,7 @@ function DreamRunPanel({
   }, [run?.id, run?.status, onDone]);
 
   const start = async (dryRunOverride?: boolean) => {
+    if (busy) return;
     setError('');
     if (runMode === 'meeting' && !input.trim()) {
       setError('请选择需要整理的会议记录文件或文件夹');
@@ -990,6 +1227,7 @@ function DreamRunPanel({
       setError('超时时间必须是正数分钟');
       return;
     }
+    setStarting(true);
     try {
       const effectiveDryRun = dryRunOverride ?? dryRun;
       const needsSubagentWorker = !effectiveDryRun && (
@@ -997,12 +1235,18 @@ function DreamRunPanel({
         || runMode === 'meeting'
         || (runMode === 'advanced' && (phase === 'synthesize' || phase === 'patterns'))
       );
-      if (needsSubagentWorker && !supervisor?.running) {
+      if (needsSubagentWorker && !supervisor?.worker_running) {
         await api.startSupervisor();
         onDone?.();
       }
       const res = await api.startDreamRun({
-        preset: runMode === 'meeting' ? 'meeting' : runMode === 'cycle' ? 'full' : undefined,
+        preset: runMode === 'meeting'
+          ? 'meeting'
+          : runMode === 'cycle'
+            ? 'full'
+            : runMode === 'quick'
+              ? 'quick'
+              : undefined,
         phase: runMode === 'advanced' ? phase : undefined,
         sourceId: runMode === 'advanced' ? sourceId.trim() || undefined : defaultSourceId,
         maxPages: runMode === 'advanced' && phase === 'propose_takes' && maxPages.trim() ? Number(maxPages) : undefined,
@@ -1021,6 +1265,9 @@ function DreamRunPanel({
       setRun(await api.run(res.runId) as ConsoleRun);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      onDone?.();
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -1036,37 +1283,67 @@ function DreamRunPanel({
     }
   };
 
+  const modeCopy: Record<DreamRunMode, {
+    title: string;
+    description: string;
+    action: string;
+  }> = {
+    quick: {
+      title: '先做一次轻量维护',
+      description: '同步变化、补全事实与关系并更新搜索索引，不运行深度观点与概念沉淀。',
+      action: '开始快速维护',
+    },
+    cycle: {
+      title: '让知识库完整整理一遍',
+      description: '检查变化、补全关系、沉淀观点、合并重复信息，并更新搜索能力。',
+      action: '开始深度整理',
+    },
+    meeting: {
+      title: '把会议和会话变成长期知识',
+      description: '选择会议记录或会话文件夹，AI 会完成整理、提炼、连接和索引。',
+      action: '开始整理会议',
+    },
+    advanced: {
+      title: '自定义本次整理',
+      description: '按来源、日期或内部阶段运行，适合调试和精细维护。',
+      action: '运行所选流程',
+    },
+  };
+
   return (
     <div id="dream-launcher" className={`dream-launcher ${compact ? 'compact' : ''}`}>
       <div className="dream-launcher-head">
         <div>
           <span className="dream-eyebrow">开始整理</span>
-          <h2>{runMode === 'meeting' ? '把会议和会话变成长期知识' : runMode === 'advanced' ? '自定义本次整理' : '让知识库自己整理一遍'}</h2>
-          <p>{runMode === 'meeting'
-            ? '选择会议记录或会话文件夹，AI 会完成整理、提炼、连接和索引。'
-            : runMode === 'advanced'
-              ? '按来源、日期或内部阶段运行，适合调试和精细维护。'
-              : 'AI 会检查最近的变化，补全关系、合并重复信息，并更新搜索能力。'}</p>
+          <h2>{modeCopy[runMode].title}</h2>
+          <p>{modeCopy[runMode].description}</p>
         </div>
         <div className="dream-run-actions">
-          <button className="pm-primary dream-primary-action" onClick={() => void start(runMode === 'advanced' ? undefined : false)} disabled={running}>
-            {running ? '正在整理…' : runMode === 'meeting' ? '开始整理会议' : runMode === 'advanced' ? '运行所选流程' : '开始整理知识'}
+          <button className="pm-primary dream-primary-action" onClick={() => void start(runMode === 'advanced' ? undefined : false)} disabled={busy}>
+            {running ? '正在整理…' : starting ? '正在准备 Worker…' : modeCopy[runMode].action}
           </button>
           {!running && runMode !== 'advanced' && (
-            <button className="pm-ghost" onClick={() => void start(true)}>先预览会发生什么</button>
+            <button className="pm-ghost" disabled={starting} onClick={() => void start(true)}>先预览会发生什么</button>
           )}
           {running && <button className="pm-ghost danger" onClick={() => void cancel()}>中止</button>}
         </div>
       </div>
       <div className="dream-run-mode">
+        <button type="button" className={runMode === 'quick' ? 'active' : ''} onClick={() => applyRunMode('quick')}>
+          <strong>快速维护</strong>
+          <span>日常更新 · 较快</span>
+        </button>
         <button type="button" className={runMode === 'cycle' ? 'active' : ''} onClick={() => applyRunMode('cycle')}>
-          一键整理
+          <strong>深度整理</strong>
+          <span>完整 Dream · 最全面</span>
         </button>
         <button type="button" className={runMode === 'meeting' ? 'active' : ''} onClick={() => applyRunMode('meeting')}>
-          会议与会话
+          <strong>会议与会话</strong>
+          <span>指定文件 · 专项提炼</span>
         </button>
         <button type="button" className={runMode === 'advanced' ? 'active' : ''} onClick={() => applyRunMode('advanced')}>
-          高级设置
+          <strong>高级设置</strong>
+          <span>按 Phase 精细控制</span>
         </button>
       </div>
       <div className="dream-run-grid">
@@ -1161,14 +1438,7 @@ function DreamRunPanel({
       </div>
       <KnowledgeJourney run={run} />
       {run && (
-        <>
-          <DreamRunNarrative run={run} />
-          <DreamTechnicalDetails run={run} />
-          <details className="nl-details">
-            <summary>原始日志与命令</summary>
-            <RunOutput run={run} />
-          </details>
-        </>
+        <DreamRunResult run={run} />
       )}
       <details className="dream-diagnostics-details">
         <summary>遇到问题？查看运行诊断</summary>
@@ -1187,16 +1457,31 @@ function RecentRuns({ runs }: { runs: ConsoleRun[] }) {
       : run.kind.includes('cycle') || run.kind.includes('full')
         ? '完整知识整理'
         : '自定义整理';
-  const statusLabel = (status: string) => ({ completed: '已完成', running: '整理中', queued: '等待中', failed: '未完成', cancelled: '已中止' }[status] ?? status);
+  const statusLabel = (status: string) => ({
+    completed: '已完成',
+    partial: '部分完成',
+    running: '整理中',
+    queued: '等待中',
+    failed: '未完成',
+    skipped: '未执行',
+    cancelled: '已中止',
+  }[status] ?? status);
   return (
     <div className="dream-run-list">
-      {runs.slice(0, 8).map(run => (
-        <div key={run.id}>
-          <span>{runLabel(run)}</span>
-          <b className={`run-${run.status}`}>{statusLabel(run.status)}</b>
-          <small>{formatDate(run.startedAt, '-')}</small>
-        </div>
-      ))}
+      {runs.slice(0, 8).map(run => {
+        const displayStatus = effectiveDreamStatus(run);
+        return (
+          <div key={run.id}>
+            <span>{runLabel(run)}</span>
+            <b className={`run-${displayStatus}`}>{statusLabel(displayStatus)}</b>
+            <small>{formatDate(run.startedAt, '-')}</small>
+            <button type="button" className="pm-ghost" onClick={() => {
+              window.localStorage.setItem(DREAM_LAST_RUN_KEY, run.id);
+              window.location.hash = 'dream-execute';
+            }}>查看本次整理内容</button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1212,6 +1497,13 @@ export function DreamOverviewPage() {
   const deadLinks = data.health?.dead_links ?? 0;
   const latestRun = data.runs.find(run => run.kind.startsWith('dream_')) ?? null;
   const latestSummary = latestRun ? describeDreamRun(latestRun) : null;
+  const latestOutcome = latestRun ? buildDreamOutcome(latestRun) : null;
+  const latestAddedItems = latestOutcome
+    ? uniqueStrings([
+        ...latestOutcome.knowledgeItems.map(item => `知识：${item}`),
+        ...latestOutcome.extractionItems,
+      ]).slice(0, 5)
+    : [];
   const latestDeltas = dreamRunDeltas(latestRun);
   const needsAttention = pending > 0 || orphanPages > 0 || deadLinks > 0;
   const statusTitle = activeLock
@@ -1265,6 +1557,10 @@ export function DreamOverviewPage() {
                 {latestSummary.outputs.slice(0, 3).map((item, index) => <span key={index}>{item}</span>)}
               </div>
               <small>{formatDate(latestRun.startedAt, '-')}</small>
+              <button type="button" className="pm-ghost dream-view-run" onClick={() => {
+                window.localStorage.setItem(DREAM_LAST_RUN_KEY, latestRun.id);
+                window.location.hash = 'dream-execute';
+              }}>查看本次整理内容</button>
             </>
           ) : (
             <div className="dream-friendly-empty"><b>还没有整理记录</b><span>第一次整理完成后，这里会告诉你 AI 做了什么。</span></div>
@@ -1276,6 +1572,16 @@ export function DreamOverviewPage() {
             <div><b>{data.overview?.stats.page_count ?? 0}</b><span>知识页面</span><small>本次 +{latestDeltas.pages}</small></div>
             <div><b>{pct(data.embeddings.coverage)}</b><span>可被 AI 搜索</span></div>
             <div><b>{data.overview?.stats.link_count ?? 0}</b><span>知识关联</span><small>本次 +{latestDeltas.links}</small></div>
+          </div>
+          <div className="dream-library-latest">
+            <b>最近一次新增内容</b>
+            {latestAddedItems.length > 0 ? (
+              <ul>
+                {latestAddedItems.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}
+              </ul>
+            ) : (
+              <span>{latestRun ? '最近一次整理没有记录到新增内容明细。' : '完成第一次整理后，这里会展示新增的知识、事实、概念和观点。'}</span>
+            )}
           </div>
         </section>
       </div>

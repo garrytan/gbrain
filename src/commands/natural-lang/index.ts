@@ -39,6 +39,8 @@ export {
   startMarkdownExportRun,
   buildMarkdownExportCommand,
   startSourceAddRun,
+  buildSourceGitCommand,
+  startSourceGitRun,
   buildDreamCommand,
   startDreamRun,
   startActionRun,

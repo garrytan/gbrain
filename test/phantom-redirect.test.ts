@@ -588,6 +588,7 @@ describe('runExtractFacts — phantom-redirect integration', () => {
         `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source)
          VALUES ('default', 'people/legacy', 'Legacy claim', 'fact', '2020-01-01'::date, 'legacy-import')`,
       );
+      await putPage('people/legacy', '# legacy\n', { type: 'person' });
       // Seed a phantom that SHOULD have been redirected if the guard didn't fire
       await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
       writeMd(brainDir, 'people/alice-example', '# alice-example\n');

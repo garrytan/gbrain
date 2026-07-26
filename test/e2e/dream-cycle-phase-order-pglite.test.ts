@@ -122,7 +122,9 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'propose_takes',              // v0.36.1.0 — hindsight calibration wave
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
+  'drift',
   'conversation_facts_backfill', // v0.41.11 — opt-in conversation facts
+  'enrich_thin',
   'embed',
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans

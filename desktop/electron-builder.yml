@@ -1,6 +1,5 @@
 appId: com.pmbrain.desktop
 productName: PMBrain
-artifactName: PMBrain-Windows-${arch}-Setup-${version}.${ext}
 compression: store
 electronDist: node_modules/electron/dist
 electronVersion: 36.5.0
@@ -21,8 +20,6 @@ extraResources:
     to: pmbrain-runtime/node_modules/@electric-sql/pglite
   - from: ../node_modules/@napi-rs/canvas
     to: pmbrain-runtime/node_modules/@napi-rs/canvas
-  - from: ../node_modules/@napi-rs/canvas-win32-x64-msvc
-    to: pmbrain-runtime/node_modules/@napi-rs/canvas-win32-x64-msvc
   - from: ../node_modules/@dqbd/tiktoken
     to: pmbrain-runtime/node_modules/@dqbd/tiktoken
   - from: ../node_modules/@aws-sdk
@@ -36,11 +33,43 @@ extraResources:
   - from: ../node_modules/web-tree-sitter
     to: pmbrain-runtime/node_modules/web-tree-sitter
 win:
+  artifactName: PMBrain-Windows-${arch}-Setup-${version}.${ext}
   target:
     - target: nsis
       arch:
         - x64
   executableName: PMBrain
+  extraResources:
+    - from: ../node_modules/@napi-rs/canvas-win32-x64-msvc
+      to: pmbrain-runtime/node_modules/@napi-rs/canvas-win32-x64-msvc
+mac:
+  artifactName: PMBrain-macOS-${arch}-${version}.${ext}
+  # CI currently has no Apple Developer certificate. Keep unsigned builds
+  # launchable after the user's explicit Gatekeeper override; switch this to
+  # true together with Developer ID signing and notarization credentials.
+  hardenedRuntime: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  category: public.app-category.productivity
+  extraResources:
+    - from: ../node_modules/@napi-rs/canvas-darwin-arm64
+      to: pmbrain-runtime/node_modules/@napi-rs/canvas-darwin-arm64
+linux:
+  artifactName: PMBrain-Linux-${arch}-${version}.${ext}
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  executableName: PMBrain
+  category: Office
+  extraResources:
+    - from: ../node_modules/@napi-rs/canvas-linux-x64-gnu
+      to: pmbrain-runtime/node_modules/@napi-rs/canvas-linux-x64-gnu
 nsis:
   include: build/installer.nsh
   oneClick: false

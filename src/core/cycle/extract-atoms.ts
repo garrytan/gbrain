@@ -48,7 +48,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
 import { dreamModelDetails, resolveDreamModel } from './model-routing.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -119,9 +120,19 @@ interface ExtractedAtom {
   body: string;
   source_quote?: string;
   lesson?: string;
+  /**
+   * 1-3 kebab-case topic labels for concept clustering. Consumed by
+   * synthesize_concepts (groups atoms by `frontmatter.concepts`; only
+   * labels shared by >=2 atoms materialize a concept page, so the prompt
+   * biases reuse-over-coinage). #2123.
+   */
+  concepts?: string[];
   virality_score?: number;
   emotional_register?: string;
 }
+
+/** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
+const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
@@ -133,11 +144,16 @@ quote, or short essay angle. Each atom must:
 
 Output a JSON array of atoms (1-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
-source_quote (verbatim ≤200 chars), lesson (one sentence), virality_score
-(0-100), emotional_register (one of: shocking, inspiring, funny, sobering,
-practical, controversial)}.
+source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
+(1-3 topic labels), virality_score (0-100), emotional_register (one of:
+shocking, inspiring, funny, sobering, practical, controversial)}.
 
 atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
+
+concepts are kebab-case English TOPIC labels used to cluster atoms into
+concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
+entity or brand names. Use the same label for the same topic across atoms;
+prefer a label you already used over coining a near-synonym.
 
 Output ONLY the JSON array, no prose.`;
 
@@ -182,6 +198,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       AND length(COALESCE(p.compiled_truth, '')) >= $3
+      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -394,6 +411,11 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
+  let budgetExhausted = false;
+  const budgetTracker = new BudgetTracker({
+    maxCostUsd: budgetCap,
+    label: 'cycle.extract_atoms',
+  });
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -418,9 +440,10 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
     await maybeYield();
-    if (estimatedSpendUsd >= budgetCap) {
+    if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
       continue;
@@ -444,12 +467,22 @@ export async function runPhaseExtractAtoms(
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
 
-      // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
-      estimatedSpendUsd +=
-        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
+      estimatedSpendUsd = budgetTracker.totalSpent;
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
+        if (!opts.dryRun && item.kind === 'page') {
+          try {
+            await engine.executeRaw(
+              `UPDATE pages
+                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+              [item.contentHash.slice(0, 16), sourceId, item.slug],
+            );
+          } catch {
+            // Fail-soft: if the marker cannot be saved, the page remains retryable.
+          }
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -478,6 +511,7 @@ export async function runPhaseExtractAtoms(
                 source_hash: item.contentHash.slice(0, 16),
                 ...(atom.source_quote && { source_quote: atom.source_quote }),
                 ...(atom.lesson && { lesson: atom.lesson }),
+                ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
                 ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
                 ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
                 extracted_at: new Date().toISOString(),
@@ -498,12 +532,20 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (err instanceof BudgetExhausted) {
+        budgetExhausted = true;
+        if (item.kind === 'transcript') transcriptsSkipped++;
+        else pagesSkipped++;
+        continue;
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
+  });
+  estimatedSpendUsd = budgetTracker.totalSpent;
 
   // v0.42 Wave B2: write extract receipt + rollup row when the phase
   // actually extracted atoms. Both are best-effort per F-OUT-19 —
@@ -562,6 +604,7 @@ export async function runPhaseExtractAtoms(
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
+      budget_exhausted: budgetExhausted,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
     },
@@ -615,6 +658,13 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
       body,
       source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
       lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
+      concepts: (() => {
+        if (!Array.isArray(obj.concepts)) return undefined;
+        const labels = obj.concepts
+          .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
+          .slice(0, 3);
+        return labels.length > 0 ? labels : undefined;
+      })(),
       virality_score:
         typeof obj.virality_score === 'number' &&
         obj.virality_score >= 0 &&

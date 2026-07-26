@@ -66,6 +66,7 @@ export interface ExtractFactsResult {
   pagesWithFacts: number;
   factsInserted: number;
   factsDeleted: number;
+  affectedSlugs: string[];
   legacyRowsPending: number;
   guardTriggered: boolean;
   warnings: string[];
@@ -93,6 +94,7 @@ export async function runExtractFacts(
     pagesWithFacts: 0,
     factsInserted: 0,
     factsDeleted: 0,
+    affectedSlugs: [],
     legacyRowsPending: 0,
     guardTriggered: false,
     warnings: [],
@@ -105,19 +107,28 @@ export async function runExtractFacts(
   };
 
   // ── Empty-fence guard (Codex R2-#7) ────────────────────────────
-  // Pre-check: if any legacy fact rows exist (row_num NULL but
-  // entity_slug NOT NULL), refuse to run the destructive
-  // reconciliation pass. The v0_32_2 orchestrator must complete
-  // first.
+  // Only live backing pages are genuinely fenceable. Inline facts may carry
+  // an entity_slug whose page was never materialized; those rows cannot be
+  // repaired by re-running the already-completed migration and must not jam
+  // every later Dream cycle.
   const legacy = await engine.executeRaw<{ n: string }>(
-    `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NOT NULL`,
+    `SELECT COUNT(*) AS n
+       FROM facts f
+      WHERE f.row_num IS NULL
+        AND f.entity_slug IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM pages p
+           WHERE p.source_id = f.source_id
+             AND p.slug = f.entity_slug
+             AND p.deleted_at IS NULL
+        )`,
   );
   const legacyCount = parseInt(legacy[0]?.n ?? '0', 10);
   result.legacyRowsPending = legacyCount;
   if (legacyCount > 0) {
     result.guardTriggered = true;
     result.warnings.push(
-      `extract_facts: ${legacyCount} legacy v0.31 fact rows pending fence backfill. ` +
+      `extract_facts: ${legacyCount} legacy v0.31 fact rows with live backing pages pending fence backfill. ` +
       `Run \`gbrain apply-migrations --yes\` to complete v0_32_2 before this phase ` +
       `can safely reconcile fence → DB.`,
     );
@@ -253,6 +264,9 @@ export async function runExtractFacts(
 
     const inserted = await engine.insertFacts(extracted, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
+    if (inserted.inserted > 0 && result.affectedSlugs.length < 100) {
+      result.affectedSlugs.push(slug);
+    }
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic

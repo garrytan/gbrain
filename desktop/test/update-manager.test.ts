@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { UpdateManager, type UpdateState } from '../src/main/update-manager.js';
+import { normalizeReleaseNotes, UpdateManager, type UpdateState } from '../src/main/update-manager.js';
 
 class FakeUpdater extends EventEmitter {
   autoDownload = true;
@@ -12,6 +12,8 @@ class FakeUpdater extends EventEmitter {
     this.emit('checking-for-update');
     this.emit('update-available', {
       version: '1.0.22',
+      releaseDate: '2026-07-25T10:00:00.000Z',
+      releaseNotes: '## 搜索增强\n\n- 提升中文召回\n- 修复更新检查',
       files: [{ url: 'PMBrain%20Desktop-1.0.22.exe', size: 8_000_000 }],
     });
   }
@@ -36,7 +38,7 @@ class FakeUpdater extends EventEmitter {
 const logger = { write() {}, close() {}, directory: '', filePath: '' } as any;
 
 describe('desktop update manager', () => {
-  test('checks, automatically downloads, then stops sidecar before install', async () => {
+  test('shows release notes before download, then stops sidecar before install', async () => {
     const updater = new FakeUpdater();
     let stopped = false;
     const states: UpdateState[] = [];
@@ -46,8 +48,13 @@ describe('desktop update manager', () => {
       onState: (state) => states.push(state),
     });
     await manager.check();
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(updater.autoDownload).toBe(false);
+    expect(updater.downloaded).toBe(false);
+    expect(manager.currentState.phase).toBe('available');
+    expect(manager.currentState.releaseDate).toBe('2026-07-25T10:00:00.000Z');
+    expect(manager.currentState.releaseNotes).toContain('提升中文召回');
+    await manager.download();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(updater.downloaded).toBe(true);
     expect(manager.currentState.phase).toBe('downloaded');
     const initialDownload = states.find((state) => state.phase === 'downloading' && state.percent === 0);
@@ -62,5 +69,13 @@ describe('desktop update manager', () => {
     await manager.install();
     expect(stopped).toBe(true);
     expect(updater.installed).toBe(true);
+  });
+
+  test('normalizes array-shaped GitHub release notes', () => {
+    expect(normalizeReleaseNotes([
+      { version: '1.0.22', note: '- Added search diagnostics' },
+      { version: '1.0.21', note: 'Fixed updater state' },
+    ])).toBe('### 1.0.22\n- Added search diagnostics\n\n### 1.0.21\nFixed updater state');
+    expect(normalizeReleaseNotes(undefined)).toBe('');
   });
 });

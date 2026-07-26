@@ -33,6 +33,8 @@ export interface ConsoleRun {
   startedAt: string;
   completedAt: string | null;
   durationMs: number | null;
+  /** Bounded structured command result, kept separately from truncated logs. */
+  result?: unknown;
 }
 
 export const INTENTS = new Set<ConsoleIntent>([

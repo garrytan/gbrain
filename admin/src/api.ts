@@ -116,6 +116,10 @@ export const api = {
     apiFetch('/admin/api/jobs/supervisor/stop', { method: 'POST' }),
   addSource: (body: { id?: string; path: string; name?: string; federated: boolean }) =>
     apiFetch('/admin/api/sources', { method: 'POST', body: JSON.stringify(body) }),
+  initializeSourceGit: (id: string) =>
+    apiFetch(`/admin/api/sources/${encodeURIComponent(id)}/git/init`, { method: 'POST', body: '{}' }),
+  commitSourceGit: (id: string, message: string) =>
+    apiFetch(`/admin/api/sources/${encodeURIComponent(id)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
   setDefaultSource: (sourceId: string) =>
     apiFetch('/admin/api/sources/default', { method: 'POST', body: JSON.stringify({ sourceId }) }),
   archiveSource: (id: string) =>

@@ -332,6 +332,16 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .update-copy .update-metrics { color: var(--text-secondary); font: 10px/1.6 Consolas, monospace; overflow-wrap: anywhere; }
 .update-progress { height: 6px; margin-top: 12px; overflow: hidden; border-radius: 999px; background: var(--line); }
 .update-progress i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .25s ease; }
+.update-release-notes { margin-top: 12px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+.update-release-notes-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.update-release-notes-head span { color: var(--accent); font: 700 9px Consolas, monospace; letter-spacing: .12em; }
+.update-release-notes-head h3 { margin: 5px 0 0; font-size: 15px; }
+.update-release-notes-head time { color: var(--text-muted); font: 10px Consolas, monospace; }
+.update-release-notes-body { display: grid; gap: 9px; padding-top: 13px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.update-release-notes-body h4 { margin: 4px 0 0; color: var(--text); font-size: 13px; }
+.update-release-notes-body p { margin: 0; }
+.update-release-notes-body ul, .update-release-notes-body ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; }
+.update-release-notes-empty { color: var(--text-muted); }
 .update-safety { margin-top: 18px; padding: 18px 20px; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface-soft); }
 .update-safety p { margin: 8px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
 .previous-version-card { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-top: 12px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }

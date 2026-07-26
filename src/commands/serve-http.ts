@@ -83,8 +83,11 @@ import {
   startImportRun,
   startMarkdownExportRun,
   startSourceAddRun,
+  startSourceGitRun,
   startThinkRun,
+  sanitizeOutput,
 } from './admin-console.ts';
+import { waitForAdminSupervisorReady } from './admin-supervisor.ts';
 import {
   buildChatGptTunnelProfile,
   CHATGPT_TUNNEL_TOKEN_NAME,
@@ -252,15 +255,20 @@ async function normalizeAdminAgentSourceScope(
 async function ensureAdminWorkerStarted(): Promise<{
   event: 'already_running' | 'started';
   worker_pid: number;
+  supervisor_pid: number;
   pid_file: string;
   mode: 'supervisor';
 }> {
   const current = await getSupervisorStatus();
   if (current.running && current.supervisor_pid) {
+    const ready = current.worker_running
+      ? current
+      : await waitForAdminSupervisorReady(current.supervisor_pid);
     return {
       event: 'already_running',
-      worker_pid: current.supervisor_pid,
-      pid_file: current.pid_file,
+      worker_pid: ready.worker_pid!,
+      supervisor_pid: current.supervisor_pid,
+      pid_file: ready.pid_file,
       mode: 'supervisor',
     };
   }
@@ -280,31 +288,54 @@ async function ensureAdminWorkerStarted(): Promise<{
     cwd: process.cwd(),
     shell: false,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: process.env,
   });
   let stdout = '';
+  let stderr = '';
   child.stdout?.on('data', chunk => {
     stdout = (stdout + String(chunk)).slice(-64_000);
+  });
+  child.stderr?.on('data', chunk => {
+    stderr = (stderr + String(chunk)).slice(-64_000);
   });
   const code = await new Promise<number | null>((resolve, reject) => {
     child.once('error', reject);
     child.once('close', resolve);
   });
-  if (code !== 0) throw new Error(`supervisor_start_failed_exit_${code ?? 'unknown'}`);
+  if (code !== 0) {
+    throw new Error(formatSupervisorStartFailure(code, stdout, stderr));
+  }
   const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
-  const payload = line ? JSON.parse(line) as {
+  let payload: {
     event?: string;
     supervisor_pid?: number;
     pid_file?: string;
-  } : {};
+  } = {};
+  try {
+    payload = line ? JSON.parse(line) as typeof payload : {};
+  } catch {
+    const detail = sanitizeOutput(stdout.trim()).slice(-4_000);
+    throw new Error(`Supervisor 启动响应无法解析${detail ? `：${detail}` : ''}`);
+  }
   if (!payload.supervisor_pid || !payload.pid_file) throw new Error('supervisor_start_invalid_response');
+  const ready = await waitForAdminSupervisorReady(payload.supervisor_pid);
   return {
     event: payload.event === 'already_running' ? 'already_running' : 'started',
-    worker_pid: payload.supervisor_pid,
+    worker_pid: ready.worker_pid!,
+    supervisor_pid: payload.supervisor_pid,
     pid_file: payload.pid_file,
     mode: 'supervisor',
   };
+}
+
+export function formatSupervisorStartFailure(
+  code: number | null,
+  stdout: string,
+  stderr: string,
+): string {
+  const detail = sanitizeOutput(stderr.trim() || stdout.trim()).slice(-4_000);
+  return `Supervisor 启动失败（exit ${code ?? 'unknown'}）${detail ? `：${detail}` : ''}`;
 }
 
 /**
@@ -2176,6 +2207,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json({ runId: run.id, status: run.status });
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'source_add_failed' });
+    }
+  });
+
+  app.post('/admin/api/sources/:id/git/:action', requireAdmin, express.json({ limit: '8kb' }), async (req: Request, res: Response) => {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const rawAction = Array.isArray(req.params.action) ? req.params.action[0] : req.params.action;
+    if (!id) {
+      res.status(400).json({ error: 'source_id_required' });
+      return;
+    }
+    if (rawAction !== 'init' && rawAction !== 'commit') {
+      res.status(400).json({ error: 'source_git_action_invalid' });
+      return;
+    }
+    try {
+      const run = await startSourceGitRun(
+        id,
+        rawAction,
+        typeof req.body?.message === 'string' ? req.body.message : undefined,
+        process.cwd(),
+        runHooks,
+      );
+      res.status(202).json({ runId: run.id, status: run.status });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'source_git_failed' });
     }
   });
 

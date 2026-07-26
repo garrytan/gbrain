@@ -8,9 +8,10 @@
  * responses.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -18,6 +19,18 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+});
+
+// These tests drive put_page, whose importFromContent embeds by design
+// (embed failure PROPAGATES — a deliberate Codex C2 choice). A sibling
+// shard file that left the gateway configured with a fake/non-legacy key
+// would make put_page's embed step 401 and throw (isError). We don't want
+// embedding here at all — the assertions are about the facts backstop, not
+// vectors — so reset the gateway before each test. An empty gateway makes
+// embedBatch a graceful no-op, so put_page succeeds regardless of what a
+// prior file in the shard process leaked.
+beforeEach(() => {
+  resetGateway();
 });
 
 afterAll(async () => {

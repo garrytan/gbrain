@@ -319,6 +319,36 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     expect(result.would_embed).toBe(0);
     expect(result.pages_processed).toBe(2);
   });
+
+  test('preserves legacy vectors with missing model provenance', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    let writes = 0;
+    const engine = mockEngine({
+      executeRaw: async () => [{ model: null, count: 24740 }],
+      countStaleChunks: async () => 0,
+      upsertChunks: async () => { writes++; },
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(result.embedded).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  test('refuses a real model conflict without clearing or rewriting vectors', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    let writes = 0;
+    const engine = mockEngine({
+      executeRaw: async () => [{ model: 'legacy-provider:legacy-embedding', count: 25000 }],
+      countStaleChunks: async () => 0,
+      upsertChunks: async () => { writes++; },
+    });
+
+    await expect(runEmbedCore(engine, { stale: true })).rejects.toThrow(
+      'PMBrain 不会在 Dream、同步或普通向量补全时自动清空已有向量',
+    );
+    expect(writes).toBe(0);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────

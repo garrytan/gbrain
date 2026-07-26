@@ -401,8 +401,9 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.36.1.0: 16 phases (added `propose_takes`, `grade_takes`, `calibration_profile` between consolidate and embed).
     // v0.39.0.0: 17 phases (added `schema-suggest` between orphans and purge — T12 schema cathedral).
     // v0.41.2.0: 19 phases (added `extract_atoms` after extract_facts + `synthesize_concepts` after patterns).
-    // PMBrain aligns to its supported upstream Dream subset (20 phases).
-    expect(hookCalls).toBe(20);
+    // PMBrain aligns to its supported upstream Dream subset (22 phases):
+    // drift + enrich_thin are included, SkillOpt remains deferred.
+    expect(hookCalls).toBe(22);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -415,8 +416,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.33.3: 13 phases (v0.32.2's 12 + resolve_symbol_edges).
     // v0.36.1.0: 16 phases (Hindsight calibration wave adds propose_takes, grade_takes, calibration_profile).
     // v0.39.0.0: 17 phases (T12 schema-suggest phase between orphans and purge).
-    // PMBrain aligns to its supported upstream Dream subset (20 phases).
-    expect(report.phases.length).toBe(20);
+    // PMBrain aligns to its supported upstream Dream subset (22 phases).
+    expect(report.phases.length).toBe(22);
   });
 });
 

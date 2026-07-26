@@ -47,8 +47,34 @@ jobs:
           path: bin/${{ matrix.artifact }}
 
   desktop:
-    runs-on: windows-latest
-    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            build_script: build:win
+            artifact_paths: |
+              desktop/dist/PMBrain-Windows-x64-Setup-*.exe
+              desktop/dist/PMBrain-Windows-x64-Setup-*.exe.blockmap
+              desktop/dist/latest.yml
+          - platform: macos
+            os: macos-latest
+            build_script: build:mac
+            artifact_paths: |
+              desktop/dist/PMBrain-macOS-arm64-*.dmg
+              desktop/dist/PMBrain-macOS-arm64-*.zip
+              desktop/dist/PMBrain-macOS-arm64-*.zip.blockmap
+              desktop/dist/latest-mac.yml
+          - platform: linux
+            os: ubuntu-latest
+            build_script: build:linux
+            artifact_paths: |
+              desktop/dist/PMBrain-Linux-x64-*.AppImage
+              desktop/dist/PMBrain-Linux-x64-*.AppImage.blockmap
+              desktop/dist/latest-linux.yml
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -58,10 +84,9 @@ jobs:
       # has no release tag to compare. Tag pushes keep the strict check.
       - name: Verify desktop version matches tag
         if: github.event_name == 'push'
-        shell: pwsh
-        run: |
-          $version = (Get-Content desktop/package.json | ConvertFrom-Json).version
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "desktop version $version does not match tag ${{ github.ref_name }}" }
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bun -e "const pkg = await Bun.file('desktop/package.json').json(); if ('v' + pkg.version !== process.env.RELEASE_TAG) throw new Error('desktop version ' + pkg.version + ' does not match tag ' + process.env.RELEASE_TAG)"
       - run: bun install --frozen-lockfile
       - name: Install Admin dependencies
         working-directory: admin
@@ -75,20 +100,13 @@ jobs:
         run: |
           bun run typecheck
           bun test test/runtime-compatibility.test.ts test/package-version-contract.test.ts
-      - name: Build Windows installer and updater metadata
+      - name: Build and verify ${{ matrix.platform }} desktop package
         working-directory: desktop
-        run: |
-          bun run build
-          bun run build:sidecar
-          bunx electron-builder --win nsis --x64 --publish never
-          bun run verify:package
+        run: bun run ${{ matrix.build_script }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: pmbrain-desktop-windows
-          path: |
-            desktop/dist/PMBrain-Windows-x64-Setup-*.exe
-            desktop/dist/PMBrain-Windows-x64-Setup-*.exe.blockmap
-            desktop/dist/latest.yml
+          name: pmbrain-desktop-${{ matrix.platform }}
+          path: ${{ matrix.artifact_paths }}
 
   release:
     # workflow_dispatch is intentionally a build-only dry run. Publishing is
@@ -109,4 +127,11 @@ jobs:
             artifacts/pmbrain-desktop-windows/PMBrain-Windows-x64-Setup-*.exe
             artifacts/pmbrain-desktop-windows/PMBrain-Windows-x64-Setup-*.exe.blockmap
             artifacts/pmbrain-desktop-windows/latest.yml
+            artifacts/pmbrain-desktop-macos/PMBrain-macOS-arm64-*.dmg
+            artifacts/pmbrain-desktop-macos/PMBrain-macOS-arm64-*.zip
+            artifacts/pmbrain-desktop-macos/PMBrain-macOS-arm64-*.zip.blockmap
+            artifacts/pmbrain-desktop-macos/latest-mac.yml
+            artifacts/pmbrain-desktop-linux/PMBrain-Linux-x64-*.AppImage
+            artifacts/pmbrain-desktop-linux/PMBrain-Linux-x64-*.AppImage.blockmap
+            artifacts/pmbrain-desktop-linux/latest-linux.yml
           generate_release_notes: true

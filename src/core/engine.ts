@@ -2,7 +2,7 @@ import type {
   Page, PageInput, PageFilters, GetPageOpts,
   Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
-  Link, GraphNode, GraphPath,
+  Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -16,6 +16,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   AdjacencyRow,
+  EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 
 /**
@@ -907,6 +908,27 @@ export interface BrainEngine {
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
+  /**
+   * fix/title-retrieval-arm (D1): page-grain title candidate arm.
+   *
+   * content_chunks.search_vector never includes the page TITLE (it is
+   * doc_comment + symbol_name_qualified + chunk_text), so a page whose
+   * title tokens are absent from its body is unreachable by searchKeyword.
+   * This arm queries the PAGE-GRAIN DOCUMENT vector pages.search_vector —
+   * NOT titles alone: per trg_pages_search_vector it is title (weight 'A')
+   * + compiled_truth ('B') + timeline text ('C'). Ranked by ts_rank_cd,
+   * the 'A'-weighted title dominates, but body/timeline matches also
+   * produce (lower-ranked) candidates. Returns page-grain hits joined to
+   * ONE representative chunk per page (compiled_truth preferred, else
+   * lowest chunk_index) so rows are shaped like searchKeyword's output and
+   * can enter RRF fusion in hybridSearch.
+   *
+   * Deliberately NO query-length gating — unlike the alias hop (≤6-token
+   * guard) and the title-phrase re-rank boost, this arm must GENERATE
+   * candidates for long exact-title queries, which is exactly where
+   * chunk-grain AND FTS is weakest.
+   */
+  searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
   /**
    * Hydrate embeddings for chunks already known by id. v0.36 (D9):
@@ -1062,6 +1084,10 @@ export interface BrainEngine {
    * applied to the to-page side of the join.
    */
   getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]>;
+  /** Distinct link provenance values with source-scoped edge counts. */
+  listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]>;
   /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used
@@ -1106,6 +1132,10 @@ export interface BrainEngine {
     slug: string,
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]>;
+  relationalFanout(
+    seeds: string[],
+    opts?: RelationalFanoutOpts,
+  ): Promise<RelationalFanoutRow[]>;
   /**
    * For a list of slugs, return how many inbound links each has.
    * Used by hybrid search backlink boost. Single SQL query, not N+1.
@@ -1138,6 +1168,10 @@ export interface BrainEngine {
    * sync-topology-aware refinement.
    */
   getAdjacencyBoosts(pageIds: number[]): Promise<Map<number, AdjacencyRow>>;
+  /** Warning markers for search hits; quarantined pages never reach this stage. */
+  getContentFlagsByPageIds(
+    pageIds: number[],
+  ): Promise<Map<number, { reason: string; detail: string }>>;
   /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.
@@ -1682,6 +1716,38 @@ export interface BrainEngine {
   ): Promise<string>;
 
   /**
+   * T3 retrieval-cathedral — free-text alias resolution for SEARCH.
+   * Given a set of NORMALIZED alias strings (normalizeAlias() output),
+   * return a map alias_norm -> canonical slugs from page_aliases. An alias
+   * may resolve to MORE THAN ONE slug (two pages claimed the same name) —
+   * the caller reports the collision and resolves deterministically.
+   *
+   * Source-scoped: pass scalar `sourceId` (single-source) OR `sourceIds`
+   * (federated read) — array wins when both set, matching sourceScopeOpts.
+   * Empty input → empty map (no query). Throws "relation page_aliases does
+   * not exist" on pre-v110 brains; the alias-hop caller wraps in try/catch
+   * (isUndefinedColumnError) and degrades to no-injection (D9 fail-open).
+   */
+  resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>>;
+
+  /**
+   * T3 retrieval-cathedral — WRITE side of the alias layer. Replace the full
+   * alias set for one (slug, source) with `aliasNorms` (already normalized):
+   * delete the page's existing page_aliases rows, insert the new set. Empty
+   * `aliasNorms` just clears them. Idempotent (the unique triple). Called by
+   * the ingest projection in importFromContent and the `reindex --aliases`
+   * backfill so a page's declared aliases stay in lockstep with its frontmatter.
+   */
+  setPageAliases(
+    slug: string,
+    sourceId: string,
+    aliasNorms: string[],
+  ): Promise<void>;
+
+  /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
    * `pages.content_hash` for a single slug+source. NO chunking, NO embedding,
    * NO link reconcile, NO `updated_at` advance beyond the trivial bump.
@@ -1901,6 +1967,20 @@ export interface BrainEngine {
    * Postgres (eng review D5 — avoids dialect drift on `interval` binding).
    */
   getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]>;
+
+  /**
+   * v0.41.39 (issue #1700) — enrich candidate selection for
+   * `gbrain enrich --thin`. ONE source-aware SQL query: thin-filter +
+   * per-page inbound-link count (source-correct via `to_page_id = p.id`,
+   * `link_source='mentions'` excluded) + optional `enriched_at` recency
+   * guard + whitelisted ORDER BY (ENRICH_ORDER_SQL) + LIMIT. Returns a
+   * lightweight projection (NO page bodies) so ranking 100K stubs doesn't
+   * pull every body into memory.
+   *
+   * Empty `opts.types` → empty result, no SQL. Source scope follows the
+   * canonical scalar/array precedence (sourceIds wins over sourceId).
+   */
+  listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]>;
 
   /**
    * Anomaly detection: cohorts (tag, type) with unusually-high page activity

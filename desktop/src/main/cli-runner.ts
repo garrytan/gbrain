@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { release as osRelease } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { DESKTOP_RUNTIME_CONTRACT, type DesktopRuntimeContract } from './runtime-contract.js';
+import { getDesktopRuntimeContract, type DesktopRuntimeContract } from './runtime-contract.js';
 
 export interface CliRuntime {
   packaged: boolean;
@@ -171,8 +171,9 @@ export function runCli(
 ): Promise<CliResult> {
   const root = projectRoot(runtime);
   const workingDirectory = runtime.packaged ? packagedRuntimeRoot(runtime) : root;
+  const runtimeContract = runtime.packaged ? getDesktopRuntimeContract() : null;
   const command = runtime.packaged
-    ? join(workingDirectory, 'bun.exe')
+    ? join(workingDirectory, runtimeContract!.runtimeExecutableName)
     : process.env.PMBRAIN_DESKTOP_BUN || 'bun';
   const commandArgs = runtime.packaged
     ? [join(workingDirectory, 'pmbrain-sidecar.js'), ...args]
@@ -220,10 +221,10 @@ function sha256File(path: string): Promise<string> {
   });
 }
 
-function assertPackagedManifest(value: unknown): asserts value is DesktopRuntimeContract {
+function assertPackagedManifest(value: unknown, runtimeContract: DesktopRuntimeContract): asserts value is DesktopRuntimeContract {
   if (!value || typeof value !== 'object') throw new Error('运行时清单不是有效对象。');
   const actual = value as Record<string, unknown>;
-  for (const [key, expected] of Object.entries(DESKTOP_RUNTIME_CONTRACT)) {
+  for (const [key, expected] of Object.entries(runtimeContract)) {
     if (actual[key] !== expected) {
       throw new Error(`运行时清单字段 ${key} 不匹配。`);
     }
@@ -232,18 +233,17 @@ function assertPackagedManifest(value: unknown): asserts value is DesktopRuntime
 
 export async function preflightCliRuntime(runtime: CliRuntime): Promise<RuntimePreflightResult | null> {
   if (!runtime.packaged) return null;
+  const runtimeContract = getDesktopRuntimeContract();
   const windowsRelease = osRelease();
-  if (process.platform !== DESKTOP_RUNTIME_CONTRACT.platform || process.arch !== DESKTOP_RUNTIME_CONTRACT.arch) {
-    throw new Error(`PMBrain 安装包架构不匹配：当前进程为 ${process.platform}-${process.arch}，需要 win32-x64。`);
-  }
-  if (!isWindowsReleaseAtLeast(windowsRelease, DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease)) {
+  if (runtimeContract.platform === 'win32' && runtimeContract.minimumWindowsRelease
+    && !isWindowsReleaseAtLeast(windowsRelease, runtimeContract.minimumWindowsRelease)) {
     throw new Error(
-      `PMBrain 需要 Windows 10 1809 或更高版本（最低 ${DESKTOP_RUNTIME_CONTRACT.minimumWindowsRelease}，当前 ${windowsRelease}）。`,
+      `PMBrain 需要 Windows 10 1809 或更高版本（最低 ${runtimeContract.minimumWindowsRelease}，当前 ${windowsRelease}）。`,
     );
   }
 
   const workingDirectory = packagedRuntimeRoot(runtime);
-  const bunPath = join(workingDirectory, 'bun.exe');
+  const bunPath = join(workingDirectory, runtimeContract.runtimeExecutableName);
   const sidecarPath = join(workingDirectory, 'pmbrain-sidecar.js');
   const manifestPath = join(workingDirectory, 'runtime-manifest.json');
   let manifest: unknown;
@@ -252,7 +252,7 @@ export async function preflightCliRuntime(runtime: CliRuntime): Promise<RuntimeP
   } catch (error) {
     throw new Error(`PMBrain 运行时清单缺失或损坏：${error instanceof Error ? error.message : String(error)}`);
   }
-  assertPackagedManifest(manifest);
+  assertPackagedManifest(manifest, runtimeContract);
 
   let executableSha256: string;
   try {
@@ -260,7 +260,7 @@ export async function preflightCliRuntime(runtime: CliRuntime): Promise<RuntimeP
   } catch (error) {
     throw new Error(`PMBrain 内置运行时缺失或无法读取：${error instanceof Error ? error.message : String(error)}`);
   }
-  if (executableSha256 !== DESKTOP_RUNTIME_CONTRACT.executableSha256) {
+  if (executableSha256 !== runtimeContract.executableSha256) {
     throw new Error('PMBrain 内置运行时校验失败，文件可能损坏或被安全软件替换。请重新安装。');
   }
 
@@ -272,8 +272,8 @@ export async function preflightCliRuntime(runtime: CliRuntime): Promise<RuntimeP
   });
   if (bunIdentity.code !== 0) throw new Error(formatCliFailure(bunIdentity));
   const bunRevision = bunIdentity.stdout.trim();
-  if (bunRevision !== DESKTOP_RUNTIME_CONTRACT.bunRevision) {
-    throw new Error(`PMBrain 内置运行时版本不匹配：需要 ${DESKTOP_RUNTIME_CONTRACT.bunRevision}，当前 ${bunRevision || '未知'}。`);
+  if (bunRevision !== runtimeContract.bunRevision) {
+    throw new Error(`PMBrain 内置运行时版本不匹配：需要 ${runtimeContract.bunRevision}，当前 ${bunRevision || '未知'}。`);
   }
 
   const sidecarIdentity = await spawnCaptured(bunPath, [sidecarPath, '--version'], {
@@ -287,8 +287,8 @@ export async function preflightCliRuntime(runtime: CliRuntime): Promise<RuntimeP
   }
 
   return {
-    arch: DESKTOP_RUNTIME_CONTRACT.arch,
-    flavor: DESKTOP_RUNTIME_CONTRACT.flavor,
+    arch: runtimeContract.arch,
+    flavor: runtimeContract.flavor,
     bunRevision,
     windowsRelease,
   };

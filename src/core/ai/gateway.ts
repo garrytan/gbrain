@@ -1337,13 +1337,26 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   }
 }
 
-/** Probe an unknown/custom embedding model without assuming its width. */
-export async function detectEmbeddingDimensions(modelStr: string = getEmbeddingModel()): Promise<number> {
+/**
+ * Probe an embedding model's actual response width.
+ *
+ * When requestedDimensions is provided, flexible-dimension providers receive
+ * the same dimension option used by normal indexing. Fixed-width and custom
+ * providers ignore unsupported options and reveal their actual width.
+ */
+export async function detectEmbeddingDimensions(
+  modelStr: string = getEmbeddingModel(),
+  requestedDimensions?: number,
+): Promise<number> {
   const { model, recipe, modelId } = await resolveEmbeddingProvider(modelStr);
   try {
+    const providerOptions = requestedDimensions === undefined
+      ? undefined
+      : dimsProviderOptions(recipe.implementation, modelId, requestedDimensions, 'document');
     const result = await _embedTransport({
       model,
       values: ['PMBrain embedding dimension probe'],
+      providerOptions,
       maxRetries: 0,
     });
     const embedding = result.embeddings?.[0];

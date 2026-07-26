@@ -18,45 +18,6 @@ export const LAN_MCP_MAX_CONCURRENT_REQUESTS = 128;
 export const LAN_MCP_BODY_IDLE_TIMEOUT_MS = 15_000;
 export const LAN_MCP_REQUEST_TIMEOUT_MS = 60_000;
 
-/**
- * Desktop shared-mode is a stricter trust boundary than the local MCP.
- * Only operations whose handlers were audited to apply the credential's
- * source scope are exposed here. The sidecar still enforces read/write
- * scopes; this list adds the source-isolation guarantee.
- */
-export const SHARED_MCP_READ_TOOL_NAMES = [
-  'whoami',
-  'search',
-  'list_pages',
-  'get_page',
-  'get_tags',
-  'get_links',
-  'get_backlinks',
-  'traverse_graph',
-  'get_timeline',
-  'get_calibration_profile',
-  'find_experts',
-  'find_trajectory',
-] as const;
-
-export const SHARED_MCP_WRITE_TOOL_NAMES = [
-  'put_page',
-  'delete_page',
-  'restore_page',
-  'add_tag',
-  'remove_tag',
-  'add_link',
-  'remove_link',
-  'add_timeline_entry',
-  'put_raw_data',
-  'revert_version',
-] as const;
-
-export const SHARED_MCP_TOOL_NAMES = [
-  ...SHARED_MCP_READ_TOOL_NAMES,
-  ...SHARED_MCP_WRITE_TOOL_NAMES,
-] as const;
-
 export interface LanMcpGatewayOptions {
   bindAddress: string;
   sidecarPort: number;
@@ -77,8 +38,9 @@ export interface LanMcpGatewayStatus {
 
 const ALLOWED_PATHS = new Set(['/mcp', '/health']);
 const ALLOWED_METHODS = new Set(['GET', 'POST', 'DELETE']);
-const SOURCE_SELECTOR_KEYS = new Set(['source_id', 'sourceId']);
-const SHARED_MCP_TOOL_SET = new Set<string>(SHARED_MCP_TOOL_NAMES);
+// The gateway restricts the MCP protocol surface, not PMBrain tools.
+// Sidecar /mcp is the single authority for tool discovery, scopes,
+// source isolation, and localOnly enforcement for both local and LAN URLs.
 const SHARED_MCP_METHODS = new Set([
   'initialize',
   'notifications/initialized',
@@ -138,105 +100,12 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function objectTreeMatches(
-  root: unknown,
-  predicate: (key: string | undefined, value: unknown) => boolean,
-): boolean {
-  const pending: Array<{ key?: string; value: unknown }> = [{ value: root }];
-  while (pending.length > 0) {
-    const current = pending.pop()!;
-    if (predicate(current.key, current.value)) return true;
-    if (Array.isArray(current.value)) {
-      for (const value of current.value) pending.push({ value });
-      continue;
-    }
-    if (isRecord(current.value)) {
-      for (const [key, value] of Object.entries(current.value)) pending.push({ key, value });
-    }
-  }
-  return false;
-}
-
-function containsSourceSelector(value: unknown): boolean {
-  return objectTreeMatches(value, (key) => Boolean(key && SOURCE_SELECTOR_KEYS.has(key)));
-}
-
-function containsAllSourceValue(value: unknown): boolean {
-  return objectTreeMatches(value, (_key, item) => item === '__all__');
-}
-
-function enablesAllSources(value: unknown): boolean {
-  return objectTreeMatches(value, (key, item) => (
-    (key === 'all_sources' || key === 'allSources') && item === true
-  ));
-}
-
-function blockedToolReason(request: unknown): string | undefined {
-  if (!isRecord(request) || request.method !== 'tools/call' || !isRecord(request.params)) return undefined;
-  const toolName = request.params.name;
-  const args = request.params.arguments;
-  if (typeof toolName !== 'string' || !SHARED_MCP_TOOL_SET.has(toolName)) {
-    return '局域网共享未开放该工具；请在主机本地使用该能力，或等待它完成知识源隔离审计。';
-  }
-  if (containsSourceSelector(args) || containsAllSourceValue(args) || enablesAllSources(args)) {
-    return '局域网共享禁止 Agent 自行指定或绕过知识源范围，请使用管理员分配给该凭据的可读范围。';
-  }
-  return undefined;
-}
-
 function blockedRequestReason(request: unknown): string | undefined {
   if (!isRecord(request) || typeof request.method !== 'string') return undefined;
   if (!SHARED_MCP_METHODS.has(request.method)) {
     return '局域网共享未开放该 MCP 方法；请在主机本地使用该能力，或等待它完成安全审计。';
   }
-  return blockedToolReason(request);
-}
-
-function containsMethod(payload: unknown, method: string): boolean {
-  const requests = Array.isArray(payload) ? payload : [payload];
-  return requests.some(request => isRecord(request) && request.method === method);
-}
-
-function filterToolsListResponse(payload: unknown): unknown {
-  if (Array.isArray(payload)) return payload.map(filterToolsListResponse);
-  if (!isRecord(payload) || !isRecord(payload.result) || !Array.isArray(payload.result.tools)) return payload;
-  return {
-    ...payload,
-    result: {
-      ...payload.result,
-      tools: payload.result.tools.filter(tool => (
-        isRecord(tool) && typeof tool.name === 'string' && SHARED_MCP_TOOL_SET.has(tool.name)
-      )),
-    },
-  };
-}
-
-function filterToolsListWireResponse(body: Buffer, contentType: string | undefined): Buffer | null {
-  const text = body.toString('utf8');
-  if (contentType?.toLowerCase().includes('text/event-stream')) {
-    let parsedEvents = 0;
-    let parseFailed = false;
-    const output = text.split('\n').map((line) => {
-      const carriageReturn = line.endsWith('\r') ? '\r' : '';
-      const content = carriageReturn ? line.slice(0, -1) : line;
-      const match = content.match(/^(\s*data:\s*)(.*)$/);
-      if (!match) return line;
-      if (match[2].trim() === '[DONE]') return line;
-      try {
-        parsedEvents += 1;
-        return `${match[1]}${JSON.stringify(filterToolsListResponse(JSON.parse(match[2])))}${carriageReturn}`;
-      } catch {
-        parseFailed = true;
-        return line;
-      }
-    }).join('\n');
-    return parseFailed || parsedEvents === 0 ? null : Buffer.from(output);
-  }
-  try {
-    return Buffer.from(JSON.stringify(filterToolsListResponse(JSON.parse(text))));
-  } catch {
-    return null;
-  }
+  return undefined;
 }
 
 function requestId(request: unknown): unknown {
@@ -252,7 +121,7 @@ function rpcAccessError(id: unknown, message: string): JsonRecord {
     error: {
       code: -32003,
       message,
-      data: { reason: 'lan_source_scope_guard' },
+      data: { reason: 'lan_gateway_guard' },
     },
   };
 }
@@ -272,7 +141,7 @@ function deniedRpcResponse(payload: unknown): JsonRecord | JsonRecord[] | undefi
   if (!payload.some(request => Boolean(blockedRequestReason(request)))) return undefined;
   return rpcAccessError(
     null,
-    '局域网网关检测到批次中含未开放或越权的工具调用；为避免部分执行，整个批次均未转发。',
+    '局域网网关检测到批次中含未开放的 MCP 方法；为避免部分执行，整个批次均未转发。',
   );
 }
 
@@ -582,7 +451,6 @@ export class LanMcpGateway {
         jsonError(response, 413, `请求体过大，局域网 MCP 上限为 ${LAN_MCP_MAX_BODY_BYTES} 字节。`);
         return;
       }
-      let filterTools = false;
       try {
         const text = body.toString('utf8');
         const payload = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
@@ -591,12 +459,11 @@ export class LanMcpGateway {
           writeRpcDenied(response, denied);
           return;
         }
-        filterTools = containsMethod(payload, 'tools/list');
       } catch {
         writeRpcParseError(response);
         return;
       }
-      this.proxyRequest(request, response, body, filterTools);
+      this.proxyRequest(request, response, body);
       return;
     }
 
@@ -607,7 +474,6 @@ export class LanMcpGateway {
     request: IncomingMessage,
     response: ServerResponse,
     body?: Buffer,
-    filterTools = false,
   ): void {
     const upstream = httpRequest({
       hostname: '127.0.0.1',
@@ -616,54 +482,9 @@ export class LanMcpGateway {
       path: request.url,
       headers: filteredHeaders(request.headers, true),
     });
-    if (filterTools) {
-      upstream.setTimeout(LAN_MCP_BODY_IDLE_TIMEOUT_MS, () => {
-        upstream.destroy(new Error('本机 PMBrain 工具列表响应超时。'));
-      });
-    }
     this.activeRequests.add(upstream);
 
     upstream.on('response', (upstreamResponse) => {
-      if (filterTools) {
-        const chunks: Buffer[] = [];
-        let total = 0;
-        let overflow = false;
-        upstreamResponse.on('data', (chunk) => {
-          if (overflow) return;
-          const value = Buffer.from(chunk);
-          total += value.byteLength;
-          if (total > LAN_MCP_MAX_BODY_BYTES) {
-            overflow = true;
-            chunks.length = 0;
-            return;
-          }
-          chunks.push(value);
-        });
-        upstreamResponse.on('end', () => {
-          if (overflow) {
-            jsonError(response, 502, '本机 PMBrain 返回的工具列表过大，共享请求已拒绝。');
-            return;
-          }
-          const original = Buffer.concat(chunks, total);
-          const contentType = Array.isArray(upstreamResponse.headers['content-type'])
-            ? upstreamResponse.headers['content-type'][0]
-            : upstreamResponse.headers['content-type'];
-          const output = filterToolsListWireResponse(original, contentType);
-          if (!output) {
-            jsonError(response, 502, '本机 PMBrain 返回了无法安全过滤的工具列表，共享请求已拒绝。');
-            return;
-          }
-          const headers = filteredHeaders(upstreamResponse.headers);
-          delete headers['content-length'];
-          headers['content-length'] = String(output.byteLength);
-          response.writeHead(upstreamResponse.statusCode ?? 502, headers);
-          response.end(output);
-        });
-        upstreamResponse.on('error', () => {
-          if (!response.writableEnded) response.destroy();
-        });
-        return;
-      }
       response.writeHead(
         upstreamResponse.statusCode ?? 502,
         filteredHeaders(upstreamResponse.headers),

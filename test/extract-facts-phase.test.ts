@@ -67,6 +67,7 @@ describe('runExtractFacts — happy path', () => {
     expect(r.pagesScanned).toBe(1);
     expect(r.pagesWithFacts).toBe(1);
     expect(r.factsInserted).toBe(2);
+    expect(r.affectedSlugs).toEqual(['people/alice']);
     expect(r.guardTriggered).toBe(false);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
