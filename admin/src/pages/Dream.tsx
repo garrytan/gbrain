@@ -136,8 +136,11 @@ interface DreamData {
   supervisor: {
     running: boolean;
     supervisor_pid: number | null;
+    worker_running?: boolean;
+    worker_pid?: number | null;
     pid_file: string;
-    mode?: 'supervisor' | 'direct-worker' | 'none';
+    mode?: 'supervisor' | 'none';
+    readiness_error?: string;
   };
   quality: {
     takes_quality_runs: Array<{ id: number; verdict: string; overall_score: number; cost_usd: number; created_at: string }>;
@@ -951,7 +954,7 @@ function DreamOpsDiagnostics({
   const failed = countBy(subagent, 'failed');
   const hasLiveQueueProblem = waiting > 0 || active > 0 || failed > 0 || (queue?.stalled_active ?? 0) > 0;
   const latestError = latestErrorJob && hasLiveQueueProblem ? formatDreamJobError(latestErrorJob.error_text ?? '') : '';
-  const stuckReason = !supervisor?.running && waiting > 0
+  const stuckReason = !supervisor?.worker_running && waiting > 0
     ? 'Worker 未运行，subagent 只会排队等待。'
     : queue && queue.stalled_active > 0
       ? '存在锁已过期的 active 子任务，需要取消或等待 Worker 回收。'
@@ -992,8 +995,9 @@ function DreamOpsDiagnostics({
       <div className="dream-ops-grid">
         <section>
           <h4>Worker</h4>
-          <div className="pm-kv"><span>状态</span><b>{supervisor?.running ? 'running' : 'stopped'}</b></div>
-          <div className="pm-kv"><span>PID</span><b>{supervisor?.supervisor_pid ?? '-'}</b></div>
+          <div className="pm-kv"><span>状态</span><b>{supervisor?.worker_running ? 'ready' : supervisor?.running ? 'starting' : 'stopped'}</b></div>
+          <div className="pm-kv"><span>Supervisor PID</span><b>{supervisor?.supervisor_pid ?? '-'}</b></div>
+          <div className="pm-kv"><span>Worker</span><b>{supervisor?.worker_running ? `PID ${supervisor.worker_pid}` : supervisor?.readiness_error ?? 'not ready'}</b></div>
           <div className="pm-kv"><span>模式</span><b>{supervisor?.mode ?? '-'}</b></div>
         </section>
         <section>
@@ -1075,7 +1079,9 @@ function DreamRunPanel({
 
   const [run, setRun] = useState<ConsoleRun | null>(null);
   const [error, setError] = useState('');
+  const [starting, setStarting] = useState(false);
   const running = run?.status === 'running' || run?.status === 'queued';
+  const busy = running || starting;
 
   const activeSources = useMemo(
     () => (sources ?? []).filter(s => !s.archived),
@@ -1151,6 +1157,7 @@ function DreamRunPanel({
   }, [run?.id, run?.status, onDone]);
 
   const start = async (dryRunOverride?: boolean) => {
+    if (busy) return;
     setError('');
     if (runMode === 'meeting' && !input.trim()) {
       setError('请选择需要整理的会议记录文件或文件夹');
@@ -1165,6 +1172,7 @@ function DreamRunPanel({
       setError('超时时间必须是正数分钟');
       return;
     }
+    setStarting(true);
     try {
       const effectiveDryRun = dryRunOverride ?? dryRun;
       const needsSubagentWorker = !effectiveDryRun && (
@@ -1172,7 +1180,7 @@ function DreamRunPanel({
         || runMode === 'meeting'
         || (runMode === 'advanced' && (phase === 'synthesize' || phase === 'patterns'))
       );
-      if (needsSubagentWorker && !supervisor?.running) {
+      if (needsSubagentWorker && !supervisor?.worker_running) {
         await api.startSupervisor();
         onDone?.();
       }
@@ -1202,6 +1210,9 @@ function DreamRunPanel({
       setRun(await api.run(res.runId) as ConsoleRun);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      onDone?.();
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -1253,11 +1264,11 @@ function DreamRunPanel({
           <p>{modeCopy[runMode].description}</p>
         </div>
         <div className="dream-run-actions">
-          <button className="pm-primary dream-primary-action" onClick={() => void start(runMode === 'advanced' ? undefined : false)} disabled={running}>
-            {running ? '正在整理…' : modeCopy[runMode].action}
+          <button className="pm-primary dream-primary-action" onClick={() => void start(runMode === 'advanced' ? undefined : false)} disabled={busy}>
+            {running ? '正在整理…' : starting ? '正在准备 Worker…' : modeCopy[runMode].action}
           </button>
           {!running && runMode !== 'advanced' && (
-            <button className="pm-ghost" onClick={() => void start(true)}>先预览会发生什么</button>
+            <button className="pm-ghost" disabled={starting} onClick={() => void start(true)}>先预览会发生什么</button>
           )}
           {running && <button className="pm-ghost danger" onClick={() => void cancel()}>中止</button>}
         </div>

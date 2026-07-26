@@ -15,25 +15,10 @@ import { loadAllSources, isSourceFederated } from '../core/sources-load.ts';
 import { resolveMainSourceId } from '../core/source-resolver.ts';
 import { ALL_PHASES } from '../core/cycle.ts';
 import { getProviderStatus, listRuns } from './natural-lang/index.ts';
+import { inspectAdminSupervisorStatus } from './admin-supervisor.ts';
 
-export async function getSupervisorStatus(): Promise<{
-  running: boolean;
-  supervisor_pid: number | null;
-  pid_file: string;
-  mode: 'supervisor' | 'direct-worker' | 'none';
-}> {
-  const {
-    DEFAULT_PID_FILE,
-    isExpectedSupervisorProcess,
-    readSupervisorPidRecord,
-  } = await import('../core/minions/supervisor.ts');
-  let supervisorPid: number | null = null;
-  let running = false;
-  const record = readSupervisorPidRecord(DEFAULT_PID_FILE);
-  supervisorPid = record?.pid ?? null;
-  running = record ? isExpectedSupervisorProcess(record) : false;
-  if (running) return { running, supervisor_pid: supervisorPid, pid_file: DEFAULT_PID_FILE, mode: 'supervisor' };
-  return { running: false, supervisor_pid: supervisorPid, pid_file: DEFAULT_PID_FILE, mode: 'none' };
+export async function getSupervisorStatus() {
+  return inspectAdminSupervisorStatus();
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { MinionWorker } from '../core/minions/worker.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { resolveGbrainCliPath } from './autopilot.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -111,6 +112,24 @@ function formatJobDetail(job: MinionJob): string {
   if (job.result != null) lines.push(`  Result: ${JSON.stringify(job.result)}`);
   lines.push(`  Data: ${JSON.stringify(job.data)}`);
   return lines.join('\n');
+}
+
+export function resolveSupervisorWorkerInvocation(
+  cliPathOverride: string | undefined,
+  argv: string[] = process.argv,
+  execPath: string = process.execPath,
+): { cliPath: string; cliArgsPrefix: string[] } {
+  if (cliPathOverride) return { cliPath: cliPathOverride, cliArgsPrefix: [] };
+
+  const entry = argv[1] ?? '';
+  if (/\.(?:[cm]?js|ts)$/i.test(entry)) {
+    return {
+      cliPath: execPath,
+      cliArgsPrefix: [entry],
+    };
+  }
+
+  return { cliPath: resolveGbrainCliPath(), cliArgsPrefix: [] };
 }
 
 export async function runJobs(engine: BrainEngine, args: string[]): Promise<void> {
@@ -1029,8 +1048,6 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         process.exit(1);
       }
 
-      const { resolveGbrainCliPath } = await import('./autopilot.ts');
-
       const concurrency = parseInt(parseFlag(args, '--concurrency') ?? '2', 10);
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const maxCrashes = parseInt(parseFlag(args, '--max-crashes') ?? '10', 10);
@@ -1061,7 +1078,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
       // the supervisor, so the watchdog is on by default here.
       const maxRssMb = parseMaxRssFlag(args) ?? 2048;
 
-      const cliPath = parseFlag(args, '--cli-path') ?? resolveGbrainCliPath();
+      const { cliPath, cliArgsPrefix } = resolveSupervisorWorkerInvocation(parseFlag(args, '--cli-path'));
 
       // --detach: fork a background supervisor, print PID payload, exit 0.
       // Implementation: re-exec the same CLI as a detached child without --detach,
@@ -1072,7 +1089,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         const childArgs = process.argv.slice(2).filter(a => a !== '--detach');
         const child = spawn(process.execPath, [process.argv[1], ...childArgs], {
           detached: true,
-          stdio: ['ignore', 'ignore', 'inherit'],
+          stdio: ['ignore', 'ignore', jsonMode ? 'ignore' : 'inherit'],
           env: process.env,
         });
         child.unref();
@@ -1095,6 +1112,7 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
         maxCrashes,
         healthInterval,
         cliPath,
+        cliArgsPrefix,
         allowShellJobs,
         json: jsonMode,
         maxRssMb,

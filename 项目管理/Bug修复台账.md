@@ -1,4 +1,13 @@
 # Bug 修复台账
+## 2026-07-26 修复 Dream 深度整理 Worker 无法启动
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.60；PMBrain Desktop 1.0.81
+- 标题：修复 Supervisor 无法解析开发端与桌面 Sidecar Worker 入口
+- 描述：深度整理启动前会自动启动 Jobs Supervisor，但原实现只接受独立 `gbrain` 可执行文件；开发端实际使用 `bun + src/cli.ts`，桌面安装包实际使用内置 Bun + `pmbrain-sidecar.js`，因此 Supervisor 在真正创建 PID 和 Worker 前以退出码 1 结束，Admin 又丢弃 stderr，只显示 `supervisor_start_failed_exit_1`。
+- 是否完成：是
+- 最终结果：Supervisor 继续复用原有单一 Worker 架构，但可携带运行时入口参数，开发端和桌面 Sidecar 均能启动 `jobs work`；Admin 保留并脱敏返回启动 stderr，启动后校验 Supervisor PID 记录、父子进程身份、当前实例审计事件和 Worker 进程身份，全部就绪后才提交深度整理。页面增加“正在准备 Worker”状态，失败后恢复按钮并刷新诊断，不再把准备阶段显示成已开始整理。新增回归测试 17 项、桌面端 124 项测试、根项目与桌面类型检查、Admin 生产构建、Sidecar 构建及内置 Bun 运行验证均通过；开发入口与打包后的 Sidecar 均实际完成 Supervisor/Worker 启停。Windows 本机没有可用 Bash，shell 型 verify 检查无法本地执行；其中可直接运行的类型检查与会话解析检查通过，`check:resolver` 仍被既有 Skill 路由警告阻断。未启动真实 Dream 写入，未修改知识库、数据库结构或原始资料。
+
 ## 2026-07-25 修正数据源“同步”误接知识导入任务
 
 - 时间：2026-07-25

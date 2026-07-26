@@ -69,6 +69,8 @@ export type ChildSupervisorEvent =
 export interface ChildWorkerSupervisorOpts {
   /** Path to the gbrain CLI binary. */
   cliPath: string;
+  /** Arguments that select the CLI entrypoint before worker argv (for example ['pmbrain-sidecar.js']). */
+  cliArgsPrefix?: string[];
   /** Worker argv after cliPath (e.g. ['jobs', 'work', '--max-rss', '2048']). */
   args: string[];
   /** Child env. Defaults to a clone of process.env. */
@@ -253,7 +255,7 @@ export class ChildWorkerSupervisor {
       const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(
         this.tiniPath,
         this.opts.cliPath,
-        this.opts.args,
+        [...(this.opts.cliArgsPrefix ?? []), ...this.opts.args],
       );
 
       let child: ChildProcess;
