@@ -9,7 +9,12 @@ import type {
   SetupInfo,
   SetupPayload,
 } from '../main/config-manager.js';
-import type { AdvancedModelConfig, AdvancedModelTier } from '../main/advanced-model-config.js';
+import type {
+  AdvancedModelConfig,
+  AdvancedModelPhase,
+  AdvancedModelTier,
+  AdvancedModelWriteInput,
+} from '../main/advanced-model-config.js';
 import type {
   CredentialKind,
   IntegrationClient,
@@ -31,7 +36,9 @@ import type {
 
 export type {
   AdvancedModelConfig,
+  AdvancedModelPhase,
   AdvancedModelTier,
+  AdvancedModelWriteInput,
   CredentialKind,
   DesktopCloseBehavior,
   DesktopCustomProvider,
@@ -99,7 +106,7 @@ export interface PMBrainDesktopApi {
   chooseDirectory(initialPath?: string): Promise<string | null>;
   getProviderModels(provider: string, touchpoint: DesktopModelTouchpoint): Promise<DesktopProviderModels>;
   getAdvancedModelConfig(): Promise<AdvancedModelConfig>;
-  saveAdvancedModelConfig(values: Partial<Record<AdvancedModelTier, string>>): Promise<AdvancedModelConfig>;
+  saveAdvancedModelConfig(values: AdvancedModelWriteInput): Promise<AdvancedModelConfig>;
   saveSetup(payload: SetupPayload): Promise<DesktopSetupState & { backup?: string | null; reembeddingWarning?: string | null }>;
   configureIntegration(client: IntegrationClient, kind: CredentialKind): Promise<IntegrationResult>;
   copy(value: string): Promise<void>;

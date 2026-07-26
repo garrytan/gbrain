@@ -173,8 +173,8 @@
             </section>
           </div>
           <details class="advanced-block model-advanced" id="advanced-model-settings">
-            <summary>高级：按任务层级指定模型</summary>
-            <div class="advanced-copy">按任务选择供应商和模型即可，不需要手动拼写 <code>provider:model</code>。API Key 会复用上方模型配置；未指定时沿用当前解析结果，保存基础配置不会清空这里的覆盖。</div>
+            <summary>高级：按任务层级与 Dream 阶段指定模型</summary>
+            <div class="advanced-copy">按任务选择供应商和模型即可，不需要手动拼写 <code>provider:model</code>。API Key 会复用上方模型配置。任务层级未指定时跟随普通模型；Dream 阶段未指定时跟随「推理任务」再跟随普通模型。保存上方基础配置不会清空这里的覆盖，请在本区单独保存或清除。</div>
             <div class="advanced-model-grid">
               <article class="advanced-task-card">
                 <div class="advanced-task-heading"><div><b>轻量任务</b><small>规则判断、意图识别、短文本处理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="utility">跟随普通模型</button></div>
@@ -207,6 +207,34 @@
                   <label><span>模型名称</span><span class="model-picker"><input id="advanced-subagent-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="subagent" aria-label="展开子代理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-subagent-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-subagent-model-status"></small></label>
                 </div>
                 <small class="advanced-task-effective" id="advanced-subagent-effective">尚未读取</small>
+              </article>
+            </div>
+            <p class="advanced-section-title">Dream 阶段模型（可选覆盖）</p>
+            <div class="advanced-copy advanced-copy-compact">以下三项优先级高于上方「推理任务」。留空则跟随推理任务 / 普通模型。历史配置里的 MIMO 等覆盖会在这里显示，可修改或点「跟随推理任务」清除。</div>
+            <div class="advanced-model-grid advanced-phase-grid">
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>观点提炼</b><small>Dream propose_takes</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="propose_takes">跟随推理任务</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-propose_takes-provider"><option value="">跟随推理任务</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-propose_takes-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="propose_takes" aria-label="展开观点提炼模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-propose_takes-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-propose_takes-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-propose_takes-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>观点评价</b><small>Dream grade_takes</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="grade_takes">跟随推理任务</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-grade_takes-provider"><option value="">跟随推理任务</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-grade_takes-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="grade_takes" aria-label="展开观点评价模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-grade_takes-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-grade_takes-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-grade_takes-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>校准画像</b><small>Dream calibration_profile</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="calibration_profile">跟随推理任务</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-calibration_profile-provider"><option value="">跟随推理任务</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-calibration_profile-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="calibration_profile" aria-label="展开校准画像模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-calibration_profile-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-calibration_profile-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-calibration_profile-effective">尚未读取</small>
               </article>
             </div>
             <div class="advanced-actions"><small id="advanced-model-status">展开后读取当前高级路由。</small><button type="button" class="solid" id="save-advanced-models" disabled><span>保存高级路由</span><i></i></button></div>

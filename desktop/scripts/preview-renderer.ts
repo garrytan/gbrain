@@ -169,12 +169,19 @@ window.pmbrainDesktop = {
         ? (provider === 'zhipu' ? ['embedding-3', 'embedding-2'] : ['nomic-embed-text'])
         : ['mimo-v2.5-pro', 'mimo-v2-pro']
   }),
-  getAdvancedModelConfig: async () => ({ tiers: {
-    utility: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
-    reasoning: { override: 'deepseek:deepseek-v4-flash', resolved: 'deepseek:deepseek-v4-flash', source: 'models.tier.reasoning' },
-    deep: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
-    subagent: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' }
-  }}),
+  getAdvancedModelConfig: async () => ({
+    tiers: {
+      utility: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
+      reasoning: { override: 'deepseek:deepseek-v4-flash', resolved: 'deepseek:deepseek-v4-flash', source: 'models.tier.reasoning' },
+      deep: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
+      subagent: { override: '', resolved: 'mimo:mimo-v2.5-pro', source: 'models.default' },
+    },
+    phases: {
+      propose_takes: { override: 'mimo:mimo-v2.5-pro', resolved: 'mimo:mimo-v2.5-pro', source: 'models.propose_takes' },
+      grade_takes: { override: '', resolved: 'deepseek:deepseek-v4-flash', source: 'models.tier.reasoning（继承）' },
+      calibration_profile: { override: '', resolved: 'deepseek:deepseek-v4-flash', source: 'models.tier.reasoning（继承）' },
+    },
+  }),
   saveAdvancedModelConfig: async () => window.pmbrainDesktop.getAdvancedModelConfig(),
   saveSetup: async () => window.pmbrainDesktop.getSetup(),
   configureIntegration: async () => ({}),

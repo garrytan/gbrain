@@ -22,7 +22,7 @@ import { listDesktopProviderModels, type DesktopModelTouchpoint } from './model-
 import {
   readAdvancedModelConfig,
   writeAdvancedModelConfig,
-  type AdvancedModelTier,
+  type AdvancedModelWriteInput,
 } from './advanced-model-config.js';
 import {
   ensureBootstrapToken,
@@ -615,12 +615,13 @@ async function syncModelDefaultsToConfigFile(opts: { resetAdvanced?: boolean } =
   if (opts.resetAdvanced) {
     await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.tier.']);
     await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.dream.']);
-  }
-  for (const key of ['models.propose_takes', 'models.grade_takes', 'models.calibration_profile']) {
-    const result = await runCli(runtime(), ['config', 'unset', key]);
-    const message = `${result.stderr}\n${result.stdout}`;
-    if (result.code !== 0 && !/Config key not found:/i.test(message)) {
-      throw new Error(message.trim() || `无法清理旧的 Dream 模型覆盖：${key}`);
+    // 阶段覆盖与 tier 同属高级路由：仅在用户明确重置高级路由时一并清除。
+    for (const key of ['models.propose_takes', 'models.grade_takes', 'models.calibration_profile']) {
+      const result = await runCli(runtime(), ['config', 'unset', key]);
+      const message = `${result.stderr}\n${result.stdout}`;
+      if (result.code !== 0 && !/Config key not found:/i.test(message)) {
+        throw new Error(message.trim() || `无法清理 Dream 阶段模型覆盖：${key}`);
+      }
     }
   }
   await runCliChecked(runtime(), ['config', 'set', 'chat_model', chatModel]);
@@ -1295,8 +1296,8 @@ if (!app.requestSingleInstanceLock()) {
     );
     handleTrustedIpc(
       'desktop:save-advanced-model-config',
-      (_event, values: Partial<Record<AdvancedModelTier, string>>) => withSidecarPausedForModelConfig(
-        () => writeAdvancedModelConfig(runtime(), values),
+      (_event, values: AdvancedModelWriteInput) => withSidecarPausedForModelConfig(
+        () => writeAdvancedModelConfig(runtime(), values ?? {}),
       ),
     );
     handleTrustedIpc('desktop:save-setup', (_event, payload: SetupPayload) => applySetup(payload));

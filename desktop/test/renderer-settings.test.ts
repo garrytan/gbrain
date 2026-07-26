@@ -29,7 +29,10 @@ describe('desktop settings renderer contracts', () => {
     }
     expect(html).toContain('id="advanced-model-settings"');
     expect(html).toContain('id="advanced-utility-provider"');
+    expect(html).toContain('id="advanced-phase-propose_takes-provider"');
+    expect(html).toContain('Dream 阶段模型');
     expect(html).toContain('跟随普通模型');
+    expect(html).toContain('跟随推理任务');
     expect(html).not.toContain('placeholder="例如 provider:model"');
     expect(html).toContain('高级：自定义主源 ID');
     expect(html).toContain('id="docker-help"');
