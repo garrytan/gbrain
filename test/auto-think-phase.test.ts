@@ -145,7 +145,12 @@ describe('runPhaseDrift', () => {
     await engine.setConfig('dream.drift.enabled', 'true');
     await engine.setConfig('dream.drift.lookback_days', '30');
     await engine.setConfig('dream.drift.budget', '1.0');
-    const r = await runPhaseDrift(engine, { dryRun: false, auditPath: join(tmpDir, 'd1.jsonl') });
+    // Stub the judge so CI without ANTHROPIC_API_KEY still completes.
+    const r = await runPhaseDrift(engine, {
+      dryRun: false,
+      auditPath: join(tmpDir, 'd1.jsonl'),
+      judge: async () => ({ drifted: false, confidence: 0.9, reasoning: 'stub-judge' }),
+    });
     expect(r.status).toBe('complete');
     expect((r.totals as { candidates?: number }).candidates).toBeGreaterThanOrEqual(0);
     await engine.setConfig('dream.drift.enabled', 'false');

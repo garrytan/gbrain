@@ -188,10 +188,21 @@ function normalizeCustomProvider(value: DesktopCustomProvider): DesktopCustomPro
   };
 }
 
+/**
+ * Resolve the user home directory for config discovery.
+ * Prefer HOME / USERPROFILE so tests and sandboxed CI runners can isolate
+ * config roots without fighting os.homedir() passwd-entry caching.
+ */
+function resolveUserHome(): string {
+  const fromEnv = (process.env.HOME || process.env.USERPROFILE || '').trim();
+  if (fromEnv) return resolve(fromEnv);
+  return homedir();
+}
+
 function preferredHome(): string {
   const override = process.env.PMBRAIN_HOME?.trim();
   if (override) return join(resolve(override), '.pmbrain');
-  return join(homedir(), '.pmbrain');
+  return join(resolveUserHome(), '.pmbrain');
 }
 
 export function preferredConfigDirectory(): string {
@@ -203,7 +214,7 @@ export function activeConfigDirectory(): string {
   if (process.env.PMBRAIN_HOME?.trim()) return preferred;
   const legacy = process.env.GBRAIN_HOME?.trim()
     ? join(resolve(process.env.GBRAIN_HOME), '.gbrain')
-    : join(homedir(), '.gbrain');
+    : join(resolveUserHome(), '.gbrain');
   if (process.env.GBRAIN_HOME?.trim()) return legacy;
   if (existsSync(join(preferred, 'config.json'))) return preferred;
   if (existsSync(join(legacy, 'config.json'))) return legacy;

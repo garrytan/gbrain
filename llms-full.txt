@@ -754,7 +754,7 @@ PMBrain 是一个支持混合 RAG 搜索的项目管理知识大脑。把你的�
 - **知识图谱**：自动从文档中提取人物、公司、项目之间的关联关系
 - **MCP 接口**：CodeBuddy、Workbuddy、Codex、Cursor、Claude Code、QwenPaw 等 AI 工具在对话中直接调用知识库
 - **GUI 管理控制台**：浏览器导入资料、浏览知识库、审批观点、自然语言任务、MCP 接入配置、任务监控和系统诊断
-- **数据本地化**：知识库存储在你自己的电脑或服务器上，不经过第三方云端
+- **数据本地化**：知识库数据库和原始资料默认保存在本机；使用云端模型时，向量化、聊天、识别所需内容会发送给你配置的模型提供商，使用本地模型可实现完整本地处理
 - **双引擎架构**：PGLite（零配置本地）和 Postgres + pgvector（大规模生产）两种部署方式
 
 ---
@@ -822,7 +822,6 @@ pmbrain serve --http --port 3131
 | `.xlsx` / `.xlsm` / `.xls` | Excel 表格 |
 | `.csv` | 表格数据 |
 | `.png` / `.jpg` / `.jpeg` / `.gif` / `.webp` / `.heic` / `.heif` / `.avif` | 图片和扫描件 |
-| `.mp3` / `.wav` / `.m4a` | 音频文件（自动转写） |
 
 ```powershell
 pmbrain sources add my-project --path "D:\项目文档"

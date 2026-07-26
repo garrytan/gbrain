@@ -30,7 +30,8 @@ import type { RerankInput, RerankResult } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
-const DIMS = 1536; // gateway default embedding dim
+// Match DEFAULT_EMBEDDING_DIMENSIONS (1280) so schema + query embed agree.
+const DIMS = 1280;
 const FAKE_EMB = Array.from({ length: DIMS }, (_, j) => (j === 0 ? 1 : 0.01));
 
 function stubEmbeddings(): void {
@@ -40,32 +41,9 @@ function stubEmbeddings(): void {
 }
 
 beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-
-  // Seed pages whose content includes a shared keyword so the keyword
-  // path will match and produce a candidate pool of 4+ items. putPage
-  // alone doesn't populate content_chunks (the table searchKeyword
-  // queries) — upsertChunks does that, and we manually seed it here
-  // so keyword search has rows to find without needing the full
-  // chunker + embed pipeline.
-  const pages: Array<[string, PageInput, string]> = [
-    ['notes/alpha', { type: 'note', title: 'Alpha Note', compiled_truth: 'alpha keyword content one' }, 'alpha keyword content one chunk'],
-    ['notes/beta',  { type: 'note', title: 'Beta Note',  compiled_truth: 'alpha keyword content two' }, 'alpha keyword content two chunk'],
-    ['notes/gamma', { type: 'note', title: 'Gamma Note', compiled_truth: 'alpha keyword content three' }, 'alpha keyword content three chunk'],
-    ['notes/delta', { type: 'note', title: 'Delta Note', compiled_truth: 'alpha keyword content four' }, 'alpha keyword content four chunk'],
-  ];
-  for (const [slug, page, chunkText] of pages) {
-    await engine.putPage(slug, page);
-    await engine.upsertChunks(slug, [
-      { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
-    ]);
-  }
-
-  // Configure with sk-test + stubbed embed transport. We DO need the
-  // gateway available (env set + transport stubbed) so hybridSearch
-  // takes the main RRF path — the keyword-only fallback at ~hybrid.ts:409
+  // Pin gateway dims before initSchema so PGLite sizes vector(N) correctly.
+  // We DO need the gateway available (env set + transport stubbed) so
+  // hybridSearch takes the main RRF path — the keyword-only fallback
   // early-returns BEFORE applyReranker, so a setup that lacks embedding
   // would never exercise the reranker integration.
   //
@@ -79,6 +57,29 @@ beforeAll(async () => {
     env: { OPENAI_API_KEY: 'sk-test' },
   });
   stubEmbeddings();
+
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+
+  // Seed pages whose content includes a shared keyword so the keyword
+  // path will match and produce a candidate pool of 4+ items. putPage
+  // alone doesn't populate content_chunks (the table searchKeyword
+  // queries) — upsertChunks does that, and we manually seed it here
+  // so keyword search has rows to find without needing the full
+  // chunker + embed pipeline. Distinct-enough text avoids Jaccard collapse.
+  const pages: Array<[string, PageInput, string]> = [
+    ['notes/alpha', { type: 'note', title: 'Alpha Note', compiled_truth: 'alpha keyword content one quantum' }, 'alpha keyword content one quantum chunk'],
+    ['notes/beta',  { type: 'note', title: 'Beta Note',  compiled_truth: 'alpha keyword content two cooking' }, 'alpha keyword content two cooking chunk'],
+    ['notes/gamma', { type: 'note', title: 'Gamma Note', compiled_truth: 'alpha keyword content three garden' }, 'alpha keyword content three garden chunk'],
+    ['notes/delta', { type: 'note', title: 'Delta Note', compiled_truth: 'alpha keyword content four markets' }, 'alpha keyword content four markets chunk'],
+  ];
+  for (const [slug, page, chunkText] of pages) {
+    await engine.putPage(slug, page);
+    await engine.upsertChunks(slug, [
+      { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
+    ]);
+  }
 });
 
 afterAll(async () => {

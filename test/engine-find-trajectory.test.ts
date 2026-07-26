@@ -22,10 +22,21 @@ import {
   DEFAULT_REGRESSION_THRESHOLD,
 } from '../src/core/trajectory.ts';
 import type { TrajectoryPoint } from '../src/core/engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { DEFAULT_EMBEDDING_DIMENSIONS } from '../src/core/ai/defaults.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Pin schema dim before initSchema. Ambient/user gateway config (or a prior
+  // shard file) can size facts.embedding to a non-default width; inserts below
+  // must match. Mirror operations-find-trajectory.test.ts.
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -33,6 +44,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {
@@ -40,16 +52,21 @@ beforeEach(async () => {
   await engine.executeRaw(`DELETE FROM sources WHERE id LIKE 'traj-%'`);
 });
 
+// v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1280 (ZE Matryoshka).
+// Fresh PGLite schemas size facts.embedding as vector(1280); inserting
+// 1536-dim vectors throws "expected 1280 dimensions, not 1536".
+const TRAJ_DIMS = 1280;
+
 function vecForMetric(metric: string, offset: number): string {
   // Deterministic per-metric/offset embedding: each metric gets a
   // unit-vector in a different "direction" of the embedding space, with
   // a small perturbation per offset so consecutive same-metric facts
   // are very-similar-but-not-identical (drift score lands between 0 and
   // some small value).
-  const a = new Float32Array(1536);
-  const idx = (metric.charCodeAt(0) + offset) % 1536;
+  const a = new Float32Array(TRAJ_DIMS);
+  const idx = (metric.charCodeAt(0) + offset) % TRAJ_DIMS;
   a[idx] = 1.0;
-  a[(idx + 1) % 1536] = 0.05 * offset;  // tiny drift between consecutive
+  a[(idx + 1) % TRAJ_DIMS] = 0.05 * offset;  // tiny drift between consecutive
   return '[' + Array.from(a).join(',') + ']';
 }
 

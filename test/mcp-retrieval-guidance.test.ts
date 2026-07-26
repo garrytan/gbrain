@@ -6,6 +6,8 @@ const emptySearchEngine = {
   searchKeyword: async () => [],
   listPages: async () => [],
   getPage: async () => null,
+  // Prefer keyword-only MCP search so this mock does not need a full hybrid engine.
+  getConfig: async (key: string) => (key === 'search.mcp_keyword_only' ? 'true' : null),
 } as any;
 
 function parseFirstText(result: Awaited<ReturnType<typeof dispatchToolCall>>): any {

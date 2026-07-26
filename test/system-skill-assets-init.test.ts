@@ -48,8 +48,8 @@ describe('system skill asset initialization', () => {
   });
 
   test('desktop package verification requires bundled system skill assets', () => {
-    expect(verifyPackageSrc).toContain("join(runtimeRoot, 'skills', '_brain-filing-rules.json')");
-    expect(verifyPackageSrc).toContain("join(runtimeRoot, 'skills', '_brain-filing-rules.md')");
+    expect(verifyPackageSrc).toContain("join(shape.runtimeRoot, 'skills', '_brain-filing-rules.json')");
+    expect(verifyPackageSrc).toContain("join(shape.runtimeRoot, 'skills', '_brain-filing-rules.md')");
   });
 
   test('dream validates ad-hoc input paths before cycle execution', () => {

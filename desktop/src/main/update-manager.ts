@@ -45,10 +45,14 @@ function updateFileName(info: UpdateInfo): string | undefined {
   const candidate = info.downloadedFile || info.files?.[0]?.url;
   if (!candidate) return undefined;
   const clean = candidate.split(/[?#]/, 1)[0];
+  // electron-updater may report a Windows path (C:\cache\file.exe) even when
+  // unit tests run on POSIX. path.basename only splits on the host separator,
+  // so normalize backslashes before taking the leaf name.
+  const normalized = clean.replace(/\\/g, '/');
   try {
-    return decodeURIComponent(basename(clean)) || undefined;
+    return decodeURIComponent(basename(normalized)) || undefined;
   } catch {
-    return basename(clean) || undefined;
+    return basename(normalized) || undefined;
   }
 }
 
