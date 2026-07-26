@@ -2744,14 +2744,46 @@ const sync_brain: Operation = {
   localOnly: true,
   handler: async (ctx, p) => {
     const { performSync } = await import('../commands/sync.ts');
-    return performSync(ctx.engine, {
+    const sourceId = (p.source_id as string | undefined) ?? ctx.sourceId;
+    const resolvedSourceId = sourceId ?? 'default';
+    const noEmbed = (p.no_embed as boolean) || false;
+    const result = await performSync(ctx.engine, {
       repoPath: p.repo as string | undefined,
       dryRun: ctx.dryRun || (p.dry_run as boolean) || false,
-      noEmbed: (p.no_embed as boolean) || false,
+      noEmbed,
       noPull: (p.no_pull as boolean) || false,
       full: (p.full as boolean) || false,
-      sourceId: (p.source_id as string | undefined) ?? ctx.sourceId,
+      sourceId,
     });
+
+    let embedBackfillReason: string | null = result.embeddingDeferred
+      ? 'sync_operation_deferred'
+      : null;
+    if (!embedBackfillReason && result.status === 'up_to_date' && !noEmbed) {
+      const { quoteIdentifier, resolveEmbeddingColumn } = await import('./search/embedding-column.ts');
+      const embeddingColumn = quoteIdentifier(resolveEmbeddingColumn(undefined, ctx.config).name);
+      const rows = await ctx.engine.executeRaw<{ missing: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+            WHERE p.source_id = $1
+              AND p.deleted_at IS NULL
+              AND cc.${embeddingColumn} IS NULL
+         ) AS missing`,
+        [resolvedSourceId],
+      );
+      if (rows[0]?.missing) embedBackfillReason = 'sync_operation_backlog';
+    }
+
+    if (embedBackfillReason) {
+      const { submitEmbedBackfill } = await import('./embed-backfill-submit.ts');
+      const embedBackfill = await submitEmbedBackfill(ctx.engine, resolvedSourceId, {
+        reason: embedBackfillReason,
+      });
+      return { ...result, embed_backfill: embedBackfill };
+    }
+    return result;
   },
   cliHints: { name: 'sync', hidden: true },
 };

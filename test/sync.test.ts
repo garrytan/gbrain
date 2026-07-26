@@ -464,6 +464,41 @@ describe('performSync dry-run never writes', () => {
     expect(typeof result.embedded).toBe('number');
   });
 
+  test('large incremental sync reports automatic embedding deferral', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const seeded = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(seeded.status).toBe('first_sync');
+
+    for (let i = 0; i < 101; i++) {
+      const suffix = String(i).padStart(3, '0');
+      writeFileSync(join(repoPath, `people/large-${suffix}.md`), [
+        '---',
+        'type: person',
+        `title: Large ${suffix}`,
+        '---',
+        '',
+        `Large-sync fixture ${suffix}.`,
+      ].join('\n'));
+    }
+    execSync('git add -A && git commit -m "large incremental batch"', { cwd: repoPath, stdio: 'pipe' });
+
+    const result = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noExtract: true,
+    });
+
+    expect(result.status).toBe('synced');
+    expect(result.added).toBe(101);
+    expect(result.embedded).toBe(0);
+    expect(result.embeddingDeferred).toBe(true);
+  });
+
   test('detached HEAD skips git pull and ingests local working-tree files', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const seeded = await performSync(engine, {

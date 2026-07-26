@@ -196,6 +196,8 @@ export interface SyncResult {
   chunksCreated: number;
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
+  /** True when sync itself auto-deferred embedding because the incremental delta exceeded the inline limit. */
+  embeddingDeferred?: boolean;
   pagesAffected: string[];
   failedFiles?: number; // count of parse failures (Bug 9)
   /**
@@ -2467,7 +2469,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     };
   }
 
-  const noEmbed = opts.noEmbed || totalChanges > 100;
+  const embeddingDeferred = !opts.noEmbed && totalChanges > 100;
+  const noEmbed = opts.noEmbed || embeddingDeferred;
   if (totalChanges > 100) {
     slog(`Large sync (${totalChanges} files). Importing text, deferring embeddings.`);
   }
@@ -3527,6 +3530,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     renamed: filtered.renamed.length,
     chunksCreated,
     embedded,
+    embeddingDeferred,
     pagesAffected,
   };
 }
