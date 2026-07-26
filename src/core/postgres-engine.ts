@@ -67,6 +67,7 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 
@@ -1407,9 +1408,10 @@ export class PostgresEngine implements BrainEngine {
     // paths, so the merge must happen inside the UPDATE (parity with
     // pglite-engine.updateSourceConfig, which already uses JSONB `||`).
     //
-    // The CASE normalizes historical bad shapes inline (so `config` is re-read
-    // against the row-locked latest version — a CTE/subquery snapshot would
-    // reintroduce the lost-update race under READ COMMITTED): older code paths
+    // The shared SQL coercion normalizes historical bad shapes inline (so
+    // `config` is re-read against the row-locked latest version — a detached
+    // read/normalize/write cycle would reintroduce the lost-update race under
+    // READ COMMITTED): older code paths
     // could store config as a JSONB string (double-encoded) or as a JSONB array
     // of patch objects. We coerce those to a flat object before the `||` merge
     // so doctor and source routing keep getting flat keys.
@@ -1435,24 +1437,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       UPDATE sources
-         SET config =
-           CASE
-             WHEN jsonb_typeof(config) = 'object' THEN config
-             WHEN jsonb_typeof(config) = 'string'
-               THEN CASE
-                 WHEN (config #>> '{}') IS JSON
-                   THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
-                 ELSE '{}'::jsonb
-               END
-             WHEN jsonb_typeof(config) = 'array'
-               THEN COALESCE(
-                 (SELECT jsonb_object_agg(kv.key, kv.value)
-                    FROM jsonb_array_elements(config) elem,
-                         jsonb_each(elem) kv),
-                 '{}'::jsonb
-               )
-             ELSE '{}'::jsonb
-           END
+         SET config = ${sql.unsafe(SOURCE_CONFIG_OBJECT_SQL)}
            || ${sql.json(patch as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
     `;

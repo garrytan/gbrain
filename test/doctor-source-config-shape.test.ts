@@ -39,6 +39,8 @@ describe('checkSourceConfigShape (#2829)', () => {
     expect(result.message).toContain('#2829');
     // Paste-ready repair SQL is part of the hint.
     expect(result.message).toContain('UPDATE sources SET config');
+    expect(result.message).toContain('jsonb_array_elements');
+    expect(result.message).toContain('IS JSON');
   });
 
   test('detection query targets the exact jsonb_typeof predicate', async () => {

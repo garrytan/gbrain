@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
+import { REPAIR_SOURCE_CONFIG_SQL } from '../core/source-config-sql.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
@@ -615,10 +616,8 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
         `${rows.length} source(s) have a non-object config — a JSON string/scalar ` +
         `instead of an object (the #2829 re-wrapping bug): ${affected}. ` +
         `Federation and ACL settings on these sources won't be read correctly. ` +
-        `Repair by running any 'gbrain sources' config write (self-heals up to 10 ` +
-        `nested layers), or in SQL: ` +
-        `UPDATE sources SET config = (config #>> '{}')::jsonb ` +
-        `WHERE jsonb_typeof(config) <> 'object';`,
+        `Repair by running any 'gbrain sources' config write (self-heals nested ` +
+        `strings and recoverable arrays), or in SQL: ${REPAIR_SOURCE_CONFIG_SQL}`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

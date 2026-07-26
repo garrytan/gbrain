@@ -102,8 +102,24 @@ describe('localFederatedSourceIds — CLI-side scope computation', () => {
   });
 
   test('single federated source (the resolved one) keeps the scalar fast path', async () => {
-    const solo = { executeRaw: async () => [{ id: 'default' }] } as any;
+    const solo = { executeRaw: async () => [{ id: 'default', config: { federated: true } }] } as any;
     expect(await localFederatedSourceIds(solo, 'default', 'seed_default')).toBeUndefined();
+  });
+
+  test('historical string and array config shapes remain federated', async () => {
+    const historical = {
+      executeRaw: async () => [
+        { id: 'default', config: { federated: true }, archived: false },
+        { id: 'nested', config: JSON.stringify(JSON.stringify({ federated: true })), archived: false },
+        { id: 'array', config: ['{"remote_url":"x"}', { federated: true }], archived: false },
+        { id: 'archived', config: ['{}', { federated: true }], archived: true },
+      ],
+    } as any;
+    expect(await localFederatedSourceIds(historical, 'default', 'seed_default')).toEqual([
+      'default',
+      'nested',
+      'array',
+    ]);
   });
 });
 
