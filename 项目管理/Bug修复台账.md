@@ -1,5 +1,14 @@
 # Bug 修复台账
 
+## 2026-07-26 修复 Windows 本地 Bash 聚合验证入口
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.64
+- 标题：配置 Git Bash 并让 Windows Bun 显式调用 Shell 检查脚本
+- 描述：Windows 已启用 WSL2，但只有 Docker Desktop 内部发行版，`bash` 入口无法提供可用的 `/bin/bash`；电脑已有 Git Bash，但其目录未加入用户 PATH。补齐 Bash 后，Windows 版 Bun 对 package scripts 中直接写入的 `.sh` 路径仍不会按 Unix shebang 执行，导致聚合验证的多数检查在真正运行前报 `bun: command not found: scripts/*.sh`。
+- 是否完成：是
+- 最终结果：将 `D:\Program Files\Git\bin` 加入当前用户永久 PATH，Git Bash 5.2.37 可直接调用；本机用户级 `GBRAIN_VERIFY_TIMEOUT` 设为 300 秒，适配 Windows 较慢的逐文件隐私扫描。package scripts 对 Shell 检查统一显式使用 `bash scripts/*.sh`，Linux、macOS 行为不变。`bun run verify` 已完整启动并结束 29 项检查，25 项通过；剩余 4 项为真实仓库检查失败：Windows WASM 编译符号检查无输出、指标词典生成物未同步、`src/commands/enrich.ts` 未登记 operations allowlist、Skill resolver 存在既有路由数据问题。未修改用户知识库、数据库或原始资料。
+
 ## 2026-07-26 修复模型配置分裂与 Dream 成果归零
 
 - 时间：2026-07-26
