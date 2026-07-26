@@ -1,5 +1,14 @@
 # Bug 修复台账
 
+## 2026-07-26 修复 GitHub Actions CI 失败（verify / test / serial / desktop-runtime）
+
+- 时间：2026-07-26
+- 版本号：PMBrain 1.1.67；PMBrain Desktop 1.0.87
+- 标题：修复 Actions 上 Test 工作流多项失败直至绿灯
+- 描述：`verify` 因 mock.module 测试未串行隔离、指标词典未同步、`enrich.ts` 未登记 operations allowlist 失败；`test` 中 `findTrajectory` 仍按 1536 维插入而默认 schema 为 1280 维；`serial-tests` 中 hybrid 在融合前/后各做一次 type-diversity，同类型 5 条候选被压成 2 条导致 autocut/reranker 断言失败；`desktop-runtime` 在 Linux/macOS 上 `os.homedir()` 不跟随测试 HOME、以及 Windows 路径 basename 在 POSIX 下不截取文件名。
+- 是否完成：进行中
+- 最终结果：待 push 后 Actions 确认全绿。
+
 ## 2026-07-26 修复 Dream 无感清空旧向量与桌面模型路由未生效
 
 - 时间：2026-07-26

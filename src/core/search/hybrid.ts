@@ -856,8 +856,17 @@ export async function hybridSearch(
         return { keywords, titles };
       }),
     );
-    keywordResults = dedupResults(variantResults.flatMap((result) => result.keywords));
-    titleResults = dedupResults(variantResults.flatMap((result) => result.titles));
+    // Arm-level dedup must NOT apply type-diversity: that layer is meant for
+    // the fused candidate pool. Running it here AND again post-fusion on a
+    // single-type corpus collapses recall twice (ceil(n*0.6) → ceil(m*0.6)),
+    // e.g. 5 notes → 3 → 2, which breaks autocut/reranker integration tests
+    // that seed a homogeneous note pool. Text/source/per-page caps still run.
+    keywordResults = dedupResults(variantResults.flatMap((result) => result.keywords), {
+      maxTypeRatio: 1,
+    });
+    titleResults = dedupResults(variantResults.flatMap((result) => result.titles), {
+      maxTypeRatio: 1,
+    });
   }
 
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for

@@ -28,29 +28,12 @@ import type { RerankInput, RerankResult } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
-const DIMS = 1536;
+// Match DEFAULT_EMBEDDING_DIMENSIONS (1280) so schema + query embed agree.
+const DIMS = 1280;
 const FAKE_EMB = Array.from({ length: DIMS }, (_, j) => (j === 0 ? 1 : 0.01));
 
 beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-
-  // Seed 5 pages sharing a keyword so the candidate pool is 5 deep.
-  const pages: Array<[string, PageInput, string]> = [
-    ['notes/a', { type: 'note', title: 'A', compiled_truth: 'alpha keyword one' }, 'alpha keyword one chunk'],
-    ['notes/b', { type: 'note', title: 'B', compiled_truth: 'alpha keyword two' }, 'alpha keyword two chunk'],
-    ['notes/c', { type: 'note', title: 'C', compiled_truth: 'alpha keyword three' }, 'alpha keyword three chunk'],
-    ['notes/d', { type: 'note', title: 'D', compiled_truth: 'alpha keyword four' }, 'alpha keyword four chunk'],
-    ['notes/e', { type: 'note', title: 'E', compiled_truth: 'alpha keyword five' }, 'alpha keyword five chunk'],
-  ];
-  for (const [slug, page, chunkText] of pages) {
-    await engine.putPage(slug, page);
-    await engine.upsertChunks(slug, [
-      { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
-    ]);
-  }
-
+  // Pin gateway dims before initSchema so PGLite sizes vector(N) correctly.
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: DIMS,
@@ -59,6 +42,26 @@ beforeAll(async () => {
   __setEmbedTransportForTests(async (args: any) => ({
     embeddings: args.values.map(() => FAKE_EMB),
   }) as any);
+
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+
+  // Seed 5 pages sharing a keyword so the candidate pool is 5 deep.
+  // Distinct-enough chunk text so Jaccard text-dedup does not collapse the pool.
+  const pages: Array<[string, PageInput, string]> = [
+    ['notes/a', { type: 'note', title: 'A', compiled_truth: 'alpha keyword one quantum physics' }, 'alpha keyword one quantum physics chunk'],
+    ['notes/b', { type: 'note', title: 'B', compiled_truth: 'alpha keyword two cooking recipes' }, 'alpha keyword two cooking recipes chunk'],
+    ['notes/c', { type: 'note', title: 'C', compiled_truth: 'alpha keyword three garden soil' }, 'alpha keyword three garden soil chunk'],
+    ['notes/d', { type: 'note', title: 'D', compiled_truth: 'alpha keyword four market analysis' }, 'alpha keyword four market analysis chunk'],
+    ['notes/e', { type: 'note', title: 'E', compiled_truth: 'alpha keyword five architecture styles' }, 'alpha keyword five architecture styles chunk'],
+  ];
+  for (const [slug, page, chunkText] of pages) {
+    await engine.putPage(slug, page);
+    await engine.upsertChunks(slug, [
+      { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
+    ]);
+  }
 });
 
 afterAll(async () => {
