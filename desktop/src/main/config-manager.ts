@@ -79,6 +79,7 @@ export interface SetupPayload {
   engine: 'pglite' | 'postgres';
   theme?: DesktopTheme;
   resetAdvancedModelRouting?: boolean;
+  confirmEmbeddingRebuild?: boolean;
   databasePath?: string;
   databaseUrl?: string;
   knowledgeDirectory?: string;
@@ -222,10 +223,7 @@ export function normalizePgliteDatabasePath(input: string): string {
 }
 
 function desktopWriteConfigPath(): string {
-  if (process.env.GBRAIN_HOME?.trim() && !process.env.PMBRAIN_HOME?.trim()) {
-    return desktopConfigPath();
-  }
-  return join(preferredConfigDirectory(), 'config.json');
+  return desktopConfigPath();
 }
 
 function stripJsonBom(content: string): string {

@@ -20,11 +20,12 @@ describe('embedding model switch contract', () => {
     expect(configCommand).toContain('saveConfig(current)');
   });
 
-  test('default Dream cycles retain the stale-embedding resume phase', () => {
+  test('default Dream cycles only fill missing vectors and never invalidate a model implicitly', () => {
     expect(cycle).toMatch(/export const ALL_PHASES[\s\S]*?'embed'/);
     expect(cycle).toContain('runEmbedCore(engine, { stale: true, dryRun })');
-    expect(readFileSync(resolve('src/commands/embed.ts'), 'utf8')).toContain(
-      'invalidateMismatchedEmbeddingModels(engine, getEmbeddingModel())',
-    );
+    const embed = readFileSync(resolve('src/commands/embed.ts'), 'utf8');
+    expect(embed).toContain('preflightEmbeddingModelChange(engine, !!opts.dryRun)');
+    expect(embed).not.toContain('invalidateMismatchedEmbeddingModels(engine, getEmbeddingModel())');
+    expect(embed).toContain('Dream、同步或普通向量补全时自动清空已有向量');
   });
 });

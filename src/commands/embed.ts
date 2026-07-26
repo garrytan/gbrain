@@ -10,6 +10,7 @@ import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
+import { splitProviderModelId } from '../core/model-id.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -152,6 +153,38 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
   throw new EmbeddingDimMismatchError(recipe);
 }
 
+function equivalentEmbeddingModelId(existing: string, configured: string): boolean {
+  const current = splitProviderModelId(existing);
+  const target = splitProviderModelId(configured);
+  const currentProvider = current.provider?.trim().toLowerCase() ?? null;
+  const targetProvider = target.provider?.trim().toLowerCase() ?? null;
+  if (current.model.trim().toLowerCase() !== target.model.trim().toLowerCase()) return false;
+  return currentProvider === targetProvider || currentProvider === null || targetProvider === null;
+}
+
+async function preflightEmbeddingModelChange(engine: BrainEngine, dryRun: boolean): Promise<void> {
+  if (dryRun) return;
+  const configuredModel = getEmbeddingModel();
+  const rows = await engine.executeRaw<{ model: string | null; count: string | number }>(
+    `SELECT model, COUNT(*)::bigint AS count
+       FROM content_chunks
+      WHERE embedding IS NOT NULL
+      GROUP BY model`,
+  );
+  const conflicts = (Array.isArray(rows) ? rows : [])
+    .filter((row) => typeof row.model === 'string'
+      && row.model.trim().length > 0
+      && !equivalentEmbeddingModelId(row.model, configuredModel))
+    .map((row) => `${row.model}（${Number(row.count)} 条）`);
+  if (conflicts.length === 0) return;
+
+  throw new Error(
+    `检测到已有向量使用 ${conflicts.join('、')}，当前配置为 ${configuredModel}。` +
+    'PMBrain 不会在 Dream、同步或普通向量补全时自动清空已有向量。' +
+    '桌面端用户请到“模型配置”确认是否更换并重建；CLI 用户请显式执行 embedding_model 切换命令。',
+  );
+}
+
 export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
@@ -176,14 +209,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // fresh-install bug class before the worker pool spends 20 parallel calls
   // hitting raw Postgres dimension errors.
   await preflightDimMismatch(engine, !!opts.dryRun);
-
-  if (opts.stale && !opts.dryRun) {
-    const { invalidateMismatchedEmbeddingModels } = await import('../core/embedding-dimension-alignment.ts');
-    const invalidated = await invalidateMismatchedEmbeddingModels(engine, getEmbeddingModel());
-    if (invalidated > 0) {
-      slog(`Invalidated ${invalidated} embeddings created by a different model; rebuilding with the current model.`);
-    }
-  }
+  await preflightEmbeddingModelChange(engine, !!opts.dryRun);
 
   const result: EmbedResult = {
     embedded: 0,

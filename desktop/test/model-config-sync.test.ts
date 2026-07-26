@@ -18,4 +18,17 @@ describe('desktop simple-model config.json sync', () => {
     expect(renderer).toContain('resetAdvancedModelRouting: false');
     expect(source).toContain('await syncModelDefaultsToConfigFile();');
   });
+
+  test('desktop ordinary model removes hidden legacy Dream phase overrides', () => {
+    expect(source).toContain("'models.propose_takes'");
+    expect(source).toContain("'models.grade_takes'");
+    expect(source).toContain("'models.calibration_profile'");
+    expect(source).toContain("['config', 'unset', key]");
+  });
+
+  test('embedding replacement requires renderer and main-process confirmation', () => {
+    expect(renderer).toContain('confirmEmbeddingRebuild = true');
+    expect(renderer).toContain('confirmEmbeddingRebuild,');
+    expect(source).toContain('payload.confirmEmbeddingRebuild !== true');
+  });
 });

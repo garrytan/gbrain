@@ -31,7 +31,7 @@ describe('desktop system orchestration contracts', () => {
   });
 
   test('prepares Postgres before migrations and sidecar startup paths', () => {
-    expect(main).toMatch(/async function applySetupOnce[\s\S]*?await ensureRuntimeReady\(\);\s+const hadRunningSidecar[\s\S]*?saved = saveSetup\(payload\);/);
+    expect(main).toMatch(/async function applySetupOnce[\s\S]*?await ensureRuntimeReady\(\);[\s\S]*?const hadRunningSidecar[\s\S]*?saved = saveSetup\(payload\);/);
     expect(main).toMatch(
       /await prepareConfiguredDatabase\(\);\s+const migrationRequired = await migrateConfiguredInstallation\(\);/,
     );
@@ -92,23 +92,20 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain('revealMainWindow');
   });
 
-  test('invalidates and rebuilds embeddings on every model change with Dream-safe resume state', () => {
+  test('only rebuilds embeddings after explicit desktop confirmation', () => {
     expect(main).toContain('saved.embeddingModelChanged');
-    expect(main).toContain("alignmentArgs.push('--force-reembed')");
+    expect(main).toContain('payload.confirmEmbeddingRebuild !== true');
+    expect(main).toContain("'--force-reembed'");
     expect(main).toContain("['embed', '--stale', '--catch-up', '--json']");
     expect(main).toContain('(result.total_chunks ?? 0) - (result.embedded ?? 0)');
     expect(main).toContain('if (!embeddingSwitchCommitted) restoreConfig(saved.snapshot)');
-    expect(main).toContain('Dream 会从剩余内容继续');
+    expect(main).toContain('Dream 不会自行触发模型迁移');
   });
 
-  test('repairs legacy embedding dimensions before the sidecar accepts imports or captures', () => {
-    expect(main).toContain('reconcileConfiguredEmbeddingIndex');
-    expect(main).toContain('`--requested-dimensions=${dimensions}`');
+  test('never repairs or clears vectors during ordinary desktop startup', () => {
+    expect(main).not.toContain('reconcileConfiguredEmbeddingIndex');
     expect(main).toMatch(
-      /const migrationRequired = await migrateConfiguredInstallation\(\);[\s\S]*?reconcileConfiguredEmbeddingIndex\(migrationRequired\)[\s\S]*?markDesktopMigration/,
-    );
-    expect(main).toMatch(
-      /reconcileConfiguredEmbeddingIndex\(migrationRequired\)[\s\S]*?startSidecar\(false\)/,
+      /const migrationRequired = await migrateConfiguredInstallation\(\);[\s\S]*?if \(migrationRequired\) markDesktopMigration[\s\S]*?startSidecar\(false\)/,
     );
   });
 

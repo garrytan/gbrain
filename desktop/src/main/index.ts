@@ -616,79 +616,15 @@ async function syncModelDefaultsToConfigFile(opts: { resetAdvanced?: boolean } =
     await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.tier.']);
     await runCliChecked(runtime(), ['config', 'unset', '--pattern', 'models.dream.']);
   }
+  for (const key of ['models.propose_takes', 'models.grade_takes', 'models.calibration_profile']) {
+    const result = await runCli(runtime(), ['config', 'unset', key]);
+    const message = `${result.stderr}\n${result.stdout}`;
+    if (result.code !== 0 && !/Config key not found:/i.test(message)) {
+      throw new Error(message.trim() || `无法清理旧的 Dream 模型覆盖：${key}`);
+    }
+  }
   await runCliChecked(runtime(), ['config', 'set', 'chat_model', chatModel]);
   await runCliChecked(runtime(), ['config', 'set', 'models.default', chatModel]);
-}
-
-async function reconcileConfiguredEmbeddingIndex(probeModel: boolean): Promise<string | null> {
-  const setup = getSetupInfo();
-  const model = setup.current.embeddingModel?.trim();
-  let dimensions = setup.current.embeddingDimensions;
-  if (!model || !Number.isInteger(dimensions) || (dimensions ?? 0) <= 0) return null;
-
-  if (probeModel) {
-    sendStartupProgress({
-      visible: true,
-      stage: 'migration',
-      title: '正在检查旧版向量兼容性',
-      message: `正在确认当前向量模型能否继续使用现有 ${dimensions} 维索引。支持旧维度时不会重建向量。`,
-    });
-    const probe = await runCliChecked(runtime(), [
-      'models',
-      'detect-embedding-dimension',
-      '--json',
-      `--requested-dimensions=${dimensions}`,
-    ]);
-    const detected = JSON.parse(probe.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
-      dimensions?: number;
-    };
-    if (!Number.isInteger(detected.dimensions) || (detected.dimensions ?? 0) <= 0) {
-      throw new Error('无法从向量模型响应中判断有效维度。');
-    }
-    if (detected.dimensions !== dimensions) {
-      updateSavedEmbeddingDimension(setup.configPath, detected.dimensions!);
-      dimensions = detected.dimensions;
-    }
-  }
-
-  const alignment = await runCliChecked(runtime(), [
-    'models',
-    'align-embedding-dimension',
-    '--yes',
-    '--json',
-  ]);
-  const result = JSON.parse(alignment.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
-    status?: 'already_aligned' | 'aligned' | 'invalidated';
-    cleared_embeddings?: number;
-  };
-  if (result.status === 'already_aligned') return null;
-  if (result.status !== 'aligned' && result.status !== 'invalidated') {
-    throw new Error('向量索引兼容性检查没有返回有效结果。');
-  }
-
-  sendStartupProgress({
-    visible: true,
-    stage: 'migration',
-    title: '正在恢复旧版搜索索引',
-    message: `已保留页面、分块正文和原始资料，正在自动重新生成 ${result.cleared_embeddings ?? 0} 条兼容向量。`,
-  });
-  const reembed = await runCli(runtime(), ['embed', '--stale', '--catch-up', '--json']);
-  if (reembed.code !== 0) {
-    return (reembed.stderr || reembed.stdout).trim()
-      || '兼容向量尚未全部恢复，Dream 会从剩余内容继续处理。';
-  }
-  try {
-    const rebuild = JSON.parse(reembed.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
-      embedded?: number;
-      total_chunks?: number;
-    };
-    const pending = Math.max(0, (rebuild.total_chunks ?? 0) - (rebuild.embedded ?? 0));
-    return pending > 0
-      ? `仍有 ${pending} 个分块等待向量化；Dream 下次启动会继续处理。`
-      : null;
-  } catch {
-    return '向量维度已修复，但无法确认重新向量化是否全部完成；Dream 下次启动会继续检查。';
-  }
 }
 
 async function ensureServiceReady(): Promise<SidecarManager> {
@@ -701,8 +637,6 @@ async function ensureServiceReady(): Promise<SidecarManager> {
     await ensureRuntimeReady();
     await prepareConfiguredDatabase();
     const migrationRequired = await migrateConfiguredInstallation();
-    const embeddingWarning = await reconcileConfiguredEmbeddingIndex(migrationRequired);
-    if (embeddingWarning) logger?.write('desktop', embeddingWarning);
     if (migrationRequired) markDesktopMigration(app.getVersion());
     if (!sidecar || currentState?.phase !== 'ready') await startSidecar(false);
     if (!sidecar || currentState?.phase !== 'ready') throw new Error('PMBrain 本地服务尚未就绪。');
@@ -752,6 +686,17 @@ async function currentDesktopSetupState() {
 
 async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
   await ensureRuntimeReady();
+  const previousEmbeddingModel = getSetupInfo().current.embeddingModel?.trim();
+  const requestedEmbeddingModel = payload.modelConfig?.embeddingModel?.trim();
+  if (previousEmbeddingModel
+      && requestedEmbeddingModel
+      && previousEmbeddingModel !== requestedEmbeddingModel
+      && payload.confirmEmbeddingRebuild !== true) {
+    throw new Error(
+      `向量模型将从 ${previousEmbeddingModel} 更换为 ${requestedEmbeddingModel}。` +
+      '必须在桌面端明确确认重新向量化后才能继续。',
+    );
+  }
   const hadRunningSidecar = Boolean(sidecar);
   await stopSidecar();
   let saved: ReturnType<typeof saveSetup>;
@@ -836,24 +781,26 @@ async function applySetupOnce(payload: SetupPayload, setDefaultSource = true) {
     if (migrationRequired) markDesktopMigration(app.getVersion());
     // Keep this as the final fallible setup step: once the DB column is
     // aligned, no later config rollback may restore an incompatible width.
-    sendStartupProgress({
-      visible: true,
-      stage: 'migration',
-      title: '正在准备搜索索引',
-      message: saved.embeddingModelChanged
-        ? '向量模型已更改，正在对齐维度并准备重新生成向量。'
-        : '正在确认现有向量索引与当前配置一致。',
-    });
-    const alignmentArgs = ['models', 'align-embedding-dimension', '--yes', '--json'];
-    if (saved.embeddingModelChanged) alignmentArgs.push('--force-reembed');
-    await runCliChecked(runtime(), alignmentArgs);
-    embeddingSwitchCommitted = saved.embeddingModelChanged;
     if (saved.embeddingModelChanged) {
       sendStartupProgress({
         visible: true,
         stage: 'migration',
+        title: '正在准备搜索索引',
+        message: '你已确认更换向量模型，正在对齐维度并准备重新生成向量。',
+      });
+      await runCliChecked(runtime(), [
+        'models',
+        'align-embedding-dimension',
+        '--yes',
+        '--json',
+        '--force-reembed',
+      ]);
+      embeddingSwitchCommitted = true;
+      sendStartupProgress({
+        visible: true,
+        stage: 'migration',
         title: '正在使用新模型重建向量',
-        message: '旧向量已安全失效，正在重新生成搜索索引。若本次中断，Dream 会从剩余内容继续。',
+        message: '正在重新生成搜索索引。此操作由你在桌面端明确确认；Dream 不会自行触发模型迁移。',
       });
       const reembed = await runCli(runtime(), ['embed', '--stale', '--catch-up', '--json']);
       if (reembed.code !== 0) {

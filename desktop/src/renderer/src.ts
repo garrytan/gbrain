@@ -940,6 +940,7 @@ async function save(): Promise<void> {
     return;
   }
 
+  let confirmEmbeddingRebuild = false;
   // 检测向量化模型是否变更（非首次配置）
   if (!state?.setup?.needsSetup && state?.setup?.current?.embeddingModel) {
     const newEmbeddingModel = composeModelId(embeddingProvider, embeddingModelName);
@@ -953,6 +954,7 @@ async function save(): Promise<void> {
       )) {
         return;
       }
+      confirmEmbeddingRebuild = true;
     }
   }
 
@@ -983,6 +985,7 @@ async function save(): Promise<void> {
   const payload: SetupPayload = {
     engine: selectedEngine(),
     resetAdvancedModelRouting: false,
+    confirmEmbeddingRebuild,
     databasePath: ($<HTMLInputElement>('#database-path')).value,
     databaseUrl: ($<HTMLInputElement>('#database-url')).value,
     knowledgeDirectory,

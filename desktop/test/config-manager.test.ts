@@ -487,7 +487,7 @@ describe('desktop config manager', () => {
     expect(existsSync(desktopConfigPath())).toBe(false);
   });
 
-  test('switching from discovered legacy config to PGLite honors the selected local path', () => {
+  test('desktop reads and writes the same discovered legacy CLI config', () => {
     const root = mkdtempSync(join(tmpdir(), 'pmbrain-desktop-legacy-switch-'));
     roots.push(root);
     const oldUserProfile = process.env.USERPROFILE;
@@ -517,12 +517,12 @@ describe('desktop config manager', () => {
         keys: {},
       });
 
-      const pmbrainConfigPath = join(root, '.pmbrain', 'config.json');
-      const saved = JSON.parse(readFileSync(pmbrainConfigPath, 'utf8'));
+      const saved = JSON.parse(readFileSync(legacyPath, 'utf8'));
       expect(saved.engine).toBe('pglite');
       expect(saved.database_path).toBe(legacyDefault);
       expect(saved.zhipu_api_key).toBe('existing-key');
       expect(existsSync(legacyPath)).toBe(true);
+      expect(existsSync(join(root, '.pmbrain', 'config.json'))).toBe(false);
     } finally {
       if (oldUserProfile === undefined) delete process.env.USERPROFILE;
       else process.env.USERPROFILE = oldUserProfile;
