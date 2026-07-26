@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { isAbsolute, join, relative, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -1153,15 +1153,27 @@ function createSyncBaselineCommit(repoPath: string): void {
 }
 
 /**
+ * True when `childReal` is `rootReal` itself or lives inside it. Both arguments
+ * must already be realpath-resolved. Containment is decided by `relative()`
+ * rather than a string prefix, so it holds on Windows too: `realpathSync`
+ * returns backslash paths there, and a literal `rootReal + '/'` prefix can
+ * never match one. A sibling (`root-evil`) is rejected because `relative`
+ * yields `../root-evil`, and a cross-drive path because it yields an absolute.
+ */
+export function isWithinRoot(childReal: string, rootReal: string): boolean {
+  if (childReal === rootReal) return true;
+  const rel = relative(rootReal, childReal);
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+}
+
+/**
  * #774 NAV-1 TOCTOU: true only if filePath realpath-resolves inside gitRoot.
  * Guards symlink escape at the per-file level (a committed symlink whose
  * target lives outside the repo), not just at scope entry.
  */
 function isPathSafe(filePath: string, gitRoot: string): boolean {
   try {
-    const real = realpathSync(filePath);
-    const rootReal = realpathSync(gitRoot);
-    return real === rootReal || real.startsWith(rootReal + '/');
+    return isWithinRoot(realpathSync(filePath), realpathSync(gitRoot));
   } catch {
     return false;
   }
@@ -1932,7 +1944,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // NAV-1/NAV-2 scope-entry guard: the realpath-resolved scope must live
   // inside the realpath-resolved git root. Catches `--src-subpath ../escape`
   // AND a symlinked subdir pointing outside the repo, before any git op runs.
-  if (syncScopeRoot !== gitContextRoot && !syncScopeRoot.startsWith(gitContextRoot + '/')) {
+  if (!isWithinRoot(syncScopeRoot, gitContextRoot)) {
     throw new Error(
       `Sync scope ${syncScopeRoot} resolves outside git repo ${gitContextRoot}. ` +
       `Refusing to sync: possible path traversal via --src-subpath.`,
