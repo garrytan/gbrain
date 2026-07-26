@@ -191,6 +191,14 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .advanced-copy { padding: 15px 16px 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
 .advanced-copy code { padding: 2px 5px; border-radius: 5px; color: var(--accent); background: var(--accent-soft); font: 11px Consolas, monospace; }
 .advanced-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 16px; }
+.advanced-phase-grid { padding-top: 0; }
+.advanced-section-title {
+  margin: 4px 16px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.advanced-copy-compact { padding-top: 6px; padding-bottom: 0; }
 .advanced-task-card { padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .advanced-task-heading { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 14px; }
 .advanced-task-heading b, .advanced-task-heading small { display: block; }

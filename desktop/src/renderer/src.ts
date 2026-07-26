@@ -1,7 +1,9 @@
 import './style.css';
 import type {
   AdvancedModelConfig,
+  AdvancedModelPhase,
   AdvancedModelTier,
+  AdvancedModelWriteInput,
   CredentialKind,
   DesktopCustomProvider,
   DesktopSystemSettingsPayload,
@@ -28,6 +30,7 @@ let latestSystemSettings: DesktopSystemSettingsState | null = null;
 let lastResult = '';
 let advancedModelsLoaded = false;
 let advancedOverrides: Partial<Record<AdvancedModelTier, string>> = {};
+let advancedPhaseOverrides: Partial<Record<AdvancedModelPhase, string>> = {};
 let loadedKnowledgeDirectory = '';
 let loadedKnowledgeSourceId = '';
 let customProviderDraft: DesktopCustomProvider | null = null;
@@ -39,6 +42,11 @@ const advancedProviderModels: Record<AdvancedModelTier, string[]> = {
   reasoning: [],
   deep: [],
   subagent: [],
+};
+const advancedPhaseProviderModels: Record<AdvancedModelPhase, string[]> = {
+  propose_takes: [],
+  grade_takes: [],
+  calibration_profile: [],
 };
 
 function setNotice(kind: 'error' | 'success', message = ''): void {
@@ -170,6 +178,20 @@ const ADVANCED_TIER_LABELS: Record<AdvancedModelTier, string> = {
   deep: '深度任务',
   subagent: '子代理任务',
 };
+const ADVANCED_PHASES = [
+  'propose_takes',
+  'grade_takes',
+  'calibration_profile',
+] as const satisfies readonly AdvancedModelPhase[];
+const ADVANCED_PHASE_LABELS: Record<AdvancedModelPhase, string> = {
+  propose_takes: '观点提炼',
+  grade_takes: '观点评价',
+  calibration_profile: '校准画像',
+};
+
+function advancedPhaseId(phase: AdvancedModelPhase): string {
+  return `advanced-phase-${phase}`;
+}
 
 function syncProviderKeyField(kind: ModelKind): void {
   const provider = ($<HTMLSelectElement>(`#${kind}-provider`)).value;
@@ -362,6 +384,23 @@ function renderAdvancedModelDropdown(tier: AdvancedModelTier): void {
   }));
 }
 
+function renderAdvancedPhaseModelDropdown(phase: AdvancedModelPhase): void {
+  const prefix = advancedPhaseId(phase);
+  const ul = $<HTMLUListElement>(`#${prefix}-model-dropdown`);
+  const input = $<HTMLInputElement>(`#${prefix}-model-name`);
+  const currentValue = input.value.trim();
+  ul.replaceChildren(...advancedPhaseProviderModels[phase].map(model => {
+    const li = document.createElement('li');
+    li.textContent = model;
+    if (model === currentValue) li.classList.add('selected');
+    li.addEventListener('click', () => {
+      input.value = model;
+      ul.hidden = true;
+    });
+    return li;
+  }));
+}
+
 async function refreshAdvancedProviderModels(tier: AdvancedModelTier, chooseDefault: boolean): Promise<void> {
   const providerSelect = $<HTMLSelectElement>(`#advanced-${tier}-provider`);
   const provider = providerSelect.value;
@@ -398,6 +437,43 @@ async function refreshAdvancedProviderModels(tier: AdvancedModelTier, chooseDefa
   }
 }
 
+async function refreshAdvancedPhaseProviderModels(phase: AdvancedModelPhase, chooseDefault: boolean): Promise<void> {
+  const prefix = advancedPhaseId(phase);
+  const providerSelect = $<HTMLSelectElement>(`#${prefix}-provider`);
+  const provider = providerSelect.value;
+  const input = $<HTMLInputElement>(`#${prefix}-model-name`);
+  const status = $<HTMLElement>(`#${prefix}-model-status`);
+  input.disabled = !provider;
+  status.classList.remove('warning');
+  if (!provider) {
+    advancedPhaseProviderModels[phase] = [];
+    status.textContent = '';
+    status.hidden = true;
+    return;
+  }
+
+  status.hidden = false;
+  status.textContent = '正在加载模型列表…';
+  try {
+    const result = await window.pmbrainDesktop.getProviderModels(provider, 'chat');
+    if (providerSelect.value !== provider) return;
+    advancedPhaseProviderModels[phase] = result.models;
+    if (chooseDefault) input.value = result.models[0] || '';
+    if (!($<HTMLUListElement>(`#${prefix}-model-dropdown`)).hidden) renderAdvancedPhaseModelDropdown(phase);
+    if (result.warning) {
+      status.textContent = result.warning;
+      status.classList.add('warning');
+    } else {
+      status.textContent = '';
+      status.hidden = true;
+    }
+  } catch (error) {
+    status.textContent = `模型列表加载失败：${error instanceof Error ? error.message : String(error)}`;
+    status.classList.add('warning');
+    status.hidden = false;
+  }
+}
+
 function renderAdvancedModelConfig(config: AdvancedModelConfig): void {
   for (const tier of ADVANCED_TIERS) {
     const entry = config.tiers[tier];
@@ -411,6 +487,19 @@ function renderAdvancedModelConfig(config: AdvancedModelConfig): void {
       ? `当前解析：${entry.resolved}${entry.source ? ` · 来源 ${entry.source}` : ''}`
       : '当前没有可用路由';
   }
+  for (const phase of ADVANCED_PHASES) {
+    const entry = config.phases[phase];
+    const prefix = advancedPhaseId(phase);
+    const override = splitModelId(entry.override);
+    ($<HTMLSelectElement>(`#${prefix}-provider`)).value = override.provider;
+    const input = $<HTMLInputElement>(`#${prefix}-model-name`);
+    input.value = override.model;
+    input.disabled = !override.provider;
+    advancedPhaseOverrides[phase] = entry.override;
+    $(`#${prefix}-effective`).textContent = entry.resolved
+      ? `当前解析：${entry.resolved}${entry.source ? ` · 来源 ${entry.source}` : ''}`
+      : '当前没有可用路由';
+  }
 }
 
 async function loadAdvancedModels(force = false): Promise<void> {
@@ -418,7 +507,7 @@ async function loadAdvancedModels(force = false): Promise<void> {
   const status = $('#advanced-model-status');
   if (advancedModelsLoaded && !force) return;
   if (state?.setup.needsSetup) {
-    status.textContent = '请先保存基础配置，再读取和设置任务层级路由。';
+    status.textContent = '请先保存基础配置，再读取和设置任务层级与 Dream 阶段路由。';
     button.disabled = true;
     return;
   }
@@ -427,9 +516,12 @@ async function loadAdvancedModels(force = false): Promise<void> {
   try {
     const config = await window.pmbrainDesktop.getAdvancedModelConfig();
     renderAdvancedModelConfig(config);
-    await Promise.all(ADVANCED_TIERS.map(tier => refreshAdvancedProviderModels(tier, false)));
+    await Promise.all([
+      ...ADVANCED_TIERS.map(tier => refreshAdvancedProviderModels(tier, false)),
+      ...ADVANCED_PHASES.map(phase => refreshAdvancedPhaseProviderModels(phase, false)),
+    ]);
     advancedModelsLoaded = true;
-    status.textContent = '只保存你在这里明确填写的覆盖；基础配置不会清空高级路由。';
+    status.textContent = '只保存你在这里明确修改的覆盖；保存上方基础配置不会清空高级路由。';
     button.disabled = false;
   } catch (error) {
     status.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
@@ -439,7 +531,7 @@ async function loadAdvancedModels(force = false): Promise<void> {
 async function saveAdvancedModels(): Promise<void> {
   const button = $<HTMLButtonElement>('#save-advanced-models');
   const status = $('#advanced-model-status');
-  const values: Partial<Record<AdvancedModelTier, string>> = {};
+  const values: AdvancedModelWriteInput = { tiers: {}, phases: {} };
   for (const tier of ADVANCED_TIERS) {
     const provider = ($<HTMLSelectElement>(`#advanced-${tier}-provider`)).value;
     const model = ($<HTMLInputElement>(`#advanced-${tier}-model-name`)).value.trim();
@@ -448,18 +540,37 @@ async function saveAdvancedModels(): Promise<void> {
       return;
     }
     const next = composeModelId(provider, model);
-    if (next !== (advancedOverrides[tier] ?? '')) values[tier] = next;
+    if (next !== (advancedOverrides[tier] ?? '')) values.tiers![tier] = next;
   }
-  if (Object.keys(values).length === 0) {
+  for (const phase of ADVANCED_PHASES) {
+    const prefix = advancedPhaseId(phase);
+    const provider = ($<HTMLSelectElement>(`#${prefix}-provider`)).value;
+    const model = ($<HTMLInputElement>(`#${prefix}-model-name`)).value.trim();
+    if ((provider && !model) || (!provider && model)) {
+      status.textContent = `${ADVANCED_PHASE_LABELS[phase]}需要同时选择供应商和填写模型名称，或点击“跟随推理任务”。`;
+      return;
+    }
+    const next = composeModelId(provider, model);
+    if (next !== (advancedPhaseOverrides[phase] ?? '')) values.phases![phase] = next;
+  }
+  const tierCount = Object.keys(values.tiers ?? {}).length;
+  const phaseCount = Object.keys(values.phases ?? {}).length;
+  if (tierCount === 0 && phaseCount === 0) {
     status.textContent = '高级路由没有修改。';
     return;
   }
+  if (tierCount === 0) delete values.tiers;
+  if (phaseCount === 0) delete values.phases;
   setBusy(button, true, '正在保存…');
   status.textContent = '正在保存高级路由；如 PGLite 正在使用，桌面端会安全重启本地服务。';
   try {
     renderAdvancedModelConfig(await window.pmbrainDesktop.saveAdvancedModelConfig(values));
+    await Promise.all([
+      ...ADVANCED_TIERS.map(tier => refreshAdvancedProviderModels(tier, false)),
+      ...ADVANCED_PHASES.map(phase => refreshAdvancedPhaseProviderModels(phase, false)),
+    ]);
     advancedModelsLoaded = true;
-    status.textContent = '高级路由已保存，未提交的层级不会被清空。';
+    status.textContent = '高级路由已保存；未修改的层级与阶段不会被清空。';
   } catch (error) {
     status.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
@@ -1105,6 +1216,11 @@ ADVANCED_TIERS.forEach(tier => {
     void refreshAdvancedProviderModels(tier, true);
   });
 });
+ADVANCED_PHASES.forEach(phase => {
+  $<HTMLSelectElement>(`#${advancedPhaseId(phase)}-provider`).addEventListener('change', () => {
+    void refreshAdvancedPhaseProviderModels(phase, true);
+  });
+});
 document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger').forEach(button => button.addEventListener('click', () => {
   const kind = (button.dataset.modelInput ?? '').startsWith('chat') ? 'chat' : 'embedding';
   const ul = $<HTMLUListElement>(`#${kind}-model-dropdown`);
@@ -1116,6 +1232,17 @@ document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger').forEach(bu
   }
 }));
 document.querySelectorAll<HTMLButtonElement>('.advanced-model-picker-trigger').forEach(button => button.addEventListener('click', () => {
+  const phase = button.dataset.advancedPhase as AdvancedModelPhase | undefined;
+  if (phase) {
+    const ul = $<HTMLUListElement>(`#${advancedPhaseId(phase)}-model-dropdown`);
+    if (ul.hidden) {
+      renderAdvancedPhaseModelDropdown(phase);
+      ul.hidden = false;
+    } else {
+      ul.hidden = true;
+    }
+    return;
+  }
   const tier = button.dataset.advancedTier as AdvancedModelTier;
   const ul = $<HTMLUListElement>(`#advanced-${tier}-model-dropdown`);
   if (ul.hidden) {
@@ -1154,6 +1281,15 @@ document.querySelectorAll<HTMLButtonElement>('.advanced-inherit').forEach(button
   input.value = '';
   input.disabled = true;
   $<HTMLElement>(`#advanced-${tier}-model-status`).textContent = '已恢复跟随当前解析结果。';
+}));
+document.querySelectorAll<HTMLButtonElement>('.advanced-phase-inherit').forEach(button => button.addEventListener('click', () => {
+  const phase = button.dataset.advancedPhase as AdvancedModelPhase;
+  const prefix = advancedPhaseId(phase);
+  ($<HTMLSelectElement>(`#${prefix}-provider`)).value = '';
+  const input = $<HTMLInputElement>(`#${prefix}-model-name`);
+  input.value = '';
+  input.disabled = true;
+  $<HTMLElement>(`#${prefix}-model-status`).textContent = '已恢复跟随推理任务 / 普通模型。';
 }));
 $('#save-advanced-models').addEventListener('click', () => void saveAdvancedModels());
 document.querySelectorAll<HTMLButtonElement>('.choose').forEach((button) => button.addEventListener('click', async () => {
