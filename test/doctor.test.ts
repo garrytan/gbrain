@@ -52,6 +52,53 @@ describe('doctor command', () => {
     expect(check.issues![0].action).toContain('trigger');
   });
 
+  test('subagent_capability checks explicit models.subagent before tier/default fallbacks', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.subagent', 'openai:gpt-5.2'],
+      ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
+      ['models.default', 'anthropic:claude-sonnet-4-6'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.subagent is "openai:gpt-5.2"');
+    expect(check.message).toContain('prompt caching');
+  });
+
+  test('subagent_capability reports explicit models.subagent on the ok path', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.subagent', 'anthropic:claude-opus-4-7'],
+      ['models.tier.subagent', 'anthropic:claude-haiku-4-5'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('Subagent model resolves via models.subagent to "anthropic:claude-opus-4-7"');
+  });
+
+  test('subagent_capability checks models.default before tier fallback', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
+      ['models.default', 'openai:gpt-5.2'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.default is "openai:gpt-5.2"');
+  });
+
   test('reranker_health warns on repeated unknown rerank failures', async () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-doctor-'));

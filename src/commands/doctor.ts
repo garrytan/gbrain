@@ -878,8 +878,8 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   checks.push(await checkEmbeddingEnvOverride(engine));
 
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
-  // The subagent loop is Anthropic-only. If models.tier.subagent or
-  // models.default is explicitly set to a non-Anthropic provider, warn here
+  // The subagent loop requires native tool-calling. If models.subagent,
+  // models.tier.subagent, or models.default resolves to a limited provider, warn here
   // so the user sees it at the next `gbrain doctor` run instead of at the
   // next subagent job submission. (Layers 1+2 also enforce — this is the
   // surfacing layer.)
@@ -3053,6 +3053,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
 export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
+    const modelsSubagent = await engine.getConfig('models.subagent');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
 
@@ -3093,11 +3094,22 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       return null;
     };
 
-    if (tierSubagent) {
-      const issue = explain(tierSubagent, 'models.tier.subagent');
+    let resolvedSource: string | null = null;
+    let resolvedModel: string | null = null;
+    if (modelsSubagent) {
+      resolvedSource = 'models.subagent';
+      resolvedModel = modelsSubagent;
+      const issue = explain(modelsSubagent, resolvedSource);
       if (issue) return issue;
     } else if (modelsDefault) {
+      resolvedSource = 'models.default';
+      resolvedModel = modelsDefault;
       const issue = explain(modelsDefault, 'models.default');
+      if (issue) return issue;
+    } else if (tierSubagent) {
+      resolvedSource = 'models.tier.subagent';
+      resolvedModel = tierSubagent;
+      const issue = explain(tierSubagent, resolvedSource);
       if (issue) return issue;
     }
     // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
@@ -3131,8 +3143,8 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
     return {
       name: 'subagent_capability',
       status: 'ok',
-      message: tierSubagent
-        ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
+      message: resolvedModel && resolvedSource
+        ? `Subagent model resolves via ${resolvedSource} to "${resolvedModel}" with full tool-loop capability`
         : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
   } catch (e) {
