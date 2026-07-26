@@ -62,6 +62,13 @@ Before skillifying, check:
 
 If ANY answer is no, it's a script, not a skill — stop here. Do not scaffold, write a SKILL.md, run evals, or write tests for it. Tell the user why and move on.
 
+Scope check (upper bound): one skill = one capability = one coherent trigger
+family. If the target spans multiple distinct intents users would invoke
+separately ("run the build" / "roll back the deploy" / "notify the team" are
+three intents, not one), do NOT build one skill covering them all. Stop,
+propose splitting into separate skillify targets, and ask the user which one
+to skillify first.
+
 ## Phase 1: Audit
 
 ```
