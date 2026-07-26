@@ -337,7 +337,9 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       process.exit(1);
     }
     out.embedding_model = `${shorthand}:${firstModel}`;
-    out.embedding_dimensions = recipe.touchpoints.embedding!.default_dims;
+    // #2051: width follows the model actually chosen, not the recipe default.
+    const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
+    out.embedding_dimensions = embeddingDimsForModel(recipe, firstModel);
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -361,8 +363,13 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       );
       process.exit(1);
     }
-    if (recipe?.touchpoints.embedding?.default_dims) {
-      out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
+    // #2051: resolve the width from the SPECIFIC model, not the recipe-wide
+    // default. `--embedding-model ollama:bge-m3` must yield 1024, not Ollama's
+    // nomic-shaped 768.
+    if (recipe) {
+      const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
+      const dims = embeddingDimsForModel(recipe, out.embedding_model);
+      if (dims > 0) out.embedding_dimensions = dims;
     }
   }
 
@@ -525,9 +532,11 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
       // legacy OpenAI 1536), not the recipe's 2560.
       const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
         await import('../core/ai/defaults.ts');
+      const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
+      // #2051: non-canonical models resolve per-model, not recipe-wide.
       const dims = fullModel === DEFAULT_EMBEDDING_MODEL
         ? DEFAULT_EMBEDDING_DIMENSIONS
-        : tp.default_dims;
+        : embeddingDimsForModel(r, model);
       out.embedding_model = fullModel;
       out.embedding_dimensions = dims;
       console.error(

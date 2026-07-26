@@ -28,6 +28,21 @@ export type Implementation =
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /**
+   * Per-model native dimensions, keyed by bare model id (no `provider:`
+   * prefix). Consulted before `default_dims` when resolving schema width
+   * for a specific model.
+   *
+   * Local recipes (ollama, llama-server) serve models with very different
+   * native widths — nomic-embed-text is 768, bge-m3 and mxbai-embed-large
+   * are 1024, qwen3-embed-8b is 4096. A single recipe-wide `default_dims`
+   * silently picks the wrong width for every model except the one it was
+   * chosen for, producing a schema that only fails at first insert (#2051).
+   *
+   * Partial by design: a model absent from this map falls back to
+   * `default_dims`, so a recipe can declare only the models it knows.
+   */
+  model_dims?: Readonly<Record<string, number>>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
