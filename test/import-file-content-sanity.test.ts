@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -30,11 +30,28 @@ beforeEach(async () => {
 /** Wrap an importFromContent call with GBRAIN_HOME + GBRAIN_AUDIT_DIR
  *  pointed at fresh tempdirs so config and audit writes don't leak
  *  between tests or pollute the developer's real ~/.gbrain. */
-async function withIsolatedHome<T>(fn: () => Promise<T>): Promise<T> {
+async function withIsolatedHome<T>(
+  fn: () => Promise<T>,
+  opts?: { rejectJunk?: boolean },
+): Promise<T> {
   gbrainHomeDir = mkdtempSync(join(tmpdir(), 'cs-gate-home-'));
   auditDir = mkdtempSync(join(tmpdir(), 'cs-gate-audit-'));
   try {
+    // Product default is junk_disposition=quarantine (page lands, hidden from
+    // search). Hard-block tests pin reject so ContentSanityBlockError still
+    // exercises the throw path.
+    if (opts?.rejectJunk) {
+      const cfgDir = join(gbrainHomeDir, '.gbrain');
+      mkdirSync(cfgDir, { recursive: true });
+      writeFileSync(
+        join(cfgDir, 'config.json'),
+        JSON.stringify({ content_sanity: { junk_disposition: 'reject' } }, null, 2) + '\n',
+      );
+    }
     return await withEnv({
+      // Prefer isolated legacy home; clear PMBRAIN_HOME so configDir() does
+      // not escape to the developer's real ~/.pmbrain.
+      PMBRAIN_HOME: undefined,
       GBRAIN_HOME: gbrainHomeDir,
       GBRAIN_AUDIT_DIR: auditDir,
     }, fn);
@@ -65,7 +82,7 @@ Body.`;
       await expect(
         importFromContent(engine, 'test/junk', content, { noEmbed: true })
       ).rejects.toThrow(ContentSanityBlockError);
-    });
+    }, { rejectJunk: true });
   });
 
   test('throws with PAGE_JUNK_PATTERN-tagged message for classifyErrorCode', async () => {
@@ -79,7 +96,7 @@ Body.`;
       }
       expect(caught).toBeDefined();
       expect(caught!.message).toContain('PAGE_JUNK_PATTERN');
-    });
+    }, { rejectJunk: true });
   });
 
   test('thrown page is NOT written to DB', async () => {
@@ -99,7 +116,7 @@ created: 2026-05-24
       } catch { /* expected */ }
       const page = await engine.getPage('test/404');
       expect(page).toBeNull();
-    });
+    }, { rejectJunk: true });
   });
 
   // ─── v0.41.13: end-to-end coverage for the expanded patterns ────────
@@ -130,7 +147,7 @@ scraper junk body`;
       expect(caught).toBeDefined();
       expect(caught!.result.junk_pattern_matches).toContain(expectedPattern);
       expect(caught!.message).toContain('PAGE_JUNK_PATTERN');
-    });
+    }, { rejectJunk: true });
   });
 
   test('v0.41.13: over-match regression — "How to Handle Access Denied Errors" imports cleanly', async () => {
