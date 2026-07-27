@@ -569,19 +569,22 @@ export async function runPhaseSynthesize(
       const hash16 = t.contentHash.slice(0, 16);
       const hash6 = t.contentHash.slice(0, 6);
 
-      // D8: single→multi-chunk migration safety. If a completed legacy
-      // single-chunk job exists for this content_hash, treat as already-
-      // synthesized and skip. Prevents duplicate writes when a transcript
-      // that was previously single-chunk now multi-chunks (because budget
-      // shrank or model changed).
-      if (hasLegacySingleChunkCompletion(
+      // D8: legacy-key migration safety. If this content hash already
+      // completed under the pre-v2 path-based key family — single-chunk OR
+      // a full chunked set — treat as already-synthesized and skip.
+      // Prevents a full paid re-synthesis when the corpus root moves or
+      // the chunking outcome changes across versions.
+      const legacyCompletion = findLegacyCompletion(
         successfulLegacyKeys,
         t.filePath,
         hash16,
-      )) {
+      );
+      if (legacyCompletion) {
         skipReports.push({
           filePath: t.filePath,
-          reason: 'already_synthesized_legacy_single_chunk',
+          reason: legacyCompletion === 'chunked'
+            ? 'already_synthesized_legacy_chunked'
+            : 'already_synthesized_legacy_single_chunk',
         });
         continue;
       }
@@ -1289,12 +1292,21 @@ async function collectChildPutPageSlugs(
 }
 
 /**
- * D8: query for any `completed` legacy single-chunk job at the canonical
- * idempotency key shape `dream:synth:<filePath>:<hash16>`. Used at fan-out
- * time to detect transcripts that were synthesized under the pre-chunking
- * code path; those should NOT be re-submitted under chunked keys.
+ * D8: load every `completed` legacy job key in the pre-v2 path-based
+ * family `dream:synth:<filePath>:<hash16>[:c<i>of<n>]`. Used at fan-out
+ * time to detect transcripts already synthesized under an old key shape;
+ * those should NOT be re-submitted under v2 keys. (v2 keys start with
+ * `dream:synth-v2:` and don't match the LIKE prefix — the queue's own
+ * idempotency dedupe already covers them.)
  *
- * Loads source-scoped semantic successes once per phase; no schema additions
+ * Plain `status = 'completed'` deliberately mirrors the queue-level
+ * idempotency semantics the legacy keys relied on: a completed job blocks
+ * re-submission regardless of `result.stop_reason` (pinned in
+ * test/minions.test.ts). Filtering on stop_reason here would re-pay for
+ * transcripts the old code path never re-ran, and reading `result` at all
+ * would need the `(result #>> '{}')` double-encoded-jsonb defense.
+ *
+ * Loads source-scoped completions once per phase; no schema additions
  * and no repeated history scan for each transcript.
  */
 async function loadSuccessfulLegacySynthesisKeys(
@@ -1306,7 +1318,6 @@ async function loadSuccessfulLegacySynthesisKeys(
        FROM minion_jobs
       WHERE name = 'subagent'
         AND status = 'completed'
-        AND result->>'stop_reason' = 'end_turn'
         AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
         AND idempotency_key LIKE 'dream:synth:%'`,
     [sourceId],
@@ -1314,18 +1325,40 @@ async function loadSuccessfulLegacySynthesisKeys(
   return rows.map(row => row.idempotency_key);
 }
 
-function hasLegacySingleChunkCompletion(
+/**
+ * Match a transcript (by filename + content hash) against completed legacy
+ * keys. `'single'` when a `dream:synth:<path>:<hash16>` completion exists;
+ * `'chunked'` when a FULL chunk set `:c0of<n>`..`:c<n-1>of<n>` completed
+ * (chunk indices are 0-based). Partial chunk sets return null so the
+ * transcript gets a fresh v2 synthesis instead of shipping with holes.
+ */
+function findLegacyCompletion(
   successfulKeys: string[],
   filePath: string,
   hash16: string,
-): boolean {
+): 'single' | 'chunked' | null {
   const filename = basename(filePath);
-  const suffix = `:${hash16}`;
-  return successfulKeys.some(key => {
-    if (!key.endsWith(suffix)) return false;
-    const historicalPath = key.slice('dream:synth:'.length, -suffix.length);
-    return basename(historicalPath) === filename;
-  });
+  const hashSuffix = `:${hash16}`;
+  /** total chunk count n → completed 0-based chunk indices */
+  const chunkSets = new Map<number, Set<number>>();
+  for (const key of successfulKeys) {
+    const chunk = /:c(\d+)of(\d+)$/.exec(key);
+    const base = chunk ? key.slice(0, -chunk[0].length) : key;
+    if (!base.endsWith(hashSuffix)) continue;
+    const historicalPath = base.slice('dream:synth:'.length, -hashSuffix.length);
+    if (basename(historicalPath) !== filename) continue;
+    if (!chunk) return 'single';
+    const i = Number(chunk[1]);
+    const n = Number(chunk[2]);
+    if (n < 1 || i < 0 || i >= n) continue;
+    let seen = chunkSets.get(n);
+    if (!seen) chunkSets.set(n, seen = new Set());
+    seen.add(i);
+  }
+  for (const [n, seen] of chunkSets) {
+    if (seen.size === n) return 'chunked';
+  }
+  return null;
 }
 
 // ── Dream-provenance DB stamp (#2569) ────────────────────────────────

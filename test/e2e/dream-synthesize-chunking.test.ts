@@ -8,8 +8,10 @@
  * Coverage:
  *   - D5 cap-hit: chunks > maxChunks → log + skip with no minion_jobs row
  *     and no dream_verdicts cache write (closes the poison-pill class).
- *   - D8 legacy single-chunk migration: a successful old-root job for the
- *     same filename + content hash suppresses duplicate synthesis.
+ *   - D8 legacy-key migration: a completed old-root job (single-chunk or a
+ *     full chunked set) for the same filename + content hash suppresses
+ *     duplicate synthesis; partial chunk sets and double-encoded result
+ *     rows are covered.
  *   - Chunked path: fat transcript spawns N children with chunk-suffixed
  *     path-independent idempotency keys; single-chunk omits the suffix.
  *
@@ -168,7 +170,7 @@ describe('E2E synthesize chunking — D5 cap hit', () => {
   }, 30_000);
 });
 
-describe('E2E synthesize chunking — D8 legacy single-chunk migration', () => {
+describe('E2E synthesize chunking — D8 legacy-key migration', () => {
   test('successful legacy synthesis survives a corpus-root move', async () => {
     const rig = await setupRig();
     const oldCorpusDir = mkdtempSync(join(tmpdir(), 'gbrain-chunk-old-corpus-'));
@@ -217,6 +219,125 @@ describe('E2E synthesize chunking — D8 legacy single-chunk migration', () => {
       expect(Number(jobs[0].cnt)).toBe(1);
     } finally {
       rmSync(oldCorpusDir, { recursive: true, force: true });
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('legacy CHUNKED completion suppresses v2 resubmission; partial chunk set does not', async () => {
+    const rig = await setupRig();
+    const oldCorpusDir = mkdtempSync(join(tmpdir(), 'gbrain-chunk-old-corpus-'));
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      // Transcript A: previously synthesized as a FULL 2-chunk legacy run.
+      const fullName = '2026-04-26-chunked-complete.txt';
+      const fullPath = corpusPath(rig.corpusDir, fullName);
+      const fullContent = 'fully chunk-synthesized lines\n'.repeat(200);
+      writeFileSync(fullPath, fullContent);
+      const fullHash16 = (await seedVerdict(rig.engine, fullPath, fullContent)).slice(0, 16);
+
+      // Transcript B: legacy run completed only chunk 0 of 3 (partial).
+      const partialName = '2026-04-27-chunked-partial.txt';
+      const partialPath = corpusPath(rig.corpusDir, partialName);
+      const partialContent = 'partially chunk-synthesized lines\n'.repeat(200);
+      writeFileSync(partialPath, partialContent);
+      const partialHash16 = (await seedVerdict(rig.engine, partialPath, partialContent)).slice(0, 16);
+
+      // All legacy rows lived under a different (moved-away) corpus root.
+      const legacyKeys = [
+        `dream:synth:${corpusPath(oldCorpusDir, fullName)}:${fullHash16}:c0of2`,
+        `dream:synth:${corpusPath(oldCorpusDir, fullName)}:${fullHash16}:c1of2`,
+        `dream:synth:${corpusPath(oldCorpusDir, partialName)}:${partialHash16}:c0of3`,
+      ];
+      for (const key of legacyKeys) {
+        await rig.engine.executeRaw(
+          `INSERT INTO minion_jobs
+             (name, queue, status, data, result, idempotency_key, finished_at)
+           VALUES
+             ('subagent', 'default', 'completed', '{}'::jsonb,
+              '{"stop_reason":"end_turn"}'::jsonb, $1, now())`,
+          [key],
+        );
+      }
+
+      await withoutAnthropicKey(async () => {
+        await withSubagentAutoCancel(rig.engine, async () => {
+          const result = await runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+          });
+          const details = result.details as {
+            children_submitted: number;
+            skips: Array<{ filePath: string; reason: string }>;
+          };
+          // A skipped (full legacy chunk set); B resubmitted (partial set).
+          expect(details.children_submitted).toBe(1);
+          expect(details.skips).toHaveLength(1);
+          expect(details.skips[0].filePath).toBe(fullPath);
+          expect(details.skips[0].reason).toBe('already_synthesized_legacy_chunked');
+        });
+      });
+
+      // 3 seeded legacy rows + exactly 1 new v2 job for the partial transcript.
+      const rows = await rig.engine.executeRaw<{ idempotency_key: string }>(
+        `SELECT idempotency_key FROM minion_jobs
+          WHERE name = 'subagent' AND idempotency_key LIKE 'dream:synth-v2:%'`,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].idempotency_key).toContain(encodeURIComponent(partialName));
+    } finally {
+      rmSync(oldCorpusDir, { recursive: true, force: true });
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('legacy completed row with double-encoded jsonb result still suppresses', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      const basename = '2026-04-28-double-encoded.txt';
+      const filePath = corpusPath(rig.corpusDir, basename);
+      const content = 'double-encoded result lines\n'.repeat(200);
+      writeFileSync(filePath, content);
+      const contentHash = await seedVerdict(rig.engine, filePath, content);
+
+      // Historical row whose `result` was double-encoded (jsonb string
+      // scalar — the #2339 class). `result->>'stop_reason'` yields NULL on
+      // this row; a completed legacy job must suppress regardless.
+      const legacyKey = `dream:synth:${filePath}:${contentHash.slice(0, 16)}`;
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs
+           (name, queue, status, data, result, idempotency_key, finished_at)
+         VALUES
+           ('subagent', 'default', 'completed', '{}'::jsonb,
+            to_jsonb('{"stop_reason":"end_turn"}'::text), $1, now())`,
+        [legacyKey],
+      );
+
+      await withoutAnthropicKey(async () => {
+        await withSubagentAutoCancel(rig.engine, async () => {
+          const result = await runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+          });
+          const details = result.details as {
+            children_submitted: number;
+            skips: Array<{ reason: string }>;
+          };
+          expect(details.children_submitted).toBe(0);
+          expect(details.skips).toHaveLength(1);
+          expect(details.skips[0].reason).toBe('already_synthesized_legacy_single_chunk');
+        });
+      });
+
+      const jobs = await rig.engine.executeRaw<{ cnt: string | number }>(
+        `SELECT count(*) AS cnt FROM minion_jobs WHERE name = 'subagent'`,
+      );
+      expect(Number(jobs[0].cnt)).toBe(1);
+    } finally {
       await rig.cleanup();
     }
   }, 30_000);
