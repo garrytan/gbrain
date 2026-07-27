@@ -19,13 +19,25 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-OUT_BIN="$(mktemp /tmp/gbrain-wasm-check.XXXXXX)"
-trap 'rm -f "$OUT_BIN"' EXIT
+# Build from a container-local copy. On Docker Desktop, Bun canonicalizes a
+# bind-mounted input to /run/host_virtiofs but keeps /app as the output path;
+# its final atomic rename then fails with ENOENT even though both names refer
+# to the same mount. Keeping inputs and output under /tmp avoids that alias.
+BUILD_DIR="$(mktemp -d /tmp/gbrain-wasm-check.XXXXXX)"
+OUT_BIN="$BUILD_DIR/chunker-smoketest"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+mkdir -p "$BUILD_DIR/scripts"
+cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+cp "$REPO_ROOT/scripts/chunker-smoketest.ts" "$BUILD_DIR/scripts/chunker-smoketest.ts"
+ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 
 # Build a minimal smoketest binary that imports the chunker. We compile this
 # instead of the full gbrain CLI so the failure mode is laser-focused on
 # chunker + WASM path resolution, not unrelated CLI wiring.
-bun build --compile --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null 2>&1
+if ! (cd "$BUILD_DIR" && bun build --compile --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null); then
+  echo "[check-wasm-embedded] FAIL: bun could not compile the smoketest binary." >&2
+  exit 1
+fi
 
 # Run it and capture JSON output.
 OUTPUT="$("$OUT_BIN" 2>&1)"
