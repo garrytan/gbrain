@@ -3333,12 +3333,22 @@ Options:
                        connections per wave ≈ parallel × workers × 2
                        (per-file pool) + parent pool. Pass --parallel 1
                        to force serial.
+  --missing-path M     (with --all) What to do when a source's local_path
+                       does not exist on this machine: 'fail' (default —
+                       loud, current behavior) or 'skip' (classify as
+                       skipped_missing_path: ⊘ in the aggregate, excluded
+                       from error_count and the rc=1 gate). Use skip on
+                       brains whose sources were registered from more
+                       than one machine.
   --json               Emit a structured JSON envelope on stdout
                        ({schema_version: 1, sources, parallel,
-                       ok_count, error_count}). Human banners route to
-                       stderr so '--json | jq' parses cleanly.
-                       Exit codes: 0 = all sources ok, 1 = any error,
-                       2 = cost-prompt-not-confirmed.
+                       ok_count, error_count, skipped_count}). Sources
+                       skipped by --missing-path skip appear with
+                       status 'skipped_missing_path' and their
+                       local_path. Human banners route to stderr so
+                       '--json | jq' parses cleanly.
+                       Exit codes: 0 = all sources ok or skipped,
+                       1 = any error, 2 = cost-prompt-not-confirmed.
   --yes                Accept any interactive prompts (CI / non-TTY).
 
 See also:
@@ -3361,6 +3371,19 @@ See also:
   const retryFailed = args.includes('--retry-failed');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
   const syncAll = args.includes('--all');
+  let missingPathMode: MissingPathMode = 'fail';
+  try {
+    missingPathMode = parseMissingPathMode(args);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(2);
+  }
+  if (missingPathMode !== 'fail' && !syncAll) {
+    // Single-source sync on a missing path should stay loud — an explicit
+    // `--source X` naming an absent checkout is an operator error, not a
+    // multi-machine artifact. Warn instead of silently ignoring the flag.
+    console.error('[gbrain] WARN: --missing-path only applies to `sync --all`; ignored here.');
+  }
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
   // v0.41.6.0 D3: lock-recovery flags. --break-lock (safe) verifies the
@@ -3633,14 +3656,40 @@ See also:
       writeHuman(`Skipping ${disabledCount} disabled source(s).`);
     }
 
-    if (activeSources.length === 0) {
+    // --missing-path skip: classify sources whose checkout is not on this
+    // machine instead of failing them (see parseMissingPathMode's rationale).
+    // Under the default 'fail' this is a no-op and behavior is unchanged.
+    let skippedMissingPath: typeof activeSources = [];
+    let runnableSources = activeSources;
+    if (missingPathMode === 'skip') {
+      const parts = partitionMissingPathSources(activeSources, existsSync);
+      runnableSources = parts.runnable;
+      skippedMissingPath = parts.missing;
+      for (const src of skippedMissingPath) {
+        writeHuman(`  ⊘ ${src.name}: skipped — local_path not present on this host (${src.local_path})`);
+      }
+      if (skippedMissingPath.length > 0) {
+        writeHuman(`Skipped ${skippedMissingPath.length} source(s) whose local_path is not present on this host (--missing-path skip).`);
+      }
+    }
+
+    if (runnableSources.length === 0) {
       if (jsonOut) {
         console.log(JSON.stringify({
           schema_version: 1,
-          sources: [],
+          sources: skippedMissingPath
+            .slice()
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((s) => ({
+              source_id: s.id,
+              name: s.name,
+              status: 'skipped_missing_path',
+              local_path: s.local_path,
+            })),
           parallel: 0,
           ok_count: 0,
           error_count: 0,
+          skipped_count: skippedMissingPath.length,
         }));
       }
       return;
@@ -3650,11 +3699,20 @@ See also:
     type PerSourceResult = {
       sourceId: string;
       sourceName: string;
-      status: 'ok' | 'error';
+      status: 'ok' | 'error' | 'skipped_missing_path';
       result?: SyncResult;
       error?: string;
+      localPath?: string;
     };
     const perSourceResults: PerSourceResult[] = [];
+    for (const src of skippedMissingPath) {
+      perSourceResults.push({
+        sourceId: src.id,
+        sourceName: src.name,
+        status: 'skipped_missing_path',
+        localPath: src.local_path ?? undefined,
+      });
+    }
 
     // #1633 (Part B): one shared SIGINT controller for the whole --all fan-out.
     // process-cleanup.ts doesn't own SIGINT, so without this Ctrl-C hard-cuts the
@@ -3763,7 +3821,7 @@ See also:
     };
 
     const parallelEligible =
-      v2Enabled && !serialFlag && engine.kind !== 'pglite' && activeSources.length > 1;
+      v2Enabled && !serialFlag && engine.kind !== 'pglite' && runnableSources.length > 1;
 
     // v0.42.42.0 (#2139, D13C): the v0.40.6.0 (D15) refusal of --skip-failed /
     // --retry-failed under parallel sync is LIFTED. It existed because the
@@ -3777,7 +3835,7 @@ See also:
     // know how the run was actually dispatched. 1 in the serial fallback,
     // capped at min(sourceCount, --max-sources, 8) in the parallel path.
     const effectiveParallel = parallelEligible
-      ? Math.min(activeSources.length, maxSources ?? 8)
+      ? Math.min(runnableSources.length, maxSources ?? 8)
       : 1;
 
     process.on('SIGINT', onAllSigint);
@@ -3801,8 +3859,8 @@ See also:
         );
       }
 
-      writeHuman(`\nParallel sync: ${activeSources.length} sources, ${cap} concurrent workers.\n`);
-      const results = await pMapAllSettled(activeSources, cap, async (src) => {
+      writeHuman(`\nParallel sync: ${runnableSources.length} sources, ${cap} concurrent workers.\n`);
+      const results = await pMapAllSettled(runnableSources, cap, async (src) => {
         const r = await runOne(src);
         return { name: src.name, result: r };
       });
@@ -3810,7 +3868,7 @@ See also:
       writeHuman('\n--- sync --all aggregate ---');
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
-        const src = activeSources[i];
+        const src = runnableSources[i];
         if (r.status === 'fulfilled') {
           writeHuman(`  ✓ ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
           perSourceResults.push({
@@ -3831,7 +3889,7 @@ See also:
         }
       }
     } else {
-      for (const src of activeSources) {
+      for (const src of runnableSources) {
         writeHuman(`\n--- Syncing source: ${src.name} ---`);
         try {
           const result = await runOne(src);
@@ -3871,6 +3929,7 @@ See also:
           source_id: r.sourceId,
           name: r.sourceName,
           status: r.status,
+          ...(r.localPath ? { local_path: r.localPath } : {}),
           ...(r.result ? {
             sync_status: r.result.status,
             added: r.result.added,
@@ -3887,6 +3946,7 @@ See also:
         parallel: effectiveParallel,
         ok_count: okCount,
         error_count: errCount,
+        skipped_count: perSourceResults.filter((r) => r.status === 'skipped_missing_path').length,
       }));
     }
 
@@ -4062,6 +4122,63 @@ See also:
     }
     await new Promise(r => setTimeout(r, interval * 1000));
   }
+}
+
+/** Mode for `sync --all --missing-path`: what to do when a source's
+ * local_path does not exist on this machine. */
+export type MissingPathMode = 'fail' | 'skip';
+
+/**
+ * Parse `--missing-path <fail|skip>` (default: fail).
+ *
+ * Why the flag exists: `sources.local_path` is machine-specific state in a
+ * brain-wide table. Any brain whose sources were registered from more than
+ * one machine — or a sanctioned setup mid-migration (topologies.md Topology 2,
+ * or the system-of-record git flow before every repo is cloned here) — has
+ * sources whose checkout simply is not present on the machine running
+ * `sync --all`. Each used to surface as a hard failure ("Not a git
+ * repository: <path>") and force rc=1 on every run; on one observed fleet
+ * that was 12 phantom failures per hour, which trains operators to ignore
+ * the exit code.
+ *
+ * The DEFAULT stays `fail`: on a single-machine brain a missing local_path
+ * usually means an unmounted volume or a deleted checkout, and silently
+ * skipping it would hide real data loss. Skip is an explicit opt-in.
+ *
+ * Throws on a bad/absent value with a paste-ready hint (caller converts to
+ * stderr + exit 2, same as other flag-misuse exits).
+ */
+export function parseMissingPathMode(args: string[]): MissingPathMode {
+  const idx = args.indexOf('--missing-path');
+  if (idx === -1) return 'fail';
+  const val = args[idx + 1];
+  if (val === 'fail' || val === 'skip') return val;
+  throw new Error(
+    `--missing-path expects 'fail' or 'skip', got: ${val ?? '(nothing)'}. ` +
+    `Use \`--missing-path skip\` to classify sources whose local_path is not ` +
+    `present on this machine as skipped instead of failed, or \`--missing-path ` +
+    `fail\` (the default) to keep them loud.`,
+  );
+}
+
+/**
+ * Partition `--all` sources by whether their local_path exists on THIS
+ * machine. Classification is driven only by the injected predicate so tests
+ * never touch the filesystem. A null local_path passes through as runnable —
+ * pure-DB sources are already excluded from `--all` by the
+ * `local_path IS NOT NULL` SELECT; this is defensive, not load-bearing.
+ */
+export function partitionMissingPathSources<T extends { local_path: string | null }>(
+  sources: T[],
+  pathExists: (p: string) => boolean,
+): { runnable: T[]; missing: T[] } {
+  const runnable: T[] = [];
+  const missing: T[] = [];
+  for (const s of sources) {
+    if (s.local_path != null && !pathExists(s.local_path)) missing.push(s);
+    else runnable.push(s);
+  }
+  return { runnable, missing };
 }
 
 /**
