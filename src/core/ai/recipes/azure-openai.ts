@@ -39,6 +39,17 @@ function fetchEntraToken(): string {
   return token;
 }
 
+/** @internal test seam: pre-populate (or clear) the Entra token cache so unit
+ * tests never shell out to `az`. */
+export function __setEntraTokenForTests(token: string | null): void {
+  _entraToken = token === null ? null : { token, fetchedAt: Date.now() };
+}
+
+/** Entra/keyless mode: explicit opt-in, or no api-key present (disableLocalAuth). */
+function isEntraMode(env: Record<string, string | undefined>): boolean {
+  return env.AZURE_OPENAI_USE_ENTRA === '1' || !env.AZURE_OPENAI_API_KEY;
+}
+
 /**
  * Azure OpenAI. The first recipe in v0.32 to exercise both seams:
  *   - resolveAuth returns `{headerName: 'api-key', token: <key>}` instead of
@@ -96,9 +107,7 @@ export const azureOpenAI: Recipe = {
     // AZURE_OPENAI_USE_ENTRA=1. Mint a refreshing AAD bearer token. Returning
     // an `Authorization: Bearer …` pair makes the gateway use the SDK's native
     // bearer path (it strips the prefix and re-adds it), so no double-auth.
-    const useEntra =
-      env.AZURE_OPENAI_USE_ENTRA === '1' || !env.AZURE_OPENAI_API_KEY;
-    if (useEntra) {
+    if (isEntraMode(env)) {
       return { headerName: 'Authorization', token: `Bearer ${fetchEntraToken()}` };
     }
     // Key mode: Azure uses `api-key:` (no Bearer); the unified seam routes this
@@ -122,6 +131,7 @@ export const azureOpenAI: Recipe = {
       );
     }
     const apiVersion = env.AZURE_OPENAI_API_VERSION ?? DEFAULT_API_VERSION;
+    const entra = isEntraMode(env);
     const baseURL = `${endpoint}/openai/deployments/${deployment}`;
     // Custom fetch wrapper splices ?api-version=... onto every request.
     // Azure rejects requests without it.
@@ -142,10 +152,23 @@ export const azureOpenAI: Recipe = {
         typeof input === 'string' || input instanceof URL
           ? finalUrl
           : new Request(finalUrl, input as Request);
+      if (entra) {
+        // Entra mode: refresh the AAD bearer on every request. The gateway
+        // caches model instances (auth is baked in at instantiation), so a
+        // long-running process would otherwise send an expired token after
+        // ~1h. fetchEntraToken()'s 45-min TTL cache keeps `az` invocations
+        // rare; the override here keeps the header fresh.
+        const headers = new Headers(
+          init?.headers ??
+            (typeof finalInput !== 'string' ? (finalInput as Request).headers : undefined),
+        );
+        headers.set('Authorization', `Bearer ${fetchEntraToken()}`);
+        init = { ...init, headers };
+      }
       return fetch(finalInput, init);
     }) as unknown as typeof fetch;
     return { baseURL, fetch: wrappedFetch };
   },
   setup_hint:
-    'Azure portal → Azure OpenAI resource. Set AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT. Optionally AZURE_OPENAI_API_VERSION (default 2024-10-21).',
+    'Azure portal → Azure OpenAI resource. Set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT, and either AZURE_OPENAI_API_KEY or keyless Entra auth (`az login` + "Cognitive Services OpenAI User" role; force with AZURE_OPENAI_USE_ENTRA=1). Optionally AZURE_OPENAI_API_VERSION (default 2024-10-21).',
 };
