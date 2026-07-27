@@ -17,6 +17,7 @@
 import type { BrainEngine } from './engine.ts';
 
 export const PGVECTOR_HNSW_VECTOR_MAX_DIMS = 2000;
+export const PGVECTOR_HNSW_HALFVEC_MAX_DIMS = 4000;
 
 const CHUNK_EMBEDDING_HNSW_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);';
@@ -27,6 +28,10 @@ export function chunkEmbeddingIndexSql(dims: number): string {
     '-- idx_chunks_embedding skipped: pgvector HNSW vector indexes support',
     `-- at most ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} dimensions; exact vector scans remain available.`,
   ].join('\n');
+}
+
+export function hnswMaxDimsForType(columnType: 'vector' | 'halfvec'): number {
+  return columnType === 'halfvec' ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
 }
 
 export function applyChunkEmbeddingIndexPolicy(sql: string, dims: number): string {

@@ -50,7 +50,10 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
     // v114 (#1941) added list_link_sources (read-only provenance discovery);
     // the edge-WRITE ops add_link/remove_link stay out (separate trust call).
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(14);
+    // #2778 added add_timeline_entry (write, fenced like put_page via
+    // operations.ts:enforceSubagentSlugFence).
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(15);
+    expect(BRAIN_TOOL_ALLOWLIST.has('add_timeline_entry')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_page')).toBe(true);
@@ -142,6 +145,41 @@ describe('buildBrainTools', () => {
         ctx,
       ),
     ).rejects.toBeInstanceOf(OperationError);
+  });
+
+  // #1586: sourceId threads through buildBrainTools → buildOpContext →
+  // put_page → importFromContent, so subagent writes land in the cycle's
+  // resolved source instead of the hardcoded 'default'.
+  test('execute() on put_page writes to the configured sourceId (#1586)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('mybrain', 'My Brain', '/tmp/mybrain', '{}'::jsonb, false, now())
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    const tools = buildBrainTools({
+      subagentId: 42,
+      engine,
+      config,
+      allowedSlugPrefixes: ['wiki/personal/reflections/*'],
+      sourceId: 'mybrain',
+    });
+    const putPage = tools.find(t => t.name === 'brain_put_page');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await putPage!.execute(
+      { slug: 'wiki/personal/reflections/2026-07-17-scoped', content: '---\ntitle: Scoped\n---\nbody' },
+      ctx,
+    );
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = 'wiki/personal/reflections/2026-07-17-scoped'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].source_id).toBe('mybrain');
+  });
+
+  test('buildBrainTools rejects a malformed sourceId at build time (#1586)', () => {
+    expect(() =>
+      buildBrainTools({ subagentId: 1, engine, config, sourceId: '../evil' }),
+    ).toThrow();
   });
 });
 

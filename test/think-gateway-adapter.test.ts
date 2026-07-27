@@ -186,6 +186,23 @@ describe('think gateway adapter — #1698 slash form + explicit-model fork', () 
   });
 });
 
+describe('think gateway adapter — current-generation recipe models', () => {
+  test('builds clients for Opus 4.8 / Sonnet 5 / Fable 5 (recipe-list refresh)', async () => {
+    // Regression guard: these GA models were absent from the recipe allowlist,
+    // so a tier-configured deep model degraded think to the no-LLM stub.
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test-fake' }, async () => {
+      for (const id of [
+        'anthropic:claude-opus-4-8',
+        'anthropic:claude-sonnet-5',
+        'anthropic:claude-fable-5',
+      ]) {
+        const client = await __thinkAdapter.tryBuildGatewayClient(id);
+        expect(client).not.toBeNull();
+      }
+    });
+  });
+});
+
 describe('think gateway adapter — graceful fallback shape', () => {
   test('buildGracefulMessage produces a parseable Anthropic.Message-shaped object', () => {
     const m = __thinkAdapter.buildGracefulMessage('anthropic:claude-opus-4-7');

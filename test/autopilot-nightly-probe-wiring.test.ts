@@ -31,10 +31,15 @@ describe('autopilot wiring: nightly quality probe', () => {
     expect(SOURCE).toContain(`runCrossModalBatchForProbe`);
   });
 
-  test('feature flag gate present: cfg.autopilot.nightly_quality_probe.enabled', () => {
+  test('feature flag gate present: dual-plane read (DB row wins, file plane fallback)', () => {
     // Per D10: the scheduler ONLY checks the feature flag. The 24h rate-limit
     // lives inside runNightlyQualityProbe itself (no scheduler-side precheck).
-    expect(SOURCE).toContain(`nightly_quality_probe?.enabled === true`);
+    // The flag resolves through resolveProbeEnabled so `gbrain config set
+    // autopilot.nightly_quality_probe.enabled true` (the doctor hint, DB
+    // plane) and ~/.gbrain/config.json (file plane) BOTH work — a file-only
+    // read made the printed hint a silent no-op.
+    expect(SOURCE).toContain(`getConfig('autopilot.nightly_quality_probe.enabled')`);
+    expect(SOURCE).toMatch(/resolveProbeEnabled\(dbEnabled,\s*cfg\?\.autopilot\?\.nightly_quality_probe\?\.enabled\)/);
   });
 
   test('NO scheduler-side rate-limit check (D10 simplification)', () => {
@@ -64,12 +69,23 @@ describe('autopilot wiring: nightly quality probe', () => {
     expect(SOURCE).toContain(`now:`);
   });
 
+  test('resolveRepoRoot prefers the gbrain package root (committed fixture home), not the brain repoPath', () => {
+    // The DI harness in nightly-quality-probe.test.ts passes process.cwd()
+    // (= the gbrain repo in CI), which papered over the wiring passing
+    // repoPath (= sync.repo_path, the user's BRAIN repo, where the fixture
+    // never exists). Pin the package-root resolution + existence check.
+    expect(SOURCE).toMatch(/fileURLToPath\(new URL\('\.\.\/\.\.', import\.meta\.url\)\)/);
+    expect(SOURCE).toContain(`'longmemeval-nightly.jsonl'`);
+    expect(SOURCE).toMatch(/fixtureAtPkgRoot \? pkgRoot : repoPath/);
+  });
+
   test('hasEmbeddingProvider reads from gateway.isAvailable("embedding") (codex round-2 #12 — in-process, not subprocess)', () => {
     expect(SOURCE).toContain(`isAvailable('embedding')`);
     expect(SOURCE).toContain(`gateway`);
   });
 
-  test('max_usd default = 5 when config unset (matches plan default per D10)', () => {
-    expect(SOURCE).toMatch(/max_usd\s*\?\?\s*5/);
+  test('max_usd resolves dual-plane (default = 5 pinned by resolveProbeMaxUsd unit tests)', () => {
+    expect(SOURCE).toContain(`getConfig('autopilot.nightly_quality_probe.max_usd')`);
+    expect(SOURCE).toMatch(/resolveProbeMaxUsd\(dbMaxUsd,\s*cfg\?\.autopilot\?\.nightly_quality_probe\?\.max_usd\)/);
   });
 });

@@ -29,8 +29,8 @@ beforeAll(async () => {
 
   // Seed test pages. Naming pattern:
   //   - alice-example: single-match case (only people/alice-*)
-  //   - bob-example vs bob-rosenstein: multi-match tiebreaker (bob-example wins on connections)
-  //   - charlie-example vs charlie-bankcroft: multi-match tiebreaker (charlie-example wins on connections)
+  //   - bob-example vs bob-rosenstein: ambiguous bare-name collision
+  //   - charlie-example vs charlie-bankcroft: ambiguous bare-name collision
   //   - dave-example: single-match case
   const pages = [
     { slug: 'people/alice-example', title: 'Alice Example', type: 'person' },
@@ -41,6 +41,7 @@ beforeAll(async () => {
     { slug: 'people/dave-example', title: 'Dave Example', type: 'person' },
     { slug: 'companies/stripe', title: 'Stripe', type: 'company' },
     { slug: 'companies/stripe-atlas', title: 'Stripe Atlas', type: 'company' },
+    { slug: 'companies/benton-capital', title: 'Benton Capital', type: 'company' },
   ];
 
   for (const p of pages) {
@@ -113,14 +114,14 @@ describe('resolveEntitySlug — prefix expansion', () => {
     expect(result).toBe('people/alice-example');
   });
 
-  it('resolves "Bob" to people/bob-example (more connections)', async () => {
+  it('refuses to choose between people sharing the same bare first name', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Bob');
-    expect(result).toBe('people/bob-example');
+    expect(result).toBe('bob');
   });
 
-  it('resolves "Charlie" to people/charlie-example (more connections)', async () => {
+  it('does not use connection count to turn bare-name ambiguity into confidence', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Charlie');
-    expect(result).toBe('people/charlie-example');
+    expect(result).toBe('charlie');
   });
 
   it('resolves "Dave" to people/dave-example (single match)', async () => {
@@ -145,9 +146,24 @@ describe('resolveEntitySlug — prefix expansion', () => {
     expect(result).toContain('alice-example');
   });
 
+  it('preserves a high-specificity multi-token typo match', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice Exampl');
+    expect(result).toBe('people/alice-example');
+  });
+
   it('hyphenated input does NOT trigger prefix expansion', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice-example');
     expect(result).toBe('people/alice-example');
+  });
+
+  it('preserves an explicit full company-name match', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Benton Capital');
+    expect(result).toBe('companies/benton-capital');
+  });
+
+  it('refuses a company match supported mainly by a shared generic token', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Beacon Capital');
+    expect(result).toBe('beacon-capital');
   });
 
   it('returns null for empty input', async () => {

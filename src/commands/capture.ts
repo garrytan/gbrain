@@ -233,14 +233,18 @@ export function maybeRewriteSourceFkError(err: unknown, sourceId: string | undef
 
 /**
  * Derive a title from the first non-empty, non-`---` line of the body,
- * stripping leading markdown heading marks, capped at 80 chars.
+ * stripping leading markdown heading marks, capped at 80 chars. Truncation
+ * is codepoint-aware (never splits an astral surrogate pair) and appends an
+ * ellipsis so a cut title is visibly cut.
  * Falls back to 'Capture' when no usable line exists.
  */
 function deriveTitle(rawBody: string): string {
   const firstLine = rawBody
     .split('\n')
     .find((l) => l.trim().length > 0 && l.trim() !== '---') ?? '';
-  return firstLine.replace(/^#+\s*/, '').slice(0, 80) || 'Capture';
+  const stripped = firstLine.replace(/^#+\s*/, '');
+  const cps = [...stripped];
+  return (cps.length > 80 ? cps.slice(0, 79).join('') + '…' : stripped) || 'Capture';
 }
 
 /**

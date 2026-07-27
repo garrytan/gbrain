@@ -135,6 +135,18 @@ the PGLite schema. Local agents continue to use stdio (`gbrain serve`).
 Running `--http` against a PGLite-backed install fails fast with a clear
 error message at startup.
 
+### Docker network isolation (self-hosted Postgres)
+
+OAuth and source scoping enforce isolation on the `serve --http` path only.
+Raw Postgres reachability bypasses both: a container that shares Docker's
+default `bridge` network with the brain's Postgres can open a direct DB
+session without any token and read every source. Put the brain's Postgres on
+a user-defined Docker network with nothing untrusted on it, publish its port
+loopback-only (if at all), and never put `DATABASE_URL` or a Postgres
+password in untrusted agent containers — those should reach the brain
+exclusively via OAuth against `serve --http`. Full operator checklist:
+[docs/mcp/DEPLOY.md — Co-located Docker workloads](docs/mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
+
 ### CORS
 
 Default-deny: no `Access-Control-Allow-Origin` header is sent unless an

@@ -149,6 +149,113 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
   });
 
+  test('email citation metadata projects identically across engines', async () => {
+    const slug = 'mail/example-citation';
+    const page = {
+      type: 'note' as const,
+      title: 'Generated page title',
+      compiled_truth: 'unique citation projection evidence',
+      timeline: '',
+      frontmatter: {
+        message_id: '<citation@example.com>',
+        thread_id: 'thread-example',
+        subject: 'Example exact email subject',
+      },
+    };
+    const chunks = [{
+      chunk_index: 0,
+      chunk_text: page.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+      embedding: basisEmbedding(77),
+    }];
+
+    await pgEngine.putPage(slug, page);
+    await pgEngine.upsertChunks(slug, chunks);
+    await pgliteEngine.putPage(slug, page);
+    await pgliteEngine.upsertChunks(slug, chunks);
+
+    const results = [
+      (await pgEngine.searchKeyword('unique citation projection evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique citation projection evidence'))[0],
+      (await pgEngine.searchKeywordChunks('unique citation projection evidence'))[0],
+      (await pgliteEngine.searchKeywordChunks('unique citation projection evidence'))[0],
+      (await pgEngine.searchVector(basisEmbedding(77)))[0],
+      (await pgliteEngine.searchVector(basisEmbedding(77)))[0],
+    ];
+
+    for (const result of results) {
+      expect(result?.message_id).toBe('<citation@example.com>');
+      expect(result?.thread_id).toBe('thread-example');
+      expect(result?.source_subject).toBe('Example exact email subject');
+    }
+
+    const nonEmailSlug = 'notes/generated-title-subject-gate';
+    const nonEmailPage = {
+      type: 'note' as const,
+      title: 'Generated page title must stay a title',
+      compiled_truth: 'unique non-email subject gate evidence',
+      timeline: '',
+      frontmatter: {
+        subject: 'Frontmatter subject without an email identity',
+        thread_id: 'standalone-thread-id',
+      },
+    };
+    const nonEmailChunks = [{
+      chunk_index: 0,
+      chunk_text: nonEmailPage.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+    }];
+    await pgEngine.putPage(nonEmailSlug, nonEmailPage);
+    await pgEngine.upsertChunks(nonEmailSlug, nonEmailChunks);
+    await pgliteEngine.putPage(nonEmailSlug, nonEmailPage);
+    await pgliteEngine.upsertChunks(nonEmailSlug, nonEmailChunks);
+
+    for (const result of [
+      (await pgEngine.searchKeyword('unique non-email subject gate evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique non-email subject gate evidence'))[0],
+    ]) {
+      expect(result?.message_id).toBeUndefined();
+      expect(result?.thread_id).toBe('standalone-thread-id');
+      expect(result?.source_subject).toBeUndefined();
+    }
+
+    const whitespaceSlug = 'mail/whitespace-message-id';
+    const whitespacePage = {
+      type: 'note' as const,
+      title: 'Whitespace Message-ID',
+      compiled_truth: 'unique whitespace message id evidence',
+      timeline: '',
+      frontmatter: {
+        message_id: ' \t\n ',
+        thread_id: 'thread-whitespace',
+        subject: 'Subject must remain gated',
+      },
+    };
+    const whitespaceChunks = [{
+      chunk_index: 0,
+      chunk_text: whitespacePage.compiled_truth,
+      chunk_source: 'compiled_truth' as const,
+      embedding: basisEmbedding(78),
+    }];
+    await pgEngine.putPage(whitespaceSlug, whitespacePage);
+    await pgEngine.upsertChunks(whitespaceSlug, whitespaceChunks);
+    await pgliteEngine.putPage(whitespaceSlug, whitespacePage);
+    await pgliteEngine.upsertChunks(whitespaceSlug, whitespaceChunks);
+
+    for (const result of [
+      (await pgEngine.searchKeyword('unique whitespace message id evidence'))[0],
+      (await pgliteEngine.searchKeyword('unique whitespace message id evidence'))[0],
+      (await pgEngine.searchKeywordChunks('unique whitespace message id evidence'))[0],
+      (await pgliteEngine.searchKeywordChunks('unique whitespace message id evidence'))[0],
+      (await pgEngine.searchVector(basisEmbedding(78)))[0],
+      (await pgliteEngine.searchVector(basisEmbedding(78)))[0],
+    ]) {
+      expect(result?.message_id).toBeUndefined();
+      expect(result?.thread_id).toBe('thread-whitespace');
+      expect(result?.source_subject).toBeUndefined();
+    }
+  });
+
   test('hard-exclude is consistent across engines', async () => {
     // Both engines should hide test/ pages by default; both should opt
     // them back in via include_slug_prefixes.
@@ -223,6 +330,66 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgChanged = pgDefault.map((r: SearchResult) => r.slug).join(',') !== pgHigh.map((r: SearchResult) => r.slug).join(',');
     const pgliteChanged = pgliteDefault.map((r: SearchResult) => r.slug).join(',') !== pgliteHigh.map((r: SearchResult) => r.slug).join(',');
     expect(pgChanged || pgliteChanged).toBe(true);
+  });
+
+  // fix/title-retrieval-arm (Reviewer F2): the title arm must behave
+  // identically on both engines — including the D1 case where the title
+  // tokens never appear in any chunk. Without this case the Postgres
+  // implementation would only ever execute behind hybridSearch's fail-open
+  // catch and a break could ship dark on the production brain. Runs in CI
+  // via scripts/run-e2e.sh (docker-provisioned Postgres); skips gracefully
+  // when DATABASE_URL is not configured.
+  test('searchTitles parity: exact-title hit with title tokens absent from body', async () => {
+    const seed = async (eng: BrainEngine) => {
+      await eng.putPage('wiki/title-arm-parity', {
+        type: 'note',
+        title: 'Vermilion Icebreaker Compendium',
+        compiled_truth: 'A document body that never mentions those words.',
+        timeline: '',
+      });
+      await eng.upsertChunks('wiki/title-arm-parity', [{
+        chunk_index: 0,
+        chunk_text: 'A document body that never mentions those words.',
+        chunk_source: 'compiled_truth',
+        embedding: basisEmbedding(33),
+        token_count: 9,
+      }] satisfies ChunkInput[]);
+    };
+    await seed(pgEngine);
+    await seed(pgliteEngine);
+
+    const q = 'Vermilion Icebreaker Compendium';
+    // Premise on both engines: chunk-grain keyword cannot see the page
+    // (also pins the F1 contract — no orFallback flag means strict AND).
+    expect((await pgEngine.searchKeyword(q, { limit: 5 })).map((r: SearchResult) => r.slug))
+      .not.toContain('wiki/title-arm-parity');
+    expect((await pgliteEngine.searchKeyword(q, { limit: 5 })).map((r: SearchResult) => r.slug))
+      .not.toContain('wiki/title-arm-parity');
+
+    const pg = await pgEngine.searchTitles(q, { limit: 5 });
+    const pglite = await pgliteEngine.searchTitles(q, { limit: 5 });
+    expect(pg.map((r: SearchResult) => r.slug)).toContain('wiki/title-arm-parity');
+    expect(pglite.map((r: SearchResult) => r.slug)).toContain('wiki/title-arm-parity');
+
+    // Row-shape parity: identical representative chunk on both engines.
+    const pgHit = pg.find((r: SearchResult) => r.slug === 'wiki/title-arm-parity')!;
+    const pgliteHit = pglite.find((r: SearchResult) => r.slug === 'wiki/title-arm-parity')!;
+    expect(pgHit.chunk_source).toBe('compiled_truth');
+    expect(pgliteHit.chunk_source).toBe(pgHit.chunk_source);
+    expect(pgliteHit.chunk_text).toBe(pgHit.chunk_text);
+  });
+
+  // fix/title-retrieval-arm (Reviewer F1): the AND→OR fallback is opt-in.
+  // Default searchKeyword stays strict on BOTH engines; orFallback: true
+  // rescues the one-bad-token query identically.
+  test('searchKeyword orFallback parity: default strict, opt-in rescues', async () => {
+    const q = 'fat code thin harness zzzabsenttoken';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const strict = await eng.searchKeyword(q, { limit: 5 });
+      expect(strict.length).toBe(0);
+      const relaxed = await eng.searchKeyword(q, { limit: 5, orFallback: true });
+      expect(relaxed.map((r: SearchResult) => r.slug)).toContain('concepts/fat-code-thin-harness');
+    }
   });
 
   // v0.39.3.0 T3 — provenance write+read parity (WARN-8 + CV5).
@@ -309,6 +476,28 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     // Page title updated (proves the UPDATE actually fired).
     expect(pgPage!.title).toBe('V2');
     expect(pglitePage!.title).toBe('V2');
+  });
+
+  test('putPage restores soft-deleted rows on both engines', async () => {
+    const slug = 'notes/put-page-restore-parity';
+    for (const engine of [pgEngine, pgliteEngine]) {
+      await engine.putPage(slug, {
+        type: 'note',
+        title: 'Before delete',
+        compiled_truth: 'before',
+        timeline: '',
+      });
+      await engine.softDeletePage(slug, { sourceId: 'default' });
+      expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+
+      await engine.putPage(slug, {
+        type: 'note',
+        title: 'After restore',
+        compiled_truth: 'after',
+        timeline: '',
+      });
+      expect((await engine.getPage(slug, { sourceId: 'default' }))?.title).toBe('After restore');
+    }
   });
 
   test('v0.41.19.0 deletePages parity: both engines return same confirmed-deleted slugs', async () => {

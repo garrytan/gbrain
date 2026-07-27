@@ -151,6 +151,119 @@ describe('runDream — --phase <name> restricts the cycle', () => {
   });
 });
 
+// ─── --once (issue #2860) ───────────────────────────────────────────
+
+describe('runDream — --once (issue #2860)', () => {
+  let repo: string;
+  let engine: InstanceType<typeof PGLiteEngine>;
+
+  beforeEach(async () => {
+    repo = makeGitRepo();
+    engine = await makePGLite();
+  }, 60_000);
+
+  afterEach(async () => {
+    if (engine) await engine.disconnect();
+    rmSync(repo, { recursive: true, force: true });
+  }, 60_000);
+
+  test('bare --once (no --phase) exits 2 with a usage hint', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--once']);
+      throw new Error('expected runDream to exit');
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    }
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires an explicit --phase <name>/);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  // Codex P3 finding: --input implicitly sets `phase = 'synthesize'` and
+  // --drain implicitly sets `phase = 'extract_atoms'` — an EARLIER version
+  // of the --once validation checked the derived `phase` value, which was
+  // already non-null by the time it ran, so both of these silently slipped
+  // past the "explicit --phase required" contract (and --once became a
+  // no-op: --drain returns before onceForPhase is ever read; --input
+  // already bypasses the synthesize gate on its own). The fix validates
+  // against `phaseWasExplicit` (whether the user actually typed --phase)
+  // instead of the derived value.
+  test('--input <file> --once (no explicit --phase) exits 2 — an implied phase does not count', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--input', '/tmp/gbrain-2860-nonexistent.txt', '--once']);
+      throw new Error('expected runDream to exit');
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    }
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires an explicit --phase <name>/);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  test('--drain --once (no explicit --phase) exits 2 — an implied phase does not count', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--drain', '--once']);
+      throw new Error('expected runDream to exit');
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    }
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.flat().join(' ')).toMatch(/--once requires an explicit --phase <name>/);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  // Codex review finding: --help must short-circuit BEFORE the bare---once
+  // usage error, matching the same IRON RULE pinned above for --source
+  // ("--help --source whatever prints help and exits 0").
+  test('--help --once (no --phase) prints help and exits 0, not the usage error', async () => {
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const result = await runDream(engine, ['--help', '--once']);
+      expect(result).toBeUndefined();
+    } catch (e: any) {
+      throw new Error('--help with --once should NOT exit; got: ' + e.message);
+    }
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: gbrain dream/);
+    exitSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  test('--phase patterns --once bypasses dream.patterns.enabled=false without writing config', async () => {
+    await engine.setConfig('dream.patterns.enabled', 'false');
+    const report = await runDream(engine, ['--dir', repo, '--phase', 'patterns', '--once', '--json']);
+    expect(report).toBeTruthy();
+    if (report) {
+      expect(report.phases.length).toBe(1);
+      // Bypassed 'disabled' → falls through to the next gate. No
+      // reflections seeded, so it reports insufficient_evidence, not
+      // 'disabled' — proving --once actually forced the run.
+      expect(report.phases[0].phase).toBe('patterns');
+      expect((report.phases[0].details as { reason?: string }).reason).toBe('insufficient_evidence');
+    }
+    expect(await engine.getConfig('dream.patterns.enabled')).toBe('false');
+  });
+
+  test('--phase patterns (no --once) with dream.patterns.enabled=false still skips as disabled', async () => {
+    await engine.setConfig('dream.patterns.enabled', 'false');
+    const report = await runDream(engine, ['--dir', repo, '--phase', 'patterns', '--json']);
+    expect(report).toBeTruthy();
+    if (report) {
+      expect((report.phases[0].details as { reason?: string }).reason).toBe('disabled');
+    }
+  });
+});
+
 // ─── Output format ─────────────────────────────────────────────────
 
 describe('runDream — output format', () => {
@@ -177,6 +290,33 @@ describe('runDream — output format', () => {
     expect(parsed).toHaveProperty('status');
     expect(parsed).toHaveProperty('phases');
     expect(parsed).toHaveProperty('totals');
+  });
+
+  // #394 / takeover of #854: the embed phase's `[dry-run] Would embed ...`
+  // summary must not leak onto stdout ahead of the JSON CycleReport.
+  test('--dry-run --json emits only JSON even when embed has stale chunks', async () => {
+    await engine.putPage('concepts/testing', {
+      type: 'concept',
+      title: 'Testing',
+      compiled_truth: 'Testing keeps JSON contracts honest.',
+      timeline: '',
+    });
+    await engine.upsertChunks('concepts/testing', [
+      { chunk_index: 0, chunk_text: 'Testing keeps JSON contracts honest.', chunk_source: 'compiled_truth' },
+    ]);
+
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
+    await runDream(engine, ['--dir', repo, '--phase', 'embed', '--dry-run', '--json']);
+    logSpy.mockRestore();
+
+    const output = lines.join('\n');
+    expect(output.trimStart().startsWith('{')).toBe(true);
+    const parsed = JSON.parse(output);
+    expect(parsed.schema_version).toBe('1');
+    expect(parsed.phases[0].phase).toBe('embed');
+    // The stale chunk was still counted in the structured report.
+    expect(parsed.phases[0].details.would_embed).toBe(1);
   });
 
   test('human output for clean status mentions "Brain is healthy"', async () => {
@@ -449,12 +589,22 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
 
   // ─── Back-compat: bare `gbrain dream` does NOT write per-source stamp ─
 
-  test('gbrain dream (no --source) leaves all sources untouched (back-compat regression)', async () => {
-    await seedSource('alpha');
-    await seedSource('beta');
+  test('gbrain dream (no --source) stamps only the source whose local_path matches --dir (#1869)', async () => {
+    // Pre-#1869 this asserted NO source was ever stamped without an explicit
+    // --source — which is exactly the bug: a path-scoped `gbrain dream --dir`
+    // run never landed a freshness stamp and doctor's cycle_freshness stayed
+    // stale forever. New truth: the source whose local_path matches the
+    // resolved brain dir is derived and stamped; unrelated sources stay
+    // untouched (cross-source isolation).
+    await seedSource('alpha'); // local_path = repo → derived + stamped
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
+      ['beta', 'beta', '/somewhere/else'],
+    );
     const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
     expect(report).toBeTruthy();
-    expect(await readLastFullCycleAt('alpha')).toBeNull();
+    expect(await readLastFullCycleAt('alpha')).not.toBeNull();
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 60_000);
 

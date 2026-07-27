@@ -453,7 +453,14 @@ function resolveActivity(
  * every `assemble()` call. 1 MB is generous for a human-edited task list. */
 const MAX_TASKS_MD_BYTES = 1_000_000;
 
-/** Extract open tasks from ops/tasks.md "## Today" section. */
+/** Extract open tasks from ops/tasks.md Today section.
+ *
+ * The daily-task-manager skill's documented Output Format uses priority
+ * headings (`## P1 — Today`) with plain `- [ ] task` lines; older fixtures
+ * used a bare `## Today` heading with bold task names. Accept both so the
+ * live-context reader matches the documented writer contract instead of
+ * silently surfacing no tasks (#2186).
+ */
 function resolveTodayTasks(workspaceDir: string): string[] {
   try {
     const path = join(workspaceDir, 'ops', 'tasks.md');
@@ -461,14 +468,18 @@ function resolveTodayTasks(workspaceDir: string): string[] {
     // statSync throws if the file doesn't exist; that lands in the outer catch.
     if (statSync(path).size > MAX_TASKS_MD_BYTES) return [];
     const raw = readFileSync(path, 'utf8');
-    const todayMatch = raw.match(/## Today[\s\S]*?(?=\n## |$)/);
+    const todayMatch = raw.match(/^##\s+(?:P\d\s*[—–-]\s*)?Today\b[\s\S]*?(?=\n##\s|$(?![\s\S]))/m);
     if (!todayMatch) return [];
 
     const lines = todayMatch[0].split('\n');
     const open: string[] = [];
     for (const line of lines) {
-      // Match unchecked task lines: - [ ] **task name** ...
-      const m = line.match(/^\s*-\s*\[ \]\s*\*\*(.+?)\*\*/);
+      // Match unchecked task lines. Legacy bold form first (extracts just
+      // the task name, dropping trailing metadata), then the documented
+      // plain form (whole line body is the task).
+      const m =
+        line.match(/^\s*-\s*\[ \]\s*\*\*(.+?)\*\*/) ??
+        line.match(/^\s*-\s*\[ \]\s*(.+?)\s*$/);
       if (m) open.push(sanitizeForPrompt(m[1].trim()));
     }
     return open.slice(0, 5); // cap at 5 to keep prompt lean

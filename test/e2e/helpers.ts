@@ -67,6 +67,40 @@ export function hasDatabase(): boolean {
 }
 
 /**
+ * Production guard: setupDB() TRUNCATEs every data table on whatever
+ * DATABASE_URL points at, and run-e2e.sh deliberately preserves an exported
+ * DATABASE_URL — so a developer with a production URL in their environment
+ * would wipe their real brain by running the suite. Refuse unless the
+ * database name identifies itself as a test database ("test" as a word
+ * segment, e.g. gbrain_test — the CI/.env.testing.example convention), or
+ * the operator explicitly opts the exact name in via GBRAIN_E2E_ALLOW_DB.
+ *
+ * Exported for unit testing; pure — no connection is made.
+ */
+export function assertSafeE2eDatabaseUrl(
+  url: string,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  let dbName: string;
+  try {
+    dbName = decodeURIComponent(new URL(url).pathname.replace(/^\//, ''));
+  } catch {
+    throw new Error(`E2E guard: DATABASE_URL is not a parseable URL; refusing to run destructive setup.`);
+  }
+  if (!dbName) {
+    throw new Error(`E2E guard: DATABASE_URL has no database name; refusing to run destructive setup.`);
+  }
+  if (/(^|[_-])test([_-]|$)/i.test(dbName)) return;
+  if (env.GBRAIN_E2E_ALLOW_DB && env.GBRAIN_E2E_ALLOW_DB === dbName) return;
+  throw new Error(
+    `E2E guard: database "${dbName}" does not look like a test database ` +
+    `(expected "test" as a name segment, e.g. gbrain_test). setupDB() would ` +
+    `TRUNCATE every data table in it. If this is intentional, set ` +
+    `GBRAIN_E2E_ALLOW_DB=${dbName} to opt in explicitly.`,
+  );
+}
+
+/**
  * Connect to DB, run schema init, truncate all tables.
  * Call in beforeAll() of each test file.
  */
@@ -74,6 +108,7 @@ export async function setupDB(): Promise<PostgresEngine> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL not set. Copy .env.testing.example to .env.testing and configure it.');
   }
+  assertSafeE2eDatabaseUrl(DATABASE_URL);
 
   // Disconnect any prior connection (clean slate)
   await db.disconnect();

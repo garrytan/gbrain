@@ -131,7 +131,9 @@ into gbrain so other clients can scaffold it. Default behavior:
   `~/.gbrain/harvest-private-patterns.txt` plus built-in defaults
   (canonical private fork name, common email regex, Slack channel pattern). Any
   match → rollback (delete the harvested files) and exit non-zero.
-- `openclaw.plugin.json` updated with the new slug, sorted.
+- `openclaw.plugin.json` updated with the new slug, sorted. Harvest must preserve
+  the top-level OpenClaw-native plugin fields (`id`, `configSchema`, `contracts`)
+  because OpenClaw validates those before it can install the package.
 - `--no-lint` bypasses the linter (after a manual editorial scrub).
 
 Use the `skillpack-harvest` skill (its companion editorial workflow)

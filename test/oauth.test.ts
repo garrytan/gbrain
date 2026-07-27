@@ -139,6 +139,107 @@ describe('client registration', () => {
       sql`INSERT INTO oauth_clients (client_id, client_name, scope) VALUES (${clientId}, ${'dup'}, ${'read'})`,
     ).rejects.toThrow();
   });
+
+  test('registerClientManual persists submit_agent bindings when supplied', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'bound-agent', ['client_credentials'], 'read agent', [], 'default', undefined, undefined, {
+        boundTools: ['search', 'get_page'],
+        boundSourceId: 'dept-x',
+        boundBrainId: 'brain-a',
+        boundSlugPrefixes: ['wiki/agents/bound-agent/'],
+        boundMaxConcurrent: 2,
+        budgetUsdPerDay: '7.50',
+      },
+    );
+
+    const rows = await sql`
+      SELECT bound_tools, bound_source_id, bound_brain_id, bound_slug_prefixes,
+             bound_max_concurrent, budget_usd_per_day::text AS budget
+        FROM oauth_clients WHERE client_id = ${clientId}
+    `;
+    expect(rows[0].bound_tools).toEqual(['search', 'get_page']);
+    expect(rows[0].bound_source_id).toBe('dept-x');
+    expect(rows[0].bound_brain_id).toBe('brain-a');
+    expect(rows[0].bound_slug_prefixes).toEqual(['wiki/agents/bound-agent/']);
+    expect(Number(rows[0].bound_max_concurrent)).toBe(2);
+    expect(rows[0].budget).toBe('7.50');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rescopeClient (#1914) — admin-gated rescope of a DCR-defaulted client
+// ---------------------------------------------------------------------------
+
+describe('rescopeClient', () => {
+  beforeAll(async () => {
+    // oauth_clients.source_id has FK → sources(id); create the targets.
+    for (const id of ['wiki', 'essays', 'alpha', 'gamma']) {
+      await sql`INSERT INTO sources (id, name) VALUES (${id}, ${id}) ON CONFLICT (id) DO NOTHING`;
+    }
+  });
+
+  test('DCR client stuck on default gets rescoped; existing tokens pick it up', async () => {
+    // Simulate the DCR path: self-registered client lands with
+    // source_id='default', federated_read=['default']. client_credentials
+    // over DCR needs the explicit --enable-dcr-insecure opt-in, so build a
+    // provider with that flag just for this registration.
+    const dcrProvider = new GBrainOAuthProvider({ sql, tokenTtl: 60, allowClientCredentialsDcr: true });
+    const dcr = await dcrProvider.clientsStore.registerClient!({
+      client_name: 'dcr-stuck-client',
+      redirect_uris: [],
+      grant_types: ['client_credentials'],
+      scope: 'read',
+      token_endpoint_auth_method: 'client_secret_post',
+    } as any);
+    const clientId = dcr.client_id;
+    const [before] = await sql`SELECT source_id, federated_read FROM oauth_clients WHERE client_id = ${clientId}`;
+    expect(before.source_id).toBe('default');
+    expect(before.federated_read).toEqual(['default']);
+
+    // Issue a token BEFORE the rescope — it must see the new scope after.
+    const tokens = await provider.exchangeClientCredentials(clientId, dcr.client_secret!, 'read');
+
+    const result = await provider.rescopeClient(clientId, {
+      sourceId: 'wiki',
+      federatedRead: ['wiki', 'essays'],
+    });
+    expect(result.sourceId).toBe('wiki');
+    expect(result.federatedRead).toEqual(['wiki', 'essays']);
+
+    const authInfo = await provider.verifyAccessToken(tokens.access_token) as unknown as CoreAuthInfo;
+    expect(authInfo.sourceId).toBe('wiki');
+    expect(authInfo.allowedSources).toEqual(['wiki', 'essays']);
+  });
+
+  test('partial rescope leaves the other axis untouched', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'partial-rescope', ['client_credentials'], 'read', [], 'alpha', ['alpha', 'beta'],
+    );
+    const result = await provider.rescopeClient(clientId, { federatedRead: ['beta'] });
+    expect(result.sourceId).toBe('alpha'); // untouched
+    expect(result.federatedRead).toEqual(['beta']);
+
+    const result2 = await provider.rescopeClient(clientId, { sourceId: 'gamma' });
+    expect(result2.sourceId).toBe('gamma');
+    expect(result2.federatedRead).toEqual(['beta']); // untouched
+  });
+
+  test('rejects invalid source ids, empty federated list, no-op calls, unknown client', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'rescope-validation', ['client_credentials'], 'read',
+    );
+    await expect(provider.rescopeClient(clientId, { sourceId: '../etc' })).rejects.toThrow('Invalid source_id');
+    await expect(provider.rescopeClient(clientId, { federatedRead: ['ok', 'Not Valid!'] })).rejects.toThrow('Invalid source_id');
+    await expect(provider.rescopeClient(clientId, { federatedRead: [] })).rejects.toThrow('cannot be empty');
+    await expect(provider.rescopeClient(clientId, {})).rejects.toThrow('requires --source and/or --federated-read');
+    await expect(provider.rescopeClient('gbrain_cl_nonexistent', { sourceId: 'wiki' })).rejects.toThrow('No OAuth client found');
+    // FK: write source must exist in sources(id).
+    await expect(provider.rescopeClient(clientId, { sourceId: 'no-such-source' })).rejects.toThrow('does not exist');
+
+    // Validation failures must not have mutated the row.
+    const [row] = await sql`SELECT source_id FROM oauth_clients WHERE client_id = ${clientId}`;
+    expect(row.source_id).toBe('default');
+  });
 });
 
 // ---------------------------------------------------------------------------

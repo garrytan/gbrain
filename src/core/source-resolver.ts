@@ -161,6 +161,33 @@ export async function resolveSourceId(
 }
 
 /**
+ * Engine-free tiers (1-3) of the resolution chain: explicit flag →
+ * GBRAIN_SOURCE env → .gbrain-source dotfile walk. Used by the thin-client
+ * CLI path (#2098), which has no local engine to run tiers 4-6 or
+ * assertSourceExists against — the remote server enforces existence + grant.
+ * Returns null when no engine-free tier fires.
+ */
+export function resolveSourceIdEngineFree(
+  explicit: string | null | undefined,
+  cwd: string = process.cwd(),
+): string | null {
+  if (explicit) {
+    if (!SOURCE_ID_RE.test(explicit)) {
+      throw new Error(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
+    }
+    return explicit;
+  }
+  const env = process.env.GBRAIN_SOURCE;
+  if (env && env.length > 0) {
+    if (!SOURCE_ID_RE.test(env)) {
+      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+    }
+    return env;
+  }
+  return readDotfileWalk(cwd);
+}
+
+/**
  * Returns the id of the SINGLE registered non-default source with a
  * local_path, when exactly one such row exists. Returns null when:
  *   - zero non-default sources are registered (fresh install)
@@ -351,6 +378,45 @@ export async function resolveSourceWithTier(
 
   // 6. Fallback: seeded 'default' source.
   return { source_id: 'default', tier: 'seed_default' };
+}
+
+/**
+ * #2561 — compute the federated read scope for an UNQUALIFIED local CLI call.
+ *
+ * `sources add --federated` promises that a `config.federated = true` source
+ * "participates in unqualified `gbrain search` results"
+ * (docs/guides/multi-source-brains.md). This helper turns that promise into a
+ * scope: given the resolved source and WHICH tier resolved it, return
+ * `[resolvedSource, ...other federated source ids]` — or `undefined` when the
+ * expansion must not apply:
+ *
+ *   - explicit tiers (`flag` / `env` / `dotfile`): the user named a source;
+ *     scalar scope stands (that IS the qualified case);
+ *   - no other federated source exists: keep the scalar fast path unchanged.
+ *
+ * Archived sources are excluded (same rationale as pickSoleNonDefaultSource);
+ * the archived column is v34+, so fall back to the un-archived query on older
+ * brains. Callers put the result on `OperationContext.localFederatedSourceIds`
+ * — consumed only by `federatedSearchScope` and only when `remote === false`.
+ */
+export async function localFederatedSourceIds(
+  engine: BrainEngine,
+  sourceId: string,
+  tier: SourceTier,
+): Promise<string[] | undefined> {
+  if (tier === 'flag' || tier === 'env' || tier === 'dotfile') return undefined;
+  let rows: Array<{ id: string }>;
+  try {
+    rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE config->>'federated' = 'true' AND archived = false ORDER BY id`,
+    );
+  } catch {
+    rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE config->>'federated' = 'true' ORDER BY id`,
+    );
+  }
+  const ids = [sourceId, ...rows.map((r) => r.id).filter((id) => id !== sourceId)];
+  return ids.length > 1 ? ids : undefined;
 }
 
 /** Exposed for tests. */

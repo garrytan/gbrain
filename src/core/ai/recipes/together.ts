@@ -16,6 +16,13 @@ export const together: Recipe = {
     setup_url: 'https://api.together.ai/settings/api-keys',
   },
   touchpoints: {
+    // Same OpenAI-compatible endpoint as chat; declared so an explicit
+    // `expansion_model: together:...` resolves instead of silently dropping
+    // expansion (#1135).
+    expansion: {
+      models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'Qwen/Qwen2.5-72B-Instruct-Turbo'],
+      price_last_verified: '2026-04-20',
+    },
     chat: {
       models: [
         'Qwen/Qwen2.5-72B-Instruct-Turbo',

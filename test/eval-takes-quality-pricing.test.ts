@@ -32,6 +32,12 @@ describe('getPricing — fail-closed contract', () => {
     expect(p.output_per_1m).toBeCloseTo(25.0, 5);
   });
 
+  test('opus 5 is supported and priced $5/$25', () => {
+    const p = getPricing('anthropic:claude-opus-5');
+    expect(p.input_per_1m).toBeCloseTo(5.0, 5);
+    expect(p.output_per_1m).toBeCloseTo(25.0, 5);
+  });
+
   test('error message names the model AND points to the file', () => {
     try {
       getPricing('foo:bar');

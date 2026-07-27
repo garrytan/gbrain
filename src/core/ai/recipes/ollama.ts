@@ -13,8 +13,20 @@ export const ollama: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
+      // #2271: modern local embed models added so assertTouchpoint accepts them.
+      // Each carries its own native dim (qwen3-embed-8b=4096, arctic-l-v2=1024);
+      // the recipe-wide default_dims below is only the nomic fallback, so users
+      // of the larger models pass --embedding-dimensions (allowed via
+      // trust_custom_dims). Per-model dims metadata is a tracked follow-up.
+      models: [
+        'nomic-embed-text',
+        'mxbai-embed-large',
+        'all-minilm',
+        'qwen3-embed-8b',
+        'snowflake-arctic-embed-l-v2',
+      ],
       default_dims: 768, // nomic-embed-text native dim
+      trust_custom_dims: true, // #2271: local models carry varied native dims
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
       // Ollama's batch capacity depends on the locally loaded model + the

@@ -28,17 +28,27 @@
  *      (excluding the OpenAI canonical fast-path recipe).
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
   embed,
   splitByTokenBudget,
+  capBatchItems,
   isTokenLimitError,
   __setEmbedTransportForTests,
   __getShrinkStateForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
+
+// The last test in this file leaves the gateway configured with a remote
+// provider + fake key and a REAL embed transport. Without a final reset,
+// that config leaks into whichever test file the shard runs next — the
+// first downstream embed then makes a live HTTP call (broke master shard 6
+// when #3022's new test file reshuffled shard composition). The bunfig
+// legacy-embedding preload only re-applies its default when the gateway is
+// UNCONFIGURED, so a configured-but-stale slot survives file boundaries.
+afterAll(() => resetGateway());
 
 // --------- Test helpers ---------
 
@@ -139,6 +149,41 @@ describe('splitByTokenBudget (pure helper)', () => {
     const texts = ['a'.repeat(40_000)];
     expect(splitByTokenBudget(texts, 96_000, 0)).toEqual(splitByTokenBudget(texts, 96_000, 4));
     expect(splitByTokenBudget(texts, 96_000, -1)).toEqual(splitByTokenBudget(texts, 96_000, 4));
+  });
+});
+
+describe('capBatchItems (hard COUNT cap helper)', () => {
+  test('batch at or under the cap is returned as a single batch (no copy of contents)', () => {
+    const texts = ['a', 'b', 'c'];
+    expect(capBatchItems(texts, 3)).toEqual([texts]);
+    expect(capBatchItems(texts, 10)).toEqual([texts]);
+  });
+
+  test('oversized batch splits into chunks of at most maxItems', () => {
+    const texts = Array.from({ length: 100 }, (_, i) => `t${i}`);
+    const result = capBatchItems(texts, 32);
+    expect(result.map(b => b.length)).toEqual([32, 32, 32, 4]);
+    expect(result.every(b => b.length <= 32)).toBe(true);
+  });
+
+  test('exact multiple splits evenly with no trailing empty batch', () => {
+    const texts = Array.from({ length: 64 }, (_, i) => `t${i}`);
+    expect(capBatchItems(texts, 32).map(b => b.length)).toEqual([32, 32]);
+  });
+
+  test('order is preserved across the split (concatenation round-trips)', () => {
+    const texts = Array.from({ length: 70 }, (_, i) => `t${i}`);
+    expect(capBatchItems(texts, 32).flat()).toEqual(texts);
+  });
+
+  test('maxItems <= 0 is a no-op (single batch) — never produces empty/infinite batches', () => {
+    const texts = ['a', 'b', 'c'];
+    expect(capBatchItems(texts, 0)).toEqual([texts]);
+    expect(capBatchItems(texts, -5)).toEqual([texts]);
+  });
+
+  test('empty input returns a single empty batch', () => {
+    expect(capBatchItems([], 32)).toEqual([[]]);
   });
 });
 

@@ -9,24 +9,27 @@
 //   4. Write each atom via engine.putPage(slug, page, {sourceId})
 //      with sourceId threaded so federated brains route correctly.
 //
-// Idempotency (D1 from /plan-eng-review):
-//   Each atom carries frontmatter.source_hash (16-char sha256 prefix).
-//   Before processing a transcript/page, query "any atom with this
-//   source_hash exists in this source?". If yes, skip. Closes both:
-//     - PR #1414's primary concern (page-side re-extraction)
-//     - Pre-existing v0.41.2.0 transcript-side date-stamp duplicate bug
-//       (atom slugs are `atoms/YYYY-MM-DD/<title>`, so re-discovered
-//       transcripts on day N+1 used to write second atoms; now skipped).
+// Idempotency (per-atom, via deterministic slug):
+//   Each atom's slug is `atoms/<source-date>/<stem>-<title-hash>` — built from
+//   the SOURCE date (the transcript's own date / the page slug), NOT the run
+//   date, plus a 6-char hash of the title. Re-extracting the same atom resolves
+//   to the SAME slug, so engine.putPage upserts in place instead of minting a
+//   duplicate. This closes three bugs in one scheme:
+//     - PR #1414's page-side re-extraction.
+//     - The cross-day transcript duplicate: append-only transcripts grow daily,
+//       so a run-date prefix (`atoms/<today>/…`) used to re-mint the same atom
+//       under a new date every day. A source-date prefix is stable, so it now
+//       upserts.
+//     - The "trailing-dash twin": the stem routes through slugifySegment (the
+//       FS-import normalizer) and re-strips a trailing dash after the 60-char
+//       truncation, so the two write paths can no longer disagree on `…would`
+//       vs `…would-` and persist the same atom twice.
 //
-// Known limitation (D9 #2 — documented, not blocking):
-//   If extraction writes atom 1 of 3 then atom 2 throws, source_hash
-//   filter sees atom 1 exists and skips on next discovery. Atoms 2+3
-//   stay missing until content_hash changes. Acceptable for v0.41.2.1:
-//     - Haiku call failure is rare; network/budget failures rarer.
-//     - Content edits trigger natural re-extract via new content_hash.
-//     - The original incident (duplicate atoms) is fully closed.
-//   Per-atom idempotency via deterministic slug is v0.42+ TODO
-//   (see TODOS.md).
+//   The source_hash batch check (atomsExistingForHashes) is retained ONLY as a
+//   cost fast-path — it skips re-running Haiku on a transcript whose whole-file
+//   hash is unchanged. On append-only sources that hash changes daily so the
+//   fast-path won't skip, but the deterministic slug makes the re-run upsert
+//   rather than duplicate, so correctness no longer depends on it.
 //
 // Config:
 //   Reads dream.synthesize.session_corpus_dir + meeting_transcripts_dir
@@ -48,11 +51,15 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { createHash } from 'crypto';
+import { slugifySegment } from '../sync.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
+const DEFAULT_EXTRACT_ATOMS_MODEL = 'anthropic:claude-haiku-4-5';
 
 // v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
@@ -61,15 +68,63 @@ const ATOM_TYPES = [
   'critique', 'collection',
 ] as const;
 
-// v0.41.2.1 (D2): brain-page discovery constants. Hardcoded for now;
-// future pack-aware refactor is a one-line change to pull from the
-// active pack manifest (symmetric with the existing
-// src/core/facts/eligibility.ts:49 TODO).
-const EXTRACTABLE_PAGE_TYPES = [
+// v0.41.2.1 (D2): brain-page discovery constants.
+//
+// Legacy floor: the pre-pack hardcoded atom-extraction types. Retained as a
+// back-compat union member so a gbrain-base brain never loses an extraction
+// target when we begin honoring the pack manifest's `extractable` flags.
+const LEGACY_EXTRACTABLE_TYPES = [
   'meeting', 'source', 'article', 'video', 'book', 'original',
 ] as const;
+
+// Synthesis outputs are never extraction inputs: extracting atoms from atoms or
+// concepts would loop (concepts are synthesized FROM atoms). Mirrors
+// facts/eligibility.ts, which likewise excludes `concept` despite its
+// extractable:true flag being a documented forward-compat marker.
+const SYNTHESIS_OUTPUT_TYPES = new Set<string>(['atom', 'concept']);
+
 const PAGE_DISCOVERY_BUDGET = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
+// Source pages whose frontmatter declares a `raw` payload pointer hold raw
+// import data, not extractable prose. Extraction on them yields zero atoms,
+// so no atom row is ever written and they re-enter discovery + the doctor
+// backlog count on every cycle — a permanent no-progress loop. Shared by
+// discoverExtractablePages and countExtractAtomsBacklog so the phase and the
+// doctor check can't drift.
+const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
+  `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
+
+/**
+ * Pure allowlist policy: the legacy floor UNION the pack's `extractable: true`
+ * types, MINUS synthesis outputs. Exported for unit tests; keep I/O-free.
+ */
+export function unionExtractableTypes(packExtractable: Iterable<string>): string[] {
+  const types = new Set<string>(LEGACY_EXTRACTABLE_TYPES);
+  for (const t of packExtractable) types.add(t);
+  for (const t of SYNTHESIS_OUTPUT_TYPES) types.delete(t);
+  return [...types];
+}
+
+/**
+ * Resolve the atom-extraction type allowlist from the active schema pack.
+ * Closes the D2 TODO of honoring the pack manifest (so a type declared
+ * extractable — e.g. `note` — actually extracts) while preserving behavior for
+ * gbrain-base via the legacy-floor union. Fail-soft: any pack-load error falls
+ * back to the legacy floor.
+ */
+async function resolveExtractableTypes(): Promise<string[]> {
+  let packExtractable: Iterable<string> = [];
+  try {
+    const { loadConfig } = await import('../config.ts');
+    const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { extractableTypesFromPack } = await import('../schema-pack/extractable.ts');
+    const resolved = await loadActivePack({ cfg: loadConfig(), remote: false });
+    packExtractable = extractableTypesFromPack(resolved.manifest);
+  } catch {
+    // Pack unavailable (test seams, bootstrap) — legacy floor only.
+  }
+  return unionExtractableTypes(packExtractable);
+}
 
 export interface ExtractAtomsOpts {
   brainDir?: string;
@@ -118,9 +173,19 @@ interface ExtractedAtom {
   body: string;
   source_quote?: string;
   lesson?: string;
+  /**
+   * 1-3 kebab-case topic labels for concept clustering. Consumed by
+   * synthesize_concepts (groups atoms by `frontmatter.concepts`; only
+   * labels shared by >=2 atoms materialize a concept page, so the prompt
+   * biases reuse-over-coinage). #2123.
+   */
+  concepts?: string[];
   virality_score?: number;
   emotional_register?: string;
 }
+
+/** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
+const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
@@ -132,11 +197,16 @@ quote, or short essay angle. Each atom must:
 
 Output a JSON array of atoms (1-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
-source_quote (verbatim ≤200 chars), lesson (one sentence), virality_score
-(0-100), emotional_register (one of: shocking, inspiring, funny, sobering,
-practical, controversial)}.
+source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
+(1-3 topic labels), virality_score (0-100), emotional_register (one of:
+shocking, inspiring, funny, sobering, practical, controversial)}.
 
 atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
+
+concepts are kebab-case English TOPIC labels used to cluster atoms into
+concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
+entity or brand names. Use the same label for the same topic across atoms;
+prefer a label you already used over coining a near-synonym.
 
 Output ONLY the JSON array, no prose.`;
 
@@ -162,6 +232,10 @@ interface DiscoveredPage {
  *      participate in the NOT EXISTS check anyway.
  *   #4 dream_generated exclusion — prevents the phase from chewing
  *      its own output (e.g. dream-generated originals).
+ *   #5 raw source-holder exclusion — source pages that only point at a raw
+ *      import payload are not extractable prose; counting them creates a
+ *      permanent backlog/no-progress loop (see
+ *      RAW_SOURCE_HOLDER_EXCLUSION_SQL).
  */
 export async function discoverExtractablePages(
   engine: BrainEngine,
@@ -180,7 +254,9 @@ export async function discoverExtractablePages(
       AND p.content_hash IS NOT NULL
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
+      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -195,7 +271,7 @@ export async function discoverExtractablePages(
   `;
   const params: unknown[] = [
     sourceId,
-    EXTRACTABLE_PAGE_TYPES as unknown as string[],
+    await resolveExtractableTypes(),
     MIN_PAGE_CHARS_FOR_EXTRACTION,
     PAGE_DISCOVERY_BUDGET,
   ];
@@ -252,7 +328,9 @@ export async function countExtractAtomsBacklog(
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -265,16 +343,19 @@ export async function countExtractAtomsBacklog(
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $2
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
                AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
                AND atom.deleted_at IS NULL
            )`;
+    const extractableTypes = await resolveExtractableTypes();
     const params = scoped
-      ? [sourceId, EXTRACTABLE_PAGE_TYPES as unknown as string[], MIN_PAGE_CHARS_FOR_EXTRACTION]
-      : [EXTRACTABLE_PAGE_TYPES as unknown as string[], MIN_PAGE_CHARS_FOR_EXTRACTION];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params);
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
@@ -454,7 +535,24 @@ export async function runPhaseExtractAtoms(
   let pagesSkipped = 0;
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  let budgetExhausted = false;
+  let extractModel = DEFAULT_EXTRACT_ATOMS_MODEL;
+  let budgetCap = DEFAULT_BUDGET_USD;
+  try {
+    const configuredModel = await engine.getConfig('models.dream.extract_atoms');
+    if (configuredModel) extractModel = configuredModel;
+    const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
+    if (configuredBudget) {
+      const n = Number(configuredBudget);
+      if (Number.isFinite(n) && n > 0) budgetCap = n;
+    }
+  } catch {
+    // Keep safe defaults: Haiku + $0.30.
+  }
+  const budgetTracker = new BudgetTracker({
+    maxCostUsd: budgetCap,
+    label: 'cycle.extract_atoms',
+  });
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -479,9 +577,10 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
     await maybeYield();
-    if (estimatedSpendUsd >= budgetCap) {
+    if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
       continue;
@@ -490,6 +589,7 @@ export async function runPhaseExtractAtoms(
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     try {
       const result = await chat({
+        model: extractModel,
         system: EXTRACT_PROMPT,
         messages: [
           {
@@ -497,19 +597,36 @@ export async function runPhaseExtractAtoms(
             content: `Source: ${originLabel}\n\n---\n\n${item.content.slice(0, 50_000)}`,
           },
         ],
-        maxTokens: 2000,
+        maxTokens: 4096,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
 
-      // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
-      estimatedSpendUsd +=
-        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
+      estimatedSpendUsd = budgetTracker.totalSpent;
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
+        // #2144: tombstone zero-yield pages so they stop being rediscovered.
+        // Idempotency is keyed on atom rows — a page that yields no atoms
+        // leaves no row, so pre-fix it re-entered the discovery window every
+        // run (wedging --drain with a false no_progress and re-spending
+        // nightly budget on the same pages). Stamp the content hash we
+        // scanned; discovery skips the page only while its content is
+        // unchanged (edits re-eligibilize, mirroring atom-row staleness).
+        // Only stamped after a SUCCESSFUL chat call — LLM failures take the
+        // catch path below and stay retryable.
+        if (!opts.dryRun && item.kind === 'page') {
+          try {
+            await engine.executeRaw(
+              `UPDATE pages
+                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+              [item.contentHash.slice(0, 16), sourceId, item.slug],
+            );
+          } catch { /* fail-soft: page stays rediscoverable */ }
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -517,7 +634,8 @@ export async function runPhaseExtractAtoms(
 
       if (!opts.dryRun) {
         for (const atom of atoms) {
-          const slug = `atoms/${todayDate()}/${slugify(atom.title)}`;
+          const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
+          const slug = atomSlug(atom.title, srcRef);
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
@@ -538,6 +656,7 @@ export async function runPhaseExtractAtoms(
                 source_hash: item.contentHash.slice(0, 16),
                 ...(atom.source_quote && { source_quote: atom.source_quote }),
                 ...(atom.lesson && { lesson: atom.lesson }),
+                ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
                 ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
                 ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
                 extracted_at: new Date().toISOString(),
@@ -558,12 +677,20 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (err instanceof BudgetExhausted) {
+        budgetExhausted = true;
+        if (item.kind === 'transcript') transcriptsSkipped++;
+        else pagesSkipped++;
+        continue;
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
+  });
+  estimatedSpendUsd = budgetTracker.totalSpent;
 
   // v0.42 Wave B2: write extract receipt + rollup row when the phase
   // actually extracted atoms. Both are best-effort per F-OUT-19 —
@@ -621,6 +748,8 @@ export async function runPhaseExtractAtoms(
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
+      model: extractModel,
+      budget_exhausted: budgetExhausted,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
     },
@@ -664,7 +793,7 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
     if (typeof item !== 'object' || item === null) continue;
     const obj = item as Record<string, unknown>;
     const title = typeof obj.title === 'string' ? obj.title.slice(0, 200) : null;
-    const atomType = typeof obj.atom_type === 'string' ? obj.atom_type : null;
+    const atomType = typeof obj.atom_type === 'string' ? obj.atom_type.trim().toLowerCase() : null;
     const body = typeof obj.body === 'string' ? obj.body : null;
     if (!title || !atomType || !body) continue;
     if (!ATOM_TYPES.includes(atomType as typeof ATOM_TYPES[number])) continue;
@@ -674,6 +803,13 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
       body,
       source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
       lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
+      concepts: (() => {
+        if (!Array.isArray(obj.concepts)) return undefined;
+        const labels = obj.concepts
+          .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
+          .slice(0, 3);
+        return labels.length > 0 ? labels : undefined;
+      })(),
       virality_score:
         typeof obj.virality_score === 'number' &&
         obj.virality_score >= 0 &&
@@ -691,12 +827,40 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 60);
+/**
+ * Canonical slug stem for an atom title. Routes through slugifySegment (the
+ * same normalizer the FS-import path uses) and RE-STRIPS a trailing dash after
+ * the 60-char truncation — the cut can land on a hyphen and re-introduce one.
+ * Two writers disagreeing on that trailing dash (`…would` vs `…would-`) was the
+ * "trailing-dash twin" duplicate bug.
+ */
+function atomSlugStem(title: string): string {
+  return slugifySegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
+}
+
+/**
+ * Pull a YYYY-MM-DD date from a source reference — a transcript file path like
+ * `…/2026-06-11-telegram.md`, or a dated page slug. Checks the basename first
+ * to avoid matching a date in a parent directory. Falls back to the run date
+ * only when the source carries no date, so dated sources are fully deterministic.
+ */
+function sourceDate(ref: string): string {
+  const base = ref.split('/').pop() ?? ref;
+  const m = base.match(/(\d{4}-\d{2}-\d{2})/) ?? ref.match(/(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : todayDate();
+}
+
+/**
+ * Deterministic per-atom slug: `atoms/<source-date>/<stem>-<title-hash>`.
+ * - Date comes from the SOURCE, not the run date, so re-extracting an
+ *   append-only transcript on a later day yields the SAME slug → putPage
+ *   upserts instead of minting a cross-day duplicate.
+ * - The 6-char title hash keeps two distinct atoms whose titles share the
+ *   first 60 chars on separate slugs, so a deterministic slug never silently
+ *   clobbers a *different* atom. Hash is over the title only (not body) so an
+ *   LLM rewording the body on re-extraction still upserts rather than dupes.
+ */
+function atomSlug(title: string, srcRef: string): string {
+  const hash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+  return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
 }

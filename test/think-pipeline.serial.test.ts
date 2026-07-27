@@ -179,6 +179,64 @@ describe('runThink (with stub client)', () => {
     expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
   });
 
+  test('passes the question into page excerpt selection', async () => {
+    const prefix = [
+      '# Widget Co',
+      'General company background and operating context. '.repeat(18),
+    ].join('\n');
+    const lateFact = 'Enterprise pricing: the plan costs 125 credits per month.';
+    const content = `${prefix}\n${lateFact}\n${'Other context. '.repeat(80)}`;
+    let pageId: number | undefined;
+    let capturedUser = '';
+    const stubClient: ThinkLLMClient = {
+      create: async (params) => {
+        const userMessage = params.messages[0]?.content;
+        capturedUser = typeof userMessage === 'string'
+          ? userMessage
+          : JSON.stringify(userMessage);
+        return {
+          id: 'msg_excerpt_wiring',
+          type: 'message',
+          role: 'assistant',
+          model: 'stub',
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ answer: 'stubbed answer', citations: [], gaps: [] }),
+          }],
+        };
+      },
+    };
+
+    try {
+      const page = await engine.putPage('companies/widget-co', {
+        title: 'Widget Co', type: 'company', compiled_truth: content,
+      });
+      pageId = page.id;
+      await engine.executeRaw('DELETE FROM content_chunks WHERE page_id = $1', [page.id]);
+      await engine.executeRaw(
+        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source)
+         VALUES ($1, 0, $2, 'compiled_truth')`,
+        [page.id, content],
+      );
+
+      const result = await runThink(engine, {
+        question: 'What is Widget Co enterprise pricing in credits per month?',
+        client: stubClient,
+        withTrajectory: false,
+      });
+
+      expect(result.pagesGathered).toBeGreaterThan(0);
+      expect(capturedUser).toContain(lateFact);
+    } finally {
+      if (pageId !== undefined) {
+        await engine.executeRaw('DELETE FROM pages WHERE id = $1', [pageId]);
+      }
+    }
+  });
+
   test('handles malformed LLM output gracefully (regex citation fallback)', async () => {
     const stubClient: ThinkLLMClient = {
       create: async () => ({
@@ -215,6 +273,24 @@ describe('runThink (with stub client)', () => {
     expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
     expect(result.answer).toContain('no LLM available');
     expect(result.rounds).toBe(0);
+  });
+
+  test('labels an unusable CONFIGURED model honestly (MODEL_NOT_USABLE, not NO_ANTHROPIC_API_KEY)', async () => {
+    // Regression guard: a configured model the recipe rejects (unknown_model)
+    // used to be stamped NO_ANTHROPIC_API_KEY, sending operators to debug
+    // env/keychain when the fix was the model id. Model validity beats the key
+    // check in probeChatModel, so the honest label holds even keyless.
+    await engine.setConfig('models.think', 'anthropic:claude-bogus-9');
+    try {
+      const result = await withoutAnthropicKey(() => runThink(engine, { question: 'bad model test' }));
+      expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_model');
+      expect(result.warnings).not.toContain('NO_ANTHROPIC_API_KEY');
+      expect(result.answer).toContain('not usable');
+      expect(result.rounds).toBe(0);
+      expect(result.synthesisOk).toBe(false);
+    } finally {
+      await engine.unsetConfig('models.think');
+    }
   });
 
   test('persistSynthesis writes synthesis page + evidence rows', async () => {
@@ -285,8 +361,11 @@ describe('runThink — #1698 explicit-model hard error', () => {
   test('NON-explicit bad model does NOT throw — graceful degrade (no modelExplicit)', async () => {
     // model present but modelExplicit unset → early gate skipped; builder returns null.
     // Hermetic no-key so the assertion can't be perturbed by a configured key.
+    // Post-honest-labeling: an unknown PROVIDER is a model problem, not a key
+    // problem — the warning names it instead of the old NO_ANTHROPIC_API_KEY
+    // catch-all. The graceful no-throw contract is unchanged.
     const result = await withoutAnthropicKey(() => runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' }));
-    expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+    expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_provider');
     expect(result.synthesisOk).toBe(false);
   });
 });

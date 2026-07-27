@@ -55,6 +55,7 @@ import { statSync } from 'node:fs';
 import type { SchemaPackManifest } from './manifest-v1.ts';
 import { computeManifestSha8, packIdentity } from './manifest-v1.ts';
 import { computeAliasClosureHash, buildAliasGraph, type AliasGraph } from './closure.ts';
+import { mergeInheritedManifest, type BorrowedTypes } from './merge.ts';
 
 export const EXTENDS_DEPTH_WARN = 4 as const;
 export const EXTENDS_DEPTH_HARD_CAP = 8 as const;
@@ -254,10 +255,12 @@ export async function resolvePack(
     return existing.resolved;
   }
 
-  // Walk extends chain to enforce depth cap AND collect names for the
-  // cache snapshot (codex C6 — child cache entry must remember every
-  // parent so invalidatePackCache(parentName) can cascade).
+  // Walk extends chain to enforce depth cap, collect names for the cache
+  // snapshot (codex C6 — child cache entry must remember every parent so
+  // invalidatePackCache(parentName) can cascade), AND retain each ancestor
+  // manifest so we can merge parent content child-wins (T20 / #1749).
   const chain: string[] = [manifest.name];
+  const ancestorsNearestFirst: SchemaPackManifest[] = [];
   let cursor: SchemaPackManifest | null = manifest;
   while (cursor?.extends) {
     const parentName = cursor.extends;
@@ -271,27 +274,52 @@ export async function resolvePack(
     if (chain.length > EXTENDS_DEPTH_WARN) {
       opts.onDepthWarn?.(chain.length, chain);
     }
-    cursor = await loadByName(parentName);
+    const parent = await loadByName(parentName);
+    ancestorsNearestFirst.push(parent);
+    cursor = parent;
+  }
+  const ancestorsBaseFirst = [...ancestorsNearestFirst].reverse();
+
+  // Resolve `borrow_from` (selective, non-transitive). Fail-closed: a
+  // missing borrow target throws UnknownPackError via loadByName, matching
+  // the extends path. Omitted `types`/`link_types` = borrow none of that
+  // category (selective by contract). We pull the borrowed pack's OWN
+  // declared types only — not its inherited/merged ones.
+  const borrowed: BorrowedTypes = { page_types: [], link_types: [] };
+  const borrowedNames: string[] = [];
+  for (const entry of manifest.borrow_from) {
+    const src = await loadByName(entry.pack);
+    borrowedNames.push(entry.pack);
+    const wantTypes = new Set(entry.types ?? []);
+    const wantLinks = new Set(entry.link_types ?? []);
+    for (const pt of src.page_types) if (wantTypes.has(pt.name)) borrowed.page_types.push(pt);
+    for (const lt of src.link_types) if (wantLinks.has(lt.name)) borrowed.link_types.push(lt);
   }
 
-  // For v0.38 skeleton: closure is computed on the manifest itself.
-  // Full extends-merging (child-wins) is the v0.41+ T20 follow-up.
-  const alias_graph = buildAliasGraph(manifest);
-  const alias_closure_hash = await computeAliasClosureHash(manifest);
+  // Child-wins merge across the extends chain + borrowed types. Every
+  // downstream reader consumes `resolved.manifest`, so the merged manifest
+  // is what makes inheritance visible. Closure is (correctly) computed on
+  // the merged manifest; a merged alias cycle surfaces here as AliasCycleError.
+  const merged = mergeInheritedManifest(ancestorsBaseFirst, manifest, borrowed);
+  const alias_graph = buildAliasGraph(merged);
+  const alias_closure_hash = await computeAliasClosureHash(merged);
 
   const resolved: ResolvedPack = {
-    manifest,
+    manifest: merged,
     identity: id,
     manifest_sha8: sha8,
     alias_closure_hash,
     alias_graph,
   };
 
-  // Capture file-stat snapshot for the stat-TTL gate. Skip names that
-  // the locator can't resolve (synthetic manifests in tests).
+  // Capture file-stat snapshot for the stat-TTL gate over EVERY file that
+  // fed this entry — the extends chain PLUS borrowed packs — so editing a
+  // borrowed pack cascade-invalidates its borrowers. Skip names the locator
+  // can't resolve (synthetic manifests in tests).
+  const trackedNames = [...new Set([...chain, ...borrowedNames])];
   const files: Array<{ name: string; path: string; mtimeMs: number }> = [];
   if (opts.loadByPath) {
-    for (const n of chain) {
+    for (const n of trackedNames) {
       const path = opts.loadByPath(n);
       if (path === null) continue;
       files.push({ name: n, path, mtimeMs: safeMtimeMs(path) });
@@ -300,7 +328,7 @@ export async function resolvePack(
 
   _byName.set(manifest.name, {
     resolved,
-    chain: [...chain],
+    chain: trackedNames,
     files,
     lastStatMs: Date.now(),
   });

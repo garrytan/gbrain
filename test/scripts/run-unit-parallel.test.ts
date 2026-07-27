@@ -22,7 +22,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { execFileSync, spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, chmodSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, chmodSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
@@ -152,5 +152,95 @@ describe('failing-on-purpose', () => {
     // Format: `shard 1/2: pass=N fail=N skip=N rc=N`
     expect(summary).toMatch(/shard 1\/2: pass=\d+ fail=\d+ skip=\d+ rc=\d+/);
     expect(summary).toMatch(/shard 2\/2: pass=\d+ fail=\d+ skip=\d+ rc=\d+/);
+  });
+});
+
+describe('run-unit-parallel.sh no-timeout-binary fallback (rc from shard wait, not watchdog teardown)', () => {
+  // Forces the no-gtimeout/no-timeout branch by running the wrapper under a
+  // curated PATH that has every tool the scripts call EXCEPT timeout
+  // binaries (real `bun` symlinked in), so the fallback executes even on
+  // hosts with coreutils installed.
+  //
+  // Regression pinned here: the shard's sentinel .exit file must record the
+  // exit code read right after `wait $pid` (the shard's own rc). The
+  // watchdog subshell is killed with SIGTERM and reports 143; reading `$?`
+  // after that teardown stamped rc=143 into every shard's sentinel — the
+  // wrapper exited non-zero with rc=143 summaries even when every test
+  // passed.
+  let FROOT: string;
+  let FENV: Record<string, string>;
+
+  beforeAll(() => {
+    FROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-fallback-'));
+    mkdirSync(join(FROOT, 'scripts'), { recursive: true });
+    mkdirSync(join(FROOT, 'test'), { recursive: true });
+    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+      copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(FROOT, 'scripts', s));
+      chmodSync(join(FROOT, 'scripts', s), 0o755);
+    }
+    const passing = `import { describe, it, expect } from 'bun:test';
+describe('passing', () => {
+  it('arithmetic works', () => { expect(1 + 1).toBe(2); });
+});`;
+    writeFileSync(join(FROOT, 'test', 'a-pass.test.ts'), passing);
+    writeFileSync(join(FROOT, 'test', 'b-pass.test.ts'), passing);
+
+    const bin = join(FROOT, 'bin');
+    mkdirSync(bin);
+    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'bun']) {
+      const p = Bun.which(tool);
+      if (p) symlinkSync(p, join(bin, tool));
+    }
+    FENV = {
+      PATH: bin,
+      HOME: process.env.HOME ?? FROOT,
+      TMPDIR: process.env.TMPDIR ?? '/tmp',
+      GBRAIN_TEST_SHARD_TIMEOUT: '300',
+    };
+  });
+
+  afterAll(() => {
+    if (FROOT) rmSync(FROOT, { recursive: true, force: true });
+  });
+
+  function runFallbackWrapper(): { code: number; stdout: string; stderr: string } {
+    const result = spawnSync(
+      'bash',
+      [join(FROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2'],
+      { cwd: FROOT, encoding: 'utf-8', env: FENV },
+    );
+    return {
+      code: result.status ?? -1,
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+    };
+  }
+
+  it('exits zero with rc=0 shard sentinels when all shards pass', () => {
+    const r = runFallbackWrapper();
+    const summary = readFileSync(join(FROOT, '.context', 'test-summary.txt'), 'utf-8');
+    expect(summary).toMatch(/shard 1\/2: pass=\d+ fail=0 skip=0 rc=0/);
+    expect(summary).toMatch(/shard 2\/2: pass=\d+ fail=0 skip=0 rc=0/);
+    expect(summary).not.toContain('rc=143');
+    expect(r.code).toBe(0);
+  });
+
+  it('propagates a failing shard rc as the test runner rc (1), not the watchdog 143', () => {
+    const failing = `import { describe, it, expect } from 'bun:test';
+describe('failing-on-purpose', () => {
+  it('expects 1 to equal 2', () => { expect(1).toBe(2); });
+});`;
+    writeFileSync(join(FROOT, 'test', 'z-fail.test.ts'), failing);
+    try {
+      const r = runFallbackWrapper();
+      expect(r.code).not.toBe(0);
+      const summary = readFileSync(join(FROOT, '.context', 'test-summary.txt'), 'utf-8');
+      expect(summary).toMatch(/shard \d\/2: pass=\d+ fail=1 skip=0 rc=1/);
+      expect(summary).not.toContain('rc=143');
+      const failureLog = readFileSync(join(FROOT, '.context', 'test-failures.log'), 'utf-8');
+      expect(failureLog).toContain('failing-on-purpose');
+    } finally {
+      rmSync(join(FROOT, 'test', 'z-fail.test.ts'), { force: true });
+    }
   });
 });

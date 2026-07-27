@@ -12,6 +12,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   resolveRequestedScope,
   resolveCodeIntelScope,
+  thinkSourceScopeOpts,
   OperationError,
   type OperationContext,
 } from '../src/core/operations.ts';
@@ -53,6 +54,20 @@ describe('resolveRequestedScope — __all__ / all_sources', () => {
   test('all_sources=true is treated identically to __all__', () => {
     const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['x'] } as any });
     expect(resolveRequestedScope(ctx, undefined, true)).toEqual({ sourceIds: ['x'] });
+  });
+});
+
+describe('think operation → runThink scope propagation', () => {
+  test('maps scalar sourceId without widening', () => {
+    expect(thinkSourceScopeOpts(ctxOf({ sourceId: 'tenant-a' }))).toEqual({ sourceId: 'tenant-a' });
+  });
+
+  test('maps federated sourceIds to runThink allowedSources and wins over scalar', () => {
+    const ctx = ctxOf({
+      sourceId: 'tenant-a',
+      auth: { allowedSources: ['tenant-a', 'tenant-b'] } as OperationContext['auth'],
+    });
+    expect(thinkSourceScopeOpts(ctx)).toEqual({ allowedSources: ['tenant-a', 'tenant-b'] });
   });
 });
 

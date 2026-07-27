@@ -23,9 +23,12 @@ import { runPhaseCalibrationProfile } from '../core/cycle/calibration-profile.ts
 import { sourceScopeOpts, type OperationContext } from '../core/operations.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import { GBrainError } from '../core/types.ts';
+import { resolveOwnerHolder } from '../core/owner-holder.ts';
 
 export interface CalibrationProfileRow {
-  id: number;
+  /** BIGSERIAL → string (postgres.js int8 wire shape; never Number() — int8
+   *  exceeds 2^53). No consumer does arithmetic on it; it's audit/serialize only. */
+  id: string;
   source_id: string;
   holder: string;
   wave_version: string;
@@ -67,7 +70,12 @@ export async function getLatestProfile(
   sql += ` ORDER BY generated_at DESC LIMIT 1`;
 
   const rows = await engine.executeRaw<CalibrationProfileRow>(sql, params);
-  return rows[0] ?? null;
+  if (!rows[0]) return null;
+  // `id` is BIGSERIAL → the pg driver returns it as a JS bigint, which crashes
+  // JSON.stringify on the --json / MCP output paths once a row exists. Coerce to
+  // string — matches the postgres.js int8 wire shape (and cli.ts's ENG-2
+  // "bigint → string" contract); String() has no 2^53 ceiling, unlike Number().
+  return { ...rows[0], id: String(rows[0].id) };
 }
 
 /** Human format the profile for terminal output. */
@@ -125,6 +133,7 @@ export interface RunCalibrationArgs {
   regenerate?: boolean;
   undoWave?: string;
   abReport?: boolean;
+  source?: string;
 }
 
 function parseArgs(args: string[]): { sub?: string; opts: RunCalibrationArgs } {
@@ -144,6 +153,7 @@ function parseArgs(args: string[]): { sub?: string; opts: RunCalibrationArgs } {
     else if (a === '--json') opts.json = true;
     else if (a === '--regenerate') opts.regenerate = true;
     else if (a === '--undo-wave') opts.undoWave = args[++i];
+    else if (a === '--source') opts.source = args[++i];
   }
   return { sub, opts };
 }
@@ -158,8 +168,15 @@ export async function runCalibration(
   config: GBrainConfig,
 ): Promise<void> {
   const { opts } = parseArgs(args);
-  const holder = opts.holder ?? 'garry';
-  const sourceId = 'default';
+  const holder = resolveOwnerHolder({
+    override: opts.holder,
+    configValue: await engine.getConfig('emotional_weight.user_holder'),
+  });
+  // Resolve --source / GBRAIN_SOURCE / .gbrain-source so the (now reachable, #2035)
+  // calibration command targets the right source in a multi-source brain instead
+  // of always reading `default`. No signal → 'default' (prior behavior).
+  const { resolveSourceId } = await import('../core/source-resolver.ts');
+  const sourceId = await resolveSourceId(engine, opts.source ?? null);
 
   if (opts.undoWave) {
     // T17 / D18 CDX-3 — reverse the wave's mutations on canonical state.
@@ -240,12 +257,15 @@ export async function getCalibrationProfileOp(
   ctx: OperationContext,
   params: { holder?: string },
 ): Promise<CalibrationProfileRow | null> {
-  const holder = params.holder ?? 'garry';
+  const holder = resolveOwnerHolder({
+    override: params.holder,
+    configValue: await ctx.engine.getConfig('emotional_weight.user_holder'),
+  });
   if (typeof holder !== 'string' || holder.length === 0) {
     throw new GBrainError(
       'INVALID_HOLDER',
       'get_calibration_profile.holder must be a non-empty string',
-      'pass holder="<slug>" or omit to default to "garry"',
+      'pass holder="<slug>" or omit to default to the owner holder (config emotional_weight.user_holder, else "self")',
     );
   }
   const scope = sourceScopeOpts(ctx);

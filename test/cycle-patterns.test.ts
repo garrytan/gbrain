@@ -39,9 +39,14 @@ describe('patterns phase wiring', () => {
     expect(patternsSrc).toContain("tool_name = 'brain_put_page'");
   });
 
-  test('skips when ANTHROPIC_API_KEY missing', () => {
-    expect(patternsSrc).toContain('ANTHROPIC_API_KEY');
-    expect(patternsSrc).toContain('no_api_key');
+  test('gates on gateway provider reachability, not ANTHROPIC_API_KEY (PR #2279)', () => {
+    // The gate must probe the RESOLVED patterns model through the gateway
+    // (any configured provider can run patterns), not hardcode the Anthropic
+    // env var — that misclassified non-Anthropic stacks as "no upstream".
+    expect(patternsSrc).toContain('probeChatModel');
+    expect(patternsSrc).toContain('normalizeModelId');
+    expect(patternsSrc).toContain('no_provider');
+    expect(patternsSrc).not.toContain('process.env.ANTHROPIC_API_KEY');
   });
 
   test('skips when reflections below min_evidence', () => {
@@ -69,8 +74,12 @@ describe('patterns phase wiring', () => {
 });
 
 describe('patterns scope filter', () => {
-  test('filters reflections by slug LIKE wiki/personal/reflections/%', () => {
-    expect(patternsSrc).toContain("slug LIKE 'wiki/personal/reflections/%'");
+  test('filters reflections by slug LIKE <output_root>/personal/reflections/%', () => {
+    // #2415: the namespace root is configurable (dream.synthesize.output_root,
+    // default 'wiki') and bound as a parameter — the scope filter itself and
+    // the reflections sub-path stay pinned.
+    expect(patternsSrc).toContain('slug LIKE $2');
+    expect(patternsSrc).toContain('/personal/reflections/%');
   });
 
   test('orders by updated_at DESC for recency-bias', () => {

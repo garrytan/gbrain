@@ -113,7 +113,36 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // by passing { noEmbed: false } in job.data.
     const noEmbed = (data as { noEmbed?: unknown }).noEmbed !== false;
 
-    const result = await importFromContent(engine, slug, event.content, { noEmbed });
+    // #1522: thread the validated event's provenance into the page write
+    // instead of dropping it on the floor. source_kind / source_uri are
+    // pure provenance strings (no scoping power) and persist
+    // unconditionally via importFromContent's putPage write-through.
+    //
+    // event.source_id is the emitter's IngestionSource instance id, NOT
+    // necessarily a registered brain source (the webhook path fabricates
+    // `webhook-<clientId>`, which pages.source_id's FK would reject). It
+    // routes the page write only when BOTH hold:
+    //   - the event is trusted (fail-closed: an untrusted webhook payload
+    //     carries a caller-controlled x-gbrain-source-id header and must
+    //     not get to choose its write source), AND
+    //   - the id names a registered source row.
+    // Otherwise the write keeps the pre-fix default-source routing.
+    let sourceId: string | undefined;
+    if (!untrustedPayload) {
+      const rows = await engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1`,
+        [event.source_id],
+      );
+      if (rows.length > 0) sourceId = event.source_id;
+    }
+
+    const result = await importFromContent(engine, slug, event.content, {
+      noEmbed,
+      sourceId,
+      source_kind: event.source_kind,
+      source_uri: event.source_uri,
+      ingested_via: 'ingest_capture',
+    });
 
     return {
       slug,

@@ -25,12 +25,14 @@ import { recordCompleted, loadOpCheckpoint } from '../../src/core/op-checkpoint.
 const describeE2E = hasDatabase() ? describe : describe.skip;
 
 describeE2E('E2E: op_checkpoints completed_keys jsonb parity (#2339)', () => {
+  // 60s: setupDB runs the full migration chain; bun's default 5s hook timeout
+  // flakes on slow CI runners (observed on the #3335 jsonb-parity job).
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 60_000);
   afterAll(async () => {
     await teardownDB();
-  });
+  }, 60_000);
 
   const key = { op: 'sync-target', fingerprint: 'jsonb-parity-2339' };
 

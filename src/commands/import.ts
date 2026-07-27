@@ -11,7 +11,9 @@ import {
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
+  matchesAnyGlob,
   pruneDir,
+  SYNC_SKIP_FILES,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -19,6 +21,7 @@ import {
   loadCheckpoint,
   saveCheckpoint,
   clearCheckpoint,
+  resolveImportTargetDir,
   resumeFilter,
 } from '../core/import-checkpoint.ts';
 
@@ -45,7 +48,25 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string; managedBookmark?: boolean } = {},
+  opts: {
+    commit?: string;
+    strategy?: SyncStrategy;
+    sourceId?: string;
+    managedBookmark?: boolean;
+    /**
+     * #753/#774: glob patterns to exclude from the import (same semantics as
+     * `isSyncable`'s `exclude` — matched against the dir-relative path).
+     * Threaded by performFullSync for `gbrain sync --exclude`.
+     */
+    exclude?: string[];
+    /**
+     * #753/#774 monorepo subdir-source support: when set, slugs and
+     * `source_path` are computed relative to this root (the git repo root)
+     * instead of `dir` (the sync scope), so `wiki/page1.md` lands as slug
+     * `wiki/page1` consistently across full and incremental sync.
+     */
+    slugRoot?: string;
+  } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
@@ -167,7 +188,19 @@ export async function runImport(
     console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json]');
     process.exit(1);
   }
-  const dir: string = dirArg;  // narrowed; survives closure capture
+  // #1728: capture the import target ONCE as an absolute real path. Every
+  // downstream consumer of `dir` (collection, checkpoint load/save, resume
+  // filtering) sees the same canonical identity — never the caller's `.`/
+  // relative spelling, which would make the persisted checkpoint `dir`
+  // resolve against whatever CWD a later process happens to run from.
+  let dir: string;
+  try {
+    dir = resolveImportTargetDir(dirArg);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Import target is not readable: ${dirArg} (${msg})`);
+    process.exit(1);
+  }
 
   // v0.31.2: collect under the right strategy. Pre-fix this called
   // collectMarkdownFiles unconditionally — code-strategy first sync
@@ -176,13 +209,30 @@ export async function runImport(
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  let allFiles = collectSyncableFiles(dir, { strategy });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
-  console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  // #753/#774: apply --exclude glob patterns (threaded by performFullSync).
+  if (opts.exclude && opts.exclude.length > 0) {
+    const beforeExclude = allFiles.length;
+    allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(dir, abs), opts.exclude));
+    console.log(
+      `Found ${allFiles.length} ${fileTypeLabel} files ` +
+      `(${beforeExclude - allFiles.length} excluded by --exclude patterns)`,
+    );
+    // NAV-4: everything excluded is almost always a mistyped pattern — warn.
+    if (beforeExclude > 0 && allFiles.length === 0) {
+      console.warn(
+        `[gbrain sync] No files matched after applying ${opts.exclude.length} --exclude pattern(s). ` +
+        `Check your --exclude flags. Patterns: ${JSON.stringify(opts.exclude)}`,
+      );
+    }
+  } else {
+    console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  }
 
   // Sort newest-first so date-prefixed brain paths get embedded before older ones.
   // See src/core/sort-newest-first.ts for the policy.
@@ -228,6 +278,11 @@ export async function runImport(
 
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(dir, filePath);
+    // #753/#774: slug + source_path base. When performFullSync syncs a
+    // monorepo subdir, slugRoot is the git root so slugs stay git-root-
+    // relative (matching the incremental path's git-diff paths). The
+    // checkpoint (`completed`) stays dir-relative — resumeFilter's contract.
+    const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relativePath;
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
@@ -238,8 +293,8 @@ export async function runImport(
       // up images when GBRAIN_EMBEDDING_MULTIMODAL=true so this branch is
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
-        ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId, activePack: importActivePack });
+        ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
+        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
@@ -255,7 +310,9 @@ export async function runImport(
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
-          failures.push({ path: relativePath, error: result.error });
+          // #774: ledger paths use the slug base so an incremental sync's
+          // success at the same (git-root-relative) path clears the row.
+          failures.push({ path: importRelPath, error: result.error });
         } else {
           // 'unchanged' or no-error skip: content_hash matched a prior
           // successful import, so this file IS done for checkpoint purposes.
@@ -273,7 +330,7 @@ export async function runImport(
       }
       errors++;
       skipped++;
-      failures.push({ path: relativePath, error: msg });
+      failures.push({ path: importRelPath, error: msg });
     }
     processed++;
     tickProgress();
@@ -287,6 +344,9 @@ export async function runImport(
         catch { /* non-fatal */ }
       }
       saveCheckpoint(checkpointPath, {
+        schema_version: 1,
+        owner: 'gbrain',
+        kind: 'import',
         dir,
         completedPaths: Array.from(completed),
         timestamp: new Date().toISOString(),
@@ -493,12 +553,39 @@ interface CollectOpts {
  * The first-sync walker historically admitted them on markdown too when
  * `GBRAIN_EMBEDDING_MULTIMODAL=true`. Codex (C5) flagged the contradiction
  * — preserve the walker semantic explicitly.
+ *
+ * Closes #345: exclude `SYNC_SKIP_FILES` metafiles
+ * (`README.md` / `index.md` / `log.md` / `schema.md` / `RESOLVER.md`).
+ * Incremental `sync` skips these via `isSyncable`, but the bulk-import
+ * walker only filtered by extension — so a directory import imported every
+ * directory README as a page, titled by its folder ("People", "Companies",
+ * …). Those index-titled pages then trigram-corrupt fuzzy entity resolution
+ * (any `people/X` slug matches the "People" page) and inflate orphan count.
+ * Funnel both admission paths through the same metafile exclusion so import
+ * and sync agree on what is a page.
  */
 function isCollectibleForWalker(
   path: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
 ): boolean {
+  // #2607: apply the SAME segment-level prune gate as incremental sync's
+  // `classifySync` (core/sync.ts). The FS walk below prunes at descent time,
+  // but the git fast path enumerates via `git ls-files` and historically
+  // filtered only by extension — so `sync --full` imported (and resurrected
+  // previously-deleted) pages under dot-dirs / vendored trees that incremental
+  // sync excludes. Full and incremental must agree on the exclusion set.
+  // (In the FS-walk route `path` is a basename, so this is the same dot-file
+  // check pruneDir already applied there — no behavior change on that route.)
+  const segments = path.split('/');
+  if (segments.some((seg) => !pruneDir(seg))) return false;
+
+  // Metafiles are directory scaffolding (READMEs / index / log / schema /
+  // resolver), not typed brain pages — same exclusion `sync`'s `isSyncable`
+  // applies. Guards both the FS-walk and the git-fast-path collection routes.
+  const basename = segments[segments.length - 1] || '';
+  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return false;
+
   switch (strategy) {
     case 'code':
       return isCodeFilePath(path);

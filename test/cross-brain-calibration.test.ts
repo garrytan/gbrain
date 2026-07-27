@@ -28,7 +28,7 @@ import type { CalibrationProfileRow } from '../src/commands/calibration.ts';
 
 function buildProfile(opts: { published: boolean; source_id?: string; holder?: string } = { published: false }): CalibrationProfileRow {
   return {
-    id: 1,
+    id: '1',
     source_id: opts.source_id ?? 'default',
     holder: opts.holder ?? 'garry',
     wave_version: 'v0.36.1.0',

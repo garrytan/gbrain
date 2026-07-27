@@ -20,11 +20,17 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
+let chunkEmbedDim = 0;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  const dim = await (engine as any).db.query(
+    `SELECT atttypmod FROM pg_attribute
+       WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'`,
+  );
+  chunkEmbedDim = (dim.rows[0] as { atttypmod: number }).atttypmod;
 });
 
 afterAll(async () => {
@@ -48,13 +54,18 @@ beforeEach(async () => {
     title: 'Alice Source-A',
     compiled_truth: 'Alice works on widgets in source A. Important context here.',
     timeline: '',
-    frontmatter: {},
+    frontmatter: {
+      message_id: '<source-a@example.com>',
+      thread_id: 'thread-source-a',
+      subject: 'Source A exact subject',
+    },
   }, { sourceId: 'default' });
   await engine.upsertChunks('people/alice', [{
     chunk_index: 0,
     chunk_text: 'Alice works on widgets in source A. Important context here.',
     chunk_source: 'compiled_truth',
     token_count: 12,
+    embedding: Float32Array.from({ length: chunkEmbedDim }, (_, i) => i === 0 ? 1 : 0),
   }], { sourceId: 'default' });
 
   await engine.putPage('people/alice', {
@@ -62,13 +73,18 @@ beforeEach(async () => {
     title: 'Alice Source-B',
     compiled_truth: 'Alice works on gadgets in source B. Important context here.',
     timeline: '',
-    frontmatter: {},
+    frontmatter: {
+      message_id: '<source-b@example.com>',
+      thread_id: 'thread-source-b',
+      subject: 'Source B exact subject',
+    },
   }, { sourceId: 'src-b' });
   await engine.upsertChunks('people/alice', [{
     chunk_index: 0,
     chunk_text: 'Alice works on gadgets in source B. Important context here.',
     chunk_source: 'compiled_truth',
     token_count: 12,
+    embedding: Float32Array.from({ length: chunkEmbedDim }, (_, i) => i === 1 ? 1 : 0),
   }], { sourceId: 'src-b' });
 
   await engine.putPage('people/bob', {
@@ -95,6 +111,9 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
     expect(results.length).toBeGreaterThan(0);
     for (const r of results) {
       expect(r.source_id).toBe('default');
+      expect(r.message_id).toBe('<source-a@example.com>');
+      expect(r.thread_id).toBe('thread-source-a');
+      expect(r.source_subject).toBe('Source A exact subject');
     }
   });
 
@@ -103,6 +122,9 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
     expect(results.length).toBeGreaterThan(0);
     for (const r of results) {
       expect(r.source_id).toBe('src-b');
+      expect(r.message_id).toBe('<source-b@example.com>');
+      expect(r.thread_id).toBe('thread-source-b');
+      expect(r.source_subject).toBe('Source B exact subject');
     }
   });
 
@@ -170,16 +192,32 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
   });
 
   test('searchVector with sourceId filters HNSW candidate pool', async () => {
-    // No real embeddings on the test pages; the WHERE cc.embedding IS NOT NULL
-    // gate filters them out. We assert the contract via an empty result
-    // rather than a positive match: with sourceId set, the SQL still runs
-    // (no type or undefined-column errors).
-    const synth = new Float32Array(1536).fill(0.01);
-    const results = await engine.searchVector(synth, { sourceId: 'src-b' });
-    // Either empty (no embeddings) or all from src-b. Both prove the
-    // filter is wired without a runtime error.
-    for (const r of results) {
-      expect(r.source_id).toBe('src-b');
+    const fixtures = [
+      {
+        sourceId: 'default', embeddingIndex: 0,
+        message_id: '<source-a@example.com>', thread_id: 'thread-source-a',
+        source_subject: 'Source A exact subject',
+      },
+      {
+        sourceId: 'src-b', embeddingIndex: 1,
+        message_id: '<source-b@example.com>', thread_id: 'thread-source-b',
+        source_subject: 'Source B exact subject',
+      },
+    ];
+
+    for (const fixture of fixtures) {
+      const synth = Float32Array.from(
+        { length: chunkEmbedDim },
+        (_, i) => i === fixture.embeddingIndex ? 1 : 0,
+      );
+      const results = await engine.searchVector(synth, { sourceId: fixture.sourceId });
+      expect(results.length).toBeGreaterThan(0);
+      for (const r of results) {
+        expect(r.source_id).toBe(fixture.sourceId);
+        expect(r.message_id).toBe(fixture.message_id);
+        expect(r.thread_id).toBe(fixture.thread_id);
+        expect(r.source_subject).toBe(fixture.source_subject);
+      }
     }
   });
 

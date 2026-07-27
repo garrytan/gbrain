@@ -15,6 +15,11 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import {
+  shouldExcludeFromOrphanReporting,
+  loadOrphanPolicyOverrides,
+  type OrphanPolicyOverrides,
+} from '../core/orphan-policy.ts';
 
 // --- Types ---
 
@@ -32,57 +37,14 @@ export interface OrphanResult {
   excluded: number;
 }
 
-// --- Filter constants ---
-
-/** Slug suffixes that are always auto-generated root files */
-const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
-
-/** Page slugs that are pseudo-pages by convention */
-const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
-
-/** Slug segment that marks raw sources */
-const RAW_SEGMENT = '/raw/';
-
-/** Slug prefixes where no inbound links is expected */
-const DENY_PREFIXES = [
-  'output/',
-  'dashboards/',
-  'scripts/',
-  'templates/',
-  'openclaw/config/',
-];
-
-/** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities']);
-
 // --- Filter logic ---
 
 /**
  * Returns true if a slug should be excluded from orphan reporting by default.
  * These are pages where having no inbound links is expected / not a content problem.
  */
-export function shouldExclude(slug: string): boolean {
-  // Pseudo-pages (exact match)
-  if (PSEUDO_SLUGS.has(slug)) return true;
-
-  // Auto-generated suffix patterns
-  for (const suffix of AUTO_SUFFIX_PATTERNS) {
-    if (slug.endsWith(suffix)) return true;
-  }
-
-  // Raw source slugs
-  if (slug.includes(RAW_SEGMENT)) return true;
-
-  // Deny-prefix slugs
-  for (const prefix of DENY_PREFIXES) {
-    if (slug.startsWith(prefix)) return true;
-  }
-
-  // First-segment exclusions
-  const firstSegment = slug.split('/')[0];
-  if (FIRST_SEGMENT_EXCLUSIONS.has(firstSegment)) return true;
-
-  return false;
+export function shouldExclude(slug: string, overrides?: OrphanPolicyOverrides): boolean {
+  return shouldExcludeFromOrphanReporting(slug, overrides);
 }
 
 /**
@@ -148,6 +110,7 @@ export async function findOrphans(
   let allOrphans: { slug: string; title: string; domain: string | null }[];
   let total: number;
   let excludedAll: number;
+  const overrides = includePseudo ? undefined : await loadOrphanPolicyOverrides(engine);
   try {
     allOrphans = await engine.findOrphanPages(
       sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
@@ -176,7 +139,7 @@ export async function findOrphans(
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0
-      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug) ? 1 : 0), 0);
+      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug, overrides) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
@@ -184,7 +147,7 @@ export async function findOrphans(
 
   const filtered = includePseudo
     ? allOrphans
-    : allOrphans.filter(row => !shouldExclude(row.slug));
+    : allOrphans.filter(row => !shouldExclude(row.slug, overrides));
 
   const orphans: OrphanPage[] = filtered.map(row => ({
     slug: row.slug,

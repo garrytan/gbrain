@@ -16,6 +16,14 @@ export const groq: Recipe = {
     setup_url: 'https://console.groq.com/keys',
   },
   touchpoints: {
+    // Same OpenAI-compatible endpoint as chat; declared so an explicit
+    // `expansion_model: groq:...` resolves instead of silently dropping
+    // expansion (#1135). 8b-instant is the natural expansion pick (cheap,
+    // fast, no tool-calling needed for multi-query rewrites).
+    expansion: {
+      models: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
+      price_last_verified: '2026-04-20',
+    },
     chat: {
       models: [
         'llama-3.3-70b-versatile',

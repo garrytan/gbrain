@@ -15,7 +15,16 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -170,6 +179,98 @@ exit 0
       expect(r.stderr).toMatch(/Failed:\s+beta\s+gamma/);
     } finally {
       cleanup(d);
+    }
+  });
+});
+
+describe("run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)", () => {
+  // macOS ships no `timeout`; without brew coreutils (`gtimeout`) — stock
+  // machines, minimal containers, restricted/sandboxed PATHs — the dispatcher
+  // degrades to the bg-pid + sleep-watchdog branch.
+  //
+  // Regression pinned here: each check's sentinel .exit file must record the
+  // exit code of the CHECK (read right after `wait $pid`), not of the
+  // watchdog teardown. The watchdog subshell is killed with SIGTERM and so
+  // reports 143; reading `$?` after the teardown stamped 143 into every
+  // sentinel — verify reported pass=0 fail=<all> while every per-check log
+  // said OK.
+  //
+  // Hermetic on any host: the script runs from a tempdir copy with `bun`
+  // stubbed (checks complete instantly, no repo needed) and PATH set to a
+  // curated symlink dir containing everything the script calls EXCEPT
+  // gtimeout/timeout — forcing the fallback branch even where coreutils is
+  // installed.
+
+  function makeFallbackHarness(): { root: string; env: Record<string, string> } {
+    const root = mkdtempSync(join(tmpdir(), "verify-fallback-"));
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    copyFileSync(SCRIPT, join(root, "scripts", "run-verify-parallel.sh"));
+
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    // Everything the dispatcher and its subshells invoke, minus timeout bins.
+    for (const tool of ["bash", "sh", "env", "dirname", "mktemp", "date", "sleep", "cat", "tail", "head", "rm", "mkdir", "pkill", "grep", "sed", "awk"]) {
+      const p = Bun.which(tool);
+      if (p) symlinkSync(p, join(bin, tool));
+    }
+    // `bun run <name>` stand-in: instant, prints OK, exits 7 for the check
+    // named in $STUB_FAIL_CHECK (if any).
+    writeFileSync(
+      join(bin, "bun"),
+      `#!/usr/bin/env bash
+name="\${2:-}"
+echo "stub check OK: $name"
+if [ -n "\${STUB_FAIL_CHECK:-}" ] && [ "$name" = "\${STUB_FAIL_CHECK}" ]; then
+  echo "stub check failing: $name" >&2
+  exit 7
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    return {
+      root,
+      env: {
+        PATH: bin,
+        HOME: process.env.HOME ?? root,
+        TMPDIR: process.env.TMPDIR ?? "/tmp",
+        GBRAIN_VERIFY_TIMEOUT: "30",
+        GBRAIN_VERIFY_LOG_DIR: join(root, "logs"),
+      },
+    };
+  }
+
+  it("all checks passing → exit 0, every sentinel records 0 (not the watchdog's 143)", () => {
+    const { root, env } = makeFallbackHarness();
+    try {
+      const r = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], { encoding: "utf8", env });
+      expect(r.stderr).toMatch(/pass=\d+ fail=0/);
+      expect(r.status).toBe(0);
+      const exits = readdirSync(join(root, "logs")).filter((f) => f.endsWith(".exit"));
+      expect(exits.length).toBeGreaterThan(10);
+      for (const f of exits) {
+        expect(readFileSync(join(root, "logs", f), "utf8").trim()).toBe("0");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("one check failing → exit 1, sentinel records the check's own rc (7), not 143", () => {
+    const { root, env } = makeFallbackHarness();
+    try {
+      const r = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], {
+        encoding: "utf8",
+        env: { ...env, STUB_FAIL_CHECK: "check:jsonb" },
+      });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("--- check:jsonb (rc=7)");
+      expect(r.stderr).toContain("stub check failing: check:jsonb");
+      expect(r.stderr).toMatch(/fail=1\b/);
+      expect(readFileSync(join(root, "logs", "check_jsonb.exit"), "utf8").trim()).toBe("7");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

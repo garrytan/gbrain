@@ -17,6 +17,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
+import { PAGE_SLUG_SEG } from '../cjk.ts';
 
 export interface CreateSlugInput {
   /**
@@ -71,7 +72,9 @@ export class SlugRegistryError extends Error {
 // SlugRegistry
 // ---------------------------------------------------------------------------
 
-const SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)+$/;
+// Shares the page-slug segment grammar (incl. CJK ranges, #738) with
+// validatePageSlug; keeps this site's dir/name shape (>= 2 segments).
+const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`);
 
 export class SlugRegistry {
   constructor(private engine: BrainEngine) {}

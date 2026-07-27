@@ -24,6 +24,7 @@
  */
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
+const SIXTY_MIN_MS = 60 * 60 * 1000;
 const TEN_MIN_MS = 10 * 60 * 1000;
 
 /**
@@ -42,6 +43,10 @@ export const HANDLER_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = {
   // few writes. Generous 10-min budget (vs the tight null-default) covers a
   // slow gateway without the 30-min loop budget.
   chronicle_extract: TEN_MIN_MS,
+  // Per-page contextual reindex jobs process chunks sequentially with one
+  // rate-leased LLM synopsis call per chunk; large transcript pages need more
+  // than the standard 30-min long-job budget.
+  contextual_reindex_per_chunk: SIXTY_MIN_MS,
 };
 
 /**

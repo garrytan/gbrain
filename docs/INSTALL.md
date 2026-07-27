@@ -111,3 +111,38 @@ gbrain models doctor              # 1-token probe per configured model
 ```
 
 If anything's yellow, `gbrain doctor` names the fix command in the message. Most issues are missing API keys or stale schema (`gbrain upgrade --force-schema`).
+
+## Troubleshooting
+
+### PGLite crashes on macOS 26.x (Tahoe)
+
+PGLite's embedded WASM engine is incompatible with macOS 26.x (Tahoe) on Apple Silicon. If `gbrain init --pglite` crashes during engine initialization, switch to native Homebrew PostgreSQL:
+
+```bash
+# Install PostgreSQL + pgvector
+brew install postgresql@17
+brew services start postgresql@17
+createdb gbrain
+
+# Build pgvector from source (required for vector search)
+cd /tmp && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
+cd pgvector && make && make install
+psql gbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# Point gbrain at your local Postgres
+cat > ~/.gbrain/config.json << 'EOF'
+{
+  "engine": "postgres",
+  "database_url": "postgresql://localhost:5432/gbrain",
+  "schema_pack": "gbrain-base-v2"
+}
+EOF
+
+# Run migrations and verify
+gbrain apply-migrations --yes
+gbrain doctor
+```
+
+All 102 migrations run on first try. Once `gbrain doctor` shows green, the brain works identically to PGLite — same commands, same skills, same data model. The only difference is the storage backend.
+
+> **Note:** This workaround is temporary. When the upstream WASM runtime fix ships (likely via a Bun update), `--pglite` will work on Tahoe again.

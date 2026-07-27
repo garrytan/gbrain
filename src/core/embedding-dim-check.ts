@@ -14,7 +14,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
+import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswMaxDimsForType } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
@@ -29,6 +29,13 @@ import {
   isOpenAITextEmbedding3Model,
   isValidOpenAITextEmbedding3Dim,
   maxOpenAITextEmbedding3Dim,
+  nvidiaEmbeddingDim,
+  nvidiaEmbeddingDimOptions,
+  supportsNvidiaEmbeddingDimension,
+  isPerplexityEmbeddingModel,
+  isValidPerplexityDim,
+  maxPerplexityEmbeddingDim,
+  PERPLEXITY_MIN_DIMS,
 } from './ai/dims.ts';
 
 /**
@@ -366,7 +373,9 @@ function validateDimAgainstTouchpoint(
   dimsOptions: number[] | undefined,
   requestedDims: number | undefined,
 ): ResolveSchemaDimResult {
-  const dim = requestedDims ?? defaultDims;
+  const nvidiaNaturalDims = recipe.id === 'nvidia' ? nvidiaEmbeddingDim(modelId) : undefined;
+  const effectiveDefaultDims = nvidiaNaturalDims ?? defaultDims;
+  const dim = requestedDims ?? effectiveDefaultDims;
 
   if (!Number.isInteger(dim) || dim <= 0) {
     return {
@@ -396,7 +405,7 @@ function validateDimAgainstTouchpoint(
     dim,
     model: `${recipe.id}:${modelId}`,
     provider: recipe.id,
-    recipeDefault: defaultDims,
+    recipeDefault: effectiveDefaultDims,
   };
 }
 
@@ -411,6 +420,22 @@ function isCustomDimValidForProvider(
   requestedDims: number,
   dimsOptions: number[] | undefined,
 ): CustomDimCheck {
+  // NVIDIA models are mixed: some fixed-dim, one Matryoshka-style. Handle
+  // them before generic recipe dims_options so llama-nemotron can use 1280d.
+  if (recipe.id === 'nvidia') {
+    const naturalDims = nvidiaEmbeddingDim(modelId);
+    if (naturalDims !== undefined && requestedDims === naturalDims) return { valid: true, error: '' };
+    if (supportsNvidiaEmbeddingDimension(modelId, requestedDims)) return { valid: true, error: '' };
+    const options = nvidiaEmbeddingDimOptions(modelId);
+    return {
+      valid: false,
+      error:
+        `NVIDIA model "${modelId}" does not support dimensions ${requestedDims}. ` +
+        `Natural dimensions: ${naturalDims ?? 'unknown'}. ` +
+        (options ? `Supported overrides: ${options.join(', ')}.` : 'No dimension overrides are supported for this NVIDIA model.'),
+    };
+  }
+
   // Tier 1: recipe-declared dims_options.
   if (dimsOptions && dimsOptions.length > 0) {
     if (dimsOptions.includes(requestedDims)) return { valid: true, error: '' };
@@ -441,6 +466,15 @@ function isCustomDimValidForProvider(
         `(allowed: ${ZEROENTROPY_VALID_DIMS.join(', ')}).`,
     };
   }
+  if (recipe.id === 'perplexity' && isPerplexityEmbeddingModel(modelId)) {
+    if (isValidPerplexityDim(modelId, requestedDims)) return { valid: true, error: '' };
+    return {
+      valid: false,
+      error:
+        `Perplexity ${modelId} accepts dimensions ${PERPLEXITY_MIN_DIMS}..${maxPerplexityEmbeddingDim(modelId)}, ` +
+        `got ${requestedDims}.`,
+    };
+  }
   if (recipe.id === 'openai' && isOpenAITextEmbedding3Model(modelId)) {
     if (isValidOpenAITextEmbedding3Dim(modelId, requestedDims)) return { valid: true, error: '' };
     const maxDim = maxOpenAITextEmbedding3Dim(modelId);
@@ -449,6 +483,18 @@ function isCustomDimValidForProvider(
       error:
         `OpenAI ${modelId} accepts dimensions 1..${maxDim}, got ${requestedDims}.`,
     };
+  }
+
+  // Passthrough tier (#2271): local / bring-your-own-backend recipes (ollama,
+  // llama-server, litellm) flag trust_custom_dims because the user knows their
+  // model's native dim and we can't enumerate every locally-pulled model. Trust
+  // the requested dim; the provider's /embeddings response-dim validation catches
+  // a genuine mismatch pre-storage. Runs AFTER Tier 1 (recipe dims_options) and
+  // Tier 2 (provider Matryoshka allowlists) so a recipe that DOES declare fixed
+  // options (e.g. openrouter) is still governed by those, and fixed-dim hosted
+  // providers (openai/voyage/zeroentropy) never reach here as valid.
+  if (recipe.touchpoints.embedding?.trust_custom_dims === true) {
+    return { valid: true, error: '' };
   }
 
   // Tier 3: provider not known to support custom dims at all.
@@ -576,6 +622,17 @@ export function buildFactsAlterRecipe(
   const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
   const targetType = columnType === 'halfvec' ? `halfvec(${configuredDims})` : `vector(${configuredDims})`;
   const dimsChanged = columnDims !== configuredDims;
+  const hnswMaxDims = hnswMaxDimsForType(columnType);
+  const indexLines = configuredDims <= hnswMaxDims
+    ? [
+        `CREATE INDEX idx_facts_embedding_hnsw`,
+        `  ON facts USING hnsw (embedding ${opclass})`,
+        `  WHERE embedding IS NOT NULL AND expired_at IS NULL;`,
+      ]
+    : [
+        `-- Skip reindex. ${columnType}(${configuredDims}) exceeds pgvector's HNSW cap of ${hnswMaxDims};`,
+        `-- fact similarity falls back to exact scans.`,
+      ];
   return [
     `-- ALTER ${columnType}(${columnDims}) → ${columnType}(${configuredDims}) on indexed column.`,
     `-- HOLD a maintenance window: this rewrites every row's embedding.`,
@@ -596,9 +653,7 @@ export function buildFactsAlterRecipe(
       : []),
     `ALTER TABLE facts ALTER COLUMN embedding TYPE ${targetType}`,
     `  USING embedding::${targetType};`,
-    `CREATE INDEX idx_facts_embedding_hnsw`,
-    `  ON facts USING hnsw (embedding ${opclass})`,
-    `  WHERE embedding IS NOT NULL AND expired_at IS NULL;`,
+    ...indexLines,
   ].join('\n');
 }
 
