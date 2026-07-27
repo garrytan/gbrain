@@ -1,5 +1,5 @@
 import { VERSION } from '../version.ts';
-import { isMinorOrMajorBump, isValidVersionString } from '../core/semver.ts';
+import { isNewerVersion, isValidVersionString } from '../core/semver.ts';
 import { fetchChangelog, fetchLatestRelease } from './check-update.ts';
 import { detectInstallMethod, runUpgrade } from './upgrade.ts';
 import { writeUpdateCache } from '../core/self-upgrade.ts';
@@ -37,7 +37,7 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
 
   const release = await fetchLatestRelease();
   const latest = release ? release.tag.replace(/^v/, '') : null;
-  const behind = !!latest && isValidVersionString(latest) && isMinorOrMajorBump(VERSION, latest);
+  const behind = !!latest && isValidVersionString(latest) && isNewerVersion(VERSION, latest);
 
   // Warm the cache so the next invocation's startup hook can emit without a fetch.
   try {

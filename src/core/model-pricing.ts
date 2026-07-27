@@ -21,7 +21,7 @@
  * regression trip-wire if anyone later re-hardcodes a view back into a duplicate)
  * and that the cross-modal panel models are all present in canonical.
  *
- * Prices verified 2026-06-03 against published provider pricing:
+ * Prices verified 2026-07-26 against published provider pricing:
  *   - Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
  *   - OpenAI:    https://openai.com/api/pricing
  *   - Google:    https://ai.google.dev/gemini-api/docs/pricing
@@ -54,8 +54,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // ── Anthropic ──────────────────────────────────────────────────────────
   // Fable 5: Anthropic's top tier, above Opus. $10 in / $50 out.
   'anthropic:claude-fable-5':             { input: 10.00, output: 50.00 },
-  // Opus 4.x: $5 in / $25 out. 4.8 (released 2026-05-28) shares 4.7's
-  // per-token rate — closes gbrain#1819.
+  // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
+  // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
+  'anthropic:claude-opus-5':              { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-8':            { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-7':            { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-6':            { input:  5.00, output: 25.00 },

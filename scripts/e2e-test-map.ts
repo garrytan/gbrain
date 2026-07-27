@@ -42,7 +42,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // phase, extract, integrity, embed, or migrate-engine change.
   "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts"],
-  "src/core/cycle/synthesize.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/synthesize.ts": [
+    "test/e2e/multi-source-bug-class.test.ts",
+    "test/e2e/synthesize-bigint-job-id-postgres.test.ts",
+  ],
   "src/commands/embed.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/migrate-engine.ts": ["test/e2e/multi-source-bug-class.test.ts"],

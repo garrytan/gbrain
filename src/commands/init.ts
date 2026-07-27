@@ -1108,12 +1108,12 @@ async function initPostgres(opts: {
 
   // v0.37.10.0 T6 (D11) + v0.37.11.0 Lane B.2: ALWAYS configure gateway BEFORE
   // initSchema. Same preflight contract as PGLite. Refuse to call initSchema
-  // until the gateway-resolved dim is validated. Schema substitution in
-  // src/schema.sql is currently a static `vector(1536)` for Postgres (unlike
-  // PGLite's templated dim), so a Voyage/ZE-configured Postgres brain will
-  // still need a future schema rewrite path — preflight makes the
-  // not-yet-supported case fail loud rather than silently produce a stuck
-  // 1536d column.
+  // until the gateway-resolved dim is validated. PostgresEngine.initSchema()
+  // passes the resolved model and dimensions through getPostgresSchema(),
+  // which templates the static `vector(1536)` source before executing it.
+  // Preflight therefore prevents an invalid dimension from reaching schema
+  // generation, while the post-init assertion below guards against templating
+  // drift.
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
