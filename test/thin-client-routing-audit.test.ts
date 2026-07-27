@@ -158,6 +158,22 @@ describe('thin-client routing audit — scratch-DB additions (jobs partial dispa
     expect(/\bconfig\s*:/.test(CLI_SOURCE.slice(hintsStart, hintsEnd))).toBe(true);
   });
 
+  test("#3224 — 'backfill' is in THIN_CLIENT_REFUSED_COMMANDS with a hint", () => {
+    // backfill mutates the local engine directly (createEngine + connect in
+    // commands/backfill.ts) with no MCP equivalent — same class as `config`
+    // above. Without this, a thin-client install would fabricate the same
+    // kind of ephemeral scratch-local PGLite `config` did before its own
+    // v0.32 audit fix.
+    const setStart = CLI_SOURCE.indexOf('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
+    const setEnd = CLI_SOURCE.indexOf(']);', setStart);
+    expect(CLI_SOURCE.slice(setStart, setEnd)).toContain("'backfill'");
+    const hintsStart = CLI_SOURCE.indexOf(
+      'const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {',
+    );
+    const hintsEnd = CLI_SOURCE.indexOf('};', hintsStart);
+    expect(/\bbackfill\s*:/.test(CLI_SOURCE.slice(hintsStart, hintsEnd))).toBe(true);
+  });
+
   test("'jobs' is NOT in THIN_CLIENT_REFUSED_COMMANDS (partial dispatch owns it)", () => {
     const setStart = CLI_SOURCE.indexOf('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
     const setEnd = CLI_SOURCE.indexOf(']);', setStart);

@@ -8,11 +8,11 @@ import {
 
 describe('extractMarkdownLinks', () => {
   it('extracts relative markdown links', () => {
-    const content = 'Check [Pedro](../people/pedro-franceschi.md) and [Brex](../../companies/brex.md).';
+    const content = 'Check [Alice](../people/alice-example.md) and [Acme](../../companies/acme-example.md).';
     const links = extractMarkdownLinks(content);
     expect(links).toHaveLength(2);
-    expect(links[0].name).toBe('Pedro');
-    expect(links[0].relTarget).toBe('../people/pedro-franceschi.md');
+    expect(links[0].name).toBe('Alice');
+    expect(links[0].relTarget).toBe('../people/alice-example.md');
   });
 
   it('skips external URLs ending in .md', () => {
@@ -34,12 +34,12 @@ describe('extractMarkdownLinks', () => {
 
 describe('extractLinksFromFile', () => {
   it('resolves relative paths to slugs', async () => {
-    const content = '---\ntitle: Test\n---\nSee [Pedro](../people/pedro.md).';
-    const allSlugs = new Set(['people/pedro', 'deals/test-deal']);
+    const content = '---\ntitle: Test\n---\nSee [Alice](../people/alice.md).';
+    const allSlugs = new Set(['people/alice', 'deals/test-deal']);
     const links = await extractLinksFromFile(content, 'deals/test-deal.md', allSlugs);
     expect(links.length).toBeGreaterThanOrEqual(1);
     expect(links[0].from_slug).toBe('deals/test-deal');
-    expect(links[0].to_slug).toBe('people/pedro');
+    expect(links[0].to_slug).toBe('people/alice');
   });
 
   it('skips links to non-existent pages', async () => {
@@ -50,15 +50,15 @@ describe('extractLinksFromFile', () => {
   });
 
   it('extracts frontmatter company links (v0.13, includeFrontmatter opt-in)', async () => {
-    const content = '---\ncompany: brex\ntype: person\n---\nContent.';
+    const content = '---\ncompany: acme-example\ntype: person\n---\nContent.';
     // v0.13 canonical: person page with company: X → person → company works_at (outgoing).
-    // Resolver needs companies/brex to exist in allSlugs to emit the edge.
-    const allSlugs = new Set(['people/test', 'companies/brex']);
+    // Resolver needs companies/acme-example to exist in allSlugs to emit the edge.
+    const allSlugs = new Set(['people/test', 'companies/acme-example']);
     const links = await extractLinksFromFile(content, 'people/test.md', allSlugs, { includeFrontmatter: true });
     const companyLinks = links.filter(l => l.link_type === 'works_at');
     expect(companyLinks.length).toBeGreaterThanOrEqual(1);
     expect(companyLinks[0].from_slug).toBe('people/test');
-    expect(companyLinks[0].to_slug).toBe('companies/brex');
+    expect(companyLinks[0].to_slug).toBe('companies/acme-example');
   });
 
   it('extracts frontmatter investors array (v0.13: incoming direction)', async () => {
@@ -91,22 +91,22 @@ describe('extractLinksFromFile', () => {
   it('frontmatter extraction is default OFF (back-compat)', async () => {
     // Without includeFrontmatter, fs-source no longer auto-extracts frontmatter.
     // Matches db-source behavior. User opts in with --include-frontmatter flag.
-    const content = '---\ncompany: brex\ntype: person\n---\nContent.';
-    const allSlugs = new Set(['people/test', 'companies/brex']);
+    const content = '---\ncompany: acme-example\ntype: person\n---\nContent.';
+    const allSlugs = new Set(['people/test', 'companies/acme-example']);
     const links = await extractLinksFromFile(content, 'people/test.md', allSlugs);
     expect(links).toEqual([]);
   });
 
   it('infers link type from directory structure', async () => {
-    const content = 'See [Brex](../companies/brex.md).';
-    const allSlugs = new Set(['people/pedro', 'companies/brex']);
-    const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
+    const content = 'See [Acme](../companies/acme-example.md).';
+    const allSlugs = new Set(['people/alice', 'companies/acme-example']);
+    const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
     expect(links[0].link_type).toBe('works_at');
   });
 
   it('infers deal_for type for deals -> companies', async () => {
-    const content = 'See [Brex](../companies/brex.md).';
-    const allSlugs = new Set(['deals/seed', 'companies/brex']);
+    const content = 'See [Acme](../companies/acme-example.md).';
+    const allSlugs = new Set(['deals/seed', 'companies/acme-example']);
     const links = await extractLinksFromFile(content, 'deals/seed.md', allSlugs);
     expect(links[0].link_type).toBe('deal_for');
   });
@@ -146,6 +146,38 @@ describe('extractTimelineFromContent', () => {
     const content = `- **2025-03-18** | Meeting – Discussed partnership`;
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
+  });
+
+  it('does not split on hyphens inside markdown link targets', () => {
+    const content = `- **2025-03-18** | Referenced in [Alice](../people/alice-example.md)`;
+    const entries = extractTimelineFromContent(content, 'companies/acme-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Referenced in [Alice](../people/alice-example.md)');
+  });
+
+  it('does not split on spaced dashes inside link labels', () => {
+    const content = `- **2025-03-18** | Referenced in [Deals — Q1 Review](../deals/q1-review.md)`;
+    const entries = extractTimelineFromContent(content, 'companies/acme-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Referenced in [Deals — Q1 Review](../deals/q1-review.md)');
+  });
+
+  it('splits on the first spaced dash outside links', () => {
+    const content = `- **2025-03-18** | [Board notes](../meetings/2025-03-18-board.md) — Approved the hire`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('[Board notes](../meetings/2025-03-18-board.md)');
+    expect(entries[0].summary).toBe('Approved the hire');
+  });
+
+  it('keeps delimiterless bullet lines whole instead of dropping them', () => {
+    const content = `- **2025-03-18** | Imported from legacy tracker`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Imported from legacy tracker');
   });
 
   it('extracts inline citation format entries', () => {

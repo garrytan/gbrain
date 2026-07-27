@@ -55,7 +55,7 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -107,6 +107,11 @@ const CLI_ONLY_SELF_HELP = new Set([
   // `gbrain connect --help` prints its own usage (flags + examples) from
   // runConnect; route around the generic one-line short-circuit.
   'connect',
+  // #3224 — `backfill` was missing from CLI_ONLY entirely (dispatch never
+  // reached runBackfillCommand). Once added there, the generic short-circuit
+  // still shadowed its own printHelp() (kind list + flags, same WARN-5 class
+  // as capture); route around it so `gbrain backfill --help` reaches it.
+  'backfill',
 ]);
 
 // v114 (#1941): alias -> operation lookup, kept separate from `cliOps` so
@@ -1083,6 +1088,17 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // it gets a partial dispatch (list/get route over MCP engine-free, the
   // rest refuse) in the main dispatch before connectEngine().
   'config',
+  // #3224: `backfill` (like migrate/apply-migrations/repair-jsonb) opens
+  // and mutates the local engine directly with no MCP equivalent op. On a
+  // thin-client install it would otherwise fabricate the same kind of
+  // ephemeral scratch-local PGLite `config` did before this audit —
+  // refuse cleanly instead. This check runs before backfill's own
+  // pre-connectEngine dispatch branch, so `--help` is ALSO refused on a
+  // thin client rather than showing help — the same pre-existing tradeoff
+  // `sync`/`enrich` already make (both are also THIN_CLIENT_REFUSED_COMMANDS
+  // with their own pre-connectEngine `--help` branch further down); not a
+  // new inconsistency introduced here.
+  'backfill',
 ]);
 
 /**
@@ -1123,6 +1139,8 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   // scratch-DB audit additions
   config: "config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set.",
   jobs: '`jobs list` and `jobs get <id>` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job MCP tools from your agent, or run on the host with GBRAIN_HOME set.',
+  // #3224
+  backfill: 'backfill mutates the host brain directly with no MCP equivalent. Run `gbrain backfill` on the host machine.',
 };
 
 /**
@@ -1598,6 +1616,24 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'enrich' && (args.includes('--help') || args.includes('-h'))) {
     const { runEnrich } = await import('./commands/enrich.ts');
     await runEnrich(null as never, args);
+    return;
+  }
+
+  // #3224: `backfill` dispatches unconditionally here (not just --help).
+  // runBackfillCommand manages its own engine end-to-end (createEngine +
+  // connect at commands/backfill.ts, disconnect when done) — it takes no
+  // engine parameter at all. The old `case 'backfill':` further down sits
+  // behind this function's shared `const engine = await connectEngine()`;
+  // reaching it there would open a SECOND PGLite connection to the same
+  // database while the first is still held, and PGLite's single-writer
+  // lock would make every real (non---help) backfill run hang for 30s and
+  // fail. Dispatching before that shared connect — same as schema/init/
+  // auth/remote above — avoids the double-connect entirely and, as a
+  // bonus, makes `--help` reachable from a fresh tmpdir with no configured
+  // brain (same motivation as the sync/capture/enrich branches below).
+  if (command === 'backfill') {
+    const { runBackfillCommand } = await import('./commands/backfill.ts');
+    await runBackfillCommand(args);
     return;
   }
 
@@ -2137,13 +2173,13 @@ async function handleCliOnly(command: string, args: string[]) {
         await reindexFrontmatterCli(args);
         return; // reindexFrontmatterCli handles its own engine lifecycle
       }
-      case 'backfill': {
-        // v0.30.1: first-class generic backfill command. Subcommand dispatch
-        // is inside runBackfillCommand (kind | list | --help).
-        const { runBackfillCommand } = await import('./commands/backfill.ts');
-        await runBackfillCommand(args);
-        return;
-      }
+      // #3224: `backfill` (v0.30.1's first-class generic backfill command)
+      // used to have its `case` right here, but runBackfillCommand manages
+      // its own engine end-to-end and dispatching it AFTER this switch's
+      // shared `connectEngine()` double-connects PGLite's single-writer
+      // lock to itself (hangs 30s, then fails on every real run). Moved to
+      // an unconditional pre-connectEngine branch above, next to schema/
+      // init/auth/remote/sync/capture/enrich — see that branch's comment.
       case 'code-callers': {
         // v0.20.0 Cathedral II Layer 10 (C4): "who calls <symbol>?"
         const { runCodeCallers } = await import('./commands/code-callers.ts');
